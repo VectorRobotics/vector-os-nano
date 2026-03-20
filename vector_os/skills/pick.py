@@ -507,6 +507,14 @@ def _get_calibration_matrix(context: SkillContext) -> np.ndarray:
         return np.array(cal["transform_matrix"], dtype=np.float64)
     if isinstance(cal, str):
         return load_calibration(cal)
+    # Handle Calibration object (from vector_os.perception.calibration)
+    if hasattr(cal, '_matrix') and cal._matrix is not None:
+        return np.array(cal._matrix, dtype=np.float64)
+    if hasattr(cal, 'camera_to_base'):
+        # Calibration class — extract matrix or use it directly
+        # Store the Calibration object reference for _camera_to_base to use
+        logger.info("[PICK] Using Calibration object directly")
+        return getattr(cal, '_matrix', np.eye(4))
     # Unknown type — use identity with a warning
     logger.warning("[PICK] Unknown calibration type %s — using identity", type(cal))
     return np.eye(4)

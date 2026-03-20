@@ -83,7 +83,12 @@ class DetectSkill:
         object_summaries: list[dict] = []
 
         for idx, det in enumerate(detections):
-            safe_label = det.label.replace(" ", "_").lower()
+            # If VLM returned the query as label (e.g., "all objects" for every detection),
+            # give each object a unique name like "object_0", "object_1", etc.
+            label = det.label
+            if label.lower() in ("all objects", "all", "objects", "everything"):
+                label = f"object_{idx}"
+            safe_label = label.replace(" ", "_").lower()
             obj_id = f"{safe_label}_{idx}"
 
             # Try to get 3D position from tracked object
@@ -120,7 +125,7 @@ class DetectSkill:
 
             obj = ObjectState(
                 object_id=obj_id,
-                label=det.label,
+                label=label,
                 x=x,
                 y=y,
                 z=z,
