@@ -22,33 +22,61 @@ The SDK works standalone with no ROS2 dependency. For hobbyists or researchers r
 
 ## Installation
 
-### Basic (no GPU, no simulation)
+**IMPORTANT:** Always use a dedicated virtual environment. Do NOT install into your system Python or an existing ROS2/conda environment — dependency conflicts will occur.
+
+### Step 1: Create virtual environment
 
 ```bash
-pip install vector-os-nano
+cd ~/Desktop/vector_os    # or wherever you cloned the repo
+python3 -m venv vector_os_nano
+source vector_os_nano/bin/activate
+pip install --upgrade pip
 ```
 
-Includes: arm driver, world model, skills, LLM providers (Claude/OpenAI/local).
+On Windows:
+```powershell
+python -m venv vector_os_nano
+vector_os_nano\Scripts\activate
+pip install --upgrade pip
+```
 
-### Full (GPU perception + IK + simulation + TUI)
+### Step 2: Install the SDK
+
+**Core only** (no GPU, no simulation — works everywhere):
 
 ```bash
-pip install vector-os-nano[all]
+pip install -e "."
 ```
 
-Adds: Intel RealSense driver, VLM object detection, EdgeTAM tracking, point cloud processing, Pinocchio IK, PyBullet simulation, Textual dashboard.
+**Full** (GPU perception + IK + simulation + TUI):
+
+```bash
+pip install -e ".[all]"
+```
+
+**Individual extras** (pick what you need):
+
+```bash
+pip install -e ".[perception]"   # RealSense + VLM + EdgeTAM + pointcloud
+pip install -e ".[ik]"           # Pinocchio FK/IK solver
+pip install -e ".[tui]"          # Textual developer dashboard
+pip install -e ".[sim]"          # PyBullet simulation
+```
 
 ### ROS2 mode (Ubuntu 22.04 + ROS2 Humble)
 
 ```bash
-# Install ROS2 Humble first: https://docs.ros.org/en/humble/Installation.html
-pip install vector-os-nano[all]
-# ROS2 Python packages (rclpy, etc.) are installed via apt, not pip
+# 1. Install ROS2 Humble: https://docs.ros.org/en/humble/Installation.html
+# 2. ROS2 Python packages (rclpy, etc.) come from apt, not pip
+# 3. Create venv WITH system packages so rclpy is accessible:
+python3 -m venv vector_os_nano --system-site-packages
+source vector_os_nano/bin/activate
+pip install -e ".[all]"
 ```
 
 ### Windows
 
-The core SDK (arm driver, skills, LLM providers, world model) is fully compatible with Windows 10/11. Use `COM3` instead of `/dev/ttyACM0` for the serial port. GPU perception requires WSL2 with CUDA passthrough.
+The core SDK (arm driver, skills, LLM providers, world model) is fully compatible with Windows 10/11. Use `COM3` instead of `/dev/ttyACM0` for the serial port. GPU perception requires an NVIDIA GPU with CUDA.
 
 ## Usage
 

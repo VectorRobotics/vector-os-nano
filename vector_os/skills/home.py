@@ -57,6 +57,9 @@ class HomeSkill:
             .get("joint_values", _DEFAULT_HOME_JOINTS)
         )
 
+        if context.arm is None:
+            return SkillResult(success=False, error_message="No arm connected")
+
         logger.info("[HOME] Moving to home pose: %s", home_joints)
         success = context.arm.move_joints(home_joints, duration=_HOME_DURATION)
 

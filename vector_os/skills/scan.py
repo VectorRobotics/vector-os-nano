@@ -60,6 +60,9 @@ class ScanSkill:
             .get("joint_values", _DEFAULT_SCAN_JOINTS)
         )
 
+        if context.arm is None:
+            return SkillResult(success=False, error_message="No arm connected")
+
         logger.info("[SCAN] Moving to scan pose: %s", scan_joints)
         success = context.arm.move_joints(scan_joints, duration=_SCAN_DURATION)
 
