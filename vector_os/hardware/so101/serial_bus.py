@@ -125,7 +125,7 @@ class SerialBus:
             logger.warning("write_position called while disconnected (motor_id=%d)", motor_id)
             return False
 
-        _, result, _ = self._packet_handler.write2ByteTxRx(
+        result, error = self._packet_handler.write2ByteTxRx(
             self._port_handler, motor_id, ADDR_GOAL_POSITION, position
         )
 
@@ -152,7 +152,7 @@ class SerialBus:
             return False
 
         value = 1 if enable else 0
-        result, _ = self._packet_handler.write1ByteTxRx(
+        result, error = self._packet_handler.write1ByteTxRx(
             self._port_handler, motor_id, ADDR_TORQUE_ENABLE, value
         )
 

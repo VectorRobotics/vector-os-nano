@@ -94,6 +94,9 @@ class PlaceSkill:
             SkillResult(success=True, result_data={"placed_at": [x, y, z]}) on success.
             SkillResult(success=False, error_message=...) on failure.
         """
+        if context.arm is None:
+            return SkillResult(success=False, error_message="No arm connected")
+
         cfg_place = context.config.get("skills", {}).get("place", {})
         pre_grasp_h: float = (
             context.config.get("skills", {})

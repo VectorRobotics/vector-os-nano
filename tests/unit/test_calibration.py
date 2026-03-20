@@ -53,6 +53,8 @@ def test_solve_affine_translation():
 
 def test_camera_to_base_transform():
     """Transform applied correctly for arbitrary rotation + translation."""
+    pytest = __import__("pytest")
+    scipy = pytest.importorskip("scipy")
     from scipy.spatial.transform import Rotation
     # Construct a known 4x4 rigid transform
     R = Rotation.from_euler("z", 45, degrees=True).as_matrix()

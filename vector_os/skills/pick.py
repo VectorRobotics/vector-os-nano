@@ -117,6 +117,9 @@ class PickSkill:
             SkillResult(success=True, result_data={"position_cm": [x, y]}) on success.
             SkillResult(success=False, error_message=...) on failure.
         """
+        if context.arm is None:
+            return SkillResult(success=False, error_message="No arm connected")
+
         max_retries: int = (
             context.config.get("skills", {}).get("pick", {}).get("max_retries", _DEFAULT_MAX_RETRIES)
         )

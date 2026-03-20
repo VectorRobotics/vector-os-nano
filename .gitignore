@@ -16,4 +16,9 @@ venv/
 .ruff_cache/
 *.urdf.bak
 config/workspace_calibration.yaml
+config/user.yaml
 *.npz
+vector_os_nano/
+test_run.py
+test_hardware.py
+test_llm.py
