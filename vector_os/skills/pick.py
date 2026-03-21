@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Gripper height above table (z offset added to the raw calibrated position)
-_DEFAULT_Z_OFFSET: float = 0.07        # 7 cm (reduced from 10cm — was descending too high)
+_DEFAULT_Z_OFFSET: float = 0.04        # 4 cm (tuned — 7cm was still too high for small objects)
 
 # Pre-grasp approach height above the target grasp point
 _DEFAULT_PRE_GRASP_HEIGHT: float = 0.06  # 6 cm (PRE_GRASP_HEIGHT in v2)
