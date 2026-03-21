@@ -313,9 +313,58 @@ def main() -> None:
 
             cv2.destroyAllWindows()
 
+        def _depth_loop():
+            """Background thread: show depth + pointcloud projection overlay."""
+            cam = perception._camera
+            cv2.namedWindow("Vector OS - Depth/Pointcloud", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Vector OS - Depth/Pointcloud", 640, 480)
+
+            while not stop_camera.is_set():
+                try:
+                    depth = cam.get_depth_frame()
+                    color = cam.get_color_frame()
+                    if depth is None or color is None:
+                        continue
+
+                    # Normalize depth for display (0-255)
+                    depth_display = depth.copy().astype(np.float32)
+                    depth_display = np.clip(depth_display, 0, 500)  # 0-50cm range
+                    depth_display = (depth_display / 500.0 * 255).astype(np.uint8)
+                    depth_colored = cv2.applyColorMap(depth_display, cv2.COLORMAP_JET)
+
+                    # Overlay tracked object mask + centroid
+                    if hasattr(perception, '_last_tracked') and perception._last_tracked:
+                        for obj in perception._last_tracked:
+                            # Draw mask outline on depth
+                            if obj.mask is not None and obj.mask.shape == depth_colored.shape[:2]:
+                                contours, _ = cv2.findContours(
+                                    obj.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                                )
+                                cv2.drawContours(depth_colored, contours, -1, (255, 255, 255), 2)
+
+                            # Draw centroid (median point projected to 2D)
+                            if obj.pose and obj.bbox_2d:
+                                cx = int((obj.bbox_2d[0] + obj.bbox_2d[2]) / 2)
+                                cy = int((obj.bbox_2d[1] + obj.bbox_2d[3]) / 2)
+                                cv2.circle(depth_colored, (cx, cy), 6, (0, 255, 0), -1)
+                                cv2.circle(depth_colored, (cx, cy), 8, (255, 255, 255), 2)
+                                # Show 3D coordinates
+                                info = f"{obj.pose.x:.3f},{obj.pose.y:.3f},{obj.pose.z:.3f}"
+                                cv2.putText(depth_colored, info, (cx + 10, cy),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+                    cv2.imshow("Vector OS - Depth/Pointcloud", depth_colored)
+                    cv2.waitKey(33)
+                except Exception:
+                    pass
+
+            cv2.destroyWindow("Vector OS - Depth/Pointcloud")
+
         camera_thread = threading.Thread(target=_camera_loop, daemon=True)
+        depth_thread = threading.Thread(target=_depth_loop, daemon=True)
         camera_thread.start()
-        print("Camera viewer started (ESC to close window)")
+        depth_thread.start()
+        print("Camera + Depth viewers started (ESC to close)")
 
     # -----------------------------------------------------------------------
     # CLI
