@@ -253,6 +253,24 @@ class PickSkill:
 
         q_grasp = descent_waypoints[-1] if descent_waypoints else q_pregrasp
 
+        # FK verification: check where gripper actually ends up
+        try:
+            fk_pos, _ = context.arm.fk(q_grasp)
+            fk_tip, _ = context.arm.fk(q_grasp)  # gripper_link position
+            if hasattr(context.arm, '_ik_solver') and context.arm._ik_solver is not None:
+                fk_tip, _ = context.arm._ik_solver.fk_gripper_tip(q_grasp)
+            target = np.array([base_pos[0], base_pos[1], base_pos[2]])
+            error = np.linalg.norm(np.array(fk_pos) - target) * 1000
+            logger.info(
+                "[PICK] FK verify: target(%.1f,%.1f,%.1f)cm gripper_link(%.1f,%.1f,%.1f)cm tip(%.1f,%.1f,%.1f)cm err=%.1fmm",
+                target[0]*100, target[1]*100, target[2]*100,
+                fk_pos[0]*100, fk_pos[1]*100, fk_pos[2]*100,
+                fk_tip[0]*100, fk_tip[1]*100, fk_tip[2]*100,
+                error,
+            )
+        except Exception as e:
+            logger.debug("[PICK] FK verify failed: %s", e)
+
         # Step 8: Open gripper
         logger.info("[PICK] Opening gripper ...")
         if context.gripper is not None:
@@ -279,12 +297,9 @@ class PickSkill:
                 context.gripper.close()
                 time.sleep(0.2)
 
-        # Step 12: Cartesian lift back to pre-grasp (reverse descent waypoints)
+        # Step 12: Lift straight back to pre-grasp (one move)
         logger.info("[PICK] Lifting ...")
-        lift_waypoints = list(reversed(descent_waypoints[:-1])) + [q_pregrasp]
-        lift_step_duration = _LIFT_DURATION / max(len(lift_waypoints), 1)
-        for wp_joints in lift_waypoints:
-            context.arm.move_joints(wp_joints, duration=lift_step_duration)
+        context.arm.move_joints(q_pregrasp, duration=_LIFT_DURATION)
 
         # Step 13: Return home
         logger.info("[PICK] Returning home ...")
