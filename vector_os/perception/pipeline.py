@@ -485,8 +485,14 @@ class PerceptionPipeline:
                 if len(points) >= 4:
                     sampled = self._sample_points(points, self._bbox_max_points)
                     bbox_3d = pointcloud_to_bbox3d_fast(sampled)
-                    if bbox_3d is not None:
-                        pose = bbox_3d.center
+                    # Use median of pointcloud for grasp center (more robust than bbox center)
+                    # Median resists outliers from mask edges and depth noise
+                    median_xyz = np.median(sampled, axis=0)
+                    pose = Pose3D(
+                        x=float(median_xyz[0]),
+                        y=float(median_xyz[1]),
+                        z=float(median_xyz[2]),
+                    )
 
             result.append(TrackedObject(
                 track_id=track_id,
