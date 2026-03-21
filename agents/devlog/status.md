@@ -1,20 +1,20 @@
 # Agent Status — Vector OS Nano SDK
 
-**Session:** 2026-03-21 | **Phase:** Tuning | **696 TESTS PASSING**
+**Session:** 2026-03-21 16:30 | **Phase:** Active Development (TUI Improvements) | **696 TESTS PASSING**
 
 ---
 
 ## Executive Summary
 
-Full SDK complete and functional on hardware. Pick pipeline end-to-end: NL command → LLM planning → sensor perception → IK → arm motion → gripper control. All 696 tests passing. Current focus: empirical pick accuracy tuning and calibration refinement. Next major work: Skill Manifest Protocol (ADR-002) for alias-based command routing.
+Full SDK complete and functional on hardware. Pick pipeline end-to-end: NL command → LLM planning → sensor perception → IK → arm motion → gripper control. All 696 tests passing. Current focus: TUI dashboard enhancements (logo, camera tab, input handling, status visualization). Next major work: Skill Manifest Protocol (ADR-002) for alias-based command routing.
 
 | Agent | Status | Current Work | Branch | Notes |
 |-------|--------|--------------|--------|-------|
 | Lead (Opus) | idle | — | — | Architecture approved, awaiting next phase |
-| Alpha (Sonnet) | idle | — | — | All wave tasks complete |
-| Beta (Sonnet) | idle | — | — | All wave tasks complete |
+| Alpha (Sonnet) | in_progress | TUI improvements: logo, input fix, status dots, joint bars, skill progress | feat/alpha-tui-improvements | Core dashboard enhancements |
+| Beta (Sonnet) | in_progress | Camera TUI tab: frame_renderer.py + Camera tab in dashboard | feat/beta-camera-tui | Unicode half-block rendering, 2Hz refresh |
 | Gamma (Sonnet) | idle | — | — | All wave tasks complete |
-| Scribe (Haiku) | active | Documentation update | dev | Status + architecture docs |
+| Scribe (Haiku) | active | Documentation update | dev | Status + architecture docs for TUI work |
 
 **Test Status:** 696/696 passing (100%), coverage 85%+
 
@@ -30,23 +30,29 @@ Full SDK complete and functional on hardware. Pick pipeline end-to-end: NL comma
 | Lines of code | 10,000+ |
 | Protocols defined | 5 |
 | Regressions | 0 |
-| Days in active development | 1 |
+| Days in active development | 2 |
 
 ---
 
-## Current Phase: Tuning
+## Current Phase: TUI Improvements Wave
 
-### Pick Reliability (In Progress)
-- Empirical XY offsets calibrated for workspace region
-- Z calibration simplified (pose-dependent, all objects at z=0.005m)
-- Gripper asymmetry compensation: left/right/center branches
-- Test data: 50+ successful picks on battery-like objects
+### Alpha: Core Dashboard Features (In Progress)
+- ASCII art logo rendering at dashboard top
+- Fixed input bar focus handling (command parser)
+- Status indicator dots: connection, hardware, tracking states
+- Joint angle progress bars: real-time visualization
+- Skill execution progress indicator
 
-### Outstanding Issues
-- Look-then-move correction disabled (calibration is pose-dependent)
-- World model cleared after each pick (prevents stale position data)
-- No grasp success detection yet (servo current feedback not implemented)
-- Camera serial hardcoded (335122270413)
+### Beta: Camera Tab Implementation (In Progress)
+- Frame renderer: RGBD → Unicode half-block (60x60 pixel equivalent)
+- New Camera tab: 5-tab layout complete (Dashboard, Log, Skills, World, Camera)
+- Conditional refresh: 2Hz when Camera tab active, skip when inactive
+- Grayscale preview rendering
+
+### Dashboard Navigation Completed
+- F1-F5: Tab switching
+- F6: Fullscreen camera
+- `/`: Focus command input
 
 ---
 
@@ -72,16 +78,16 @@ Full SDK complete and functional on hardware. Pick pipeline end-to-end: NL comma
 - PyBullet arm simulation
 - Documentation + examples
 
-### Post-Wave 4 — +54 tests (696 total)
+### Post-Wave 4 (Calibration Tuning) — +54 tests (696 total)
 - Background EdgeTAM tracking
 - Dashboard fixes
 - Calibration refinement
 
 ---
 
-## Next Phase: Skill Manifest Protocol (ADR-002)
+## Next Phase: TUI Completion + Skill Manifest Protocol (ADR-002)
 
-Starting implementation:
+Starting after TUI wave:
 1. **Phase 1:** YAML skill registry with aliases
 2. **Phase 2:** LLM context enrichment (available skills → prompt injection)
 3. **Phase 3:** Dynamic skill discovery + routing
@@ -93,15 +99,16 @@ See `docs/ADR-002-skill-manifest-protocol.md` for design details.
 
 ## Blockers
 
-None currently. All hardware interfaces working, calibration tuning ongoing, next major feature (Skill Manifest) ready to begin.
+None currently. All hardware interfaces working, TUI improvements underway, calibration tuning complete.
 
 ---
 
 ## File Dependencies
 
-- `vector_os/core/agent.py` — main Agent class, executor, world model
-- `vector_os/hardware/so101/` — SO-101 arm driver
-- `vector_os/perception/pipeline.py` — camera + VLM + tracking orchestrator
-- `vector_os/skills/pick.py` — full pick skill implementation
-- `vector_os/cli/simple.py` — readline shell
+- `vector_os_nano/core/agent.py` — main Agent class, executor, world model
+- `vector_os_nano/hardware/so101/` — SO-101 arm driver
+- `vector_os_nano/perception/pipeline.py` — camera + VLM + tracking orchestrator
+- `vector_os_nano/skills/pick.py` — full pick skill implementation
+- `vector_os_nano/cli/simple.py` — readline shell
+- `vector_os_nano/cli/dashboard.py` — Textual TUI dashboard (currently being enhanced)
 - `config/workspace_calibration.yaml` — calibration matrix (gitignored)

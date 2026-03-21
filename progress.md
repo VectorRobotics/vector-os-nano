@@ -1,7 +1,7 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-03-21  
-**Status:** v0.1.0 functional, pick pipeline working, in active tuning
+**Last updated:** 2026-03-21 16:30  
+**Status:** v0.1.0 functional, pick pipeline working, TUI improvements in progress
 
 ## What Works
 
@@ -15,6 +15,26 @@
 - PyBullet simulation
 - SO-101 arm driver (Feetech STS3215 serial)
 - Calibration wizard (TUI + readline)
+
+## TUI Improvements (In Progress)
+
+### Alpha: Core Dashboard Enhancements
+- ASCII art logo at dashboard top
+- Fixed command input handling (focus management)
+- Status indicator dots (connection status, hardware state)
+- Joint angle progress bars (real-time joint visualization)
+- Skill execution progress indicator
+
+### Beta: Camera Tab Implementation
+- Camera frame renderer (Unicode half-block compression: 60x60 pixel equivalent)
+- New "Camera" tab in 5-tab dashboard (Dashboard, Log, Skills, World, Camera)
+- 2Hz refresh rate (only active when Camera tab is in focus)
+- Camera preview with grayscale rendering
+
+### Dashboard Navigation
+- F1-F5: Tab switching (Dashboard, Log, Skills, World, Camera)
+- F6: Fullscreen camera view
+- `/` : Focus command input bar
 
 ## Current Limitations
 
@@ -52,8 +72,9 @@
 
 ## Next Steps
 
-1. Skill Manifest Protocol (ADR-002) — alias-based command routing
-2. Re-calibration with more points + Z variation
-3. Hand-eye calibration for pose-independent transforms
-4. Grasp success detection via servo current/load
-5. Multi-object pick-and-place sequences
+1. TUI improvements completion (Alpha + Beta)
+2. Skill Manifest Protocol (ADR-002) — alias-based command routing
+3. Re-calibration with more points + Z variation
+4. Hand-eye calibration for pose-independent transforms
+5. Grasp success detection via servo current/load
+6. Multi-object pick-and-place sequences

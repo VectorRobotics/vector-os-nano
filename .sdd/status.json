@@ -1,13 +1,14 @@
 {
   "project": "vector-os-nano-sdk",
-  "current_phase": "tuning",
+  "current_phase": "execute",
   "spec_status": "approved",
   "plan_status": "approved",
   "tasks_status": "approved",
+  "current_wave": "tui-improvements",
   "tasks_progress": {
     "total": 13,
     "completed": 12,
-    "in_progress": 1,
+    "in_progress": 2,
     "pending": 0
   },
   "test_metrics": {
@@ -15,7 +16,7 @@
     "passed": 696,
     "failed": 0,
     "coverage_percent": 85,
-    "last_run": "2026-03-21T00:00:00Z"
+    "last_run": "2026-03-21T16:30:00Z"
   },
   "history": [
     {
@@ -65,6 +66,12 @@
       "action": "phase_transition",
       "agent": "scribe",
       "details": "Transitioned to tuning phase. Pick accuracy calibration in progress. Next: ADR-002 Skill Manifest Protocol implementation."
+    },
+    {
+      "timestamp": "2026-03-21T16:30:00Z",
+      "action": "wave_tui_improvements_start",
+      "agent": "alpha, beta",
+      "details": "TUI improvements wave initiated. Alpha: dashboard logo, input fix, status dots, joint bars, skill progress. Beta: camera tab with Unicode half-block frame renderer, 2Hz refresh. Navigation: F1-F5 tabs, F6 fullscreen, / command focus."
     }
   ]
 }

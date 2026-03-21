@@ -302,6 +302,105 @@ Direct Commands (bypass LLM):
 
 ---
 
+---
+
+## TUI Dashboard Architecture
+
+### 5-Tab Layout
+
+The Textual TUI dashboard provides comprehensive monitoring and control:
+
+```
+┌─ Vector OS Nano Dashboard ─────────────────────────────────────────┐
+│  [F1] Dashboard  [F2] Log  [F3] Skills  [F4] World  [F5] Camera     │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  VECTOR OS NANO SDK                    Connection: ●              │
+│  ▄███████▄  ▄██████▄                   Hardware:   ●              │
+│ ▀█▀   ▀█▀ █▀    ▀█▀                    Tracking:   ●              │
+│   ▀█▀█▀   █   ▄▀▀▀                                               │
+│     ▀█▀    █▀▀▀▀█▀   Joint Angles:                               │
+│   ▄███▄   ▀██████▀   J1: [████░░░░░░] 45.2°                     │
+│                       J2: [███░░░░░░░] 32.1°                     │
+│  Skill Progress:      J3: [██████░░░░] 67.8°                     │
+│  pick: [████████░░] 80%  J4: [█████░░░░░] 55.3°                  │
+│                       J5: [███░░░░░░░] 28.9°                     │
+│                       J6: [██████████] 90.0°                     │
+│                                                                    │
+├────────────────────────────────────────────────────────────────────┤
+│ Command: _                                                         │
+│ / to focus                                                         │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Tab: Dashboard
+- **ASCII logo** at top (Vector OS Nano branding)
+- **Status indicator dots**: connection, hardware, tracking states (live •)
+- **Joint angle bars**: real-time 6-DOF visualization with degree readings
+- **Skill execution progress**: current skill name + percentage complete
+- **Command input bar** at bottom (focus with `/`, type command)
+
+### Tab: Log
+- Scrollable task execution log
+- Messages: command received, perception results, motion complete, errors
+- Timestamps per entry
+
+### Tab: Skills
+- Registered skills with aliases
+- Current execution state (waiting, running, complete)
+- Skill parameters (target, pose, object label)
+
+### Tab: World
+- Detected objects in world model
+- Object label, 3D position (x, y, z), confidence
+- Update frequency: refreshed on detect/pick
+
+### Tab: Camera (New in TUI Improvements Wave)
+- Live RGBD preview
+- **Unicode half-block rendering:** 60x60 pixel equivalent (dense visualization)
+- Grayscale depth visualization with intensity mapping
+- **2Hz refresh rate** (active only when tab is in focus, skipped when inactive)
+- F6 fullscreen: expand to full terminal size
+
+### Navigation
+
+| Key | Action |
+|-----|--------|
+| F1 | Dashboard tab |
+| F2 | Log tab |
+| F3 | Skills tab |
+| F4 | World tab |
+| F5 | Camera tab |
+| F6 | Fullscreen camera |
+| `/` | Focus command input |
+| `↑/↓` | Scroll log (when in Log tab) |
+| `Enter` | Execute command |
+| `Ctrl+C` | Quit |
+
+### Frame Renderer (Camera Tab)
+
+**Unicode Half-Block Encoding:**
+- Depth → 256 grayscale levels
+- Each terminal character = 1 half-block (▀ ▄)
+- Rendered at ~60x60 character grid (60-char width × 60-line height)
+- Equivalent to ~360x360 pixels at 6:1 compression
+- Grayscale mapping: depth distance → character intensity (░ ▒ ▓ █)
+
+**Performance:**
+- 2Hz refresh: update every 500ms when tab active
+- Skipped entirely when Camera tab inactive (no GPU load)
+- Minimal CPU: numpy vectorization for grayscale conversion
+
+**Visual Example:**
+```
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░▒▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░▒▓▓▓▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+▒▓█████▓▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+▓████████▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+```
+
 ## Design Decisions
 
 ### 1. **ROS2 is Optional**
