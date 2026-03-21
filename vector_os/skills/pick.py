@@ -159,6 +159,11 @@ class PickSkill:
 
         Returns SkillResult — does NOT retry on its own.
         """
+        # Always open gripper first — ensures clean grip regardless of current state
+        if context.gripper is not None:
+            logger.info("[PICK] Ensuring gripper is open ...")
+            context.gripper.open()
+
         cfg = context.config.get("skills", {}).get("pick", {})
         z_offset: float = cfg.get("z_offset", _DEFAULT_Z_OFFSET)
         x_offset: float = cfg.get("x_offset", 0.0)
