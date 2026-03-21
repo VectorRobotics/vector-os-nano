@@ -124,9 +124,8 @@ def main() -> None:
         print(f"Connecting arm on {port}...")
         arm.connect()
         gripper = SO101Gripper(arm._bus)
-        gripper.open()  # ensure gripper starts open
         joints = [round(j, 2) for j in arm.get_joint_positions()]
-        print(f"Arm connected. Gripper opened. Joints: {joints}")
+        print(f"Arm connected. Joints: {joints}")
     except Exception as exc:
         print(f"Arm not available: {exc}")
 
