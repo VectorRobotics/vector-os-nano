@@ -324,33 +324,31 @@ class PickSkill:
         Returns:
             (3,) numpy array in base frame metres, or None if unresolvable.
         """
-        # 1. object_id lookup (only use if has valid 3D position)
+        # ALWAYS re-detect with perception if available (object may have moved)
+        if context.perception is not None:
+            label = params.get("object_label") or params.get("object_id") or "object"
+            logger.info("[PICK] Live perception for %r (always re-detect)", label)
+            result = self._sample_from_perception(params, context)
+            if result is not None:
+                return result
+            logger.warning("[PICK] Perception failed, falling back to world model")
+
+        # Fallback: world model (only if no perception or perception failed)
         obj_id = params.get("object_id")
         if obj_id:
             obj = context.world_model.get_object(obj_id)
             if obj is not None and (abs(obj.x) > 0.01 or abs(obj.y) > 0.01):
-                logger.info("[PICK] Resolved via world_model object_id=%s", obj_id)
+                logger.info("[PICK] Fallback: world_model object_id=%s", obj_id)
                 return np.array([obj.x, obj.y, obj.z], dtype=float)
-            if obj is not None:
-                logger.info("[PICK] object_id=%s has no 3D position, will use perception", obj_id)
 
-        # 2. object_label lookup (only use if has valid 3D position)
         label = params.get("object_label")
         if label:
             objects = context.world_model.get_objects_by_label(label)
             valid = [o for o in objects if abs(o.x) > 0.01 or abs(o.y) > 0.01]
             if valid:
                 closest = min(valid, key=lambda o: o.x ** 2 + o.y ** 2)
-                logger.info(
-                    "[PICK] Resolved via world_model label=%r -> object_id=%s",
-                    label, closest.object_id,
-                )
+                logger.info("[PICK] Fallback: world_model label=%r", label)
                 return np.array([closest.x, closest.y, closest.z], dtype=float)
-            logger.warning("[PICK] label=%r not in world model with valid 3D", label)
-
-        # 3. Perception sampling with density clustering
-        if context.perception is not None:
-            return self._sample_from_perception(params, context)
 
         return None
 
