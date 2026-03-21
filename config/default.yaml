@@ -38,7 +38,7 @@ calibration:
 
 skills:
   pick:
-    z_offset: 0.04
+    z_offset: 0.07
     pre_grasp_height: 0.02
     max_retries: 2
   place:

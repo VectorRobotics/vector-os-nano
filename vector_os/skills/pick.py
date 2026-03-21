@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Gripper height above table (z offset added to the raw calibrated position)
-_DEFAULT_Z_OFFSET: float = 0.04        # 4 cm — gripper_link to table: tip is 2.5cm below link, so tip at ~2cm above table
+_DEFAULT_Z_OFFSET: float = 0.07        # 7 cm — tuned empirically for SO-101 + D405
 
 # Pre-grasp approach height above the target grasp point
 _DEFAULT_PRE_GRASP_HEIGHT: float = 0.02  # 2 cm above grasp (v2 comment: "tiny descent minimizes XY drift")
