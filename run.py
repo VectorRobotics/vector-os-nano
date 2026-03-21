@@ -16,6 +16,10 @@ import os
 import sys
 import logging
 
+# Suppress Qt font warnings from OpenCV
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+
 logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 logger = logging.getLogger("vector_os")
 
