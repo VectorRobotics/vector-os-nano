@@ -1,10 +1,54 @@
-# Vector OS Nano
+<p align="center">
+  <img src="images/vector.jpg" width="800" alt="Vector Robotics">
+</p>
 
-Natural language robot arm control. `pip install` and go.
+<h1 align="center">Vector OS Nano</h1>
 
-```bash
-pip install vector-os-nano[all]
-```
+<p align="center">
+  <b>Zero-shot, natural language generalized grasping on a $150 robot arm.</b>
+  <br>
+  <b>No training. No fine-tuning. Just say what you want.</b>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/PyTorch-2.x-red?logo=pytorch&logoColor=white" alt="PyTorch">
+  <img src="https://img.shields.io/badge/ROS2-Optional-blue?logo=ros&logoColor=white" alt="ROS2">
+  <img src="https://img.shields.io/badge/Moondream2-VLM-purple" alt="Moondream2">
+  <img src="https://img.shields.io/badge/EdgeTAM-Tracking-orange" alt="EdgeTAM">
+  <img src="https://img.shields.io/badge/Claude_Haiku-LLM_Brain-blueviolet?logo=anthropic&logoColor=white" alt="Claude">
+  <img src="https://img.shields.io/badge/Pinocchio-IK_Solver-yellow" alt="Pinocchio">
+  <img src="https://img.shields.io/badge/Intel_RealSense-D405-0071C5?logo=intel&logoColor=white" alt="RealSense">
+  <img src="https://img.shields.io/badge/LeRobot-SO--ARM100-black" alt="LeRobot">
+</p>
+
+<p align="center">
+  <i>Vector OS: a cross-embodiment robot operating system with industrial-grade SLAM, navigation, generalized grasping, semantic mapping, long-chain task orchestration and explainable task execution.<br>
+  Being developed at <b>CMU Robotics Institute</b>. Nano is the grasping proof-of-value. Full stack coming soon.</i>
+</p>
+
+<p align="center">
+  <i>Vector OS: 跨本体通用机器人操作系统：工业级SLAM、导航、泛化抓取、语义建图、长链任务编排、可解释任务执行。<br>
+  <b>CMU 机器人研究所</b> 全力开发中。Nano 是低成本硬件上的低门槛概念验证，完整系统即将分阶段开源。</i>
+</p>
+
+---
+
+<h3 align="center">Demo</h3>
+
+<p align="center">
+  <a href="https://drive.google.com/file/d/1a0Y46zHZ9VNUqBVCpGbyP9m2getLlIio/view">
+    <img src="images/compressed_demo.gif" width="700" alt="Click to watch full demo video">
+  </a>
+  <br>
+  <i>Click to watch full demo video</i>
+</p>
+
+---
+
+## What is Vector OS Nano?
+
+A **Python SDK** that gives any robot arm a natural language brain. `pip install` and go. No ROS2 required.
 
 ```python
 from vector_os_nano import Agent, SO101
@@ -14,124 +58,143 @@ agent = Agent(arm=arm, llm_api_key="sk-...")
 agent.execute("pick up the red cup")
 ```
 
-## What is Vector OS Nano?
+**10 lines of code. From unboxing to natural language control.**
 
-Vector OS Nano is a Python SDK that gives any robot arm a natural language brain. You describe what you want in plain English — "pick up the red cup and place it on the tray" — and the agent plans a skill sequence, handles perception, and executes the motion. It ships with a complete driver for the SO-101 open-source arm and an optional ROS2 integration layer for larger deployments.
+## System Architecture
 
-The SDK works standalone with no ROS2 dependency. For hobbyists or researchers running a single arm on a laptop, a plain `pip install` is all that's needed. For production systems that need lifecycle management, TF2 transforms, multi-robot coordination, or Nav2 compatibility, the optional ROS2 mode launches a full node graph that exposes every capability as a service.
+```
+User (natural language, Chinese/English)
+  |
+  v
++---------------------------------------------+
+|              LLM Brain Layer                 |
+|  Claude Haiku (via OpenRouter API)           |
+|  - Intent parsing & task decomposition       |
+|  - Tool calling / function execution         |
+|  - Multi-step planning                       |
+|  - Bilingual: Chinese + English              |
++---------------------------------------------+
+|              Skill Layer                     |
+|  - pick(object)     detect_all()             |
+|  - home() / scan()  describe_scene()         |
+|  - place(x,y,z)     track(object)            |
++---------------------------------------------+
+|           Perception Layer                   |
+|  - Moondream2 VLM (local, ~4GB GPU)         |
+|  - EdgeTAM real-time tracking (20fps)        |
+|  - D405 depth camera (640x480 RGB+D @30fps) |
+|  - Workspace calibration (camera->base)      |
++---------------------------------------------+
+|            Control Layer                     |
+|  - Pinocchio FK/IK solver                    |
+|  - Joint trajectory interpolation            |
+|  - Gripper command with retry logic          |
+|  - Dynamic position compensation             |
++---------------------------------------------+
+|           Hardware Layer                     |
+|  - SO-ARM100 (6-DOF, STS3215 servos)        |
+|  - Intel RealSense D405 (USB 3.x)           |
+|  - Total cost: ~$420                         |
++---------------------------------------------+
+```
 
-## Installation
+## Capabilities
 
-**IMPORTANT:** Always use a dedicated virtual environment. Do NOT install into your system Python or an existing ROS2/conda environment — dependency conflicts will occur.
+| Capability | Status |
+|-----------|--------|
+| Zero-shot natural language grasping | Working |
+| Real-time object tracking (20fps) | Working |
+| Scene description via VLM | Working |
+| Chinese + English commands | Working |
+| LLM-powered task interpretation | Working |
+| Workspace calibration (14-point) | Working |
+| Auto-retry on pick failure | Working |
+| Dynamic gripper compensation | Working |
+| Place skill | Working |
+| Multi-step task planning | Working |
+| Textual TUI dashboard | Working |
+| ROS2 integration (optional) | Working |
+| PyBullet simulation | Working |
 
-### Step 1: Create virtual environment
+## Hardware (~$420 total)
+
+| Component | Model | Cost |
+|-----------|-------|------|
+| Robot Arm | LeRobot SO-ARM100 (6-DOF, 3D-printed) | ~$150 |
+| Camera | Intel RealSense D405 | ~$270 |
+| GPU | Any NVIDIA with 8+ GB VRAM | (existing) |
+| Computer | Ubuntu 22.04 / Windows / macOS | (existing) |
+
+<p align="center">
+  <img src="images/setup.png" width="600" alt="Hardware Setup">
+</p>
+
+## Quick Start
+
+### 1. Create virtual environment
 
 ```bash
-cd ~/Desktop/vector_os    # or wherever you cloned the repo
 python3 -m venv vector_os_nano
 source vector_os_nano/bin/activate
 pip install --upgrade pip
 ```
 
-On Windows:
-```powershell
-python -m venv vector_os_nano
-vector_os_nano\Scripts\activate
-pip install --upgrade pip
-```
-
-### Step 2: Install the SDK
-
-**Core only** (no GPU, no simulation — works everywhere):
+### 2. Install SDK
 
 ```bash
+# Core only (no GPU)
 pip install -e "."
-```
 
-**Full** (GPU perception + IK + simulation + TUI):
-
-```bash
+# Full (GPU perception + IK + TUI + simulation)
 pip install -e ".[all]"
+
+# GPU: RTX 5080/Blackwell requires nightly PyTorch
+pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
 ```
 
-**Individual extras** (pick what you need):
+### 3. Configure LLM
+
+Create `config/user.yaml` (do NOT commit this file):
+```yaml
+llm:
+  api_key: "your-openrouter-api-key"
+  model: "anthropic/claude-haiku-4-5"
+  api_base: "https://openrouter.ai/api/v1"
+```
+Get your key at: https://openrouter.ai/keys
+
+### 4. Run
 
 ```bash
-pip install -e ".[perception]"   # RealSense + VLM + EdgeTAM + pointcloud
-pip install -e ".[ik]"           # Pinocchio FK/IK solver
-pip install -e ".[tui]"          # Textual developer dashboard
-pip install -e ".[sim]"          # PyBullet simulation
+python run.py
 ```
 
-### ROS2 mode (Ubuntu 22.04 + ROS2 Humble)
+### 5. Use
 
-```bash
-# 1. Install ROS2 Humble: https://docs.ros.org/en/humble/Installation.html
-# 2. ROS2 Python packages (rclpy, etc.) come from apt, not pip
-# 3. Create venv WITH system packages so rclpy is accessible:
-python3 -m venv vector_os_nano --system-site-packages
-source vector_os_nano/bin/activate
-pip install -e ".[all]"
+```
+vector> pick battery              # Pick up a battery
+vector> grab the red cup          # Natural language pick
+vector> home                      # Return to home position
+vector> scan                      # Move to scan position
+vector> open                      # Open gripper (instant, no LLM)
+vector> close                     # Close gripper (instant, no LLM)
+vector> detect all objects        # Detect everything on table
+vector> world                     # Show world model state
 ```
 
-### Windows
-
-The core SDK (arm driver, skills, LLM providers, world model) is fully compatible with Windows 10/11. Use `COM3` instead of `/dev/ttyACM0` for the serial port. GPU perception requires an NVIDIA GPU with CUDA.
-
-## Usage
-
-### Without LLM (direct skill execution)
-
-```python
-from vector_os_nano import Agent, SO101
-
-arm = SO101(port="/dev/ttyACM0")
-agent = Agent(arm=arm)  # no LLM key
-
-agent.execute("home")    # move to home position
-agent.execute("scan")    # move to scan position
-agent.execute("detect")  # run object detection (requires camera)
-agent.execute("pick")    # pick the first detected object
+Chinese works too:
+```
+vector> 抓电池
+vector> 看看桌上有什么
+vector> 抓蛋白棒
 ```
 
-Direct mode recognises skill names verbatim. No LLM call is made; the matching skill runs immediately.
-
-### With LLM (natural language)
-
-```python
-from vector_os_nano import Agent, SO101
-
-arm = SO101(port="/dev/ttyACM0")
-agent = Agent(arm=arm, llm_api_key="sk-ant-...")
-
-result = agent.execute("pick up the red cup and place it on the tray")
-if result.success:
-    print("Done")
-else:
-    print("Failed:", result.error)
-    print("Clarification:", result.clarification)
-```
-
-The LLM (Claude by default) decomposes the request into a sequence of built-in skills, checks preconditions against the world model, and re-plans on failure.
-
-### Context manager (auto-connect and disconnect)
-
-```python
-from vector_os_nano import Agent, SO101
-
-with Agent(arm=SO101(port="/dev/ttyACM0"), llm_api_key="sk-...") as agent:
-    agent.execute("home")
-    agent.execute("pick the blue block")
-# arm torque disabled and serial port closed on exit
-```
-
-### Custom skills
+## Custom Skills
 
 ```python
 from vector_os_nano import Agent, SO101
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.types import SkillResult
-
 
 class WaveSkill:
     name = "wave"
@@ -141,294 +204,102 @@ class WaveSkill:
     postconditions = []
     effects = {}
 
-    def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        times = int(params.get("times", 3))
-        for _ in range(times):
-            joints = list(context.arm.get_joint_positions())
+    def execute(self, params, context):
+        for _ in range(params.get("times", 3)):
+            joints = context.arm.get_joint_positions()
             joints[0] = 0.5
             context.arm.move_joints(joints, duration=0.5)
             joints[0] = -0.5
             context.arm.move_joints(joints, duration=0.5)
         return SkillResult(success=True)
 
+agent = Agent(arm=SO101(port="/dev/ttyACM0"), skills=[WaveSkill()])
+agent.execute("wave 5 times")  # LLM discovers and uses the skill
+```
+
+## ROS2 Mode (Optional)
+
+ROS2 is **not required** for basic operation. For advanced features (lifecycle management, TF2, multi-robot):
+
+```bash
+python3 -m venv vector_os_nano --system-site-packages
+source vector_os_nano/bin/activate
+pip install -e ".[all]"
+ros2 launch vector_os_nano nano.launch.py serial_port:=/dev/ttyACM0
+```
+
+| Service | Description |
+|---------|-------------|
+| `/skill/pick` | Pick an object |
+| `/skill/place` | Place held object |
+| `/skill/home` | Move to home |
+| `/skill/scan` | Move to scan |
+| `/skill/detect` | Detect objects |
+| `/world_model/query` | Query world state |
+| `/agent/execute` | Execute NL command |
+
+## What's Coming
+
+Vector OS Nano is a proof of value for the grasping module. The full Vector OS stack under development at **CMU Robotics Institute** includes:
+
+- **SLAM + Navigation** -- LiDAR/visual SLAM, Nav2 integration, multi-floor mapping
+- **Semantic Mapping** -- 3D scene graphs, object permanence, spatial reasoning
+- **Multi-Robot Coordination** -- fleet management, task allocation, shared world model
+- **Mobile Manipulation** -- wheeled, legged, and humanoid platforms
+- **Explainable Planning** -- neuro-symbolic task decomposition with reasoning traces
+- **Visual Servoing** -- sub-millimeter closed-loop precision manipulation
+- **Multi-Modal HRI** -- voice, gesture, gaze-aware human-robot interaction
+
+**Star this repo and stay tuned.**
+
+---
+
+<details>
+<summary><b>点击查看中文</b></summary>
+
+## 什么是 Vector OS Nano？
+
+一个 **Python SDK**，让任何机械臂拥有自然语言大脑。`pip install` 即可使用，不需要 ROS2。
+
+```python
+from vector_os_nano import Agent, SO101
 
 arm = SO101(port="/dev/ttyACM0")
-agent = Agent(arm=arm, llm_api_key="sk-...", skills=[WaveSkill()])
-agent.execute("wave 5 times")
+agent = Agent(arm=arm, llm_api_key="sk-...")
+agent.execute("抓起红色杯子")
 ```
 
-Custom skills are automatically made available to the LLM planner. The `skills=[...]` argument appends to the built-in set (pick, place, home, scan, detect).
-
-### Interactive CLI
+## 快速开始
 
 ```bash
-# Connect to real arm
-vector-os --port /dev/ttyACM0 --llm-key sk-...
-
-# No arm (planning + world model only)
-vector-os --no-arm
-
-# Verbose output (shows skill traces)
-vector-os --port /dev/ttyACM0 --verbose
+python3 -m venv vector_os_nano
+source vector_os_nano/bin/activate
+pip install -e ".[all]"
+python run.py
 ```
 
-Available commands at the prompt: `pick`, `place`, `home`, `scan`, `detect`, `status`, `skills`, `world`, `help`, `quit`.
+## 硬件（总计约 $420）
 
-## ROS2 Integration
+| 组件 | 型号 | 成本 |
+|------|------|------|
+| 机械臂 | LeRobot SO-ARM100 | 约 $150 |
+| 相机 | Intel RealSense D405 | 约 $270 |
+| GPU | 任意 NVIDIA 8GB+ 显存 | （已有） |
 
-### Why ROS2?
+## 即将到来
 
-The standalone SDK covers most use cases. Add ROS2 when you need:
+**CMU 机器人研究所** 正在开发完整 Vector OS 栈：SLAM、导航、语义建图、多机协调、移动操作、可解释规划、视觉伺服。
 
-- Lifecycle-managed node graph with automatic restart on crash
-- TF2 coordinate frame transforms across multiple sensors or robots
-- Nav2 integration (the arm publishes `/joint_states` compatible with standard controllers)
-- RViz visualisation of the world model and planned trajectories
-- Multi-robot coordination via standard ROS2 topics and services
-- rosbag2 data recording for replay and debugging
+**Star 这个仓库，敬请关注。**
 
-### Launch the full node graph
+</details>
 
-```bash
-ros2 launch vector_os nano.launch.py serial_port:=/dev/ttyACM0
-
-# Custom port and RViz
-ros2 launch vector_os nano.launch.py serial_port:=/dev/ttyACM1 use_rviz:=true
-```
-
-Startup order (staggered for reliable initialisation):
-
-| t | Node | Role |
-|---|------|------|
-| 0 s | `hardware_bridge` | Connects to servos, publishes `/joint_states` at 30 Hz |
-| 3 s | `perception_bridge` | Reads RGB-D camera, publishes `/perception/detections` |
-| 5 s | `world_model_service` | Builds world model from joint states + detections |
-| 6 s | `skill_server` | Exposes each skill as a `/skill/<name>` service |
-| 7 s | `agent_node` | Accepts natural language via `/agent/execute` |
-
-### Available ROS2 services
-
-| Service | Type | Description |
-|---------|------|-------------|
-| `/skill/home` | `std_srvs/Trigger` | Move to home position |
-| `/skill/scan` | `std_srvs/Trigger` | Move to scan position |
-| `/skill/detect` | `std_srvs/Trigger` | Run VLM object detection |
-| `/skill/pick` | `std_srvs/Trigger` | Pick first detected object |
-| `/skill/place` | `std_srvs/Trigger` | Place held object |
-| `/world_model/query` | `std_srvs/Trigger` | Return full world state as JSON |
-| `/world_model/predicate` | `std_srvs/Trigger` | Evaluate a named predicate |
-| `/agent/execute` | `std_srvs/Trigger` | Execute a natural language command |
-| `/agent/plan` | `std_srvs/Trigger` | Return the planned skill sequence without executing |
-
-### Launch arguments
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `serial_port` | `/dev/ttyACM0` | Serial port for SO-101 |
-| `baudrate` | `1000000` | Serial baud rate |
-| `publish_rate` | `30.0` | Joint state publish rate (Hz) |
-| `color_topic` | `/camera/color/image_raw` | RGB image topic |
-| `depth_topic` | `/camera/aligned_depth_to_color/image_raw` | Aligned depth topic |
-| `use_rviz` | `false` | Launch RViz visualiser |
-
-## Architecture
-
-```
-User input (text)
-      |
-      v
-  [ Agent ]  <--- config, skills list, LLM provider
-      |
-      +---> [ LLM Planner ] <--- SkillRegistry schemas, WorldModel state
-      |           |
-      |           v
-      |      [ TaskPlan ]  (ordered TaskStep list with dependencies)
-      |           |
-      +---> [ TaskExecutor ]
-      |           |
-      |     (for each step)
-      |           |
-      |           +---> precondition check (WorldModel)
-      |           +---> skill.execute(params, SkillContext)
-      |           +---> postcondition check + world model update
-      |
-      +---> [ Skills ]  (pick, place, home, scan, detect, custom...)
-      |           |
-      |           +---> [ ArmProtocol ]  (SO101Arm or SimulatedArm)
-      |           +---> [ GripperProtocol ]  (SO101Gripper)
-      |           +---> [ PerceptionProtocol ]  (PerceptionPipeline)
-      |
-      +---> [ WorldModel ]  (object states, robot state, predicates)
-
-ROS2 mode wraps each layer in a lifecycle node:
-  HardwareBridgeNode -> PerceptionBridgeNode -> WorldModelServiceNode
-                     -> SkillServerNode -> AgentNode
-```
-
-## Hardware Setup
-
-### SO-101 arm
-
-The SO-101 is a 5-DOF open-source robot arm using Feetech STS3215 serial-bus servos. Assembly guides and CAD files are available at [huggingface.co/lerobot](https://huggingface.co/lerobot).
-
-- Connect via USB (appears as `/dev/ttyACM0` on Linux, `COM3` on Windows)
-- Default baud rate: 1 000 000 bps
-- 5 arm joints + 1 gripper joint on the same serial bus
-
-### Intel RealSense D405
-
-- Mount on the gripper bracket (eye-in-hand configuration)
-- USB 3.x port required (blue port)
-- Streams aligned RGB + depth at up to 640x480 / 30 fps
-
-### Calibration
-
-Hand-eye calibration maps camera coordinates to robot base coordinates:
-
-```python
-from vector_os_nano.skills.calibration import load_calibration
-cal = load_calibration("my_calibration.npy")
-```
-
-Run the calibration routine once after mounting the camera and save the result. The pick skill uses it automatically.
-
-## Configuration
-
-The default configuration is in `config/default.yaml`. Override any key by passing a dict or a YAML file path to `Agent`:
-
-```python
-agent = Agent(
-    arm=arm,
-    config={
-        "llm": {"provider": "openai", "model": "gpt-4o"},
-        "skills": {"pick": {"max_retries": 3}},
-    }
-)
-```
-
-Or with a YAML file:
-
-```python
-agent = Agent(arm=arm, config="/path/to/my_config.yaml")
-```
-
-### Configuration reference
-
-```yaml
-agent:
-  max_planning_retries: 3      # LLM replanning attempts on failure
-  max_execution_retries: 2     # skill retry attempts
-  planning_timeout_sec: 10.0
-
-llm:
-  provider: "claude"           # claude | openai | local
-  model: "claude-sonnet-4-6"
-  api_base: "https://openrouter.ai/api/v1"
-  temperature: 0.0
-  max_tokens: 2048
-
-arm:
-  type: "so101"
-  port: "/dev/ttyACM0"         # COM3 on Windows
-  baudrate: 1000000
-
-camera:
-  type: "realsense"
-  serial: ""                   # empty = auto-detect
-  resolution: [640, 480]
-  fps: 30
-
-perception:
-  vlm_provider: "moondream"    # moondream | station | cloud
-  vlm_model: "vikhyatk/moondream2"
-  tracker: "edgetam"
-  tracker_model: "yonigozlan/EdgeTAM-hf"
-
-calibration:
-  file: ""                     # path to .npy calibration file
-  method: "affine"
-  num_points: 25
-
-skills:
-  pick:
-    z_offset: 0.12
-    pre_grasp_height: 0.06
-    max_retries: 2
-  place:
-    default_height: 0.05
-  home:
-    joint_values: [-0.014, -1.238, 0.562, 0.858, 0.311]
-```
-
-## API Reference
-
-### `Agent`
-
-The main entry point. Wires all components together.
-
-```python
-Agent(
-    arm=None,           # ArmProtocol implementation (SO101Arm or SimulatedArm)
-    gripper=None,       # GripperProtocol — auto-created from arm if omitted
-    perception=None,    # PerceptionProtocol — enables vision-based skills
-    llm=None,           # LLMProvider — enables natural language planning
-    llm_api_key=None,   # Shorthand: creates ClaudeProvider automatically
-    skills=None,        # Additional skills (appended to built-in defaults)
-    config=None,        # dict, path to YAML, or None for defaults
-)
-```
-
-Key methods: `execute(command) -> ExecutionResult`, `home() -> SkillResult`, `stop()`, `connect()`, `disconnect()`.
-
-### `SO101`
-
-Alias for `SO101Arm`. Implements `ArmProtocol`.
-
-```python
-SO101(port="/dev/ttyACM0", baudrate=1_000_000)
-```
-
-Key methods: `connect()`, `disconnect()`, `get_joint_positions() -> list[float]`, `move_joints(positions, duration) -> bool`, `stop()`.
-
-### `Skill`
-
-Runtime-checkable Protocol. Implement to add custom capabilities.
-
-Required class attributes: `name`, `description`, `parameters`, `preconditions`, `postconditions`, `effects`.
-Required method: `execute(params: dict, context: SkillContext) -> SkillResult`.
-
-### `SkillResult`
-
-Frozen dataclass returned by every skill.
-
-```python
-SkillResult(success=True)
-SkillResult(success=False, error="IK failed: target out of reach")
-```
-
-### `ExecutionResult`
-
-Returned by `Agent.execute()`.
-
-```python
-result.success        # bool
-result.error          # str | None
-result.clarification  # str | None — LLM question when it needs more info
-result.steps          # list[StepTrace] — per-skill execution trace
-```
-
-### `WorldModel`
-
-Tracks all known objects and robot state. Access via `agent.world`.
-
-```python
-agent.world.get_object("cup_01")           # ObjectState | None
-agent.world.evaluate_predicate("gripper_empty")   # bool
-agent.world.list_objects()                 # list[str]
-```
+---
 
 ## License
 
-MIT License. Copyright 2024 Vector Robotics.
+MIT License
 
-See [LICENSE](LICENSE) for the full text.
+---
+
+<p align="center"><i>Built by Vector Robotics at CMU Robotics Institute with Claude Code</i></p>
