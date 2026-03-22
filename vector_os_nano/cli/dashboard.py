@@ -210,23 +210,13 @@ if TEXTUAL_AVAILABLE:
             border: solid #45475a;
             background: #181825;
         }
-        #camera-rgb, #camera-depth {
-            width: 1fr;
+        #main-layout {
+            height: 1fr;
+        }
+        #chat-log {
             height: 1fr;
             border: solid #585b70;
-            overflow: hidden;
-        }
-        #dash-camera-preview {
-            height: auto;
-            min-height: 12;
-            max-height: 20;
-            border: solid #585b70;
-            overflow: hidden;
-        }
-        #dash-log {
-            height: 1fr;
-            min-height: 6;
-            border: solid #585b70;
+            background: #11111b;
         }
         Button {
             margin: 0 1;
@@ -242,16 +232,11 @@ if TEXTUAL_AVAILABLE:
         """
 
         BINDINGS = [
-            Binding("f1", "switch_tab('dashboard')", "Dashboard"),
-            Binding("f2", "switch_tab('log')", "Log"),
-            Binding("f3", "switch_tab('skills')", "Skills"),
-            Binding("f4", "switch_tab('world')", "World"),
-            Binding("f5", "switch_tab('camera')", "Camera"),
-            Binding("f6", "open_fullscreen_camera", "Fullscreen Cam"),
+            Binding("f1", "open_fullscreen_camera", "Camera Window"),
             Binding("ctrl+e", "estop", "E-STOP"),
             Binding("ctrl+c", "quit", "Quit"),
-            Binding("slash", "focus_command", "Command"),
-            Binding("escape", "focus_command", "Command"),
+            Binding("slash", "focus_command", "/Command"),
+            Binding("escape", "focus_command", ""),
         ]
 
         def __init__(self, agent: Any = None) -> None:
@@ -269,51 +254,24 @@ if TEXTUAL_AVAILABLE:
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
             yield Static(_LOGO_RICH, id="logo-banner")
-            with TabbedContent():
-                with TabPane("Dashboard", id="dashboard"):
-                    with Horizontal(id="dashboard-layout"):
-                        with Vertical(id="left-col"):
-                            yield Label("SYSTEM STATUS", classes="panel-title")
-                            yield Static(
-                                self._render_status(),
-                                id="status-panel",
-                            )
-                            yield Label("CAMERA PREVIEW", classes="panel-title")
-                            yield Static(
-                                "[dim]No camera[/dim]",
-                                id="dash-camera-preview",
-                            )
-                            with Horizontal(id="action-buttons"):
-                                yield Button("Home", id="btn-home", variant="primary")
-                                yield Button("Scan", id="btn-scan")
-                                yield Button("Detect", id="btn-detect")
-                                yield Button("Stop", id="btn-stop", variant="error")
-                        with Vertical(id="right-col"):
-                            yield Label("JOINT STATES", classes="panel-title")
-                            yield Static(
-                                self._render_joints(),
-                                id="joint-panel",
-                            )
-                            yield Label("SKILL EXECUTION", classes="panel-title")
-                            yield Static(
-                                self._render_skill(),
-                                id="skill-panel",
-                            )
-                            yield Label("LOG", classes="panel-title")
-                            yield RichLog(id="dash-log", highlight=True, markup=True, max_lines=50)
-                with TabPane("Log", id="log"):
-                    yield RichLog(id="log-view", highlight=True, markup=True)
-                with TabPane("Skills", id="skills"):
-                    yield DataTable(id="skills-table")
-                with TabPane("World", id="world"):
-                    yield RichLog(id="world-view", highlight=True, markup=True)
-                with TabPane("Camera", id="camera"):
-                    with Horizontal():
-                        yield Static("[dim]RGB Feed[/dim]", id="camera-rgb-label", classes="panel-title")
-                        yield Static("[dim]Depth Map[/dim]", id="camera-depth-label", classes="panel-title")
-                    with Horizontal():
-                        yield Static("[dim]No camera connected[/dim]", id="camera-rgb")
-                        yield Static("[dim]No camera connected[/dim]", id="camera-depth")
+            with Horizontal(id="main-layout"):
+                # Left panel: status + joints + skills
+                with Vertical(id="left-col"):
+                    yield Label("SYSTEM STATUS", classes="panel-title")
+                    yield Static(self._render_status(), id="status-panel")
+                    yield Label("JOINT STATES", classes="panel-title")
+                    yield Static(self._render_joints(), id="joint-panel")
+                    yield Label("SKILL EXECUTION", classes="panel-title")
+                    yield Static(self._render_skill(), id="skill-panel")
+                    with Horizontal(id="action-buttons"):
+                        yield Button("Home", id="btn-home", variant="primary")
+                        yield Button("Scan", id="btn-scan")
+                        yield Button("Detect", id="btn-detect")
+                        yield Button("Stop", id="btn-stop", variant="error")
+                # Right panel: chat log (conversation style)
+                with Vertical(id="right-col"):
+                    yield Label("CHAT", classes="panel-title")
+                    yield RichLog(id="chat-log", highlight=True, markup=True)
             yield Input(
                 placeholder="vector> type command or natural language...",
                 id="command-input",
@@ -325,24 +283,30 @@ if TEXTUAL_AVAILABLE:
         # ------------------------------------------------------------------
 
         def on_mount(self) -> None:
-            """Set up logging, populate skills table, start refresh timer."""
+            """Set up logging, start refresh timer, auto-launch camera."""
             self._setup_logging()
-            self._populate_skills_table()
-            self.set_interval(0.5, self._refresh_panels)
-            self._log(f"[bold cyan]Vector OS Nano v{_VERSION} Dashboard started[/bold cyan]")
+            self.set_interval(1.0, self._refresh_panels)  # 1Hz (was 0.5s, too fast)
+            self._log(f"[bold #00b4b4]Vector OS Nano v{_VERSION}[/bold #00b4b4]")
+            self._log("Type commands below. F1=Camera window, Ctrl+E=E-STOP\n")
             if self._agent is None:
                 self._log("[yellow]No agent configured — running in demo mode[/yellow]")
+            # Auto-launch camera window if perception available
+            if self._agent and self._agent._perception is not None:
+                self.call_after_refresh(self.action_open_fullscreen_camera)
+            # Focus command input
+            self.call_after_refresh(self.action_focus_command)
 
         # ------------------------------------------------------------------
         # Logging bridge
         # ------------------------------------------------------------------
 
         def _setup_logging(self) -> None:
-            """Route Python logging to the Log tab RichLog widget."""
+            """Route Python logging to the chat log."""
             try:
-                log_view = self.query_one("#log-view", RichLog)
-                handler = _RichLogHandler(log_view)
-                handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+                chat_log = self.query_one("#chat-log", RichLog)
+                handler = _RichLogHandler(chat_log)
+                handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+                handler.setLevel(logging.INFO)
                 logging.getLogger().addHandler(handler)
                 self._log_handler = handler
             except Exception:
@@ -381,14 +345,10 @@ if TEXTUAL_AVAILABLE:
         # ------------------------------------------------------------------
 
         def _refresh_panels(self) -> None:
-            """Update all live panels."""
+            """Update all live panels (2Hz)."""
             self._update_status_panel()
             self._update_joint_panel()
             self._update_skill_panel()
-            self._update_dash_camera_preview()
-            self._update_world_panel()
-            self._update_world_tab()
-            self._update_camera_panel()
 
         def _update_status_panel(self) -> None:
             try:
@@ -639,11 +599,15 @@ if TEXTUAL_AVAILABLE:
             text = event.value.strip()
             if not text:
                 return
-            # Clear input and re-focus for next command
-            event.input.value = ""
-            event.input.clear()
-            self.call_after_refresh(event.input.focus)
-            self._log(f"[bold #00b4b4]> {text}[/bold #00b4b4]")
+            # Clear input immediately
+            inp = event.input
+            inp.value = ""
+            try:
+                inp.clear()
+            except Exception:
+                pass
+            # Show user message in chat (teal, right-aligned feel)
+            self._log(f"\n[bold #00b4b4]You:[/bold #00b4b4] {text}")
 
             if self._agent is None:
                 self._log("[red]No agent configured[/red]")
@@ -656,6 +620,7 @@ if TEXTUAL_AVAILABLE:
             self._current_skill = text
             self._skill_progress = (0, 0)
             self._update_skill_panel()
+            self._log("[dim]Executing...[/dim]")
             try:
                 result = self._agent.execute(text)
                 if result.success:
@@ -663,26 +628,24 @@ if TEXTUAL_AVAILABLE:
                     steps_total = getattr(result, "steps_total", 1)
                     self._skill_progress = (steps_done, steps_total)
                     self._update_skill_panel()
-                    msg = f"[green]OK[/green] ({steps_done}/{steps_total} steps)"
-                    self._last_result = msg
-                    self._log(msg)
+                    # Chat-style response
+                    self._log(f"[bold green]Robot:[/bold green] Done ({steps_done}/{steps_total} steps)")
+                    if result.trace:
+                        for t in result.trace:
+                            status = "[green]OK[/green]" if t.status == "success" else f"[red]{t.status}[/red]"
+                            self._log(f"  {status} {t.skill_name} ({t.duration_sec:.1f}s)")
                 else:
                     status = result.status or "failed"
                     if status == "clarification_needed":
-                        msg = f"[yellow]Question:[/yellow] {result.clarification_question}"
+                        self._log(f"[bold yellow]Robot:[/bold yellow] {result.clarification_question}")
                     else:
-                        msg = f"[red]FAILED[/red]: {result.failure_reason}"
-                    self._last_result = msg
-                    self._log(msg)
+                        self._log(f"[bold red]Robot:[/bold red] {result.failure_reason}")
             except Exception as exc:
-                msg = f"[red]Error: {exc}[/red]"
-                self._last_result = msg
-                self._log(msg)
+                self._log(f"[bold red]Error:[/bold red] {exc}")
             finally:
                 self._current_skill = ""
                 self._skill_progress = (0, 0)
                 self._update_skill_panel()
-                self._update_last_result()
 
         def _update_last_result(self) -> None:
             """Update the #last-result widget on the Dashboard tab."""
@@ -823,16 +786,10 @@ if TEXTUAL_AVAILABLE:
         # ------------------------------------------------------------------
 
         def _log(self, message: str) -> None:
-            """Write a message to both the Log tab AND the Dashboard log panel."""
+            """Write a message to the chat log."""
             try:
-                log_view = self.query_one("#log-view", RichLog)
-                log_view.write(message)
-            except Exception:
-                pass
-            # Also write to the dashboard's embedded log
-            try:
-                dash_log = self.query_one("#dash-log", RichLog)
-                dash_log.write(message)
+                chat_log = self.query_one("#chat-log", RichLog)
+                chat_log.write(message)
             except Exception:
                 pass
 
