@@ -14,6 +14,7 @@ import json
 import logging
 import readline  # noqa: F401 — side-effect: enables line editing and history
 import sys
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -67,15 +68,23 @@ class SimpleCLI:
 
         while self._running:
             try:
-                user_input = input(f"vector> ").strip()
+                user_input = input("vector> ").strip()
             except (KeyboardInterrupt, EOFError):
                 print()
                 self._running = False
                 break
+            except Exception:
+                # MuJoCo viewer thread can sometimes interrupt input()
+                continue
 
             if not user_input:
                 continue
-            self._handle_input(user_input)
+
+            try:
+                self._handle_input(user_input)
+            except Exception as exc:
+                print(f"{_RED}Error: {exc}{_RESET}")
+                logger.exception("Unhandled error in _handle_input")
 
         print("Goodbye.")
 
