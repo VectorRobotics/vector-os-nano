@@ -468,6 +468,34 @@ def _run_dashboard(agent) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Web dashboard mode — FastAPI + WebSocket
+# ---------------------------------------------------------------------------
+
+def _run_web(agent, cfg: dict, port: int = 8000) -> None:
+    """Start the FastAPI web dashboard."""
+    try:
+        import uvicorn
+        from vector_os_nano.web.app import create_app
+    except ImportError as exc:
+        print(f"Web dashboard requires: pip install fastapi uvicorn\n{exc}")
+        sys.exit(1)
+
+    app = create_app(agent, cfg)
+
+    # Auto-open browser
+    import webbrowser
+    import threading
+    def _open_browser():
+        import time
+        time.sleep(1.5)
+        webbrowser.open(f"http://localhost:{port}")
+    threading.Thread(target=_open_browser, daemon=True).start()
+
+    print(f"\n  Web dashboard: http://localhost:{port}\n")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -483,6 +511,8 @@ def main() -> None:
             "  python run.py -d           # TUI dashboard (short flag)\n"
             "  python run.py --cli        # CLI (explicit)\n"
             "  python run.py --sim        # MuJoCo simulation (no hardware)\n"
+            "  python run.py --web        # Web dashboard (localhost:8000)\n"
+            "  python run.py --web --sim  # Web + MuJoCo simulation\n"
             "  python run.py --sim -d     # Sim + TUI dashboard\n"
         ),
     )
@@ -491,6 +521,11 @@ def main() -> None:
         "--dashboard", "-d",
         action="store_true",
         help="Launch the Textual TUI dashboard instead of the CLI",
+    )
+    mode_group.add_argument(
+        "--web", "-w",
+        action="store_true",
+        help="Launch web dashboard at http://localhost:8000",
     )
     mode_group.add_argument(
         "--cli",
@@ -550,7 +585,9 @@ def main() -> None:
     print()
 
     try:
-        if dashboard_mode:
+        if args.web:
+            _run_web(agent, cfg)
+        elif dashboard_mode:
             _run_dashboard(agent)
         else:
             _run_cli(agent, perception)

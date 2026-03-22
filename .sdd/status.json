@@ -71,7 +71,19 @@
       "timestamp": "2026-03-21T16:30:00Z",
       "action": "wave_tui_improvements_start",
       "agent": "alpha, beta",
-      "details": "TUI improvements wave initiated. Alpha: dashboard logo, input fix, status dots, joint bars, skill progress. Beta: camera tab with Unicode half-block frame renderer, 2Hz refresh. Navigation: F1-F5 tabs, F6 fullscreen, / command focus."
+      "details": "TUI improvements wave initiated."
+    },
+    {
+      "timestamp": "2026-03-22T21:00:00Z",
+      "action": "mujoco_sim_complete",
+      "agent": "alpha",
+      "details": "MuJoCo simulation: real STL meshes, 6 objects, weld grasping, sim perception, pick-and-place. 26 tests."
+    },
+    {
+      "timestamp": "2026-03-22T21:45:00Z",
+      "action": "web_dashboard_v1",
+      "agent": "alpha",
+      "details": "Web dashboard: FastAPI + WebSocket, AI chat with Haiku, dark theme, live status, 14 tests. python run.py --web"
     }
   ]
 }

@@ -1,17 +1,18 @@
 # Vector OS Nano SDK — Progress
 
 **Last updated:** 2026-03-22
-**Status:** v0.1.0 + MuJoCo simulation — full NL pick-and-place pipeline in sim and on real hardware
+**Status:** v0.1.0 + MuJoCo sim + Web Dashboard — full NL pick-and-place, AI chat, web UI
 
 ## What Works
 
 - Full NL pipeline: "抓杯子" → LLM → scan → detect → pick → place (rotate + drop) → home
+- **Web Dashboard**: `python run.py --web` — localhost:8000, real-time AI chat with Claude Haiku, live robot status, dark glassmorphism theme, WebSocket bidirectional, multi-turn conversation
 - **MuJoCo simulation**: `python run.py --sim-gui` — SO-101 arm with real STL meshes, 6 mesh objects (banana, mug, bottle, screwdriver, duck, lego), weld-based grasping, smooth real-time motion, pick-and-place with rotate-and-drop
 - **Simulated perception**: ground-truth object detection from MuJoCo state, Chinese/English NL queries
 - Direct commands without LLM: home, scan, open, close (instant, no API call)
 - Chinese + English natural language
 - Live camera viewer: RGB + depth side-by-side, EdgeTAM tracking overlay
-- 719 unit tests passing
+- 733 unit tests passing
 - ROS2 integration layer (optional, 5 nodes + launch file)
 - Textual TUI dashboard (5 tabs, real-time status, camera preview)
 - SO-101 arm driver (Feetech STS3215 serial)

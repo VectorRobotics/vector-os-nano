@@ -65,6 +65,12 @@ tui = [
     "textual>=0.40",
 ]
 
+# Web: Localhost web dashboard with AI chat
+web = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+]
+
 # Simulation: MuJoCo (recommended) + PyBullet (legacy)
 sim = [
     "mujoco>=3.0",
@@ -79,7 +85,7 @@ ros2 = [
 ]
 
 all = [
-    "vector-os-nano[perception,ik,tui,sim]",
+    "vector-os-nano[perception,ik,tui,sim,web]",
 ]
 
 # Development tools
