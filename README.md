@@ -13,6 +13,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/PyTorch-2.x-red?logo=pytorch&logoColor=white" alt="PyTorch">
+  <img src="https://img.shields.io/badge/MuJoCo-3.6-green?logo=data:image/svg+xml;base64,&logoColor=white" alt="MuJoCo">
   <img src="https://img.shields.io/badge/ROS2-Optional-blue?logo=ros&logoColor=white" alt="ROS2">
   <img src="https://img.shields.io/badge/Moondream2-VLM-purple" alt="Moondream2">
   <img src="https://img.shields.io/badge/EdgeTAM-Tracking-orange" alt="EdgeTAM">
@@ -60,6 +61,17 @@ agent.execute("pick up the red cup")
 
 **10 lines of code. From unboxing to natural language control.**
 
+No hardware? No problem:
+
+```python
+from vector_os_nano import Agent, MuJoCoArm
+
+arm = MuJoCoArm(gui=True)
+arm.connect()
+agent = Agent(arm=arm, llm_api_key="sk-...")
+agent.execute("pick up the mug")
+```
+
 ## System Architecture
 
 ```
@@ -80,21 +92,26 @@ User (natural language, Chinese/English)
 |  - place(x,y,z)     track(object)            |
 +---------------------------------------------+
 |           Perception Layer                   |
+|  Real hardware:                              |
 |  - Moondream2 VLM (local, ~4GB GPU)         |
 |  - EdgeTAM real-time tracking (20fps)        |
 |  - D405 depth camera (640x480 RGB+D @30fps) |
 |  - Workspace calibration (camera->base)      |
+|  Simulation:                                 |
+|  - MuJoCo ground-truth object positions      |
+|  - Chinese/English NL query matching         |
 +---------------------------------------------+
 |            Control Layer                     |
-|  - Pinocchio FK/IK solver                    |
+|  - Pinocchio FK/IK solver (real hardware)    |
+|  - MuJoCo Jacobian IK solver (simulation)   |
 |  - Joint trajectory interpolation            |
 |  - Gripper command with retry logic          |
-|  - Dynamic position compensation             |
 +---------------------------------------------+
 |           Hardware Layer                     |
-|  - SO-ARM100 (6-DOF, STS3215 servos)        |
-|  - Intel RealSense D405 (USB 3.x)           |
-|  - Total cost: ~$420                         |
+|  Real: SO-ARM100 (6-DOF, STS3215 servos)    |
+|        Intel RealSense D405 (USB 3.x)       |
+|  Sim:  MuJoCo 3.6 with real STL meshes      |
+|        6 mesh objects, weld-based grasping   |
 +---------------------------------------------+
 ```
 
@@ -103,18 +120,41 @@ User (natural language, Chinese/English)
 | Capability | Status |
 |-----------|--------|
 | Zero-shot natural language grasping | Working |
+| **MuJoCo simulation (no hardware needed)** | **Working** |
 | Real-time object tracking (20fps) | Working |
 | Scene description via VLM | Working |
 | Chinese + English commands | Working |
 | LLM-powered task interpretation | Working |
+| Pick-and-place (grasp + rotate + drop) | Working |
 | Workspace calibration (14-point) | Working |
 | Auto-retry on pick failure | Working |
 | Dynamic gripper compensation | Working |
-| Place skill | Working |
-| Multi-step task planning | Working |
 | Textual TUI dashboard | Working |
 | ROS2 integration (optional) | Working |
-| PyBullet simulation | Working |
+| 719 unit tests passing | Working |
+
+## MuJoCo Simulation
+
+**No robot? No camera? No problem.** Full pick-and-place in simulation:
+
+```bash
+python run.py --sim-gui    # MuJoCo viewer + CLI
+python run.py --sim         # headless simulation
+```
+
+The simulation includes:
+- **SO-101 arm with real STL meshes** from the CAD model (13 mesh parts)
+- **6 graspable objects**: banana, mug, bottle, screwdriver, duck, lego brick
+- **Weld-constraint grasping** -- reliable, no contact/friction alignment issues
+- **Smooth real-time motion** -- linear interpolation, 60fps viewer sync
+- **Simulated perception** -- ground-truth object detection, Chinese/English NL queries
+- **Full pick-and-place sequence**: open gripper -> approach -> grasp -> lift -> rotate 90deg -> drop -> home
+
+```
+vector> 抓杯子         # Pick up the mug
+vector> 抓香蕉         # Pick up the banana
+vector> grab the duck  # English works too
+```
 
 ## Hardware (~$420 total)
 
@@ -134,8 +174,9 @@ User (natural language, Chinese/English)
 ### 1. Create virtual environment
 
 ```bash
-python3 -m venv vector_os_nano
-source vector_os_nano/bin/activate
+cd vector_os_nano
+python3 -m venv .venv --prompt vector_os_nano
+source .venv/bin/activate
 pip install --upgrade pip
 ```
 
@@ -147,6 +188,9 @@ pip install -e "."
 
 # Full (GPU perception + IK + TUI + simulation)
 pip install -e ".[all]"
+
+# MuJoCo simulation only (no GPU required)
+pip install -e "." && pip install mujoco httpx
 
 # GPU: RTX 5080/Blackwell requires nightly PyTorch
 pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
@@ -163,57 +207,34 @@ llm:
 ```
 Get your key at: https://openrouter.ai/keys
 
-### 4. Launch System
+### 4. Launch
 
-Choose your interface:
-
-**CLI Mode (default) — readline shell with command history:**
 ```bash
-python run.py
+# Real hardware
+python run.py                  # CLI mode
+python run.py --dashboard      # TUI dashboard
+
+# MuJoCo simulation (no hardware)
+python run.py --sim-gui        # with 3D viewer
+python run.py --sim            # headless
+
+# Testing
+python run.py --no-arm         # no arm
+python run.py --no-perception  # no camera
 ```
 
-Type commands naturally:
+Commands (CLI):
 ```
-vector> pick battery              # Pick up a battery
-vector> grab the red cup          # Natural language pick
-vector> home                      # Return to home position
+vector> pick battery              # English
+vector> 抓电池                     # Chinese
+vector> grab the red cup          # Natural language
+vector> home                      # Return to home (instant, no LLM)
+vector> open / close              # Gripper control (instant)
 vector> scan                      # Move to scan position
-vector> open                      # Open gripper (instant, no LLM)
-vector> close                     # Close gripper (instant, no LLM)
 vector> detect all objects        # Detect everything on table
 vector> world                     # Show world model state
 vector> help                      # Show all commands
-```
-
-Chinese works too:
-```
-vector> 抓电池
-vector> 看看桌上有什么
-vector> 抓蛋白棒
-```
-
-**Dashboard Mode — TUI with live visualization:**
-```bash
-python -m vector_os_nano.cli.dashboard
-```
-
-Rich terminal UI with 5 tabs (Dashboard, Log, Skills, World, Camera), real-time joint angles, camera preview, and tracking visualization.
-
-Keyboard shortcuts:
-- `F1-F5`: Switch tabs
-- `F6`: Fullscreen camera
-- `/`: Focus command input
-
-**Testing without hardware:**
-```bash
-# No arm
-python run.py --no-arm
-
-# No camera + perception
-python run.py --no-perception
-
-# Fully simulated (useful for development)
-python run.py --no-arm --no-perception
+vector> q                         # Quit
 ```
 
 ## Custom Skills
@@ -249,21 +270,26 @@ agent.execute("wave 5 times")  # LLM discovers and uses the skill
 ROS2 is **not required** for basic operation. For advanced features (lifecycle management, TF2, multi-robot):
 
 ```bash
-python3 -m venv vector_os_nano --system-site-packages
-source vector_os_nano/bin/activate
+python3 -m venv .venv --system-site-packages --prompt vector_os_nano
+source .venv/bin/activate
 pip install -e ".[all]"
 ros2 launch vector_os_nano nano.launch.py serial_port:=/dev/ttyACM0
 ```
 
-| Service | Description |
-|---------|-------------|
-| `/skill/pick` | Pick an object |
-| `/skill/place` | Place held object |
-| `/skill/home` | Move to home |
-| `/skill/scan` | Move to scan |
-| `/skill/detect` | Detect objects |
-| `/world_model/query` | Query world state |
-| `/agent/execute` | Execute NL command |
+## Project Structure
+
+```
+vector_os_nano/
+├── core/          Agent, Planner, Executor, WorldModel, Skill protocol
+├── llm/           Claude/OpenAI/Local LLM providers + planning prompts
+├── perception/    RealSense camera, Moondream VLM, EdgeTAM tracker, pointcloud
+├── hardware/
+│   ├── so101/     SO-101 arm driver (Feetech STS3215 serial, Pinocchio IK)
+│   └── sim/       MuJoCo simulation (arm, gripper, perception, MJCF scene)
+├── skills/        pick, place, home, scan, detect
+├── cli/           SimpleCLI (readline) + Textual TUI Dashboard
+└── ros2/          Optional ROS2 nodes + launch file (5 nodes)
+```
 
 ## What's Coming
 
@@ -296,13 +322,23 @@ agent = Agent(arm=arm, llm_api_key="sk-...")
 agent.execute("抓起红色杯子")
 ```
 
+没有硬件？用 MuJoCo 仿真：
+
+```bash
+python run.py --sim-gui    # 打开 3D 仿真窗口
+```
+
+仿真包含 SO-101 真实 STL 模型、6 个可抓取物体（香蕉、杯子、瓶子、螺丝刀、鸭子、乐高积木），支持中文自然语言指令。
+
 ## 快速开始
 
 ```bash
-python3 -m venv vector_os_nano
-source vector_os_nano/bin/activate
+cd vector_os_nano
+python3 -m venv .venv --prompt vector_os_nano
+source .venv/bin/activate
 pip install -e ".[all]"
-python run.py
+pip install mujoco httpx
+python run.py --sim-gui
 ```
 
 ## 硬件（总计约 $420）
