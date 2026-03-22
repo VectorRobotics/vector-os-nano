@@ -262,6 +262,7 @@ if TEXTUAL_AVAILABLE:
             self._skill_progress: tuple[int, int] = (0, 0)
             self._last_result: str = ""
             self._stop_requested: bool = False
+            self._exec_thread: Any = None
 
         # ------------------------------------------------------------------
         # Compose
@@ -676,23 +677,29 @@ if TEXTUAL_AVAILABLE:
                 return
 
             import threading
-            thread = threading.Thread(
+            self._stop_requested = False
+            self._exec_thread = threading.Thread(
                 target=self._execute_command_sync, args=(text,), daemon=True
             )
-            thread.start()
+            self._exec_thread.start()
 
         def _execute_command_sync(self, text: str) -> None:
-            """Execute a command in a THREAD (not async worker).
-
-            This keeps the Textual event loop free so log messages
-            appear in real-time during execution, not all at once after.
-            """
+            """Execute a command in a THREAD. Aborts if _stop_requested."""
             self._current_skill = text
             self._skill_progress = (0, 0)
             self.call_from_thread(self._update_skill_panel)
             self.call_from_thread(self._log, "[dim]Executing...[/dim]")
             try:
+                if self._stop_requested:
+                    return
+                # Force max_retries=1 so agent doesn't loop 3x if stop is hit mid-execution
+                cfg = self._agent._config
+                cfg.setdefault("agent", {})["max_planning_retries"] = 1
                 result = self._agent.execute(text)
+                cfg["agent"]["max_planning_retries"] = 3  # restore
+                if self._stop_requested:
+                    self.call_from_thread(self._log, "[yellow]Cancelled by STOP[/yellow]")
+                    return
                 if result.success:
                     steps_done = getattr(result, "steps_completed", 1)
                     steps_total = getattr(result, "steps_total", 1)
