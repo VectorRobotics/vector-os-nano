@@ -70,7 +70,11 @@ _JOINT_RANGES: dict[str, tuple[float, float]] = {
 # ---------------------------------------------------------------------------
 
 class _RichLogHandler(logging.Handler):
-    """Logging handler that writes to a Textual RichLog widget."""
+    """Logging handler that writes to a Textual RichLog widget.
+
+    Thread-safe: uses app.call_from_thread() when called from worker threads
+    so that log messages appear in real-time during blocking operations.
+    """
 
     def __init__(self, log_widget: Any) -> None:
         super().__init__()
@@ -81,13 +85,24 @@ class _RichLogHandler(logging.Handler):
             msg = self.format(record)
             level = record.levelname
             if level == "ERROR" or level == "CRITICAL":
-                self._widget.write(f"[red]{msg}[/red]")
+                formatted = f"[red]{msg}[/red]"
             elif level == "WARNING":
-                self._widget.write(f"[yellow]{msg}[/yellow]")
+                formatted = f"[yellow]{msg}[/yellow]"
             elif level == "DEBUG":
-                self._widget.write(f"[dim]{msg}[/dim]")
+                formatted = f"[dim]{msg}[/dim]"
             else:
-                self._widget.write(msg)
+                formatted = msg
+
+            # Try thread-safe write via app.call_from_thread
+            app = self._widget.app
+            if app is not None and hasattr(app, 'call_from_thread'):
+                try:
+                    app.call_from_thread(self._widget.write, formatted)
+                    return
+                except Exception:
+                    pass
+            # Fallback: direct write (works if on main thread)
+            self._widget.write(formatted)
         except Exception:
             pass
 
@@ -656,35 +671,51 @@ if TEXTUAL_AVAILABLE:
                 self._log("[red]No agent configured[/red]")
                 return
 
-            self.run_worker(self._execute_command(text), exclusive=False)
+            import threading
+            thread = threading.Thread(
+                target=self._execute_command_sync, args=(text,), daemon=True
+            )
+            thread.start()
 
-        async def _execute_command(self, text: str) -> None:
-            """Execute a command via the agent (runs in a Textual worker)."""
+        def _execute_command_sync(self, text: str) -> None:
+            """Execute a command in a THREAD (not async worker).
+
+            This keeps the Textual event loop free so log messages
+            appear in real-time during execution, not all at once after.
+            """
             self._current_skill = text
             self._skill_progress = (0, 0)
-            self._update_skill_panel()
-            self._log("[dim]Executing...[/dim]")
+            self.call_from_thread(self._update_skill_panel)
+            self.call_from_thread(self._log, "[dim]Executing...[/dim]")
             try:
                 result = self._agent.execute(text)
                 if result.success:
                     steps_done = getattr(result, "steps_completed", 1)
                     steps_total = getattr(result, "steps_total", 1)
                     self._skill_progress = (steps_done, steps_total)
-                    self._update_skill_panel()
-                    # Chat-style response
-                    self._log(f"[bold green]Robot:[/bold green] Done ({steps_done}/{steps_total} steps)")
+                    self.call_from_thread(self._update_skill_panel)
+                    self.call_from_thread(
+                        self._log,
+                        f"[bold green]Robot:[/bold green] Done ({steps_done}/{steps_total} steps)",
+                    )
                     if result.trace:
                         for t in result.trace:
-                            status = "[green]OK[/green]" if t.status == "success" else f"[red]{t.status}[/red]"
-                            self._log(f"  {status} {t.skill_name} ({t.duration_sec:.1f}s)")
+                            s = "[green]OK[/green]" if t.status == "success" else f"[red]{t.status}[/red]"
+                            self.call_from_thread(self._log, f"  {s} {t.skill_name} ({t.duration_sec:.1f}s)")
                 else:
                     status = result.status or "failed"
                     if status == "clarification_needed":
-                        self._log(f"[bold yellow]Robot:[/bold yellow] {result.clarification_question}")
+                        self.call_from_thread(
+                            self._log,
+                            f"[bold yellow]Robot:[/bold yellow] {result.clarification_question}",
+                        )
                     else:
-                        self._log(f"[bold red]Robot:[/bold red] {result.failure_reason}")
+                        self.call_from_thread(
+                            self._log,
+                            f"[bold red]Robot:[/bold red] {result.failure_reason}",
+                        )
             except Exception as exc:
-                self._log(f"[bold red]Error:[/bold red] {exc}")
+                self.call_from_thread(self._log, f"[bold red]Error:[/bold red] {exc}")
             finally:
                 self._current_skill = ""
                 self._skill_progress = (0, 0)
