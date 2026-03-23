@@ -87,7 +87,17 @@ class PerceptionPipeline:
         self._vlm = vlm
         self._tracker = tracker
 
-        self._depth_scale = depth_scale
+        # Use hardware depth_scale if camera provides it (D405: 0.0001, D435i: 0.001)
+        # The constructor's depth_scale is a fallback for synthetic/test use.
+        if camera is not None and hasattr(camera, "get_depth_scale"):
+            hw_scale = camera.get_depth_scale()
+            # Convert to our convention: depth_scale = 1/hw_scale
+            # rgbd_to_pointcloud_fast does: depth_raw / depth_scale → metres
+            # So depth_scale = 1 / hw_scale
+            self._depth_scale = 1.0 / hw_scale
+            logger.info("Depth scale from hardware: raw / %.1f = metres (hw_scale=%g)", self._depth_scale, hw_scale)
+        else:
+            self._depth_scale = depth_scale
         self._depth_trunc = depth_trunc
         self._bbox_max_points = bbox_max_points
 

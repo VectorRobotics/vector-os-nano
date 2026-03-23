@@ -61,6 +61,7 @@ class RealSenseCamera:
         self._pipeline: object | None = None
         self._align: object | None = None
         self._intrinsics: CameraIntrinsics | None = None
+        self._depth_scale: float = 0.001  # default: mm → m; overwritten by hardware value
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -101,6 +102,11 @@ class RealSenseCamera:
             raise RuntimeError(
                 f"Failed to start RealSense pipeline (serial={self._serial!r}): {exc}"
             ) from exc
+
+        # Read actual depth scale from hardware (D405 uses 0.0001, not 0.001)
+        depth_sensor = profile.get_device().first_depth_sensor()
+        self._depth_scale = float(depth_sensor.get_depth_scale())
+        logger.info("RealSense depth_scale: %g (raw * scale = metres)", self._depth_scale)
 
         # align depth to color (as in camera.launch.py: align_depth.enable=True)
         self._align = rs.align(rs.stream.color)
@@ -183,6 +189,14 @@ class RealSenseCamera:
         """Return latest depth frame as (H, W) uint16 (mm units)."""
         _, depth = self.get_aligned_frames()
         return depth
+
+    def get_depth_scale(self) -> float:
+        """Return depth scale: multiply raw uint16 values by this to get metres.
+
+        D405 typically returns 0.0001 (units of 0.1mm).
+        D435i typically returns 0.001 (units of 1mm).
+        """
+        return self._depth_scale
 
     def get_intrinsics(self) -> CameraIntrinsics:
         """Return cached camera intrinsics (available after connect()).
