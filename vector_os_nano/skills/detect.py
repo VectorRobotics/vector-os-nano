@@ -10,13 +10,18 @@ from __future__ import annotations
 import logging
 import time
 
-from vector_os_nano.core.skill import Skill, SkillContext
+from vector_os_nano.core.skill import Skill, SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.core.world_model import ObjectState
 
 logger = logging.getLogger(__name__)
 
 
+@skill(
+    aliases=["find", "search", "检测", "识别", "找一下"],
+    direct=True,
+    auto_steps=["scan", "detect"],
+)
 class DetectSkill:
     """Detect objects using VLM + depth for 3D positions.
 

@@ -10,18 +10,19 @@ from __future__ import annotations
 
 import logging
 
-from vector_os_nano.core.skill import Skill, SkillContext
+from vector_os_nano.core.skill import Skill, SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 
 logger = logging.getLogger(__name__)
 
-# Scan pose = home pose (matches ARM_SCAN_VALUES in skill_node_v2.py)
 _DEFAULT_SCAN_JOINTS: list[float] = [-0.014, -1.238, 0.562, 0.858, 0.311]
-
-# Duration for the scan joint move (seconds)
 _SCAN_DURATION: float = 3.0
 
 
+@skill(
+    aliases=["look", "observe", "看看", "扫描", "看一下"],
+    direct=True,
+)
 class ScanSkill:
     """Move arm to scan position for workspace observation.
 

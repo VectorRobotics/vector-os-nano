@@ -29,7 +29,7 @@ from typing import Optional
 
 import numpy as np
 
-from vector_os_nano.core.skill import Skill, SkillContext
+from vector_os_nano.core.skill import Skill, SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.skills.calibration import camera_to_base, load_calibration
 
@@ -69,6 +69,11 @@ _WORKSPACE_MAX_DIST: float = 0.35   # 35 cm
 _DEFAULT_HOME_JOINTS: list[float] = [-0.014, -1.238, 0.562, 0.858, 0.311]
 
 
+@skill(
+    aliases=["grab", "grasp", "take", "抓", "拿", "抓起", "抓住", "抓取", "拿起", "取"],
+    direct=False,
+    auto_steps=["scan", "detect", "pick"],
+)
 class PickSkill:
     """Pick up an object from the workspace.
 

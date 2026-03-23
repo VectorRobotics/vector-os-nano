@@ -15,7 +15,7 @@ from typing import Any
 
 from vector_os_nano.core.config import load_config
 from vector_os_nano.core.executor import TaskExecutor
-from vector_os_nano.core.skill import Skill, SkillContext, SkillRegistry
+from vector_os_nano.core.skill import Skill, SkillContext, SkillMatch, SkillRegistry
 from vector_os_nano.core.types import ExecutionResult
 from vector_os_nano.core.world_model import WorldModel
 
@@ -229,34 +229,132 @@ class Agent:
         """
         self._sync_robot_state()
 
-        # ── Stage 1: Try direct commands (no LLM, instant) ──
-        direct_result = self._try_direct(instruction)
-        if direct_result is not None:
-            return direct_result
+        # ── Stage 1: MATCH against skill aliases (no LLM needed) ──
+        match = self._skill_registry.match(instruction)
 
+        if match is not None:
+            if match.direct:
+                # Direct skill: execute immediately, zero LLM calls
+                return self._execute_matched(match, instruction)
+
+            if match.auto_steps and not self._needs_llm_planning(instruction, match):
+                # Auto-steps: expand to skill chain, zero LLM calls
+                return self._execute_auto_steps(
+                    match, instruction,
+                    on_message=on_message, on_step=on_step, on_step_done=on_step_done,
+                )
+
+        # ── Stage 2: No alias match or complex instruction → LLM ──
         if self._llm is None:
-            return self._execute_direct(instruction)
+            if match:
+                return self._execute_matched(match, instruction)
+            return ExecutionResult(
+                success=False, status="failed",
+                failure_reason=f"Unknown command and no LLM configured.",
+            )
 
-        # ── Stage 2: CLASSIFY intent ──
+        # ── Stage 3: CLASSIFY intent via LLM ──
         intent = self._llm.classify(instruction)
         logger.info("[Agent] Intent: %s for %r", intent, instruction)
 
-        # ── Stage 3: ROUTE by intent ──
         if intent == "chat":
             return self._handle_chat(instruction)
 
-        if intent == "direct":
-            # Try as direct, fall through to planning if not matched
-            dr = self._execute_direct(instruction)
-            if dr.success or "Unknown command" not in (dr.failure_reason or ""):
-                return dr
-
         if intent == "query":
-            # Query = scan + detect + AI summarize
             return self._handle_query(instruction)
 
-        # intent == "task" (or fallback)
-        return self._handle_task(instruction, on_message=on_message, on_step=on_step, on_step_done=on_step_done)
+        # intent == "task" or "direct" → LLM planning
+        return self._handle_task(
+            instruction, on_message=on_message, on_step=on_step, on_step_done=on_step_done,
+        )
+
+    def _execute_matched(self, match: SkillMatch, instruction: str) -> ExecutionResult:
+        """Execute a directly matched skill (no LLM)."""
+        skill = self._skill_registry.get(match.skill_name)
+        if skill is None:
+            return ExecutionResult(success=False, status="failed",
+                                   failure_reason=f"Skill {match.skill_name!r} not found")
+        context = self._build_context()
+        params: dict = {}
+        if match.extracted_arg:
+            # Try to pass the extracted arg as object_label or query
+            if hasattr(skill, 'parameters'):
+                if "object_label" in skill.parameters:
+                    params["object_label"] = match.extracted_arg
+                elif "query" in skill.parameters:
+                    params["query"] = match.extracted_arg
+        result = skill.execute(params, context)
+        self._sync_robot_state()
+        return ExecutionResult(
+            success=result.success,
+            status="completed" if result.success else "failed",
+            steps_completed=1 if result.success else 0,
+            steps_total=1,
+            failure_reason=result.error_message if not result.success else None,
+        )
+
+    def _needs_llm_planning(self, instruction: str, match: SkillMatch) -> bool:
+        """Determine if instruction needs LLM planning beyond auto_steps.
+
+        Returns True for complex/multi-object instructions that auto_steps
+        can't handle (e.g. "put X on the left", "grab everything").
+        """
+        text = instruction.lower()
+        # If there's a destination mentioned, need LLM to figure out place params
+        if any(kw in text for kw in ["放到", "放在", "放去", "put", "to the", "on the",
+                                       "前", "后", "左", "右", "中"]):
+            return True
+        # If it mentions multiple objects or "all"
+        if any(kw in text for kw in ["所有", "全部", "都", "all", "every", "each"]):
+            return True
+        return False
+
+    def _execute_auto_steps(
+        self, match: SkillMatch, instruction: str,
+        on_message: Any = None, on_step: Any = None, on_step_done: Any = None,
+    ) -> ExecutionResult:
+        """Execute a skill's auto_steps chain without LLM planning."""
+        from vector_os_nano.core.types import TaskPlan, TaskStep
+
+        steps = []
+        for i, skill_name in enumerate(match.auto_steps):
+            params: dict = {}
+            if skill_name == match.skill_name and match.extracted_arg:
+                if skill_name == "pick":
+                    params["object_label"] = match.extracted_arg
+                elif skill_name == "detect":
+                    params["query"] = match.extracted_arg
+            steps.append(TaskStep(
+                step_id=f"s{i+1}",
+                skill_name=skill_name,
+                parameters=params,
+                depends_on=[f"s{i}"] if i > 0 else [],
+                preconditions=[],
+                postconditions=[],
+            ))
+
+        # Add home at end
+        steps.append(TaskStep(
+            step_id=f"s{len(steps)+1}",
+            skill_name="home",
+            parameters={},
+            depends_on=[f"s{len(steps)}"],
+            preconditions=[],
+            postconditions=[],
+        ))
+
+        plan = TaskPlan(goal=instruction, steps=steps)
+
+        if on_message:
+            on_message(f"Executing: {' → '.join(match.auto_steps)} → home")
+
+        context = self._build_context()
+        result = self._executor.execute(
+            plan, self._skill_registry, context,
+            on_step=on_step, on_step_done=on_step_done,
+        )
+        self._sync_robot_state()
+        return result
 
     def _handle_chat(self, instruction: str) -> ExecutionResult:
         """Handle pure chat — LLM response, no robot action."""

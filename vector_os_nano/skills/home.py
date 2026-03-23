@@ -6,18 +6,19 @@ from __future__ import annotations
 
 import logging
 
-from vector_os_nano.core.skill import Skill, SkillContext
+from vector_os_nano.core.skill import Skill, SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 
 logger = logging.getLogger(__name__)
 
-# Calibrated home pose (user-recorded) — matches skill_node_v2.DEFAULT_HOME_VALUES
 _DEFAULT_HOME_JOINTS: list[float] = [-0.014, -1.238, 0.562, 0.858, 0.311]
-
-# Duration for the home joint move (seconds)
 _HOME_DURATION: float = 3.0
 
 
+@skill(
+    aliases=["go home", "reset", "回家", "归位", "复位", "回到初始位置"],
+    direct=True,
+)
 class HomeSkill:
     """Move arm to home position and open gripper.
 
