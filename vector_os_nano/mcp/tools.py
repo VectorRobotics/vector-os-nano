@@ -88,11 +88,15 @@ def skill_schema_to_mcp_tool(schema: dict) -> dict:
     properties: dict[str, dict] = {}
     required: list[str] = []
 
+    # SkillFlow uses Python type names; JSON Schema requires standard names
+    _TYPE_MAP = {"float": "number", "int": "integer", "bool": "boolean", "str": "string"}
+
     for param_name, param_def in raw_params.items():
         # Build clean JSON Schema property — exclude internal keys
         prop: dict[str, Any] = {}
         if "type" in param_def:
-            prop["type"] = param_def["type"]
+            raw_type = param_def["type"]
+            prop["type"] = _TYPE_MAP.get(raw_type, raw_type)
         if "description" in param_def:
             prop["description"] = param_def["description"]
         if "enum" in param_def:
