@@ -29,6 +29,7 @@ _EXPECTED_URIS = {
     "camera://overhead",
     "camera://front",
     "camera://side",
+    "camera://live",
 }
 
 # MuJoCoArm.render() returns BGR; use all-zero array so BGR->RGB is a no-op.
@@ -81,7 +82,7 @@ def _make_agent(world_dict: dict | None | bool = None) -> MagicMock:
 
 class TestResourceDefinitions:
     def test_resource_definitions_count(self) -> None:
-        assert len(get_resource_definitions()) == 6
+        assert len(get_resource_definitions()) == 7
 
     def test_resource_definitions_uris(self) -> None:
         uris = {r["uri"] for r in get_resource_definitions()}
@@ -97,7 +98,7 @@ class TestResourceDefinitions:
         """Mutating the returned list must not affect RESOURCE_DEFINITIONS."""
         defs = get_resource_definitions()
         defs.clear()
-        assert len(RESOURCE_DEFINITIONS) == 6
+        assert len(RESOURCE_DEFINITIONS) == 7
 
 
 # ---------------------------------------------------------------------------

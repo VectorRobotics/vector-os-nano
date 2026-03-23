@@ -125,7 +125,7 @@ class TestVectorMCPServer:
         resource_list = asyncio.run(
             _invoke_list_resources(server)
         )
-        assert len(resource_list) == 6
+        assert len(resource_list) == 7
 
     def test_list_resources_uris(self) -> None:
         """list_resources URIs include world:// and camera:// schemes."""

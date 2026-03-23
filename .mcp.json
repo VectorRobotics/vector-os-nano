@@ -2,7 +2,7 @@
   "mcpServers": {
     "vector-os-nano": {
       "command": "/home/yusen/Desktop/vector_os_nano/.venv/bin/python",
-      "args": ["-m", "vector_os_nano.mcp", "--sim", "--stdio"],
+      "args": ["-m", "vector_os_nano.mcp", "--hardware", "--stdio"],
       "cwd": "/home/yusen/Desktop/vector_os_nano"
     }
   }

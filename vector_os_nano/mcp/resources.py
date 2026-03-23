@@ -52,6 +52,12 @@ RESOURCE_DEFINITIONS: list[dict] = [
         "description": "Side view of the workspace (640x480 PNG)",
         "mimeType": "image/png",
     },
+    {
+        "uri": "camera://live",
+        "name": "Live Camera",
+        "description": "Live RealSense D405 RGB feed (hardware mode)",
+        "mimeType": "image/png",
+    },
 ]
 
 
@@ -156,17 +162,45 @@ def _read_robot_state(agent: Agent) -> dict:
 async def _read_camera(agent: Agent, camera_name: str) -> dict:
     """Render a camera view and return as base64 PNG.
 
-    Uses agent._arm (MuJoCoArm) render() method.  The render() call is
-    offloaded to a thread via asyncio.to_thread() because MuJoCo rendering
-    can block for several milliseconds.
-
-    MuJoCoArm.render() returns a BGR numpy array.  We convert to RGB before
-    PNG encoding so that image consumers see correct colours.
+    Supports two paths:
+    - camera://live  → RealSense D405 via perception.get_color_frame() (hardware mode)
+    - camera://overhead|front|side → MuJoCo arm.render() (sim mode)
 
     Raises:
-        ValueError: If the arm is absent, does not support render, or the
-            camera returned no image.
+        ValueError: If the camera source is not available.
     """
+    if camera_name == "live":
+        return await _read_live_camera(agent)
+    return await _read_sim_camera(agent, camera_name)
+
+
+async def _read_live_camera(agent: Agent) -> dict:
+    """Read a frame from the RealSense D405 camera (hardware mode)."""
+    perception = agent._perception
+    if perception is None or not hasattr(perception, "get_color_frame"):
+        raise ValueError("Live camera not available (no perception pipeline)")
+
+    rgb_array = await asyncio.to_thread(perception.get_color_frame)
+
+    if rgb_array is None:
+        raise ValueError("Live camera returned no frame")
+
+    png_bytes = _numpy_to_png(rgb_array)
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+
+    return {
+        "contents": [
+            {
+                "uri": "camera://live",
+                "mimeType": "image/png",
+                "blob": b64,
+            }
+        ]
+    }
+
+
+async def _read_sim_camera(agent: Agent, camera_name: str) -> dict:
+    """Render a MuJoCo camera view (sim mode)."""
     arm = agent._arm
     if arm is None or not hasattr(arm, "render"):
         raise ValueError(
@@ -178,7 +212,6 @@ async def _read_camera(agent: Agent, camera_name: str) -> dict:
     if bgr_array is None:
         raise ValueError(f"Camera {camera_name!r} returned no image")
 
-    # MuJoCoArm returns BGR — convert to RGB for standard PNG output
     rgb_array = _bgr_to_rgb(bgr_array)
     png_bytes = _numpy_to_png(rgb_array)
     b64 = base64.b64encode(png_bytes).decode("ascii")
