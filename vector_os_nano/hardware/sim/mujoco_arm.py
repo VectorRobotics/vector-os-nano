@@ -155,9 +155,20 @@ class MuJoCoArm:
                     self._model, self._data,
                     show_left_ui=False,
                     show_right_ui=False,
-                    width=640,
-                    height=480,
                 )
+                # Resize window via GLFW (MuJoCo viewer doesn't accept size params)
+                try:
+                    import glfw
+                    # Find the MuJoCo window and resize it
+                    for _ in range(10):
+                        import time as _t; _t.sleep(0.05)
+                        win = glfw.get_current_context()
+                        if win:
+                            glfw.set_window_size(win, 640, 480)
+                            glfw.set_window_pos(win, 50, 50)
+                            break
+                except Exception:
+                    pass
             except Exception as exc:
                 logger.warning("MuJoCo viewer failed to launch: %s", exc)
                 self._viewer = None
