@@ -1,5 +1,5 @@
 """Pytest root conftest — adds the project root to sys.path so that
-`vector_os` is importable without installing the package.
+`vector_os_nano` is importable without installing the package.
 """
 import sys
 import os

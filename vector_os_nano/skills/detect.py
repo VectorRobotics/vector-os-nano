@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 @skill(
     aliases=["find", "search", "检测", "识别", "找一下"],
-    direct=True,
+    direct=False,
     auto_steps=["scan", "detect"],
 )
 class DetectSkill:

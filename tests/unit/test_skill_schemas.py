@@ -196,10 +196,9 @@ class TestPlaceSkillSchema:
         assert self.skill.parameters["y"]["required"] is False
         assert self.skill.parameters["z"]["required"] is False
 
-    def test_xyz_defaults(self):
-        assert self.skill.parameters["x"]["default"] == pytest.approx(0.25)
-        assert self.skill.parameters["y"]["default"] == pytest.approx(0.0)
-        assert self.skill.parameters["z"]["default"] == pytest.approx(0.05)
+    def test_has_location_param(self):
+        assert "location" in self.skill.parameters
+        assert self.skill.parameters["location"]["default"] == "front"
 
     def test_preconditions_gripper_holding_any(self):
         assert "gripper_holding_any" in self.skill.preconditions
@@ -226,8 +225,8 @@ class TestGetDefaultSkills:
     def setup_method(self):
         self.skills = get_default_skills()
 
-    def test_returns_five_skills(self):
-        assert len(self.skills) == 5
+    def test_returns_all_skills(self):
+        assert len(self.skills) == 7
 
     def test_all_satisfy_skill_protocol(self):
         for skill in self.skills:
@@ -237,7 +236,7 @@ class TestGetDefaultSkills:
 
     def test_all_skill_names_present(self):
         names = {s.name for s in self.skills}
-        assert names == {"home", "scan", "detect", "pick", "place"}
+        assert names == {"home", "scan", "detect", "pick", "place", "gripper_open", "gripper_close"}
 
     def test_all_skills_have_descriptions(self):
         for skill in self.skills:

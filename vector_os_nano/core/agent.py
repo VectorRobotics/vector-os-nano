@@ -687,7 +687,7 @@ class Agent:
                     # Resolve relative paths: try ~/Desktop/vector_os/<cal_file> then cwd
                     cal_path = Path(cal_file)
                     if not cal_path.is_absolute():
-                        candidate = Path.home() / "Desktop" / "vector_os" / cal_path
+                        candidate = Path.home() / "Desktop" / "vector_os_nano" / cal_path
                         if not candidate.exists():
                             candidate = Path.cwd() / cal_path
                         if candidate.exists():
