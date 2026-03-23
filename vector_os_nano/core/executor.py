@@ -30,7 +30,7 @@ class TaskExecutor:
         skill_registry: Any,  # SkillRegistry — avoids circular import concern
         context: Any,         # SkillContext
         on_step: Any = None,  # Optional callback(skill_name, step_idx, total) — before step
-        on_step_done: Any = None,  # Optional callback(skill_name, success, duration) — after step
+        on_step_done: Any = None,  # Optional callback(skill_name, success, duration, params) — after step
     ) -> ExecutionResult:
         """Execute task plan step by step.
 
@@ -70,7 +70,7 @@ class TaskExecutor:
             # --- 0. Notify caller ---
             if on_step is not None:
                 try:
-                    on_step(step.skill_name, step_idx, steps_total)
+                    on_step(step.skill_name, step_idx, steps_total, step.parameters)
                 except Exception:
                     pass
 
@@ -208,7 +208,7 @@ class TaskExecutor:
             )
             if on_step_done is not None:
                 try:
-                    on_step_done(step.skill_name, True, duration)
+                    on_step_done(step.skill_name, True, duration, step.parameters)
                 except Exception:
                     pass
 

@@ -220,19 +220,38 @@ class SimpleCLI:
                 width=min(_console.width, 70),
             ))
 
-        def _on_step(skill_name: str, idx: int, total: int) -> None:
+        def _on_step(skill_name: str, idx: int, total: int, params: dict = None) -> None:
             step_count[0] = total
             if idx == 0:
                 _console.print(f"  [dim]Plan: {total} steps[/]")
                 _console.print()
-            label = skill_name.replace("_", " ")
-            _console.print(f"  [dim][{idx+1}/{total}][/] [{_TEAL}]{label}[/] ", end="")
 
-        def _on_step_done(skill_name: str, success: bool, duration: float) -> None:
+        def _format_params(skill_name: str, params: dict) -> str:
+            """Format step params into a human-readable detail string."""
+            if not params:
+                return ""
+            if skill_name == "pick":
+                obj = params.get("object_label", "")
+                mode = params.get("mode", "drop")
+                if obj:
+                    return f"[dim]({obj}, {mode})[/]"
+            elif skill_name == "place":
+                loc = params.get("location", "")
+                if loc:
+                    return f"[dim]({loc})[/]"
+            elif skill_name == "detect":
+                q = params.get("query", "")
+                if q:
+                    return f"[dim]({q})[/]"
+            return ""
+
+        def _on_step_done(skill_name: str, success: bool, duration: float, params: dict = None) -> None:
+            label = skill_name.replace("_", " ")
+            detail = _format_params(skill_name, params or {})
             if success:
-                _console.print(f"[green]OK[/] [dim]{duration:.1f}s[/]")
+                _console.print(f"  [green]OK[/] [{_TEAL}]{label}[/] {detail} [dim]{duration:.1f}s[/]")
             else:
-                _console.print(f"[red]FAIL[/]")
+                _console.print(f"  [red]FAIL[/] [{_TEAL}]{label}[/] {detail}")
 
         result = self._agent.execute(
             text, on_message=_on_message, on_step=_on_step, on_step_done=_on_step_done,
