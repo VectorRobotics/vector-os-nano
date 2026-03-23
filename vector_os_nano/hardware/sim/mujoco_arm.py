@@ -155,6 +155,8 @@ class MuJoCoArm:
                     self._model, self._data,
                     show_left_ui=False,
                     show_right_ui=False,
+                    width=640,
+                    height=480,
                 )
             except Exception as exc:
                 logger.warning("MuJoCo viewer failed to launch: %s", exc)
