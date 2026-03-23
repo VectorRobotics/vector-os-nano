@@ -338,42 +338,18 @@ class SimpleCLI:
         except FileNotFoundError:
             logo_lines = ["VECTOR OS NANO"]
 
-        # Animated reveal: lines appear one by one with fade
-        _console.clear()
         _console.print()
 
-        displayed: list[str] = []
+        # Line-by-line reveal
         for i, line in enumerate(logo_lines):
-            displayed.append(line)
-            # Move cursor up to redraw all lines
-            if i > 0:
-                _console.print(f"\033[{i}A", end="")
-            # Redraw with gradient: newest = bright, older = dimmer
-            for j, dl in enumerate(displayed):
-                age = i - j
-                if age == 0:
-                    style = f"bold {_TEAL}"
-                elif age == 1:
-                    style = _TEAL
-                else:
-                    style = _DIM_TEAL
-                _console.print(f"[{style}]{dl}[/]")
+            _console.print(f"[bold {_TEAL}]{line}[/]")
             time.sleep(0.06)
 
-        # Version
         _console.print(f"[dim]{'':>40}v{_VERSION}[/]")
-        time.sleep(0.15)
-
-        # Typewriter subtitle
-        subtitle = "  Natural language robot arm control + AI chat."
-        import sys as _sys
-        for i in range(len(subtitle) + 1):
-            _sys.stdout.write(f"\r\033[36m{subtitle[:i]}\033[0m")
-            _sys.stdout.flush()
-            time.sleep(0.012)
-        print()
-
-        _console.print(f"  [dim]Tab = autocomplete | Ctrl+R = history | 'help' = commands[/]")
+        time.sleep(0.2)
+        _console.print()
+        _console.print(f"  [{_TEAL}]Natural language robot arm control + AI chat.[/]")
+        _console.print(f"  [dim]Tab = autocomplete  |  Ctrl+R = history  |  'help' = commands[/]")
         _console.print()
 
     def _print_help(self) -> None:
