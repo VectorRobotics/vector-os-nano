@@ -105,9 +105,9 @@ python -m vector_os_nano.mcp --hardware --stdio         # Real hardware
 | Agent | Model | Status | Notes |
 |-------|-------|--------|-------|
 | Lead/Architect | opus | Ready | v0.3.0 spec authoring |
-| Alpha | sonnet | DONE | 54 new tests (calibration, pick, execute_skill) |
-| Beta | sonnet | DONE | MCP error reporting + inline step details |
-| Gamma | sonnet | Ready | Claude Code testing |
+| Alpha | sonnet | DONE | T1+T2+T7: StepTrace diagnostics + executor diagnostics + scan/home/gripper/wave diagnostics (33 new T7 tests pass) |
+| Beta | sonnet | DONE | T4: PickSkill world model fix + diagnostics — 8 new tests, 24 pick tests pass |
+| Gamma | sonnet | DONE | T6: DetectSkill merge logic + diagnostics — 8 new tests, all return paths + merge logic covered |
 | QA | — | Ready | Code review for v0.3.0 |
 | Scribe | haiku | DONE | Final session docs |
 

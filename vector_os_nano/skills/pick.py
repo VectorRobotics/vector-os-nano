@@ -112,6 +112,11 @@ class PickSkill:
     preconditions: list[str] = ["gripper_empty"]
     postconditions: list[str] = []  # pick ends with gripper open (object dropped)
     effects: dict = {"gripper_state": "open"}  # pick ends with drop
+    failure_modes: list[str] = [
+        "no_arm", "object_not_found", "no_detections", "no_3d_samples",
+        "out_of_workspace", "ik_unreachable", "move_failed", "track_failed",
+        "calibration_error",
+    ]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Execute pick with retry logic.
@@ -129,7 +134,11 @@ class PickSkill:
             SkillResult(success=False, error_message=...) on failure.
         """
         if context.arm is None:
-            return SkillResult(success=False, error_message="No arm connected")
+            return SkillResult(
+                success=False,
+                error_message="No arm connected",
+                result_data={"diagnosis": "no_arm"},
+            )
 
         max_retries: int = (
             context.config.get("skills", {}).get("pick", {}).get("max_retries", _DEFAULT_MAX_RETRIES)
@@ -139,12 +148,16 @@ class PickSkill:
         )
 
         last_error: str = "unknown error"
+        last_diagnosis: str = "unknown"
+        last_result_data: dict = {}
         for attempt in range(1, max_retries + 1):
             logger.info("[PICK] Attempt %d/%d", attempt, max_retries)
             result = self._single_pick_attempt(params, context)
             if result.success:
                 return result
             last_error = result.error_message
+            last_result_data = dict(result.result_data)
+            last_diagnosis = last_result_data.get("diagnosis", "unknown")
             logger.warning("[PICK] Attempt %d failed: %s", attempt, last_error)
 
             if attempt < max_retries:
@@ -152,9 +165,18 @@ class PickSkill:
                 context.arm.move_joints(home_joints, duration=_HOME_DURATION)
                 time.sleep(1.0)
 
+        # Merge retry metadata into the last attempt's result_data so callers
+        # can inspect both the failure diagnosis and retry statistics.
+        retry_data = dict(last_result_data)
+        retry_data.update({
+            "diagnosis": last_diagnosis,
+            "attempts": max_retries,
+            "hint": "All retry attempts exhausted.",
+        })
         return SkillResult(
             success=False,
             error_message=f"Pick failed after {max_retries} attempts: {last_error}",
+            result_data=retry_data,
         )
 
     # ------------------------------------------------------------------
@@ -187,9 +209,17 @@ class PickSkill:
         # Step 1: Get target in base frame
         base_pos_result = self._get_target_base_pos(params, context)
         if base_pos_result is None:
+            label = params.get("object_label") or params.get("object_id") or ""
             return SkillResult(
                 success=False,
                 error_message="Cannot locate target object",
+                result_data={
+                    "diagnosis": "object_not_found",
+                    "query": label,
+                    "world_model_objects": [
+                        o.label for o in context.world_model.get_objects()
+                    ],
+                },
             )
         base_pos = base_pos_result.copy()
 
@@ -224,6 +254,19 @@ class PickSkill:
                     f"Object at ({base_pos[0]*100:.1f}, {base_pos[1]*100:.1f}) cm "
                     f"outside workspace ({_WORKSPACE_MIN_DIST*100:.0f}–{_WORKSPACE_MAX_DIST*100:.0f} cm)"
                 ),
+                result_data={
+                    "diagnosis": "out_of_workspace",
+                    "target_base_cm": [
+                        round(base_pos[0] * 100, 1),
+                        round(base_pos[1] * 100, 1),
+                        round(base_pos[2] * 100, 1),
+                    ],
+                    "distance_cm": round(dist_xy * 100, 1),
+                    "workspace_bounds_cm": [
+                        int(_WORKSPACE_MIN_DIST * 100),
+                        int(_WORKSPACE_MAX_DIST * 100),
+                    ],
+                },
             )
 
         # Step 6: Simple IK — solve for gripper_link directly
@@ -241,7 +284,23 @@ class PickSkill:
             current_joints,
         )
         if q_pregrasp_result is None:
-            return SkillResult(success=False, error_message="IK failed for pre-grasp")
+            return SkillResult(
+                success=False,
+                error_message="IK failed for pre-grasp",
+                result_data={
+                    "diagnosis": "ik_unreachable",
+                    "target_base_cm": [
+                        round(base_pos[0] * 100, 1),
+                        round(base_pos[1] * 100, 1),
+                        round(base_pos[2] * 100, 1),
+                    ],
+                    "pre_grasp_cm": [
+                        round(pre_grasp_pos[0] * 100, 1),
+                        round(pre_grasp_pos[1] * 100, 1),
+                        round(pre_grasp_pos[2] * 100, 1),
+                    ],
+                },
+            )
         q_pregrasp = list(q_pregrasp_result)
 
         # Wrist roll offset (sim mode: +pi/2 to orient gripper fingers for top-down grasp)
@@ -255,7 +314,18 @@ class PickSkill:
             q_pregrasp,
         )
         if q_grasp_result is None:
-            return SkillResult(success=False, error_message="IK failed for grasp position")
+            return SkillResult(
+                success=False,
+                error_message="IK failed for grasp position",
+                result_data={
+                    "diagnosis": "ik_unreachable",
+                    "target_base_cm": [
+                        round(base_pos[0] * 100, 1),
+                        round(base_pos[1] * 100, 1),
+                        round(base_pos[2] * 100, 1),
+                    ],
+                },
+            )
         q_grasp = list(q_grasp_result)
 
         if wrist_roll_offset != 0.0 and len(q_grasp) == 5:
@@ -274,12 +344,20 @@ class PickSkill:
         # Step 9: Move to pre-grasp
         logger.info("[PICK] Moving to pre-grasp ...")
         if not context.arm.move_joints(q_pregrasp, duration=_PREGRASP_DURATION):
-            return SkillResult(success=False, error_message="Pre-grasp move failed")
+            return SkillResult(
+                success=False,
+                error_message="Pre-grasp move failed",
+                result_data={"diagnosis": "move_failed", "phase": "pre-grasp"},
+            )
 
         # Step 10: Descend to grasp
         logger.info("[PICK] Descending to grasp ...")
         if not context.arm.move_joints(q_grasp, duration=_DESCENT_DURATION):
-            return SkillResult(success=False, error_message="Descent to grasp failed")
+            return SkillResult(
+                success=False,
+                error_message="Descent to grasp failed",
+                result_data={"diagnosis": "move_failed", "phase": "descent"},
+            )
 
         # Step 11: Open → wait → Close gripper sequence
         # Open first to ensure full grip range, then close to grasp
@@ -298,7 +376,11 @@ class PickSkill:
         # Step 13: Return home (holding object)
         logger.info("[PICK] Returning home ...")
         if not context.arm.move_joints(home_joints, duration=_HOME_DURATION):
-            return SkillResult(success=False, error_message="Return home after pick failed")
+            return SkillResult(
+                success=False,
+                error_message="Return home after pick failed",
+                result_data={"diagnosis": "move_failed", "phase": "home"},
+            )
 
         # Step 14: Mode-dependent behavior
         pick_mode = params.get("mode", cfg.get("default_mode", "drop"))
@@ -322,10 +404,19 @@ class PickSkill:
             logger.info("[PICK] Returning home ...")
             context.arm.move_joints(home_joints, duration=_HOME_DURATION)
 
-        # Clear world model — object has moved, stale data is dangerous
-        for obj in list(context.world_model.get_objects()):
-            context.world_model.remove_object(obj.object_id)
-        logger.info("[PICK] World model cleared")
+        # Remove only the picked object from world model
+        # (other objects are still valid; clearing all was a bug)
+        picked_id = params.get("object_id")
+        if not picked_id:
+            label = params.get("object_label", "")
+            matches = context.world_model.get_objects_by_label(label)
+            if matches:
+                picked_id = matches[0].object_id
+        if picked_id:
+            context.world_model.remove_object(picked_id)
+            logger.info("[PICK] Removed %s from world model", picked_id)
+        else:
+            logger.info("[PICK] No specific object to remove from world model")
 
         logger.info(
             "[PICK] Pick complete! Grasped at (%.1f, %.1f) cm",
@@ -337,7 +428,8 @@ class PickSkill:
                 "position_cm": [
                     round(base_pos[0] * 100, 2),
                     round(base_pos[1] * 100, 2),
-                ]
+                ],
+                "diagnosis": "ok",
             },
         )
 
