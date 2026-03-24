@@ -96,16 +96,19 @@ class PickSkill:
             "type": "string",
             "required": False,
             "description": "ID of the object in the world model",
+            "source": "world_model.objects.object_id",
         },
         "object_label": {
             "type": "string",
             "required": False,
             "description": "Label of the object to pick (e.g. 'mug', 'banana')",
+            "source": "world_model.objects.label",
         },
         "mode": {
             "type": "string",
             "required": False,
             "default": "drop",
+            "enum": ["drop", "hold"],
             "description": "'hold' = grasp and hold at home (for subsequent place), 'drop' = grasp and discard to side",
         },
     }

@@ -313,6 +313,7 @@ class StepTrace:
     status: str
     duration_sec: float = 0.0
     error: str = ""
+    result_data: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -321,6 +322,7 @@ class StepTrace:
             "status": self.status,
             "duration_sec": self.duration_sec,
             "error": self.error,
+            "result_data": self.result_data,
         }
 
     @classmethod
@@ -331,6 +333,7 @@ class StepTrace:
             status=str(d["status"]),
             duration_sec=float(d.get("duration_sec", 0.0)),
             error=str(d.get("error", "")),
+            result_data=dict(d.get("result_data", {})),
         )
 
 

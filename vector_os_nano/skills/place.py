@@ -66,12 +66,15 @@ class PlaceSkill:
 
     name: str = "place"
     description: str = "Place held object at a location: front, left, right, center, back, front_left, front_right, back_left, back_right"
+    failure_modes: list[str] = ["no_arm", "ik_unreachable", "move_failed"]
     parameters: dict = {
         "location": {
             "type": "string",
             "required": False,
             "default": "front",
+            "enum": list(_LOCATION_MAP.keys()),
             "description": "Named position: front, front_left, front_right, center, left, right, back, back_left, back_right",
+            "source": "static",
         },
         "x": {
             "type": "float",
@@ -111,7 +114,11 @@ class PlaceSkill:
             SkillResult(success=False, error_message=...) on failure.
         """
         if context.arm is None:
-            return SkillResult(success=False, error_message="No arm connected")
+            return SkillResult(
+                success=False,
+                error_message="No arm connected",
+                result_data={"diagnosis": "no_arm"},
+            )
 
         cfg_place = context.config.get("skills", {}).get("place", {})
         pre_grasp_h: float = (
@@ -153,13 +160,27 @@ class PlaceSkill:
             return SkillResult(
                 success=False,
                 error_message="IK failed for above-place position",
+                result_data={
+                    "diagnosis": "ik_unreachable",
+                    "target_cm": [round(tx * 100, 1), round(ty * 100, 1), round(tz * 100, 1)],
+                    "above_target_cm": [
+                        round(above_pos[0] * 100, 1),
+                        round(above_pos[1] * 100, 1),
+                        round(above_pos[2] * 100, 1),
+                    ],
+                    "hint": "IK solver could not reach above-place position.",
+                },
             )
         q_above = list(q_above_result)
 
         # Move above target
         logger.info("[PLACE] Moving above target ...")
         if not context.arm.move_joints(q_above, duration=_APPROACH_DURATION):
-            return SkillResult(success=False, error_message="Move to above-place failed")
+            return SkillResult(
+                success=False,
+                error_message="Move to above-place failed",
+                result_data={"diagnosis": "move_failed", "phase": "approach"},
+            )
 
         # IK for place position (warm-started from above)
         q_place_result = context.arm.ik(
@@ -170,13 +191,22 @@ class PlaceSkill:
             return SkillResult(
                 success=False,
                 error_message="IK failed for place position",
+                result_data={
+                    "diagnosis": "ik_unreachable",
+                    "target_cm": [round(tx * 100, 1), round(ty * 100, 1), round(tz * 100, 1)],
+                    "hint": "IK solver could not reach place position.",
+                },
             )
         q_place = list(q_place_result)
 
         # Descend to place position
         logger.info("[PLACE] Descending ...")
         if not context.arm.move_joints(q_place, duration=_DESCEND_DURATION):
-            return SkillResult(success=False, error_message="Place descent failed")
+            return SkillResult(
+                success=False,
+                error_message="Place descent failed",
+                result_data={"diagnosis": "move_failed", "phase": "descend"},
+            )
 
         # Open gripper to release object
         logger.info("[PLACE] Opening gripper ...")
@@ -186,7 +216,11 @@ class PlaceSkill:
         # Lift back to above position
         logger.info("[PLACE] Lifting ...")
         if not context.arm.move_joints(q_above, duration=_LIFT_DURATION):
-            return SkillResult(success=False, error_message="Place lift failed")
+            return SkillResult(
+                success=False,
+                error_message="Place lift failed",
+                result_data={"diagnosis": "move_failed", "phase": "lift"},
+            )
 
         # Close gripper and return home
         if context.gripper is not None:
@@ -198,5 +232,8 @@ class PlaceSkill:
         logger.info("[PLACE] Place complete!")
         return SkillResult(
             success=True,
-            result_data={"placed_at": [round(tx, 4), round(ty, 4), round(tz, 4)]},
+            result_data={
+                "placed_at": [round(tx, 4), round(ty, 4), round(tz, 4)],
+                "diagnosis": "ok",
+            },
         )

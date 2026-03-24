@@ -79,16 +79,7 @@ PICK AND PLACE RULES:
 - When user just says "pick X" or "grab X" without a destination, use pick(mode="drop") — this discards the object to the side.
 - ALWAYS end every plan with a home step so the arm returns to rest position.
 
-PLACE LOCATIONS (map user language to these values):
-- "前面/前方/front" → "front"
-- "左前方" → "front_left"
-- "右前方" → "front_right"
-- "中间/中央" → "center"
-- "左边/左侧" → "left"
-- "右边/右侧" → "right"
-- "后面/后方/靠近我" → "back"
-- "左后方" → "back_left"
-- "右后方" → "back_right"
+{constraints_block}
 
 MULTI-OBJECT EXAMPLE:
 User: "把所有东西都抓了随便乱放"
@@ -169,9 +160,43 @@ def build_planning_prompt(
     """Build the system prompt for the LLM task planner."""
     skills_json = json.dumps(skill_schemas, indent=2, ensure_ascii=False)
     world_state_json = json.dumps(world_state, indent=2, ensure_ascii=False)
+
+    # Build dynamic constraints
+    constraints_parts: list[str] = []
+
+    # 1. Enum constraints from skill schemas
+    for schema in skill_schemas:
+        for param_name, param_def in schema.get("parameters", {}).items():
+            if isinstance(param_def, dict) and "enum" in param_def:
+                values = ", ".join(str(v) for v in param_def["enum"])
+                constraints_parts.append(
+                    f"VALID VALUES for {schema['name']}.{param_name}: {values}"
+                )
+
+    # 2. Available objects from world state
+    objects = world_state.get("objects", [])
+    if objects:
+        labels = [o.get("label", "unknown") for o in objects if isinstance(o, dict)]
+        constraints_parts.append(f"AVAILABLE OBJECTS: {', '.join(labels)}")
+        constraints_parts.append("pick.object_label MUST be one of these exact names.")
+    else:
+        constraints_parts.append("AVAILABLE OBJECTS: none detected. Plan MUST start with scan + detect.")
+
+    # 3. Gripper state
+    robot = world_state.get("robot", {})
+    held = robot.get("held_object")
+    if held:
+        constraints_parts.append(f"GRIPPER: holding {held}. Can place directly without picking.")
+    else:
+        gripper_state = robot.get("gripper_state", "unknown")
+        constraints_parts.append(f"GRIPPER: {gripper_state} (not holding anything). Must pick before place.")
+
+    constraints_block = "\n".join(constraints_parts)
+
     return PLANNING_SYSTEM_PROMPT.format(
         skills_json=skills_json,
         world_state_json=world_state_json,
+        constraints_block=constraints_block,
     )
 
 

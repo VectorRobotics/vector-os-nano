@@ -39,15 +39,24 @@ class WaveSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"is_moving": False}
+    failure_modes: list[str] = ["no_arm", "move_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         if context.arm is None:
-            return SkillResult(success=False, error_message="No arm connected")
+            return SkillResult(
+                success=False,
+                error_message="No arm connected",
+                result_data={"diagnosis": "no_arm"},
+            )
 
         # 1. Raise arm
         logger.info("[WAVE] Raising arm")
         if not context.arm.move_joints(_RAISED, duration=_RAISE_DURATION):
-            return SkillResult(success=False, error_message="Failed to raise arm")
+            return SkillResult(
+                success=False,
+                error_message="Failed to raise arm",
+                result_data={"diagnosis": "move_failed"},
+            )
 
         # 2. Open gripper (open hand)
         if context.gripper is not None:
@@ -77,4 +86,4 @@ class WaveSkill:
         context.arm.move_joints(home_joints, duration=_RAISE_DURATION)
 
         logger.info("[WAVE] Done")
-        return SkillResult(success=True)
+        return SkillResult(success=True, result_data={"diagnosis": "ok"})

@@ -145,11 +145,14 @@ def skill_schema_to_mcp_tool(schema: dict) -> dict:
     if required:
         input_schema["required"] = required
 
-    return {
+    tool: dict[str, Any] = {
         "name": schema["name"],
         "description": schema.get("description", ""),
         "inputSchema": input_schema,
     }
+    if "failure_modes" in schema:
+        tool["failure_modes"] = schema["failure_modes"]
+    return tool
 
 
 async def handle_tool_call(
@@ -164,7 +167,8 @@ async def handle_tool_call(
 
     Note: agent.execute() is synchronous, so this wraps it with asyncio.to_thread().
 
-    Returns a text description of the result.
+    Returns a structured JSON string for ExecutionResult, or plain text for
+    diagnostics / string responses.
     """
     import asyncio
 
@@ -178,12 +182,14 @@ async def handle_tool_call(
     if tool_name == "natural_language":
         instruction = arguments.get("instruction", "")
         result = await asyncio.to_thread(agent.execute, instruction)
-        return _format_execution_result(instruction, result)
+        world_state = agent.world.to_dict() if agent.world else None
+        return _format_execution_result(instruction, result, world_state=world_state)
 
     # Direct skill call: use structured params (bypasses string parsing)
     result = await asyncio.to_thread(agent.execute_skill, tool_name, arguments)
     label = _build_skill_instruction(tool_name, arguments)
-    return _format_execution_result(label, result)
+    world_state = agent.world.to_dict() if agent.world else None
+    return _format_execution_result(label, result, world_state=world_state)
 
 
 def _run_debug_perception(agent: Agent, query: str) -> str:
@@ -422,48 +428,52 @@ def _build_skill_instruction(skill_name: str, arguments: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def _format_execution_result(instruction: str, result: Any) -> str:
-    """Format an ExecutionResult (or string) into a human-readable MCP response.
+def _format_execution_result(
+    instruction: str, result: Any, world_state: dict | None = None
+) -> str:
+    """Format ExecutionResult as structured JSON for MCP consumers.
 
-    If result is a string (chat/query response), return it directly.
-
-    If result is an ExecutionResult, format as:
-        Executed: <instruction>
-        Status: <status>
-        Steps: skill1(ok) -> skill2(ok) -> skill3(failed)
-        Duration: 4.2s
+    Returns JSON string with per-step diagnostics, world state, and robot state.
+    Falls back to plain text for non-ExecutionResult inputs (backward compat).
     """
     if isinstance(result, str):
         return result
 
-    # ExecutionResult
     from vector_os_nano.core.types import ExecutionResult
+    import json
 
     if not isinstance(result, ExecutionResult):
         return str(result)
 
-    lines: list[str] = [
-        f"Executed: {instruction}",
-        f"Status: {result.status}",
-    ]
+    steps = []
+    for t in result.trace:
+        step: dict[str, Any] = {
+            "step_id": t.step_id,
+            "skill_name": t.skill_name,
+            "status": t.status,
+            "duration_sec": round(t.duration_sec, 3),
+            "result_data": t.result_data,
+        }
+        if t.error:
+            step["error"] = t.error
+        steps.append(step)
 
-    if result.trace:
-        step_parts: list[str] = []
-        for trace in result.trace:
-            if trace.status == "success":
-                step_parts.append(f"{trace.skill_name}(ok)")
-            else:
-                detail = trace.error if trace.error else "failed"
-                step_parts.append(f"{trace.skill_name}(failed: {detail})")
-        lines.append("Steps: " + " -> ".join(step_parts))
-
-        total_duration = sum(t.duration_sec for t in result.trace)
-        lines.append(f"Duration: {total_duration:.1f}s")
+    response: dict[str, Any] = {
+        "success": result.success,
+        "status": result.status,
+        "steps_completed": result.steps_completed,
+        "steps_total": result.steps_total,
+        "steps": steps,
+    }
 
     if result.failure_reason:
-        lines.append(f"Failure: {result.failure_reason}")
-
+        response["failure_reason"] = result.failure_reason
     if result.message:
-        lines.append(f"Message: {result.message}")
+        response["message"] = result.message
+    if world_state is not None:
+        response["world_state"] = world_state
 
-    return "\n".join(lines)
+    total_duration = sum(t.duration_sec for t in result.trace)
+    response["total_duration_sec"] = round(total_duration, 3)
+
+    return json.dumps(response, ensure_ascii=False, indent=2)

@@ -36,6 +36,7 @@ class HomeSkill:
         "held_object": None,
         "is_moving": False,
     }
+    failure_modes: list[str] = ["no_arm", "move_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Move to home joint configuration, then open gripper.
@@ -59,14 +60,22 @@ class HomeSkill:
         )
 
         if context.arm is None:
-            return SkillResult(success=False, error_message="No arm connected")
+            return SkillResult(
+                success=False,
+                error_message="No arm connected",
+                result_data={"diagnosis": "no_arm"},
+            )
 
         logger.info("[HOME] Moving to home pose: %s", home_joints)
         success = context.arm.move_joints(home_joints, duration=_HOME_DURATION)
 
         if not success:
             logger.error("[HOME] Arm move failed")
-            return SkillResult(success=False, error_message="Arm move to home failed")
+            return SkillResult(
+                success=False,
+                error_message="Arm move to home failed",
+                result_data={"diagnosis": "move_failed"},
+            )
 
         if context.gripper is not None:
             logger.info("[HOME] Opening gripper")
@@ -75,5 +84,5 @@ class HomeSkill:
         logger.info("[HOME] Done")
         return SkillResult(
             success=True,
-            result_data={"joint_values": list(home_joints)},
+            result_data={"joint_values": list(home_joints), "diagnosis": "ok"},
         )

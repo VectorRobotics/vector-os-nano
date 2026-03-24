@@ -85,6 +85,7 @@ class TaskExecutor:
                     status="skill_not_found",
                     duration_sec=time.monotonic() - step_start,
                     error=reason,
+                    result_data={"diagnosis": "skill_not_found"},
                 ))
                 return ExecutionResult(
                     success=False,
@@ -108,6 +109,7 @@ class TaskExecutor:
                         status="precondition_failed",
                         duration_sec=time.monotonic() - step_start,
                         error=reason,
+                        result_data={"diagnosis": "precondition_failed", "predicate": pred},
                     ))
                     return ExecutionResult(
                         success=False,
@@ -131,6 +133,7 @@ class TaskExecutor:
                     status="execution_failed",
                     duration_sec=time.monotonic() - step_start,
                     error=reason,
+                    result_data={"diagnosis": "exception", "exception_type": type(exc).__name__},
                 ))
                 return ExecutionResult(
                     success=False,
@@ -156,6 +159,7 @@ class TaskExecutor:
                     status="execution_failed",
                     duration_sec=duration,
                     error=reason,
+                    result_data=dict(skill_result.result_data),
                 ))
                 return ExecutionResult(
                     success=False,
@@ -184,6 +188,11 @@ class TaskExecutor:
                         status="postcondition_failed",
                         duration_sec=duration,
                         error=reason,
+                        result_data={
+                            **dict(skill_result.result_data),
+                            "diagnosis": "postcondition_failed",
+                            "predicate": pred,
+                        },
                     ))
                     return ExecutionResult(
                         success=False,
@@ -200,6 +209,7 @@ class TaskExecutor:
                 skill_name=step.skill_name,
                 status="success",
                 duration_sec=duration,
+                result_data=dict(skill_result.result_data),
             ))
             steps_completed += 1
             logger.info(

@@ -469,6 +469,24 @@ class Agent:
             if plan.message:
                 plan_message = plan.message
 
+            # ── PlanValidator: validate and auto-repair before execution ──
+            from vector_os_nano.core.plan_validator import PlanValidator
+            validator = PlanValidator(self._skill_registry, self._world_model)
+            plan, repairs = validator.validate_and_repair(plan)
+            if repairs:
+                logger.info(
+                    "[Agent] PlanValidator applied %d repairs: %s",
+                    len(repairs),
+                    [(r.field, r.old_value, r.new_value) for r in repairs],
+                )
+            validation = validator.validate(plan)
+            if not validation.valid:
+                logger.warning(
+                    "[Agent] Plan validation failed: %s",
+                    [(e.code, e.message) for e in validation.errors],
+                )
+                # Non-blocking — executor will catch runtime errors
+
             if plan.requires_clarification:
                 return ExecutionResult(
                     success=False,

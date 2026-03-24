@@ -348,9 +348,32 @@ class WorldModel:
         _skill = skill_name.lower()
 
         if _skill == "pick":
-            # Pick ends with drop — clear ALL objects (positions are stale after arm moved)
-            self._objects.clear()
-            self.update_robot_state(held_object=None, gripper_state="open")
+            mode = params.get("mode", "drop")
+            picked_id = params.get("object_id")
+            if not picked_id:
+                label = params.get("object_label", "")
+                matches = self.get_objects_by_label(label)
+                if matches:
+                    picked_id = matches[0].object_id
+
+            if mode == "hold":
+                if picked_id and picked_id in self._objects:
+                    old = self._objects[picked_id]
+                    self._objects[picked_id] = ObjectState(
+                        object_id=old.object_id,
+                        label=old.label,
+                        x=old.x, y=old.y, z=old.z,
+                        confidence=old.confidence,
+                        state="grasped",
+                        last_seen=time.time(),
+                        properties=old.properties,
+                    )
+                self.update_robot_state(held_object=picked_id, gripper_state="holding")
+            else:
+                # mode="drop" (default): remove the specific object, gripper returns open
+                if picked_id:
+                    self.remove_object(picked_id)
+                self.update_robot_state(held_object=None, gripper_state="open")
 
         elif _skill == "place":
             obj_id = params.get("object_id") or self._robot.held_object

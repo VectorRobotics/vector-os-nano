@@ -82,6 +82,7 @@ class Skill(Protocol):
     preconditions: list[str]
     postconditions: list[str]
     effects: dict
+    failure_modes: list[str]
 
     def execute(self, params: dict, context: "SkillContext") -> SkillResult: ...
 
@@ -198,12 +199,13 @@ class SkillRegistry:
     def to_schemas(self) -> list[dict]:
         """Serialize all skill schemas for LLM planner context.
 
-        Includes aliases and auto_steps metadata for richer LLM context.
+        Includes aliases, auto_steps, and failure_modes metadata for richer LLM context.
         """
         schemas: list[dict] = []
         for s in self._skills.values():
             aliases = getattr(s, '__skill_aliases__', [])
             auto = getattr(s, '__skill_auto_steps__', [])
+            failure_modes = getattr(s, 'failure_modes', [])
             schema = {
                 "name": s.name,
                 "description": s.description,
@@ -216,5 +218,7 @@ class SkillRegistry:
                 schema["aliases"] = aliases
             if auto:
                 schema["auto_steps"] = auto
+            if failure_modes:
+                schema["failure_modes"] = failure_modes
             schemas.append(schema)
         return schemas
