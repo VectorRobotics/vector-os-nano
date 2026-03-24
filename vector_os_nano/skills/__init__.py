@@ -1,6 +1,7 @@
 """Built-in robot skills — all use @skill decorator for routing metadata."""
 from __future__ import annotations
 
+from vector_os_nano.skills.describe import DescribeSkill
 from vector_os_nano.skills.detect import DetectSkill
 from vector_os_nano.skills.gripper import GripperCloseSkill, GripperOpenSkill
 from vector_os_nano.skills.home import HomeSkill
@@ -10,6 +11,7 @@ from vector_os_nano.skills.scan import ScanSkill
 from vector_os_nano.skills.wave import WaveSkill
 
 __all__ = [
+    "DescribeSkill",
     "DetectSkill",
     "GripperCloseSkill",
     "GripperOpenSkill",
@@ -27,6 +29,7 @@ def get_default_skills() -> list:
     return [
         HomeSkill(),
         ScanSkill(),
+        DescribeSkill(),
         DetectSkill(),
         PickSkill(),
         PlaceSkill(),

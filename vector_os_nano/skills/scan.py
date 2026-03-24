@@ -39,6 +39,7 @@ class ScanSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"is_moving": False}
+    failure_modes: list[str] = ["no_arm", "move_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Move to scan joint configuration.
@@ -62,17 +63,25 @@ class ScanSkill:
         )
 
         if context.arm is None:
-            return SkillResult(success=False, error_message="No arm connected")
+            return SkillResult(
+                success=False,
+                error_message="No arm connected",
+                result_data={"diagnosis": "no_arm"},
+            )
 
         logger.info("[SCAN] Moving to scan pose: %s", scan_joints)
         success = context.arm.move_joints(scan_joints, duration=_SCAN_DURATION)
 
         if not success:
             logger.error("[SCAN] Arm move failed")
-            return SkillResult(success=False, error_message="Arm move to scan pose failed")
+            return SkillResult(
+                success=False,
+                error_message="Arm move to scan pose failed",
+                result_data={"diagnosis": "move_failed"},
+            )
 
         logger.info("[SCAN] Done")
         return SkillResult(
             success=True,
-            result_data={"joint_values": list(scan_joints)},
+            result_data={"joint_values": list(scan_joints), "diagnosis": "ok"},
         )

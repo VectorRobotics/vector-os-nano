@@ -313,6 +313,7 @@ class StepTrace:
     status: str
     duration_sec: float = 0.0
     error: str = ""
+    result_data: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -321,6 +322,7 @@ class StepTrace:
             "status": self.status,
             "duration_sec": self.duration_sec,
             "error": self.error,
+            "result_data": self.result_data,
         }
 
     @classmethod
@@ -331,6 +333,7 @@ class StepTrace:
             status=str(d["status"]),
             duration_sec=float(d.get("duration_sec", 0.0)),
             error=str(d.get("error", "")),
+            result_data=dict(d.get("result_data", {})),
         )
 
 
@@ -380,3 +383,56 @@ class ExecutionResult:
             world_model_diff=dict(d.get("world_model_diff", {})),
             clarification_question=d.get("clarification_question"),
         )
+
+
+# ---------------------------------------------------------------------------
+# Agent Loop types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ActionRecord:
+    """Record of a single action in the agent loop."""
+
+    iteration: int
+    action: str
+    params: dict[str, Any] = field(default_factory=dict)
+    skill_success: bool = False
+    verified: bool = False
+    reasoning: str = ""
+    duration_sec: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "iteration": self.iteration,
+            "action": self.action,
+            "params": self.params,
+            "skill_success": self.skill_success,
+            "verified": self.verified,
+            "reasoning": self.reasoning,
+            "duration_sec": self.duration_sec,
+        }
+
+
+@dataclass(frozen=True)
+class GoalResult:
+    """Result of an iterative agent loop execution."""
+
+    success: bool
+    goal: str
+    iterations: int
+    total_duration_sec: float
+    actions: list[ActionRecord] = field(default_factory=list)
+    summary: str = ""
+    final_world_state: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.success,
+            "goal": self.goal,
+            "iterations": self.iterations,
+            "total_duration_sec": self.total_duration_sec,
+            "actions": [a.to_dict() for a in self.actions],
+            "summary": self.summary,
+            "final_world_state": self.final_world_state,
+        }

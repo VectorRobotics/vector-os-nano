@@ -253,8 +253,13 @@ class SimpleCLI:
             else:
                 _console.print(f"  [red]FAIL[/] [{_TEAL}]{label}[/] {detail}")
 
+        def _on_debug(stage: str, detail: str) -> None:
+            if self._verbose:
+                _console.print(f"  [dim cyan][{stage}][/] [dim]{detail}[/]")
+
         result = self._agent.execute(
             text, on_message=_on_message, on_step=_on_step, on_step_done=_on_step_done,
+            on_debug=_on_debug,
         )
         elapsed = time.time() - start
 

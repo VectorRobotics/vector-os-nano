@@ -214,7 +214,7 @@ class Agent:
             except Exception as exc:
                 logger.debug("Could not refresh objects from sim: %s", exc)
 
-    def execute(self, instruction: str, on_message: Any = None, on_step: Any = None, on_step_done: Any = None) -> ExecutionResult:
+    def execute(self, instruction: str, on_message: Any = None, on_step: Any = None, on_step_done: Any = None, on_debug: Any = None) -> ExecutionResult:
         """Execute a natural language instruction via multi-stage pipeline.
 
         Stage 1: CLASSIFY — determine intent (chat/task/direct/query)
@@ -228,22 +228,32 @@ class Agent:
             instruction: Human-readable command string.
             on_message: Optional callback(str) — called with AI message BEFORE execution.
             on_step: Optional callback(step_name, step_idx, total) — called before each step.
+            on_debug: Optional callback(stage, detail) — called at each decision point.
 
         Returns:
             ExecutionResult with trace and AI message.
         """
+        def _dbg(stage: str, detail: str) -> None:
+            logger.info("[Agent] %s: %s", stage, detail)
+            if on_debug:
+                try:
+                    on_debug(stage, detail)
+                except Exception:
+                    pass
+
         self._sync_robot_state()
 
         # ── Stage 1: MATCH against skill aliases (no LLM needed) ──
         match = self._skill_registry.match(instruction)
+        _dbg("MATCH", f"{match.skill_name} (direct={match.direct}, auto={match.auto_steps})" if match else "no alias match")
 
         if match is not None:
             if match.direct:
-                # Direct skill: execute immediately, zero LLM calls
+                _dbg("ROUTE", f"direct skill → {match.skill_name}")
                 return self._execute_matched(match, instruction)
 
             if match.auto_steps and not self._needs_llm_planning(instruction, match):
-                # Auto-steps: expand to skill chain, zero LLM calls
+                _dbg("ROUTE", f"auto_steps → {' → '.join(match.auto_steps)}")
                 return self._execute_auto_steps(
                     match, instruction,
                     on_message=on_message, on_step=on_step, on_step_done=on_step_done,
@@ -261,15 +271,18 @@ class Agent:
         # ── Stage 3: CLASSIFY intent via LLM ──
         classify_selection = self._router.for_classify()
         intent = self._llm.classify(instruction, model_override=classify_selection.model)
-        logger.info("[Agent] Intent: %s for %r (model: %s)", intent, instruction, classify_selection.model)
+        _dbg("CLASSIFY", f"intent={intent} (model={classify_selection.model})")
 
         if intent == "chat":
+            _dbg("ROUTE", "chat → LLM response only, no robot action")
             return self._handle_chat(instruction)
 
         if intent == "query":
+            _dbg("ROUTE", "query → detect objects then answer")
             return self._handle_query(instruction)
 
         # intent == "task" or "direct" → LLM planning
+        _dbg("ROUTE", f"task → LLM planning + execution")
         return self._handle_task(
             instruction, on_message=on_message, on_step=on_step, on_step_done=on_step_done,
         )
@@ -391,20 +404,35 @@ class Agent:
         )
 
     def _handle_query(self, instruction: str) -> ExecutionResult:
-        """Handle state query — detect objects, then AI describes."""
+        """Handle state query — scan, capture camera frame, LLM describes.
+
+        If perception is available, sends a camera frame directly to the
+        LLM (vision) so it can SEE the workspace. Falls back to text-only
+        description from world model if no camera.
+        """
         self._memory.add_user_message(instruction, entry_type="query")
 
-        # Execute scan + detect
+        # Move to scan position for clear view
         context = self._build_context()
         scan_skill = self._skill_registry.get("scan")
-        detect_skill = self._skill_registry.get("detect")
-
         if scan_skill:
             scan_skill.execute({}, context)
+
+        # Capture camera frame for LLM vision
+        camera_frame = None
+        if self._perception is not None and hasattr(self._perception, "get_color_frame"):
+            try:
+                camera_frame = self._perception.get_color_frame()
+                logger.info("[Agent] Captured camera frame for query (%s)", camera_frame.shape if camera_frame is not None else "None")
+            except Exception as exc:
+                logger.warning("[Agent] Failed to capture camera frame: %s", exc)
+
+        # Also run detect for world model update (3D positions for future commands)
+        detect_skill = self._skill_registry.get("detect")
         if detect_skill:
             detect_skill.execute({"query": "all objects"}, context)
 
-        # Get updated state
+        # Get world model info as text fallback
         self._sync_robot_state()
         objects_info = ""
         if hasattr(self._arm, "get_object_positions"):
@@ -414,16 +442,23 @@ class Agent:
                 for name, pos in objs.items()
             )
 
-        # Ask LLM to answer the query with updated info
+        # World model objects (from detect)
+        wm_objects = [o.label for o in self._world_model.get_objects()]
+        if wm_objects:
+            objects_info += f"\nWorld model objects: {', '.join(wm_objects)}"
+
+        # Ask LLM — with image if available (uses vision-capable model)
         history = self._memory.get_llm_history(max_turns=30)
         agent_prompt = self._load_agent_prompt()
         full_prompt = f"{agent_prompt}\n\nDetected objects: {objects_info}"
-        selection = self._router.for_chat()
+        selection = self._router.for_query()
+        logger.info("[Agent] Query model: %s (image=%s)", selection.model, camera_frame is not None)
         response = self._llm.chat(
             instruction,
             system_prompt=full_prompt,
             history=history,
             model_override=selection.model,
+            image=camera_frame,
         )
         self._memory.add_assistant_message(response, entry_type="query")
 
@@ -468,6 +503,24 @@ class Agent:
 
             if plan.message:
                 plan_message = plan.message
+
+            # ── PlanValidator: validate and auto-repair before execution ──
+            from vector_os_nano.core.plan_validator import PlanValidator
+            validator = PlanValidator(self._skill_registry, self._world_model)
+            plan, repairs = validator.validate_and_repair(plan)
+            if repairs:
+                logger.info(
+                    "[Agent] PlanValidator applied %d repairs: %s",
+                    len(repairs),
+                    [(r.field, r.old_value, r.new_value) for r in repairs],
+                )
+            validation = validator.validate(plan)
+            if not validation.valid:
+                logger.warning(
+                    "[Agent] Plan validation failed: %s",
+                    [(e.code, e.message) for e in validation.errors],
+                )
+                # Non-blocking — executor will catch runtime errors
 
             if plan.requires_clarification:
                 return ExecutionResult(
@@ -622,6 +675,48 @@ class Agent:
         except (KeyError, IndexError):
             return prompt
 
+    def run_goal(
+        self,
+        goal: str,
+        max_iterations: int | None = None,
+        verify: bool | None = None,
+        on_step: Any = None,
+        on_message: Any = None,
+    ) -> "GoalResult":
+        """Execute an iterative goal using the observe-decide-act-verify loop.
+
+        Unlike execute() which plans all steps upfront, run_goal() calls the
+        LLM once per action, observes the result, and decides the next step
+        dynamically. Use for open-ended goals like "clean the table".
+
+        Args:
+            goal: Natural language goal string.
+            max_iterations: Safety cap on loop iterations. None = use config default.
+            verify: Whether to run perception verification after pick/place.
+                    None = use config default.
+            on_step: Optional callback(action_name, iteration, max_iterations).
+            on_message: Optional callback(str) for LLM messages.
+
+        Returns:
+            GoalResult with success, actions trace, and summary.
+        """
+        from vector_os_nano.core.agent_loop import AgentLoop  # lazy import
+
+        loop_cfg = self._config.get("agent", {}).get("agent_loop", {})
+        if max_iterations is None:
+            max_iterations = loop_cfg.get("max_iterations", 10)
+        if verify is None:
+            verify = loop_cfg.get("verify", True)
+
+        loop = AgentLoop(agent_ref=self, config=self._config)
+        return loop.run(
+            goal=goal,
+            max_iterations=max_iterations,
+            verify=verify,
+            on_step=on_step,
+            on_message=on_message,
+        )
+
     # -------------------------------------------------------------------------
     # Convenience methods
     # -------------------------------------------------------------------------
@@ -709,12 +804,13 @@ class Agent:
                 postconditions=[],
             ))
 
-        # Add home at end if not already there — but NOT when pick mode='hold'
-        # (pick already returns to home internally, and HomeSkill opens the
-        # gripper which would drop the held object).
+        # Add home at end if not already there — but NOT when:
+        # - pick mode='hold' (HomeSkill opens gripper, would drop held object)
+        # - gripper_close / gripper_open (HomeSkill opens gripper, overrides state)
+        # - home itself
         skip_home = (
-            skill_name == "pick"
-            and params.get("mode") == "hold"
+            (skill_name == "pick" and params.get("mode") == "hold")
+            or skill_name in ("gripper_close", "gripper_open", "home")
         )
         if not skip_home and (not steps or steps[-1].skill_name != "home"):
             steps.append(TaskStep(

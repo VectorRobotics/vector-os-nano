@@ -65,7 +65,8 @@ from vector_os_nano import Agent, MuJoCoArm
 arm = MuJoCoArm(gui=True)
 arm.connect()
 agent = Agent(arm=arm, llm_api_key="sk-...")
-agent.execute("把鸭子放到前面")
+agent.execute("把鸭子放到前面")        # one-shot: plan + execute
+agent.run_goal("clean the table")     # agent loop: observe-decide-act-verify
 ```
 
 ## SkillFlow — Declarative Skill Routing
@@ -106,19 +107,31 @@ Routing logic:
 
 See `docs/skill-protocol.md` for full SkillFlow specification.
 
-## Agent Pipeline
+## Agent Pipeline — Two Execution Modes
+
+**One-shot** (simple commands) — plan once, execute all steps:
 
 ```
-User Input
-    |
-    v
-[1. MATCH]     @skill aliases (zero LLM for simple commands)
-[2. CLASSIFY]  LLM intent: chat / task / query (only when needed)
-[3. PLAN]      LLM decomposes into skill sequence + V speaks
-[4. EXECUTE]   Deterministic step-by-step execution
-[5. ADAPT]     On failure: explain + suggest alternatives
-[6. SUMMARIZE] LLM reports results to user
+User Input → MATCH → CLASSIFY → PLAN → EXECUTE → SUMMARIZE
+"抓杯子"      alias    (skip)    (skip)   scan→detect→pick   "Done"
+"把X放左边"   no match  task     LLM plan  pick(hold)→place   "Done"
 ```
+
+**Agent Loop** (iterative goals) — observe, decide one step, act, verify, repeat:
+
+```
+User Input → run_goal("clean the table")
+                ↓
+        ┌→ OBSERVE  (camera + world model)
+        │  DECIDE   (LLM picks ONE action)
+        │  ACT      (execute single skill)
+        │  VERIFY   (re-detect: did it actually work?)
+        └─ LOOP     (until goal achieved or max iterations)
+```
+
+The Agent Loop solves two problems:
+1. **Iterative goals**: "clean the table" picks objects one-by-one until table is empty
+2. **Hardware drift**: doesn't trust `success=True` — uses perception to verify actual outcomes
 
 AI assistant **V** speaks before acting, shows live progress, and summarizes after:
 
@@ -200,12 +213,39 @@ llm:
 ## All Launch Modes
 
 ```bash
+# Classic pipeline (classify → plan → execute)
 python run.py                  # Real hardware + CLI
 python run.py --sim            # MuJoCo sim + viewer + CLI
 python run.py --sim-headless   # MuJoCo sim headless
+python run.py -v               # Verbose: show agent thinking (MATCH/CLASSIFY/ROUTE)
 python run.py --dashboard      # Textual TUI dashboard
 python run.py --web --sim      # Web dashboard at localhost:8000
+
+# Agent mode (LLM tool-calling — smarter, context-aware)
+python run.py --agent                                     # Default: gpt-4o-mini
+python run.py --agent --agent-model openai/gpt-4o         # Stronger reasoning
+python run.py --agent --agent-model anthropic/claude-sonnet-4-6  # Claude Sonnet
+python run.py --agent -v                                  # Agent + debug output
+python run.py --sim --agent                               # Sim + agent mode
 ```
+
+**Classic vs Agent mode**: Classic mode uses a rigid classify→plan→execute pipeline — fast for simple commands ("抓杯子") but can't handle multi-turn context. Agent mode uses LLM-native function calling — the LLM sees full conversation history, decides when to chat vs call tools, and understands context ("我饿了" → picks food proactively).
+
+## REST API
+
+When running with `--web`, these endpoints are available:
+
+```bash
+GET  /api/status              # Robot state (joints, gripper, objects)
+GET  /api/skills              # Available skills with JSON schemas
+GET  /api/world               # World model (objects + robot state)
+GET  /api/camera              # Camera frame (JPEG)
+POST /api/execute             # {"instruction": "pick the banana"}
+POST /api/skill/{name}        # {"object_label": "banana", "mode": "drop"}
+POST /api/run_goal            # {"goal": "clean the table", "max_iterations": 10}
+```
+
+Any agent framework (LangGraph, custom scripts, etc.) can control the robot via HTTP.
 
 ## Custom Skills
 
@@ -240,14 +280,15 @@ agent.execute("挥手三次")    # alias match → LLM fills params
 
 ```
 vector_os_nano/
-├── core/          SkillFlow protocol, Agent pipeline, Executor, WorldModel
-├── llm/           Claude provider (classify, plan, chat, summarize)
+├── core/          SkillFlow, Agent, AgentLoop, Executor, WorldModel, PlanValidator
+├── llm/           LLM-agnostic providers (Claude, OpenAI, Ollama), ModelRouter
 ├── perception/    RealSense + Moondream VLM + EdgeTAM tracker
 ├── hardware/
 │   ├── so101/     SO-101 arm driver (Feetech serial, Pinocchio IK)
 │   └── sim/       MuJoCo simulation (arm, gripper, perception, 6 objects)
-├── skills/        Built-in @skill classes (pick, place, home, scan, detect, gripper)
-├── cli/           Rich CLI with prompt_toolkit (auto-complete, status bar)
+├── skills/        @skill classes with diagnostics + enum constraints + failure_modes
+├── cli/           Rich CLI with debug mode (-v shows agent thinking)
+├── mcp/           MCP server (tools + resources, stdio + SSE transport)
 ├── web/           FastAPI + WebSocket dashboard
 └── ros2/          Optional ROS2 integration (5 nodes)
 ```
@@ -258,10 +299,13 @@ Vector OS Nano exposes all skills via the **Model Context Protocol (MCP)**. Clau
 
 ```bash
 # Auto-connects when Claude Code starts (configured in .mcp.json)
-# Or manual: python -m vector_os_nano.mcp --sim --stdio
+# Or manual:
+python -m vector_os_nano.mcp --sim --stdio        # sim + stdio (for .mcp.json)
+python -m vector_os_nano.mcp --hardware --stdio    # real hardware + stdio
+python -m vector_os_nano.mcp --sim                 # sim + SSE on :8100
 ```
 
-**10 MCP tools**: pick, place, home, scan, detect, gripper_open, gripper_close, natural_language, diagnostics, debug_perception
+**12 MCP tools**: pick, place, home, scan, detect, gripper_open, gripper_close, wave, natural_language, run_goal, diagnostics, debug_perception
 **7 MCP resources**: world://state, world://objects, world://robot, camera://overhead, camera://front, camera://side, camera://live
 
 <p align="center">

@@ -105,9 +105,9 @@ python -m vector_os_nano.mcp --hardware --stdio         # Real hardware
 | Agent | Model | Status | Notes |
 |-------|-------|--------|-------|
 | Lead/Architect | opus | Ready | v0.3.0 spec authoring |
-| Alpha | sonnet | DONE | 54 new tests (calibration, pick, execute_skill) |
-| Beta | sonnet | DONE | MCP error reporting + inline step details |
-| Gamma | sonnet | Ready | Claude Code testing |
+| Alpha | sonnet | DONE | T3 (v0.4.0): AgentLoop Full Implementation Tests — 13 new tests in test_agent_loop.py; all 23 T3 tests pass (13 new + 4 skeleton + 6 types), no implementation fixes needed |
+| Beta | sonnet | DONE | T4 (v0.4.0): Agent.run_goal() + MCP run_goal tool + config — run_goal() on Agent with lazy AgentLoop import, build_run_goal_tool() + _format_goal_result() + handle_tool_call handler in tools.py, agent_loop config in default.yaml; 14 new tests pass (6 agent + 8 mcp), 70 total in target suite |
+| Gamma | sonnet | DONE | T5: Integration tests — tests/unit/test_agent_loop_integration.py (5 tests: full Agent.run_goal() path with mock arm + mock LLM, MCP handler, no-LLM fallback, max-iterations cap); all 5 pass, regression 1010 passed / 1 pre-existing fail |
 | QA | — | Ready | Code review for v0.3.0 |
 | Scribe | haiku | DONE | Final session docs |
 

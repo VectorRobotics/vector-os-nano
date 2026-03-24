@@ -318,120 +318,219 @@ def _shutdown(arm, perception) -> None:
 
 
 # ---------------------------------------------------------------------------
-# CLI mode — readline shell + OpenCV camera viewer
+# Shared camera viewer (used by both CLI and Agent modes)
 # ---------------------------------------------------------------------------
 
-def _run_cli(agent, perception) -> None:
-    """Start SimpleCLI and an OpenCV camera viewer (background thread)."""
-    camera_thread = None
-    stop_camera = None
+def _start_camera_viewer(perception):
+    """Start background OpenCV camera viewer thread. Returns (thread, stop_event) or (None, None)."""
+    if perception is None or not hasattr(perception, '_camera') or perception._camera is None:
+        return None, None
 
-    if perception is not None and hasattr(perception, '_camera') and perception._camera is not None:
-        import threading
-        import cv2
-        import numpy as np
-        from PIL import Image as PILImage, ImageDraw, ImageFont
+    import threading
+    import cv2
+    import numpy as np
+    from PIL import Image as PILImage, ImageDraw, ImageFont
 
-        stop_camera = threading.Event()
+    stop_event = threading.Event()
 
-        # Load a font that supports Chinese
-        _pil_font = None
-        for font_path in [
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-        ]:
-            if os.path.exists(font_path):
-                try:
-                    _pil_font = ImageFont.truetype(font_path, 16)
-                    break
-                except Exception:
-                    pass
-        if _pil_font is None:
+    _pil_font = None
+    for font_path in [
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    ]:
+        if os.path.exists(font_path):
             try:
-                _pil_font = ImageFont.load_default()
+                _pil_font = ImageFont.truetype(font_path, 16)
+                break
+            except Exception:
+                pass
+    if _pil_font is None:
+        try:
+            _pil_font = ImageFont.load_default()
+        except Exception:
+            pass
+
+    def _put_text_pil(img, text, pos, color=(0, 255, 0)):
+        if _pil_font is None:
+            cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            return img
+        pil_img = PILImage.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(pil_img)
+        draw.text(pos, text, font=_pil_font, fill=color)
+        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+    def _viewer_loop():
+        cam = perception._camera
+        cv2.namedWindow("Vector OS", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Vector OS", 1280, 480)
+
+        while not stop_event.is_set():
+            try:
+                color = cam.get_color_frame()
+                depth = cam.get_depth_frame()
+                if color is None or depth is None:
+                    continue
+
+                rgb_display = color.copy()
+                if hasattr(perception, '_last_tracked') and perception._last_tracked:
+                    for obj in perception._last_tracked:
+                        if obj.bbox_2d:
+                            x1, y1, x2, y2 = [int(v) for v in obj.bbox_2d]
+                            cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            lbl = obj.label
+                            if obj.pose:
+                                lbl += f" ({obj.pose.x:.2f},{obj.pose.y:.2f},{obj.pose.z:.2f})"
+                            rgb_display = _put_text_pil(rgb_display, lbl, (x1, max(y1 - 20, 0)))
+                elif hasattr(perception, '_last_detections') and perception._last_detections:
+                    for det in perception._last_detections:
+                        x1, y1, x2, y2 = [int(v) for v in det.bbox]
+                        cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        rgb_display = _put_text_pil(rgb_display, det.label, (x1, max(y1 - 20, 0)))
+
+                depth_f = np.clip(depth.astype(np.float32), 0, 500)
+                depth_u8 = (depth_f / 500.0 * 255).astype(np.uint8)
+                depth_colored = cv2.applyColorMap(depth_u8, cv2.COLORMAP_JET)
+
+                if hasattr(perception, '_last_tracked') and perception._last_tracked:
+                    for obj in perception._last_tracked:
+                        if obj.mask is not None and obj.mask.shape == depth_colored.shape[:2]:
+                            contours, _ = cv2.findContours(
+                                obj.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                            )
+                            cv2.drawContours(depth_colored, contours, -1, (255, 255, 255), 2)
+                        if obj.pose and obj.bbox_2d:
+                            cx = int((obj.bbox_2d[0] + obj.bbox_2d[2]) / 2)
+                            cy = int((obj.bbox_2d[1] + obj.bbox_2d[3]) / 2)
+                            cv2.circle(depth_colored, (cx, cy), 6, (0, 255, 0), -1)
+                            cv2.circle(depth_colored, (cx, cy), 8, (255, 255, 255), 2)
+                            info = f"{obj.pose.x:.3f},{obj.pose.y:.3f},{obj.pose.z:.3f}"
+                            cv2.putText(depth_colored, info, (cx + 10, cy),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+                combined = np.hstack([rgb_display, depth_colored])
+                cv2.imshow("Vector OS", combined)
+                if cv2.waitKey(33) == 27:
+                    break
             except Exception:
                 pass
 
-        def _put_text_pil(img, text, pos, color=(0, 255, 0)):
-            """Draw text with PIL (supports Unicode/Chinese)."""
-            if _pil_font is None:
-                cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                return img
-            pil_img = PILImage.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-            draw = ImageDraw.Draw(pil_img)
-            draw.text(pos, text, font=_pil_font, fill=color)
-            return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        cv2.destroyAllWindows()
 
-        def _viewer_loop():
-            """Single background thread: RGB + depth side by side."""
-            cam = perception._camera
-            cv2.namedWindow("Vector OS", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Vector OS", 1280, 480)
+    thread = threading.Thread(target=_viewer_loop, daemon=True)
+    thread.start()
+    print("Viewer started: RGB + Depth side-by-side (ESC to close)")
+    return thread, stop_event
 
-            while not stop_camera.is_set():
-                try:
-                    color = cam.get_color_frame()
-                    depth = cam.get_depth_frame()
-                    if color is None or depth is None:
-                        continue
 
-                    # --- Left: RGB + tracking overlay ---
-                    rgb_display = color.copy()
-                    if hasattr(perception, '_last_tracked') and perception._last_tracked:
-                        for obj in perception._last_tracked:
-                            if obj.bbox_2d:
-                                x1, y1, x2, y2 = [int(v) for v in obj.bbox_2d]
-                                cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                                lbl = obj.label
-                                if obj.pose:
-                                    lbl += f" ({obj.pose.x:.2f},{obj.pose.y:.2f},{obj.pose.z:.2f})"
-                                rgb_display = _put_text_pil(rgb_display, lbl, (x1, max(y1 - 20, 0)))
-                    elif hasattr(perception, '_last_detections') and perception._last_detections:
-                        for det in perception._last_detections:
-                            x1, y1, x2, y2 = [int(v) for v in det.bbox]
-                            cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                            rgb_display = _put_text_pil(rgb_display, det.label, (x1, max(y1 - 20, 0)))
+# ---------------------------------------------------------------------------
+# Agent mode — LLM tool-calling conversation
+# ---------------------------------------------------------------------------
 
-                    # --- Right: Depth colormap + mask + centroid ---
-                    depth_f = np.clip(depth.astype(np.float32), 0, 500)
-                    depth_u8 = (depth_f / 500.0 * 255).astype(np.uint8)
-                    depth_colored = cv2.applyColorMap(depth_u8, cv2.COLORMAP_JET)
+def _run_agent_mode(agent, cfg, api_key, args) -> None:
+    """Start the tool-calling agent mode with native function calling."""
+    from rich.console import Console
+    from rich.panel import Panel
+    from prompt_toolkit import PromptSession
 
-                    if hasattr(perception, '_last_tracked') and perception._last_tracked:
-                        for obj in perception._last_tracked:
-                            if obj.mask is not None and obj.mask.shape == depth_colored.shape[:2]:
-                                contours, _ = cv2.findContours(
-                                    obj.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                                )
-                                cv2.drawContours(depth_colored, contours, -1, (255, 255, 255), 2)
-                            if obj.pose and obj.bbox_2d:
-                                cx = int((obj.bbox_2d[0] + obj.bbox_2d[2]) / 2)
-                                cy = int((obj.bbox_2d[1] + obj.bbox_2d[3]) / 2)
-                                cv2.circle(depth_colored, (cx, cy), 6, (0, 255, 0), -1)
-                                cv2.circle(depth_colored, (cx, cy), 8, (255, 255, 255), 2)
-                                info = f"{obj.pose.x:.3f},{obj.pose.y:.3f},{obj.pose.z:.3f}"
-                                cv2.putText(depth_colored, info, (cx + 10, cy),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    if not api_key:
+        print("ERROR: --agent mode requires OPENROUTER_API_KEY")
+        return
 
-                    # --- Combine side by side ---
-                    combined = np.hstack([rgb_display, depth_colored])
-                    cv2.imshow("Vector OS", combined)
-                    key = cv2.waitKey(33)
-                    if key == 27:
-                        break
-                except Exception:
-                    pass
+    from vector_os_nano.core.tool_agent import ToolAgent
 
-            cv2.destroyAllWindows()
+    model = args.agent_model or cfg.get("llm", {}).get("models", {}).get("agent", "openai/gpt-4o-mini")
+    api_base = cfg.get("llm", {}).get("api_base", "https://openrouter.ai/api/v1")
 
-        camera_thread = threading.Thread(target=_viewer_loop, daemon=True)
-        camera_thread.start()
-        print("Viewer started: RGB + Depth side-by-side (ESC to close)")
+    tool_agent = ToolAgent(
+        agent_ref=agent,
+        api_key=api_key,
+        model=model,
+        api_base=api_base,
+    )
+
+    console = Console()
+    session = PromptSession()
+    _teal = "#00b4b4"
+
+    # Print the same logo as SimpleCLI
+    import pathlib as _pl
+    _logo_path = _pl.Path(__file__).parent / "vector_os_nano" / "cli" / "logo_braille.txt"
+    if not _logo_path.exists():
+        _logo_path = _pl.Path("vector_os_nano/cli/logo_braille.txt")
+
+    console.clear()
+    try:
+        logo_lines = _logo_path.read_text().strip().splitlines()
+        for line in logo_lines:
+            console.print(f"[bold {_teal}]{line}[/]")
+            import time as _t; _t.sleep(0.12)
+    except FileNotFoundError:
+        console.print(f"[bold {_teal}]VECTOR OS NANO[/]")
+
+    from vector_os_nano.version import __version__ as _ver
+    console.print(f"[dim]{'':>40}v{_ver}[/]")
+    console.print(f"[dim]  Agent Mode | Model: {model} | Tools: {len(tool_agent._tools)} | 'q' to quit[/]")
+    console.print()
+
+    # Start camera viewer (same as CLI mode)
+    perception = agent._perception
+    camera_thread, stop_camera = _start_camera_viewer(perception)
+
+    while True:
+        try:
+            user_input = session.prompt("you> ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+
+        if not user_input:
+            continue
+        if user_input.lower() in ("q", "quit", "exit"):
+            break
+
+        def _on_tool_call(name, params):
+            detail = ", ".join(f"{k}={v}" for k, v in params.items()) if params else ""
+            console.print(f"  [yellow]TOOL[/] [{_teal}]{name}[/]({detail})")
+
+        def _on_debug(stage, detail):
+            if args.verbose:
+                console.print(f"  [dim cyan][{stage}][/] [dim]{detail}[/]")
+
+        response = tool_agent.chat(
+            user_input,
+            on_tool_call=_on_tool_call,
+            on_debug=_on_debug,
+        )
+
+        console.print()
+        console.print(Panel(
+            response,
+            title="[bold]V[/]",
+            title_align="left",
+            border_style=_teal,
+            padding=(0, 1),
+            width=min(console.width, 70),
+        ))
+        console.print()
+
+    # Cleanup camera viewer
+    if stop_camera is not None:
+        stop_camera.set()
+    if camera_thread is not None:
+        camera_thread.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# CLI mode — readline shell + OpenCV camera viewer
+# ---------------------------------------------------------------------------
+
+def _run_cli(agent, perception, verbose: bool = False) -> None:
+    """Start SimpleCLI and an OpenCV camera viewer (background thread)."""
+    camera_thread, stop_camera = _start_camera_viewer(perception)
 
     from vector_os_nano.cli.simple import SimpleCLI
-    cli = SimpleCLI(agent=agent, verbose=True)
+    cli = SimpleCLI(agent=agent, verbose=verbose)
 
     try:
         cli.run()
@@ -542,6 +641,22 @@ def main() -> None:
         action="store_true",
         help="MuJoCo simulation without viewer (headless)",
     )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show agent thinking process (match, classify, route decisions)",
+    )
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Use LLM tool-calling agent mode (smarter conversation, understands context)",
+    )
+    parser.add_argument(
+        "--agent-model",
+        type=str,
+        default=None,
+        help="Model for agent mode (default: openai/gpt-4o-mini). Examples: openai/gpt-4o, anthropic/claude-sonnet-4-6",
+    )
     args = parser.parse_args()
 
     dashboard_mode: bool = args.dashboard
@@ -589,8 +704,10 @@ def main() -> None:
             _run_web(agent, cfg)
         elif dashboard_mode:
             _run_dashboard(agent)
+        elif args.agent:
+            _run_agent_mode(agent, cfg, api_key, args)
         else:
-            _run_cli(agent, perception)
+            _run_cli(agent, perception, verbose=args.verbose)
     finally:
         _shutdown(arm, perception)
 

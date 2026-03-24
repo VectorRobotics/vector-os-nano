@@ -6,6 +6,12 @@ agent:
   max_planning_retries: 3
   max_execution_retries: 2
   planning_timeout_sec: 10.0
+  agent_loop:
+    max_iterations: 10
+    verify: true
+    verify_in_sim: false
+    history_max_actions: 6
+    model: null
 
 llm:
   provider: "claude"           # claude | openai | local
@@ -19,6 +25,7 @@ llm:
     plan_simple: "anthropic/claude-haiku-4-5"
     plan_complex: "anthropic/claude-sonnet-4-6"
     chat: "anthropic/claude-haiku-4-5"
+    query: "openai/gpt-4o-mini"              # vision-capable model for visual queries
     summarize: "anthropic/claude-haiku-4-5"
 
 arm:

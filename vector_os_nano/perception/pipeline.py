@@ -181,6 +181,48 @@ class PerceptionPipeline:
         )
         return points
 
+    def caption(self, length: str = "normal") -> str:
+        """Generate a natural language caption describing the current frame.
+
+        Args:
+            length: Caption length — "short", "normal", or "long".
+
+        Returns:
+            Caption string.
+
+        Raises:
+            RuntimeError: If no VLM is configured.
+        """
+        if self._vlm is None:
+            raise RuntimeError("No VLM configured")
+        color = self.get_color_frame()
+        caption_text: str = self._vlm.caption(color, length=length) if hasattr(self._vlm, "caption") else ""
+        if isinstance(caption_text, dict):
+            caption_text = caption_text.get("caption", str(caption_text))
+        logger.info("VLM caption(%s) -> %s", length, caption_text[:80])
+        return str(caption_text)
+
+    def visual_query(self, question: str) -> str:
+        """Answer a free-form question about the current camera frame.
+
+        Args:
+            question: Natural language question about the scene.
+
+        Returns:
+            Answer string.
+
+        Raises:
+            RuntimeError: If no VLM is configured.
+        """
+        if self._vlm is None:
+            raise RuntimeError("No VLM configured")
+        color = self.get_color_frame()
+        answer: str = self._vlm.query(color, question) if hasattr(self._vlm, "query") else ""
+        if isinstance(answer, dict):
+            answer = answer.get("answer", str(answer))
+        logger.info("VLM query(%r) -> %s", question, str(answer)[:80])
+        return str(answer)
+
     def detect(self, query: str) -> list[Detection]:
         """Run VLM detection on the current frame.
 

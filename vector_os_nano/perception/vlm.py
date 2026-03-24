@@ -191,17 +191,19 @@ class VLMDetector:
 
         return detections
 
-    def caption(self, image: np.ndarray) -> str:
+    def caption(self, image: np.ndarray, length: str | None = None) -> str:
         """Generate a natural language caption for the image.
 
         Args:
             image: (H, W, 3) uint8 RGB image.
+            length: Caption length override ("short", "normal", "long").
+                    Falls back to config caption_length if not provided.
 
         Returns:
             Caption string.
         """
         pil_image = self._to_pil(image)
-        length = self._cfg.caption_length
+        length = length or self._cfg.caption_length
         if self._local:
             result = self._client.caption(pil_image, length=length)  # type: ignore[union-attr]
         else:

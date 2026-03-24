@@ -1,0 +1,31 @@
+{
+  "version": "0.4.0",
+  "name": "Built-in Agent Loop",
+  "current_phase": "execute",
+  "tasks_status": "approved",
+  "date": "2026-03-24",
+  "author": "alpha",
+  "files": {
+    "spec": ".sdd-v0.4.0/spec.md",
+    "plan": ".sdd-v0.4.0/plan.md",
+    "tasks": ".sdd-v0.4.0/task.md"
+  },
+  "waves": {
+    "wave_1": {
+      "status": "ready",
+      "tasks": ["T1 [alpha]", "T2 [beta]"],
+      "note": "parallel, no dependencies"
+    },
+    "wave_2": {
+      "status": "blocked_on_wave_1",
+      "tasks": ["T3 [alpha]", "T4 [beta]"],
+      "note": "parallel, depends on T1+T2"
+    },
+    "wave_3": {
+      "status": "blocked_on_wave_2",
+      "tasks": ["T5 [gamma]"],
+      "note": "depends on T3+T4"
+    }
+  },
+  "next": "Assign T1 to Alpha, T2 to Beta. Run Wave 1."
+}

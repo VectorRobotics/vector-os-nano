@@ -128,6 +128,11 @@ class ModelRouter:
         model = self._models.get("chat", self._default_model)
         return ModelSelection(model=model, reason="chat")
 
+    def for_query(self) -> ModelSelection:
+        """Model for visual queries (vision-capable model preferred)."""
+        model = self._models.get("query", self._default_model)
+        return ModelSelection(model=model, reason="query")
+
     def for_summarize(self) -> ModelSelection:
         """Model for execution summarization."""
         model = self._models.get("summarize", self._default_model)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from vector_os_nano.mcp.tools import (
@@ -188,7 +190,7 @@ class TestSkillsToMcpTools:
         registry = self._make_registry()
         skill_count = len(registry.list_skills())
         tools = skills_to_mcp_tools(registry)
-        assert len(tools) == skill_count + 1
+        assert len(tools) == skill_count + 4  # +4 meta-tools: natural_language, diagnostics, debug_perception, run_goal
 
     def test_all_tools_have_name_description_input_schema(self) -> None:
         registry = self._make_registry()
@@ -298,26 +300,31 @@ class TestFormatExecutionResult:
         assert "completed" in output
 
     def test_success_result_contains_instruction(self) -> None:
+        """JSON output contains skill names from the trace."""
         result = self._make_result(
             trace_steps=[("scan", "success", 1.0), ("pick", "success", 3.0)]
         )
-        output = _format_execution_result("pick banana", result)
-        assert "pick banana" in output
+        data = json.loads(_format_execution_result("pick banana", result))
+        skill_names = [s["skill_name"] for s in data["steps"]]
+        assert "scan" in skill_names
+        assert "pick" in skill_names
 
     def test_success_result_lists_steps(self) -> None:
+        """JSON steps list has one entry per trace step with correct status."""
         result = self._make_result(
             trace_steps=[("scan", "success", 1.0), ("pick", "success", 3.0)]
         )
-        output = _format_execution_result("pick banana", result)
-        assert "scan(ok)" in output
-        assert "pick(ok)" in output
+        data = json.loads(_format_execution_result("pick banana", result))
+        assert len(data["steps"]) == 2
+        assert all(s["status"] == "success" for s in data["steps"])
 
     def test_success_result_shows_duration(self) -> None:
+        """total_duration_sec equals sum of step durations."""
         result = self._make_result(
             trace_steps=[("scan", "success", 1.0), ("pick", "success", 3.2)]
         )
-        output = _format_execution_result("pick banana", result)
-        assert "4.2s" in output
+        data = json.loads(_format_execution_result("pick banana", result))
+        assert data["total_duration_sec"] == 4.2
 
     def test_failure_result_shows_status(self) -> None:
         result = self._make_result(
@@ -331,15 +338,18 @@ class TestFormatExecutionResult:
         assert "IK solver failed" in output
 
     def test_failure_step_marked_failed(self) -> None:
+        """Failed step has non-success status in JSON."""
         result = self._make_result(
             success=False,
             status="failed",
             trace_steps=[("pick", "execution_failed", 0.5)],
         )
-        output = _format_execution_result("pick banana", result)
-        assert "pick(failed:" in output or "pick(failed)" in output
+        data = json.loads(_format_execution_result("pick banana", result))
+        assert data["steps"][0]["skill_name"] == "pick"
+        assert data["steps"][0]["status"] == "execution_failed"
 
     def test_failure_step_includes_error_detail(self) -> None:
+        """Failed step JSON includes error field and failure_reason."""
         trace = [
             StepTrace(step_id="s1", skill_name="scan", status="success", duration_sec=1.0),
             StepTrace(step_id="s2", skill_name="pick", status="execution_failed",
@@ -353,19 +363,22 @@ class TestFormatExecutionResult:
             trace=trace,
             failure_reason="Pick failed — could not determine target position",
         )
-        output = _format_execution_result("pick battery", result)
-        assert "scan(ok)" in output
-        assert "pick(failed: No valid 3D position samples from perception)" in output
-        assert "Pick failed — could not determine target position" in output
+        data = json.loads(_format_execution_result("pick battery", result))
+        scan_step = next(s for s in data["steps"] if s["skill_name"] == "scan")
+        pick_step = next(s for s in data["steps"] if s["skill_name"] == "pick")
+        assert scan_step["status"] == "success"
+        assert pick_step["error"] == "No valid 3D position samples from perception"
+        assert data["failure_reason"] == "Pick failed — could not determine target position"
 
     def test_string_passthrough(self) -> None:
         output = _format_execution_result("hello", "The robot is ready.")
         assert output == "The robot is ready."
 
-    def test_no_trace_omits_steps_line(self) -> None:
+    def test_no_trace_produces_empty_steps_list(self) -> None:
+        """Empty trace produces JSON with empty steps list."""
         result = self._make_result(trace_steps=[])
-        output = _format_execution_result("home", result)
-        assert "Steps:" not in output
+        data = json.loads(_format_execution_result("home", result))
+        assert data["steps"] == []
 
     def test_message_included_when_present(self) -> None:
         result = self._make_result(message="Task completed successfully.")

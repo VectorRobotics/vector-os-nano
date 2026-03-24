@@ -107,6 +107,59 @@ def parse_plan_response(goal: str, raw_text: str) -> TaskPlan:
     return TaskPlan(goal=goal, steps=steps, message=ai_message)
 
 
+def parse_action_response(raw_text: str) -> dict:
+    """Parse an LLM response for the agent loop into a single action dict.
+
+    Returns one of:
+        {"action": "skill_name", "params": {...}, "reasoning": "..."}
+        {"done": true, "summary": "..."}
+
+    Triple fallback:
+        1. JSON parse (with markdown fence stripping)
+        2. Regex extract action name
+        3. Default to {"action": "scan"} (safe, non-destructive)
+
+    Never raises.
+    """
+    if not raw_text or not raw_text.strip():
+        log.warning("Empty LLM response for agent loop, defaulting to scan")
+        return {"action": "scan", "params": {}, "reasoning": "empty response fallback"}
+
+    cleaned = _strip_markdown_fences(raw_text)
+
+    # Attempt 1: Full JSON parse
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            if data.get("done"):
+                return data
+            if "action" in data:
+                data.setdefault("params", {})
+                data.setdefault("reasoning", "")
+                return data
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 2: Regex extract action name
+    m = re.search(r'"action"\s*:\s*"(\w+)"', raw_text)
+    if m:
+        action = m.group(1)
+        log.warning("JSON parse failed, regex extracted action=%r", action)
+        # Try to extract params too
+        params: dict = {}
+        pm = re.search(r'"params"\s*:\s*(\{[^}]*\})', raw_text)
+        if pm:
+            try:
+                params = json.loads(pm.group(1))
+            except json.JSONDecodeError:
+                pass
+        return {"action": action, "params": params, "reasoning": "regex fallback"}
+
+    # Attempt 3: Safe default
+    log.warning("Could not parse agent loop response: %.200s — defaulting to scan", raw_text)
+    return {"action": "scan", "params": {}, "reasoning": "parse failure fallback"}
+
+
 # ---------------------------------------------------------------------------
 # ClaudeProvider
 # ---------------------------------------------------------------------------
@@ -221,13 +274,60 @@ class ClaudeProvider:
         system_prompt: str,
         history: list[dict[str, Any]] | None = None,
         model_override: str | None = None,
+        image: Any = None,
     ) -> str:
-        """Free-form chat with conversation history."""
+        """Free-form chat with conversation history.
+
+        Args:
+            user_message: User text.
+            system_prompt: System prompt.
+            history: Prior conversation turns.
+            model_override: Override model.
+            image: Optional numpy array (H, W, 3) RGB image to include
+                   in the user message via base64 encoding.
+        """
         messages: list[dict[str, Any]] = []
         if history:
             messages.extend(history[-self.max_history:])
-        messages.append({"role": "user", "content": user_message})
+
+        if image is not None:
+            # Build multimodal message with image
+            content: list[dict[str, Any]] = [
+                {"type": "text", "text": user_message},
+            ]
+            try:
+                b64 = self._encode_image(image)
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                })
+            except Exception as exc:
+                log.warning("Failed to encode image: %s", exc)
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": user_message})
+
         return self._chat_completion(system_prompt, messages, model_override)
+
+    @staticmethod
+    def _encode_image(image: Any) -> str:
+        """Encode a numpy RGB image to base64 JPEG string."""
+        import base64
+        import io
+        try:
+            from PIL import Image
+            img = Image.fromarray(image)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            return base64.b64encode(buf.getvalue()).decode("ascii")
+        except ImportError:
+            pass
+        # Fallback: cv2
+        import cv2
+        bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        _, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        import base64
+        return base64.b64encode(buf.tobytes()).decode("ascii")
 
     def summarize(
         self,
@@ -242,6 +342,29 @@ class ClaudeProvider:
             {"role": "user", "content": "Summarize the execution results."}
         ]
         return self._chat_completion(system, messages, model_override)
+
+    def decide_next_action(
+        self,
+        goal: str,
+        observation: dict,
+        skill_schemas: list[dict],
+        history: list[dict],
+        model_override: str | None = None,
+    ) -> dict:
+        """Decide the next action for the agent loop.
+
+        Returns a dict with either {"action": ..., "params": ...} or {"done": true, "summary": ...}.
+        """
+        from vector_os_nano.llm.prompts import build_agent_loop_prompt
+        system_prompt = build_agent_loop_prompt(
+            goal=goal,
+            observation=observation,
+            skill_schemas=skill_schemas,
+            history=history,
+        )
+        messages: list[dict] = [{"role": "user", "content": goal}]
+        raw = self._chat_completion(system_prompt, messages, model_override)
+        return parse_action_response(raw)
 
     # ------------------------------------------------------------------
     # Internal helpers

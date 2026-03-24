@@ -45,6 +45,7 @@ class DetectSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {}
+    failure_modes: list[str] = ["no_perception", "no_detections", "track_failed", "calibration_error"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         if context.perception is None:
@@ -52,6 +53,7 @@ class DetectSkill:
             return SkillResult(
                 success=False,
                 error_message="No perception backend available",
+                result_data={"diagnosis": "no_perception"},
             )
 
         query: str = params.get("query", "all objects")
@@ -65,27 +67,31 @@ class DetectSkill:
             return SkillResult(
                 success=False,
                 error_message=f"Perception error: {exc}",
+                result_data={"diagnosis": "no_perception", "error_detail": str(exc)},
             )
 
         if not detections:
             logger.info("[DETECT] No objects detected")
             return SkillResult(
                 success=True,
-                result_data={"objects": [], "count": 0},
+                result_data={"objects": [], "count": 0, "diagnosis": "no_detections", "query": query},
             )
 
         logger.info("[DETECT] VLM found %d object(s), getting 3D positions...", len(detections))
 
         # Step 2: Track to get 3D positions (tracker + depth → pointcloud → centroid)
         tracked_objects = []
+        track_warning: str | None = None
         try:
             tracked_objects = context.perception.track(detections)
         except Exception as exc:
             logger.warning("[DETECT] Tracking failed, storing 2D-only: %s", exc)
+            track_warning = str(exc)
 
         # Step 3: Store in world model
         now = time.time()
         object_summaries: list[dict] = []
+        merged_count = 0
 
         for idx, det in enumerate(detections):
             # If VLM returned the query as label (e.g., "all objects" for every detection),
@@ -94,7 +100,20 @@ class DetectSkill:
             if label.lower() in ("all objects", "all", "objects", "everything"):
                 label = f"object_{idx}"
             safe_label = label.replace(" ", "_").lower()
-            obj_id = f"{safe_label}_{idx}"
+
+            # Merge with existing world model objects by label
+            existing = context.world_model.get_objects_by_label(label)
+            if existing:
+                obj_id = existing[0].object_id  # Reuse existing ID
+                merged_count += 1
+            else:
+                # Generate unique ID avoiding collisions
+                existing_ids = {o.object_id for o in context.world_model.get_objects()}
+                counter = 0
+                obj_id = f"{safe_label}_{counter}"
+                while obj_id in existing_ids:
+                    counter += 1
+                    obj_id = f"{safe_label}_{counter}"
 
             # Try to get 3D position from tracked object
             x, y, z = 0.0, 0.0, 0.0
@@ -150,13 +169,19 @@ class DetectSkill:
                 summary["position_cm"] = [round(x * 100, 1), round(y * 100, 1), round(z * 100, 1)]
             object_summaries.append(summary)
 
-        logger.info("[DETECT] Detected %d object(s), %d with 3D positions",
-                    len(detections), sum(1 for s in object_summaries if s.get("has_3d")))
+        logger.info("[DETECT] Detected %d object(s), %d with 3D positions, %d merged",
+                    len(detections), sum(1 for s in object_summaries if s.get("has_3d")), merged_count)
+
+        result_data: dict = {
+            "objects": object_summaries,
+            "count": len(object_summaries),
+            "diagnosis": "ok",
+            "merged_count": merged_count,
+        }
+        if track_warning is not None:
+            result_data["track_warning"] = track_warning
 
         return SkillResult(
             success=True,
-            result_data={
-                "objects": object_summaries,
-                "count": len(object_summaries),
-            },
+            result_data=result_data,
         )

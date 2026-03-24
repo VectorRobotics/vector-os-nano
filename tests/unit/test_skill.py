@@ -20,6 +20,7 @@ def make_mock_skill(name: str, description: str = "A skill",
     skill.preconditions = preconditions or []
     skill.postconditions = postconditions or []
     skill.effects = {}
+    skill.failure_modes = []
     skill.execute.return_value = SkillResult(success=True)
     return skill
 

@@ -205,6 +205,94 @@ def create_app(agent: Any, config: dict) -> FastAPI:
     async def api_history():
         return _command_history
 
+    @app.get("/api/skills")
+    async def api_skills():
+        """List available skills with JSON schemas."""
+        if _agent is None:
+            return {"skills": []}
+        return {"skills": _agent._skill_registry.to_schemas()}
+
+    @app.get("/api/world")
+    async def api_world():
+        """Current world model state."""
+        if _agent is None:
+            return {"objects": [], "robot": {}}
+        return _agent.world.to_dict()
+
+    @app.post("/api/execute")
+    async def api_execute(body: dict):
+        """Execute a natural language instruction.
+
+        Body: {"instruction": "pick the banana"}
+        Returns: ExecutionResult as JSON.
+        """
+        if _agent is None:
+            return {"success": False, "error": "No agent configured"}
+        instruction = body.get("instruction", "")
+        if not instruction:
+            return {"success": False, "error": "Missing 'instruction' field"}
+        async with _command_lock:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, _agent.execute, instruction
+            )
+        return result.to_dict()
+
+    @app.post("/api/skill/{skill_name}")
+    async def api_skill(skill_name: str, body: dict = None):
+        """Execute a skill directly with structured params.
+
+        POST /api/skill/pick {"object_label": "banana", "mode": "drop"}
+        Returns: ExecutionResult as JSON.
+        """
+        if _agent is None:
+            return {"success": False, "error": "No agent configured"}
+        params = body or {}
+        async with _command_lock:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, _agent.execute_skill, skill_name, params
+            )
+        return result.to_dict()
+
+    @app.post("/api/run_goal")
+    async def api_run_goal(body: dict):
+        """Execute an iterative goal via agent loop.
+
+        Body: {"goal": "clean the table", "max_iterations": 10, "verify": true}
+        Returns: GoalResult as JSON.
+        """
+        if _agent is None:
+            return {"success": False, "error": "No agent configured"}
+        goal = body.get("goal", "")
+        if not goal:
+            return {"success": False, "error": "Missing 'goal' field"}
+        max_iter = body.get("max_iterations", 10)
+        verify = body.get("verify", True)
+        async with _command_lock:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _agent.run_goal(goal, max_iterations=max_iter, verify=verify)
+            )
+        return result.to_dict()
+
+    @app.get("/api/camera")
+    async def api_camera():
+        """Get current camera frame as JPEG."""
+        from fastapi.responses import Response
+        if _agent is None or _agent._perception is None:
+            return Response(content=b"", media_type="text/plain", status_code=404)
+        try:
+            frame = await asyncio.get_event_loop().run_in_executor(
+                None, _agent._perception.get_color_frame
+            )
+            if frame is None:
+                return Response(content=b"", media_type="text/plain", status_code=404)
+            # Encode as JPEG
+            import cv2
+            bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            _, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return Response(content=buf.tobytes(), media_type="image/jpeg")
+        except Exception as exc:
+            return Response(content=str(exc).encode(), media_type="text/plain", status_code=500)
+
     @app.websocket("/ws/chat")
     async def ws_chat(ws: WebSocket):
         await ws.accept()

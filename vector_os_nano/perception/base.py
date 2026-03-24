@@ -31,6 +31,14 @@ class PerceptionProtocol(Protocol):
         """Return pinhole camera intrinsic parameters."""
         ...
 
+    def caption(self, length: str = "normal") -> str:
+        """Generate a natural language caption for the current frame."""
+        ...
+
+    def visual_query(self, question: str) -> str:
+        """Answer a free-form question about the current frame."""
+        ...
+
     def detect(self, query: str) -> list[Detection]:
         """Run VLM detection for objects matching query.
 
