@@ -1,5 +1,8 @@
 """Hardware abstraction layer.
 
-Contains the ArmProtocol and GripperProtocol definitions plus the
-SO-101 reference implementation.
+Contains ArmProtocol, GripperProtocol, and BaseProtocol definitions plus
+concrete implementations (SO-101, MuJoCo sim, etc.).
 """
+from vector_os_nano.hardware.base import BaseProtocol
+
+__all__ = ["BaseProtocol"]

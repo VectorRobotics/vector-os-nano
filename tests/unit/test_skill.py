@@ -160,7 +160,8 @@ class TestSkillContext:
         assert isinstance(context.config, dict)
         assert len(context.config) == 0
 
-    def test_arms_default_none(self):
+    def test_arms_default_empty_no_base(self):
+        """When no dict registries are passed, arms is empty dict and base is None."""
         from vector_os_nano.core.skill import SkillContext
         from vector_os_nano.core.world_model import WorldModel
         context = SkillContext(
@@ -170,7 +171,10 @@ class TestSkillContext:
             world_model=WorldModel(),
             calibration=None,
         )
-        assert context.arms is None
+        # arms dict is empty when no dict-style registry was provided
+        assert isinstance(context.arms, dict)
+        assert len(context.arms) == 0
+        # base property returns None when no bases dict and no legacy base
         assert context.base is None
 
 

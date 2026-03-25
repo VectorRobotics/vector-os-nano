@@ -113,3 +113,80 @@ class TestMuJoCoGo2Walk:
         pos = go2.get_position()
         assert pos[2] > 0.15, f"Robot fell during 5s walk: z={pos[2]:.3f}"
         go2.disconnect()
+
+
+class TestMuJoCoGo2HAL:
+    """Tests for the new HAL interface (set_velocity, odometry, lidar)."""
+
+    def test_name_property(self):
+        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+        go2 = MuJoCoGo2(gui=False)
+        go2.connect()
+        assert go2.name == "mujoco_go2"
+        go2.disconnect()
+
+    def test_supports_holonomic(self):
+        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+        go2 = MuJoCoGo2(gui=False)
+        go2.connect()
+        assert go2.supports_holonomic is True
+        go2.disconnect()
+
+    def test_supports_lidar(self):
+        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+        go2 = MuJoCoGo2(gui=False)
+        go2.connect()
+        assert go2.supports_lidar is True
+        go2.disconnect()
+
+    def test_set_velocity_changes_position(self):
+        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+        import time
+        go2 = MuJoCoGo2(gui=False)
+        go2.connect()
+        go2.stand()
+        start = go2.get_position()
+        go2.set_velocity(0.3, 0, 0)
+        time.sleep(2.0)
+        go2.set_velocity(0, 0, 0)
+        time.sleep(0.2)  # let physics settle
+        end = go2.get_position()
+        dist = ((end[0]-start[0])**2 + (end[1]-start[1])**2)**0.5
+        assert dist > 0.1, f"Robot didn't move: dist={dist}"
+        assert end[2] > 0.15, "Robot fell"
+        go2.disconnect()
+
+    def test_get_odometry(self):
+        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+        from vector_os_nano.core.types import Odometry
+        go2 = MuJoCoGo2(gui=False)
+        go2.connect()
+        go2.stand()
+        odom = go2.get_odometry()
+        assert isinstance(odom, Odometry)
+        assert odom.timestamp > 0
+        # Standing robot should have qw close to 1
+        assert abs(odom.qw) > 0.5
+        go2.disconnect()
+
+    def test_get_lidar_scan(self):
+        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+        from vector_os_nano.core.types import LaserScan
+        go2 = MuJoCoGo2(gui=False)
+        go2.connect()
+        go2.stand()
+        scan = go2.get_lidar_scan()
+        assert isinstance(scan, LaserScan)
+        assert len(scan.ranges) == 360
+        assert scan.range_max == 12.0
+        # In the room scene, some rays should hit walls (finite range)
+        finite_ranges = [r for r in scan.ranges if r < scan.range_max]
+        assert len(finite_ranges) > 0, "No walls detected by lidar"
+        go2.disconnect()
+
+    def test_satisfies_base_protocol(self):
+        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+        from vector_os_nano.hardware.base import BaseProtocol
+        go2 = MuJoCoGo2(gui=False)
+        # Check protocol satisfaction (structural typing)
+        assert isinstance(go2, BaseProtocol)

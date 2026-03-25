@@ -10,12 +10,15 @@ The SkillRegistry matches user input against aliases and routes accordingly.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from vector_os_nano.core.types import SkillResult
 
 logger = logging.getLogger(__name__)
+
+# Sentinel for detecting whether legacy kwargs were explicitly supplied.
+_UNSET: object = object()
 
 
 # ---------------------------------------------------------------------------
@@ -91,18 +94,173 @@ class Skill(Protocol):
 # SkillContext
 # ---------------------------------------------------------------------------
 
-@dataclass
 class SkillContext:
-    """Everything a skill needs during execution."""
+    """Everything a skill needs during execution.
 
-    arm: Any
-    gripper: Any
-    perception: Any
-    world_model: Any
-    calibration: Any
-    config: dict = field(default_factory=dict)
-    arms: dict | None = None
-    base: Any | None = None
+    Hardware is accessed via typed registries (dicts). Skills query capabilities
+    before using hardware. Backward-compatible flat-field kwargs allow existing
+    skill code (context.arm, context.base, etc.) to continue working unchanged.
+
+    New-style construction (dict registries):
+        ctx = SkillContext(
+            arms={"so101": arm},
+            grippers={"so101": gripper},
+            bases={"go2": base},
+            perception_sources={"realsense": cam},
+            world_model=wm,
+        )
+
+    Legacy construction (flat fields, backward-compatible):
+        ctx = SkillContext(arm=arm, gripper=gripper, base=base,
+                           perception=cam, world_model=wm, calibration=cal)
+    """
+
+    def __init__(
+        self,
+        *,
+        # New-style dict registries
+        arms: dict | None = None,
+        grippers: dict | None = None,
+        bases: dict | None = None,
+        perception_sources: dict | None = None,
+        services: dict | None = None,
+        # Shared state
+        world_model: Any = None,
+        calibration: Any = None,
+        config: dict | None = None,
+        # Legacy flat-field kwargs (backward-compatible)
+        arm: Any = _UNSET,
+        gripper: Any = _UNSET,
+        perception: Any = _UNSET,
+        base: Any = _UNSET,
+    ) -> None:
+        # Dict registries (new-style API)
+        self.arms: dict = arms if arms is not None else {}
+        self.grippers: dict = grippers if grippers is not None else {}
+        self.bases: dict = bases if bases is not None else {}
+        self.perception_sources: dict = (
+            perception_sources if perception_sources is not None else {}
+        )
+        self.services: dict = services if services is not None else {}
+
+        # Shared state
+        self.world_model: Any = world_model
+        self.calibration: Any = calibration
+        self.config: dict = config if config is not None else {}
+
+        # Legacy flat fields — stored as-is so old code can still read them;
+        # property accessors prefer the dict registries when both are present.
+        self._legacy_arm: Any = arm if arm is not _UNSET else None
+        self._legacy_gripper: Any = gripper if gripper is not _UNSET else None
+        self._legacy_perception: Any = perception if perception is not _UNSET else None
+        self._legacy_base: Any = base if base is not _UNSET else None
+
+        # Track whether legacy kwargs were explicitly supplied (for .arms / .base
+        # backward-compat attribute access in old tests that assert arms is None).
+        self._has_legacy_arm: bool = arm is not _UNSET
+        self._has_legacy_gripper: bool = gripper is not _UNSET
+        self._has_legacy_perception: bool = perception is not _UNSET
+        self._has_legacy_base: bool = base is not _UNSET
+
+    # --- Backward-compatible property accessors ---
+
+    @property
+    def arm(self) -> Any:
+        """Return first arm from registry, falling back to legacy flat field."""
+        if self.arms:
+            return next(iter(self.arms.values()))
+        return self._legacy_arm
+
+    @property
+    def gripper(self) -> Any:
+        """Return first gripper from registry, falling back to legacy flat field."""
+        if self.grippers:
+            return next(iter(self.grippers.values()))
+        return self._legacy_gripper
+
+    @property
+    def base(self) -> Any:
+        """Return first base from registry, falling back to legacy flat field."""
+        if self.bases:
+            return next(iter(self.bases.values()))
+        return self._legacy_base
+
+    @base.setter
+    def base(self, value: Any) -> None:
+        """Set base — clears the bases dict and updates the legacy field."""
+        self.bases.clear()
+        self._legacy_base = value
+        self._has_legacy_base = value is not None
+
+    @property
+    def perception(self) -> Any:
+        """Return first perception source from registry, falling back to legacy."""
+        if self.perception_sources:
+            return next(iter(self.perception_sources.values()))
+        return self._legacy_perception
+
+    # --- Capability queries ---
+
+    def has_arm(self, name: str | None = None) -> bool:
+        if name is not None:
+            return name in self.arms
+        return bool(self.arms) or self._legacy_arm is not None
+
+    def has_gripper(self, name: str | None = None) -> bool:
+        if name is not None:
+            return name in self.grippers
+        return bool(self.grippers) or self._legacy_gripper is not None
+
+    def has_base(self, name: str | None = None) -> bool:
+        if name is not None:
+            return name in self.bases
+        return bool(self.bases) or self._legacy_base is not None
+
+    def has_perception(self, name: str | None = None) -> bool:
+        if name is not None:
+            return name in self.perception_sources
+        return bool(self.perception_sources) or self._legacy_perception is not None
+
+    def get_arm(self, name: str | None = None) -> Any:
+        if name is not None:
+            return self.arms.get(name)
+        return self.arm
+
+    def get_gripper(self, name: str | None = None) -> Any:
+        if name is not None:
+            return self.grippers.get(name)
+        return self.gripper
+
+    def get_base(self, name: str | None = None) -> Any:
+        if name is not None:
+            return self.bases.get(name)
+        return self.base
+
+    def capabilities(self) -> dict:
+        return {
+            "has_arm": self.has_arm(),
+            "has_gripper": self.has_gripper(),
+            "has_base": self.has_base(),
+            "has_perception": self.has_perception(),
+            "arm_names": list(self.arms.keys()),
+            "gripper_names": list(self.grippers.keys()),
+            "base_names": list(self.bases.keys()),
+            "perception_names": list(self.perception_sources.keys()),
+        }
+
+    def __repr__(self) -> str:
+        parts = []
+        if self.arms:
+            parts.append(f"arms={list(self.arms.keys())!r}")
+        elif self._legacy_arm is not None:
+            parts.append("arm=<legacy>")
+        if self.bases:
+            parts.append(f"bases={list(self.bases.keys())!r}")
+        elif self._legacy_base is not None:
+            parts.append("base=<legacy>")
+        if self.world_model is not None:
+            parts.append("world_model=set")
+        return f"SkillContext({', '.join(parts)})"
 
 
 # ---------------------------------------------------------------------------

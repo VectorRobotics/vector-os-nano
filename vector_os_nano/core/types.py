@@ -438,3 +438,71 @@ class GoalResult:
             "summary": self.summary,
             "final_world_state": self.final_world_state,
         }
+
+
+# ---------------------------------------------------------------------------
+# Navigation sensor types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Odometry:
+    """Robot odometry: pose + velocity in a single snapshot."""
+
+    timestamp: float
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    qx: float = 0.0
+    qy: float = 0.0
+    qz: float = 0.0
+    qw: float = 1.0
+    vx: float = 0.0
+    vy: float = 0.0
+    vz: float = 0.0
+    vyaw: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {field: getattr(self, field) for field in
+                ["timestamp", "x", "y", "z", "qx", "qy", "qz", "qw", "vx", "vy", "vz", "vyaw"]}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Odometry":
+        return cls(**{k: float(d.get(k, 0.0 if k != "qw" else 1.0)) for k in
+                      ["timestamp", "x", "y", "z", "qx", "qy", "qz", "qw", "vx", "vy", "vz", "vyaw"]})
+
+
+@dataclass(frozen=True)
+class LaserScan:
+    """2D laser scan (simulated or real)."""
+
+    timestamp: float
+    angle_min: float
+    angle_max: float
+    angle_increment: float
+    range_min: float
+    range_max: float
+    ranges: tuple[float, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timestamp": self.timestamp,
+            "angle_min": self.angle_min,
+            "angle_max": self.angle_max,
+            "angle_increment": self.angle_increment,
+            "range_min": self.range_min,
+            "range_max": self.range_max,
+            "ranges": list(self.ranges),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "LaserScan":
+        return cls(
+            timestamp=float(d["timestamp"]),
+            angle_min=float(d["angle_min"]),
+            angle_max=float(d["angle_max"]),
+            angle_increment=float(d["angle_increment"]),
+            range_min=float(d["range_min"]),
+            range_max=float(d["range_max"]),
+            ranges=tuple(float(r) for r in d["ranges"]),
+        )

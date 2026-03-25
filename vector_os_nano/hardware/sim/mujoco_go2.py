@@ -12,11 +12,19 @@ Joint ordering (MuJoCo ctrl and qpos[7:19]):
     9-11: RR  hip, thigh, calf
 
 Quaternion convention: MuJoCo uses (w, x, y, z) in qpos[3:7].
+
+Background physics thread:
+    connect() starts a daemon thread (_physics_loop) at 1 kHz.
+    set_velocity() writes (vx, vy, vyaw) under _cmd_lock (non-blocking).
+    stand/sit/lie_down pause the thread, run PD synchronously, then resume.
+    disconnect() stops the thread cleanly.
 """
 from __future__ import annotations
 
 import logging
 import math
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +107,9 @@ _LEG_NAMES: list[str] = ["FL", "FR", "RL", "RR"]
 # Paths
 _ROOM_XML: Path = Path(__file__).parent / "go2_room.xml"
 
+# Lidar update interval (physics steps between lidar refreshes, ~10 Hz at 1 kHz)
+_LIDAR_UPDATE_INTERVAL: int = 100
+
 
 def _build_room_scene_xml() -> Path:
     """Build a composite scene XML that places the Go2 inside an indoor room.
@@ -151,6 +162,34 @@ class MuJoCoGo2:
         self._mpc: Any = None       # CentroidalMPC (lazy — first walk() call)
         self._leg_ctrl: Any = None  # LegController
 
+        # Background physics thread state
+        self._cmd_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._cmd_lock: threading.Lock = threading.Lock()
+        self._physics_thread: threading.Thread | None = None
+        self._running: bool = False
+        self._last_odom: Any = None   # Odometry dataclass or None
+        self._last_scan: Any = None   # LaserScan dataclass or None
+        self._scan_counter: int = 0
+
+    # ------------------------------------------------------------------
+    # Capability properties (BaseProtocol)
+    # ------------------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        """Unique identifier for this base implementation."""
+        return "mujoco_go2"
+
+    @property
+    def supports_holonomic(self) -> bool:
+        """Go2 can strafe — omnidirectional motion."""
+        return True
+
+    @property
+    def supports_lidar(self) -> bool:
+        """Lidar simulated via mj_ray."""
+        return True
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -191,7 +230,7 @@ class MuJoCoGo2:
         self._pin = PinGo2Model()
         self._gait = Gait(_GAIT_HZ, _GAIT_DUTY)
         self._traj = ComTraj(self._pin)
-        self._mpc = None  # lazy init on first walk() call
+        self._mpc = None  # lazy init on first walk() / physics loop call
         self._leg_ctrl = LegController()
 
         if self._gui:
@@ -217,8 +256,23 @@ class MuJoCoGo2:
         self._connected = True
         logger.info("MuJoCoGo2 connected (gui=%s)", self._gui)
 
+        # Start background physics thread AFTER marking connected.
+        # stand/sit/lie_down pause the thread, so callers may call stand()
+        # immediately after connect(); _pause_physics/_resume_physics handles it.
+        self._running = True
+        self._physics_thread = threading.Thread(
+            target=self._physics_loop, daemon=True, name="mujoco_go2_physics"
+        )
+        self._physics_thread.start()
+
     def disconnect(self) -> None:
-        """Close viewer and release model. Idempotent."""
+        """Stop physics thread, close viewer and release model. Idempotent."""
+        # Stop physics thread first
+        self._running = False
+        if self._physics_thread is not None:
+            self._physics_thread.join(timeout=2.0)
+            self._physics_thread = None
+
         if self._viewer is not None:
             try:
                 self._viewer.close()
@@ -231,11 +285,147 @@ class MuJoCoGo2:
         self._traj = None
         self._mpc = None
         self._leg_ctrl = None
+        self._last_odom = None
+        self._last_scan = None
         self._connected = False
 
     def _require_connection(self) -> None:
         if not self._connected:
             raise RuntimeError("MuJoCoGo2: not connected. Call connect() first.")
+
+    # ------------------------------------------------------------------
+    # Physics thread management
+    # ------------------------------------------------------------------
+
+    def _pause_physics(self) -> None:
+        """Stop the physics thread synchronously. Safe to call if not running."""
+        self._running = False
+        if self._physics_thread is not None:
+            self._physics_thread.join(timeout=2.0)
+            self._physics_thread = None
+
+    def _resume_physics(self) -> None:
+        """Restart the physics thread. Must only be called when connected."""
+        self._running = True
+        self._physics_thread = threading.Thread(
+            target=self._physics_loop, daemon=True, name="mujoco_go2_physics"
+        )
+        self._physics_thread.start()
+
+    # ------------------------------------------------------------------
+    # Background physics loop
+    # ------------------------------------------------------------------
+
+    def _physics_loop(self) -> None:
+        """Background physics: read cmd_vel, run MPC, step MuJoCo, update sensors.
+
+        Runs at ~1 kHz. Real-time pacing uses time.perf_counter with sleep.
+        All mj_* calls happen exclusively on this thread (MuJoCo not thread-safe).
+        """
+        mj = _get_mujoco()
+
+        gait_period = self._gait.gait_period
+        mpc_dt = gait_period / _MPC_DT_FACTOR
+        mpc_hz = 1.0 / mpc_dt
+        steps_per_mpc = max(1, int(_CTRL_HZ // mpc_hz))
+
+        U_opt: Any = None
+        ctrl_i: int = 0
+        tau_hold: np.ndarray = np.zeros(12, dtype=float)
+        sim_step: int = 0
+        scan_counter: int = 0
+
+        while self._running:
+            loop_start = time.perf_counter()
+
+            # Read commanded velocity atomically
+            with self._cmd_lock:
+                vx, vy, vyaw = self._cmd_vel
+
+            time_now = float(self._mj.data.time)
+
+            # Skip MPC when velocity is zero and we have no pending command
+            is_moving = (vx != 0.0 or vy != 0.0 or vyaw != 0.0)
+
+            # Controller update at CTRL_HZ
+            if sim_step % _CTRL_DECIM == 0:
+                self._mj.update_pin_with_mujoco(self._pin)
+
+                if is_moving:
+                    # MPC update when scheduled
+                    if ctrl_i % steps_per_mpc == 0:
+                        self._traj.generate_traj(
+                            self._pin, self._gait, time_now,
+                            vx, vy, _Z_DES, vyaw, time_step=mpc_dt,
+                        )
+                        if self._mpc is None:
+                            from convex_mpc.centroidal_mpc import CentroidalMPC  # noqa: PLC0415
+                            self._mpc = CentroidalMPC(self._pin, self._traj)
+
+                        sol = self._mpc.solve_QP(self._pin, self._traj, False)
+                        n = self._traj.N
+                        w_opt = sol["x"].full().flatten()
+                        U_opt = w_opt[12 * n:].reshape((12, n), order="F")
+
+                    if U_opt is not None:
+                        mpc_force = U_opt[:, 0]
+                        tau = np.zeros(12, dtype=float)
+                        for i, leg in enumerate(_LEG_NAMES):
+                            leg_out = self._leg_ctrl.compute_leg_torque(
+                                leg, self._pin, self._gait,
+                                mpc_force[i * 3:(i + 1) * 3], time_now,
+                            )
+                            tau[i * 3:(i + 1) * 3] = leg_out.tau
+                        tau = np.clip(tau, -_TAU_LIM_MPC, _TAU_LIM_MPC)
+                        tau_hold = tau.copy()
+
+                ctrl_i += 1
+
+            # Physics step (split: kinematics → apply ctrl → dynamics)
+            mj.mj_step1(self._mj.model, self._mj.data)
+            self._mj.set_joint_torque(tau_hold)
+            mj.mj_step2(self._mj.model, self._mj.data)
+
+            # Update odometry every step (cheap)
+            self._update_odometry()
+
+            # Update lidar at ~10 Hz
+            scan_counter += 1
+            if scan_counter >= _LIDAR_UPDATE_INTERVAL:
+                self._update_lidar()
+                scan_counter = 0
+
+            # Viewer sync
+            if self._viewer is not None and sim_step % _VIEWER_SYNC_EVERY == 0:
+                self._viewer.sync()
+
+            sim_step += 1
+
+            # Real-time pacing: target 1 kHz
+            elapsed = time.perf_counter() - loop_start
+            sleep_time = _SIM_DT - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    # ------------------------------------------------------------------
+    # Velocity command (non-blocking)
+    # ------------------------------------------------------------------
+
+    def set_velocity(self, vx: float, vy: float, vyaw: float) -> None:
+        """Set target body velocity. Non-blocking. Physics thread applies it.
+
+        Args:
+            vx: Forward velocity in m/s. Clamped to ±0.8.
+            vy: Lateral velocity in m/s. Clamped to ±0.4.
+            vyaw: Yaw rate in rad/s. Clamped to ±4.0.
+        """
+        self._require_connection()
+        with self._cmd_lock:
+            self._cmd_vel = (
+                float(np.clip(vx, -_VX_MAX, _VX_MAX)),
+                float(np.clip(vy, -_VY_MAX, _VY_MAX)),
+                float(np.clip(vyaw, -_VYAW_MAX, _VYAW_MAX)),
+            )
 
     # ------------------------------------------------------------------
     # State queries
@@ -272,8 +462,102 @@ class MuJoCoGo2:
         self._require_connection()
         return list(self._mj.data.qvel[6:18].astype(float))
 
+    def get_odometry(self) -> Any:
+        """Return full odometry snapshot as Odometry dataclass.
+
+        Reads from the snapshot updated by the physics thread.
+        Falls back to a synchronous read if thread hasn't populated it yet.
+
+        Returns:
+            vector_os_nano.core.types.Odometry
+        """
+        self._require_connection()
+        if self._last_odom is None:
+            self._update_odometry()
+        return self._last_odom
+
+    def get_lidar_scan(self) -> Any:
+        """Return most recent 2D laser scan as LaserScan dataclass.
+
+        Updated at ~10 Hz by the physics thread.
+        Falls back to a synchronous ray-cast if not yet populated.
+
+        Returns:
+            vector_os_nano.core.types.LaserScan
+        """
+        self._require_connection()
+        if self._last_scan is None:
+            self._update_lidar()
+        return self._last_scan
+
     # ------------------------------------------------------------------
-    # PD control
+    # Sensor update helpers (called from physics thread or on-demand)
+    # ------------------------------------------------------------------
+
+    def _update_odometry(self) -> None:
+        """Snapshot current MuJoCo state into an Odometry dataclass."""
+        from vector_os_nano.core.types import Odometry  # noqa: PLC0415
+        q = self._mj.data.qpos
+        v = self._mj.data.qvel
+        # MuJoCo stores quaternion as (w, x, y, z) in qpos[3:7]
+        # Odometry uses (qx, qy, qz, qw) convention
+        self._last_odom = Odometry(
+            timestamp=float(self._mj.data.time),
+            x=float(q[0]),
+            y=float(q[1]),
+            z=float(q[2]),
+            qx=float(q[4]),   # MuJoCo x
+            qy=float(q[5]),   # MuJoCo y
+            qz=float(q[6]),   # MuJoCo z
+            qw=float(q[3]),   # MuJoCo w
+            vx=float(v[0]),
+            vy=float(v[1]),
+            vz=float(v[2]),
+            vyaw=float(v[5]),  # angular velocity around z axis
+        )
+
+    def _update_lidar(self) -> None:
+        """Cast 360 rays in the horizontal plane and store as LaserScan."""
+        from vector_os_nano.core.types import LaserScan  # noqa: PLC0415
+        mj = _get_mujoco()
+
+        pos = self._mj.data.qpos[0:3].copy().astype(np.float64)
+        pos[2] = 0.15  # lidar sensor height above ground
+
+        heading = self.get_heading()
+
+        n_rays = 360
+        ranges: list[float] = []
+        for i in range(n_rays):
+            angle = heading + math.radians(i - 180)
+            direction = np.array(
+                [math.cos(angle), math.sin(angle), 0.0], dtype=np.float64
+            )
+            geom_id = np.zeros(1, dtype=np.int32)
+            dist = mj.mj_ray(
+                self._mj.model,
+                self._mj.data,
+                pos,
+                direction,
+                None,
+                1,
+                -1,
+                geom_id,
+            )
+            ranges.append(float(dist) if dist > 0 else float("inf"))
+
+        self._last_scan = LaserScan(
+            timestamp=float(self._mj.data.time),
+            angle_min=-math.pi,
+            angle_max=math.pi,
+            angle_increment=math.radians(1.0),
+            range_min=0.1,
+            range_max=12.0,
+            ranges=tuple(ranges),
+        )
+
+    # ------------------------------------------------------------------
+    # PD control (runs synchronously — requires physics thread PAUSED)
     # ------------------------------------------------------------------
 
     def _pd_interpolate(
@@ -286,11 +570,21 @@ class MuJoCoGo2:
         Uses a tanh-based interpolated setpoint so the robot accelerates
         smoothly from its current configuration to the target.
 
+        Pauses and resumes the physics thread internally so it is safe to call
+        from any context (stand/sit/lie_down already pause, but _pd_interpolate
+        can also be called directly in tests).
+
         Args:
             target_joints: Desired joint positions, shape (12,).
             duration: Transition duration in seconds.
         """
         self._require_connection()
+
+        # Pause the physics thread if it is running (avoids MuJoCo data race)
+        was_running = self._running
+        if was_running:
+            self._pause_physics()
+
         mj = _get_mujoco()
 
         model = self._mj.model
@@ -331,6 +625,10 @@ class MuJoCoGo2:
             if self._viewer is not None and (step % _VIEWER_SYNC_EVERY == 0):
                 self._viewer.sync()
 
+        # Resume physics if it was running before we paused it
+        if was_running:
+            self._resume_physics()
+
     # ------------------------------------------------------------------
     # Posture commands
     # ------------------------------------------------------------------
@@ -351,13 +649,13 @@ class MuJoCoGo2:
         self._pd_interpolate(np.array(_LIE_DOWN_JOINTS, dtype=np.float64), duration=duration)
 
     def stop(self) -> None:
-        """Hold current joint positions with PD control for a brief moment."""
+        """Emergency stop: zero velocity command and hold current joints."""
         self._require_connection()
-        current = np.array(self._mj.data.qpos[7:19], dtype=np.float64)
-        self._pd_interpolate(current, duration=0.1)
+        with self._cmd_lock:
+            self._cmd_vel = (0.0, 0.0, 0.0)
 
     # ------------------------------------------------------------------
-    # MPC locomotion
+    # MPC locomotion (blocking)
     # ------------------------------------------------------------------
 
     def walk(
@@ -370,6 +668,7 @@ class MuJoCoGo2:
         """Walk at commanded body velocity using convex MPC locomotion.
 
         The robot must be in standing posture before calling (call stand() first).
+        Delegates to the background physics thread via set_velocity.
 
         Args:
             vx: Forward velocity command (m/s). Clamped to ±0.8.
@@ -381,90 +680,9 @@ class MuJoCoGo2:
             True if the walk completed without the robot falling.
         """
         self._require_connection()
-        mj = _get_mujoco()
-
-        vx = float(np.clip(vx, -_VX_MAX, _VX_MAX))
-        vy = float(np.clip(vy, -_VY_MAX, _VY_MAX))
-        vyaw = float(np.clip(vyaw, -_VYAW_MAX, _VYAW_MAX))
-
-        gait_period = self._gait.gait_period          # 1/3 s for 3 Hz
-        mpc_dt = gait_period / _MPC_DT_FACTOR         # ~0.0208 s
-        mpc_hz = 1.0 / mpc_dt
-        steps_per_mpc = max(1, int(_CTRL_HZ // mpc_hz))
-
-        sim_steps = int(duration * _SIM_HZ)
-
-        # Sync Pinocchio state from MuJoCo before generating first trajectory
-        self._mj.update_pin_with_mujoco(self._pin)
-        self._traj.generate_traj(
-            self._pin,
-            self._gait,
-            float(self._mj.data.time),
-            vx,
-            vy,
-            _Z_DES,
-            vyaw,
-            time_step=mpc_dt,
-        )
-
-        # Lazy-initialize MPC solver (needs a generated trajectory for sparsity)
-        if self._mpc is None:
-            from convex_mpc.centroidal_mpc import CentroidalMPC  # noqa: PLC0415
-            self._mpc = CentroidalMPC(self._pin, self._traj)
-
-        U_opt = np.zeros((12, self._traj.N), dtype=float)
-
-        ctrl_i = 0
-        tau_hold = np.zeros(12, dtype=float)
-
-        for k in range(sim_steps):
-            time_now_s = float(self._mj.data.time)
-
-            # Control update at CTRL_HZ
-            if k % _CTRL_DECIM == 0:
-                # Sync Pinocchio from current MuJoCo state
-                self._mj.update_pin_with_mujoco(self._pin)
-
-                # MPC update when scheduled
-                if ctrl_i % steps_per_mpc == 0:
-                    self._traj.generate_traj(
-                        self._pin,
-                        self._gait,
-                        time_now_s,
-                        vx,
-                        vy,
-                        _Z_DES,
-                        vyaw,
-                        time_step=mpc_dt,
-                    )
-                    sol = self._mpc.solve_QP(self._pin, self._traj, False)
-                    n = self._traj.N
-                    w_opt = sol["x"].full().flatten()
-                    U_opt = w_opt[12 * n:].reshape((12, n), order="F")
-
-                # Compute leg torques from MPC GRF at current horizon step
-                mpc_force = U_opt[:, 0]
-                tau = np.zeros(12, dtype=float)
-                for i, leg in enumerate(_LEG_NAMES):
-                    leg_out = self._leg_ctrl.compute_leg_torque(
-                        leg,
-                        self._pin,
-                        self._gait,
-                        mpc_force[i * 3:(i + 1) * 3],
-                        time_now_s,
-                    )
-                    tau[i * 3:(i + 1) * 3] = leg_out.tau
-
-                tau = np.clip(tau, -_TAU_LIM_MPC, _TAU_LIM_MPC)
-                tau_hold = tau.copy()
-                ctrl_i += 1
-
-            # Physics step: apply torques via split step
-            mj.mj_step1(self._mj.model, self._mj.data)
-            self._mj.set_joint_torque(tau_hold)
-            mj.mj_step2(self._mj.model, self._mj.data)
-
-            if self._viewer is not None and k % _VIEWER_SYNC_EVERY == 0:
-                self._viewer.sync()
-
-        return True
+        self.set_velocity(vx, vy, vyaw)
+        time.sleep(duration)
+        self.set_velocity(0.0, 0.0, 0.0)
+        time.sleep(0.1)  # brief settle
+        pos = self.get_position()
+        return pos[2] > 0.15  # upright check

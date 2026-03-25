@@ -949,11 +949,13 @@ class Agent:
                 logger.debug("Calibration not available: %s", exc)
 
         return SkillContext(
-            arm=self._arm,
-            gripper=self._gripper,
-            perception=self._perception,
+            arms={"default": self._arm} if self._arm else {},
+            grippers={"default": self._gripper} if self._gripper else {},
+            bases={"default": self._base} if self._base else {},
+            perception_sources=(
+                {"default": self._perception} if self._perception else {}
+            ),
             world_model=self._world_model,
             calibration=self._calibration,
             config=self._config,
-            base=self._base,
         )
