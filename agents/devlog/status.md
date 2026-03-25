@@ -1,138 +1,78 @@
-# Development Status — v0.2.0 FINAL
+# Development Status -- v0.3.0 Architecture
 
-**Session Date:** 2026-03-23  
-**Project:** Vector OS Nano SDK  
-**Status:** v0.2.0 stable release complete, ready for v0.3.0 planning  
-**Final Test Count:** 852+ tests passing (all critical features working)
-
----
-
-## v0.2.0 Final Summary
-
-### Major Features Delivered
-
-**Phase 1: LLM Memory + Model Router** (COMPLETE)
-- SessionMemory: Persistent cross-task conversation history (50 entries max)
-- ModelRouter: Complexity-driven model selection (Haiku for simple, Sonnet for complex)
-- Agent integration: Fixed conversation history reset bug
-- 120 new tests passing (78 unit + 42 integration)
-
-**Phase 2: MCP Server** (COMPLETE)
-- MCP tools: 7 skill tools + natural_language meta-tool + diagnostics + debug_perception = 10 total
-- MCP resources: 7 resources (world state, objects, 3 cameras, live camera for hardware)
-- VectorMCPServer: Full MCP protocol with stdio transport
-- Modes: --sim, --sim-headless, --hardware
-- Claude Desktop integration: .mcp.json auto-connect config
-
-**Phase 2.5: Critical Bug Fixes** (COMPLETE)
-1. **CRITICAL: depth_scale hardcoding** — D405 uses 0.1mm units (hw_scale=0.0001), code assumed 1mm (depth_scale=1000), producing 3D coords 10x too large. Root cause of all pick failures in both CLI and MCP. Fixed by reading actual `get_depth_scale()` from RealSense hardware. All pick operations now work.
-2. MOONDREAM_MODEL env var — MCP server now sets before VLMDetector init
-3. MCP parameter passing — Fixed string concat bug; now uses Agent.execute_skill()
-4. JSON Schema type mapping — SkillFlow float → JSON Schema number
-5. Python 3.10+ asyncio compatibility
-
-### Test Results
-- Phase 1 unit tests: 78 pass
-- Phase 1 integration tests: 42 pass
-- Phase 2 unit tests: 75 pass
-- Phase 2.5 new tests: 54 pass
-- Pre-existing tests: 783 pass (v0.1.0 features)
-- Skipped: 11 (ROS2 conditional)
-- **TOTAL: 852+ tests passing**
-
-### Known Regressions (non-blocking)
-- test_skill_schemas.py expects 7 skills, now has 8 (WaveSkill added)
+**Session Date:** 2026-03-25
+**Project:** Vector OS Nano SDK
+**Status:** ADR-003 proposed, awaiting CEO/CTO approval
+**Baseline:** v0.2.0 stable (852+ tests passing)
 
 ---
 
-## Session Activity
+## Current Activity
 
-### Commits This Session (~20)
-- e067cd9: MCP camera viewer with annotated RGB + depth + pointcloud centroids
-- e3de99c: CRITICAL FIX — read actual depth_scale from RealSense hardware
-- f6c2f4c: Add 54 tests for calibration, pick workspace, execute_skill
-- 772a536: Fix MOONDREAM_MODEL env var before VLMDetector init
-- e41f47a, 061056f: debug_perception tool + error reporting
-- ce5fafc: MCP hardware mode with camera viewer
-- dc9cdeb: Fix skill calls with structured params
-- And more (full history in git log)
+### Lead Architect (Opus) -- ACTIVE
+- Produced ADR-003: Hardware Abstraction Layer Redesign
+- Defined BaseProtocol, SkillContext redesign, MuJoCoGo2 background thread architecture
+- Created 11-task breakdown across 4 execution waves
+- Awaiting CEO/CTO approval before agents begin execution
 
-### Files Changed
-**New:**
-- vector_os_nano/mcp/ (tools, resources, server, __main__, __init__)
-- .mcp.json
-- tests/unit/test_calibration_transform.py, test_pick_workspace.py, test_execute_skill.py
-- And more
+### Alpha -- DONE
+- T2 (BaseProtocol): COMPLETE
+- T4 (MuJoCoGo2 HAL refactor): COMPLETE
+  - Background physics thread at 1 kHz (daemon thread, starts in connect, stops in disconnect)
+  - set_velocity(vx, vy, vyaw): non-blocking, Lock-protected
+  - walk() refactored to set_velocity + sleep + set_velocity(0,0,0)
+  - get_odometry() -> Odometry dataclass (updated every physics step)
+  - get_lidar_scan() -> LaserScan (360 mj_ray rays, cached at ~10 Hz)
+  - name / supports_holonomic / supports_lidar properties added
+  - BaseProtocol satisfied (isinstance check passes)
+  - _pd_interpolate pauses/resumes physics thread internally (MuJoCo thread-safety)
+  - 17/17 tests passing (10 existing + 7 new HAL tests)
 
-**Modified:**
-- vector_os_nano/core/agent.py (SessionMemory + ModelRouter integration)
-- vector_os_nano/perception/ (depth_scale fix, VLM env var)
-- vector_os_nano/llm/ (model_override parameter)
-- config/default.yaml (models + mcp sections)
-- pyproject.toml (mcp optional dependency)
+### Gamma -- DONE
+- T1 (Odometry + LaserScan types): COMPLETE
+- Appended Odometry and LaserScan frozen dataclasses to vector_os_nano/core/types.py
+- Created tests/unit/test_types_hal.py (11 tests, all passing)
+- Zero regressions in existing test suite
 
----
-
-## Entry Points (v0.2.0)
-
-**CLI:**
-```bash
-python run.py                  # Real hardware or simulation
-python run.py --sim            # With MuJoCo viewer
-python run.py --sim-headless   # Headless
-python run.py --dashboard      # TUI mode
-```
-
-**MCP Server:**
-```bash
-python -m vector_os_nano.mcp --sim --stdio              # Sim + stdio (for .mcp.json)
-python -m vector_os_nano.mcp --sim-headless --stdio     # Headless sim
-python -m vector_os_nano.mcp --hardware --stdio         # Real hardware
-```
+### Beta -- DONE
+- T3/T4 (SkillContext redesign): COMPLETE
+- NavStackClient (T6-nav): COMPLETE
+  - Created: vector_os_nano/core/nav_client.py
+  - Created: tests/unit/test_nav_client.py (16 tests, all passing)
+  - Wraps /way_point, /state_estimation, /goal_reached, /cancel_goal ROS2 topics
+  - All ROS2 imports lazy -- works without rclpy installed
+  - NavStackClient(node=None) is_available=False, navigate_to returns False
+  - Zero new regressions (34 pre-existing failures unchanged)
 
 ---
 
-## v0.3.0 Planning
+## ADR-003 Summary
 
-### Proposed Features (awaiting Yusen approval)
-1. Claude Code agent team integration (full parallel pipeline)
-2. Real RealSense D405 camera feed + depth validation
-3. Moondream VLM open-vocabulary detection
-4. EdgeTAM continuous object tracking
-5. Architecture documentation + API reference
+CEO directives:
+1. Sim-only for now (WebRTC deferred)
+2. Vector OS Nano is THE system; SO-101 and Go2 are hardware adapters
+3. Maximize compatibility: User -> LLM -> Skill -> Hardware pipeline identical regardless of hardware
 
-### Agent Status
-| Agent | Model | Status | Notes |
-|-------|-------|--------|-------|
-| Lead/Architect | opus | Ready | v0.3.0 spec authoring |
-| Alpha | sonnet | DONE | T3 (Go2 MuJoCo walk): walk() MPC locomotion complete — 10/10 tests pass; SIM_HZ=1000, CTRL_HZ=200, 3Hz trot gait, CentroidalMPC lazy-init |
-| Beta | sonnet | DONE | T4 (Go2 Skills): walk/turn/stance skills — 12 tests pass; vector_os_nano/skills/go2/ (walk.py, turn.py, stance.py, __init__.py); SkillResult.diagnosis_code added to core/types.py. T6 (Integration tests): 3/3 pass in tests/integration/test_go2_integration.py; T7 (pyproject.toml go2 deps): casadi>=3.6 + pin>=3.0 added, pip install -e ".[go2]" verified. |
-| Gamma | sonnet | DONE | T5 (run.py --sim-go2 + ToolAgent Go2 prompt): --sim-go2/--sim-go2-headless flags, _init_sim_go2(), Go2 skills registered, _SYSTEM_PROMPT_GO2 with position/heading in ToolAgent — 3 new tests pass, 35 total pass, 0 regressions |
-| QA | — | Ready | Code review for v0.3.0 |
-| Scribe | haiku | DONE | Final session docs |
+Architecture decisions:
+- BaseProtocol: formal interface for any mobile base (walk + set_velocity + odometry + lidar)
+- SkillContext: dict-based hardware registries with backward-compatible property accessors
+- MuJoCoGo2: background physics thread for streaming cmd_vel (Nav2 compatible)
+- NavigateSkill: hardware-agnostic, moved from go2/ to top-level skills/
+- ROS2 Go2 bridge: 4 nodes (cmd_vel, odom, lidar, joint_states) -- Phase 5, deferred
 
----
-
-## Documentation Status
-
-**COMPLETE:**
-- progress.md — Full v0.2.0 feature list, entry points, MCP reference, test counts
-- agents/devlog/status.md — This file
-
-**TODO for v0.3.0:**
-- README.md — Add MCP section, Claude Desktop setup guide
-- docs/architecture.md — SessionMemory/ModelRouter/MCP flow diagrams
-- docs/api.md — MCP tools + resources reference
-- QUICKSTART.md — MCP server startup guide (optional)
+Files:
+- `docs/architecture-decisions/ADR-003-hardware-abstraction-layer.md`
+- `agents/devlog/tasks.md` (11 tasks, 4 waves)
 
 ---
 
-## Critical Path Forward
+## Agent Status
 
-1. All v0.2.0 features complete and tested
-2. depth_scale bug fix verified (all pick operations working)
-3. MCP server production-ready (10 tools, 7 resources, 3 transport modes)
-4. Zero blockers, ready for v0.3.0 planning
-
-**Next:** Yusen review of v0.3.0 feature list, then parallel agent execution.
-
+| Agent | Model | Status | Assigned |
+|-------|-------|--------|----------|
+| Lead | opus | ACTIVE | ADR-003 authoring |
+| Alpha | sonnet | IDLE | Wave 1: T1 (BaseProtocol), T2 (Types) |
+| Beta | sonnet | DONE | NavStackClient: ROS2 nav stack wrapper (16 tests, 0 regressions) |
+| Gamma | sonnet | DONE | T5: Agent HAL integration tests (14 tests, 0 regressions) |
+| QA | -- | IDLE | Review after each wave |
+| Scribe | haiku | IDLE | Docs after approval |
