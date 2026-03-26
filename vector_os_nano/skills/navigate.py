@@ -312,8 +312,8 @@ class NavigateSkill:
         logger.info("[NAV] Using nav stack -> room=%s target=(%.1f, %.1f)",
                     room_key, target[0], target[1])
 
-        # Send the waypoint
-        nav.navigate_to(target[0], target[1], timeout=30.0)
+        # Send the waypoint and wait for result
+        nav_result = nav.navigate_to(target[0], target[1], timeout=30.0)
 
         # Check actual position after navigation
         pos = context.base.get_position() if context.base else None
@@ -328,8 +328,22 @@ class NavigateSkill:
         if memory is not None:
             memory.visit(room_key, pos[0], pos[1])
 
+        if not nav_result:
+            return SkillResult(
+                success=False,
+                error_message=f"Navigation to {room_key} failed (timeout or rejected)",
+                diagnosis_code="navigation_failed",
+                result_data={
+                    "room": room_key,
+                    "target": [round(target[0], 1), round(target[1], 1)],
+                    "position": [round(pos[0], 1), round(pos[1], 1)],
+                    "distance_to_target": round(dist, 1),
+                    "mode": "nav_stack",
+                },
+            )
+
         return SkillResult(
-            success=True,  # We sent the goal; robot moved
+            success=True,
             result_data={
                 "room": room_key,
                 "target": [round(target[0], 1), round(target[1], 1)],

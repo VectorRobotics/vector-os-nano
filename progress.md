@@ -1,95 +1,94 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-03-25
+**Last updated:** 2026-03-26
 **Current version:** v0.5.0-dev
-**Focus:** Hardware Abstraction Layer + Go2 Navigation Stack Integration
+**Focus:** Gazebo + Nav2 Navigation Simulation
 
 ---
 
 ## v0.5.0-dev — IN PROGRESS
 
-### Hardware Abstraction Layer (ADR-003) — DONE
-- [x] BaseProtocol (hardware/base.py): formal Protocol for any mobile base
-  - walk() blocking + set_velocity() streaming dual-mode
-  - get_odometry(), get_lidar_scan(), get_position(), get_heading()
-  - supports_holonomic, supports_lidar capability flags
-- [x] Odometry + LaserScan pure-Python types (core/types.py)
-- [x] SkillContext redesign: dict registries (arms, bases, grippers, perception_sources, services)
-  - Backward-compatible properties: context.arm, context.base still work
-  - Capability queries: has_arm(), has_base(), capabilities()
-- [x] MuJoCoGo2 refactored: background 1kHz physics thread
-  - set_velocity() non-blocking (for Nav2 cmd_vel)
-  - walk() = set_velocity + sleep (backward compat for skills)
-  - PD idle posture hold (no more z-collapse)
-  - 3D lidar via mj_ray: 7 elevation rings x 360 azimuth = 2520 rays
-  - Robot body excluded from ray detection
-- [x] NavStackClient (core/nav_client.py): wraps vector_navigation_stack
-  - /way_point (publish goal), /state_estimation (subscribe odom), /goal_reached
-  - Lazy rclpy import — works without ROS2 installed
-- [x] NavigateSkill: hardware-agnostic, uses NavStackClient when available, dead-reckoning fallback
+### Gazebo Go2 Simulation (NEW — 2026-03-26)
+- [x] Workspace: ~/Desktop/vector_go2_sim/ (14 packages, colcon build clean)
+- [x] Go2 URDF: Unitree official model from quadruped_ros2_control (FR/FL/RR/RL naming)
+- [x] Sensors: MID360 lidar (Velodyne VLP16 plugin) + D435 depth camera + IMU
+- [x] World: AWS RoboMaker Small House (realistic furnished residential environment)
+- [x] Planar move mode: gravity-free floating, /cmd_vel → /odom, all sensors working
+- [x] Nav2 config: SmacPlanner2D + DWB controller + SLAM Toolbox (params written, untested)
+- [x] Launch: `go2launch` alias, world presets (aws_house/indoor_house/empty), locomotion modes
+- [ ] Nav2 SLAM mapping (needs Gazebo + teleop drive-through)
+- [ ] Nav2 autonomous navigation (needs pre-built map)
+- [ ] Agent integration: NavStackClient → Nav2 → Go2 in Gazebo
 
-### Navigation Stack Integration — WORKING
-- [x] Unity simulation tested: robot navigates with FAR planner + local planner
-- [x] cmd_vel_mux added to launch (pathFollower → /navigation_cmd_vel → mux → /cmd_vel)
-- [x] Vector OS Nano brain controls nav stack: NavStackClient.navigate_to() → /way_point → robot moves
-- [x] test_nav_brain.py: standalone demo proving brain→nav→robot loop
-- [ ] MuJoCo bridge (go2_bridge.py): publishes /state_estimation + /registered_scan, terrain_map works, but pathFollower autonomy mode not resolved
-- [ ] Semantic navigation: needs dynamic room discovery (not hardcoded coords)
+### Locomotion Controller Status
+- CHAMP: unstable in Gazebo (drift/bounce), abandoned
+- unitree_guide_controller: built OK, but leg_pd_controller (ChainableController) crashes gzserver on Humble — chained controllers need Jazzy
+- Planar move: working, used for Nav2 development
+- **Plan: upgrade Ubuntu 22.04 → 24.04 + ROS2 Jazzy for proper controller support**
 
-### Go2 ROS2 Bridge (WIP)
-- go2_bridge.py: MuJoCo → ROS2 topics bridge
-  - Publishes /state_estimation (50Hz), /registered_scan (10Hz, XYZI PointCloud2), /tf
-  - Subscribes /cmd_vel → set_velocity()
-  - 3D lidar: floor + walls + ceiling detected (robot body excluded)
-  - Fake joystick for pathFollower autonomy mode
-  - Issue: pathFollower still outputs zero velocity in MuJoCo mode (Unity mode works fine)
+### NavStackClient Nav2 Mode (NEW — 2026-03-26)
+- [x] Dual-mode: auto/nav2/cmu — API signature unchanged
+- [x] Nav2: NavigateToPose action client, feedback, cancel, timeout
+- [x] CMU: /way_point + /goal_reached (preserved, zero regression)
+- [x] 53 unit tests (test_nav_client_nav2.py)
+- [x] All 16 existing tests pass (test_nav_client.py)
+
+### Bug Fixes (2026-03-26)
+- [x] NavigateSkill._navigate_with_nav_stack() ignored navigate_to() return value — always returned success=True
+- [x] go2/__init__.py imported deleted skills.explore module — 3 tests failing
+
+### Hardware Abstraction Layer — DONE
+- [x] BaseProtocol, Odometry/LaserScan types, SkillContext dict registries
+- [x] MuJoCoGo2: 1kHz physics thread, dual velocity modes, 3D lidar
+- [x] NavStackClient, NavigateSkill (hardware-agnostic)
+
+### Navigation Stack Integration
+- [x] Unity sim: brain → nav stack → robot loop proven
+- [x] MuJoCo bridge: publishes /state_estimation + /registered_scan
+- [ ] pathFollower autonomy mode not resolved (CMU nav stack specific)
 
 ---
 
 ## v0.4.0 — Go2 MuJoCo Milestone 1 — DONE
 
-- Convex MPC locomotion (MIT Cheetah 3 paper, go2-convex-mpc library)
-- MuJoCoGo2: walk/turn/stand/sit/lie_down via ToolAgent
-- 6 Go2 skills: walk, turn, stand, sit, lie_down, navigate
-- Indoor house scene: 20m x 14m, 7 rooms + central hallway, furniture
-- `python run.py --sim-go2` launches Go2 MuJoCo with ToolAgent
-- 48 unit + integration tests
-- Dependencies: pinocchio 3.9 (pin), casadi 3.7, convex_mpc (editable)
-
----
+- Convex MPC locomotion, 6 Go2 skills, indoor house scene
+- `python run.py --sim-go2`, 48 tests
 
 ## v0.2.0 — MCP + Memory + Router — DONE
-
-- SessionMemory (50-entry cross-task memory)
-- ModelRouter (complexity-driven model selection)
-- MCP Server: 10 tools + 7 resources for Claude Desktop/Code
-- Bug fixes: depth_scale, parameter passing, JSON schema
-
----
-
 ## v0.1.0 — Foundation — DONE
 
-- Full NL pipeline: classify → plan → execute → summarize
-- SkillFlow protocol, MuJoCo sim, web dashboard, CLI, ROS2
+---
+
+## Test Summary (2026-03-26)
+
+| Suite | Count | Status |
+|-------|-------|--------|
+| NavStackClient Nav2 | 53 | PASS |
+| NavigateSkill Nav2 | 38 | PASS |
+| NavStackClient CMU | 16 | PASS |
+| NavigateSkill existing | 20 | PASS |
+| Gazebo URDF planar | 27 | PASS |
+| Full unit suite | 1262 | PASS |
 
 ---
 
-## Launcher Commands
+## Launch Commands
 
 ```bash
 # SO-101 arm
-python run.py --sim              # MuJoCo arm with viewer
-python run.py --sim-headless     # Headless
+python run.py --sim
 
-# Go2 quadruped
-python run.py --sim-go2          # MuJoCo Go2 with ToolAgent + viewer
+# Go2 MuJoCo (locomotion R&D)
+python run.py --sim-go2
 
-# Navigation stack (Unity)
-cd ~/Desktop/vector_navigation_stack
-export ROBOT_CONFIG_PATH="unitree/unitree_go2"
-./src/.../environment/Model.x86_64 &
-ros2 launch vehicle_simulator system_simulation_with_route_planner.launch.py &
+# Go2 Gazebo (navigation, default: AWS house + planar mode)
+go2launch
 
-# Vector OS Nano brain → nav stack
-./scripts/run_nav_brain.sh
+# Go2 Gazebo with specific world/mode
+GO2_WORLD=empty go2launch
+GO2_WORLD=indoor_house go2launch
+GO2_LOCOMOTION=champ go2launch
+
+# Nav2 brain test
+./scripts/run_nav2_brain.sh
 ```
