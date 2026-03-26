@@ -26,8 +26,8 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from geometry_msgs.msg import TwistStamped, TransformStamped
 from nav_msgs.msg import Odometry as OdomMsg
-from sensor_msgs.msg import PointCloud2, PointField
-from std_msgs.msg import Header
+from sensor_msgs.msg import Joy, PointCloud2, PointField
+from std_msgs.msg import Float32, Header
 from tf2_ros import TransformBroadcaster
 
 
@@ -64,12 +64,40 @@ class Go2MuJoCoBridge(Node):
         # --- TF broadcaster: map → sensor ---
         self._tf_broadcaster = TransformBroadcaster(self)
 
+        # --- Publisher: fake joystick to enable autonomy mode in pathFollower ---
+        self._joy_pub = self.create_publisher(Joy, "/joy", 5)
+        self._speed_pub = self.create_publisher(Float32, "/speed", 5)
+
         # --- Timers ---
         self._odom_timer = self.create_timer(0.02, self._publish_odom)    # 50 Hz
         self._scan_timer = self.create_timer(0.1, self._publish_scan)     # 10 Hz
+        self._joy_timer = self.create_timer(0.5, self._publish_autonomy)  # 2 Hz
 
         self._last_cmd_time = time.time()
         self.get_logger().info("Go2MuJoCoBridge ready. Publishing /state_estimation + /registered_scan")
+
+    def _publish_autonomy(self) -> None:
+        """Publish fake joystick + speed to keep pathFollower in autonomy mode.
+
+        pathFollower requires:
+          1. joy.axes[2] < -0.1 (LT trigger) → sets autonomyMode=true
+          2. joy.axes[4] == 0 (right stick Y neutral) → joySpeed=0
+          3. /speed topic → sets actual desired speed
+        Without this, pathFollower outputs zero velocity even with valid paths.
+        """
+        joy_msg = Joy()
+        joy_msg.header.stamp = self.get_clock().now().to_msg()
+        # axes[2]=-1.0: LT pressed → autonomyMode=true
+        # axes[4]=0.0: no manual forward → joySpeed=0 (overridden by /speed)
+        # axes[5]=-1.0: RT pressed → manualMode=false
+        joy_msg.axes = [0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0]
+        joy_msg.buttons = [0] * 11
+        self._joy_pub.publish(joy_msg)
+
+        # Set desired speed for autonomy
+        speed_msg = Float32()
+        speed_msg.data = 0.5  # 0.5 m/s
+        self._speed_pub.publish(speed_msg)
 
     def _on_cmd_vel(self, msg: TwistStamped) -> None:
         """Receive velocity command from nav stack pathFollower."""
