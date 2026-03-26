@@ -137,38 +137,21 @@ class Go2MuJoCoBridge(Node):
         self._tf_broadcaster.sendTransform(tv)
 
     def _publish_scan(self) -> None:
-        """Publish simulated lidar as /registered_scan (PointCloud2 in map frame)."""
-        scan = self._base.get_lidar_scan()
-        if scan is None:
-            return
+        """Publish 3D lidar as /registered_scan (PointCloud2 in map frame).
 
-        odom = self._base.get_odometry()
-        if odom is None:
+        Uses get_3d_pointcloud() which provides multi-ring 3D data
+        matching what terrain_analysis expects from a Livox MID360.
+        """
+        points = self._base.get_3d_pointcloud()
+        if not points:
             return
 
         now = self.get_clock().now().to_msg()
 
-        # Convert LaserScan → PointCloud2 in map frame
-        points = []
-        heading = self._base.get_heading()
-        px, py, pz = odom.x, odom.y, 0.15  # lidar height
-
-        for i, r in enumerate(scan.ranges):
-            if r <= scan.range_min or r >= scan.range_max:
-                continue
-            angle = scan.angle_min + i * scan.angle_increment + heading
-            x = px + r * math.cos(angle)
-            y = py + r * math.sin(angle)
-            z = pz
-            points.append((x, y, z))
-
-        if not points:
-            return
-
-        # Build PointCloud2
+        # Build PointCloud2 (XYZI format)
         msg = PointCloud2()
         msg.header.stamp = now
-        msg.header.frame_id = "map"  # registered_scan is in map frame
+        msg.header.frame_id = "map"
         msg.height = 1
         msg.width = len(points)
         msg.fields = [
@@ -178,13 +161,13 @@ class Go2MuJoCoBridge(Node):
             PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
         ]
         msg.is_bigendian = False
-        msg.point_step = 16  # 4 floats x 4 bytes
+        msg.point_step = 16
         msg.row_step = 16 * len(points)
         msg.is_dense = True
 
         data = bytearray()
-        for x, y, z in points:
-            data.extend(struct.pack("ffff", x, y, z, 100.0))  # intensity=100
+        for x, y, z, intensity in points:
+            data.extend(struct.pack("ffff", x, y, z, intensity))
         msg.data = bytes(data)
 
         self._scan_pub.publish(msg)

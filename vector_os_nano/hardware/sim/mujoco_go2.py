@@ -169,6 +169,7 @@ class MuJoCoGo2:
         self._running: bool = False
         self._last_odom: Any = None   # Odometry dataclass or None
         self._last_scan: Any = None   # LaserScan dataclass or None
+        self._last_pointcloud: list = []  # [(x,y,z,intensity), ...] for /registered_scan
         self._scan_counter: int = 0
 
     # ------------------------------------------------------------------
@@ -344,7 +345,6 @@ class MuJoCoGo2:
 
             time_now = float(self._mj.data.time)
 
-            # Skip MPC when velocity is zero and we have no pending command
             is_moving = (vx != 0.0 or vy != 0.0 or vyaw != 0.0)
 
             # Controller update at CTRL_HZ
@@ -352,7 +352,7 @@ class MuJoCoGo2:
                 self._mj.update_pin_with_mujoco(self._pin)
 
                 if is_moving:
-                    # MPC update when scheduled
+                    # MPC locomotion when velocity commanded
                     if ctrl_i % steps_per_mpc == 0:
                         self._traj.generate_traj(
                             self._pin, self._gait, time_now,
@@ -378,6 +378,18 @@ class MuJoCoGo2:
                             tau[i * 3:(i + 1) * 3] = leg_out.tau
                         tau = np.clip(tau, -_TAU_LIM_MPC, _TAU_LIM_MPC)
                         tau_hold = tau.copy()
+                else:
+                    # Idle: PD hold standing posture (prevent collapse)
+                    q_cur = np.array(
+                        self._mj.data.qpos[7:19], dtype=np.float64
+                    )
+                    dq_cur = np.array(
+                        self._mj.data.qvel[6:18], dtype=np.float64
+                    )
+                    q_stand = np.array(_STAND_JOINTS, dtype=np.float64)
+                    tau = _KP * (q_stand - q_cur) - _KD * dq_cur
+                    tau = np.clip(tau, -_TAU_LIMITS, _TAU_LIMITS)
+                    tau_hold = tau.copy()
 
                 ctrl_i += 1
 
@@ -490,6 +502,17 @@ class MuJoCoGo2:
             self._update_lidar()
         return self._last_scan
 
+    def get_3d_pointcloud(self) -> list[tuple[float, float, float, float]]:
+        """Return most recent 3D point cloud as list of (x, y, z, intensity).
+
+        Points are in map frame. Updated at ~10Hz by the physics thread.
+        Used by go2_bridge.py to publish /registered_scan as PointCloud2.
+        """
+        self._require_connection()
+        if not self._last_pointcloud:
+            self._update_lidar()
+        return self._last_pointcloud
+
     # ------------------------------------------------------------------
     # Sensor update helpers (called from physics thread or on-demand)
     # ------------------------------------------------------------------
@@ -517,34 +540,61 @@ class MuJoCoGo2:
         )
 
     def _update_lidar(self) -> None:
-        """Cast 360 rays in the horizontal plane and store as LaserScan."""
+        """Cast rays in multiple elevation rings and store as LaserScan + 3D cloud.
+
+        Simulates a Livox MID360-like 3D lidar:
+          - 360 azimuth angles (1 degree steps)
+          - 7 elevation rings (-15 to +15 degrees, 5 degree steps)
+          - Total: 2520 rays per scan
+        The LaserScan stores the middle (0 degree) ring for 2D compatibility.
+        The 3D point cloud is stored separately for /registered_scan.
+        """
         from vector_os_nano.core.types import LaserScan  # noqa: PLC0415
         mj = _get_mujoco()
 
         pos = self._mj.data.qpos[0:3].copy().astype(np.float64)
-        pos[2] = 0.15  # lidar sensor height above ground
+        lidar_z = float(pos[2]) + 0.05  # lidar mounted slightly above body center
+        pos_lidar = np.array([pos[0], pos[1], lidar_z], dtype=np.float64)
 
         heading = self.get_heading()
 
-        n_rays = 360
-        ranges: list[float] = []
-        for i in range(n_rays):
-            angle = heading + math.radians(i - 180)
-            direction = np.array(
-                [math.cos(angle), math.sin(angle), 0.0], dtype=np.float64
-            )
-            geom_id = np.zeros(1, dtype=np.int32)
-            dist = mj.mj_ray(
-                self._mj.model,
-                self._mj.data,
-                pos,
-                direction,
-                None,
-                1,
-                -1,
-                geom_id,
-            )
-            ranges.append(float(dist) if dist > 0 else float("inf"))
+        n_azimuth = 360
+        elevations = [-15, -10, -5, 0, 5, 10, 15]  # degrees
+        mid_ring_ranges: list[float] = []
+        points_3d: list[tuple[float, float, float, float]] = []  # x, y, z, intensity
+
+        for elev_deg in elevations:
+            elev_rad = math.radians(elev_deg)
+            cos_elev = math.cos(elev_rad)
+            sin_elev = math.sin(elev_rad)
+            for i in range(n_azimuth):
+                azimuth = heading + math.radians(i - 180)
+                direction = np.array([
+                    cos_elev * math.cos(azimuth),
+                    cos_elev * math.sin(azimuth),
+                    sin_elev,
+                ], dtype=np.float64)
+                geom_id = np.zeros(1, dtype=np.int32)
+                dist = mj.mj_ray(
+                    self._mj.model,
+                    self._mj.data,
+                    pos_lidar,
+                    direction,
+                    None,
+                    1,
+                    -1,
+                    geom_id,
+                )
+                if dist > 0 and dist < 12.0:
+                    # Convert to world-frame 3D point
+                    px = pos_lidar[0] + dist * direction[0]
+                    py = pos_lidar[1] + dist * direction[1]
+                    pz = pos_lidar[2] + dist * direction[2]
+                    points_3d.append((float(px), float(py), float(pz), 100.0))
+
+                # Store middle ring for 2D LaserScan
+                if elev_deg == 0:
+                    mid_ring_ranges.append(float(dist) if dist > 0 else float("inf"))
 
         self._last_scan = LaserScan(
             timestamp=float(self._mj.data.time),
@@ -553,8 +603,10 @@ class MuJoCoGo2:
             angle_increment=math.radians(1.0),
             range_min=0.1,
             range_max=12.0,
-            ranges=tuple(ranges),
+            ranges=tuple(mid_ring_ranges),
         )
+        # Store 3D cloud for /registered_scan
+        self._last_pointcloud = points_3d
 
     # ------------------------------------------------------------------
     # PD control (runs synchronously — requires physics thread PAUSED)
