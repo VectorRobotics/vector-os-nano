@@ -893,23 +893,26 @@ class MuJoCoGo2:
     # Posture commands
     # ------------------------------------------------------------------
 
-    def stand(self, duration: float = 2.0) -> None:
+    def stand(self, duration: float = 2.0) -> bool:
         self._require_connection()
         self._pd_interpolate(
             np.array(_STAND_JOINTS, dtype=np.float64), duration=duration
         )
+        return True
 
-    def sit(self, duration: float = 2.0) -> None:
+    def sit(self, duration: float = 2.0) -> bool:
         self._require_connection()
         self._pd_interpolate(
             np.array(_SIT_JOINTS, dtype=np.float64), duration=duration
         )
+        return True
 
-    def lie_down(self, duration: float = 2.0) -> None:
+    def lie_down(self, duration: float = 2.0) -> bool:
         self._require_connection()
         self._pd_interpolate(
             np.array(_LIE_DOWN_JOINTS, dtype=np.float64), duration=duration
         )
+        return True
 
     def stop(self) -> None:
         """Emergency stop: zero velocity command."""
