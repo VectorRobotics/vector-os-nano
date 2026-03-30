@@ -1,86 +1,40 @@
-# Development Status -- v0.3.0 Architecture
+# Development Status — Go2 Locomotion + Nav2
 
-**Session Date:** 2026-03-25
+**Session Date:** 2026-03-30
 **Project:** Vector OS Nano SDK
-**Status:** ADR-003 proposed, awaiting CEO/CTO approval
-**Baseline:** v0.2.0 stable (852+ tests passing)
+**Status:** Go2 locomotion + Nav2 autonomous navigation WORKING
+**Baseline:** v0.5.0-dev (1262+ tests, harness 21/21)
 
 ---
 
-## Current Activity
+## Completed This Session
 
-### Lead Architect (Opus) -- ACTIVE
-- Produced ADR-003: Hardware Abstraction Layer Redesign
-- Defined BaseProtocol, SkillContext redesign, MuJoCoGo2 background thread architecture
-- Created 11-task breakdown across 4 execution waves
-- Awaiting CEO/CTO approval before agents begin execution
+### Go2 MuJoCo Locomotion — DONE
+- Removed convex_mpc hard dependency (was broken: Python 3.10 vs 3.12)
+- Implemented sinusoidal trotting gait (Backend A: mujoco + numpy only)
+- Integrated convex_mpc as Backend B (casadi + pinocchio on Python 3.12)
+- Dual-backend: `backend="auto"` detects MPC, falls back to sinusoidal
+- MJCF model files copied locally to hardware/sim/mjcf/go2/
+- Locomotion harness: 21/21 tests pass (L0-L4)
 
-### Alpha -- DONE
-- T2 (BaseProtocol): COMPLETE
-- T4 (MuJoCoGo2 HAL refactor): COMPLETE
-  - Background physics thread at 1 kHz (daemon thread, starts in connect, stops in disconnect)
-  - set_velocity(vx, vy, vyaw): non-blocking, Lock-protected
-  - walk() refactored to set_velocity + sleep + set_velocity(0,0,0)
-  - get_odometry() -> Odometry dataclass (updated every physics step)
-  - get_lidar_scan() -> LaserScan (360 mj_ray rays, cached at ~10 Hz)
-  - name / supports_holonomic / supports_lidar properties added
-  - BaseProtocol satisfied (isinstance check passes)
-  - _pd_interpolate pauses/resumes physics thread internally (MuJoCo thread-safety)
-  - 17/17 tests passing (10 existing + 7 new HAL tests)
-- T7/T8 (Unified NavigateSkill): COMPLETE
-  - Created vector_os_nano/skills/navigate.py (hardware-agnostic, 220 lines)
-  - NavStackClient mode: context.services["nav"] when is_available=True
-  - Dead-reckoning fallback: room map + waypoint graph, any BaseProtocol
-  - go2/__init__.py updated: imports NavigateSkill from top-level skills/
-  - go2/navigate.py: thin DeprecationWarning re-export
-  - tests/unit/test_navigate_skill.py: 20 tests, all passing
-  - 0 regressions (92 navigate-adjacent tests pass, 34 pre-existing failures unchanged)
+### Nav2 Integration — DONE
+- go2_nav_bridge.py: MuJoCoGo2 <-> ROS2 (/odom, /scan, /cmd_vel_nav, TF)
+- QoS: /scan RELIABLE (required by Nav2 costmap + AMCL)
+- Subscribes: /cmd_vel, /cmd_vel_nav, /cmd_vel_smoothed (full Nav2 Jazzy chain)
+- Nav2 integration test: 11/11 pass
+- End-to-end verified: Nav2 goal -> Go2 walks to target in house scene
 
-### Gamma -- DONE
-- T1 (Odometry + LaserScan types): COMPLETE
-- Appended Odometry and LaserScan frozen dataclasses to vector_os_nano/core/types.py
-- Created tests/unit/test_types_hal.py (11 tests, all passing)
-- Zero regressions in existing test suite
-
-### Beta -- DONE
-- T3/T4 (SkillContext redesign): COMPLETE
-- NavStackClient (T6-nav): COMPLETE
-  - Created: vector_os_nano/core/nav_client.py
-  - Created: tests/unit/test_nav_client.py (16 tests, all passing)
-  - Wraps /way_point, /state_estimation, /goal_reached, /cancel_goal ROS2 topics
-  - All ROS2 imports lazy -- works without rclpy installed
-  - NavStackClient(node=None) is_available=False, navigate_to returns False
-  - Zero new regressions (34 pre-existing failures unchanged)
-
----
-
-## ADR-003 Summary
-
-CEO directives:
-1. Sim-only for now (WebRTC deferred)
-2. Vector OS Nano is THE system; SO-101 and Go2 are hardware adapters
-3. Maximize compatibility: User -> LLM -> Skill -> Hardware pipeline identical regardless of hardware
-
-Architecture decisions:
-- BaseProtocol: formal interface for any mobile base (walk + set_velocity + odometry + lidar)
-- SkillContext: dict-based hardware registries with backward-compatible property accessors
-- MuJoCoGo2: background physics thread for streaming cmd_vel (Nav2 compatible)
-- NavigateSkill: hardware-agnostic, moved from go2/ to top-level skills/
-- ROS2 Go2 bridge: 4 nodes (cmd_vel, odom, lidar, joint_states) -- Phase 5, deferred
-
-Files:
-- `docs/architecture-decisions/ADR-003-hardware-abstraction-layer.md`
-- `agents/devlog/tasks.md` (11 tasks, 4 waves)
+### Harness Framework — DONE
+- .sdd-locomotion/ (spec, plan, task, harness.yaml)
+- tests/harness/ (22 benchmarks: L0 physics -> L4 navigation)
+- scripts/test_nav2_integration.sh (4-layer automated verification)
 
 ---
 
 ## Agent Status
 
-| Agent | Model | Status | Assigned |
-|-------|-------|--------|----------|
-| Lead | opus | ACTIVE | ADR-003 authoring |
-| Alpha | sonnet | DONE | T7/T8 (Unified NavigateSkill): 20 tests, 0 regressions |
-| Beta | sonnet | DONE | NavStackClient: ROS2 nav stack wrapper (16 tests, 0 regressions) |
-| Gamma | sonnet | DONE | T5: Agent HAL integration tests (14 tests, 0 regressions) |
-| QA | -- | IDLE | Review after each wave |
-| Scribe | haiku | IDLE | Docs after approval |
+| Agent | Status | Work |
+|-------|--------|------|
+| Dispatcher (Opus) | DONE | mujoco_go2.py refactor, Nav2 bridge, harness iteration |
+| Alpha (Sonnet) | DONE | SDD locomotion artifacts |
+| Beta (Sonnet) | DONE | Harness benchmark tests |

@@ -10,6 +10,9 @@ build/
 *.so
 .env
 .venv/
+.venv-nano/
+vector_os_nano/hardware/sim/mjcf/go2/scene_flat.xml
+vector_os_nano/hardware/sim/mjcf/go2/scene_room.xml
 venv/
 *.log
 .mypy_cache/

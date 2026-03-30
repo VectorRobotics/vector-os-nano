@@ -1,0 +1,50 @@
+# Go2 Locomotion Harness — Tuning Configuration
+# Loaded by tests/harness/conftest.py and scripts/harness_run.py
+# Edit to tune gait/PD without changing source code.
+
+gait:
+  frequency_hz: 2.0
+  thigh_amplitude: 0.3
+  calf_amplitude: 0.3
+  calf_phase_offset: 1.5708  # pi/2: calf leads thigh by 90 degrees
+  hip_amplitude: 0.15
+  duty_cycle: 0.6
+
+pd:
+  kp: 120.0
+  kd: 3.5
+
+levels:
+  0:
+    torque_nm: 10.0
+    min_displacement_rad: 0.01
+    steps: 100
+  1:
+    min_height_m: 0.25
+    max_angular_vel: 0.5
+    hold_duration_s: 1.0
+    timeout_s: 10.0
+  2:
+    walk_vx: 0.3
+    walk_duration_s: 5.0
+    min_displacement_m: 0.3
+    min_height_m: 0.15
+  3:
+    cmd_vx: 0.3
+    settle_time_s: 3.0
+    duration_s: 5.0
+    velocity_tolerance: 0.5  # accept >= 50% of commanded velocity
+  4:
+    start_xy: [10.0, 3.0]
+    goal_xy: [12.0, 3.0]
+    arrival_tolerance_m: 0.5
+    timeout_s: 60.0
+
+optimization:
+  max_iterations_per_level: 10
+  backend_switch_after: 5  # switch to Backend C after N consecutive failures
+  search_space:
+    frequency_hz: [1.5, 2.0, 2.5, 3.0]
+    thigh_amplitude: [0.2, 0.3, 0.4]
+    calf_amplitude: [0.2, 0.3, 0.4]
+    kp: [80.0, 100.0, 120.0, 150.0]

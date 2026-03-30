@@ -116,3 +116,10 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-p no:launch_ros -p no:launch_testing -p no:ament_copyright -p no:ament_flake8 -p no:ament_pep257 -p no:ament_xmllint -p no:ament_lint"
+markers = [
+    "level0: Level 0 — MuJoCo physics validity (no MuJoCoGo2 wrapper required)",
+    "level1: Level 1 — PD standing stability",
+    "level2: Level 2 — Open-loop locomotion / walking",
+    "level3: Level 3 — Velocity tracking via set_velocity()",
+    "level4: Level 4 — Navigation to waypoint (P-controller placeholder)",
+]
