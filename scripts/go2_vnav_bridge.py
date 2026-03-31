@@ -64,7 +64,7 @@ from nav_msgs.msg import Odometry as OdometryMsg, Path
 from sensor_msgs.msg import PointCloud2, PointField, Joy, LaserScan as LaserScanMsg
 from geometry_msgs.msg import TwistStamped, Twist, TransformStamped, PointStamped
 from std_msgs.msg import Float32, Header
-from tf2_ros import TransformBroadcaster, StaticTransformBroadcaster
+from tf2_ros import TransformBroadcaster
 import numpy as np
 
 from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
@@ -111,10 +111,8 @@ class Go2VNavBridge(Node):
         self._speed_pub = self.create_publisher(Float32, "/speed", 5)
 
         self._tf_broadcaster = TransformBroadcaster(self)
-        self._static_tf = StaticTransformBroadcaster(self)
-
-        # Publish static TF: sensor → base_link (sensor mounting offset)
-        self._publish_static_tf()
+        # NOTE: static TF sensor→base_link is published by local_planner.launch.py
+        # (vehicleTransPublisher node) — do NOT duplicate here
 
         # Subscribe to /path from localPlanner — we follow it with our own Python follower
         # (C++ pathFollower oscillates with MPC gait, bypassed)
@@ -143,19 +141,6 @@ class Go2VNavBridge(Node):
         self.get_logger().info(
             "Go2VNavBridge started — /state_estimation, /registered_scan, /joy, /speed"
         )
-
-    def _publish_static_tf(self) -> None:
-        """Static TF: sensor → base_link offset."""
-        t = TransformStamped()
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = "sensor"
-        t.child_frame_id = "base_link"
-        # base_link is behind and below sensor
-        t.transform.translation.x = -_SENSOR_X
-        t.transform.translation.y = -_SENSOR_Y
-        t.transform.translation.z = -_SENSOR_Z
-        t.transform.rotation.w = 1.0
-        self._static_tf.sendTransform(t)
 
     def _cmd_vel_stamped_cb(self, msg: TwistStamped) -> None:
         vx = msg.twist.linear.x

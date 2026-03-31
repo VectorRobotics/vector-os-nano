@@ -40,7 +40,7 @@ cleanup() {
 }
 trap cleanup EXIT INT
 
-RVIZ_CFG="$REPO_DIR/config/nav2_go2.rviz"
+RVIZ_CFG="$REPO_DIR/config/vnav.rviz"
 
 echo "======================================"
 echo "  Go2 + Vector Navigation Stack"
