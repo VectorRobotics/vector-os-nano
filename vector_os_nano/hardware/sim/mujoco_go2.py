@@ -794,13 +794,15 @@ class MuJoCoGo2:
         heading = self.get_heading()
         robot_body_id = self._mj.base_bid
 
-        # MID360 mounting: 30° forward tilt (pitch down)
-        tilt_rad = math.radians(30.0)
+        # MID360 mounting: ~15° forward tilt (pitch DOWN).
+        # Real hardware is 30° but SLAM accumulates multi-frame data.
+        # In sim (single-frame, no SLAM) 15° gives good mix of floor + wall hits.
+        tilt_rad = math.radians(-15.0)
         cos_tilt = math.cos(tilt_rad)
         sin_tilt = math.sin(tilt_rad)
 
-        # Livox MID360-like pattern: 26 elevation rings (-25° to +25°), 200 azimuth
-        n_azimuth = 200
+        # Livox MID360-like pattern: 26 elevation rings (-25° to +25°), 360 azimuth
+        n_azimuth = 360
         elevations = list(range(-25, 26, 2))
         mid_ring_ranges: list[float] = []
         points_3d: list[tuple[float, float, float, float]] = []
