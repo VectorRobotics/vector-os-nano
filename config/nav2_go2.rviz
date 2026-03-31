@@ -59,7 +59,7 @@ Visualization Manager:
       Style: Points
       Alpha: 1.0
 
-    # 3D Point Cloud (registered lidar scan — white, like nav stack default)
+    # 3D Point Cloud (registered lidar — colored by height)
     - Class: rviz_default_plugins/PointCloud2
       Name: RegisteredScan
       Enabled: true
@@ -67,14 +67,14 @@ Visualization Manager:
         Value: /registered_scan
         Depth: 5
         Reliability Policy: Reliable
-      Size (Pixels): 2
+      Size (Pixels): 3
       Style: Points
-      Color Transformer: FlatColor
-      Color: 220; 220; 220
-      Alpha: 0.7
-      Decay Time: 3.0
+      Color Transformer: AxisColor
+      Axis: Z
+      Alpha: 0.9
+      Decay Time: 5.0
 
-    # Terrain map (local obstacle detection)
+    # Terrain map (height-coded obstacles)
     - Class: rviz_default_plugins/PointCloud2
       Name: TerrainMap
       Enabled: true
@@ -84,8 +84,7 @@ Visualization Manager:
         Reliability Policy: Reliable
       Size (Pixels): 5
       Style: Squares
-      Color Transformer: FlatColor
-      Color: 50; 200; 50
+      Color Transformer: Intensity
       Alpha: 0.8
       Decay Time: 0.5
 
@@ -99,9 +98,8 @@ Visualization Manager:
         Reliability Policy: Reliable
       Size (Pixels): 3
       Style: Points
-      Color Transformer: FlatColor
-      Color: 80; 160; 80
-      Alpha: 0.5
+      Color Transformer: Intensity
+      Alpha: 0.6
       Decay Time: 1.0
 
     # Robot odometry trail
