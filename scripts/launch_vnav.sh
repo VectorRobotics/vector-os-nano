@@ -1,14 +1,14 @@
 #!/bin/bash
-# Go2 + Vector Navigation Stack — one-command launch
+# Go2 + Vector Navigation Stack (Full) — one-command launch
 #
 # Usage:
 #   cd ~/Desktop/vector_os_nano
 #   ./scripts/launch_vnav.sh              # MuJoCo viewer + RViz
 #   ./scripts/launch_vnav.sh --no-gui     # headless MuJoCo
 #
-# Send a goal:
-#   ros2 topic pub --once /way_point geometry_msgs/msg/PointStamped \
-#     "{header: {frame_id: 'map'}, point: {x: 5.0, y: 3.0, z: 0.0}}"
+# Send goal:
+#   ros2 topic pub --once /goal_point geometry_msgs/msg/PointStamped \
+#     "{header: {frame_id: 'map'}, point: {x: 3.0, y: 2.5, z: 0.0}}"
 
 set -e
 
@@ -30,10 +30,11 @@ export ROBOT_CONFIG_PATH="unitree/unitree_go2"
 source /opt/ros/jazzy/setup.bash
 source "$NAV_STACK/install/setup.bash"
 
+PIDS=()
 cleanup() {
     echo ""
     echo "Stopping all..."
-    kill $BRIDGE_PID $LP_PID $SSG_PID $TA_PID $TAE_PID $VIS_PID $RVIZ_PID 2>/dev/null
+    for p in "${PIDS[@]}"; do kill $p 2>/dev/null; done
     wait 2>/dev/null
     echo "Done."
 }
@@ -45,52 +46,59 @@ echo "======================================"
 echo "  Go2 + Vector Navigation Stack"
 echo "======================================"
 echo "  MuJoCo: Go2 MPC in house scene"
-echo "  Nav: localPlanner + pathFollower + terrain analysis"
-echo "  Config: unitree_go2 (autonomyMode=true)"
+echo "  Local:  localPlanner + pathFollower"
+echo "  Global: FAR Planner (visibility graph)"
+echo "  Terrain: terrainAnalysis + ext"
 echo "======================================"
 
-# 1. Bridge
-echo "[1/5] Starting bridge..."
+# 1. Bridge (MuJoCoGo2 → ROS2 topics)
+echo "[1/6] Starting bridge..."
 python3 "$SCRIPT_DIR/go2_vnav_bridge.py" $NO_GUI &
-BRIDGE_PID=$!
+PIDS+=($!)
 sleep 7
 
-# 2. Local planner stack (includes localPlanner, pathFollower, odomTransformer, static TFs)
-echo "[2/5] Starting local planner (autonomyMode=true)..."
+# 2. Local planner stack (localPlanner, pathFollower, odomTransformer, static TFs)
+echo "[2/6] Starting local planner..."
 ros2 launch local_planner local_planner.launch.py \
     robot_config:=unitree/unitree_go2 \
     autonomyMode:=true \
     joyToSpeedDelay:=0.0 \
     twoWayDrive:=true &
-LP_PID=$!
-sleep 3
+PIDS+=($!)
+sleep 4
 
-# 3. Sensor scan generation
-echo "[3/5] Starting sensor scan generation..."
+# 3. Sensor scan generation (syncs /registered_scan + /state_estimation)
+echo "[3/6] Starting sensor scan generation..."
 ros2 run sensor_scan_generation sensorScanGeneration &
-SSG_PID=$!
+PIDS+=($!)
 sleep 1
 
-# 4. Terrain analysis
-echo "[4/5] Starting terrain analysis..."
+# 4. Terrain analysis (local + extended)
+echo "[4/6] Starting terrain analysis..."
 ros2 run terrain_analysis terrainAnalysis &
-TA_PID=$!
+PIDS+=($!)
 ros2 run terrain_analysis_ext terrainAnalysisExt &
-TAE_PID=$!
-sleep 2
+PIDS+=($!)
+sleep 3
 
-# 5. Visualization + RViz
-echo "[5/5] Starting visualization..."
-ros2 run visualization_tools visualizationTools &
-VIS_PID=$!
-rviz2 -d "$RVIZ_CFG" &
-RVIZ_PID=$!
+# 5. FAR Planner (global route) + graph decoder
+echo "[5/6] Starting FAR planner..."
+ros2 launch far_planner far_planner.launch config:=indoor &
+PIDS+=($!)
+sleep 3
+
+# 6. Visualization + RViz
+echo "[6/6] Starting visualization + RViz..."
+ros2 run visualization_tools visualizationTools 2>/dev/null &
+PIDS+=($!)
+rviz2 -d "$RVIZ_CFG" 2>/dev/null &
+PIDS+=($!)
 
 echo ""
 echo "Ready! Send a navigation goal:"
-echo "  ros2 topic pub --once /way_point geometry_msgs/msg/PointStamped \\"
-echo "    \"{header: {frame_id: 'map'}, point: {x: 5.0, y: 3.0, z: 0.0}}\""
+echo "  ros2 topic pub --once /goal_point geometry_msgs/msg/PointStamped \\"
+echo "    \"{header: {frame_id: 'map'}, point: {x: 3.0, y: 2.5, z: 0.0}}\""
 echo ""
 echo "Press Ctrl+C to stop."
 
-wait $BRIDGE_PID
+wait ${PIDS[0]}

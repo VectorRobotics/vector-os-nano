@@ -159,6 +159,30 @@ Visualization Manager:
         Color: 200; 100; 255
       Arrow Length: 0.15
 
+    # FAR planner global path
+    - Class: rviz_default_plugins/Path
+      Name: FAR Global Path
+      Enabled: true
+      Topic:
+        Value: /global_path
+        Depth: 1
+        Reliability Policy: Reliable
+      Color: 255; 165; 0
+      Alpha: 1.0
+      Line Style: Lines
+      Width: 0.08
+
+    # Navigation boundary (from FAR planner)
+    - Class: rviz_default_plugins/Polygon
+      Name: NavBoundary
+      Enabled: true
+      Topic:
+        Value: /navigation_boundary
+        Depth: 1
+        Reliability Policy: Reliable
+      Color: 255; 255; 0
+      Alpha: 0.3
+
     # Goal pose
     - Class: rviz_default_plugins/Pose
       Name: Goal
