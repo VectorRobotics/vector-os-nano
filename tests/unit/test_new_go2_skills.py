@@ -8,7 +8,7 @@ import pytest
 
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.go2.explore import ExploreSkill, _try_start_tare_exploration
+from vector_os_nano.skills.go2.explore import ExploreSkill
 from vector_os_nano.skills.go2.stop import StopSkill
 from vector_os_nano.skills.go2.where_am_i import WhereAmISkill, _heading_label
 
@@ -212,7 +212,7 @@ class TestExploreDeadReckoning:
     def _run_with_short_duration(self, base) -> SkillResult:
         ctx = _make_context(base)
         with patch(
-            "vector_os_nano.skills.go2.explore._try_start_tare_exploration",
+            "vector_os_nano.skills.go2.explore._start_bridge_on_go2",
             return_value=False,
         ):
             return ExploreSkill().execute({"duration": 5.0}, ctx)
@@ -250,7 +250,7 @@ class TestExploreDeadReckoning:
         base = _make_base()
         ctx = _make_context(base)
         with patch(
-            "vector_os_nano.skills.go2.explore._try_start_tare_exploration",
+            "vector_os_nano.skills.go2.explore._start_bridge_on_go2",
             return_value=False,
         ):
             result = ExploreSkill().execute({"duration": 0.1}, ctx)
@@ -261,7 +261,7 @@ class TestExploreDeadReckoning:
         base = _make_base(x=10.0, y=5.0)  # hallway
         ctx = _make_context(base)
         with patch(
-            "vector_os_nano.skills.go2.explore._try_start_tare_exploration",
+            "vector_os_nano.skills.go2.explore._start_bridge_on_go2",
             return_value=False,
         ), patch(
             "vector_os_nano.skills.go2.explore._navigate_to_waypoint",
@@ -272,27 +272,28 @@ class TestExploreDeadReckoning:
         assert result.success
 
 
-class TestExploreROS2Path:
-    """Explore via TARE / ROS2 monitoring path."""
+class TestExploreMonitor:
+    """Test _monitor_exploration directly (no ROS2 needed)."""
 
-    def test_tare_unavailable_returns_false(self):
-        """_try_start_tare_exploration returns False without ROS2."""
-        # rclpy is not installed in test env, so this must return False gracefully
-        result = _try_start_tare_exploration()
-        assert result is False
+    def test_monitoring_tracks_rooms(self):
+        """_monitor_exploration samples position and detects rooms."""
+        base = _make_base(x=3.0, y=2.5)  # living_room
+        skill = ExploreSkill()
 
-    def test_monitoring_path_samples_position(self):
-        """When TARE is 'active', monitor path samples position repeatedly."""
-        base = _make_base(x=3.0, y=2.5)
-        ctx = _make_context(base)
-        with patch(
-            "vector_os_nano.skills.go2.explore._try_start_tare_exploration",
-            return_value=True,
-        ):
-            # Very short duration to not block the test
-            result = ExploreSkill().execute({"duration": 5.0}, ctx)
+        # Patch time: first call sets deadline (1000+5=1005), then loop runs a few times
+        with patch("vector_os_nano.skills.go2.explore.time") as mock_time:
+            call_count = [0]
+            def fake_time():
+                call_count[0] += 1
+                # First call (deadline calc): 1000. Next calls: 1001, 1002, ... then 1010 to exit
+                if call_count[0] <= 3:
+                    return 1000.0
+                return 1010.0
+            mock_time.time = fake_time
+            mock_time.sleep = lambda _: None
+            result = skill._monitor_exploration(base, 5.0)
 
         assert result.success
         assert result.result_data["mode"] == "tare"
-        assert "rooms_visited" in result.result_data
+        assert "living_room" in result.result_data["rooms_visited"]
         assert base.get_position.call_count >= 1
