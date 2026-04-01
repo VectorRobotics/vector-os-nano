@@ -418,23 +418,35 @@ def _handle_slash_command(
     elif cmd == "login":
         from vector_os_nano.vcli.config import load_config, save_config
         provider_choice = args_rest[0] if args_rest else None
-        if provider_choice not in ("anthropic", "openrouter", None):
-            console.print(f"[yellow]  Usage: /login anthropic  or  /login openrouter[/]")
+        if provider_choice not in ("claude", "anthropic", "openrouter", None):
+            console.print(f"[yellow]  Usage: /login claude | /login anthropic | /login openrouter[/]")
             return True
 
         if provider_choice is None:
             console.print(f"\n[bold {TEAL}]Authentication:[/]")
             console.print()
-            console.print(f"  [{TEAL}]/login anthropic[/]   Anthropic API key (console.anthropic.com/settings/keys)")
-            console.print(f"  [{TEAL}]/login openrouter[/]  OpenRouter key (openrouter.ai/keys) — multi-model")
+            console.print(f"  [{TEAL}]/login claude[/]      Log in with Claude subscription (opens browser)")
+            console.print(f"  [{TEAL}]/login anthropic[/]   Enter Anthropic API key manually")
+            console.print(f"  [{TEAL}]/login openrouter[/]  Enter OpenRouter key (multi-model)")
             console.print()
-            console.print("[dim]  Keys are saved to ~/.vector/config.yaml (never committed to git).[/dim]")
-            console.print("[dim]  OpenRouter supports Claude, GPT, Gemini, Llama, DeepSeek, etc.[/dim]\n")
+            console.print("[dim]  /login claude gives V its own rate limit pool, independent of Claude Code.[/dim]\n")
             return True
 
         config = load_config()
 
-        if provider_choice == "anthropic":
+        if provider_choice == "claude":
+            from vector_os_nano.vcli.oauth import login_oauth
+            console.print(f"\n[bold {TEAL}]Claude subscription login[/]")
+            console.print("[dim]  Opening browser for authentication...[/dim]\n")
+            creds = login_oauth()
+            if creds:
+                console.print(f"[green]  Authenticated.[/] Token saved to ~/.vector/oauth_credentials.json")
+                console.print(f"[dim]  Restart vector-cli to use your subscription.[/dim]\n")
+            else:
+                console.print("[red]  Authentication failed or timed out.[/]")
+                console.print("[dim]  Make sure you have an active Claude subscription.[/dim]\n")
+
+        elif provider_choice == "anthropic":
             console.print(f"\n[bold {TEAL}]Anthropic API key[/]")
             console.print("[dim]  Get your key at: https://console.anthropic.com/settings/keys[/dim]\n")
             key = Prompt.ask("  API key (sk-ant-...)")
@@ -606,8 +618,14 @@ def _handle_slash_command(
             if app_state is None:
                 console.print("[yellow]No app state.[/]")
             else:
+                prov = app_state["provider"]
+                # Strip provider prefix for Anthropic direct, add for OpenRouter
+                if prov == "anthropic" and "/" in new_model:
+                    new_model = new_model.split("/", 1)[1]
+                elif prov == "openrouter" and "/" not in new_model:
+                    new_model = f"anthropic/{new_model}"
                 new_backend = create_backend(
-                    provider=app_state["provider"],
+                    provider=prov,
                     api_key=app_state["api_key"],
                     model=new_model,
                     base_url=app_state.get("base_url"),
@@ -868,18 +886,27 @@ def main(argv: list[str] | None = None) -> None:
                     border_style=DIM_TEAL, padding=(0, 1),
                     width=min(console.width, 80),
                 )
-                with Live(thinking_panel, console=console, refresh_per_second=8, transient=True) as live:
-                    live_ref = live
-                    turn_result: TurnResult = engine.run_turn(
-                        user_message=user_input,
-                        session=session,
-                        agent=app_state.get("agent"),
-                        on_text=on_text,
-                        on_tool_start=on_tool_start,
-                        on_tool_end=on_tool_end,
-                        ask_permission=lambda n, p: ask_permission(n, p),
-                        app_state=app_state,
-                    )
+                # Suppress ROS2/subprocess log noise during engine turn
+                _saved_stderr = sys.stderr
+                try:
+                    sys.stderr = open(os.devnull, "w")
+                except OSError:
+                    pass
+                try:
+                    with Live(thinking_panel, console=console, refresh_per_second=8, transient=True) as live:
+                        live_ref = live
+                        turn_result: TurnResult = engine.run_turn(
+                            user_message=user_input,
+                            session=session,
+                            agent=app_state.get("agent"),
+                            on_text=on_text,
+                            on_tool_start=on_tool_start,
+                            on_tool_end=on_tool_end,
+                            ask_permission=lambda n, p: ask_permission(n, p),
+                            app_state=app_state,
+                        )
+                finally:
+                    sys.stderr = _saved_stderr
 
                 # Final response: highlighted panel with braille V title
                 global _last_response
@@ -896,18 +923,28 @@ def main(argv: list[str] | None = None) -> None:
                     session._entries = session._entries[-12:]
                     console.print(f"[dim]  auto-compacted to last 12 entries[/dim]")
 
-                # Token usage
+                # Token usage (show in/out breakdown)
                 if turn_result.usage:
                     u = turn_result.usage
-                    total = u.input_tokens + u.output_tokens
-                    if total > 0:
-                        console.print(f"[dim]  {total:,} tokens[/]")
+                    if u.input_tokens or u.output_tokens:
+                        console.print(f"[dim]  in={u.input_tokens:,} out={u.output_tokens:,}[/]")
                 console.print()
 
             except KeyboardInterrupt:
                 console.print("\n[yellow]Interrupted.[/yellow]")
             except Exception as exc:
-                console.print(f"[red]Error:[/] {exc}")
+                err_str = str(exc)
+                if "429" in err_str or "rate_limit" in err_str:
+                    current_model = app_state.get("model", "?")
+                    console.print(f"[yellow]  Rate limited on {current_model}.[/]")
+                    console.print(f"[dim]  Try: /model claude-haiku-4-5 (lower rate limit)[/dim]")
+                elif "401" in err_str or "authentication" in err_str.lower():
+                    console.print(f"[yellow]  Authentication failed. Use /login to reconfigure.[/]")
+                elif "404" in err_str or "not_found" in err_str:
+                    console.print(f"[yellow]  Model not found: {app_state.get('model', '?')}[/]")
+                    console.print(f"[dim]  Try: /model claude-haiku-4-5[/dim]")
+                else:
+                    console.print(f"[red]Error:[/] {exc}")
                 if args.verbose:
                     import traceback
                     traceback.print_exc()

@@ -35,11 +35,11 @@
 
 ### Built-in Agentic CLI: Vibe-code your robot
 
-Vector OS Nano ships with `vector-cli` -- an agentic terminal harness inspired by Claude Code. Talk to your robot, write code, run simulations, and explore environments, all from one prompt.
+Vector OS Nano ships with `vector-cli` -- an agentic terminal harness with V, the AI core. Talk to your robot, write code, run simulations, and explore environments, all from one prompt.
 
 ```bash
 pip install -e .
-vector-cli                     # auto-detects OpenRouter API key
+vector-cli                     # auto-detects Claude subscription or OpenRouter key
 ```
 
 ```
@@ -52,8 +52,7 @@ vector> explore the house
 vector> list all python files here
   glob(pattern="**/*.py") ... ok 0.1s
 
-vector> read run.py and tell me what it does
-  file_read(file_path="run.py") ... ok 0.0s
+vector> !git status                    # ! prefix for direct shell
 ```
 
 **What V can do:**
@@ -63,8 +62,13 @@ vector> read run.py and tell me what it does
 | Robot control | start_simulation, walk, turn, stand, sit, explore, navigate, pick, place |
 | Codebase work | file_read, file_write, file_edit, bash, glob, grep |
 | Perception | world_query, robot_status, detect, describe |
+| Web | web_fetch (documentation, API references) |
 
-**Architecture:** Multi-backend LLM engine (OpenRouter, Anthropic, local models via OpenAI-compatible API) with streaming, tool-use loop, 6-layer permission system, JSONL session persistence, and concurrent read-only tool execution. 19 robot skills auto-registered at runtime when hardware connects.
+**Authentication:** Claude subscription (auto-detected from Claude Code), Anthropic API key, OpenRouter, or local models via `--base-url`.
+
+**Slash commands:** `/help` `/model` `/tools` `/agent` `/status` `/login` `/compact` `/clear` `/copy` `/export` -- type `/` + Tab for auto-complete with descriptions.
+
+**Architecture:** Multi-backend LLM engine (Anthropic, OpenRouter, local models via OpenAI-compatible API) with streaming, tool-use loop, 6-layer permission system, JSONL session persistence, and concurrent read-only tool execution. 19 robot skills auto-registered at runtime when hardware connects.
 
 <p align="center">
   <img src="images/agent.png" width="700" alt="Vector CLI with Go2 simulation">

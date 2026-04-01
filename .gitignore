@@ -33,3 +33,6 @@ test_agent_hardware.py
 test_ik.py
 mjmodel.mjb
 mjmodel.mjb
+# Vector CLI OAuth credentials
+.vector/
+oauth_credentials.json

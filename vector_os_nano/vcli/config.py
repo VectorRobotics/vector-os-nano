@@ -122,7 +122,15 @@ def resolve_credentials(
     base_url = cli_base_url
 
     if not api_key:
-        # Claude Code OAuth (auto-discovered from ~/.claude/.credentials.json)
+        # Vector CLI's own OAuth credentials (independent rate limits)
+        from vector_os_nano.vcli.oauth import load_credentials
+        own_creds = load_credentials()
+        if own_creds:
+            api_key = own_creds["accessToken"]
+            provider = "anthropic"
+
+    if not api_key:
+        # Claude Code OAuth fallback (shared rate limits)
         oauth = load_claude_oauth()
         if oauth:
             api_key = oauth["accessToken"]
