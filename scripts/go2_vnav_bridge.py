@@ -109,8 +109,8 @@ class Go2VNavBridge(Node):
         )
         self._joy_pub = self.create_publisher(Joy, "/joy", 5)
         self._speed_pub = self.create_publisher(Float32, "/speed", 5)
-        self._img_pub = self.create_publisher(Image, "/camera/image", sensor_qos)
-        self._depth_pub = self.create_publisher(Image, "/camera/depth", sensor_qos)
+        self._img_pub = self.create_publisher(Image, "/camera/image", reliable_qos)
+        self._depth_pub = self.create_publisher(Image, "/camera/depth", reliable_qos)
 
         self._tf_broadcaster = TransformBroadcaster(self)
         # NOTE: static TF sensor→base_link is published by local_planner.launch.py
