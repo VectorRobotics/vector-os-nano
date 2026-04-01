@@ -5,7 +5,7 @@
 <h1 align="center">Vector OS Nano</h1>
 
 <p align="center">
-  <b>Zero-shot, natural language generalized grasping on a $150 robot arm.</b>
+  <b>Cross-embodiment robot OS: natural language control, industrial-grade navigation, sim-to-real.</b>
   <br>
   <b>No training. No fine-tuning. Just say what you want.</b>
 </p>
@@ -13,12 +13,12 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/MuJoCo-3.6-green" alt="MuJoCo">
+  <img src="https://img.shields.io/badge/ROS2_Jazzy-Navigation-blue?logo=ros&logoColor=white" alt="ROS2">
+  <img src="https://img.shields.io/badge/Unitree_Go2-Quadruped-red" alt="Go2">
+  <img src="https://img.shields.io/badge/Convex_MPC-1kHz_Control-orange" alt="MPC">
   <img src="https://img.shields.io/badge/Claude_Haiku-LLM_Brain-blueviolet?logo=anthropic&logoColor=white" alt="Claude">
-  <img src="https://img.shields.io/badge/ROS2-Optional-blue?logo=ros&logoColor=white" alt="ROS2">
-  <img src="https://img.shields.io/badge/Moondream2-VLM-purple" alt="Moondream2">
-  <img src="https://img.shields.io/badge/EdgeTAM-Tracking-orange" alt="EdgeTAM">
-  <img src="https://img.shields.io/badge/Intel_RealSense-D405-0071C5?logo=intel&logoColor=white" alt="RealSense">
   <img src="https://img.shields.io/badge/LeRobot-SO--ARM100-black" alt="LeRobot">
+  <img src="https://img.shields.io/badge/Intel_RealSense-D405-0071C5?logo=intel&logoColor=white" alt="RealSense">
 </p>
 
 <p align="center">
@@ -47,7 +47,45 @@
 
 ## What is Vector OS Nano?
 
-A **Python SDK** that gives any robot arm a natural language brain. `pip install` and go. No ROS2 required.
+A **cross-embodiment robot SDK** with natural language control, industrial-grade navigation, and sim-to-real transfer. Supports both manipulation (SO-101 arm) and locomotion (Unitree Go2 quadruped) with a unified skill architecture.
+
+### Go2 Quadruped -- Full Navigation Stack in Simulation
+
+MuJoCo physics simulation with convex MPC locomotion (1kHz), integrated with the CMU/Ji Zhang [Vector Navigation Stack](https://github.com/VectorRobotics/vector_navigation_stack) for autonomous exploration and navigation. The same navigation stack runs on real Unitree robots -- sim-to-real ready.
+
+```bash
+python run.py --sim-go2                # Go2 in MuJoCo + natural language agent
+```
+
+Then talk to the robot:
+
+```
+you> explore the house
+  TOOL explore()
+  [EXPLORE] Starting ROS2 bridge... Nav stack launching... RViz opening...
+  [EXPLORE] Entered room: hallway
+  [EXPLORE] Entered room: kitchen
+  ...
+
+you> go to the bedroom
+  TOOL navigate(room="master_bedroom")
+
+you> where am i
+  TOOL where_am_i()
+```
+
+**Navigation architecture:**
+
+```
+TARE planner (frontier exploration)
+    --> FAR planner (global visibility-graph routing)
+        --> localPlanner (terrain-aware local obstacle avoidance)
+            --> pathFollower / pure-pursuit --> Go2 MPC locomotion
+```
+
+**Sim-to-real:** The navigation stack (localPlanner, FAR planner, TARE, terrainAnalysis) is identical to what runs on real Unitree Go2 robots with Livox MID360 LiDAR. The MuJoCo bridge simulates the same sensor topics (`/state_estimation`, `/registered_scan`, `/terrain_map`) at matching specs (10k+ points/scan, 30-degree tilt, asymmetric FOV). Switching from sim to real hardware requires only changing the bridge node.
+
+### SO-101 Arm -- Zero-Shot Grasping
 
 ```python
 from vector_os_nano import Agent, SO101
@@ -65,7 +103,7 @@ from vector_os_nano import Agent, MuJoCoArm
 arm = MuJoCoArm(gui=True)
 arm.connect()
 agent = Agent(arm=arm, llm_api_key="sk-...")
-agent.execute("把鸭子放到前面")        # one-shot: plan + execute
+agent.execute("put the duck in front")
 agent.run_goal("clean the table")     # agent loop: observe-decide-act-verify
 ```
 
@@ -159,6 +197,23 @@ vector> 把所有东西都随便乱放
 
 **No robot? No camera? No problem.**
 
+### Go2 Quadruped Simulation
+
+```bash
+python run.py --sim-go2              # Go2 + MuJoCo viewer + agent CLI
+python run.py --sim-go2-headless     # headless Go2
+python run.py --sim-go2 --explore    # Go2 + full nav stack + TARE + RViz
+```
+
+- Unitree Go2 with convex MPC locomotion (1kHz physics, dual-backend with sinusoidal fallback)
+- Livox MID360 LiDAR simulation (10k+ points/scan, 30-degree tilt, asymmetric FOV)
+- Full Vector Navigation Stack: localPlanner + FAR planner + TARE autonomous exploration
+- Terrain analysis, obstacle avoidance, visibility-graph routing
+- 9 agent skills: walk, turn, stand, sit, lie_down, navigate, explore, stop, where_am_i
+- 26/26 locomotion tests passing (L0 physics through L4 navigation)
+
+### SO-101 Arm Simulation
+
 ```bash
 python run.py --sim              # MuJoCo viewer + interactive CLI
 python run.py --sim-headless     # headless (no viewer)
@@ -213,19 +268,27 @@ llm:
 ## All Launch Modes
 
 ```bash
-# Classic pipeline (classify → plan → execute)
+# Go2 quadruped (MuJoCo + agent mode)
+python run.py --sim-go2                # Go2 sim + MuJoCo viewer + agent CLI
+python run.py --sim-go2-headless       # Go2 sim headless
+python run.py --sim-go2 --explore      # Go2 + nav stack launched externally via ROS2 proxy
+
+# Go2 navigation stack (shell scripts, no agent)
+./scripts/launch_vnav.sh               # Go2 + Vector Nav Stack + RViz (manual control)
+./scripts/launch_explore.sh            # Go2 + VNav + TARE autonomous exploration + RViz
+./scripts/launch_nav2.sh --rviz        # Go2 + Nav2 (AMCL + MPPI) alternative
+./scripts/launch_slam.sh               # Go2 + SLAM real-time mapping
+
+# SO-101 arm
 python run.py                  # Real hardware + CLI
 python run.py --sim            # MuJoCo sim + viewer + CLI
 python run.py --sim-headless   # MuJoCo sim headless
-python run.py -v               # Verbose: show agent thinking (MATCH/CLASSIFY/ROUTE)
 python run.py --dashboard      # Textual TUI dashboard
 python run.py --web --sim      # Web dashboard at localhost:8000
 
-# Agent mode (LLM tool-calling — smarter, context-aware)
-python run.py --agent                                     # Default: GPT-4o (reliable tool calling + vision)
-python run.py --agent --agent-model openai/gpt-4o-mini    # Cheaper alternative
+# Agent mode (LLM tool-calling -- works with both arm and Go2)
+python run.py --agent                                     # Default: GPT-4o
 python run.py --agent --agent-model anthropic/claude-sonnet-4-6  # Claude Sonnet
-python run.py --agent -v                                  # Agent + debug output
 python run.py --sim --agent                               # Sim + agent mode
 ```
 
@@ -282,17 +345,31 @@ agent.execute("挥手三次")    # alias match → LLM fills params
 
 ```
 vector_os_nano/
-├── core/          SkillFlow, Agent, AgentLoop, Executor, WorldModel, PlanValidator
-├── llm/           LLM-agnostic providers (Claude, OpenAI, Ollama), ModelRouter
-├── perception/    RealSense + Moondream VLM + EdgeTAM tracker
+├── core/              SkillFlow, Agent, ToolAgent, Executor, WorldModel
+├── llm/               LLM-agnostic providers (Claude, OpenAI, Ollama)
+├── perception/        RealSense + Moondream VLM + EdgeTAM tracker
 ├── hardware/
-│   ├── so101/     SO-101 arm driver (Feetech serial, Pinocchio IK)
-│   └── sim/       MuJoCo simulation (arm, gripper, perception, 6 objects)
-├── skills/        @skill classes with diagnostics + enum constraints + failure_modes
-├── cli/           Rich CLI with debug mode (-v shows agent thinking)
-├── mcp/           MCP server (tools + resources, stdio + SSE transport)
-├── web/           FastAPI + WebSocket dashboard
-└── ros2/          Optional ROS2 integration (5 nodes)
+│   ├── so101/         SO-101 arm driver (Feetech serial, Pinocchio IK)
+│   └── sim/           MuJoCo simulation (arm, Go2, perception)
+│       ├── mujoco_go2.py        Go2 physics (convex MPC, 1kHz)
+│       └── go2_ros2_proxy.py    ROS2 topic proxy for nav stack integration
+├── skills/
+│   ├── go2/           walk, turn, stand, sit, explore, stop, where_am_i
+│   ├── navigate.py    Room navigation (nav stack or dead-reckoning)
+│   └── ...            pick, place, home, scan, detect, gripper, wave
+├── cli/               Rich CLI + TUI dashboard
+├── mcp/               MCP server (tools + resources)
+├── web/               FastAPI + WebSocket dashboard
+└── ros2/              Optional ROS2 integration
+
+scripts/
+├── go2_vnav_bridge.py     MuJoCo <-> ROS2 bridge (state_estimation, registered_scan, TF)
+├── launch_vnav.sh         Full nav stack launch (bridge + localPlanner + FAR + terrain + RViz)
+├── launch_explore.sh      Nav stack + TARE autonomous exploration
+├── launch_nav_only.sh     Nav stack nodes only (bridge managed externally by run.py)
+├── launch_nav2.sh         Nav2 alternative (AMCL + MPPI)
+├── launch_slam.sh         SLAM real-time mapping
+└── go2_demo.py            Visual locomotion demo (standalone)
 ```
 
 ## MCP Server -- Claude Code Controls the Robot
@@ -326,14 +403,40 @@ Claude Agent can autonomously design, implement, and test new skills with full r
   <i>Claude Agent designing a custom wave skill with full reasoning, code generation, and live execution.</i>
 </p>
 
+## Navigation Stack Dependencies
+
+The Go2 navigation features require the [Vector Navigation Stack](https://github.com/VectorRobotics/vector_navigation_stack) (CMU/Ji Zhang group):
+
+```bash
+# 1. ROS2 Jazzy
+sudo apt install ros-jazzy-desktop
+
+# 2. Build the navigation stack
+cd ~/Desktop
+git clone https://github.com/VectorRobotics/vector_navigation_stack.git  # see repo for details
+cd vector_navigation_stack
+colcon build
+
+# 3. Build TARE planner (autonomous exploration)
+colcon build --packages-select tare_planner
+
+# 4. Install Go2 MPC controller
+cd ~/Desktop
+git clone https://github.com/VectorRobotics/go2-convex-mpc.git
+cd go2-convex-mpc
+pip install -e .
+```
+
+Without the navigation stack, Go2 basic skills (walk, turn, stand, navigate via dead-reckoning) still work. The nav stack adds: terrain-aware obstacle avoidance, global path planning (FAR planner), and autonomous exploration (TARE planner).
+
 ## What's Coming
 
 The full Vector OS stack under development at **CMU Robotics Institute**:
 
-- **SLAM + Navigation** -- LiDAR/visual SLAM, Nav2, multi-floor mapping
 - **Semantic Mapping** -- 3D scene graphs, object permanence, spatial reasoning
 - **Multi-Robot Coordination** -- fleet management, task allocation, shared world model
-- **Mobile Manipulation** -- wheeled, legged, and humanoid platforms
+- **Mobile Manipulation** -- Go2 + arm integration, whole-body control
+- **Humanoid Support** -- extending to bipedal platforms
 
 **Star this repo and stay tuned.**
 
