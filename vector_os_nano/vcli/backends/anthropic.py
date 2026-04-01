@@ -26,6 +26,7 @@ class AnthropicBackend:
         base_url: str | None = None,
         max_retries: int = 3,
     ) -> None:
+        # OAuth tokens (sk-ant-oat*) work as regular api_key via x-api-key header
         kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url

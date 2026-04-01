@@ -7,6 +7,7 @@ Public exports:
 """
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 from typing import Any
 
@@ -230,6 +231,70 @@ class FileWriteTool:
 
 
 # ---------------------------------------------------------------------------
+# Diff helper
+# ---------------------------------------------------------------------------
+
+_MAX_DIFF_LINES: int = 20
+
+
+def _format_edit_diff(before: str, after: str, file_path_str: str) -> str:
+    """Return a compact unified-diff summary of a single edit.
+
+    Uses ``difflib.unified_diff`` with n=2 context lines and caps the
+    output at *_MAX_DIFF_LINES* lines to keep it readable.
+
+    Returns a string like::
+
+        Edited /path/to/file.py:
+        @@ line 7 @@
+        -old line content
+        +new line content
+         context line
+    """
+    before_lines = before.splitlines(keepends=True)
+    after_lines = after.splitlines(keepends=True)
+
+    diff_iter = difflib.unified_diff(
+        before_lines,
+        after_lines,
+        fromfile=file_path_str,
+        tofile=file_path_str,
+        n=2,
+    )
+
+    # Collect and cap the diff output
+    diff_lines: list[str] = []
+    for line in diff_iter:
+        diff_lines.append(line)
+        if len(diff_lines) >= _MAX_DIFF_LINES:
+            break
+
+    if not diff_lines:
+        # Identical content after replacement (old_string == new_string edge-case)
+        return f"Edited {file_path_str}: no visible changes"
+
+    # Strip the two "--- / +++" header lines produced by unified_diff;
+    # they are redundant since we already show the filename.
+    body_lines = [ln for ln in diff_lines if not ln.startswith("--- ") and not ln.startswith("+++ ")]
+
+    # Rewrite the @@ hunk header to a friendlier "line N" format
+    formatted: list[str] = [f"Edited {file_path_str}:"]
+    for ln in body_lines:
+        if ln.startswith("@@"):
+            # Parse first line number from "@@ -L,C +L,C @@"
+            try:
+                after_marker = ln.split("+")[1].split(",")[0]
+                line_num = int(after_marker)
+                formatted.append(f"@@ line {line_num} @@")
+            except (IndexError, ValueError):
+                formatted.append(ln.rstrip())
+        else:
+            formatted.append(ln.rstrip())
+
+    return "\n".join(formatted)
+
+
+# ---------------------------------------------------------------------------
 # FileEditTool
 # ---------------------------------------------------------------------------
 
@@ -305,6 +370,10 @@ class FileEditTool:
         except OSError as exc:
             return ToolResult(content=f"Write error: {exc}", is_error=True)
 
-        return ToolResult(
-            content=f"Replaced 1 occurrence in {file_path_str}",
+        # 4. Build a compact unified diff for the caller
+        diff_text = _format_edit_diff(
+            before=current,
+            after=updated,
+            file_path_str=file_path_str,
         )
+        return ToolResult(content=diff_text)
