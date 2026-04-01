@@ -30,6 +30,7 @@ dependencies = [
     "pyserial>=3.5",
     "httpx>=0.25",
     "pyyaml>=6.0",
+    "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]
@@ -106,6 +107,7 @@ dev = [
 vector-os = "run:main"
 vector-os-dashboard = "run:main_dashboard"
 vector-os-mcp = "vector_os_nano.mcp.server:main_sync"
+vector-cli = "vector_os_nano.vcli.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vector_os_nano"]
