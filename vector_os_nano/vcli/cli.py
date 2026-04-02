@@ -736,31 +736,35 @@ def _handle_slash_command(
             console.print("[dim]No session.[/dim]")
 
     elif cmd == "clear_memory":
+        import os as _os
+        _sg_path = _os.path.expanduser("~/.vector_os_nano/scene_graph.yaml")
+        cleared = False
+
+        # Clear in-memory scene graph if agent is running
         agent_obj = app_state.get("agent") if app_state else None
         if agent_obj is not None:
             sm = getattr(agent_obj, "_spatial_memory", None)
             if sm is not None:
-                # Reset to empty graph, keeping persist_path
-                persist_path = getattr(sm, "_persist_path", None)
+                persist_path = getattr(sm, "_persist_path", None) or _sg_path
                 from vector_os_nano.core.scene_graph import SceneGraph
                 new_sg = SceneGraph(persist_path=persist_path)
                 agent_obj._spatial_memory = new_sg
-                # Also update proxy's reference
                 base = getattr(agent_obj, "_base", None)
                 if base is not None and hasattr(base, "_scene_graph"):
                     base._scene_graph = new_sg
-                # Delete the file
-                if persist_path:
-                    import os as _os
-                    try:
-                        _os.remove(persist_path)
-                    except FileNotFoundError:
-                        pass
-                console.print(f"[dim]  Scene graph cleared. All rooms/objects forgotten.[/dim]")
-            else:
-                console.print("[dim]No scene graph to clear.[/dim]")
+                cleared = True
+
+        # Always delete the persist file (works even without agent)
+        try:
+            _os.remove(_sg_path)
+            cleared = True
+        except FileNotFoundError:
+            pass
+
+        if cleared:
+            console.print(f"[dim]  Scene graph cleared. All rooms/objects forgotten.[/dim]")
         else:
-            console.print("[dim]No agent running.[/dim]")
+            console.print(f"[dim]  No scene graph file found.[/dim]")
 
     elif cmd == "model":
         if not args_rest:
