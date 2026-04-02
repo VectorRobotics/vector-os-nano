@@ -360,48 +360,56 @@ def _compute_object_position(
 ) -> tuple[float, float]:
     """Compute world position for an object marker.
 
-    Strategy (priority order):
-    1. Use obj.x / obj.y if non-zero — these come from depth projection
-       (D435 RGBD camera → project_center_to_world). Most accurate.
-    2. Project from viewpoint heading — when depth isn't available but
-       we know where the robot was looking.
-    3. Fall back to room center circular arrangement.
+    We know the robot's position and heading when it saw the objects,
+    but VLM only returns names — no pixel coordinates, no per-object
+    depth. So we place objects as a CLUSTER in front of the viewpoint:
 
-    Result is always clamped inside the room boundary.
+    1. Find the viewpoint that saw this object.
+    2. Compute the "scene center" = viewpoint + 2m along heading.
+       This is approximately where the camera was pointing.
+    3. Distribute objects in a small cluster around scene center.
+       Each object gets a unique offset so they don't overlap.
+    4. Clamp inside room bounds.
+
+    Fall back to room center if no viewpoint is available.
     """
     bounds = _ROOM_BOUNDS.get(room_id)
     margin = 0.5
-    ox, oy = 0.0, 0.0
 
-    # Priority 1: depth-projected position stored in ObjectNode
-    if obj.x != 0.0 or obj.y != 0.0:
-        ox, oy = obj.x, obj.y
-    else:
-        # Priority 2: project from viewpoint heading
-        vp = None
-        if obj.viewpoint_ids and scene_graph is not None:
-            for vp_id in obj.viewpoint_ids:
-                vps = scene_graph._viewpoints.get(vp_id)
-                if vps is not None:
-                    vp = vps
-                    break
+    # Try to find the viewpoint that observed this object
+    vp = None
+    if obj.viewpoint_ids and scene_graph is not None:
+        for vp_id in obj.viewpoint_ids:
+            vps = scene_graph._viewpoints.get(vp_id)
+            if vps is not None:
+                vp = vps
+                break
 
-        if vp is not None and (vp.x != 0.0 or vp.y != 0.0):
-            half_fov = math.radians(_VIEWPOINT_FOV_DEG / 2)
-            if total_objs > 1:
-                angle_offset = -half_fov + (2 * half_fov) * obj_index / (total_objs - 1)
-            else:
-                angle_offset = 0.0
-            direction = vp.heading + angle_offset
-            dist = 1.8 + 0.3 * (obj_index % 3)
-            ox = vp.x + dist * math.cos(direction)
-            oy = vp.y + dist * math.sin(direction)
+    if vp is not None and (vp.x != 0.0 or vp.y != 0.0):
+        # Scene center = viewpoint position + 2m along heading
+        scene_dist = 2.0
+        scene_cx = vp.x + scene_dist * math.cos(vp.heading)
+        scene_cy = vp.y + scene_dist * math.sin(vp.heading)
+
+        # Distribute objects in a cluster around scene center.
+        # Use a grid-like scatter within a ~1m radius circle.
+        if total_objs == 1:
+            ox, oy = scene_cx, scene_cy
         else:
-            # Priority 3: room center fallback
-            cx, cy = _ROOM_CENTERS.get(room_id, (0.0, 0.0))
-            angle = obj_index * 2 * math.pi / max(total_objs, 1)
-            ox = cx + 1.2 * math.cos(angle)
-            oy = cy + 1.2 * math.sin(angle)
+            # Arrange in a circle of radius proportional to object count
+            cluster_radius = min(0.8, 0.3 + 0.1 * total_objs)
+            angle = obj_index * 2.0 * math.pi / total_objs
+            ox = scene_cx + cluster_radius * math.cos(angle)
+            oy = scene_cy + cluster_radius * math.sin(angle)
+    else:
+        # Fallback: room center
+        cx, cy = _ROOM_CENTERS.get(room_id, (0.0, 0.0))
+        if total_objs == 1:
+            ox, oy = cx, cy
+        else:
+            angle = obj_index * 2.0 * math.pi / total_objs
+            ox = cx + 1.0 * math.cos(angle)
+            oy = cy + 1.0 * math.sin(angle)
 
     # Clamp inside room bounds
     if bounds:

@@ -451,7 +451,7 @@ class ExploreSkill:
         spatial_memory = context.services.get("spatial_memory")
         if vlm is not None:
             def _do_auto_look(room: str) -> dict | None:
-                """Capture RGBD, run VLM, use depth to project object world position."""
+                """Capture RGB, run VLM, record to scene graph."""
                 try:
                     frame = base.get_camera_frame()
                     scene = vlm.describe_scene(frame)
@@ -459,40 +459,19 @@ class ExploreSkill:
                     detected_room = room_id.room if room_id.room != "unknown" else room
 
                     obj_names = [o.name for o in scene.objects]
-
-                    # Use depth to find world position of what robot sees
-                    obs_x, obs_y = 0.0, 0.0
                     pos = base.get_position()
                     heading = base.get_heading()
 
-                    if hasattr(base, "get_depth_frame"):
-                        try:
-                            depth = base.get_depth_frame()
-                            from vector_os_nano.perception.depth_projection import (
-                                d435_intrinsics, project_center_to_world,
-                            )
-                            intr = d435_intrinsics(depth.shape[1], depth.shape[0])
-                            world_pt = project_center_to_world(
-                                depth, intr,
-                                float(pos[0]), float(pos[1]), float(pos[2]),
-                                float(heading),
-                            )
-                            if world_pt is not None:
-                                obs_x, obs_y = world_pt[0], world_pt[1]
-                        except Exception:
-                            pass
-
-                    if obs_x == 0.0 and obs_y == 0.0:
-                        obs_x, obs_y = float(pos[0]), float(pos[1])
-
+                    # Viewpoint = robot position. Objects have no individual
+                    # coords — viz places them in a cluster 2m along heading.
                     if spatial_memory is not None:
                         if hasattr(spatial_memory, "observe_with_viewpoint"):
                             spatial_memory.observe_with_viewpoint(
-                                detected_room, obs_x, obs_y,
+                                detected_room, float(pos[0]), float(pos[1]),
                                 float(heading), obj_names, scene.summary,
                             )
                         else:
-                            spatial_memory.visit(detected_room, obs_x, obs_y)
+                            spatial_memory.visit(detected_room, float(pos[0]), float(pos[1]))
                             spatial_memory.observe(detected_room, obj_names, scene.summary)
 
                     return {

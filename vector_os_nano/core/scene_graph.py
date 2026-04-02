@@ -525,7 +525,6 @@ class SceneGraph:
                         self.merge_object(
                             category=obj_name, room_id=room,
                             viewpoint_id=nearest_vp,
-                            x=x, y=y,
                         )
             return None
 
@@ -543,12 +542,13 @@ class SceneGraph:
         # Visit room if not yet visited
         self.visit(room, x, y)
 
-        # Add objects
+        # Add objects — no individual coords (VLM gives names, not positions).
+        # The viz layer uses viewpoint (x, y, heading) to position objects.
         with self._lock:
             for obj_name in objects:
                 self.merge_object(
                     category=obj_name, room_id=room,
-                    viewpoint_id=vp_id, x=x, y=y,
+                    viewpoint_id=vp_id,
                 )
 
         return vp

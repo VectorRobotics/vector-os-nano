@@ -115,49 +115,35 @@ class LookSkill:
         # Prefer VLM room over positional heuristic; fall back if "unknown".
         room: str = room_id.room if room_id.room != "unknown" else _fallback_room(context)
 
-        # Compute world position of what the robot is looking at using depth.
-        # This gives us the (x, y) where objects should be placed on the map.
-        obs_x, obs_y = 0.0, 0.0
+        # Get robot pose for viewpoint recording.
         pos = context.base.get_position()
         heading = context.base.get_heading()
 
+        # Compute depth-based observation distance. This tells us HOW FAR
+        # the scene is, not individual object positions (VLM can't give those).
+        obs_depth = 0.0
         if depth_frame is not None:
             try:
-                from vector_os_nano.perception.depth_projection import (
-                    d435_intrinsics,
-                    project_center_to_world,
-                )
-                intr = d435_intrinsics(depth_frame.shape[1], depth_frame.shape[0])
-                world_pt = project_center_to_world(
-                    depth_frame, intr,
-                    float(pos[0]), float(pos[1]), float(pos[2]),
-                    float(heading),
-                )
-                if world_pt is not None:
-                    obs_x, obs_y = world_pt[0], world_pt[1]
-                    logger.info(
-                        "[LOOK] Depth projection: (%.1f, %.1f) → world (%.1f, %.1f)",
-                        pos[0], pos[1], obs_x, obs_y,
-                    )
-            except Exception as exc:
-                logger.debug("[LOOK] Depth projection failed: %s", exc)
-
-        # Fall back to robot position if depth projection unavailable
-        if obs_x == 0.0 and obs_y == 0.0:
-            obs_x, obs_y = float(pos[0]), float(pos[1])
+                from vector_os_nano.perception.depth_projection import center_depth
+                obs_depth = center_depth(depth_frame)
+            except Exception:
+                pass
 
         # Record to spatial memory / scene graph.
+        # Viewpoint = robot position (precise). Objects get no individual
+        # coords — we only know they're roughly obs_depth metres ahead.
+        # The viz layer uses viewpoint heading + obs_depth to place them.
         spatial_memory = context.services.get("spatial_memory")
         if spatial_memory is not None:
             object_names: list[str] = [obj.name for obj in scene.objects]
             try:
                 if hasattr(spatial_memory, "observe_with_viewpoint"):
                     spatial_memory.observe_with_viewpoint(
-                        room, obs_x, obs_y,
+                        room, float(pos[0]), float(pos[1]),
                         float(heading), object_names, scene.summary,
                     )
                 else:
-                    spatial_memory.visit(room, obs_x, obs_y)
+                    spatial_memory.visit(room, float(pos[0]), float(pos[1]))
                     spatial_memory.observe(room, object_names, scene.summary)
             except Exception as exc:
                 logger.warning("[LOOK] spatial_memory update failed: %s", exc)
