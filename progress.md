@@ -1,12 +1,22 @@
 # Vector OS Nano SDK — Progress
 
 **Last updated:** 2026-04-02
-**Version:** v0.7.0-dev
+**Version:** v0.8.0-dev
 **Branch:** master
 
 ---
 
-## Current: Go2 VLM + SceneGraph + Auto-Look + RViz Visualization
+## Current: Go2 RGBD Perception + Depth-Based Object Mapping
+
+### Sensor Configuration (sim-to-real)
+```
+Unitree Go2 quadruped
+  ├── Livox MID-360 LiDAR  → /registered_scan (10Hz, 10k+ pts)
+  │     30° tilt, -7/+52° FOV, sim: MuJoCo raycasting
+  └── RealSense D435 RGBD  → /camera/image (5Hz, RGB8 320x240)
+        69° HFOV              → /camera/depth (5Hz, 32FC1 320x240)
+        sim: MuJoCo depth renderer, real: rs2 aligned_depth_to_color
+```
 
 ### Architecture
 ```
@@ -16,29 +26,50 @@ User
   ├── RViz teleop ──→ /joy ──→ bridge (direct velocity, 0.8 m/s)
   └── /goal_point ──→ FAR planner ──→ /way_point ──→ localPlanner
 
-MuJoCoGo2 (convex MPC, 1kHz)
-  ├── get_camera_frame() ──→ Go2VLMPerception (GPT-4o via OpenRouter)
-  │     ├── describe_scene() → SceneDescription (summary, objects, room_type)
-  │     ├── identify_room() → RoomIdentification (room, confidence)
-  │     └── find_objects() → [DetectedObject]
-  ├── publishes: /state_estimation (200Hz), /registered_scan (10Hz)
-  ├── publishes: /camera/image (5Hz, 320x240), /speed (2Hz)
+Subprocess (launch_vnav.sh)
+  MuJoCoGo2 (convex MPC, 1kHz)
+  Go2VNavBridge (200Hz odom, 10Hz scan, 5Hz RGBD)
+  localPlanner + pathFollower + terrainAnalysis + FAR planner
+  sensorScanGeneration → /state_estimation_at_scan → TARE
+
+Agent Process (vector-cli / run.py)
+  Go2ROS2Proxy ←→ ROS2 topics ←→ Bridge
+  ├── get_camera_frame()  → VLM (GPT-4o via OpenRouter)
+  │     describe_scene() → SceneDescription
+  │     identify_room()  → RoomIdentification
+  ├── get_depth_frame()   → depth_projection.project_center_to_world()
+  │     pixel + depth + D435 intrinsics + robot pose → world (x,y,z)
   └── SceneGraph: 3-layer (rooms→viewpoints→objects), persistent YAML
+        objects positioned via depth projection (sim-to-real)
 
 Skills (12 total):
   walk, turn, stand, sit, lie_down, navigate, explore,
   where_am_i, stop, look, describe_scene, patrol
 
-RViz Visualization:
+RViz Visualization (anti-flicker: 3s interval, 5s lifetime):
   ├── Room fills (semi-transparent, color-coded per room)
   ├── Room borders (LINE_STRIP outlines, visited=bright, unvisited=dim)
   ├── Room labels (name + visit count + coverage% + object count)
   ├── Viewpoint spheres (teal-green) + FOV cones (TRIANGLE_LIST)
-  ├── Object cubes (category-colored) + text labels
+  ├── Object cubes (depth-projected position, category-colored) + labels
   ├── Robot arrow (teal) + footprint cylinder
   ├── Trajectory trail (LINE_STRIP, grey→teal fade)
   └── Nav goal beacon (red cylinder + disc + "GOAL" label)
 ```
+
+### Object Positioning Pipeline (sim-to-real)
+```
+D435 RGBD camera
+  ├── RGB → VLM (GPT-4o) → "saw: sofa, table, lamp"
+  └── Depth → center_depth(median 20% center) → 2.3m
+                  ↓
+      project_center_to_world(depth, D435_intrinsics, robot_pose)
+                  ↓
+      ObjectNode(x=4.2, y=1.8)  ← world coordinates
+                  ↓
+      RViz marker at (4.2, 1.8)  ← accurate placement
+```
+Fallback chain: depth projection → viewpoint heading fan → room center.
 
 ### Harness Results
 | Suite | Result | Details |
@@ -59,42 +90,55 @@ RViz Visualization:
 | Persistence (L9) | **28/28** | SceneGraph save/load lifecycle, edge cases |
 | Auto-Look (L10) | **8/8** | ExploreSkill + VLM auto-observe on new room |
 | Mobile Loop (L11) | **14/14** | LLM planning, fallback, execution, auto-observe |
-| **Total harness** | **236+** | 0 collection errors |
+| TARE Chain (L12) | **20/20** | wander interval, duty cycle, QoS compat |
+| Depth Projection (L13) | **24/24** | D435 intrinsics, pixel→world, center_depth |
+| **Total harness** | **280+** | 0 collection errors |
 
-### What's New (v0.7.0-dev)
-- **VLM Auto-Look on Explore**: ExploreSkill automatically calls VLM when entering a new room, records observations in SceneGraph with viewpoint-aware positioning
-- **RViz Visualization Upgrade**: Apple-quality markers — color-coded rooms, FOV cone fans, trajectory trail with gradient fade, nav goal beacon, category-colored object cubes
-- **SceneGraph Persistence**: Auto-load on startup from ~/.vector_os_nano/scene_graph.yaml, auto-save on exit. Rooms, viewpoints, objects survive across sessions
-- **MobileAgentLoop LLM Fix**: Fixed chat() interface mismatch (was calling messages= keyword, now uses user_message/system_prompt). Auto-observe uses SceneGraph viewpoint-aware API
-- **Proxy Camera E2E Verified**: Go2ROS2Proxy._camera_cb → get_camera_frame → LookSkill → VLM → SceneGraph pipeline fully tested
-- **Test Harness Expanded**: L8 from 17→38 tests, new L9 (proxy+persistence), L10 (auto-look), L11 (mobile loop). 236+ tests total
+### What's New (v0.8.0-dev)
+- **RealSense D435 RGBD Simulation**: MuJoCoGo2 renders aligned RGB+depth via MuJoCo depth renderer. Same `get_rgbd_frame()` interface for sim and real.
+- **Depth-Based Object Positioning**: Objects placed at world coordinates computed from D435 depth + camera intrinsics + robot pose. Replaces heading-based guessing.
+- **depth_projection.py**: D435 intrinsics, `pixel_to_camera()`, `camera_to_world()`, `center_depth()`, `project_center_to_world()`. Sim-to-real compatible.
+- **Anti-Flicker Markers**: Publish interval 1Hz→3Hz, marker lifetime=5s, hash-based change detection. Only re-publish when scene graph changes.
+- **TARE Wander Fix**: Exploration loop sends velocity every 0.8s (was 2.0s), 62.5% duty cycle. TARE gets continuous scan data instead of starving.
+- **`/clear_memory` Command**: Reset scene graph and delete persist file from CLI.
+- **Object Position Fix**: Markers use depth-projected coords (priority 1), viewpoint heading projection (priority 2), room center (priority 3). All clamped to room bounds.
 
 ### What Works
 - Go2 walks with unitree convex MPC (auto-detected, sinusoidal fallback)
-- Livox MID360 simulation: 30 deg tilt, -7/+52 deg FOV, 10k+ points/scan
+- Livox MID360 + RealSense D435 simulation (LiDAR + RGBD)
 - Vector Nav Stack: localPlanner, pathFollower, terrain_analysis, FAR planner
-- TARE autonomous exploration (frontier-based TSP)
-- Camera RGB from MuJoCo → GPT-4o scene understanding
+- TARE autonomous exploration with continuous wander velocity
+- RGBD camera → GPT-4o scene understanding + depth object positioning
 - VLM room identification with confidence scores
 - Multi-room patrol with spatial memory recording
 - Agent SDK: natural language → Go2 skills (12 skills)
 - SceneGraph persists across sessions (rooms, viewpoints, objects)
-- Auto-look during exploration captures VLM scene at each new room
+- Auto-look during exploration: RGBD capture + VLM + depth projection at each new room
 - MobileAgentLoop plans via LLM with SceneGraph context
-- RViz shows room boundaries, FOV cones, trajectory, nav goal, objects
+- RViz: color-coded rooms, FOV cones, trajectory, objects at depth-projected positions
+- `/clear_memory` to reset scene graph
 
 ### Known Issues
 1. FAR planner publishes /way_point but not /global_path (graph_decoder issue)
-2. Camera depth rendering intermittent (MuJoCo API)
-3. VLM look via proxy `/camera/image` — tested in mock, needs real ROS2 E2E verification
-4. L5 VLM accuracy limited by MuJoCo room texture quality
+2. TARE may still struggle with viewpoint generation in tight spaces (MuJoCo house geometry)
+3. VLM accuracy limited by MuJoCo room texture quality (L5 diagnostic)
+4. Depth projection accuracy depends on MuJoCo depth buffer fidelity
 
 ### TODO
-- [ ] Live ROS2 E2E test: start launch_vnav.sh + proxy, verify real /camera/image frames
+- [ ] Verify TARE produces waypoints with wander fix (check /tmp/vector_tare.log)
 - [ ] Improve VLM room accuracy (higher res, multi-angle, better scene textures)
-- [ ] Go2ROS2Proxy: add sit/lie_down via ROS2 service (currently just zero velocity)
-- [ ] MobileAgentLoop: test with real OpenRouter API for LLM planning
-- [ ] SceneGraph: add room connectivity edges (door graph) for smarter navigation
+- [ ] Go2ROS2Proxy: sit/lie_down via ROS2 service (currently just zero velocity)
+- [ ] SceneGraph: room connectivity edges (door graph) for smarter navigation
+- [ ] Real D435 driver integration (rs2 → /camera/image + /camera/depth)
+
+### CLI Commands
+| Command | Purpose |
+|---------|---------|
+| `/clear_memory` | Reset scene graph, delete persist file |
+| `/model <name>` | Switch LLM model (OpenRouter) |
+| `/status` | Show hardware, tools, session info |
+| `/tools` | List all registered tools |
+| `/help` | Show all commands |
 
 ### Scripts
 | Script | Purpose |
