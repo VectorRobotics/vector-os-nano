@@ -512,21 +512,3 @@ class ExploreSkill:
                         "You can navigate or look while exploring.",
             },
         )
-
-
-def _build_result(visited: set[str], duration: float, mode: str) -> SkillResult:
-    rooms_list = sorted(visited)
-    total_rooms = len(_ROOM_CENTERS)
-    coverage = round(len(visited) / total_rooms * 100.0, 1) if total_rooms else 0.0
-
-    return SkillResult(
-        success=True,
-        result_data={
-            "rooms_visited": rooms_list,
-            "rooms_visited_count": len(visited),
-            "total_rooms": total_rooms,
-            "coverage_percent": coverage,
-            "duration_s": duration,
-            "mode": mode,
-        },
-    )

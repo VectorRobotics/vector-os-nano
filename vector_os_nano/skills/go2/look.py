@@ -92,14 +92,6 @@ class LookSkill:
                 diagnosis_code="camera_failed",
             )
 
-        # Depth frame for 3D object positioning (optional — works without)
-        depth_frame = None
-        if hasattr(context.base, "get_depth_frame"):
-            try:
-                depth_frame = context.base.get_depth_frame()
-            except Exception:
-                pass
-
         # Run VLM calls — both scene description and room identification.
         try:
             scene = vlm.describe_scene(frame)
@@ -119,20 +111,9 @@ class LookSkill:
         pos = context.base.get_position()
         heading = context.base.get_heading()
 
-        # Compute depth-based observation distance. This tells us HOW FAR
-        # the scene is, not individual object positions (VLM can't give those).
-        obs_depth = 0.0
-        if depth_frame is not None:
-            try:
-                from vector_os_nano.perception.depth_projection import center_depth
-                obs_depth = center_depth(depth_frame)
-            except Exception:
-                pass
-
         # Record to spatial memory / scene graph.
-        # Viewpoint = robot position (precise). Objects get no individual
-        # coords — we only know they're roughly obs_depth metres ahead.
-        # The viz layer uses viewpoint heading + obs_depth to place them.
+        # Viewpoint = robot position (precise). Objects have no individual
+        # coords — the viz layer places them in front of the viewpoint heading.
         spatial_memory = context.services.get("spatial_memory")
         if spatial_memory is not None:
             object_names: list[str] = [obj.name for obj in scene.objects]
