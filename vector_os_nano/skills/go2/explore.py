@@ -304,6 +304,18 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
         base.set_velocity(0.1, 0.0, 0.05)  # slow forward + gentle turn
         time.sleep(3.0)  # let TARE process scans
 
+    # TARE needs continuous scan data to generate viewpoints. The bridge's
+    # path follower only moves the robot when it has a /path from localPlanner,
+    # which only has a path when TARE or FAR publishes /way_point. This creates
+    # a deadlock: no movement → no scans → no viewpoints → no waypoints.
+    #
+    # Fix: keep sending a slow wander velocity every cycle. The bridge's
+    # _cmd_vel_cb sets teleop_until=+0.5s, so this overrides the path
+    # follower. Once TARE starts working, we stop sending wander commands
+    # and let the nav stack drive.
+    _last_wander = 0.0
+    _wander_heading = 0.08  # gentle turn rate, alternates direction
+
     try:
         while not _explore_cancel.is_set():
             try:
@@ -311,6 +323,23 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                 if pos[2] < 0.12:
                     _emit("stopped", {"reason": "robot_fell", "rooms": sorted(_explore_visited)})
                     break
+
+                # Wander: keep the robot moving so TARE gets scan data.
+                # Send velocity every 2s. The /cmd_vel_nav topic gives
+                # the bridge ~0.5s of teleop override, then path follower
+                # tries to take over. By re-sending every 2s we ensure
+                # continuous movement while still allowing nav stack paths
+                # to briefly execute between our wander commands.
+                if has_bridge:
+                    now = time.time()
+                    if now - _last_wander > 2.0:
+                        base.set_velocity(0.15, 0.0, _wander_heading)
+                        _last_wander = now
+                        # Reverse turn direction occasionally to avoid circles
+                        if len(_explore_visited) % 2 == 0:
+                            _wander_heading = 0.08
+                        else:
+                            _wander_heading = -0.08
 
                 room = _detect_current_room(float(pos[0]), float(pos[1]))
                 if room not in _explore_visited:
