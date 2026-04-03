@@ -94,6 +94,11 @@ def _ensure_model() -> bool:
         return False
 
     try:
+        import os as _os
+        _os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+        import warnings
+        warnings.filterwarnings("ignore", message=".*unauthenticated.*HF Hub.*")
+
         import torch  # noqa: F401
         from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 
