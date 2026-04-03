@@ -60,16 +60,19 @@ def _start_tare() -> bool:
         cmd = "source /opt/ros/jazzy/setup.bash && "
         nav_stack = os.path.expanduser("~/Desktop/vector_navigation_stack")
         cmd += f"source {nav_stack}/install/setup.bash && "
-        # Use Go2-tuned TARE config if available, else fall back to default
-        go2_cfg = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__))))),
-            "config", "tare_go2_indoor.yaml",
+        # Copy Go2-tuned TARE config to nav stack install dir before launch
+        _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)
+        ))))
+        go2_cfg = os.path.join(_repo, "config", "tare_go2_indoor.yaml")
+        tare_install = os.path.expanduser(
+            "~/Desktop/vector_navigation_stack/install/tare_planner/share/tare_planner"
         )
-        if os.path.isfile(go2_cfg):
-            cmd += f"ros2 launch tare_planner explore.launch scenario:=indoor_small --ros-args --params-file {go2_cfg}"
-        else:
-            cmd += "ros2 launch tare_planner explore.launch scenario:=indoor_small"
+        if os.path.isfile(go2_cfg) and os.path.isdir(tare_install):
+            import shutil
+            shutil.copy2(go2_cfg, os.path.join(tare_install, "indoor_small.yaml"))
+            logger.info("[EXPLORE] Installed Go2-tuned TARE config")
+        cmd += "ros2 launch tare_planner explore.launch scenario:=indoor_small"
 
         log_fh = open("/tmp/vector_tare.log", "w")
         _tare_proc = subprocess.Popen(
@@ -484,6 +487,12 @@ class ExploreSkill:
                         try:
                             from vector_os_nano.perception.object_detector import RobotPose
                             depth = base.get_depth_frame()
+                            cam_xpos, cam_xmat = None, None
+                            if hasattr(base, "get_camera_pose"):
+                                try:
+                                    cam_xpos, cam_xmat = base.get_camera_pose()
+                                except Exception:
+                                    pass
                             dets = detector(
                                 frame, depth,
                                 RobotPose(
@@ -491,6 +500,8 @@ class ExploreSkill:
                                     y=float(pos[1]),
                                     z=float(pos[2]),
                                     heading=float(heading),
+                                    cam_xpos=cam_xpos,
+                                    cam_xmat=cam_xmat,
                                 ),
                             )
                             if dets:

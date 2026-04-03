@@ -798,6 +798,21 @@ class MuJoCoGo2:
         depth[(depth < 0.1) | (depth > 10.0)] = 0.0
         return depth
 
+    def get_camera_pose(self) -> tuple:
+        """Return (cam_xpos, cam_xmat) for the d435_rgb camera.
+
+        cam_xpos: (3,) world position
+        cam_xmat: (9,) rotation matrix (row-major, reshape to 3x3)
+
+        Used by depth_projection.camera_to_world for exact transforms.
+        """
+        self._require_connection()
+        cam_id = self._mj.model.cam("d435_rgb").id
+        return (
+            self._mj.data.cam_xpos[cam_id].copy(),
+            self._mj.data.cam_xmat[cam_id].copy(),
+        )
+
     def get_rgbd_frame(
         self, width: int = 320, height: int = 240,
     ) -> tuple["np.ndarray", "np.ndarray"]:

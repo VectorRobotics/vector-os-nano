@@ -129,11 +129,20 @@ class LookSkill:
             try:
                 from vector_os_nano.perception.object_detector import RobotPose
                 depth_frame: np.ndarray = context.base.get_depth_frame()
+                # Get camera world pose for exact projection (sim only)
+                cam_xpos, cam_xmat = None, None
+                if hasattr(context.base, "get_camera_pose"):
+                    try:
+                        cam_xpos, cam_xmat = context.base.get_camera_pose()
+                    except Exception:
+                        pass
                 pose = RobotPose(
                     x=float(pos[0]),
                     y=float(pos[1]),
                     z=float(pos[2]),
                     heading=float(heading),
+                    cam_xpos=cam_xpos,
+                    cam_xmat=cam_xmat,
                 )
                 detected_objects = detector(frame, depth_frame, pose)
             except Exception as exc:

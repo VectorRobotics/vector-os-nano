@@ -120,32 +120,44 @@ def camera_to_world(
     robot_y: float,
     robot_z: float,
     robot_heading: float,
+    cam_xpos: Any = None,
+    cam_xmat: Any = None,
 ) -> tuple[float, float, float]:
     """Transform camera-frame point to world frame.
 
-    Assumes camera is mounted forward-facing on the robot:
-    - Camera Z (forward) → world heading direction
-    - Camera X (right)   → world perpendicular to heading
-    - Camera Y (down)    → world -Z
+    Two modes:
+    1. If cam_xpos and cam_xmat are provided (from MuJoCo data.cam_xpos/xmat),
+       uses the EXACT camera world pose. Most accurate for simulation.
+    2. Otherwise, approximates from robot pose + mount offset + heading.
 
-    Robot heading is yaw in radians (CCW positive from world X axis).
+    Camera pixel convention: x_cam=right, y_cam=down, z_cam=depth (OpenCV).
+    MuJoCo camera convention: col0=right, col1=up, col2=-forward (OpenGL).
 
     Returns (world_x, world_y, world_z).
     """
+    if cam_xpos is not None and cam_xmat is not None:
+        # Use exact MuJoCo camera transform
+        import numpy as np
+        xmat = np.array(cam_xmat, dtype=np.float64).reshape(3, 3)
+        pos = np.array(cam_xpos, dtype=np.float64)
+        # MuJoCo xmat columns: right, up, -forward
+        cam_right = xmat[:, 0]
+        cam_up = xmat[:, 1]
+        cam_forward = -xmat[:, 2]
+        # pixel_to_camera gives (x=right, y=down, z=forward)
+        world_pt = pos + x_cam * cam_right + (-y_cam) * cam_up + z_cam * cam_forward
+        return (float(world_pt[0]), float(world_pt[1]), float(world_pt[2]))
+
+    # Fallback: approximate from robot heading + mount offset
     cos_h = math.cos(robot_heading)
     sin_h = math.sin(robot_heading)
-
-    # Camera mount offset from body center (matches MJCF d435 pos="0.30 0.0 0.05")
     mount_forward = 0.3
     mount_up = 0.05
 
-    # Camera frame → robot body frame
-    # cam_z = forward, cam_x = right, cam_y = down
     body_forward = z_cam
     body_right = x_cam
     body_up = -y_cam
 
-    # Robot body frame → world frame (2D rotation by heading)
     world_x = robot_x + cos_h * (mount_forward + body_forward) - sin_h * body_right
     world_y = robot_y + sin_h * (mount_forward + body_forward) + cos_h * body_right
     world_z = robot_z + mount_up + body_up

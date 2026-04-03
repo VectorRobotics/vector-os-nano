@@ -77,6 +77,8 @@ class RobotPose:
     y: float
     z: float
     heading: float  # yaw in radians
+    cam_xpos: Any = None  # (3,) camera world position from MuJoCo
+    cam_xmat: Any = None  # (9,) camera rotation matrix from MuJoCo
 
 
 # ---------------------------------------------------------------------------
@@ -264,12 +266,15 @@ def detect_and_project(
         valid = patch[(patch > 0.1) & (patch < 10.0)]
         d_m = float(np.median(valid)) if len(valid) > 0 else 0.0
 
-        # Project to world
+        # Project to world using camera pose (exact) or robot heading (fallback)
         wx, wy, wz = 0.0, 0.0, 0.0
         if d_m > 0.0:
-            world_pt = depth_to_world(
-                depth, cu, cv, intrinsics,
+            from vector_os_nano.perception.depth_projection import pixel_to_camera, camera_to_world
+            x_cam, y_cam, z_cam = pixel_to_camera(cu, cv, d_m, intrinsics)
+            world_pt = camera_to_world(
+                x_cam, y_cam, z_cam,
                 pose.x, pose.y, pose.z, pose.heading,
+                cam_xpos=pose.cam_xpos, cam_xmat=pose.cam_xmat,
             )
             if world_pt is not None:
                 wx, wy, wz = world_pt
