@@ -76,9 +76,17 @@
       <geom size="0.047" pos="0.293 0 -0.06" class="collision" />
       <site name="imu" pos="-0.02557 0 0.04232" />
       <!-- RealSense D435 mounted on Go2 head (front face, slight downward tilt) -->
-      <!-- pos: 0.3m forward from CoM, 0.05m up. fovy=42° matches D435 vertical FOV -->
-      <camera name="d435_rgb" pos="0.30 0.0 0.05" euler="-5 0 0" fovy="42" />
-      <camera name="d435_depth" pos="0.30 0.0 0.05" euler="-5 0 0" fovy="42" />
+      <!-- D435 body: 90x25x25mm. pos: 0.3m forward, 0.05m up from CoM -->
+      <body name="d435_camera" pos="0.30 0.0 0.05">
+        <geom type="box" size="0.045 0.0125 0.0125" rgba="0.15 0.15 0.15 1" mass="0.072"
+              contype="0" conaffinity="0" />
+        <geom type="cylinder" size="0.008 0.005" pos="0.02 0.0 0.0" euler="0 90 0"
+              rgba="0.1 0.1 0.3 1" contype="0" conaffinity="0" />
+        <geom type="cylinder" size="0.008 0.005" pos="-0.02 0.0 0.0" euler="0 90 0"
+              rgba="0.1 0.1 0.3 1" contype="0" conaffinity="0" />
+        <camera name="d435_rgb" pos="0.0 0.0 0.0" euler="-5 0 0" fovy="42" />
+        <camera name="d435_depth" pos="0.0 0.0 0.0" euler="-5 0 0" fovy="42" />
+      </body>
       <body name="FL_hip" pos="0.1934 0.0465 0">
         <inertial pos="-0.0054 0.00194 -0.000105" quat="0.497014 0.499245 0.505462 0.498237"
           mass="0.678"

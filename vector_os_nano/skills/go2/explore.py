@@ -60,7 +60,16 @@ def _start_tare() -> bool:
         cmd = "source /opt/ros/jazzy/setup.bash && "
         nav_stack = os.path.expanduser("~/Desktop/vector_navigation_stack")
         cmd += f"source {nav_stack}/install/setup.bash && "
-        cmd += "ros2 launch tare_planner explore.launch scenario:=indoor_small"
+        # Use Go2-tuned TARE config if available, else fall back to default
+        go2_cfg = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))))),
+            "config", "tare_go2_indoor.yaml",
+        )
+        if os.path.isfile(go2_cfg):
+            cmd += f"ros2 launch tare_planner explore.launch scenario:=indoor_small --ros-args --params-file {go2_cfg}"
+        else:
+            cmd += "ros2 launch tare_planner explore.launch scenario:=indoor_small"
 
         log_fh = open("/tmp/vector_tare.log", "w")
         _tare_proc = subprocess.Popen(
@@ -296,25 +305,22 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
             if _explore_cancel.is_set():
                 _explore_running = False
                 return
-            base.set_velocity(0.15, 0.0, 0.0)
+            base.set_velocity(0.3, 0.0, 0.0)
             time.sleep(1.0)
-        # Don't zero velocity — keep creeping so TARE gets fresh scans
-        # while it builds its initial visibility graph. Nav stack will
-        # override this once it has a real path to follow.
-        base.set_velocity(0.1, 0.0, 0.05)  # slow forward + gentle turn
-        time.sleep(3.0)  # let TARE process scans
+        # Brief turn to widen initial scan coverage
+        base.set_velocity(0.2, 0.0, 0.15)
+        time.sleep(3.0)
 
-    # TARE needs continuous scan data to generate viewpoints. The bridge's
-    # path follower only moves the robot when it has a /path from localPlanner,
-    # which only has a path when TARE or FAR publishes /way_point. This creates
-    # a deadlock: no movement → no scans → no viewpoints → no waypoints.
+    # Wander strategy: send velocity ONLY when the nav stack has no path.
+    # Once TARE/FAR gives waypoints → localPlanner → path → bridge follows it
+    # at full speed (0.5 m/s). We must NOT override this with slow wander.
     #
-    # Fix: keep sending a slow wander velocity every cycle. The bridge's
-    # _cmd_vel_cb sets teleop_until=+0.5s, so this overrides the path
-    # follower. Once TARE starts working, we stop sending wander commands
-    # and let the nav stack drive.
+    # Detection: check if robot position changes between cycles. If it moved
+    # >0.05m in 2s, the nav stack is driving. If stuck, wander to feed TARE.
     _last_wander = 0.0
-    _wander_heading = 0.08  # gentle turn rate, alternates direction
+    _wander_heading = 0.12  # moderate turn
+    _last_pos = (0.0, 0.0)
+    _stuck_count = 0
 
     try:
         while not _explore_cancel.is_set():
@@ -324,23 +330,26 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                     _emit("stopped", {"reason": "robot_fell", "rooms": sorted(_explore_visited)})
                     break
 
-                # Wander: keep the robot moving so TARE gets scan data.
-                # The bridge's _cmd_vel_cb sets teleop_until = now + 0.5s, so
-                # the robot moves for 0.5s after each command, then _follow_path
-                # decelerates it to zero (no path is set). Re-sending every 0.8s
-                # keeps the gap between teleop expiry and next command to ≤0.3s
-                # (vs 1.5s at the previous 2.0s interval) — significantly more
-                # scan data for sensorScanGeneration + TARE.
-                if has_bridge:
+                # Check if robot is stuck (nav stack not moving it)
+                dx = abs(pos[0] - _last_pos[0])
+                dy = abs(pos[1] - _last_pos[1])
+                moved = (dx + dy) > 0.05
+                _last_pos = (pos[0], pos[1])
+
+                if moved:
+                    _stuck_count = 0
+                else:
+                    _stuck_count += 1
+
+                # Only wander when stuck (nav stack has no path).
+                # After 3 stuck cycles (~6s), start wandering to feed TARE.
+                if has_bridge and _stuck_count > 3:
                     now = time.time()
                     if now - _last_wander > 0.8:
-                        base.set_velocity(0.15, 0.0, _wander_heading)
+                        base.set_velocity(0.25, 0.0, _wander_heading)
                         _last_wander = now
-                        # Reverse turn direction occasionally to avoid circles
-                        if len(_explore_visited) % 2 == 0:
-                            _wander_heading = 0.08
-                        else:
-                            _wander_heading = -0.08
+                        if _stuck_count % 5 == 0:
+                            _wander_heading = -_wander_heading  # reverse turn
 
                 room = _detect_current_room(float(pos[0]), float(pos[1]))
                 if room not in _explore_visited:

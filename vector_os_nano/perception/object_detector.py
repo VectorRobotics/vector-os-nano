@@ -41,7 +41,7 @@ _DEFAULT_PROMPT: str = (
     "bathtub . toilet . sink . stool . dresser . rug"
 )
 
-_CONFIDENCE_THRESHOLD: float = 0.25
+_CONFIDENCE_THRESHOLD: float = 0.15
 _MODEL_ID: str = "IDEA-Research/grounding-dino-tiny"
 
 
@@ -179,14 +179,31 @@ def detect_objects(
     )[0]
 
     detections = []
-    # Use text_labels (string names) instead of labels (deprecated, returns ids in v5+)
+    h_img, w_img = pil_image.size[::-1]  # (H, W)
+    # Labels that are not physical objects (structural elements / background)
+    _IGNORE_LABELS = frozenset({"wall", "floor", "ceiling", "room", "space", "area"})
+
     labels_key = "text_labels" if "text_labels" in results else "labels"
     for score, label, box in zip(
         results["scores"], results[labels_key], results["boxes"]
     ):
         u1, v1, u2, v2 = box.cpu().tolist()
-        # Clean label: take the first word if multi-word ("table sofa" → "table")
         clean_label = str(label).strip().split()[0] if label else "object"
+
+        # Skip structural elements
+        if clean_label.lower() in _IGNORE_LABELS:
+            continue
+
+        # Skip bboxes that cover >60% of the image (likely background)
+        bbox_area = (u2 - u1) * (v2 - v1)
+        img_area = w_img * h_img
+        if bbox_area > 0.6 * img_area:
+            continue
+
+        # Skip tiny bboxes (<1% of image — likely noise)
+        if bbox_area < 0.01 * img_area:
+            continue
+
         detections.append({
             "label": clean_label,
             "confidence": float(score.cpu()),
