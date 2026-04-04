@@ -53,7 +53,7 @@ class TestReactiveWallAvoidance:
     def test_front_slowdown(self):
         """When obstacle ahead, vx is reduced."""
         src = _read_bridge()
-        assert "front_d < 0.3" in src or "front_d < 0.5" in src or "front_d < 0.6" in src
+        assert "front_d < 0.6" in src or "front_d < 0.5" in src
 
 
 class TestStuckRecovery:

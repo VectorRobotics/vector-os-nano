@@ -117,10 +117,11 @@ class SimStartTool:
         repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__)
         ))))
-        # Use launch_vnav.sh — bridge + nav stack (NO TARE).
-        # TARE is started on-demand by ExploreSkill only.
-        # DDS cross-process works with RELIABLE QoS (fixed in SDD).
-        vnav_script = os.path.join(repo, "scripts", "launch_vnav.sh")
+        # Use launch_explore.sh — all nodes (bridge + nav stack + TARE) must be
+        # in ONE process group for reliable DDS communication. The nav flag
+        # (/tmp/vector_nav_active) is NOT created here — dog stays still.
+        # explore.py creates the flag to start movement.
+        vnav_script = os.path.join(repo, "scripts", "launch_explore.sh")
         gui_flag = [] if gui else ["--no-gui"]
 
         log_fh = open("/tmp/vector_vnav.log", "w")

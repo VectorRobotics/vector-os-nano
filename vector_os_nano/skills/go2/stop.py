@@ -47,7 +47,7 @@ class StopSkill:
                 diagnosis_code="no_base",
             )
 
-        # Cancel background exploration (if running via CLI)
+        # Cancel any background exploration
         try:
             from vector_os_nano.skills.go2.explore import cancel_exploration, is_exploring
             if is_exploring():
@@ -56,51 +56,20 @@ class StopSkill:
         except Exception:
             pass
 
-        # Kill TARE regardless of explore state (may have been auto-started)
-        _kill_tare()
+        # Hard stop via base interface
+        try:
+            context.base.set_velocity(0.0, 0.0, 0.0)
+            logger.info("[STOP] set_velocity(0, 0, 0) issued")
+        except Exception as exc:
+            logger.warning("[STOP] set_velocity failed: %s", exc)
 
-        # Remove nav flag — this tells bridge path follower to stop
-        _remove_nav_flag()
-
-        # Stop navigation on proxy (clears goal, zeros velocity)
-        if hasattr(context.base, "stop_navigation"):
-            try:
-                context.base.stop_navigation()
-                logger.info("[STOP] stop_navigation() called")
-            except Exception as exc:
-                logger.warning("[STOP] stop_navigation failed: %s", exc)
-        else:
-            try:
-                context.base.set_velocity(0.0, 0.0, 0.0)
-                logger.info("[STOP] set_velocity(0, 0, 0) issued")
-            except Exception as exc:
-                logger.warning("[STOP] set_velocity failed: %s", exc)
+        # Best-effort: publish zero Twist to /cmd_vel_nav via ROS2
+        _try_publish_zero_cmdvel()
 
         return SkillResult(
             success=True,
             result_data={"stopped": True},
         )
-
-
-def _kill_tare() -> None:
-    """Kill TARE planner if running (regardless of how it was started)."""
-    import subprocess
-    try:
-        subprocess.run(["pkill", "-f", "tare_planner_node"],
-                       capture_output=True, timeout=3)
-        logger.info("[STOP] Killed TARE planner")
-    except Exception:
-        pass
-
-
-def _remove_nav_flag() -> None:
-    """Remove nav flag file so bridge path follower stops."""
-    import os
-    try:
-        os.remove("/tmp/vector_nav_active")
-        logger.info("[STOP] Removed nav flag")
-    except FileNotFoundError:
-        pass
 
 
 def _try_publish_zero_cmdvel() -> None:

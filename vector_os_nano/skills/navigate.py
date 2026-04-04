@@ -338,15 +338,6 @@ class NavigateSkill:
         except Exception:
             pass
 
-        # Kill TARE regardless — it may have been auto-started by launch script
-        # and would override our /goal_point with its own /way_point
-        try:
-            import subprocess
-            subprocess.run(["pkill", "-f", "tare_planner_node"],
-                           capture_output=True, timeout=3)
-        except Exception:
-            pass
-
         # Ensure nav flag exists so bridge path follower is armed
         try:
             import os
