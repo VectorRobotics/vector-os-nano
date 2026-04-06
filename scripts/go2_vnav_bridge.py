@@ -857,7 +857,7 @@ class Go2VNavBridge(Node):
         # Track how long robot has been moving slowly. Used to progressively
         # relax heading gate and increase lookahead near furniture/doorways.
         # Prevents the stop-turn-stop-turn loop that causes spinning in place.
-        if self._pf_speed < 0.15:
+        if abs(self._pf_speed) < 0.15:
             self._pf_slow_time += 1.0 / 20.0  # 20Hz tick
         else:
             self._pf_slow_time = max(0.0, self._pf_slow_time - 0.1)  # decay
@@ -924,15 +924,22 @@ class Go2VNavBridge(Node):
             vy = max(-_MAX_LAT, min(_MAX_LAT, vy))
         else:
             # Heading NOT aligned — spot turn toward target.
-            # Quadruped-specific: MPC gait needs some forward velocity to
-            # produce effective rotation. Pure vx=0 + vyaw causes the dog to
-            # "march in place" without actually turning.
-            # Scale creep by heading alignment — at large errors (>45°) the
-            # creep pushes the robot into walls. Minimum 0.05 for gait.
-            creep_scale = max(0.0, 1.0 - abs_err / 0.8)  # 1.0 at 0°, 0.0 at 45°+
-            vx = 0.05 + 0.10 * creep_scale  # 0.15 at small err, 0.05 at large err
-            vy = 0.0
-            # Boost yaw rate for faster spot turn (unclamped here, clamped below)
+            # --- Tight-space 3-point turn ---
+            # If heading error is large AND front is blocked AND we've been
+            # slow for 2+ seconds: REVERSE to clear the obstacle, then turn.
+            # This handles kitchen islands, furniture corners, narrow gaps
+            # where the robot can't turn forward but has space behind it.
+            front_clear = self._check_front_obstacle()
+            if abs_err > 0.6 and front_clear < 0.5 and self._pf_slow_time > 2.0:
+                vx = -0.25  # reverse while turning (3-point turn)
+                vy = 0.0
+            else:
+                # Normal spot turn: scale creep by heading alignment.
+                # At large errors (>45°) minimal forward to avoid wall push.
+                creep_scale = max(0.0, 1.0 - abs_err / 0.8)
+                vx = 0.05 + 0.10 * creep_scale
+                vy = 0.0
+            # Yaw always applied — turn during both forward creep and reverse
             vyaw = _STOP_YAW_GAIN * dir_diff
 
         # --- Cylinder body safety boundary (Go2 MJCF collision) ---
