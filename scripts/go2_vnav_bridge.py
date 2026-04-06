@@ -924,11 +924,13 @@ class Go2VNavBridge(Node):
             vy = max(-_MAX_LAT, min(_MAX_LAT, vy))
         else:
             # Heading NOT aligned — spot turn toward target.
-            # Quadruped-specific: MPC gait needs forward velocity to
+            # Quadruped-specific: MPC gait needs some forward velocity to
             # produce effective rotation. Pure vx=0 + vyaw causes the dog to
-            # "march in place" without actually turning. A creep forward
-            # engages the gait and enables smooth turns while making progress.
-            vx = 0.15  # creep forward while turning (was 0.05 — too slow in doorways)
+            # "march in place" without actually turning.
+            # Scale creep by heading alignment — at large errors (>45°) the
+            # creep pushes the robot into walls. Minimum 0.05 for gait.
+            creep_scale = max(0.0, 1.0 - abs_err / 0.8)  # 1.0 at 0°, 0.0 at 45°+
+            vx = 0.05 + 0.10 * creep_scale  # 0.15 at small err, 0.05 at large err
             vy = 0.0
             # Boost yaw rate for faster spot turn (unclamped here, clamped below)
             vyaw = _STOP_YAW_GAIN * dir_diff
