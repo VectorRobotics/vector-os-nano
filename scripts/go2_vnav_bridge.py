@@ -955,13 +955,29 @@ class Go2VNavBridge(Node):
             if vy < 0:
                 vy = 0.0
 
-        # --- Smooth acceleration ---
+        # --- Smooth acceleration on ALL axes (prevents MPC gait destabilization) ---
+        _ACCEL_LAT = 0.02    # m/s per tick @ 20Hz = 0.4 m/s² lateral
+        _ACCEL_YAW = 0.04    # rad/s per tick @ 20Hz = 0.8 rad/s² yaw
+
+        # Forward/reverse
         if self._pf_speed < vx:
             self._pf_speed = min(vx, self._pf_speed + _ACCEL)
         elif self._pf_speed > vx:
             self._pf_speed = max(vx, self._pf_speed - _ACCEL)
-        self._pf_lat = vy  # lateral can change instantly (no inertia issue)
-        self._pf_yawrate = float(np.clip(vyaw, -_MAX_YAW_RATE, _MAX_YAW_RATE))
+
+        # Lateral — smoothed to prevent sudden weight shift
+        target_lat = float(np.clip(vy, -_MAX_LAT, _MAX_LAT))
+        if self._pf_lat < target_lat:
+            self._pf_lat = min(target_lat, self._pf_lat + _ACCEL_LAT)
+        elif self._pf_lat > target_lat:
+            self._pf_lat = max(target_lat, self._pf_lat - _ACCEL_LAT)
+
+        # Yaw — smoothed to prevent rotational jerk
+        target_yaw = float(np.clip(vyaw, -_MAX_YAW_RATE, _MAX_YAW_RATE))
+        if self._pf_yawrate < target_yaw:
+            self._pf_yawrate = min(target_yaw, self._pf_yawrate + _ACCEL_YAW)
+        elif self._pf_yawrate > target_yaw:
+            self._pf_yawrate = max(target_yaw, self._pf_yawrate - _ACCEL_YAW)
 
         # Clamp final speeds
         self._pf_speed = float(np.clip(self._pf_speed, -0.3, _MAX_SPEED))
