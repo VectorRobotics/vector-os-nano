@@ -47,10 +47,10 @@ class TestFollowerConstants:
             f"YAW_GAIN={c.get('YAW_GAIN')} — C++ uses 7.5"
         )
 
-    def test_stop_yaw_gain_matches_cpp(self):
-        """STOP_YAW_GAIN should be 7.5 (C++ pathFollower line 54)."""
+    def test_max_speed(self):
+        """MAX_SPEED should be ~0.8 m/s."""
         c = self._get_constants()
-        assert c.get("STOP_YAW_GAIN", 0) == pytest.approx(7.5, abs=0.1)
+        assert c.get("MAX_SPEED", 0) == pytest.approx(0.8, abs=0.1)
 
     def test_max_yaw_rate_adequate(self):
         """MAX_YAW_RATE should be 0.785-1.2 rad/s (C++: 0.785, raised for quadruped spot turn)."""
@@ -75,10 +75,10 @@ class TestFollowerConstants:
         c = self._get_constants()
         assert c.get("SLOW_DWN_DIS", 0) == pytest.approx(1.0, abs=0.1)
 
-    def test_dir_diff_threshold_exists(self):
-        """DIR_DIFF_THRE ~1.0 rad (wide gate for quadruped omni-walk)."""
+    def test_yaw_gain_exists(self):
+        """YAW_GAIN should be ~7.5 (proportional heading correction)."""
         c = self._get_constants()
-        assert c.get("DIR_DIFF_THRE", 0) == pytest.approx(1.0, abs=0.1)
+        assert c.get("YAW_GAIN", 0) == pytest.approx(7.5, abs=1.0)
 
     def test_max_lat_speed(self):
         """MAX_LAT should be ~0.4 m/s for quadruped lateral stability."""
@@ -90,46 +90,34 @@ class TestFollowerConstants:
 # Part 2: Heading-gated acceleration (the KEY precision feature)
 # ===================================================================
 
-class TestHeadingGate:
-    """The most critical feature: don't accelerate when heading is wrong.
+class TestOmniDirectional:
+    """Quadruped uses full omnidirectional cos/sin decomposition.
 
-    C++ pathFollower only allows acceleration when:
-      abs(dirDiff) < dirDiffThre (0.1 rad = 5.7°)
-      OR (distance < omniDirGoalThre AND abs(dirDiff) < omniDirDiffThre)
-
-    Without this gate, the robot moves forward while pointing at a wall.
+    No heading gate — cos/sin naturally maps any heading error to vx/vy:
+      0°: full forward  |  90°: pure strafe  |  180°: capped reverse
+    The obstacle safety zones prevent wall collisions.
     """
 
-    def test_heading_gate_exists(self):
-        """Follower must have heading_ok / DIR_DIFF_THRE conditional."""
+    def test_cos_sin_decomposition_exists(self):
+        """Follower must use cos/sin decomposition for vx/vy."""
         src = read_bridge_source()
         follow = src[src.find("def _follow_path"):]
-        assert "heading_ok" in follow or "DIR_DIFF_THRE" in follow, (
-            "No heading gate found — robot will drive into walls when misaligned"
-        )
+        assert "math.cos(dir_diff)" in follow, "No cos decomposition for vx"
+        assert "math.sin(dir_diff)" in follow, "No sin decomposition for vy"
 
-    def test_heading_gate_controls_acceleration(self):
-        """When heading is NOT ok, vx should be 0 (decelerate to stop)."""
+    def test_reverse_speed_capped(self):
+        """Reverse speed should be capped (can't see behind)."""
         src = read_bridge_source()
         follow = src[src.find("def _follow_path"):]
-        # After heading_ok check, the else branch should set vx = 0
-        assert "vx = 0" in follow, (
-            "No vx=0 when heading misaligned — robot will drift into walls"
+        assert "max(-0.3" in follow or "max(-0.2" in follow, (
+            "No reverse speed cap — robot could back into obstacles unseen"
         )
 
-    def test_heading_gate_threshold_quadruped(self):
-        """Heading threshold wide for quadruped omni-walk (cos/sin decomposition)."""
+    def test_yaw_always_correcting(self):
+        """Yaw rate should always be proportional to heading error."""
         src = read_bridge_source()
-        match = re.search(r'DIR_DIFF_THRE\s*=\s*([\d.]+)', src)
-        assert match, "DIR_DIFF_THRE not found"
-        thre = float(match.group(1))
-        # Quadruped: wide gate lets cos/sin decomposition handle heading errors.
-        # At 57° (1.0 rad): cos=0.54 → half speed forward, sin=0.84 → strong strafe.
-        # Spot turn only for U-turns (>57°).
-        assert 0.5 <= thre <= 1.2, (
-            f"DIR_DIFF_THRE={thre} rad ({math.degrees(thre):.0f}°) — "
-            f"should be 30-70° for quadruped omni-walk"
-        )
+        follow = src[src.find("def _follow_path"):]
+        assert "YAW_GAIN * dir_diff" in follow
 
 
 # ===================================================================
@@ -183,8 +171,7 @@ class TestFollowerBehavior:
         ex: float, ey: float,  # endpoint
         speed: float = 0.0,    # current speed
     ) -> dict:
-        """Simulate one step of the heading-gated follower."""
-        _DIR_DIFF_THRE = 1.0
+        """Simulate one step of the omni-directional follower."""
         _MAX_SPEED = 0.8
         _SLOW_DWN_DIS = 1.0
         _STOP_DIS = 0.2
@@ -207,16 +194,13 @@ class TestFollowerBehavior:
         if end_dis < _STOP_DIS:
             target_speed = 0.0
 
-        if abs(speed) < 2 * _ACCEL:
-            vyaw = _STOP_YAW_GAIN * dir_diff
-        else:
-            vyaw = _YAW_GAIN * dir_diff
+        vyaw = _YAW_GAIN * dir_diff
+        heading_ok = True  # no gate — omni-directional
 
-        heading_ok = abs_err < _DIR_DIFF_THRE
-
-        if heading_ok and end_dis > _STOP_DIS:
+        if end_dis > _STOP_DIS:
             vx = target_speed * math.cos(dir_diff)
             vy = -target_speed * math.sin(dir_diff)
+            vx = max(-0.3, vx)  # cap reverse
             vy = max(-_MAX_LAT, min(_MAX_LAT, vy))
         else:
             vx = 0.0
@@ -231,11 +215,11 @@ class TestFollowerBehavior:
         assert r["vx"] > 0, "Should move forward when aligned"
         assert r["heading_ok"]
 
-    def test_misaligned_stops(self):
-        """When heading is 90° off, vx = 0 (heading gate)."""
+    def test_90deg_strafes(self):
+        """When heading is 90° off, quadruped strafes (vx≈0, vy≠0)."""
         r = self._simulate_step(0, 0, math.pi / 2, 5, 0, 5, 0)  # facing up, target right
-        assert r["vx"] == 0.0, "Should NOT move forward when 90° off"
-        assert not r["heading_ok"]
+        assert abs(r["vx"]) < 0.1, "vx should be ~0 at 90° (cos(90°)=0)"
+        assert abs(r["vy"]) > 0.2, "Should strafe toward target at 90°"
 
     def test_small_error_still_moves(self):
         """3° error is within threshold — should still move."""
@@ -243,13 +227,11 @@ class TestFollowerBehavior:
         assert r["vx"] > 0, "3° error should still allow forward motion"
         assert r["heading_ok"]
 
-    def test_large_error_omni_walks(self):
-        """45° error — quadruped should omni-walk (vx reduced, vy corrects)."""
+    def test_45deg_omni_walks(self):
+        """45° error — forward + strafe via cos/sin."""
         r = self._simulate_step(0, 0, math.pi / 4, 5, 0, 5, 0)
-        # 45° is within the wide gate (57°) — should still move forward
-        assert r["heading_ok"], "45° should be within omni-walk gate"
-        assert r["vx"] > 0, "Should still have forward speed (cos(45°)=0.71)"
-        assert abs(r["vy"]) > 0.1, "Should have strong lateral correction"
+        assert r["vx"] > 0.3, "cos(45°)=0.71 → should have forward speed"
+        assert abs(r["vy"]) > 0.1, "sin(45°)=0.71 → should strafe"
 
     def test_cross_track_vy_correction(self):
         """Small heading error produces lateral correction via vy."""
@@ -274,21 +256,20 @@ class TestFollowerBehavior:
         r = self._simulate_step(0, 0, 0.0, 0.1, 0, 0.1, 0)
         assert r["vx"] == 0.0, "Should stop within 0.2m of goal"
 
-    def test_near_goal_large_heading_ok(self):
-        """50° error is within wide gate — should omni-walk."""
-        r = self._simulate_step(0, 0, 0.87, 5, 0, 5, 0)  # 50° off, 5m away
-        assert r["heading_ok"], (
-            "50° heading should be within omni-walk gate (1.0 rad)"
-        )
+    def test_180deg_pure_reverse(self):
+        """180° error — pure reverse (target directly behind)."""
+        r = self._simulate_step(0, 0, math.pi, 5, 0, 5, 0)
+        assert r["vx"] < 0, "Should reverse when target is behind"
+        assert r["vx"] >= -0.3, "Reverse capped"
+        assert abs(r["vy"]) < 0.1, "Minimal strafe at 180°"
 
-    def test_wall_approach_scenario(self):
-        """At 30° error, quadruped omni-walks — reduced vx + lateral correction."""
-        # Robot at (0,0) heading 30° right of path. Path goes straight ahead.
-        r = self._simulate_step(0, 0, 0.52, 5, 0, 5, 0)  # 30° off
-        assert r["heading_ok"], "30° is within omni-walk gate"
-        # cos(30°) = 0.87 → forward speed reduced but not zero
-        assert r["vx"] > 0.3, "Should still move forward at 30° error"
-        assert abs(r["vy"]) > 0.1, "Should have lateral correction"
+    def test_120deg_reverse_and_strafe(self):
+        """120° error — reverses + strafes (target behind-side)."""
+        r = self._simulate_step(0, 0, 2.1, 5, 0, 5, 0)  # 120° off
+        # cos(120°) = -0.5 → reverse, capped at -0.3
+        assert r["vx"] < 0, "Should reverse at 120° error"
+        assert r["vx"] >= -0.3, "Reverse should be capped"
+        assert abs(r["vy"]) > 0.1, "Should strafe toward target"
 
     def test_yaw_rate_proportional(self):
         """Yaw rate should be proportional to heading error."""

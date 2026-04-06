@@ -812,10 +812,8 @@ class Go2VNavBridge(Node):
         _MAX_SPEED = 0.8               # m/s forward cruise
         _MAX_LAT = 0.4                 # m/s max lateral speed
         _MAX_YAW_RATE = 1.0            # rad/s max yaw rate
-        _YAW_GAIN = 7.5                # P-gain for yaw
-        _STOP_YAW_GAIN = 7.5           # P-gain when nearly stopped
-        _DIR_DIFF_THRE = 1.0           # rad (~57°) wide gate for quadruped omni-walk
-        _LOOK_AHEAD = 0.8              # m lookahead (wider than C++ 0.5 to smooth curves)
+        _YAW_GAIN = 7.5                # P-gain for yaw correction
+        _LOOK_AHEAD = 0.8              # m lookahead (wider than C++ to smooth curves)
         _STOP_DIS = 0.2                # m — stop within this
         _SLOW_DWN_DIS = 1.0            # m — start decelerating
         _ACCEL = 0.05                  # m/s per step @ 20Hz
@@ -878,31 +876,21 @@ class Go2VNavBridge(Node):
         if end_dis < _STOP_DIS or path_size <= 1:
             target_speed = 0.0
 
-        # --- Yaw rate: P-control (matches C++ pathFollower) ---
-        if abs(self._pf_speed) < 2.0 * _ACCEL:
-            vyaw = _STOP_YAW_GAIN * dir_diff  # stopped: faster turn
-        else:
-            vyaw = _YAW_GAIN * dir_diff        # moving: proportional
+        # --- Full omnidirectional velocity decomposition ---
+        # No heading gate. cos/sin naturally maps ANY heading error:
+        #   0°: full forward  |  90°: pure strafe  |  180°: reverse
+        # Quadruped can walk in all directions — no need to stop and turn.
+        vyaw = _YAW_GAIN * dir_diff  # always correcting heading
 
-        # --- Omnidirectional heading gate (quadruped-adapted) ---
-        # Wide gate (57°): cos/sin decomposition naturally reduces forward
-        # speed and adds lateral correction as heading error increases.
-        # At 57°: vx = 0.54*speed, vy = 0.84*speed — still good progress.
-        # Spot turn only for >57° errors (U-turns, rare during exploration).
-        heading_ok = abs_err < _DIR_DIFF_THRE
-
-        if heading_ok and end_dis > _STOP_DIS:
-            # Omni-walk: decompose speed into forward + lateral components.
-            # cos(err) → forward, sin(err) → lateral correction.
+        if end_dis > _STOP_DIS:
             vx = target_speed * math.cos(dir_diff)
             vy = -target_speed * math.sin(dir_diff)
+            # Cap reverse speed (can't see behind, be cautious)
+            vx = max(-0.3, vx)
             vy = max(-_MAX_LAT, min(_MAX_LAT, vy))
         else:
-            # Spot turn: heading error > 57° (U-turn or target behind).
-            # Minimal creep to keep MPC gait engaged for rotation.
-            vx = 0.05
+            vx = 0.0
             vy = 0.0
-            vyaw = _STOP_YAW_GAIN * dir_diff
 
         # --- Cylinder body safety boundary (Go2 MJCF collision) ---
         # The dog is NOT a point — it's a cylinder with radius ~0.19m.
