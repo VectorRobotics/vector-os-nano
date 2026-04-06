@@ -805,6 +805,7 @@ class Go2VNavBridge(Node):
             self._pf_lat = 0.0         # current lateral speed
             self._pf_yawrate = 0.0     # current yaw rate
             self._pf_point_id = 0      # path progress index
+            self._pf_slow_time = 0.0   # seconds spent at low speed (adaptive gate)
 
         # Constants ported from C++ pathFollower (pathFollower.cpp)
         # Adapted for Go2 quadruped: lower max speed, same tracking precision
@@ -814,9 +815,11 @@ class Go2VNavBridge(Node):
         _YAW_GAIN = 7.5                # P-gain for yaw (matches C++)
         _STOP_YAW_GAIN = 7.5           # P-gain when nearly stopped (matches C++)
         _DIR_DIFF_THRE = 0.35          # rad (~20°) heading gate (C++ 0.1 for wheeled; relaxed for quadruped omni-walk)
+        _DIR_DIFF_MAX = 0.8            # rad (~45°) max relaxed gate when slow/stuck near furniture
         _OMNI_DIR_GOAL_THRE = 1.0      # m — near goal, allow large heading (C++)
         _OMNI_DIR_DIFF_THRE = 1.5      # rad — heading limit near goal (C++)
-        _LOOK_AHEAD = 0.5              # m lookahead (matches C++)
+        _LOOK_AHEAD = 0.5              # m lookahead base (matches C++)
+        _LOOK_AHEAD_MAX = 1.5          # m lookahead when slow (skip tight curves)
         _STOP_DIS = 0.2                # m — stop within this (matches C++)
         _SLOW_DWN_DIS = 1.0            # m — start decelerating (matches C++)
         _ACCEL = 0.05                  # m/s per step @ 20Hz (C++: 0.01@100Hz = same)
@@ -850,11 +853,26 @@ class Go2VNavBridge(Node):
         ex, ey = path[-1]
         end_dis = math.sqrt((ex - rx)**2 + (ey - ry)**2)
 
+        # --- Adaptive slow-time tracker ---
+        # Track how long robot has been moving slowly. Used to progressively
+        # relax heading gate and increase lookahead near furniture/doorways.
+        # Prevents the stop-turn-stop-turn loop that causes spinning in place.
+        if self._pf_speed < 0.15:
+            self._pf_slow_time += 1.0 / 20.0  # 20Hz tick
+        else:
+            self._pf_slow_time = max(0.0, self._pf_slow_time - 0.1)  # decay
+
+        # --- Adaptive lookahead: look further ahead when slow ---
+        # Near furniture, the path has tight curves. Looking further ahead
+        # smooths out direction changes, reducing heading oscillation.
+        slow_factor = min(1.0, self._pf_slow_time / 3.0)  # ramp over 3s
+        look_ahead = _LOOK_AHEAD + slow_factor * (_LOOK_AHEAD_MAX - _LOOK_AHEAD)
+
         # --- Progressive lookahead ---
         while self._pf_point_id < path_size - 1:
             px, py = path[self._pf_point_id]
             d = math.sqrt((px - rx)**2 + (py - ry)**2)
-            if d < _LOOK_AHEAD:
+            if d < look_ahead:
                 self._pf_point_id += 1
             else:
                 break
@@ -884,14 +902,16 @@ class Go2VNavBridge(Node):
         else:
             vyaw = _YAW_GAIN * dir_diff        # moving: proportional
 
-        # --- Heading-gated acceleration (KEY from C++ pathFollower) ---
-        # Only accelerate when heading is aligned. Otherwise decelerate to
-        # stop and turn in place. This prevents forward drift into walls
-        # when the robot is facing the wrong direction.
+        # --- Heading-gated acceleration (adapted from C++ pathFollower) ---
+        # Progressively relax the heading gate when the robot is slow/stuck.
+        # Normal: 20° — precise path tracking
+        # After 2s slow: ramps to 45° — push through tight spaces
+        # This prevents the stop-turn-stop-turn loop near furniture/doorways.
+        adaptive_dir_thre = _DIR_DIFF_THRE + slow_factor * (_DIR_DIFF_MAX - _DIR_DIFF_THRE)
+
         heading_ok = (
-            abs_err < _DIR_DIFF_THRE  # < 5.7° — well aligned
+            abs_err < adaptive_dir_thre
             or (end_dis < _OMNI_DIR_GOAL_THRE and abs_err < _OMNI_DIR_DIFF_THRE)
-            # near goal: allow larger heading error for omnidirectional approach
         )
 
         if heading_ok and end_dis > _STOP_DIS:
@@ -943,9 +963,10 @@ class Go2VNavBridge(Node):
             else:
                 # Scale: full speed at _COMFORT gap, zero at _DANGER gap
                 vx *= (front_gap - _DANGER) / (_COMFORT - _DANGER)
-            # Also slow down forward speed when any side is tight
-            if left_gap < _DANGER or right_gap < _DANGER:
-                vx *= 0.3  # crawl when sides are tight
+            # Slow down when BOTH sides are tight (corridor/gap), but not
+            # for single-side obstacles (table legs, door frames)
+            if left_gap < _DANGER and right_gap < _DANGER:
+                vx *= 0.3  # crawl when squeezed on BOTH sides
 
         # Sides: push HARD away from wall when gap < comfort zone
         if left_gap < _COMFORT:
@@ -987,12 +1008,14 @@ class Go2VNavBridge(Node):
             self._follow_count = 0
         self._follow_count += 1
         if self._follow_count % 20 == 0:
+            adapt = f" ADAPT={math.degrees(adaptive_dir_thre):.0f}° LA={look_ahead:.1f}" if self._pf_slow_time > 1.0 else ""
             self.get_logger().info(
                 f"PyPF: vx={self._pf_speed:.2f} vy={self._pf_lat:.2f} "
                 f"yr={self._pf_yawrate:.2f} endD={end_dis:.1f} "
                 f"err={math.degrees(dir_diff):.0f}° "
                 f"pt={self._pf_point_id}/{path_size} "
                 f"wall=F{front_d:.1f}/L{left_d:.1f}/R{right_d:.1f}"
+                f"{adapt}"
             )
 
     def _log_diagnostics(self) -> None:
