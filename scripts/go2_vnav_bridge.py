@@ -754,7 +754,7 @@ class Go2VNavBridge(Node):
             fwd = dx * cos_h + dy * sin_h
             lat = -dx * sin_h + dy * cos_h
             d = math.sqrt(fwd * fwd + lat * lat)
-            if d > 1.0 or d < 0.05:
+            if d > 1.5 or d < 0.05:
                 continue
 
             angle = math.atan2(abs(lat), fwd)
@@ -846,7 +846,7 @@ class Go2VNavBridge(Node):
         _LOOK_AHEAD = 0.8              # m lookahead
         _STOP_DIS = 0.2                # m — stop within this
         _SLOW_DWN_DIS = 1.0            # m — start decelerating
-        _ACCEL = 0.04                  # m/s per step @ 20Hz forward
+        _ACCEL = 0.03                  # m/s per step @ 20Hz (0→0.8 takes 1.3s)
         _PATH_TIMEOUT = 8.0            # seconds before path considered stale
 
         has_path = (self._current_path
@@ -921,7 +921,23 @@ class Go2VNavBridge(Node):
         else:
             space_speed = 0.15                           # tight crawl
 
-        target_speed = space_speed
+        # --- Path curvature: slow down BEFORE turns, not during ---
+        # Look 3-5 points ahead on path. If direction changes significantly,
+        # reduce speed now so the robot can make the turn without overshooting.
+        curve_speed = _MAX_SPEED
+        if path_size > 3:
+            look_pts = min(self._pf_point_id + 6, path_size - 1)
+            fx, fy = path[look_pts]
+            future_dir = math.atan2(fy - ry, fx - rx)
+            curve = future_dir - path_dir
+            while curve > math.pi: curve -= 2 * math.pi
+            while curve < -math.pi: curve += 2 * math.pi
+            abs_curve = abs(curve)
+            if abs_curve > 0.3:  # > 17° turn ahead
+                # Scale: 0.3 rad → full speed, 1.5 rad → 30% speed
+                curve_speed = _MAX_SPEED * max(0.3, 1.0 - abs_curve / 1.5)
+
+        target_speed = min(space_speed, curve_speed)
         if end_dis < _SLOW_DWN_DIS:
             target_speed = min(target_speed, _MAX_SPEED * (end_dis / _SLOW_DWN_DIS))
         if end_dis < _STOP_DIS or path_size <= 1:
