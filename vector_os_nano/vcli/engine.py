@@ -93,6 +93,8 @@ class VectorEngine:
         permissions: PermissionContext | None = None,
         max_turns: int = 50,
         max_tokens: int = 16384,
+        intent_router: Any = None,
+        hooks: Any = None,
     ) -> None:
         self._backend: LLMBackend = backend
         self._registry: ToolRegistry = registry or ToolRegistry()
@@ -100,6 +102,8 @@ class VectorEngine:
         self._permissions: PermissionContext = permissions or PermissionContext()
         self._max_turns: int = max_turns
         self._max_tokens: int = max_tokens
+        self._intent_router = intent_router  # IntentRouter or None
+        self._hooks = hooks                  # ToolHookRegistry or None
 
     # ------------------------------------------------------------------
     # Public API
@@ -161,7 +165,16 @@ class VectorEngine:
                 break
 
             messages = session.to_messages()
-            tools = self._registry.to_anthropic_schemas()
+
+            # Intent routing: select relevant tool categories
+            if self._intent_router is not None and hasattr(self._registry, "to_anthropic_schemas"):
+                categories = self._intent_router.route(user_message)
+                if categories is not None:
+                    tools = self._registry.to_anthropic_schemas(categories=categories)
+                else:
+                    tools = self._registry.to_anthropic_schemas()
+            else:
+                tools = self._registry.to_anthropic_schemas()
 
             # Backend handles streaming, format conversion, and retry
             response: LLMResponse = self._backend.call(
@@ -309,6 +322,11 @@ class VectorEngine:
         if on_tool_start is not None:
             on_tool_start(tool_name, params)
 
+        # Pre-hook
+        if self._hooks is not None:
+            from vector_os_nano.vcli.hooks import ToolHookContext
+            self._hooks.fire_pre(ToolHookContext(tool_name=tool_name, params=params))
+
         start = time.monotonic()
         try:
             result = tool.execute(params, tool_context)
@@ -316,6 +334,13 @@ class VectorEngine:
             result = ToolResult(content=f"Tool error: {exc}", is_error=True)
             logger.error("Tool %r raised %r", tool_name, exc, exc_info=True)
         duration = time.monotonic() - start
+
+        # Post-hook
+        if self._hooks is not None:
+            from vector_os_nano.vcli.hooks import ToolHookContext
+            self._hooks.fire_post(ToolHookContext(
+                tool_name=tool_name, params=params, result=result, duration=duration,
+            ))
 
         if on_tool_end is not None:
             on_tool_end(tool_name, result)

@@ -1010,11 +1010,50 @@ def main(argv: list[str] | None = None) -> None:
     except ImportError:
         pass
 
+    # Intent router + hooks
+    intent_router = None
+    hooks = None
+    try:
+        from vector_os_nano.vcli.intent_router import IntentRouter
+        intent_router = IntentRouter()
+    except ImportError:
+        pass
+    try:
+        from vector_os_nano.vcli.hooks import ToolHookRegistry
+        hooks = ToolHookRegistry()
+    except ImportError:
+        pass
+
+    # Explore event streaming — show room discovery in real-time
+    try:
+        from vector_os_nano.skills.go2.explore import set_event_callback
+        def _on_explore_event(event_type: str, data: dict) -> None:
+            if event_type == "room_entered":
+                room = data.get("room", "?")
+                visited = data.get("visited", 0)
+                total = data.get("total", 0)
+                console.print(f"  [dim]Entered {room} ({visited}/{total})[/dim]")
+            elif event_type == "stopped":
+                reason = data.get("reason", "stopped")
+                rooms = data.get("rooms", [])
+                console.print(f"  [dim]Exploration {reason} — {len(rooms)} rooms[/dim]")
+            elif event_type == "room_observed":
+                room = data.get("room", "?")
+                summary = data.get("summary", "")[:60]
+                if summary:
+                    console.print(f"  [dim]Observed {room}: {summary}[/dim]")
+        set_event_callback(_on_explore_event)
+    except ImportError:
+        pass
+
     # Backend + engine (deferred if no API key — /login can set it up)
     engine: VectorEngine | None = None
     if api_key:
         backend = create_backend(provider=provider, api_key=api_key, model=model, base_url=base_url)
-        engine = VectorEngine(backend=backend, registry=registry, system_prompt=system_prompt, permissions=permissions)
+        engine = VectorEngine(
+            backend=backend, registry=registry, system_prompt=system_prompt,
+            permissions=permissions, intent_router=intent_router, hooks=hooks,
+        )
 
     # Mutable app state
     _spatial_memory = getattr(agent, "_spatial_memory", None) if agent else None
