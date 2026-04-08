@@ -1,183 +1,244 @@
-# Vector CLI — Tool Call System Architecture
+# Vector CLI — Tool Call 系统架构
 
-## Overview
+## 概述
 
-Vector CLI is an AI-powered robot development environment. The user speaks natural language; the AI agent uses tools to control the robot, edit code, and diagnose issues — all in one session.
+Vector CLI 是一个 AI 驱动的机器人开发环境。用户说自然语言，AI agent 通过工具系统同时控制机器人、编辑代码、诊断问题 —— 一个 session 里完成所有事。
 
 ```
-User: "探索的时候狗在转角撞墙"
+用户: "探索的时候狗在转角撞墙"
   ↓
 AI Agent (VectorEngine)
-  ├── file_read("go2_vnav_bridge.py")     → reads path follower code
-  ├── file_edit(old="0.6", new="0.4")     → fixes speed constant
-  ├── skill_reload("walk")                → hot-reloads without restart
-  ├── explore()                           → re-runs exploration
-  └── responds: "改了转弯速度，重新探索中"
+  ├── file_read("go2_vnav_bridge.py")     → 读路径跟随代码
+  ├── file_edit(old="0.6", new="0.4")     → 改转弯速度
+  ├── skill_reload("walk")                → 热加载，不用重启
+  ├── explore()                           → 重新跑探索
+  └── 回复: "改了转弯速度，重新探索中"
 ```
 
-## System Architecture
+## 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  vector-cli (vcli/cli.py)                                       │
 │                                                                 │
-│  User Input ──→ VectorEngine.run_turn()                         │
-│                    │                                            │
-│                    ├── DynamicSystemPrompt                       │
-│                    │     ├── ROLE_PROMPT (cached)                │
-│                    │     ├── TOOL_INSTRUCTIONS (cached)          │
-│                    │     ├── Hardware / Skills / World (static)  │
-│                    │     └── [Robot State] (refreshed each turn) │
-│                    │           Position, Room, SceneGraph,       │
-│                    │           Nav state, Exploring status       │
-│                    │                                            │
-│                    ├── CategorizedToolRegistry                   │
-│                    │     ├── code:   file_read/write/edit,       │
-│                    │     │          bash, glob, grep             │
-│                    │     ├── robot:  22 wrapped skills +         │
-│                    │     │          scene_graph_query             │
-│                    │     ├── diag:   ros2_topics, ros2_nodes,    │
-│                    │     │          ros2_log, nav_state,          │
-│                    │     │          terrain_status                │
-│                    │     └── system: robot_status, sim_start,    │
-│                    │                web_fetch, skill_reload       │
-│                    │                                            │
-│                    ├── LLM Backend (Anthropic / OpenRouter)      │
-│                    ├── PermissionContext (7-layer check)         │
-│                    └── Session (JSONL, crash-safe)               │
+│  用户输入 ──→ IntentRouter (意图分类)                             │
+│                  │                                              │
+│                  ↓                                              │
+│              VectorEngine.run_turn()                             │
+│                  │                                              │
+│                  ├── DynamicSystemPrompt                         │
+│                  │     ├── 角色设定 (缓存)                        │
+│                  │     ├── 工具使用说明 (缓存)                     │
+│                  │     ├── 硬件/技能/世界模型 (静态)               │
+│                  │     └── [机器人状态] (每次刷新)                  │
+│                  │           位置、房间、SceneGraph、              │
+│                  │           导航状态、探索进度                     │
+│                  │                                              │
+│                  ├── CategorizedToolRegistry                     │
+│                  │     ├── code:   文件读写编辑、bash、搜索         │
+│                  │     ├── robot:  22个技能 + 场景图查询            │
+│                  │     ├── diag:   ROS2话题/节点/日志、导航/地形    │
+│                  │     └── system: 状态、仿真、热加载              │
+│                  │                                              │
+│                  ├── ToolHookRegistry                            │
+│                  │     ├── pre_hook: 执行前回调                   │
+│                  │     └── post_hook: 执行后回调(验证/统计)         │
+│                  │                                              │
+│                  ├── LLM 后端 (Anthropic / OpenRouter / 本地)     │
+│                  ├── 权限系统 (7层检查)                            │
+│                  └── Session (JSONL 持久化)                       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Tool Call Flow
+## Tool Call 完整流程
 
 ```
-1. User types natural language
-2. VectorEngine serializes:
-   - system_prompt (DynamicSystemPrompt refreshes robot state)
-   - messages (session history)
-   - tools (CategorizedToolRegistry.to_anthropic_schemas())
-3. LLM returns tool_use blocks
-4. Engine partitions tools:
-   - read-only + concurrency-safe → parallel (ThreadPoolExecutor, 10 workers)
-   - write / motor → sequential
-5. For each tool:
-   a. PermissionContext.check() → allow / deny / ask
-   b. If "ask" → user prompted in CLI
+1. 用户输入自然语言
+2. IntentRouter 关键词分类 → 选择相关工具类别
+   "去厨房" → robot+diag (省 68% token)
+   "改代码" → code+system (省 72% token)
+   "你好"   → 全部工具 (无法判断意图)
+3. VectorEngine 序列化:
+   - system_prompt (DynamicSystemPrompt 刷新机器人状态)
+   - messages (对话历史)
+   - tools (只发选中类别的工具 schema)
+4. LLM 返回 tool_use 调用
+5. 引擎分区执行:
+   - 只读 + 并发安全 → 并行 (ThreadPoolExecutor, 10 workers)
+   - 写入 / 电机控制 → 串行
+6. 每个工具执行:
+   a. pre_hook 触发 (日志/预检)
+   b. 权限检查 → allow / deny / ask(用户确认)
    c. tool.execute(params, context) → ToolResult
-   d. If motor skill → post-execution state appended to result
-6. Results appended to session
-7. Loop back to step 2 until LLM returns end_turn
-8. Final text rendered in CLI panel
+   d. post_hook 触发 (验证/统计)
+   e. 电机技能 → 自动附加执行后状态(位置/房间)
+7. 结果追加到 session
+8. 循环回步骤 3，直到 LLM 返回 end_turn
+9. 最终文本渲染到 CLI 面板
 ```
 
-## CategorizedToolRegistry
+## CategorizedToolRegistry — 分类工具注册表
 
-### Design
+### 设计思路
 
-Extends `ToolRegistry` (backward-compatible). Adds category-based grouping so tools can be organized, enabled/disabled at runtime, and (future) routed by intent.
+继承自 `ToolRegistry`（完全向后兼容）。核心能力：
+- 工具按类别分组管理
+- 运行时动态启用/禁用整个类别
+- 配合 IntentRouter 按意图只发送相关工具
 
 ```python
 class CategorizedToolRegistry(ToolRegistry):
-    """Tool registry with category-based organization."""
-
-    _categories: dict[str, list[str]]   # category → [tool_names]
-    _disabled: set[str]                 # disabled category names
+    _categories: dict[str, list[str]]   # 类别 → [工具名列表]
+    _disabled: set[str]                 # 已禁用的类别
 
     def register(self, tool, category="default") -> None
     def enable_category(self, category: str) -> None
     def disable_category(self, category: str) -> None
-    def to_anthropic_schemas(self) -> list[dict]     # filters out disabled
+    def to_anthropic_schemas(categories=None) -> list[dict]  # 可按类别过滤
     def list_categories(self) -> dict[str, list[str]]
 ```
 
-### Categories
+### 工具类别
 
-| Category | Tools | Purpose |
-|----------|-------|---------|
-| `code` | file_read, file_write, file_edit, bash, glob, grep | Code reading and editing |
-| `robot` | 22 wrapped skills + scene_graph_query + world_query | Robot control + spatial queries |
-| `diag` | ros2_topics, ros2_nodes, ros2_log, nav_state, terrain_status | ROS2 diagnostics |
-| `system` | robot_status, start_simulation, web_fetch, skill_reload | System management |
+| 类别 | 工具 | 用途 |
+|------|------|------|
+| `code` | file_read, file_write, file_edit, bash, glob, grep | 代码读写编辑 |
+| `robot` | 22个包装技能 + scene_graph_query + world_query | 机器人控制 + 空间查询 |
+| `diag` | ros2_topics, ros2_nodes, ros2_log, nav_state, terrain_status | ROS2 诊断 |
+| `system` | robot_status, start_simulation, web_fetch, skill_reload | 系统管理 |
 
-### Scalability Strategy
+### 扩展策略
 
-1. **v1 (current)**: All categories enabled. ~30 tools sent to LLM per turn.
-2. **v1.1 (future)**: Intent routing — analyze user message, select relevant categories. "改代码" → code+system only. "去厨房" → robot+diag only.
-3. **v2 (future)**: Deferred schemas — send tool names only, LLM requests full schema on demand.
+| 阶段 | 策略 | 效果 |
+|------|------|------|
+| v1（当前） | 全部启用，IntentRouter 按意图路由 | 平均省 52% token |
+| v1.1 | 延迟 schema — 先发名字，LLM 需要时再请求完整定义 | 再省 60% |
+| v2 | 外部插件 — pyproject.toml entry_points 注册第三方工具 | 无限扩展 |
 
-### Adding a New Tool
+### 添加新工具（开发者工作流）
 
 ```python
-# 1. Create file: vcli/tools/my_tool.py
+# 1. 新建文件: vcli/tools/my_tool.py
 @tool(name="my_tool", description="...", read_only=True, permission="allow")
 class MyTool:
     input_schema = { "type": "object", "properties": { ... } }
     def execute(self, params, context) -> ToolResult: ...
 
-# 2. Add to vcli/tools/__init__.py:
-#    - Import in discover_all_tools()
-#    - Add name to _TOOL_CATEGORIES["my_category"]
+# 2. 在 vcli/tools/__init__.py 中:
+#    - discover_all_tools() 里加 import + 实例化
+#    - _TOOL_CATEGORIES["my_category"] 里加工具名
 
-# Done. No engine, backend, or permission changes needed.
+# 完成。不需要改引擎、后端、权限、或任何其他文件。
 ```
 
-## Tool Protocol
+## IntentRouter — 意图路由器
 
-Every tool implements this interface (Protocol-based, no inheritance required):
+零成本关键词匹配，在 LLM 调用前选择相关工具类别：
+
+```python
+class IntentRouter:
+    def route(self, user_message: str) -> list[str] | None:
+        # 返回类别列表，或 None（发全部工具）
+
+# 规则示例:
+# "改"/"edit"/"code"/"bug"  → ["code", "system"]
+# "去"/"走"/"explore"       → ["robot", "diag"]
+# "topic"/"log"/"为什么"    → ["diag", "system"]
+# "你好" (无关键词匹配)     → None → 全部工具
+```
+
+Token 节省效果：
+
+| 场景 | 改前 (39 工具) | 改后 (路由) | 节省 |
+|------|---------------|------------|------|
+| "我在哪" | ~2500 tokens | ~800 tokens | 68% |
+| "改速度" | ~2500 tokens | ~700 tokens | 72% |
+| "你好" | ~2500 tokens | ~2500 tokens | 0% |
+| 平均 | ~2500 tokens | ~1200 tokens | ~52% |
+
+## Tool Protocol — 工具协议
+
+每个工具实现这个接口（Protocol 类型，不需要继承）：
 
 ```python
 class Tool(Protocol):
-    name: str
-    description: str
-    input_schema: dict[str, Any]    # JSON Schema for LLM
+    name: str                           # 工具名
+    description: str                    # LLM 看到的描述
+    input_schema: dict[str, Any]        # JSON Schema 参数定义
 
-    def execute(params, context) -> ToolResult
-    def check_permissions(params, context) -> PermissionResult
-    def is_read_only(params) -> bool
-    def is_concurrency_safe(params) -> bool
+    def execute(params, context) -> ToolResult          # 执行
+    def check_permissions(params, context) -> PermissionResult  # 权限检查
+    def is_read_only(params) -> bool                    # 只读？
+    def is_concurrency_safe(params) -> bool             # 可并发？
 ```
 
-The `@tool` decorator auto-injects defaults for permissions, read_only, and concurrency.
+`@tool` 装饰器自动注入 permissions、read_only、concurrency 的默认实现。
 
-## Skill Wrapping
+## SkillWrapperTool — 技能包装器
 
-Robot skills (`@skill` decorator) are automatically wrapped as LLM tools:
-
-```
-@skill(aliases=["stand", "站"]) class StandSkill → SkillWrapperTool("stand")
-@skill(aliases=["navigate"])    class NavigateSkill → SkillWrapperTool("navigate")
-```
-
-`SkillWrapperTool` adds:
-- **Motor detection**: Skills with "move", "navigate", "arm" in effects → requires permission
-- **Post-execution state**: After motor skills, appends position/room to result
-- **Recovery hints**: On failure, includes suggested next action based on diagnosis_code
+Robot skill（`@skill` 装饰器）自动包装为 LLM tool：
 
 ```
-Success: "Skill 'navigate' succeeded. Data: {room: kitchen}
-          State: pos=(16.8, 2.3) room=kitchen"
-
-Failure: "Skill 'navigate' failed. (room_not_explored)
-          Suggested: Room not explored yet. Run the explore skill first.
-          Current state: {position: [10.0, 5.0], room: hallway}"
+@skill(aliases=["stand", "站"]) class StandSkill  →  SkillWrapperTool("stand")
+@skill(aliases=["navigate"])    class NavigateSkill →  SkillWrapperTool("navigate")
 ```
 
-## DynamicSystemPrompt
+包装器增加的能力：
+- **电机检测**: effects 中包含 "move"/"navigate"/"arm" → 需要用户授权
+- **执行后状态**: 电机技能执行后，自动附加当前位置/房间到结果
+- **恢复提示**: 失败时根据 diagnosis_code 给出下一步建议
 
-Problem: System prompt is built once at startup. Robot state goes stale after the first message.
+```
+成功: "Skill 'navigate' succeeded. Data: {room: kitchen}
+       State: pos=(16.8, 2.3) room=kitchen"
 
-Solution: `DynamicSystemPrompt` is a list subclass that refreshes the robot context block on each `__iter__()` call. VectorEngine iterates the system prompt on every API call, so the LLM always sees current state.
+失败: "Skill 'navigate' failed. (room_not_explored)
+       Suggested: Room not explored yet. Run the explore skill first.
+       Current state: {position: [10.0, 5.0], room: hallway}"
+```
+
+已知的恢复提示映射：
+
+| diagnosis_code | 提示 |
+|---------------|------|
+| no_base | 没有连接机器人，用 start_simulation 启动仿真 |
+| unknown_room | 房间不存在，用 scene_graph_query 查看可用房间 |
+| room_not_explored | 房间未探索，先运行 explore |
+| navigation_failed | 导航失败，用 nav_state 检查导航栈状态 |
+| no_vlm | VLM 不可用，检查 Ollama 是否运行 |
+| camera_failed | 摄像头未连接，用 robot_status 检查硬件 |
+
+## ToolHookRegistry — 工具执行钩子
+
+在每个工具执行前后触发回调，用于：
+- 自动验证（电机技能后检查位置变化）
+- 统计遥测（记录工具调用频率/耗时）
+- 链式反应（文件编辑后自动格式化）
 
 ```python
-class DynamicSystemPrompt(list):
-    def __iter__(self):
-        # Refresh [Robot State] block from RobotContextProvider
-        block = self._provider.get_context_block()
-        self[self._context_idx] = block
-        return super().__iter__()
+class ToolHookRegistry:
+    def add_pre_hook(self, hook: Callable) -> None    # 执行前
+    def add_post_hook(self, hook: Callable) -> None   # 执行后
+    def fire_pre(self, ctx: ToolHookContext) -> None
+    def fire_post(self, ctx: ToolHookContext) -> None
+
+@dataclass(frozen=True)
+class ToolHookContext:
+    tool_name: str
+    params: dict
+    result: ToolResult | None   # pre-hook 时为 None
+    duration: float             # pre-hook 时为 0.0
 ```
 
-The LLM sees on every turn:
+钩子异常被吞掉，不会中断工具执行。
+
+## DynamicSystemPrompt — 动态系统提示
+
+**问题**: System prompt 启动时构建一次，之后机器人状态就过期了。
+
+**解决**: `DynamicSystemPrompt` 是 list 的子类，重写 `__iter__()`。VectorEngine 每次 API 调用都会遍历 system prompt，所以机器人状态每轮都是最新的。
+
+LLM 每次对话都看到：
 ```
 [Robot State]
 Position: (10.2, 5.3, 0.28) — hallway
@@ -187,69 +248,69 @@ Exploring: no
 Nav stack: running
 ```
 
-## RobotContextProvider
+## RobotContextProvider — 机器人状态采集
 
-Collects real-time state from multiple sources:
+从多个来源实时采集状态：
 
-| Field | Source | Updates |
-|-------|--------|---------|
-| Position (x, y, z) | `base.get_position()` | Every turn |
-| Heading (deg + compass) | `base.get_heading()` | Every turn |
-| Current room | `scene_graph.nearest_room()` | Every turn |
-| SceneGraph summary | `scene_graph.stats()` + `get_room_summary()` | Every turn |
-| Exploring? | `explore.is_exploring()` | Every turn |
-| Nav stack running? | `explore.is_nav_stack_running()` | Every turn |
+| 字段 | 数据源 | 更新频率 |
+|------|--------|---------|
+| 位置 (x, y, z) | `base.get_position()` | 每轮对话 |
+| 朝向 (度数 + 方位) | `base.get_heading()` | 每轮对话 |
+| 当前房间 | `scene_graph.nearest_room()` | 每轮对话 |
+| SceneGraph 摘要 | `scene_graph.stats()` + `get_room_summary()` | 每轮对话 |
+| 是否在探索 | `explore.is_exploring()` | 每轮对话 |
+| 导航栈运行中？ | `explore.is_nav_stack_running()` | 每轮对话 |
 
-Graceful degradation: no base → "No hardware connected". No SceneGraph → omits room data.
+优雅降级：没有 base → "No hardware connected"。没有 SceneGraph → 省略房间数据。
 
-## Permission System
+## 权限系统
 
-7-layer check (highest to lowest priority):
+7 层检查（优先级从高到低）：
 
-1. `no_permission` flag → allow all
-2. `deny_tools` blacklist → deny
-3. `tool.check_permissions()` → deny → deny
-4. `session_allow` (user said "always") → allow
-5. `is_read_only(params)` → allow
-6. `tool.check_permissions()` → ask → prompt user
-7. default → ask
+1. `no_permission` 标志 → 全部放行
+2. `deny_tools` 黑名单 → 拒绝
+3. `tool.check_permissions()` 返回 deny → 拒绝
+4. `session_allow`（用户说了 "always"）→ 放行
+5. `is_read_only(params)` → 放行
+6. `tool.check_permissions()` 返回 ask → 提示用户确认
+7. 默认 → 提示用户确认
 
-Motor skills (navigate, walk, pick) → always "ask".
-Read-only tools (file_read, grep, ros2_topics) → always "allow".
+电机技能（navigate、walk、pick）→ 始终 ask。
+只读工具（file_read、grep、ros2_topics）→ 始终 allow。
 
-## Complete Tool Inventory (17 built-in + 22 skills)
+## 完整工具清单 (17 内置 + 22 技能)
 
-### Built-in Tools
+### 内置工具
 
-| Tool | Category | R/O | Permission | Description |
-|------|----------|-----|------------|-------------|
-| file_read | code | yes | allow | Read file with line numbers |
-| file_write | code | no | ask | Create/overwrite file |
-| file_edit | code | no | ask | Search & replace in file |
-| bash | code | no | ask | Execute shell command |
-| glob | code | yes | allow | Find files by pattern |
-| grep | code | yes | allow | Search file contents |
-| world_query | robot | yes | allow | Query world model objects |
-| scene_graph_query | robot | yes | allow | Query rooms/doors/objects/paths |
-| robot_status | system | yes | allow | Hardware connection status |
-| start_simulation | system | no | ask | Launch MuJoCo sim |
-| web_fetch | system | yes | allow | Fetch URL |
-| skill_reload | system | no | ask | Hot-reload skill module |
-| ros2_topics | diag | yes | allow | List/hz/echo ROS2 topics |
-| ros2_nodes | diag | yes | allow | List/info ROS2 nodes |
-| ros2_log | diag | yes | allow | Read robot log files |
-| nav_state | diag | yes | allow | Navigation/exploration status |
-| terrain_status | diag | yes | allow | Terrain map file info |
+| 工具 | 类别 | 只读 | 权限 | 说明 |
+|------|------|------|------|------|
+| file_read | code | 是 | allow | 读取文件（带行号） |
+| file_write | code | 否 | ask | 创建/覆盖文件 |
+| file_edit | code | 否 | ask | 搜索替换 |
+| bash | code | 否 | ask | 执行 shell 命令 |
+| glob | code | 是 | allow | 按模式查找文件 |
+| grep | code | 是 | allow | 搜索文件内容 |
+| world_query | robot | 是 | allow | 查询世界模型对象 |
+| scene_graph_query | robot | 是 | allow | 查询房间/门/物体/路径 |
+| robot_status | system | 是 | allow | 硬件连接状态 |
+| start_simulation | system | 否 | ask | 启动 MuJoCo 仿真 |
+| web_fetch | system | 是 | allow | 抓取 URL |
+| skill_reload | system | 否 | ask | 热加载技能模块 |
+| ros2_topics | diag | 是 | allow | 列出/hz/echo ROS2 话题 |
+| ros2_nodes | diag | 是 | allow | 列出/info ROS2 节点 |
+| ros2_log | diag | 是 | allow | 读取机器人日志 |
+| nav_state | diag | 是 | allow | 导航/探索状态 |
+| terrain_status | diag | 是 | allow | 地形地图文件信息 |
 
-### Wrapped Robot Skills (22)
+### 包装的机器人技能 (22 个)
 
 Walk, Turn, Stand, Sit, Lie Down, Stop, Explore, Navigate, Patrol,
 Look, Describe Scene, Where Am I, Home, Scan, Wave, Pick, Place,
 Handover, Detect, Describe, Gripper Open, Gripper Close
 
-## Session Persistence
+## Session 持久化
 
-JSONL format with atomic write + fsync:
+JSONL 格式，原子写入 + fsync：
 ```
 {"type":"user","content":"去厨房","ts":"..."}
 {"type":"assistant","text":"","tool_use":[{"name":"navigate","input":{"room":"kitchen"}}],"ts":"..."}
@@ -257,37 +318,56 @@ JSONL format with atomic write + fsync:
 {"type":"assistant","text":"到了厨房，你要我看看有什么吗？","ts":"..."}
 ```
 
-Auto-compacted at 50 entries to prevent context overflow.
+50 条记录自动压缩，防止上下文溢出。
 
-## File Map
+## 探索事件流
+
+探索期间，房间发现事件实时显示在 CLI：
+
+```
+vector> explore
+  start_simulation(sim_type="go2") ... ok 2.1s
+  explore() ... ok
+  Entered hallway (1/8)
+  Entered kitchen (2/8)
+  Entered dining_room (3/8)
+  ...
+  Exploration finished — 8 rooms
+```
+
+由 `explore.py` 的 `set_event_callback()` 驱动，在 `vcli/cli.py` 启动时接入。
+
+## 文件目录
 
 ```
 vcli/
-├── cli.py                # Entry point, REPL loop, slash commands
-├── engine.py             # VectorEngine — multi-turn tool_use agent loop
-├── prompt.py             # System prompt builder (static + dynamic blocks)
-├── robot_context.py      # RobotContextProvider (live robot state)
-├── dynamic_prompt.py     # DynamicSystemPrompt (refreshes on each turn)
-├── session.py            # JSONL session persistence
-├── config.py             # ~/.vector/config.yaml loader
-├── permissions.py        # 7-layer permission checker
+├── cli.py                  # 入口、REPL 循环、斜杠命令
+├── engine.py               # VectorEngine — 多轮 tool_use agent 循环
+├── intent_router.py        # IntentRouter — 意图路由（关键词 → 类别）
+├── hooks.py                # ToolHookRegistry — 工具执行钩子
+├── prompt.py               # 系统提示构建器（静态 + 动态块）
+├── robot_context.py        # RobotContextProvider（实时机器人状态）
+├── dynamic_prompt.py       # DynamicSystemPrompt（每轮自动刷新）
+├── session.py              # JSONL session 持久化
+├── config.py               # ~/.vector/config.yaml 加载器
+├── permissions.py          # 7层权限检查器
 ├── backends/
-│   ├── __init__.py       # LLMBackend Protocol + create_backend factory
-│   ├── anthropic.py      # Anthropic Messages API (streaming)
-│   └── openai_compat.py  # OpenRouter / Ollama / vLLM
+│   ├── __init__.py         # LLMBackend Protocol + create_backend 工厂
+│   ├── anthropic.py        # Anthropic Messages API（流式）
+│   └── openai_compat.py    # OpenRouter / Ollama / vLLM
 └── tools/
-    ├── base.py           # Tool Protocol, @tool decorator, ToolRegistry,
-    │                     # CategorizedToolRegistry
-    ├── __init__.py       # discover_all_tools(), discover_categorized_tools()
-    ├── file_tools.py     # file_read, file_write, file_edit
-    ├── bash_tool.py      # bash
-    ├── search_tools.py   # glob, grep
-    ├── robot.py          # world_query, robot_status
-    ├── sim_tool.py       # start_simulation
-    ├── web_tool.py       # web_fetch
-    ├── skill_wrapper.py  # SkillWrapperTool + wrap_skills() + recovery hints
-    ├── scene_graph_tool.py  # scene_graph_query (7 query types)
-    ├── ros2_tools.py     # ros2_topics, ros2_nodes, ros2_log
-    ├── nav_tools.py      # nav_state, terrain_status
-    └── reload_tool.py    # skill_reload (hot reload)
+    ├── base.py             # Tool Protocol, @tool 装饰器,
+    │                       # ToolRegistry, CategorizedToolRegistry
+    ├── __init__.py         # discover_all_tools(), discover_categorized_tools()
+    ├── file_tools.py       # file_read, file_write, file_edit
+    ├── bash_tool.py        # bash
+    ├── search_tools.py     # glob, grep
+    ├── robot.py            # world_query, robot_status
+    ├── sim_tool.py         # start_simulation
+    ├── web_tool.py         # web_fetch
+    ├── skill_wrapper.py    # SkillWrapperTool + wrap_skills() + 恢复提示
+    ├── scene_graph_tool.py # scene_graph_query（7种查询）
+    ├── ros2_tools.py       # ros2_topics, ros2_nodes, ros2_log
+    ├── nav_tools.py        # nav_state, terrain_status
+    └── reload_tool.py      # skill_reload（热加载）
 ```
