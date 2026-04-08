@@ -889,7 +889,11 @@ _ROOM_LABELS: dict[str, str] = {
 
 
 def _setup_explore_events(console: Any) -> None:
-    """Hook exploration background events into Rich console output."""
+    """Hook exploration background events into console output.
+
+    Uses print() instead of console.print() because explore events fire
+    from a background thread — Rich Console is not thread-safe.
+    """
     try:
         from vector_os_nano.skills.go2.explore import set_event_callback
     except ImportError:
@@ -898,7 +902,7 @@ def _setup_explore_events(console: Any) -> None:
     def _on_explore_event(event_type: str, data: dict) -> None:
         if event_type == "started":
             total = data.get("total_rooms", 8)
-            console.print(f"  [dim]Exploration started ({total} rooms to discover)[/dim]")
+            print(f"  >> Exploration started ({total} rooms to discover)")
 
         elif event_type == "room_entered":
             room = data.get("room", "?")
@@ -906,27 +910,21 @@ def _setup_explore_events(console: Any) -> None:
             total = data.get("total", 8)
             label = _ROOM_LABELS.get(room, room)
             bar = f"[{'#' * visited}{'.' * (total - visited)}]"
-            console.print(
-                f"  [{TEAL}]>> {label}[/] [dim]{bar} {visited}/{total}[/dim]"
-            )
+            print(f"  >> {label} {bar} {visited}/{total}")
 
         elif event_type == "completed":
             rooms = data.get("rooms", [])
-            console.print(
-                f"  [green]Exploration complete![/] "
-                f"[dim]All {len(rooms)} rooms discovered.[/dim]"
-            )
+            print(f"  >> Exploration complete! {len(rooms)} rooms discovered.")
 
         elif event_type == "stopped":
             reason = data.get("reason", "unknown")
             rooms = data.get("rooms", [])
             if reason == "cancelled":
-                console.print(
-                    f"  [yellow]Exploration stopped.[/] "
-                    f"[dim]{len(rooms)} rooms discovered so far.[/dim]"
-                )
+                print(f"  >> Exploration stopped. {len(rooms)} rooms so far.")
             elif reason == "robot_fell":
-                console.print(f"  [red]Robot fell! Exploration aborted.[/]")
+                print("  >> Robot fell! Exploration aborted.")
+            else:
+                print(f"  >> Exploration {reason} — {len(rooms)} rooms.")
 
     set_event_callback(_on_explore_event)
 
@@ -1024,27 +1022,8 @@ def main(argv: list[str] | None = None) -> None:
     except ImportError:
         pass
 
-    # Explore event streaming — show room discovery in real-time
-    try:
-        from vector_os_nano.skills.go2.explore import set_event_callback
-        def _on_explore_event(event_type: str, data: dict) -> None:
-            if event_type == "room_entered":
-                room = data.get("room", "?")
-                visited = data.get("visited", 0)
-                total = data.get("total", 0)
-                console.print(f"  [dim]Entered {room} ({visited}/{total})[/dim]")
-            elif event_type == "stopped":
-                reason = data.get("reason", "stopped")
-                rooms = data.get("rooms", [])
-                console.print(f"  [dim]Exploration {reason} — {len(rooms)} rooms[/dim]")
-            elif event_type == "room_observed":
-                room = data.get("room", "?")
-                summary = data.get("summary", "")[:60]
-                if summary:
-                    console.print(f"  [dim]Observed {room}: {summary}[/dim]")
-        set_event_callback(_on_explore_event)
-    except ImportError:
-        pass
+    # Explore event streaming — wired via _setup_explore_events on first explore
+    _setup_explore_events(console)
 
     # Backend + engine (deferred if no API key — /login can set it up)
     engine: VectorEngine | None = None
@@ -1291,15 +1270,17 @@ def main(argv: list[str] | None = None) -> None:
 
                     return ""
 
+                _tool_displays: dict[str, str] = {}
+
                 def on_tool_start(name: str, p: dict[str, Any]) -> None:
                     _tool_start_times[name] = time.monotonic()
-                    display = _format_tool_display(name, p)
-                    console.print(f"  [{TEAL}]▸[/] {display} ...", end="")
+                    _tool_displays[name] = _format_tool_display(name, p)
 
                 def on_tool_end(name: str, result: Any) -> None:
                     elapsed = time.monotonic() - _tool_start_times.pop(name, time.monotonic())
+                    display = _tool_displays.pop(name, name)
                     tag = "[green]ok[/]" if not result.is_error else "[red]fail[/]"
-                    console.print(f" {tag} [dim]{elapsed:.1f}s[/]")
+                    console.print(f"  [{TEAL}]▸[/] {display} {tag} [dim]{elapsed:.1f}s[/]")
 
                     # Show result summary for important tools
                     summary = _format_result_summary(name, result)
