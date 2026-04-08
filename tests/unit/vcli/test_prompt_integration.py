@@ -65,6 +65,16 @@ def _combined(blocks: list[dict]) -> str:
     return " ".join(b["text"] for b in blocks)
 
 
+def _has_robot_state_block(blocks: list[dict]) -> bool:
+    """Check if there is a dedicated [Robot State] block (not just a mention in instructions)."""
+    for b in blocks:
+        text = b.get("text", "")
+        # A dedicated robot state block STARTS with [Robot State]
+        if text.strip().startswith("[Robot State]"):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -110,16 +120,14 @@ class TestBuildPromptWithoutRobotContext:
     """build_system_prompt(robot_context=None) does not inject a robot state block."""
 
     def test_no_robot_state_block_when_none(self) -> None:
-        """robot_context=None → no [Robot State] block in output."""
+        """robot_context=None → no dedicated [Robot State] block in output."""
         result = _build(robot_context=None)
-        combined = _combined(result)
-        assert "[Robot State]" not in combined
+        assert not _has_robot_state_block(result)
 
     def test_default_is_none(self) -> None:
-        """Calling build_system_prompt() without robot_context still works, no robot state."""
+        """Calling build_system_prompt() without robot_context still works, no robot state block."""
         result = _build()
-        combined = _combined(result)
-        assert "[Robot State]" not in combined
+        assert not _has_robot_state_block(result)
 
 
 class TestRobotContextBlockPosition:
@@ -127,7 +135,6 @@ class TestRobotContextBlockPosition:
 
     def test_robot_state_block_after_world_model(self, tmp_path: Path) -> None:
         """Robot state block index > world model block index."""
-        # Build a minimal agent with a world model so the world model block appears
         class _MockObjectState:
             label = "chair"
             x = 1.0
@@ -154,12 +161,11 @@ class TestRobotContextBlockPosition:
         provider = RobotContextProvider(base=MockBase(), scene_graph=MockSG())
         result = _build(agent=_MockAgent(), robot_context=provider)
 
-        # Find indices
         world_idx = next(
             (i for i, b in enumerate(result) if "World Model" in b["text"]), None
         )
         robot_idx = next(
-            (i for i, b in enumerate(result) if "[Robot State]" in b["text"]), None
+            (i for i, b in enumerate(result) if b["text"].strip().startswith("[Robot State]")), None
         )
 
         assert world_idx is not None, "World Model block not found"
@@ -214,8 +220,7 @@ class TestBackwardCompat:
 
         result = _build(agent=_MinimalAgent())
         assert isinstance(result, list)
-        combined = _combined(result)
-        assert "[Robot State]" not in combined
+        assert not _has_robot_state_block(result)
 
     def test_cwd_only_still_works(self, tmp_path: Path) -> None:
         """build_system_prompt(cwd=...) without robot_context works unchanged."""
@@ -225,7 +230,7 @@ class TestBackwardCompat:
         assert isinstance(result, list)
         combined = _combined(result)
         assert "Project Context" in combined
-        assert "[Robot State]" not in combined
+        assert not _has_robot_state_block(result)
 
     def test_robot_context_kwarg_is_optional(self) -> None:
         """robot_context is a keyword-only optional param — signature is backward-compat."""
@@ -252,11 +257,10 @@ class TestRobotContextErrorHandling:
         assert len(result) >= 2
 
     def test_empty_block_from_provider_is_excluded(self) -> None:
-        """If get_context_block() returns empty dict/falsy, block is not added."""
+        """If get_context_block() returns empty dict/falsy, no dedicated robot state block added."""
         class _EmptyProvider:
             def get_context_block(self) -> dict:
                 return {}
 
         result = _build(robot_context=_EmptyProvider())
-        combined = _combined(result)
-        assert "[Robot State]" not in combined
+        assert not _has_robot_state_block(result)
