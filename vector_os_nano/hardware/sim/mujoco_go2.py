@@ -898,7 +898,7 @@ class MuJoCoGo2:
 
         # Sensor mounting: on top of Go2 head — above all leg geoms.
         # 0.3m forward (head position) + 0.2m up (above trunk top).
-        # At -30° tilt, nearest ground hit ≈ 0.35m ahead of lidar →
+        # At -20° tilt, nearest ground hit ≈ 0.9m ahead of lidar →
         # well past front legs (~0.1m ahead of lidar). No self-hits.
         # Must match bridge _SENSOR_X/_SENSOR_Z and nav stack sensorOffset.
         _LIDAR_OFFSET_X = 0.3
@@ -918,14 +918,14 @@ class MuJoCoGo2:
 
         robot_body_id = self._mj.base_bid
 
-        # Scan beam tilt: 30° downward from sensor horizontal plane
+        # Scan beam tilt: 20° downward from sensor horizontal plane
         # (sensor frame itself is NOT tilted — only the beams are)
-        tilt_rad = math.radians(-30.0)
+        tilt_rad = math.radians(-20.0)
         cos_tilt = math.cos(tilt_rad)
         sin_tilt = math.sin(tilt_rad)
 
         # Livox MID360 FOV: -7° to +52° (asymmetric, 59° range)
-        # With 30° downward tilt → world frame: -37° to +22°
+        # With 20° downward tilt → world frame: -27° to +32°
         # This gives both ground hits (below horizontal) and wall hits (above)
         n_azimuth = 360
         elevations = list(range(-7, 53, 2))  # -7° to +52° in 2° steps = 30 rings

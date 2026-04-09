@@ -573,6 +573,14 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
         if not _explore_cancel.is_set():
             _emit("stopped", {"reason": "finished", "rooms": sorted(_explore_visited)})
 
+        # Trigger terrain replay so FAR gets the accumulated map data
+        try:
+            with open("/tmp/vector_terrain_replay", "w") as f:
+                f.write("1")
+            logger.info("[EXPLORE] Triggered terrain replay for FAR")
+        except OSError:
+            pass
+
     finally:
         _explore_running = False
 

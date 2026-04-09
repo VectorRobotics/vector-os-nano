@@ -231,7 +231,7 @@ def _navigate_to_waypoint(
         "navigate", "go to", "goto",
         "去", "到", "走到", "去到", "导航",
     ],
-    direct=False,
+    direct=True,
 )
 class NavigateSkill:
     """Navigate the robot to a room discovered during exploration.
@@ -250,8 +250,9 @@ class NavigateSkill:
 
     name: str = "navigate"
     description: str = (
-        "Navigate the robot to a room discovered during exploration. "
-        "Run explore first to learn room positions."
+        "Navigate the robot to a named room. "
+        "Use this when the user says 'go to X' or '去X'. "
+        "Returns an error if the room has not been discovered yet."
     )
     parameters: dict = {
         "room": {

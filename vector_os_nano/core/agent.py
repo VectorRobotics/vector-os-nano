@@ -335,10 +335,12 @@ class Agent:
         context = self._build_context()
         params: dict = {}
         if match.extracted_arg:
-            # Try to pass the extracted arg as object_label or query
+            # Try to pass the extracted arg as the appropriate parameter
             if hasattr(skill, 'parameters'):
                 if "object_label" in skill.parameters:
                     params["object_label"] = match.extracted_arg
+                elif "room" in skill.parameters:
+                    params["room"] = match.extracted_arg
                 elif "query" in skill.parameters:
                     params["query"] = match.extracted_arg
         result = skill.execute(params, context)

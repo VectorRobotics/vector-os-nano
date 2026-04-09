@@ -346,6 +346,22 @@ class Go2VNavBridge(Node):
             self._go2.set_velocity(0.0, 0.0, 0.0)
             self.get_logger().info("Navigation DISABLED (flag file removed)")
 
+        # Check for terrain replay trigger (set by explore.py after exploration)
+        replay_flag = "/tmp/vector_terrain_replay"
+        if os.path.exists(replay_flag):
+            try:
+                os.remove(replay_flag)
+            except OSError:
+                pass
+            self.save_terrain()
+            self._terrain_replay_points = self._terrain_acc.to_pointcloud()
+            self._terrain_replay_count = 0
+            if self._terrain_replay_points:
+                self._terrain_replay_timer = self.create_timer(0.2, self._replay_terrain)
+                self.get_logger().info(
+                    f"Terrain replay triggered: {len(self._terrain_replay_points)} points"
+                )
+
     def _terrain_replay_gate(self) -> None:
         """Wait for all nav stack nodes to start, then switch to fast replay."""
         if time.time() < self._terrain_replay_start:
@@ -357,6 +373,32 @@ class Go2VNavBridge(Node):
             f"{self._terrain_replay_max} frames at 5Hz"
         )
         self._terrain_replay_timer = self.create_timer(0.2, self._replay_terrain)
+
+    def _build_terrain_pc2(self, points: list) -> PointCloud2:
+        """Build a PointCloud2 message from (x, y, z, intensity) tuples."""
+        now = self.get_clock().now().to_msg()
+        fields = [
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+            PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
+        ]
+        point_step = 16
+        data = bytearray()
+        for x, y, z, intensity in points:
+            data.extend(struct.pack("ffff", x, y, z, intensity))
+        msg = PointCloud2()
+        msg.header.stamp = now
+        msg.header.frame_id = "map"
+        msg.height = 1
+        msg.width = len(points)
+        msg.fields = fields
+        msg.is_bigendian = False
+        msg.point_step = point_step
+        msg.row_step = point_step * len(points)
+        msg.data = bytes(data)
+        msg.is_dense = True
+        return msg
 
     def _replay_terrain(self) -> None:
         """Publish saved terrain as /registered_scan to seed FAR planner (5Hz burst)."""
@@ -371,31 +413,7 @@ class Go2VNavBridge(Node):
             self._terrain_replay_timer.cancel()
             return
 
-        # Build PointCloud2 from saved points (same format as _publish_pointcloud)
-        now = self.get_clock().now().to_msg()
-        fields = [
-            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
-            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
-            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
-            PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
-        ]
-
-        point_step = 16
-        data = bytearray()
-        for x, y, z, intensity in self._terrain_replay_points:
-            data.extend(struct.pack("ffff", x, y, z, intensity))
-
-        msg = PointCloud2()
-        msg.header.stamp = now
-        msg.header.frame_id = "map"
-        msg.height = 1
-        msg.width = len(self._terrain_replay_points)
-        msg.fields = fields
-        msg.is_bigendian = False
-        msg.point_step = point_step
-        msg.row_step = point_step * len(self._terrain_replay_points)
-        msg.data = bytes(data)
-        msg.is_dense = True
+        msg = self._build_terrain_pc2(self._terrain_replay_points)
         self._pc_pub.publish(msg)
         self._terrain_map_pub.publish(msg)
         self._terrain_map_ext_pub.publish(msg)
@@ -406,6 +424,22 @@ class Go2VNavBridge(Node):
                 f"Terrain replay: publishing {len(self._terrain_replay_points)} points "
                 f"({self._terrain_replay_max} frames at 5Hz)"
             )
+
+    def _publish_accumulated_terrain(self) -> None:
+        """Publish accumulated terrain directly to FAR input topics.
+
+        Bypasses terrainAnalysis's ~3.5m range filter so FAR gets full
+        terrain coverage for V-Graph building.
+        """
+        points = self._terrain_acc.to_pointcloud()
+        if not points:
+            return
+        msg = self._build_terrain_pc2(points)
+        self._terrain_map_pub.publish(msg)
+        self._terrain_map_ext_pub.publish(msg)
+        self.get_logger().info(
+            f"Terrain sync to FAR: {len(points)} points"
+        )
 
     def _joy_cb(self, msg: Joy) -> None:
         """Direct teleop: /joy axes → velocity (bypasses pathFollower).
@@ -1186,9 +1220,16 @@ class Go2VNavBridge(Node):
         return ok
 
     def _auto_save_terrain(self) -> None:
-        """Auto-save terrain every 30s when nav is active and terrain has data."""
+        """Auto-save terrain every 30s when nav is active and terrain has data.
+
+        Every other save (60s interval), also publishes accumulated terrain
+        directly to FAR's input topics, bypassing terrainAnalysis's range filter.
+        """
         if self._nav_enabled and self._terrain_acc.size > 0:
             self.save_terrain()
+            self._terrain_save_count = getattr(self, '_terrain_save_count', 0) + 1
+            if self._terrain_save_count % 2 == 0:
+                self._publish_accumulated_terrain()
 
     def _publish_scene_graph_markers(self) -> None:
         """Publish scene graph visualization as MarkerArray (1 Hz)."""
