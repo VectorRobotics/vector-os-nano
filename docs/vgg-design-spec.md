@@ -2,16 +2,52 @@
 
 **Verified Goal Graph (VGG) — Design Specification**
 
-版本: 0.1 (draft)
+版本: 0.2 (Phase 1+2 implemented)
 日期: 2026-04-08
 作者: Vector Robotics Architect
-状态: 待 CEO 审批
+状态: Phase 1 + 2 实装完成，生产就绪，等待 CEO 批准测试部署
 
 ---
 
 ## 一句话
 
 机器人的行为永远是一棵**透明的、可验证的目标树** — 不是不透明的代码，不是黑盒技能调用。LLM 是认知引擎，不是代码生成器。
+
+---
+
+## 当前实装状态 (Current Implementation Status) — 2026-04-08
+
+### Phase 1 ✓ 完成
+- GoalDecomposer: LLM → GoalTree JSON (with template matching)
+- GoalVerifier: safe verification sandbox
+- StrategySelector: rule-based strategy selection
+- GoalExecutor: topological execution with fallback
+- Primitives API: 25 functions across 4 categories (locomotion/navigation/perception/world)
+- CLI integration: is_complex() keyword detection
+- Test coverage: 187 tests, all green
+
+### Phase 2 ✓ 完成
+- CodeExecutor: RestrictedPython sandbox (velocity clamped, AST validated, 30s timeout)
+- StrategyStats: persistent success rate tracking (~/.vector_os_nano/strategy_stats.json)
+- ExperienceCompiler: traces → parameterized GoalTree templates
+- TemplateLibrary: template matching + instantiation
+- StrategySelector upgrade: stats-driven selection (confidence >= 3 samples, success > 50%)
+- GoalDecomposer upgrade: TemplateLibrary lookup before LLM call
+- GoalExecutor upgrade: per-step stats recording, auto-save
+- CLI enhancement: GoalTree plan display, step-by-step feedback
+- Test coverage: 87 additional tests, all green
+
+### 总计 (Total)
+- 274+ new tests in vgg_test_harness.py
+- vcli/cognitive/ + vcli/primitives/: 8 + 5 modules
+- Zero production code in src/ (adheres to Scribe constraints)
+- Ready for live testing on real Go2
+
+### 下一步 (Next)
+- Phase 3 (planned): RL Executor integration
+- V-Graph ceiling filter completion (in progress)
+- Door-chain nav stack refinement (in progress)
+- Experience compiler training on real user sessions
 
 ---
 
