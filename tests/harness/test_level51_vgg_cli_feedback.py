@@ -210,6 +210,9 @@ class TestVggDecomposeExecuteSplit:
         mock_decomposer.decompose.return_value = goal_tree
 
         engine._vgg_enabled = True
+        engine._vgg_agent = MagicMock()
+        engine._vgg_agent._base = MagicMock()
+        engine._vgg_agent._skill_registry = None
         engine._goal_decomposer = mock_decomposer
         engine._goal_executor = MagicMock()
 
@@ -333,6 +336,9 @@ class TestVggDecomposeExecuteSplit:
         mock_executor.execute.return_value = trace
 
         engine._vgg_enabled = True
+        engine._vgg_agent = MagicMock()
+        engine._vgg_agent._base = MagicMock()
+        engine._vgg_agent._skill_registry = None
         engine._goal_decomposer = mock_decomposer
         engine._goal_executor = mock_executor
 

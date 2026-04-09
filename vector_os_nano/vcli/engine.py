@@ -242,12 +242,18 @@ class VectorEngine:
 
         Slow path: for complex tasks, call LLM GoalDecomposer for multi-step
         decomposition.
+
+        Returns None when VGG is not ready (no agent/base connected).
         """
         if not self._vgg_enabled:
             return None
         if self._intent_router is None:
             return None
-        _sr = getattr(self._vgg_agent, "_skill_registry", None) if hasattr(self, "_vgg_agent") else None
+        # VGG needs a functioning robot — don't decompose before sim starts
+        _agent = getattr(self, "_vgg_agent", None)
+        if _agent is None or getattr(_agent, "_base", None) is None:
+            return None
+        _sr = getattr(_agent, "_skill_registry", None)
         if not self._intent_router.should_use_vgg(user_message, skill_registry=_sr):
             return None
 

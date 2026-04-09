@@ -183,6 +183,9 @@ class TestTryVgg:
 
         # Inject mocked components directly
         engine._vgg_enabled = True
+        engine._vgg_agent = MagicMock()
+        engine._vgg_agent._base = MagicMock()
+        engine._vgg_agent._skill_registry = None
         engine._goal_decomposer = mock_decomposer
         engine._goal_executor = mock_executor
 

@@ -85,11 +85,17 @@ _ACTION_VERBS: frozenset[str] = frozenset({
 
 def _has_multiple_actions(msg: str) -> bool:
     """Return True if message contains 2+ distinct action verbs."""
+    import re
     found: set[str] = set()
     msg_lower = msg.lower()
     for verb in _ACTION_VERBS:
         if verb in msg_lower:
-            found.add(verb)
+            if verb.isascii():
+                # English: word boundary to avoid "go" in "go2sim"
+                if re.search(r'\b' + re.escape(verb) + r'\b', msg_lower):
+                    found.add(verb)
+            else:
+                found.add(verb)
         if len(found) >= 2:
             return True
     return False
@@ -198,9 +204,17 @@ class IntentRouter:
         if any(pat in msg_lower for pat in _MOTOR_PATTERNS):
             return True
 
-        # Any action verb → VGG
-        if any(v in msg_lower for v in _ACTION_VERBS):
-            return True
+        # Any action verb (word-boundary aware for English, substring for Chinese)
+        for v in _ACTION_VERBS:
+            if v in msg_lower:
+                if v.isascii():
+                    # English: require word boundary (avoid "go" in "go2sim")
+                    import re
+                    if re.search(r'\b' + re.escape(v) + r'\b', msg_lower):
+                        return True
+                else:
+                    # Chinese: substring match is correct (去 in 去厨房)
+                    return True
 
         return False
 
