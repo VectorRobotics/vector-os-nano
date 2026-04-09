@@ -164,39 +164,45 @@ class IntentRouter:
     def should_use_vgg(self, user_message: str, skill_registry: Any = None) -> bool:
         """Return True if this message should go through VGG pipeline.
 
-        Broader than is_complex(): also triggers for motor actions (navigate,
-        patrol, explore) that benefit from async execution with progress feedback.
+        VGG is the unified task/information flow framework. ALL actionable
+        commands go through it — simple commands produce 1-step GoalTrees,
+        complex commands get LLM decomposition.
 
-        However, if the message matches a single known skill AND is not complex,
-        skip VGG — the skill handles it better directly.
+        Returns True for:
+        - Complex tasks (is_complex: multi-step, conditional, scope)
+        - Motor actions (navigate, patrol, explore, walk, etc.)
+        - Any message that matches a registered skill
 
-        Priority order:
-        1. If is_complex() → VGG (multi-step/conditional, regardless of prefix match)
-        2. If skill_registry has a match (any match) → bypass VGG (direct skill)
-        3. If motor pattern keyword present → VGG
+        Returns False only for:
+        - Empty/trivial input
+        - Pure conversation (greetings, questions, no action verb)
         """
         if not user_message or len(user_message) < 2:
             return False
 
-        # Complex check first — overrides any skill prefix match.
-        # "去厨房看看有没有杯子" starts with "去" (NavigateSkill), but the
-        # 看看有没有 phrase makes it complex → must go through VGG.
+        # Complex tasks → VGG
         if self.is_complex(user_message):
             return True
 
-        # Any skill match on the full message → bypass VGG (not complex).
-        # Use match-any (not match.direct) so ExploreSkill (direct=False)
-        # also bypasses VGG: a non-complex "explore" is a plain skill call.
+        # Skill match → VGG (1-step GoalTree, no LLM needed)
         if skill_registry is not None:
             try:
                 match = skill_registry.match(user_message)
                 if match is not None:
-                    return False  # Single skill can handle this directly
+                    return True
             except Exception:
                 pass
 
+        # Motor pattern keywords → VGG
         msg_lower = user_message.lower()
-        return any(pat in msg_lower for pat in _MOTOR_PATTERNS)
+        if any(pat in msg_lower for pat in _MOTOR_PATTERNS):
+            return True
+
+        # Any action verb → VGG
+        if any(v in msg_lower for v in _ACTION_VERBS):
+            return True
+
+        return False
 
     def route(self, user_message: str) -> list[str] | None:
         """Classify user message into tool categories.

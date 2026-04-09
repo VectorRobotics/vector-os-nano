@@ -219,8 +219,8 @@ class TestVggDecomposeExecuteSplit:
         assert isinstance(result, GoalTree)
         mock_decomposer.decompose.assert_called_once()
 
-    def test_vgg_decompose_returns_none_for_simple(self) -> None:
-        """vgg_decompose on a simple message returns None (no decomposition)."""
+    def test_vgg_decompose_returns_none_for_conversation(self) -> None:
+        """vgg_decompose on pure conversation returns None."""
         from vector_os_nano.vcli.engine import VectorEngine
 
         backend = _make_mock_backend()
@@ -232,9 +232,8 @@ class TestVggDecomposeExecuteSplit:
         engine._goal_decomposer = mock_decomposer
         engine._goal_executor = MagicMock()
 
-        result = engine.vgg_decompose("站起来")
+        result = engine.vgg_decompose("你好")
         assert result is None
-        mock_decomposer.decompose.assert_not_called()
 
     def test_vgg_decompose_returns_none_when_disabled(self) -> None:
         """vgg_decompose returns None when VGG is disabled."""

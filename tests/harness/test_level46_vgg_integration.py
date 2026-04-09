@@ -205,8 +205,8 @@ class TestTryVgg:
         result = engine.try_vgg("去厨房看看有没有杯子")
         assert result is None
 
-    def test_try_vgg_simple_message_returns_none(self) -> None:
-        """Simple (non-complex) messages bypass VGG even when enabled."""
+    def test_try_vgg_conversation_returns_none(self) -> None:
+        """Pure conversation (no action verb) bypasses VGG."""
         from vector_os_nano.vcli.engine import VectorEngine
         from vector_os_nano.vcli.intent_router import IntentRouter
 
@@ -217,9 +217,8 @@ class TestTryVgg:
         engine._goal_decomposer = MagicMock()
         engine._goal_executor = MagicMock()
 
-        result = engine.try_vgg("站起来")
+        result = engine.try_vgg("你好，今天天气怎么样")
         assert result is None
-        engine._goal_decomposer.decompose.assert_not_called()
 
     def test_try_vgg_no_router_returns_none(self) -> None:
         """try_vgg with no intent_router returns None (cannot determine complexity)."""

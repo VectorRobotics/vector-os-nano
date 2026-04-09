@@ -39,7 +39,7 @@ try:
         StrategySelector,
         StrategyStats,
     )
-    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, SubGoal, StepRecord
     _VGG_AVAILABLE = True
 except ImportError:
     _VGG_AVAILABLE = False
@@ -235,21 +235,97 @@ class VectorEngine:
             return None
 
     def vgg_decompose(self, user_message: str) -> "GoalTree | None":
-        """Decompose only — returns GoalTree or None if not complex / VGG disabled."""
+        """Decompose task into GoalTree. All actionable commands go through VGG.
+
+        Fast path: if the message matches a single skill, create a 1-step
+        GoalTree directly (no LLM call). This handles "探索", "去厨房", "站起来".
+
+        Slow path: for complex tasks, call LLM GoalDecomposer for multi-step
+        decomposition.
+        """
         if not self._vgg_enabled:
             return None
         if self._intent_router is None:
             return None
-        # Pass skill_registry so should_use_vgg can check direct skill matches
         _sr = getattr(self._vgg_agent, "_skill_registry", None) if hasattr(self, "_vgg_agent") else None
         if not self._intent_router.should_use_vgg(user_message, skill_registry=_sr):
             return None
+
+        # Fast path: single skill match → 1-step GoalTree, no LLM
+        if _sr is not None and not self._intent_router.is_complex(user_message):
+            tree = self._try_skill_goal_tree(user_message, _sr)
+            if tree is not None:
+                return tree
+
+        # Slow path: LLM decomposition for complex tasks
         world_context = self._build_world_context()
         try:
             return self._goal_decomposer.decompose(user_message, world_context)
         except Exception as exc:  # noqa: BLE001
             logger.warning("VGG decompose failed (%s)", exc)
             return None
+
+    def _try_skill_goal_tree(self, user_message: str, skill_registry: Any) -> "GoalTree | None":
+        """Create a 1-step GoalTree from a direct skill match.
+
+        Returns None if no skill matches the message.
+        """
+        if not _VGG_AVAILABLE:
+            return None
+        try:
+            match = skill_registry.match(user_message)
+        except Exception:
+            return None
+        if match is None:
+            return None
+
+        skill_name = match.skill_name
+        extracted = match.extracted_arg or ""
+
+        # Build verify expression based on skill type
+        verify = self._verify_for_skill(skill_name, extracted)
+
+        # Build strategy params
+        params: dict = {}
+        if extracted:
+            # Navigate needs room param, detect needs query, etc.
+            skill_obj = skill_registry.get(skill_name)
+            if skill_obj and hasattr(skill_obj, "parameters"):
+                if "room" in skill_obj.parameters:
+                    params["room"] = extracted
+                elif "object_label" in skill_obj.parameters:
+                    params["object_label"] = extracted
+                elif "query" in skill_obj.parameters:
+                    params["query"] = extracted
+
+        sub_goal = SubGoal(
+            name=f"{skill_name}_goal",
+            description=user_message,
+            verify=verify,
+            strategy=f"{skill_name}_skill",
+            strategy_params=params,
+            timeout_sec=60.0 if skill_name in ("navigate", "explore", "patrol") else 30.0,
+        )
+        return GoalTree(goal=user_message, sub_goals=(sub_goal,))
+
+    @staticmethod
+    def _verify_for_skill(skill_name: str, arg: str) -> str:
+        """Generate a verify expression for a known skill."""
+        _VERIFY_MAP: dict[str, str] = {
+            "navigate": "nearest_room() == '{arg}'" if arg else "True",
+            "explore": "len(get_visited_rooms()) > 0",
+            "patrol": "len(get_visited_rooms()) >= 3",
+            "look": "len(describe_scene()) > 0",
+            "describe_scene": "len(describe_scene()) > 0",
+            "where_am_i": "True",
+            "stand": "True",
+            "sit": "True",
+            "stop": "True",
+            "walk": "True",
+            "turn": "True",
+        }
+        template = _VERIFY_MAP.get(skill_name, "True")
+        return template.replace("{arg}", arg) if "{arg}" in template else template
 
     def vgg_execute(self, goal_tree: "GoalTree") -> "ExecutionTrace":
         """Execute a pre-decomposed GoalTree (synchronous). Returns ExecutionTrace."""

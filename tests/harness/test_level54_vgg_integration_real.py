@@ -234,40 +234,38 @@ def _build_skill_context(base: MockBase, sg: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-class TestVGGDirectSkillBypass:
-    """Test that simple commands bypass VGG and go to skills directly."""
+class TestVGGUnifiedPipeline:
+    """ALL actionable commands go through VGG — no bypass."""
 
-    def test_explore_bypasses_vgg(self) -> None:
-        """'explore' should match ExploreSkill → skip VGG (any skill match)."""
+    def test_explore_goes_through_vgg(self) -> None:
+        """'explore' matches ExploreSkill → VGG (1-step GoalTree)."""
         base = MockBase()
         agent = _make_agent_with_skills(base)
         from vector_os_nano.vcli.intent_router import IntentRouter
 
         router = IntentRouter()
         result = router.should_use_vgg("explore", skill_registry=agent._skill_registry)
-        assert result is False, (
-            "explore should bypass VGG — direct skill match (any match = skip VGG)"
-        )
+        assert result is True, "explore should go through VGG (unified pipeline)"
 
-    def test_go_to_kitchen_bypasses_vgg(self) -> None:
-        """'去厨房' should match NavigateSkill (direct=True) → skip VGG."""
+    def test_go_to_kitchen_goes_through_vgg(self) -> None:
+        """'去厨房' matches NavigateSkill → VGG (1-step GoalTree)."""
         base = MockBase()
         agent = _make_agent_with_skills(base)
         from vector_os_nano.vcli.intent_router import IntentRouter
 
         router = IntentRouter()
         result = router.should_use_vgg("去厨房", skill_registry=agent._skill_registry)
-        assert result is False, "去厨房 should bypass VGG (NavigateSkill direct=True)"
+        assert result is True, "去厨房 should go through VGG (unified pipeline)"
 
-    def test_stand_bypasses_vgg(self) -> None:
-        """'站起来' should bypass VGG (StandSkill direct=True)."""
+    def test_stand_goes_through_vgg(self) -> None:
+        """'站起来' matches StandSkill → VGG (1-step GoalTree)."""
         base = MockBase()
         agent = _make_agent_with_skills(base)
         from vector_os_nano.vcli.intent_router import IntentRouter
 
         router = IntentRouter()
         result = router.should_use_vgg("站起来", skill_registry=agent._skill_registry)
-        assert result is False, "站起来 should bypass VGG (StandSkill direct=True)"
+        assert result is True, "站起来 should go through VGG (unified pipeline)"
 
     def test_complex_task_triggers_vgg(self) -> None:
         """'去厨房看看有没有杯子' should trigger VGG (multi-step)."""
@@ -678,8 +676,8 @@ class TestVGGFullPipelineIntegration:
         )
         assert len(tree.sub_goals) > 0
 
-    def test_engine_vgg_decompose_returns_none_for_simple_navigate(self) -> None:
-        """engine.vgg_decompose() returns None for '去厨房' (direct skill match)."""
+    def test_engine_vgg_decompose_simple_navigate_returns_1step(self) -> None:
+        """engine.vgg_decompose('去厨房') returns 1-step GoalTree (fast path)."""
         base = MockBase()
         agent = _make_agent_with_skills(base)
         backend = MockLLMBackend()
@@ -691,9 +689,9 @@ class TestVGGFullPipelineIntegration:
         engine.init_vgg(agent=agent, skill_registry=agent._skill_registry)
 
         tree = engine.vgg_decompose("去厨房")
-        assert tree is None, (
-            "Simple navigate '去厨房' should bypass VGG — got GoalTree instead of None"
-        )
+        assert tree is not None, "去厨房 should produce 1-step GoalTree via VGG fast path"
+        assert len(tree.sub_goals) == 1, f"Simple navigate should be 1 step, got {len(tree.sub_goals)}"
+        assert "navigate" in tree.sub_goals[0].name.lower()
 
     def test_engine_vgg_execute_no_nonetype_errors(self) -> None:
         """engine.vgg_execute() should not produce NoneType errors in trace."""
@@ -739,8 +737,8 @@ class TestVGGFullPipelineIntegration:
             "engine.init_vgg() must wire build_context"
         )
 
-    def test_engine_vgg_explore_bypasses(self) -> None:
-        """engine.vgg_decompose('explore') returns None — direct skill bypass."""
+    def test_engine_vgg_explore_1step(self) -> None:
+        """engine.vgg_decompose('explore') returns 1-step GoalTree (fast path)."""
         base = MockBase()
         agent = _make_agent_with_skills(base)
         backend = MockLLMBackend()
@@ -752,6 +750,6 @@ class TestVGGFullPipelineIntegration:
         engine.init_vgg(agent=agent, skill_registry=agent._skill_registry)
 
         tree = engine.vgg_decompose("explore")
-        assert tree is None, (
-            "'explore' should bypass VGG — returns None from vgg_decompose()"
-        )
+        assert tree is not None, "explore should produce 1-step GoalTree via VGG fast path"
+        assert len(tree.sub_goals) == 1
+        assert "explore" in tree.sub_goals[0].name.lower()
