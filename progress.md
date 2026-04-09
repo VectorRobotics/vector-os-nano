@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-04-08
 **Version:** v1.3.0
-**Branch:** robo-cli (new — unified CLI)
+**Branch:** robo-cli (8 commits, +5400 lines, 431 new tests)
 
 ## Vector CLI (NEW)
 
