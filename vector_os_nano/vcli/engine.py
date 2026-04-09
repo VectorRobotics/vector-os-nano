@@ -216,7 +216,7 @@ class VectorEngine:
             return None
         if self._intent_router is None:
             return None
-        if not self._intent_router.is_complex(user_message):
+        if not self._intent_router.should_use_vgg(user_message):
             return None
         world_context = self._build_world_context()
         try:
@@ -226,8 +226,37 @@ class VectorEngine:
             return None
 
     def vgg_execute(self, goal_tree: "GoalTree") -> "ExecutionTrace":
-        """Execute a pre-decomposed GoalTree. Returns ExecutionTrace."""
+        """Execute a pre-decomposed GoalTree (synchronous). Returns ExecutionTrace."""
         return self._goal_executor.execute(goal_tree, on_step=self._on_vgg_step)
+
+    def vgg_execute_async(
+        self,
+        goal_tree: "GoalTree",
+        on_complete: "Callable[[ExecutionTrace], None] | None" = None,
+    ) -> None:
+        """Execute GoalTree in background thread. CLI remains responsive.
+
+        Args:
+            goal_tree: The goal tree to execute.
+            on_complete: Called when execution finishes (in background thread).
+        """
+        import threading
+
+        self._vgg_cancel = threading.Event()
+
+        def _run() -> None:
+            try:
+                trace = self._goal_executor.execute(
+                    goal_tree, on_step=self._on_vgg_step,
+                )
+                if on_complete:
+                    on_complete(trace)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("VGG async execution failed: %s", exc)
+
+        t = threading.Thread(target=_run, name="vgg-executor", daemon=True)
+        t.start()
+        self._vgg_thread = t
 
     def _build_world_context(self) -> str:
         """Build a brief world context string for the GoalDecomposer."""

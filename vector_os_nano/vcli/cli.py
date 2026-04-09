@@ -1320,33 +1320,45 @@ def main(argv: list[str] | None = None) -> None:
                     if name in ("start_simulation", "explore"):
                         _setup_explore_events(console)
 
-                # --- VGG: try cognitive pipeline for complex tasks ---
-                vgg_trace = engine.try_vgg(user_input)
-                if vgg_trace is not None:
-                    # VGG handled the task — show summary
-                    tree = vgg_trace.goal_tree
-                    n_steps = len(vgg_trace.steps)
-                    n_ok = sum(1 for s in vgg_trace.steps if s.success)
+                # --- VGG: try cognitive pipeline ---
+                # Covers both complex tasks AND motor actions (navigate, patrol)
+                goal_tree = engine.vgg_decompose(user_input)
+                if goal_tree is not None:
+                    # Show plan BEFORE execution
                     console.print()
-                    console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {tree.goal}")
-                    # Steps already printed by _vgg_step_display callback
-                    tag = "[green]complete[/]" if vgg_trace.success else "[red]incomplete[/]"
-                    console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {tag}: {n_ok}/{n_steps} verified ({vgg_trace.total_duration_sec:.1f}s)")
+                    console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {goal_tree.goal}")
+                    for i, sg in enumerate(goal_tree.sub_goals, 1):
+                        dep = f" (after {', '.join(sg.depends_on)})" if sg.depends_on else ""
+                        strat = f" [dim]via {sg.strategy}[/]" if sg.strategy else ""
+                        console.print(f"  [{TEAL}]>[/]   [{i}/{len(goal_tree.sub_goals)}] {sg.name} — {sg.description}{strat}{dep}")
                     console.print()
 
-                    # Feed result to LLM for natural language response
-                    step_summary = "\n".join(
-                        f"  {s.sub_goal_name}: {'ok' if s.success else 'FAILED'}"
-                        + (f" ({s.error})" if s.error else "")
-                        for s in vgg_trace.steps
-                    )
-                    session.append_user(user_input)
-                    session.append_assistant(
-                        f"[VGG executed]\nGoal: {tree.goal}\n"
-                        f"Result: {'success' if vgg_trace.success else 'partial failure'}\n"
-                        f"Steps:\n{step_summary}"
-                    )
-                    continue
+                    # Reset step counter for callback
+                    _vgg_step_idx[0] = 0
+                    _vgg_total[0] = len(goal_tree.sub_goals)
+
+                    # Execute async — CLI remains responsive
+                    def _on_vgg_complete(trace: Any) -> None:
+                        n_steps = len(trace.steps)
+                        n_ok = sum(1 for s in trace.steps if s.success)
+                        tag = "[green]complete[/]" if trace.success else "[red]incomplete[/]"
+                        console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {tag}: {n_ok}/{n_steps} verified ({trace.total_duration_sec:.1f}s)")
+
+                        # Record in session
+                        step_summary = "\n".join(
+                            f"  {s.sub_goal_name}: {'ok' if s.success else 'FAILED'}"
+                            + (f" ({s.error})" if s.error else "")
+                            for s in trace.steps
+                        )
+                        session.append_user(user_input)
+                        session.append_assistant(
+                            f"[VGG executed]\nGoal: {trace.goal_tree.goal}\n"
+                            f"Result: {'success' if trace.success else 'partial failure'}\n"
+                            f"Steps:\n{step_summary}"
+                        )
+
+                    engine.vgg_execute_async(goal_tree, on_complete=_on_vgg_complete)
+                    continue  # CLI immediately available for next input
 
                 # --- Normal tool_use path ---
                 thinking_panel = Panel(

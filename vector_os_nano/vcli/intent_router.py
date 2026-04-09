@@ -95,6 +95,15 @@ def _has_multiple_actions(msg: str) -> bool:
     return False
 
 
+# Motor action patterns — these should go through VGG for async execution
+_MOTOR_PATTERNS: tuple[str, ...] = (
+    "去", "到", "走到", "去到", "导航",
+    "go to", "goto", "navigate to",
+    "巡逻", "patrol",
+    "探索", "explore",
+)
+
+
 class IntentRouter:
     """Classify user intent to select relevant tool categories.
 
@@ -151,6 +160,20 @@ class IntentRouter:
             return True
 
         return False
+
+    def should_use_vgg(self, user_message: str) -> bool:
+        """Return True if this message should go through VGG pipeline.
+
+        Broader than is_complex(): also triggers for motor actions (navigate,
+        patrol, explore) that benefit from async execution with progress feedback,
+        even if they're single-step tasks.
+        """
+        if not user_message or len(user_message) < 2:
+            return False
+        if self.is_complex(user_message):
+            return True
+        msg_lower = user_message.lower()
+        return any(pat in msg_lower for pat in _MOTOR_PATTERNS)
 
     def route(self, user_message: str) -> list[str] | None:
         """Classify user message into tool categories.
