@@ -74,6 +74,8 @@ class SimStartTool:
 
         # Update app state
         app["agent"] = agent
+        app["scene_graph"] = getattr(agent, "_spatial_memory", None)
+        app["skill_registry"] = getattr(agent, "_skill_registry", None)
 
         # Register skill tools
         registry = app.get("registry")
@@ -87,11 +89,27 @@ class SimStartTool:
         if engine is not None:
             from vector_os_nano.vcli.prompt import build_system_prompt
             engine._system_prompt = build_system_prompt(agent=agent, cwd=context.cwd)
+            # Reinit VGG with new agent so verifier has live robot state
+            try:
+                engine.init_vgg(
+                    agent=agent,
+                    skill_registry=getattr(agent, "_skill_registry", None),
+                    on_vgg_step=getattr(engine, "_vgg_step_callback", None),
+                )
+            except Exception:
+                pass
+
+        # Report SceneGraph status
+        sg = getattr(agent, "_spatial_memory", None)
+        sg_stats = sg.stats() if sg else {}
+        sg_info = ""
+        if sg_stats.get("rooms", 0) > 0:
+            sg_info = f" SceneGraph restored: {sg_stats['rooms']} rooms."
 
         hw_name = type(getattr(agent, "_arm", None) or getattr(agent, "_base", None)).__name__
         skill_count = len(agent._skill_registry.list_skills()) if hasattr(agent, "_skill_registry") else 0
         return ToolResult(
-            content=f"Started {sim_type} simulation: {hw_name}, {skill_count} skills registered."
+            content=f"Started {sim_type} simulation: {hw_name}, {skill_count} skills registered.{sg_info}"
         )
 
     @staticmethod
