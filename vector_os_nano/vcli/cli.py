@@ -1060,12 +1060,12 @@ def main(argv: list[str] | None = None) -> None:
         fallback = getattr(step, "fallback_used", False)
         err = getattr(step, "error", "")
 
-        tag = f"[green]ok[/]" if success else f"[red]fail[/]"
+        tag = "[green]ok[/]" if success else "[red]fail[/]"
         verify_tag = "[green]verified[/]" if verify else "[red]unverified[/]"
         fb_tag = " [yellow](fallback)[/]" if fallback else ""
         err_tag = f" [red]{err}[/]" if err and not success else ""
 
-        print(f"  [{TEAL}]>[/] {name} via {strategy} ... {tag} {verify_tag}{fb_tag}{err_tag} [dim]{dur:.1f}s[/]")
+        console.print(f"  [{TEAL}]>[/] {name} via {strategy} ... {tag} {verify_tag}{fb_tag}{err_tag} [dim]{dur:.1f}s[/]")
 
     try:
         engine.init_vgg(
@@ -1328,10 +1328,10 @@ def main(argv: list[str] | None = None) -> None:
                     n_steps = len(vgg_trace.steps)
                     n_ok = sum(1 for s in vgg_trace.steps if s.success)
                     console.print()
-                    print(f"  [{TEAL}]>[/] [bold]VGG[/] {tree.goal}")
+                    console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {tree.goal}")
                     # Steps already printed by _vgg_step_display callback
                     tag = "[green]complete[/]" if vgg_trace.success else "[red]incomplete[/]"
-                    print(f"  [{TEAL}]>[/] [bold]VGG[/] {tag}: {n_ok}/{n_steps} verified ({vgg_trace.total_duration_sec:.1f}s)")
+                    console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {tag}: {n_ok}/{n_steps} verified ({vgg_trace.total_duration_sec:.1f}s)")
                     console.print()
 
                     # Feed result to LLM for natural language response
