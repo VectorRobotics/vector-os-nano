@@ -37,3 +37,7 @@ mjmodel.mjb
 .vector/
 oauth_credentials.json
 .gitnexus
+.claude/
+.webui_secret_key
+CLAUDE.md
+lib/
