@@ -36,6 +36,7 @@ from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 from vector_os_nano.vcli.cognitive.strategy_selector import StrategyResult, StrategySelector
 from vector_os_nano.vcli.cognitive.strategy_stats import StrategyRecord, StrategyStats
 from vector_os_nano.vcli.cognitive.template_library import TemplateLibrary
+from vector_os_nano.vcli.cognitive.vgg_harness import VGGHarness, HarnessConfig, FailureRecord
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     GoalTree,
@@ -61,4 +62,7 @@ __all__ = [
     "SubGoal",
     "SubGoalTemplate",
     "TemplateLibrary",
+    "VGGHarness",
+    "HarnessConfig",
+    "FailureRecord",
 ]

@@ -40,6 +40,7 @@ try:
         StrategyStats,
     )
     from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, SubGoal, StepRecord
+    from vector_os_nano.vcli.cognitive.vgg_harness import VGGHarness, HarnessConfig
     _VGG_AVAILABLE = True
 except ImportError:
     _VGG_AVAILABLE = False
@@ -187,6 +188,17 @@ class VectorEngine:
             )
             self._goal_decomposer = decomposer
             self._goal_executor = executor
+            self._vgg_harness = VGGHarness(
+                decomposer=decomposer,
+                executor=executor,
+                selector=selector,
+                config=HarnessConfig(
+                    max_step_retries=2,
+                    max_redecompose=1,
+                    max_pipeline_retries=1,
+                ),
+                on_step=self._on_vgg_step,
+            )
             self._vgg_enabled = True
             logger.debug("VGG pipeline initialised successfully")
         except Exception as exc:  # noqa: BLE001
@@ -334,7 +346,15 @@ class VectorEngine:
         return template.replace("{arg}", arg) if "{arg}" in template else template
 
     def vgg_execute(self, goal_tree: "GoalTree") -> "ExecutionTrace":
-        """Execute a pre-decomposed GoalTree (synchronous). Returns ExecutionTrace."""
+        """Execute GoalTree with feedback harness (retry + re-plan on failure)."""
+        if hasattr(self, "_vgg_harness") and self._vgg_harness is not None:
+            world_context = self._build_world_context()
+            return self._vgg_harness.run(
+                task=goal_tree.goal,
+                world_context=world_context,
+                goal_tree=goal_tree,
+            )
+        # Fallback: raw executor (no harness)
         return self._goal_executor.execute(goal_tree, on_step=self._on_vgg_step)
 
     def vgg_execute_async(
