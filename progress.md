@@ -86,6 +86,31 @@ vector ros nodes          # ROS2 diagnostics
 vector chat               # LLM agent mode
 ```
 
+## 开发测试流程
+
+所有实机验证通过 vector-cli 对话完成，不直接脚本调用 MuJoCo/ROS2：
+
+```bash
+cd ~/Desktop/vector_os_nano
+python3 -m vector_os_nano.vcli.cli --sim-go2
+```
+
+启动后在 REPL 中用自然语言交互：
+- `探索` — 触发 TARE 自主探索
+- `去厨房` — VGG 分解 + nav stack 导航
+- `看看有没有杯子` — VLM 感知
+- `去厨房看看有没有杯子` — VGG 多步分解 + 执行 + 验证
+
+单元测试（无 MuJoCo）：
+```bash
+python3 -m pytest tests/harness/test_level57_object_memory.py tests/harness/test_level58_predict.py tests/harness/test_level59_visual_verifier.py tests/harness/test_level60_namespace_integration.py tests/harness/test_level60_visual_verify_integration.py tests/harness/test_level61_auto_observe.py -v
+```
+
+MuJoCo 集成测试：
+```bash
+python3 -m pytest tests/harness/test_level62_phase3_mujoco.py -v
+```
+
 ## Test Coverage: 630+ VGG tests, 1150+ total
 
 | Suite | Tests | Status |
