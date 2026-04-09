@@ -35,6 +35,7 @@ class GoalExecutor:
         skill_registry: Any = None,
         primitives: Any = None,
         build_context: Callable | None = None,
+        stats: Any = None,
     ) -> None:
         """Initialise the executor.
 
@@ -45,12 +46,15 @@ class GoalExecutor:
             primitives: Optional dict mapping primitive name → callable,
                         or any namespace with primitive functions.
             build_context: Optional callable that builds a SkillContext for skill execution.
+            stats: Optional StrategyStats — records per-step outcomes for data-driven
+                   strategy selection.  Auto-saved after each full execution.
         """
         self._selector = strategy_selector
         self._verifier = verifier
         self._skill_registry = skill_registry
         self._primitives = primitives
         self._build_context = build_context
+        self._stats = stats
 
     # ------------------------------------------------------------------
     # Public API
@@ -88,6 +92,19 @@ class GoalExecutor:
         for sub_goal in ordered:
             step = self._execute_sub_goal(sub_goal)
             steps.append(step)
+
+            # Record to stats if available
+            if self._stats is not None:
+                try:
+                    self._stats.record(
+                        strategy_name=step.strategy,
+                        sub_goal_name=step.sub_goal_name,
+                        success=step.success,
+                        duration_sec=step.duration_sec,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GoalExecutor: stats.record raised: %s", exc)
+
             if on_step is not None:
                 try:
                     on_step(step)
@@ -97,6 +114,13 @@ class GoalExecutor:
             if not step.success:
                 overall_success = False
                 break  # abort remaining
+
+        # Auto-save stats after full execution
+        if self._stats is not None:
+            try:
+                self._stats.save()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("GoalExecutor: stats.save raised: %s", exc)
 
         total_duration = time.monotonic() - trace_start
         return ExecutionTrace(

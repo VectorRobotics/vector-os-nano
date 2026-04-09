@@ -188,14 +188,19 @@ Response:
   "context_snapshot": "Robot is in hallway, kitchen is adjacent."
 }"""
 
-    def __init__(self, backend: Any) -> None:
+    def __init__(self, backend: Any, template_library: Any = None) -> None:
         """Initialise with an LLMBackend (must implement .call()).
 
         Args:
             backend: Any object implementing the LLMBackend Protocol
                      (has .call(messages, tools, system, max_tokens)).
+            template_library: Optional TemplateLibrary — checked before calling
+                              the LLM.  When a template matches the task, the
+                              instantiated GoalTree is returned immediately and
+                              the LLM backend is not called.
         """
         self._backend = backend
+        self._template_library = template_library
 
     # ------------------------------------------------------------------
     # Public API
@@ -203,6 +208,9 @@ Response:
 
     def decompose(self, task: str, world_context: str) -> GoalTree:
         """Decompose *task* into a GoalTree using the LLM backend.
+
+        If a template_library is injected and a template matches *task*,
+        the instantiated GoalTree is returned immediately — no LLM call.
 
         Args:
             task: Natural language instruction (may be empty).
@@ -212,6 +220,16 @@ Response:
             Validated GoalTree. Never raises — falls back to a single-step
             GoalTree on any parsing or communication failure.
         """
+        # Template check — skip LLM when a reusable template matches
+        if self._template_library is not None:
+            try:
+                match_result = self._template_library.match(task)
+                if match_result is not None:
+                    template, params = match_result
+                    return self._template_library.instantiate(template, params)
+            except Exception as exc:  # noqa: BLE001
+                _LOG.warning("GoalDecomposer: template_library match/instantiate failed: %s", exc)
+
         system = self._build_system_prompt()
         messages = self._build_messages(task, world_context)
 
