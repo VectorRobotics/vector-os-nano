@@ -305,10 +305,13 @@ class Go2ROS2Proxy:
     ) -> bool:
         """Walk at the given velocity for *duration* seconds, then stop.
 
-        Returns True (mirrors the MuJoCoGo2 API which checks upright status).
+        Publishes velocity at 4Hz to keep overriding the bridge path follower
+        (which reclaims control 0.5s after last /cmd_vel_nav message).
         """
-        self.set_velocity(vx, vy, vyaw)
-        time.sleep(duration)
+        deadline = time.time() + duration
+        while time.time() < deadline:
+            self.set_velocity(vx, vy, vyaw)
+            time.sleep(0.25)  # 4Hz — keeps _teleop_until fresh
         self.set_velocity(0.0, 0.0, 0.0)
         return True
 
