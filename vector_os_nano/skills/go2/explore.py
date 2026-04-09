@@ -540,6 +540,56 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                     except Exception:
                         pass
 
+                    # Auto-observe hook: capture VLM scene description at new viewpoints.
+                    # Only triggers when VLM is available and position is a novel viewpoint.
+                    # VLM failures are non-blocking — exploration continues regardless.
+                    _vlm_hook = getattr(base, "_vlm", None)
+                    if _vlm_hook is not None:
+                        try:
+                            if _spatial_memory.should_add_viewpoint(room, x, y):
+                                _base_hook = getattr(base, "_base", base)
+                                frame = None
+                                if hasattr(_base_hook, "get_camera_frame"):
+                                    frame = _base_hook.get_camera_frame()
+                                if frame is not None:
+                                    desc_result = _vlm_hook.describe_scene(frame)
+                                    obj_result = _vlm_hook.find_objects(frame)
+                                    scene_summary = str(
+                                        getattr(desc_result, "summary", "")
+                                    )
+                                    detected = [
+                                        {
+                                            "category": str(getattr(o, "name", "")),
+                                            "confidence": float(
+                                                getattr(o, "confidence", 0.5)
+                                            ),
+                                        }
+                                        for o in (obj_result or [])
+                                    ]
+                                    object_names = [
+                                        d["category"] for d in detected if d["category"]
+                                    ]
+                                    heading = float(pos[3]) if len(pos) > 3 else 0.0
+                                    _spatial_memory.observe_with_viewpoint(
+                                        room=room,
+                                        x=x,
+                                        y=y,
+                                        heading=heading,
+                                        objects=object_names,
+                                        description=scene_summary,
+                                        detected_objects=detected,
+                                    )
+                                    logger.debug(
+                                        "[EXPLORE] Auto-observe: %d objects in %s",
+                                        len(detected),
+                                        room,
+                                    )
+                        except Exception as exc:
+                            logger.debug(
+                                "[EXPLORE] Auto-observe VLM failed (non-blocking): %s",
+                                exc,
+                            )
+
                 # Door learning: detect room transitions (uses nearest_room, not _in_room,
                 # because door detection should work at the boundary between rooms).
                 if _prev_room is not None and room is not None and room != _prev_room:

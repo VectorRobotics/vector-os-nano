@@ -151,6 +151,95 @@ def path_between(room_a: str, room_b: str) -> list[tuple[float, float]]:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# ObjectMemory-backed queries
+# ---------------------------------------------------------------------------
+
+
+def last_seen(category: str = "") -> dict | None:
+    """Most recent observation of category.
+
+    Args:
+        category: Object category to search for (substring match).
+
+    Returns:
+        {"room", "position", "seconds_ago", "confidence"} or None if not found.
+        Delegates to ObjectMemory if available, otherwise returns None.
+    """
+    if _ctx is None or _ctx.object_memory is None:
+        return None
+    return _ctx.object_memory.last_seen(category)
+
+
+def certainty(fact: str = "") -> float:
+    """Time-decayed confidence of a fact like "cup在kitchen" or "cup in kitchen".
+
+    Args:
+        fact: Fact string in Chinese ("cup在kitchen") or English ("cup in kitchen") format.
+
+    Returns:
+        Effective confidence float 0.0–1.0.
+        Delegates to ObjectMemory. Returns 0.0 if unavailable.
+    """
+    if _ctx is None or _ctx.object_memory is None:
+        return 0.0
+    return _ctx.object_memory.certainty(fact)
+
+
+def find_object(category: str = "") -> list[dict]:
+    """All known locations of category, sorted by confidence.
+
+    Args:
+        category: Object category to search for (substring match).
+
+    Returns:
+        List of {"object_id", "category", "room", "x", "y", "confidence", "seconds_ago"}.
+        Delegates to ObjectMemory. Returns [] if unavailable.
+    """
+    if _ctx is None or _ctx.object_memory is None:
+        return []
+    return _ctx.object_memory.find_object(category)
+
+
+def objects_in_room(room_id: str = "") -> list[dict]:
+    """Objects in room with time-decayed confidence.
+
+    Args:
+        room_id: Room identifier to query.
+
+    Returns:
+        List of {"object_id", "category", "x", "y", "confidence", "seconds_ago"}.
+        Delegates to ObjectMemory. Returns [] if unavailable.
+    """
+    if _ctx is None or _ctx.object_memory is None:
+        return []
+    return _ctx.object_memory.objects_in_room(room_id)
+
+
+def room_coverage(room_id: str = "") -> float:
+    """Exploration coverage of room (0.0~1.0).
+
+    Args:
+        room_id: Room identifier to query.
+
+    Returns:
+        Coverage fraction from SceneGraph.get_room_coverage(). Returns 0.0 on error.
+
+    Raises:
+        RuntimeError: If no SceneGraph is connected.
+    """
+    sg = _require_scene_graph()
+    try:
+        return float(sg.get_room_coverage(room_id))
+    except Exception:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
+
 def world_stats() -> dict:
     """Return high-level world model statistics.
 

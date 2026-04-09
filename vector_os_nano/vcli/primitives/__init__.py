@@ -31,6 +31,7 @@ class PrimitiveContext:
     vlm: Any | None = None               # Go2VLMPerception instance
     nav_client: Any | None = None        # NavStackClient instance
     skill_registry: Any | None = None    # SkillRegistry instance
+    object_memory: Any | None = None     # ObjectMemory instance (optional)
 
 
 _ctx: PrimitiveContext | None = None
