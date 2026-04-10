@@ -127,10 +127,29 @@ VisualVerifier: verify 失败 → VLM 拍照二次确认 (感知步骤才触发)
 Auto-Observe: 探索时每个新 viewpoint → VLM 自动识别物体 → SceneGraph + ObjectMemory
 ```
 
+## Foxglove 可视化 — feat/web-viz
+
+Foxglove Studio + foxglove_bridge 替代 RViz (ADR-004 revised)。
+Three.js 自建方案已废弃 — 开发成本高、效果调试困难。
+
+```
+ROS2 Topics → foxglove_bridge (ws://8765) → Foxglove Studio
+  Dashboard: foxglove/vector-os-dashboard.json
+  6 面板: 3D 透视 + 3D 俯视 + 摄像头 + SceneGraph JSON + Raw Messages + 速度曲线
+  14 topic: registered_scan(turbo) + free_paths + path + markers + camera + scene_graph JSON...
+  启动: vector CLI → "打开可视化" 或 ./foxglove/launch_foxglove.sh
+  CLI tool: open_foxglove (start/stop/status)
+  JSON topic: /vector_os/scene_graph (0.5Hz, rooms+doors+objects+stats)
+```
+
+已知限制: V-Graph 线段在 Foxglove 中只能显示为散点或很细的 marker（PointCloud2 无法渲染为 LineSegments，MarkerArray 线宽由 FAR 源码决定）。MuJoCo sim 的点云密度和视觉效果不如真实 LiDAR。
+
 ## TODO
 
-- MuJoCo sim 环境太简单 — 需要增加家具、物品、更复杂的房间布局来测试 Phase 3 物体追踪
-- Web 可视化前端 — rosbridge + Three.js 替代 RViz（ADR-004, feat/web-viz 分支）
+- Isaac Lab 集成 — 替代/补充 MuJoCo 仿真（更好的物理+视觉）
+- Foxglove 自定义面板 (Wave 2): SceneGraph/ObjectMemory/VGG React 扩展
+- V-Graph 线段渲染: 需要 Foxglove custom panel 或回到 Three.js 方案
+- MuJoCo sim 环境太简单 — 需要增加家具、物品、更复杂的房间布局
 - TARE kAutoStart 需要在 indoor_small.yaml 里手动设为 true（会被 linter 改回 false）
 
 ## FAR V-Graph 调参记录 (2026-04-09)

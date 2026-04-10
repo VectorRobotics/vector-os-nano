@@ -40,6 +40,7 @@ def discover_all_tools() -> list:
     from vector_os_nano.vcli.tools.ros2_tools import Ros2TopicsTool, Ros2NodesTool, Ros2LogTool
     from vector_os_nano.vcli.tools.nav_tools import NavStateTool, TerrainStatusTool
     from vector_os_nano.vcli.tools.reload_tool import SkillReloadTool
+    from vector_os_nano.vcli.tools.viz_tool import FoxgloveTool
 
     return [
         # Existing tools
@@ -61,6 +62,7 @@ def discover_all_tools() -> list:
         NavStateTool(),
         TerrainStatusTool(),
         SkillReloadTool(),
+        FoxgloveTool(),
     ]
 
 
@@ -69,7 +71,7 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
     "code": ["file_read", "file_write", "file_edit", "bash", "glob", "grep"],
     "robot": ["world_query", "scene_graph_query"],
     "diag": ["ros2_topics", "ros2_nodes", "ros2_log", "nav_state", "terrain_status"],
-    "system": ["robot_status", "start_simulation", "web_fetch", "skill_reload"],
+    "system": ["robot_status", "start_simulation", "web_fetch", "skill_reload", "open_foxglove"],
 }
 
 

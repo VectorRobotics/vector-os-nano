@@ -186,6 +186,13 @@ class IntentRouter:
         if not user_message or len(user_message) < 2:
             return False
 
+        # System tool keywords → tool_use path, not VGG
+        # These are CLI/infra commands, not robot actions.
+        msg_lower = user_message.lower()
+        _SYSTEM_BYPASS = ("可视化", "foxglove", "visualization", "viz ")
+        if any(kw in msg_lower for kw in _SYSTEM_BYPASS):
+            return False
+
         # Complex tasks → VGG
         if self.is_complex(user_message):
             return True
@@ -200,7 +207,6 @@ class IntentRouter:
                 pass
 
         # Motor pattern keywords → VGG
-        msg_lower = user_message.lower()
         if any(pat in msg_lower for pat in _MOTOR_PATTERNS):
             return True
 

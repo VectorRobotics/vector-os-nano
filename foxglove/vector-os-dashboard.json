@@ -1,0 +1,471 @@
+{
+  "_watermark": {
+    "creator": "Vector OS Nano",
+    "author": "Vector Robotics",
+    "version": "2.0",
+    "timestamp": "2026-04-10",
+    "description": "Go2 navigation + SLAM + V-Graph + cognitive data dashboard"
+  },
+  "configById": {
+    "3D!main": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 14,
+        "phi": 50,
+        "thetaOffset": -90,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.01,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "sensor",
+      "scene": {
+        "backgroundColor": "#000000",
+        "enableStats": false,
+        "syncCamera": false
+      },
+      "transforms": {
+        "frame:map": { "visible": true },
+        "frame:sensor": { "visible": true }
+      },
+      "topics": {
+        "/registered_scan": {
+          "visible": true,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 5,
+          "pointShape": "circle",
+          "decayTime": 0
+        },
+        "/overall_map": {
+          "visible": true,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 3,
+          "pointShape": "circle",
+          "decayTime": 0
+        },
+        "/stacked_cloud": {
+          "visible": false,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 3,
+          "pointShape": "circle",
+          "decayTime": 0
+        },
+        "/free_paths": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 2,
+          "pointShape": "circle",
+          "decayTime": 1
+        },
+        "/frontier_cloud": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#00ffff88",
+          "pointSize": 4,
+          "pointShape": "circle",
+          "decayTime": 1
+        },
+        "/explored_areas": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#00ff4444",
+          "pointSize": 3,
+          "decayTime": 0
+        },
+        "/coverage_cloud": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#4488ff44",
+          "pointSize": 3,
+          "decayTime": 0
+        },
+        "/path": {
+          "visible": true,
+          "lineWidth": 0.08,
+          "color": "#ffffffcc"
+        },
+        "/global_path": {
+          "visible": true,
+          "lineWidth": 0.06,
+          "color": "#00d4b4cc"
+        },
+        "/global_path_full": {
+          "visible": true,
+          "lineWidth": 0.04,
+          "color": "#00d4b466"
+        },
+        "/exploration_path": {
+          "visible": true,
+          "lineWidth": 0.05,
+          "color": "#f0a030cc"
+        },
+        "/tare_visualizer/local_path": {
+          "visible": true,
+          "lineWidth": 0.04,
+          "color": "#ff8800aa"
+        },
+        "/way_point": {
+          "visible": true,
+          "color": "#ff4444"
+        },
+        "/goal_point": {
+          "visible": true,
+          "color": "#ff8800",
+          "type": "arrow"
+        },
+        "/scene_graph_markers": {
+          "visible": true
+        },
+        "/terrain_map": {
+          "visible": false,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 4,
+          "pointShape": "circle"
+        },
+        "/terrain_map_ext": {
+          "visible": false,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 4
+        },
+        "/added_obstacles": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#ff1900",
+          "pointSize": 4
+        },
+        "/trajectory": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "rainbow",
+          "pointSize": 5
+        },
+        "/viz_graph_topic": {
+          "visible": true,
+          "namespaces": {
+            "freespace_vgraph": { "visible": true },
+            "polygon_edge": { "visible": true },
+            "angle_direct": { "visible": false },
+            "boundary_edge": { "visible": false },
+            "boundary_vertex": { "visible": false },
+            "freespace_vertex": { "visible": false },
+            "frontier_vertex": { "visible": false },
+            "global_vertex": { "visible": false },
+            "global_vgraph": { "visible": false },
+            "localrange_vertex": { "visible": false },
+            "odom_edge": { "visible": false },
+            "to_goal_edge": { "visible": false },
+            "trajectory_edge": { "visible": false },
+            "trajectory_vertex": { "visible": false },
+            "updating_vertex": { "visible": false },
+            "vertex_angle": { "visible": false },
+            "vertices_matches": { "visible": false },
+            "visibility_edge": { "visible": false }
+          }
+        },
+        "/keypose_graph_edge_marker": {
+          "visible": false
+        },
+        "/keypose_graph_node_marker": {
+          "visible": false
+        },
+        "/navigation_boundary": {
+          "visible": true,
+          "color": "#00ff00",
+          "lineWidth": 0.15
+        },
+        "/nogo_boundary_marker": {
+          "visible": true,
+          "color": "#ff000088"
+        },
+        "/tare_visualizer/marker_array": {
+          "visible": false
+        },
+        "/tare_visualizer/viewpoints": {
+          "visible": false
+        },
+        "/tare_visualizer/viewpoint_candidates": {
+          "visible": false
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "color": "#1a4a4a",
+          "size": 100,
+          "divisions": 100,
+          "lineWidth": 1,
+          "frameId": "map"
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/goal_point",
+        "pointTopic": "/way_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939,
+        "frameId": "map"
+      },
+      "imageMode": {}
+    },
+    "3D!topdown": {
+      "cameraState": {
+        "perspective": false,
+        "distance": 30,
+        "phi": 0,
+        "thetaOffset": -90,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.01,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "sensor",
+      "scene": {
+        "backgroundColor": "#000000",
+        "enableStats": false,
+        "syncCamera": false
+      },
+      "transforms": {
+        "frame:map": { "visible": true },
+        "frame:sensor": { "visible": true }
+      },
+      "topics": {
+        "/registered_scan": {
+          "visible": true,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 3,
+          "pointShape": "circle",
+          "decayTime": 0
+        },
+        "/overall_map": {
+          "visible": true,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 2,
+          "pointShape": "circle",
+          "decayTime": 0
+        },
+        "/free_paths": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 1.5,
+          "decayTime": 1
+        },
+        "/frontier_cloud": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#00ffff66",
+          "pointSize": 3,
+          "decayTime": 1
+        },
+        "/path": {
+          "visible": true,
+          "lineWidth": 0.08,
+          "color": "#ffffffcc"
+        },
+        "/global_path": {
+          "visible": true,
+          "lineWidth": 0.06,
+          "color": "#00d4b4cc"
+        },
+        "/global_path_full": {
+          "visible": true,
+          "lineWidth": 0.04,
+          "color": "#00d4b466"
+        },
+        "/exploration_path": {
+          "visible": true,
+          "lineWidth": 0.05,
+          "color": "#f0a030cc"
+        },
+        "/way_point": {
+          "visible": true,
+          "color": "#ff4444"
+        },
+        "/goal_point": {
+          "visible": true,
+          "color": "#ff8800"
+        },
+        "/scene_graph_markers": {
+          "visible": true
+        },
+        "/viz_graph_topic": {
+          "visible": true,
+          "namespaces": {
+            "freespace_vgraph": { "visible": true },
+            "polygon_edge": { "visible": true },
+            "angle_direct": { "visible": false },
+            "boundary_edge": { "visible": false },
+            "boundary_vertex": { "visible": false },
+            "freespace_vertex": { "visible": false },
+            "frontier_vertex": { "visible": false },
+            "global_vertex": { "visible": false },
+            "global_vgraph": { "visible": false },
+            "localrange_vertex": { "visible": false },
+            "odom_edge": { "visible": false },
+            "to_goal_edge": { "visible": false },
+            "trajectory_edge": { "visible": false },
+            "trajectory_vertex": { "visible": false },
+            "updating_vertex": { "visible": false },
+            "vertex_angle": { "visible": false },
+            "vertices_matches": { "visible": false },
+            "visibility_edge": { "visible": false }
+          }
+        },
+        "/navigation_boundary": {
+          "visible": true,
+          "color": "#00ff00",
+          "lineWidth": 0.1
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "color": "#1a4a4a",
+          "size": 100,
+          "divisions": 100,
+          "lineWidth": 1,
+          "frameId": "map"
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/goal_point",
+        "pointTopic": "/way_point",
+        "frameId": "map"
+      },
+      "imageMode": {}
+    },
+    "Image!camera": {
+      "cameraTopic": "/camera/image",
+      "enabledMarkerTopics": [],
+      "synchronize": false,
+      "transformMarkers": true,
+      "smooth": false,
+      "flipHorizontal": false,
+      "flipVertical": false,
+      "minValue": 0,
+      "maxValue": 1,
+      "rotation": 0
+    },
+    "RawMessages!scenegraph": {
+      "topicPath": "/vector_os/scene_graph",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!debug": {
+      "topicPath": "/state_estimation",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "Plot!speed": {
+      "paths": [
+        {
+          "value": "/state_estimation.twist.twist.linear.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Linear X"
+        },
+        {
+          "value": "/state_estimation.twist.twist.linear.y",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Linear Y"
+        },
+        {
+          "value": "/state_estimation.twist.twist.angular.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Angular Z"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240,
+      "minYValue": -1.5,
+      "maxYValue": 1.5
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "linkedGlobalVariables": [],
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": {
+      "first": "3D!main",
+      "second": {
+        "first": "Image!camera",
+        "second": "3D!topdown",
+        "direction": "column",
+        "splitPercentage": 35
+      },
+      "direction": "row",
+      "splitPercentage": 68
+    },
+    "second": {
+      "first": "RawMessages!scenegraph",
+      "second": {
+        "first": "RawMessages!debug",
+        "second": "Plot!speed",
+        "direction": "row",
+        "splitPercentage": 45
+      },
+      "direction": "row",
+      "splitPercentage": 28
+    },
+    "direction": "column",
+    "splitPercentage": 80
+  }
+}

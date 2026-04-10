@@ -268,6 +268,14 @@ class Go2VNavBridge(Node):
         except ImportError:
             self._marker_pub = None
 
+        # Scene graph JSON topic (0.5 Hz) — structured data for Foxglove Raw Messages
+        try:
+            from std_msgs.msg import String
+            self._sg_json_pub = self.create_publisher(String, "/vector_os/scene_graph", 5)
+            self.create_timer(2.0, self._publish_scene_graph_json)
+        except ImportError:
+            self._sg_json_pub = None
+
         # Diagnostic counters — track message flow for TARE data-starvation debugging.
         # Logged every 10s at INFO level via _log_diagnostics timer.
         self._diag_odom_count: int = 0
@@ -1285,6 +1293,58 @@ class Go2VNavBridge(Node):
                 self._marker_pub.publish(ma)
         except Exception:
             pass  # visualization is best-effort
+
+    def _publish_scene_graph_json(self) -> None:
+        """Publish scene graph as JSON string (0.5 Hz) for Foxglove Raw Messages."""
+        if self._sg_json_pub is None or self._scene_graph is None:
+            return
+        try:
+            import json
+            from std_msgs.msg import String
+
+            sg = self._scene_graph
+            rooms = sg.get_all_rooms()
+            doors = sg.get_all_doors()
+            objects = []
+            for room in rooms:
+                objects.extend(sg.find_objects_in_room(room.room_id))
+
+            data = {
+                "rooms": [
+                    {
+                        "id": r.room_id,
+                        "center": [round(r.center_x, 2), round(r.center_y, 2)],
+                        "area": round(r.area, 1),
+                        "visits": r.visit_count,
+                        "description": r.representative_description[:80] if r.representative_description else "",
+                        "connected": list(r.connected_rooms),
+                    }
+                    for r in rooms
+                ],
+                "doors": [
+                    {
+                        "rooms": list(k),
+                        "position": [round(v[0], 2), round(v[1], 2)],
+                    }
+                    for k, v in doors.items()
+                ],
+                "objects": [
+                    {
+                        "category": o.category,
+                        "room": o.room_id,
+                        "position": [round(o.x, 2), round(o.y, 2)],
+                        "confidence": round(o.confidence, 2),
+                    }
+                    for o in objects
+                ],
+                "stats": sg.stats(),
+            }
+
+            msg = String()
+            msg.data = json.dumps(data, ensure_ascii=False)
+            self._sg_json_pub.publish(msg)
+        except Exception as e:
+            self.get_logger().warn(f"scene_graph_json publish error: {e}")
 
 
 def main():
