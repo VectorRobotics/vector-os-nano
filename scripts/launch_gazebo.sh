@@ -80,10 +80,13 @@ esac
 
 # ---------------------------------------------------------------------------
 # Source quadruped_ros2_control (Go2 URDF + controllers)
+# Temporarily disable nounset — colcon setup.bash uses unbound variables
 # ---------------------------------------------------------------------------
 QUADRUPED_DIR="${HOME}/Desktop/quadruped_ros2_control"
 if [[ -f "${QUADRUPED_DIR}/install/setup.bash" ]]; then
+    set +u
     source "${QUADRUPED_DIR}/install/setup.bash"
+    set -u
 else
     echo "ERROR: quadruped_ros2_control not built." >&2
     echo "       cd ~/Desktop/quadruped_ros2_control && colcon build --packages-up-to unitree_guide_controller --symlink-install" >&2

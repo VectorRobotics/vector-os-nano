@@ -8,7 +8,7 @@ Supported simulations:
   go2   — Unitree Go2 quadruped (MuJoCoGo2 / IsaacSimProxy / GazeboGo2Proxy)
 
 Supported backends:
-  isaac  — Isaac Sim 5.1 Docker (photorealistic, default)
+  gazebo — Gz Sim Harmonic (default, ROS2-native)
   mujoco — MuJoCo 3.x (lightweight fallback)
   gazebo — Gz Sim Harmonic (ROS2-native, open-source)
 """
@@ -33,7 +33,7 @@ from vector_os_nano.vcli.tools.base import (
 class SimStartTool:
     """Start a simulation and register its skills into the tool registry.
 
-    Backends: isaac (default, photorealistic), mujoco (lightweight), gazebo (ROS2-native).
+    Backends: gazebo (default, ROS2-native), mujoco (lightweight), isaac (Docker, archived).
     """
 
     input_schema: dict[str, Any] = {
