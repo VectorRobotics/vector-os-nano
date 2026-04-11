@@ -68,9 +68,9 @@ def _launch_setup(context, *args, **kwargs):
     # ------------------------------------------------------------------
     # 1. Gz Sim — load world SDF
     # ------------------------------------------------------------------
-    # Start PAUSED (no -r) — unpause after controllers activate
-    # This prevents robot from collapsing before controller has torque control
-    gz_args = f"{world_sdf} -v 3"
+    # Start RUNNING (-r) — paused start doesn't work because
+    # controller_manager needs sim ticks to activate controllers
+    gz_args = f"{world_sdf} -r -v 3"
     if gui.lower() != "true":
         gz_args += " -s"  # server-only (headless)
 
@@ -193,24 +193,6 @@ def _launch_setup(context, *args, **kwargs):
             event_handler=OnProcessExit(
                 target_action=joint_state_broadcaster,
                 on_exit=[unitree_guide_controller],
-            )
-        ),
-        # Chain: after guide controller active → unpause simulation
-        # Simulation starts PAUSED so robot doesn't collapse before
-        # controller has torque control.
-        RegisterEventHandler(
-            event_handler=OnProcessExit(
-                target_action=unitree_guide_controller,
-                on_exit=[
-                    ExecuteProcess(
-                        cmd=["gz", "service", "-s", "/world/" + world + "/control",
-                             "--reqtype", "gz.msgs.WorldControl",
-                             "--reptype", "gz.msgs.Boolean",
-                             "--timeout", "5000",
-                             "--req", "pause: false"],
-                        output="screen",
-                    ),
-                ],
             )
         ),
         rviz2,
