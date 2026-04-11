@@ -79,6 +79,18 @@ case "${CONTROLLER}" in
 esac
 
 # ---------------------------------------------------------------------------
+# Source quadruped_ros2_control (Go2 URDF + controllers)
+# ---------------------------------------------------------------------------
+QUADRUPED_DIR="${HOME}/Desktop/quadruped_ros2_control"
+if [[ -f "${QUADRUPED_DIR}/install/setup.bash" ]]; then
+    source "${QUADRUPED_DIR}/install/setup.bash"
+else
+    echo "ERROR: quadruped_ros2_control not built." >&2
+    echo "       cd ~/Desktop/quadruped_ros2_control && colcon build --packages-up-to unitree_guide_controller --symlink-install" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Pre-flight checks
 # ---------------------------------------------------------------------------
 echo "[launch_gazebo] Pre-flight checks..."

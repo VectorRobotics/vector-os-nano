@@ -88,12 +88,12 @@ def test_gazebo_only_supports_go2() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. Default backend remains "isaac" (no regression)
+# 6. Default backend is now "gazebo"
 # ---------------------------------------------------------------------------
 
-def test_gazebo_backend_default_unchanged() -> None:
-    """Adding gazebo must not change the default backend (must stay 'isaac')."""
+def test_gazebo_is_default_backend() -> None:
+    """Default backend must be 'gazebo' (Gazebo Harmonic is primary sim)."""
     backend_prop = SimStartTool.input_schema["properties"]["backend"]
-    assert backend_prop.get("default") == "isaac", (
-        f"Default backend changed from 'isaac' to {backend_prop.get('default')!r}"
+    assert backend_prop.get("default") == "gazebo", (
+        f"Default backend should be 'gazebo', got {backend_prop.get('default')!r}"
     )

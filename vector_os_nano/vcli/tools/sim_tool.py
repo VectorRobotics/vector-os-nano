@@ -52,10 +52,10 @@ class SimStartTool:
             "backend": {
                 "type": "string",
                 "enum": ["isaac", "mujoco", "gazebo"],
-                "default": "isaac",
+                "default": "gazebo",
                 "description": (
-                    "Simulation backend: 'isaac' (photorealistic, default), "
-                    "'mujoco' (lightweight fallback), or 'gazebo' (Gz Sim Harmonic)"
+                    "Simulation backend: 'gazebo' (Gz Sim Harmonic, default), "
+                    "'mujoco' (lightweight fallback), or 'isaac' (Docker, archived)"
                 ),
             },
         },
@@ -65,7 +65,7 @@ class SimStartTool:
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         sim_type: str = params["sim_type"]
         gui: bool = params.get("gui", True)
-        backend: str = params.get("backend", "isaac")
+        backend: str = params.get("backend", "gazebo")
         app = context.app_state
         if app is None:
             return ToolResult(content="No app state available", is_error=True)
@@ -302,23 +302,69 @@ class SimStartTool:
 
     @staticmethod
     def _start_gazebo_go2() -> Any:
-        """Connect to Go2 in Gz Sim Harmonic (must already be running).
+        """Start Go2 in Gazebo Harmonic via launch script + connect proxy.
 
-        Uses GazeboGo2Proxy over ROS2 topics — identical interface to
-        IsaacSimProxy but targets Gazebo Harmonic.  No subprocess launch
-        or sleep(20) needed; Gazebo must be running before calling this.
+        1. Launches Gazebo via scripts/launch_gazebo.sh (subprocess)
+        2. Waits for /state_estimation topic (up to 60s)
+        3. Connects GazeboGo2Proxy
+        4. Builds Agent with skills + VLM + SceneGraph
         """
         import os
+        import signal
+        import subprocess
+        import atexit
+        import time as _time
         from vector_os_nano.hardware.sim.gazebo_go2_proxy import GazeboGo2Proxy  # type: ignore[import]
         from vector_os_nano.core.agent import Agent  # type: ignore[import]
         from vector_os_nano.core.config import load_config
 
-        proxy = GazeboGo2Proxy()
-        proxy.connect()
-
         repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__)
         ))))
+
+        # Launch Gazebo via script (handles sourcing quadruped_ros2_control)
+        launch_script = os.path.join(repo, "scripts", "launch_gazebo.sh")
+        log_fh = open("/tmp/vector_gazebo.log", "w")
+        gz_proc = subprocess.Popen(
+            ["bash", launch_script, "--world", "apartment"],
+            stdout=log_fh, stderr=subprocess.STDOUT,
+            preexec_fn=os.setsid,
+        )
+
+        def _cleanup():
+            try:
+                os.killpg(os.getpgid(gz_proc.pid), signal.SIGTERM)
+                gz_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    os.killpg(os.getpgid(gz_proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+            log_fh.close()
+
+        atexit.register(_cleanup)
+
+        # Wait for Gazebo to start (poll for /clock topic)
+        import logging as _logging
+        logger = _logging.getLogger(__name__)
+        logger.info("[Gazebo] Waiting for Gazebo to start...")
+        for i in range(60):
+            if GazeboGo2Proxy.is_gazebo_running():
+                logger.info("[Gazebo] Gazebo ready after %ds", i)
+                break
+            _time.sleep(1)
+        else:
+            raise ConnectionError(
+                "Gazebo did not start within 60s. Check /tmp/vector_gazebo.log"
+            )
+
+        # Extra wait for controllers to activate
+        _time.sleep(5)
+
+        # Connect proxy
+        proxy = GazeboGo2Proxy()
+        proxy.connect()
+
         cfg_path = os.path.join(repo, "config", "user.yaml")
         cfg = load_config(cfg_path) if os.path.exists(cfg_path) else {}
         api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY", "")
@@ -330,7 +376,7 @@ class SimStartTool:
         for skill in get_go2_skills():
             agent._skill_registry.register(skill)
 
-        # VLM perception (GPT-4o via OpenRouter)
+        # VLM perception
         if api_key:
             try:
                 from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
@@ -339,14 +385,11 @@ class SimStartTool:
                 agent._vlm = None
 
         # Scene graph — persistent
-        import os as _os
         from vector_os_nano.core.scene_graph import SceneGraph
-        _persist_path = _os.path.expanduser("~/.vector_os_nano/scene_graph.yaml")
-        _os.makedirs(_os.path.dirname(_persist_path), exist_ok=True)
+        _persist_path = os.path.expanduser("~/.vector_os_nano/scene_graph.yaml")
+        os.makedirs(os.path.dirname(_persist_path), exist_ok=True)
         sg = SceneGraph(persist_path=_persist_path)
         sg.load()
-        import logging as _logging
-        _logging.getLogger(__name__).info("[Gazebo] SceneGraph loaded from %s", _persist_path)
         agent._spatial_memory = sg
         proxy._scene_graph = agent._spatial_memory
 
