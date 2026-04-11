@@ -321,15 +321,17 @@ class Go2ROS2Proxy:
         """Emergency stop — immediately halt all motion."""
         self.set_velocity(0.0, 0.0, 0.0)
 
-    def stand(self, duration: float = 1.0) -> None:
+    def stand(self, duration: float = 1.0) -> bool:
         """Stop motion and hold position for *duration* seconds."""
         self.set_velocity(0.0, 0.0, 0.0)
         time.sleep(duration)
+        return True
 
-    def sit(self, duration: float = 1.0) -> None:
+    def sit(self, duration: float = 1.0) -> bool:
         """Best-effort sit: stop motion (cannot command sit via ROS2 velocity)."""
         self.set_velocity(0.0, 0.0, 0.0)
         time.sleep(duration)
+        return True
 
     # ------------------------------------------------------------------
     # Navigation via FAR planner / nav stack

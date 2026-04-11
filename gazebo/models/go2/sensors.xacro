@@ -154,4 +154,19 @@
     </sensor>
   </gazebo>
 
+  <!-- ============================================================ -->
+  <!-- Odometry publisher plugin (Gazebo doesn't publish odom by    -->
+  <!-- default — need this for /state_estimation via bridge)        -->
+  <!-- ============================================================ -->
+
+  <gazebo>
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base</robot_base_frame>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_topic>/model/go2/odometry</odom_topic>
+    </plugin>
+  </gazebo>
+
 </robot>

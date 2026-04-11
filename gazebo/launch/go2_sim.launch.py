@@ -119,12 +119,14 @@ def _launch_setup(context, *args, **kwargs):
         executable="parameter_bridge",
         arguments=[
             "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
+            "/model/go2/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry",
             "/scan/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
             "/camera/image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/camera/depth@sensor_msgs/msg/Image[gz.msgs.Image",
             "/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
         ],
         remappings=[
+            ("/model/go2/odometry", "/state_estimation"),
             ("/scan/points", "/registered_scan"),
             ("/imu", "/imu/data"),
         ],
