@@ -79,18 +79,13 @@ case "${CONTROLLER}" in
 esac
 
 # ---------------------------------------------------------------------------
-# Source quadruped_ros2_control (Go2 URDF + controllers)
-# Temporarily disable nounset — colcon setup.bash uses unbound variables
+# Source quadruped_ros2_control (optional — for joint controller mode)
 # ---------------------------------------------------------------------------
 QUADRUPED_DIR="${HOME}/Desktop/quadruped_ros2_control"
 if [[ -f "${QUADRUPED_DIR}/install/setup.bash" ]]; then
     set +u
-    source "${QUADRUPED_DIR}/install/setup.bash"
+    source "${QUADRUPED_DIR}/install/setup.bash" 2>/dev/null || true
     set -u
-else
-    echo "ERROR: quadruped_ros2_control not built." >&2
-    echo "       cd ~/Desktop/quadruped_ros2_control && colcon build --packages-up-to unitree_guide_controller --symlink-install" >&2
-    exit 1
 fi
 
 # ---------------------------------------------------------------------------
