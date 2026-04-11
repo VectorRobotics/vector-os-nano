@@ -1,0 +1,189 @@
+<?xml version="1.0" ?>
+<!-- Go2 Quadruped — SDF 1.9 for Gazebo Harmonic
+     Source: quadruped_ros2_control/go2_description xacro (inertials, limits)
+     Geometry: box/cylinder only — meshes addable later.
+     Sensor mounting:
+       Livox MID-360: pos=0.3 0 0.2, pitch=-20 deg — covers ground ahead, avoids body occlusion
+       D435 RGB+Depth: pos=0.3 0 0.05, pitch=-5 deg — floor visible at ~0.5 m ahead
+       IMU: body-centre — cleanest inertial signal -->
+<sdf version="1.9">
+  <model name="go2">
+
+    <!-- base_link: massless floating base anchored to trunk -->
+    <link name="base_link">
+      <inertial><mass>0.001</mass><inertia><ixx>1e-6</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1e-6</iyy><iyz>0</iyz><izz>1e-6</izz></inertia></inertial>
+      <visual name="v"><geometry><box><size>0.001 0.001 0.001</size></box></geometry></visual>
+      <collision name="c"><geometry><box><size>0.001 0.001 0.001</size></box></geometry></collision>
+    </link>
+    <joint name="floating_base" type="fixed"><parent>base_link</parent><child>trunk</child></joint>
+
+    <!-- trunk: 0.3762 x 0.0935 x 0.114 m, 6.921 kg -->
+    <link name="trunk">
+      <inertial>
+        <pose>0.021112 0 -0.005366 0 0 0</pose><mass>6.921</mass>
+        <inertia><ixx>0.02448</ixx><ixy>0.00012166</ixy><ixz>0.0014849</ixz><iyy>0.098077</iyy><iyz>-3.12e-5</iyz><izz>0.107</izz></inertia>
+      </inertial>
+      <visual name="trunk_v">
+        <geometry><box><size>0.3762 0.0935 0.114</size></box></geometry>
+        <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material>
+      </visual>
+      <collision name="trunk_c"><geometry><box><size>0.3762 0.0935 0.114</size></box></geometry></collision>
+    </link>
+
+    <!-- IMU link — body-centre, 200 Hz -->
+    <link name="imu_link">
+      <inertial><mass>0.001</mass><inertia><ixx>1e-4</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1e-4</iyy><iyz>0</iyz><izz>1e-4</izz></inertia></inertial>
+      <visual name="v"><geometry><box><size>0.001 0.001 0.001</size></box></geometry></visual>
+      <collision name="c"><geometry><box><size>0.001 0.001 0.001</size></box></geometry></collision>
+      <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on><update_rate>200</update_rate>
+        <imu/>
+        <topic>/imu</topic>
+      </sensor>
+    </link>
+    <joint name="imu_joint" type="fixed"><parent>trunk</parent><child>imu_link</child><pose>0 0 0 0 0 0</pose></joint>
+
+    <!-- Livox MID-360 lidar — forward-top, pitch=-20 deg=-0.34907 rad -->
+    <link name="lidar_link">
+      <inertial><mass>0.01</mass><inertia><ixx>1e-6</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1e-6</iyy><iyz>0</iyz><izz>1e-6</izz></inertia></inertial>
+      <visual name="lidar_v">
+        <geometry><cylinder><radius>0.045</radius><length>0.04</length></cylinder></geometry>
+        <material><ambient>0.1 0.1 0.8 1</ambient><diffuse>0.1 0.1 0.8 1</diffuse></material>
+      </visual>
+      <collision name="lidar_c"><geometry><cylinder><radius>0.045</radius><length>0.04</length></cylinder></geometry></collision>
+      <sensor name="livox_mid360" type="gpu_lidar">
+        <always_on>true</always_on><update_rate>10</update_rate><visualize>false</visualize>
+        <lidar>
+          <scan>
+            <horizontal><samples>360</samples><resolution>1</resolution><min_angle>-3.14159</min_angle><max_angle>3.14159</max_angle></horizontal>
+            <vertical><samples>30</samples><resolution>1</resolution><min_angle>-0.5236</min_angle><max_angle>0.5236</max_angle></vertical>
+          </scan>
+          <range><min>0.1</min><max>12.0</max><resolution>0.01</resolution></range>
+          <noise><type>gaussian</type><mean>0</mean><stddev>0.01</stddev></noise>
+        </lidar>
+        <topic>/scan</topic>
+      </sensor>
+    </link>
+    <joint name="lidar_joint" type="fixed"><parent>trunk</parent><child>lidar_link</child><pose>0.3 0 0.2 0 -0.34907 0</pose></joint>
+
+    <!-- D435 camera link — forward-mid, pitch=-5 deg=-0.08727 rad, RGB + Depth sensors co-located -->
+    <link name="camera_link">
+      <inertial><mass>0.01</mass><inertia><ixx>1e-6</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1e-6</iyy><iyz>0</iyz><izz>1e-6</izz></inertia></inertial>
+      <visual name="cam_v">
+        <geometry><box><size>0.025 0.09 0.025</size></box></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+      </visual>
+      <collision name="cam_c"><geometry><box><size>0.025 0.09 0.025</size></box></geometry></collision>
+      <!-- RGB camera -->
+      <sensor name="d435_rgb" type="camera">
+        <always_on>true</always_on><update_rate>30</update_rate><visualize>false</visualize>
+        <camera>
+          <horizontal_fov>1.2</horizontal_fov>
+          <image><width>640</width><height>480</height><format>R8G8B8</format></image>
+          <clip><near>0.1</near><far>100.0</far></clip>
+        </camera>
+        <topic>/camera/image</topic>
+      </sensor>
+      <!-- Depth camera (co-located with RGB) -->
+      <sensor name="d435_depth" type="depth_camera">
+        <always_on>true</always_on><update_rate>30</update_rate><visualize>false</visualize>
+        <camera>
+          <horizontal_fov>1.2</horizontal_fov>
+          <image><width>640</width><height>480</height><format>R_FLOAT32</format></image>
+          <clip><near>0.3</near><far>10.0</far></clip>
+        </camera>
+        <topic>/camera/depth</topic>
+      </sensor>
+    </link>
+    <joint name="camera_joint" type="fixed"><parent>trunk</parent><child>camera_link</child><pose>0.3 0 0.05 0 -0.08727 0</pose></joint>
+
+    <!-- ===== FRONT-LEFT LEG (FL) ===== -->
+    <!-- FL hip: abduction/adduction around X -->
+    <link name="FL_hip">
+      <inertial><pose>-0.0054 0.00194 -0.000105 0 0 0</pose><mass>0.678</mass><inertia><ixx>4.8e-4</ixx><ixy>-3.01e-6</ixy><ixz>1.11e-6</ixz><iyy>8.84e-4</iyy><iyz>-1.42e-6</iyz><izz>5.96e-4</izz></inertia></inertial>
+      <visual name="FL_hip_v"><pose>0 0.0955 0 1.5708 0 0</pose><geometry><cylinder><radius>0.046</radius><length>0.04</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+      <collision name="FL_hip_c"><pose>0 0.0955 0 1.5708 0 0</pose><geometry><cylinder><radius>0.046</radius><length>0.04</length></cylinder></geometry></collision>
+    </link>
+    <joint name="FL_hip_joint" type="revolute"><parent>trunk</parent><child>FL_hip</child><pose>0.1934 0.0465 0 0 0 0</pose><axis><xyz>1 0 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-1.0472</lower><upper>1.0472</upper><effort>23.7</effort><velocity>30.1</velocity></limit></axis></joint>
+    <!-- FL thigh: flexion/extension around Y -->
+    <link name="FL_thigh">
+      <inertial><pose>-0.00374 -0.0223 -0.0327 0 0 0</pose><mass>1.152</mass><inertia><ixx>5.84e-3</ixx><ixy>8.72e-5</ixy><ixz>-2.89e-4</ixz><iyy>5.8e-3</iyy><iyz>8.08e-4</iyz><izz>1.03e-3</izz></inertia></inertial>
+      <visual name="FL_thigh_v"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.0245 0.034</size></box></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+      <collision name="FL_thigh_c"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.0245 0.034</size></box></geometry></collision>
+    </link>
+    <joint name="FL_thigh_joint" type="revolute"><parent>FL_hip</parent><child>FL_thigh</child><pose>0 0.0955 0 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-1.5708</lower><upper>3.4907</upper><effort>23.7</effort><velocity>30.1</velocity></limit></axis></joint>
+    <!-- FL calf -->
+    <link name="FL_calf">
+      <inertial><pose>0.00548 -0.000975 -0.115 0 0 0</pose><mass>0.154</mass><inertia><ixx>1.08e-3</ixx><ixy>3.4e-7</ixy><ixz>1.72e-5</ixz><iyy>1.1e-3</iyy><iyz>8.28e-6</iyz><izz>3.29e-5</izz></inertia></inertial>
+      <visual name="FL_calf_v"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.016 0.016</size></box></geometry><material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.4 0.4 0.4 1</diffuse></material></visual>
+      <collision name="FL_calf_c"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.016 0.016</size></box></geometry></collision>
+    </link>
+    <joint name="FL_calf_joint" type="revolute"><parent>FL_thigh</parent><child>FL_calf</child><pose>0 0 -0.213 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-2.7227</lower><upper>-0.83776</upper><effort>35.55</effort><velocity>20.06</velocity></limit></axis></joint>
+
+    <!-- ===== FRONT-RIGHT LEG (FR) ===== -->
+    <link name="FR_hip">
+      <inertial><pose>-0.0054 -0.00194 -0.000105 0 0 0</pose><mass>0.678</mass><inertia><ixx>4.8e-4</ixx><ixy>3.01e-6</ixy><ixz>1.11e-6</ixz><iyy>8.84e-4</iyy><iyz>1.42e-6</iyz><izz>5.96e-4</izz></inertia></inertial>
+      <visual name="FR_hip_v"><pose>0 -0.0955 0 1.5708 0 0</pose><geometry><cylinder><radius>0.046</radius><length>0.04</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+      <collision name="FR_hip_c"><pose>0 -0.0955 0 1.5708 0 0</pose><geometry><cylinder><radius>0.046</radius><length>0.04</length></cylinder></geometry></collision>
+    </link>
+    <joint name="FR_hip_joint" type="revolute"><parent>trunk</parent><child>FR_hip</child><pose>0.1934 -0.0465 0 0 0 0</pose><axis><xyz>1 0 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-1.0472</lower><upper>1.0472</upper><effort>23.7</effort><velocity>30.1</velocity></limit></axis></joint>
+    <link name="FR_thigh">
+      <inertial><pose>-0.00374 0.0223 -0.0327 0 0 0</pose><mass>1.152</mass><inertia><ixx>5.84e-3</ixx><ixy>-8.72e-5</ixy><ixz>-2.89e-4</ixz><iyy>5.8e-3</iyy><iyz>-8.08e-4</iyz><izz>1.03e-3</izz></inertia></inertial>
+      <visual name="FR_thigh_v"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.0245 0.034</size></box></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+      <collision name="FR_thigh_c"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.0245 0.034</size></box></geometry></collision>
+    </link>
+    <joint name="FR_thigh_joint" type="revolute"><parent>FR_hip</parent><child>FR_thigh</child><pose>0 -0.0955 0 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-1.5708</lower><upper>3.4907</upper><effort>23.7</effort><velocity>30.1</velocity></limit></axis></joint>
+    <link name="FR_calf">
+      <inertial><pose>0.00548 0.000975 -0.115 0 0 0</pose><mass>0.154</mass><inertia><ixx>1.08e-3</ixx><ixy>-3.4e-7</ixy><ixz>1.72e-5</ixz><iyy>1.1e-3</iyy><iyz>-8.28e-6</iyz><izz>3.29e-5</izz></inertia></inertial>
+      <visual name="FR_calf_v"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.016 0.016</size></box></geometry><material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.4 0.4 0.4 1</diffuse></material></visual>
+      <collision name="FR_calf_c"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.016 0.016</size></box></geometry></collision>
+    </link>
+    <joint name="FR_calf_joint" type="revolute"><parent>FR_thigh</parent><child>FR_calf</child><pose>0 0 -0.213 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-2.7227</lower><upper>-0.83776</upper><effort>35.55</effort><velocity>20.06</velocity></limit></axis></joint>
+
+    <!-- ===== REAR-LEFT LEG (RL) ===== -->
+    <link name="RL_hip">
+      <inertial><pose>0.0054 0.00194 -0.000105 0 0 0</pose><mass>0.678</mass><inertia><ixx>4.8e-4</ixx><ixy>3.01e-6</ixy><ixz>-1.11e-6</ixz><iyy>8.84e-4</iyy><iyz>-1.42e-6</iyz><izz>5.96e-4</izz></inertia></inertial>
+      <visual name="RL_hip_v"><pose>0 0.0955 0 1.5708 0 0</pose><geometry><cylinder><radius>0.046</radius><length>0.04</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+      <collision name="RL_hip_c"><pose>0 0.0955 0 1.5708 0 0</pose><geometry><cylinder><radius>0.046</radius><length>0.04</length></cylinder></geometry></collision>
+    </link>
+    <joint name="RL_hip_joint" type="revolute"><parent>trunk</parent><child>RL_hip</child><pose>-0.1934 0.0465 0 0 0 0</pose><axis><xyz>1 0 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-1.0472</lower><upper>1.0472</upper><effort>23.7</effort><velocity>30.1</velocity></limit></axis></joint>
+    <link name="RL_thigh">
+      <inertial><pose>0.00374 -0.0223 -0.0327 0 0 0</pose><mass>1.152</mass><inertia><ixx>5.84e-3</ixx><ixy>-8.72e-5</ixy><ixz>2.89e-4</ixz><iyy>5.8e-3</iyy><iyz>8.08e-4</iyz><izz>1.03e-3</izz></inertia></inertial>
+      <visual name="RL_thigh_v"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.0245 0.034</size></box></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+      <collision name="RL_thigh_c"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.0245 0.034</size></box></geometry></collision>
+    </link>
+    <joint name="RL_thigh_joint" type="revolute"><parent>RL_hip</parent><child>RL_thigh</child><pose>0 0.0955 0 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-1.5708</lower><upper>3.4907</upper><effort>23.7</effort><velocity>30.1</velocity></limit></axis></joint>
+    <link name="RL_calf">
+      <inertial><pose>-0.00548 -0.000975 -0.115 0 0 0</pose><mass>0.154</mass><inertia><ixx>1.08e-3</ixx><ixy>-3.4e-7</ixy><ixz>-1.72e-5</ixz><iyy>1.1e-3</iyy><iyz>8.28e-6</iyz><izz>3.29e-5</izz></inertia></inertial>
+      <visual name="RL_calf_v"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.016 0.016</size></box></geometry><material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.4 0.4 0.4 1</diffuse></material></visual>
+      <collision name="RL_calf_c"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.016 0.016</size></box></geometry></collision>
+    </link>
+    <joint name="RL_calf_joint" type="revolute"><parent>RL_thigh</parent><child>RL_calf</child><pose>0 0 -0.213 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-2.7227</lower><upper>-0.83776</upper><effort>35.55</effort><velocity>20.06</velocity></limit></axis></joint>
+
+    <!-- ===== REAR-RIGHT LEG (RR) ===== -->
+    <link name="RR_hip">
+      <inertial><pose>0.0054 -0.00194 -0.000105 0 0 0</pose><mass>0.678</mass><inertia><ixx>4.8e-4</ixx><ixy>-3.01e-6</ixy><ixz>-1.11e-6</ixz><iyy>8.84e-4</iyy><iyz>1.42e-6</iyz><izz>5.96e-4</izz></inertia></inertial>
+      <visual name="RR_hip_v"><pose>0 -0.0955 0 1.5708 0 0</pose><geometry><cylinder><radius>0.046</radius><length>0.04</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+      <collision name="RR_hip_c"><pose>0 -0.0955 0 1.5708 0 0</pose><geometry><cylinder><radius>0.046</radius><length>0.04</length></cylinder></geometry></collision>
+    </link>
+    <joint name="RR_hip_joint" type="revolute"><parent>trunk</parent><child>RR_hip</child><pose>-0.1934 -0.0465 0 0 0 0</pose><axis><xyz>1 0 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-1.0472</lower><upper>1.0472</upper><effort>23.7</effort><velocity>30.1</velocity></limit></axis></joint>
+    <link name="RR_thigh">
+      <inertial><pose>0.00374 0.0223 -0.0327 0 0 0</pose><mass>1.152</mass><inertia><ixx>5.84e-3</ixx><ixy>8.72e-5</ixy><ixz>2.89e-4</ixz><iyy>5.8e-3</iyy><iyz>-8.08e-4</iyz><izz>1.03e-3</izz></inertia></inertial>
+      <visual name="RR_thigh_v"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.0245 0.034</size></box></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+      <collision name="RR_thigh_c"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.0245 0.034</size></box></geometry></collision>
+    </link>
+    <joint name="RR_thigh_joint" type="revolute"><parent>RR_hip</parent><child>RR_thigh</child><pose>0 -0.0955 0 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-1.5708</lower><upper>3.4907</upper><effort>23.7</effort><velocity>30.1</velocity></limit></axis></joint>
+    <link name="RR_calf">
+      <inertial><pose>-0.00548 0.000975 -0.115 0 0 0</pose><mass>0.154</mass><inertia><ixx>1.08e-3</ixx><ixy>3.4e-7</ixy><ixz>-1.72e-5</ixz><iyy>1.1e-3</iyy><iyz>-8.28e-6</iyz><izz>3.29e-5</izz></inertia></inertial>
+      <visual name="RR_calf_v"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.016 0.016</size></box></geometry><material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.4 0.4 0.4 1</diffuse></material></visual>
+      <collision name="RR_calf_c"><pose>0 0 -0.1065 1.5708 0 0</pose><geometry><box><size>0.213 0.016 0.016</size></box></geometry></collision>
+    </link>
+    <joint name="RR_calf_joint" type="revolute"><parent>RR_thigh</parent><child>RR_calf</child><pose>0 0 -0.213 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-2.7227</lower><upper>-0.83776</upper><effort>35.55</effort><velocity>20.06</velocity></limit></axis></joint>
+
+    <!-- gz_ros2_control integration -->
+    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(find go2_description)/config/ros2_control.yaml</parameters>
+    </plugin>
+
+  </model>
+</sdf>
