@@ -1,0 +1,1325 @@
+<?xml version="1.0" ?>
+<!--
+  apartment.sdf — Furnished apartment world for Gazebo Harmonic (SDF 1.9)
+
+  Five-room apartment for navigation testing and VLN development.
+  The Go2 quadruped explores rooms, identifies them by contents, and grasps objects.
+
+  Floor plan (all coordinates in metres, origin at hallway centre):
+  ┌──────────────┬───────────┬──────────┐
+  │              │           │          │
+  │  Bedroom     D  Hallway  D Kitchen  │
+  │  (carpet)    │           │ (tile)   │
+  │  4x3m        │  2x6m     │ 3x3m    │
+  ├──────D───────┤           ├────D─────┤
+  │              │           │          │
+  │  Bathroom    │           │  Living  │
+  │  (tile)      │           │  Room    │
+  │  2.5x3m      │           │ 4x4m    │
+  │              │           │ (wood)   │
+  └──────────────┴───────────┴──────────┘
+
+  Room boundaries (inner face, 0.15 m walls):
+    Hallway      x=[-1,  1],  y=[-3, 3]
+    Living Room  x=[ 1,  6],  y=[-3, 0]
+    Kitchen      x=[ 1,  6],  y=[ 0, 3]
+    Bedroom      x=[-6, -1],  y=[ 0, 3]
+    Bathroom     x=[-4, -1],  y=[-3, 0]
+
+  Door openings (0.9 m gap, no door model):
+    D1: Hallway ↔ Living Room  — east hallway wall at x=1,  y≈-1.5
+    D2: Hallway ↔ Kitchen      — east hallway wall at x=1,  y≈ 1.5
+    D3: Hallway ↔ Bedroom      — west hallway wall at x=-1, y≈ 1.5
+    D4: Hallway ↔ Bathroom     — west hallway wall at x=-1, y≈-1.5
+
+  All walls: 0.15 m thick, 2.5 m tall.
+  Wall material: painted drywall #E8E8E8 (ambient 0.91 0.91 0.91).
+
+  Floor materials (distinct so VLM can identify rooms):
+    Hallway     — light gray    #D8D8D8  (0.85 0.85 0.85)
+    Living Room — warm wood     #8B6F47  (0.55 0.44 0.28)
+    Kitchen     — white tile    #F0F0F0  (0.94 0.94 0.94)
+    Bedroom     — beige carpet  #D4C5A9  (0.83 0.77 0.66)
+    Bathroom    — light blue    #D0E8F0  (0.82 0.91 0.94)
+-->
+<sdf version="1.9">
+  <world name="apartment">
+
+    <!-- Physics: 1 ms fixed step, DART solver -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Gravity -->
+    <gravity>0 0 -9.81</gravity>
+
+    <!-- Required Gazebo Harmonic system plugins -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-contact-system"
+            name="gz::sim::systems::Contact"/>
+
+    <!-- ==================== GLOBAL LIGHTING ==================== -->
+
+    <!-- Sun: primary directional light -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Per-room point lights at ceiling height z=2.3 m -->
+    <!-- Hallway ceiling lamp -->
+    <light type="point" name="light_hallway">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 2.3 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>8</range>
+        <constant>0.5</constant>
+        <linear>0.02</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- Living room ceiling lamp -->
+    <light type="point" name="light_living_room">
+      <cast_shadows>false</cast_shadows>
+      <pose>3.5 -1.5 2.3 0 0 0</pose>
+      <diffuse>0.9 0.85 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>8</range>
+        <constant>0.5</constant>
+        <linear>0.02</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- Kitchen ceiling lamp -->
+    <light type="point" name="light_kitchen">
+      <cast_shadows>false</cast_shadows>
+      <pose>3.5 1.5 2.3 0 0 0</pose>
+      <diffuse>1.0 1.0 0.95 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>8</range>
+        <constant>0.5</constant>
+        <linear>0.02</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- Bedroom ceiling lamp -->
+    <light type="point" name="light_bedroom">
+      <cast_shadows>false</cast_shadows>
+      <pose>-3.5 1.5 2.3 0 0 0</pose>
+      <diffuse>0.85 0.85 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>8</range>
+        <constant>0.5</constant>
+        <linear>0.02</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- Bathroom ceiling lamp -->
+    <light type="point" name="light_bathroom">
+      <cast_shadows>false</cast_shadows>
+      <pose>-2.5 -1.5 2.3 0 0 0</pose>
+      <diffuse>0.95 0.98 1.0 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>6</range>
+        <constant>0.5</constant>
+        <linear>0.02</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- ==================== HALLWAY ==================== -->
+    <!-- Dimensions: x=[-1,1], y=[-3,3], 2m wide x 6m long -->
+    <!-- Floor: light gray #D8D8D8 -->
+
+    <model name="floor_hallway">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>2.0 6.0 0.01</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>2.0 6.0 0.01</size></box>
+          </geometry>
+          <material>
+            <ambient>0.85 0.85 0.85 1</ambient>
+            <diffuse>0.85 0.85 0.85 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Hallway north outer wall: y=3, x=[-1,1], 2m wide -->
+    <model name="wall_hallway_north">
+      <static>true</static>
+      <pose>0 3.075 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>2.15 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>2.15 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Hallway south outer wall: y=-3, x=[-1,1], 2m wide -->
+    <model name="wall_hallway_south">
+      <static>true</static>
+      <pose>0 -3.075 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>2.15 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>2.15 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Hallway east wall segments (with D1 at y=-1.5 and D2 at y=1.5) -->
+    <!-- D1 gap: y=[-2.0, -1.1]  — 0.9m opening for living room -->
+    <!-- D2 gap: y=[ 1.1,  2.0]  — 0.9m opening for kitchen -->
+    <!-- East wall south segment: y=[-3, -2.0] -->
+    <model name="wall_hallway_east_south">
+      <static>true</static>
+      <pose>1.075 -2.55 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 1.9 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 1.9 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- East wall middle segment: y=[-1.1, 1.1] — between the two doors -->
+    <model name="wall_hallway_east_mid">
+      <static>true</static>
+      <pose>1.075 0 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 2.2 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 2.2 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- East wall north segment: y=[2.0, 3.0] -->
+    <model name="wall_hallway_east_north">
+      <static>true</static>
+      <pose>1.075 2.55 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 1.9 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 1.9 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Hallway west wall segments (with D3 at y=1.5 and D4 at y=-1.5) -->
+    <!-- D4 gap: y=[-2.0, -1.1]  — 0.9m opening for bathroom -->
+    <!-- D3 gap: y=[ 1.1,  2.0]  — 0.9m opening for bedroom -->
+    <!-- West wall south segment: y=[-3, -2.0] -->
+    <model name="wall_hallway_west_south">
+      <static>true</static>
+      <pose>-1.075 -2.55 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 1.9 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 1.9 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- West wall middle segment: y=[-1.1, 1.1] — between the two doors -->
+    <model name="wall_hallway_west_mid">
+      <static>true</static>
+      <pose>-1.075 0 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 2.2 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 2.2 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- West wall north segment: y=[2.0, 3.0] -->
+    <model name="wall_hallway_west_north">
+      <static>true</static>
+      <pose>-1.075 2.55 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 1.9 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 1.9 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== LIVING ROOM ==================== -->
+    <!-- Dimensions: x=[1,6], y=[-3,0], 5m x 3m -->
+    <!-- Floor: warm wood #8B6F47 -->
+
+    <model name="floor_living_room">
+      <static>true</static>
+      <pose>3.5 -1.5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.0 3.0 0.01</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.0 3.0 0.01</size></box>
+          </geometry>
+          <material>
+            <ambient>0.55 0.44 0.28 1</ambient>
+            <diffuse>0.55 0.44 0.28 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Living room outer east wall: x=6.15, y=[-3,0] -->
+    <model name="wall_living_east">
+      <static>true</static>
+      <pose>6.075 -1.5 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 3.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 3.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Living room outer south wall: y=-3.075, x=[1,6] -->
+    <model name="wall_living_south">
+      <static>true</static>
+      <pose>3.5 -3.075 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.15 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.15 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Living room / Kitchen divider wall: y=0.075, x=[1,6] (no door) -->
+    <model name="wall_living_kitchen_divider">
+      <static>true</static>
+      <pose>3.5 0.075 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.0 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.0 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== LIVING ROOM FURNITURE ==================== -->
+
+    <!-- Sofa: pos=(4.5, -2.5, 0.4), size=(1.8, 0.8, 0.8), dark gray -->
+    <model name="sofa">
+      <static>true</static>
+      <pose>4.5 -2.5 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.8 0.8 0.8</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.8 0.8 0.8</size></box>
+          </geometry>
+          <material>
+            <ambient>0.25 0.25 0.25 1</ambient>
+            <diffuse>0.25 0.25 0.25 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Coffee table: pos=(3.5, -1.5, 0.25), size=(0.8, 0.5, 0.5), brown -->
+    <model name="coffee_table">
+      <static>true</static>
+      <pose>3.5 -1.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.8 0.5 0.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.8 0.5 0.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.44 0.27 0.11 1</ambient>
+            <diffuse>0.44 0.27 0.11 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Bookshelf: pos=(5.0, 0.0, 0.9), size=(0.3, 1.2, 1.8), dark brown -->
+    <model name="bookshelf">
+      <static>true</static>
+      <pose>5.0 -0.2 0.9 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.3 1.2 1.8</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.3 1.2 1.8</size></box>
+          </geometry>
+          <material>
+            <ambient>0.22 0.14 0.06 1</ambient>
+            <diffuse>0.22 0.14 0.06 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- TV stand: pos=(2.0, -2.5, 0.3), size=(1.0, 0.3, 0.6), black -->
+    <model name="tv_stand">
+      <static>true</static>
+      <pose>2.0 -2.5 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.0 0.3 0.6</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.0 0.3 0.6</size></box>
+          </geometry>
+          <material>
+            <ambient>0.05 0.05 0.05 1</ambient>
+            <diffuse>0.05 0.05 0.05 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== KITCHEN ==================== -->
+    <!-- Dimensions: x=[1,6], y=[0,3], 5m x 3m -->
+    <!-- Floor: white tile #F0F0F0 -->
+
+    <model name="floor_kitchen">
+      <static>true</static>
+      <pose>3.5 1.5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.0 3.0 0.01</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.0 3.0 0.01</size></box>
+          </geometry>
+          <material>
+            <ambient>0.94 0.94 0.94 1</ambient>
+            <diffuse>0.94 0.94 0.94 1</diffuse>
+            <specular>0.15 0.15 0.15 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Kitchen outer east wall: x=6.075, y=[0,3] -->
+    <model name="wall_kitchen_east">
+      <static>true</static>
+      <pose>6.075 1.5 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 3.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 3.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Kitchen outer north wall: y=3.075, x=[1,6] -->
+    <model name="wall_kitchen_north">
+      <static>true</static>
+      <pose>3.5 3.075 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.15 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.15 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== KITCHEN FURNITURE ==================== -->
+
+    <!-- Kitchen table: pos=(3.5, 2.0, 0.38), size=(1.0, 0.6, 0.76), light brown -->
+    <model name="kitchen_table">
+      <static>true</static>
+      <pose>3.5 2.0 0.38 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.0 0.6 0.76</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.0 0.6 0.76</size></box>
+          </geometry>
+          <material>
+            <ambient>0.72 0.60 0.45 1</ambient>
+            <diffuse>0.72 0.60 0.45 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Kitchen chair 1: pos=(3.0, 2.0, 0.22), size=(0.4, 0.4, 0.45), gray -->
+    <model name="kitchen_chair_1">
+      <static>true</static>
+      <pose>3.0 2.0 0.22 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.4 0.4 0.45</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.4 0.4 0.45</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Kitchen chair 2: pos=(4.0, 2.0, 0.22), size=(0.4, 0.4, 0.45), gray -->
+    <model name="kitchen_chair_2">
+      <static>true</static>
+      <pose>4.0 2.0 0.22 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.4 0.4 0.45</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.4 0.4 0.45</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Counter (base): pos=(4.5, 2.8, 0.45), size=(2.0, 0.6, 0.9), white -->
+    <model name="counter">
+      <static>true</static>
+      <pose>4.5 2.8 0.45 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>2.0 0.6 0.9</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>2.0 0.6 0.9</size></box>
+          </geometry>
+          <material>
+            <ambient>0.95 0.95 0.95 1</ambient>
+            <diffuse>0.95 0.95 0.95 1</diffuse>
+            <specular>0.2 0.2 0.2 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Cabinet (above counter): pos=(4.5, 2.8, 1.5), size=(2.0, 0.35, 0.7), light brown -->
+    <model name="cabinet">
+      <static>true</static>
+      <pose>4.5 2.8 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>2.0 0.35 0.7</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>2.0 0.35 0.7</size></box>
+          </geometry>
+          <material>
+            <ambient>0.72 0.60 0.45 1</ambient>
+            <diffuse>0.72 0.60 0.45 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== BEDROOM ==================== -->
+    <!-- Dimensions: x=[-6,-1], y=[0,3], 5m x 3m -->
+    <!-- Floor: beige carpet #D4C5A9 -->
+
+    <model name="floor_bedroom">
+      <static>true</static>
+      <pose>-3.5 1.5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.0 3.0 0.01</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.0 3.0 0.01</size></box>
+          </geometry>
+          <material>
+            <ambient>0.83 0.77 0.66 1</ambient>
+            <diffuse>0.83 0.77 0.66 1</diffuse>
+            <specular>0.02 0.02 0.02 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Bedroom outer west wall: x=-6.075, y=[0,3] -->
+    <model name="wall_bedroom_west">
+      <static>true</static>
+      <pose>-6.075 1.5 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 3.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 3.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Bedroom outer north wall: y=3.075, x=[-6,-1] -->
+    <model name="wall_bedroom_north">
+      <static>true</static>
+      <pose>-3.5 3.075 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.15 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.15 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Bedroom south wall (divider with bathroom): y=0.075, x=[-6,-1] -->
+    <model name="wall_bedroom_south">
+      <static>true</static>
+      <pose>-3.5 0.075 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.0 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.0 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== BEDROOM FURNITURE ==================== -->
+
+    <!-- Bed: pos=(-3.5, 2.0, 0.3), size=(2.0, 1.5, 0.6), blue -->
+    <model name="bed">
+      <static>true</static>
+      <pose>-3.5 2.0 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>2.0 1.5 0.6</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>2.0 1.5 0.6</size></box>
+          </geometry>
+          <material>
+            <ambient>0.15 0.30 0.60 1</ambient>
+            <diffuse>0.15 0.30 0.60 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Nightstand: pos=(-2.3, 2.5, 0.25), size=(0.4, 0.4, 0.5), brown -->
+    <model name="nightstand">
+      <static>true</static>
+      <pose>-2.3 2.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.4 0.4 0.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.4 0.4 0.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.44 0.27 0.11 1</ambient>
+            <diffuse>0.44 0.27 0.11 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Dresser: pos=(-4.5, 0.5, 0.4), size=(1.0, 0.5, 0.8), brown -->
+    <model name="dresser">
+      <static>true</static>
+      <pose>-4.5 0.5 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.0 0.5 0.8</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.0 0.5 0.8</size></box>
+          </geometry>
+          <material>
+            <ambient>0.44 0.27 0.11 1</ambient>
+            <diffuse>0.44 0.27 0.11 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Desk: pos=(-2.0, 0.5, 0.38), size=(1.0, 0.5, 0.76), light brown -->
+    <model name="desk">
+      <static>true</static>
+      <pose>-2.0 0.5 0.38 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.0 0.5 0.76</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.0 0.5 0.76</size></box>
+          </geometry>
+          <material>
+            <ambient>0.72 0.60 0.45 1</ambient>
+            <diffuse>0.72 0.60 0.45 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== BATHROOM ==================== -->
+    <!-- Dimensions: x=[-4,-1], y=[-3,0], 3m x 3m -->
+    <!-- Floor: light blue #D0E8F0 -->
+
+    <model name="floor_bathroom">
+      <static>true</static>
+      <pose>-2.5 -1.5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>3.0 3.0 0.01</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>3.0 3.0 0.01</size></box>
+          </geometry>
+          <material>
+            <ambient>0.82 0.91 0.94 1</ambient>
+            <diffuse>0.82 0.91 0.94 1</diffuse>
+            <specular>0.15 0.15 0.15 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Bathroom outer west wall: x=-4.075, y=[-3,0] -->
+    <model name="wall_bathroom_west">
+      <static>true</static>
+      <pose>-4.075 -1.5 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 3.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 3.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Bathroom outer south wall: y=-3.075, x=[-4,-1] -->
+    <model name="wall_bathroom_south">
+      <static>true</static>
+      <pose>-2.5 -3.075 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>3.15 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>3.15 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== BATHROOM FURNITURE ==================== -->
+
+    <!-- Bathtub: pos=(-2.5, -2.5, 0.3), size=(1.5, 0.7, 0.6), white -->
+    <model name="bathtub">
+      <static>true</static>
+      <pose>-2.5 -2.5 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.5 0.7 0.6</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.5 0.7 0.6</size></box>
+          </geometry>
+          <material>
+            <ambient>0.95 0.95 0.95 1</ambient>
+            <diffuse>0.95 0.95 0.95 1</diffuse>
+            <specular>0.3 0.3 0.3 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Sink: pos=(-1.5, -2.5, 0.4), size=(0.5, 0.4, 0.8), white -->
+    <model name="sink">
+      <static>true</static>
+      <pose>-1.5 -2.5 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.5 0.4 0.8</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.5 0.4 0.8</size></box>
+          </geometry>
+          <material>
+            <ambient>0.95 0.95 0.95 1</ambient>
+            <diffuse>0.95 0.95 0.95 1</diffuse>
+            <specular>0.3 0.3 0.3 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Toilet: pos=(-1.5, -1.0, 0.2), size=(0.4, 0.6, 0.4), white -->
+    <model name="toilet">
+      <static>true</static>
+      <pose>-1.5 -1.0 0.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.4 0.6 0.4</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.4 0.6 0.4</size></box>
+          </geometry>
+          <material>
+            <ambient>0.95 0.95 0.95 1</ambient>
+            <diffuse>0.95 0.95 0.95 1</diffuse>
+            <specular>0.3 0.3 0.3 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ==================== GRASPABLE OBJECTS (DYNAMIC) ==================== -->
+    <!-- All objects: static=false, mass > 0, inertial defined, collision defined -->
+
+    <!-- red_cup: coffee_table surface, cylinder, red #CC0000 -->
+    <model name="red_cup">
+      <static>false</static>
+      <pose>3.5 -1.5 0.55 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.15</mass>
+          <inertia>
+            <ixx>0.0001</ixx><iyy>0.0001</iyy><izz>0.0001</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.04</radius><length>0.1</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.04</radius><length>0.1</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.0 0.0 1</ambient>
+            <diffuse>0.8 0.0 0.0 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- blue_bottle: kitchen_table surface, cylinder, blue #0044CC -->
+    <model name="blue_bottle">
+      <static>false</static>
+      <pose>3.3 2.0 0.8 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.3</mass>
+          <inertia>
+            <ixx>0.0003</ixx><iyy>0.0003</iyy><izz>0.0001</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.03</radius><length>0.2</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.03</radius><length>0.2</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.0 0.27 0.8 1</ambient>
+            <diffuse>0.0 0.27 0.8 1</diffuse>
+            <specular>0.2 0.2 0.3 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- phone: nightstand surface, box, dark gray #333333 -->
+    <model name="phone">
+      <static>false</static>
+      <pose>-2.3 2.5 0.55 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.2</mass>
+          <inertia>
+            <ixx>0.0002</ixx><iyy>0.0003</iyy><izz>0.0001</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 0.07 0.01</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 0.07 0.01</size></box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+            <specular>0.3 0.3 0.3 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- book: desk surface, box, green #006600 -->
+    <model name="book">
+      <static>false</static>
+      <pose>-2.0 0.5 0.8 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.5</mass>
+          <inertia>
+            <ixx>0.001</ixx><iyy>0.001</iyy><izz>0.0005</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box><size>0.2 0.15 0.03</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.2 0.15 0.03</size></box>
+          </geometry>
+          <material>
+            <ambient>0.0 0.4 0.0 1</ambient>
+            <diffuse>0.0 0.4 0.0 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- bowl: counter surface, cylinder, white #FFFFFF -->
+    <model name="bowl">
+      <static>false</static>
+      <pose>4.2 2.8 0.95 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.2</mass>
+          <inertia>
+            <ixx>0.0005</ixx><iyy>0.0005</iyy><izz>0.0008</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.08</radius><length>0.06</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.08</radius><length>0.06</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>1.0 1.0 1.0 1</ambient>
+            <diffuse>1.0 1.0 1.0 1</diffuse>
+            <specular>0.4 0.4 0.4 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- remote: sofa surface, box, black #111111 -->
+    <model name="remote">
+      <static>false</static>
+      <pose>4.5 -2.3 0.85 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.15</mass>
+          <inertia>
+            <ixx>0.0002</ixx><iyy>0.0004</iyy><izz>0.0001</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box><size>0.18 0.05 0.02</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.18 0.05 0.02</size></box>
+          </geometry>
+          <material>
+            <ambient>0.07 0.07 0.07 1</ambient>
+            <diffuse>0.07 0.07 0.07 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- apple: kitchen_table surface, sphere, red #CC3333 -->
+    <model name="apple">
+      <static>false</static>
+      <pose>3.7 1.8 0.8 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.2</mass>
+          <inertia>
+            <ixx>0.0001</ixx><iyy>0.0001</iyy><izz>0.0001</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <sphere><radius>0.04</radius></sphere>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <sphere><radius>0.04</radius></sphere>
+          </geometry>
+          <material>
+            <ambient>0.8 0.2 0.2 1</ambient>
+            <diffuse>0.8 0.2 0.2 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- keys: tv_stand surface, box, silver #C0C0C0 -->
+    <model name="keys">
+      <static>false</static>
+      <pose>2.0 -2.5 0.65 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.05</mass>
+          <inertia>
+            <ixx>0.00001</ixx><iyy>0.00002</iyy><izz>0.00001</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box><size>0.06 0.03 0.01</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.06 0.03 0.01</size></box>
+          </geometry>
+          <material>
+            <ambient>0.75 0.75 0.75 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+            <specular>0.6 0.6 0.6 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
