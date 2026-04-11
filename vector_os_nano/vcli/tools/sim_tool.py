@@ -1,11 +1,16 @@
 """SimStartTool — start/stop robot simulations at runtime.
 
-Allows V to spin up MuJoCo simulations mid-conversation without
-requiring --sim or --sim-go2 flags at startup.
+Allows V to spin up simulations mid-conversation without requiring
+--sim or --sim-go2 flags at startup.
 
 Supported simulations:
   arm   — SO-101 6-DOF arm (MuJoCoArm)
-  go2   — Unitree Go2 quadruped (MuJoCoGo2)
+  go2   — Unitree Go2 quadruped (MuJoCoGo2 / IsaacSimProxy / GazeboGo2Proxy)
+
+Supported backends:
+  isaac  — Isaac Sim 5.1 Docker (photorealistic, default)
+  mujoco — MuJoCo 3.x (lightweight fallback)
+  gazebo — Gz Sim Harmonic (ROS2-native, open-source)
 """
 from __future__ import annotations
 
@@ -21,12 +26,15 @@ from vector_os_nano.vcli.tools.base import (
 
 @tool(
     name="start_simulation",
-    description="Start a robot simulation (arm or go2 quadruped). No restart needed.",
+    description="Start a robot simulation (arm or go2 quadruped) with isaac, mujoco, or gazebo backend. No restart needed.",
     read_only=False,
     permission="ask",
 )
 class SimStartTool:
-    """Start a MuJoCo simulation and register its skills into the tool registry."""
+    """Start a simulation and register its skills into the tool registry.
+
+    Backends: isaac (default, photorealistic), mujoco (lightweight), gazebo (ROS2-native).
+    """
 
     input_schema: dict[str, Any] = {
         "type": "object",
@@ -43,9 +51,12 @@ class SimStartTool:
             },
             "backend": {
                 "type": "string",
-                "enum": ["isaac", "mujoco"],
+                "enum": ["isaac", "mujoco", "gazebo"],
                 "default": "isaac",
-                "description": "Simulation backend: 'isaac' (photorealistic, default) or 'mujoco' (lightweight fallback)",
+                "description": (
+                    "Simulation backend: 'isaac' (photorealistic, default), "
+                    "'mujoco' (lightweight fallback), or 'gazebo' (Gz Sim Harmonic)"
+                ),
             },
         },
         "required": ["sim_type"],
@@ -77,6 +88,14 @@ class SimStartTool:
                     agent = self._start_isaac_arm()
                 else:
                     return ToolResult(content=f"Unknown sim type: {sim_type}", is_error=True)
+            elif backend == "gazebo":
+                if sim_type == "go2":
+                    agent = self._start_gazebo_go2()
+                else:
+                    return ToolResult(
+                        content="Gazebo backend only supports go2",
+                        is_error=True,
+                    )
             else:
                 # Default: mujoco backend (existing paths unchanged)
                 if sim_type == "arm":
@@ -276,6 +295,58 @@ class SimStartTool:
         _os.makedirs(_os.path.dirname(_persist_path), exist_ok=True)
         sg = SceneGraph(persist_path=_persist_path)
         sg.load()
+        agent._spatial_memory = sg
+        proxy._scene_graph = agent._spatial_memory
+
+        return agent
+
+    @staticmethod
+    def _start_gazebo_go2() -> Any:
+        """Connect to Go2 in Gz Sim Harmonic (must already be running).
+
+        Uses GazeboGo2Proxy over ROS2 topics — identical interface to
+        IsaacSimProxy but targets Gazebo Harmonic.  No subprocess launch
+        or sleep(20) needed; Gazebo must be running before calling this.
+        """
+        import os
+        from vector_os_nano.hardware.sim.gazebo_go2_proxy import GazeboGo2Proxy  # type: ignore[import]
+        from vector_os_nano.core.agent import Agent  # type: ignore[import]
+        from vector_os_nano.core.config import load_config
+
+        proxy = GazeboGo2Proxy()
+        proxy.connect()
+
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)
+        ))))
+        cfg_path = os.path.join(repo, "config", "user.yaml")
+        cfg = load_config(cfg_path) if os.path.exists(cfg_path) else {}
+        api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY", "")
+
+        agent = Agent(base=proxy, llm_api_key=api_key, config=cfg)
+
+        # Go2 skills
+        from vector_os_nano.skills.go2 import get_go2_skills  # type: ignore[import]
+        for skill in get_go2_skills():
+            agent._skill_registry.register(skill)
+
+        # VLM perception (GPT-4o via OpenRouter)
+        if api_key:
+            try:
+                from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
+                agent._vlm = Go2VLMPerception(config={"api_key": api_key})
+            except Exception:
+                agent._vlm = None
+
+        # Scene graph — persistent
+        import os as _os
+        from vector_os_nano.core.scene_graph import SceneGraph
+        _persist_path = _os.path.expanduser("~/.vector_os_nano/scene_graph.yaml")
+        _os.makedirs(_os.path.dirname(_persist_path), exist_ok=True)
+        sg = SceneGraph(persist_path=_persist_path)
+        sg.load()
+        import logging as _logging
+        _logging.getLogger(__name__).info("[Gazebo] SceneGraph loaded from %s", _persist_path)
         agent._spatial_memory = sg
         proxy._scene_graph = agent._spatial_memory
 
