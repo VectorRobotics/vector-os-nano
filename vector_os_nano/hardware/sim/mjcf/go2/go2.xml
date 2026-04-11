@@ -76,17 +76,22 @@
       <geom size="0.047" pos="0.293 0 -0.06" class="collision" />
       <site name="imu" pos="-0.02557 0 0.04232" />
 
-      <!-- Livox MID-360 LiDAR — shoulder-mounted, behind head, 20 deg forward tilt -->
-      <!-- Real mounting: on bracket behind head, x=0.15 z=0.10 from trunk CoM -->
-      <body name="mid360_lidar" pos="0.15 0.0 0.10" euler="-20 0 0">
-        <geom type="cylinder" size="0.05 0.03" rgba="0.2 0.2 0.2 1" mass="0.265"
+      <!-- Livox MID-360 LiDAR — bracket-mounted on top of body center -->
+      <!-- Real photo: puck on tall bracket, body center, well above trunk top -->
+      <!-- trunk top z≈0.057, bracket lifts ~8cm → sensor at z≈0.14 -->
+      <body name="mid360_lidar" pos="0.0 0.0 0.14" euler="-20 0 0">
+        <!-- bracket post -->
+        <geom type="cylinder" size="0.012 0.04" pos="0 0 -0.04" rgba="0.4 0.4 0.4 1"
+              mass="0.05" contype="0" conaffinity="0" />
+        <!-- lidar puck -->
+        <geom type="cylinder" size="0.05 0.03" rgba="0.15 0.15 0.15 1" mass="0.265"
               contype="0" conaffinity="0" />
         <site name="mid360_site" pos="0 0 0.03" />
       </body>
 
-      <!-- RealSense D435 — in front of MID-360, on head area, 5 deg downward tilt -->
-      <!-- Real mounting: forward of lidar, x=0.27 z=0.08 from trunk CoM -->
-      <body name="d435_camera" pos="0.27 0.0 0.08" euler="-5 0 0">
+      <!-- RealSense D435 — mounted in front of MID-360, on bracket arm -->
+      <!-- Real photo: forward of lidar, lower, pointing forward -->
+      <body name="d435_camera" pos="0.12 0.0 0.10" euler="-5 0 0">
         <geom type="box" size="0.045 0.0125 0.0125" rgba="0.15 0.15 0.15 1" mass="0.072"
               contype="0" conaffinity="0" />
         <geom type="cylinder" size="0.008 0.005" pos="0.02 0.0 0.0" euler="0 90 0"
