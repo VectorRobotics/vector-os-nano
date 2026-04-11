@@ -1,0 +1,187 @@
+<?xml version="1.0"?>
+<!--
+  Vector OS Nano — Go2 external sensor xacro
+  Adds Livox MID-360 lidar + RealSense D435 to the Go2 URDF.
+  Include this after the base robot.xacro.
+
+  Sensor mounting matches real Go2 hardware (see reference photo):
+    - MID-360: back-mounted on custom bracket, ~20 deg forward tilt
+    - D435: front-facing at nose height, ~5 deg downward tilt
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ============================================================ -->
+  <!-- Livox MID-360 LiDAR                                          -->
+  <!-- Mounted just behind the head, on top of shoulders.           -->
+  <!-- x=0.15 (behind head at x=0.29, above shoulder line)          -->
+  <!-- z=0.15 (shoulder top + bracket)                              -->
+  <!-- Tilted 20 deg forward for ground coverage.                   -->
+  <!-- ============================================================ -->
+
+  <joint name="mid360_joint" type="fixed">
+    <parent link="trunk"/>
+    <child link="mid360_link"/>
+    <!-- Behind head, on shoulders, tilted 20 deg forward -->
+    <origin xyz="0.15 0.0 0.15" rpy="0 -0.349 0"/>
+  </joint>
+
+  <link name="mid360_link">
+    <inertial>
+      <mass value="0.265"/>  <!-- MID-360 actual mass: 265g -->
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0003"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.06"/>  <!-- MID-360 puck shape -->
+      </geometry>
+      <material name="mid360_gray">
+        <color rgba="0.3 0.3 0.3 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <gazebo reference="mid360_link">
+    <sensor name="mid360_lidar" type="gpu_lidar">
+      <topic>/scan</topic>
+      <gz_frame_id>mid360_link</gz_frame_id>
+      <always_on>true</always_on>
+      <update_rate>10</update_rate>
+      <visualize>true</visualize>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>30</samples>
+            <resolution>1</resolution>
+            <!-- MID-360 VFoV: -7 to +52 deg -->
+            <min_angle>-0.122</min_angle>
+            <max_angle>0.908</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!-- ============================================================ -->
+  <!-- RealSense D435 RGB-D Camera                                   -->
+  <!-- Mounted in front of MID-360, on the head/shoulder area.      -->
+  <!-- Slightly forward and lower than the lidar.                   -->
+  <!-- ~5 deg downward tilt for ground object visibility.           -->
+  <!-- ============================================================ -->
+
+  <joint name="d435_joint" type="fixed">
+    <parent link="trunk"/>
+    <child link="d435_link"/>
+    <!-- In front of MID-360, on head area, 5 deg down -->
+    <origin xyz="0.27 0.0 0.12" rpy="0 0.087 0"/>
+  </joint>
+
+  <link name="d435_link">
+    <inertial>
+      <mass value="0.072"/>  <!-- D435 actual mass: 72g -->
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.00005" ixy="0" ixz="0" iyy="0.00005" iyz="0" izz="0.00003"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.09 0.025"/>  <!-- D435 form factor -->
+      </geometry>
+      <material name="d435_silver">
+        <color rgba="0.7 0.7 0.7 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.09 0.025"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- D435 optical frame (Z forward, X right, Y down — camera convention) -->
+  <joint name="d435_optical_joint" type="fixed">
+    <parent link="d435_link"/>
+    <child link="d435_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
+  </joint>
+
+  <link name="d435_optical_frame"/>
+
+  <!-- D435 RGB camera sensor -->
+  <gazebo reference="d435_link">
+    <sensor name="d435_rgb" type="camera">
+      <topic>/camera/image</topic>
+      <gz_frame_id>d435_link</gz_frame_id>
+      <always_on>true</always_on>
+      <update_rate>30</update_rate>
+      <visualize>false</visualize>
+      <camera>
+        <horizontal_fov>1.20</horizontal_fov>  <!-- ~69 deg -->
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>15.0</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.005</stddev>
+        </noise>
+        <optical_frame_id>d435_optical_frame</optical_frame_id>
+        <camera_info_topic>/camera/camera_info</camera_info_topic>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <!-- D435 depth camera sensor — separate sensor on same link -->
+  <gazebo reference="d435_link">
+    <sensor name="d435_depth" type="depth_camera">
+      <topic>/camera/depth</topic>
+      <gz_frame_id>d435_link</gz_frame_id>
+      <always_on>true</always_on>
+      <update_rate>30</update_rate>
+      <visualize>false</visualize>
+      <camera>
+        <horizontal_fov>1.20</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R_FLOAT32</format>
+        </image>
+        <clip>
+          <near>0.3</near>
+          <far>10.0</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.002</stddev>
+        </noise>
+      </camera>
+    </sensor>
+  </gazebo>
+
+</robot>

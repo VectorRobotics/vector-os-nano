@@ -1,53 +1,44 @@
 # ros_gz_bridge topic mapping — Gazebo Harmonic <-> ROS2 Jazzy
 #
-# Used by parameter_bridge node to translate between gz-transport and ROS2.
 # Direction:
 #   GZ_TO_ROS — Gazebo publishes, ROS2 subscribes (sensor data, state)
 #   ROS_TO_GZ — ROS2 publishes, Gazebo subscribes (commands)
 #
-# Consumers:
-#   nav stack   — /state_estimation, /registered_scan, /cmd_vel_nav, /clock
-#   perception  — /camera/image, /camera/depth
-#   sensor fusion — /imu/data
+# Note: topic_name is the ROS2 topic name.
+# gz_topic_name (if different) maps to the Gazebo-side topic.
 
-# Odometry from Gazebo physics → nav stack state estimator input
-- topic_name: /state_estimation
-  ros_type_name: "nav_msgs/msg/Odometry"
-  gz_type_name: "gz.msgs.Odometry"
-  direction: GZ_TO_ROS
-
-# Livox MID-360 / RealSense point cloud → FAR/TARE nav planner input
-- topic_name: /registered_scan
+# Livox MID-360 point cloud → nav stack
+# Gazebo publishes /scan/points, ROS2 needs /registered_scan
+- ros_topic_name: /registered_scan
+  gz_topic_name: /scan/points
   ros_type_name: "sensor_msgs/msg/PointCloud2"
   gz_type_name: "gz.msgs.PointCloudPacked"
   direction: GZ_TO_ROS
 
-# RealSense D435 RGB stream → VLM perception pipeline
-- topic_name: /camera/image
+# D435 RGB camera → VLM perception
+- ros_topic_name: /camera/image
+  gz_topic_name: /camera/image
   ros_type_name: "sensor_msgs/msg/Image"
   gz_type_name: "gz.msgs.Image"
   direction: GZ_TO_ROS
 
-# RealSense D435 depth stream → VLM perception pipeline / obstacle avoidance
-- topic_name: /camera/depth
+# D435 depth camera → depth projection / obstacle avoidance
+- ros_topic_name: /camera/depth
+  gz_topic_name: /camera/depth
   ros_type_name: "sensor_msgs/msg/Image"
   gz_type_name: "gz.msgs.Image"
   direction: GZ_TO_ROS
 
-# Velocity commands from nav stack → Gazebo Go2 actuator (ROS→GZ)
-- topic_name: /cmd_vel_nav
+# Velocity commands → Gazebo Go2
+- ros_topic_name: /cmd_vel_nav
+  gz_topic_name: /cmd_vel_nav
   ros_type_name: "geometry_msgs/msg/Twist"
   gz_type_name: "gz.msgs.Twist"
   direction: ROS_TO_GZ
 
-# Simulation clock → nav stack / sensor timestamps
-- topic_name: /clock
-  ros_type_name: "rosgraph_msgs/msg/Clock"
-  gz_type_name: "gz.msgs.Clock"
-  direction: GZ_TO_ROS
-
-# IMU data from Gazebo Go2 → sensor fusion / state estimation
-- topic_name: /imu/data
+# IMU data
+- ros_topic_name: /imu/data
+  gz_topic_name: /imu
   ros_type_name: "sensor_msgs/msg/Imu"
   gz_type_name: "gz.msgs.IMU"
   direction: GZ_TO_ROS

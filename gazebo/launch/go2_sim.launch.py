@@ -58,12 +58,36 @@ def _launch_setup(context, *args, **kwargs):
     # ------------------------------------------------------------------
     # Process Go2 URDF xacro from quadruped_ros2_control
     # Includes <ros2_control> tags needed by gz_quadruped_hardware
+    # Then inject our sensor xacro (MID-360 lidar + D435 camera)
     # ------------------------------------------------------------------
     pkg_path = get_package_share_directory("go2_description")
     xacro_file = os.path.join(pkg_path, "xacro", "robot.xacro")
-    robot_description = xacro.process_file(
+    sensors_xacro = os.path.join(_GAZEBO_DIR, "models", "go2", "sensors.xacro")
+
+    # Process base robot URDF
+    robot_xml = xacro.process_file(
         xacro_file, mappings={"GAZEBO": "true"}
     ).toxml()
+
+    # Inject sensor links/joints/gazebo tags into URDF
+    # Parse sensors.xacro separately and merge into robot XML
+    if os.path.exists(sensors_xacro):
+        sensors_xml = xacro.process_file(sensors_xacro).toxml()
+        # Extract content between <robot> tags from sensors
+        import re
+        sensor_content = re.search(
+            r'<robot[^>]*>(.*)</robot>', sensors_xml, re.DOTALL
+        )
+        if sensor_content:
+            # Insert before closing </robot> tag of base URDF
+            robot_description = robot_xml.replace(
+                '</robot>',
+                sensor_content.group(1) + '\n</robot>'
+            )
+        else:
+            robot_description = robot_xml
+    else:
+        robot_description = robot_xml
 
     # ------------------------------------------------------------------
     # 1. Gz Sim — load world SDF
@@ -111,13 +135,24 @@ def _launch_setup(context, *args, **kwargs):
     )
 
     # ------------------------------------------------------------------
-    # 4. ros_gz_bridge — topic relay (our bridge.yaml + /clock)
+    # 4. ros_gz_bridge — topic relay
+    #    Use command-line argument syntax: topic@ROS_type[gz_type (GZ→ROS)
+    #    or topic@ROS_type]gz_type (ROS→GZ)
     # ------------------------------------------------------------------
     ros_gz_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
-        arguments=["/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock"],
-        parameters=[{"config_file": _BRIDGE_YAML, "use_sim_time": True}],
+        arguments=[
+            "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
+            "/scan/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
+            "/camera/image@sensor_msgs/msg/Image[gz.msgs.Image",
+            "/camera/depth@sensor_msgs/msg/Image[gz.msgs.Image",
+            "/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
+        ],
+        remappings=[
+            ("/scan/points", "/registered_scan"),
+            ("/imu", "/imu/data"),
+        ],
         output="screen",
     )
 

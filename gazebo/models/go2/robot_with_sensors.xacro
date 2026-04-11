@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!--
+  Vector OS Nano — Go2 with external sensors for Gazebo Harmonic.
+  Wraps the upstream go2_description URDF and adds:
+    - Livox MID-360 LiDAR (back-mounted, 20 deg tilt)
+    - RealSense D435 RGB-D camera (front-mounted)
+-->
+<robot name="go2" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Base Go2 robot from quadruped_ros2_control -->
+  <xacro:include filename="$(find go2_description)/xacro/robot.xacro"/>
+
+  <!-- Vector OS Nano external sensors -->
+  <xacro:include filename="$(find vector_os_nano_gazebo)/sensors.xacro"/>
+
+</robot>
