@@ -43,3 +43,10 @@ try:
     __all__ += ["IsaacSimArmProxy"]
 except Exception:
     pass
+
+try:
+    from vector_os_nano.hardware.sim.gazebo_go2_proxy import GazeboGo2Proxy
+
+    __all__ += ["GazeboGo2Proxy"]
+except Exception:
+    pass
