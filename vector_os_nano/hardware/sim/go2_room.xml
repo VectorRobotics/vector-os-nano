@@ -126,9 +126,7 @@
     <mesh name="m_chair" file="furniture/chair.obj" scale="2.1 2.1 2.1" inertia="shell"/>
 
     <!-- Potted Plant -->
-    <mesh name="m_pottedPlant_wood" file="furniture/pottedPlant_wood.obj" scale="1.5 1.5 1.5" inertia="shell"/>
-    <mesh name="m_pottedPlant_woodDark" inertia="shell" file="furniture/pottedPlant_woodDark.obj" scale="1.5 1.5 1.5"/>
-    <mesh name="m_pottedPlant_plant" file="furniture/pottedPlant_plant.obj" scale="1.5 1.5 1.5" inertia="shell"/>
+    <!-- pottedPlant meshes removed — collision cylinders trap Go2 -->
 
     <!-- Sideboard -->
     <mesh name="m_sideTableDrawers_wood" file="furniture/sideTableDrawers_wood.obj" scale="2.0 2.0 2.0" inertia="shell"/>
@@ -351,12 +349,7 @@
       <geom type="box" pos="0 0 0.38" size="0.53 0.22 0.38" rgba="0 0 0 0" group="3"/>
     </body>
 
-    <body name="plant_dining" pos="0.5 5.5 0">
-      <geom type="mesh" mesh="m_pottedPlant_wood" euler="1.5708 0 0" material="mat_walnut" contype="0" conaffinity="0"/>
-      <geom type="mesh" mesh="m_pottedPlant_woodDark" euler="1.5708 0 0" material="mat_walnut" contype="0" conaffinity="0"/>
-      <geom type="mesh" mesh="m_pottedPlant_plant" euler="1.5708 0 0" rgba="0.18 0.82 0.58 1" contype="0" conaffinity="0"/>
-      <geom type="cylinder" pos="0 0 0.4" size="0.15 0.4" rgba="0 0 0 0" group="3"/>
-    </body>
+    <!-- plant_dining REMOVED — collision cylinder traps Go2 -->
 
 
     <!-- ==================== KITCHEN (x=14..20, y=0..5) ==================== -->
@@ -450,12 +443,7 @@
     <geom name="rug_study_darker" type="mesh" mesh="m_rugRectangle_carpetDarker" euler="1.5708 0 0" pos="17.5 7.5 0.005"
           rgba="0.61 0.30 0.29 1" contype="0" conaffinity="0"/>
 
-    <body name="plant_study" pos="14.5 5.5 0">
-      <geom type="mesh" mesh="m_pottedPlant_wood" euler="1.5708 0 0" material="mat_walnut" contype="0" conaffinity="0"/>
-      <geom type="mesh" mesh="m_pottedPlant_woodDark" euler="1.5708 0 0" material="mat_walnut" contype="0" conaffinity="0"/>
-      <geom type="mesh" mesh="m_pottedPlant_plant" euler="1.5708 0 0" rgba="0.18 0.82 0.58 1" contype="0" conaffinity="0"/>
-      <geom type="cylinder" pos="0 0 0.4" size="0.15 0.4" rgba="0 0 0 0" group="3"/>
-    </body>
+    <!-- plant_study REMOVED — collision cylinder traps Go2 -->
 
 
     <!-- ==================== MASTER BEDROOM (x=0..7, y=10..14) ==================== -->
@@ -561,24 +549,14 @@
       <geom type="box" pos="0 0 0.35" size="0.48 0.20 0.35" rgba="0 0 0 0" group="3"/>
     </body>
 
-    <body name="plant_entry" pos="8 1.5 0">
-      <geom type="mesh" mesh="m_pottedPlant_wood" euler="1.5708 0 0" material="mat_walnut" contype="0" conaffinity="0"/>
-      <geom type="mesh" mesh="m_pottedPlant_woodDark" euler="1.5708 0 0" material="mat_walnut" contype="0" conaffinity="0"/>
-      <geom type="mesh" mesh="m_pottedPlant_plant" euler="1.5708 0 0" rgba="0.18 0.82 0.58 1" contype="0" conaffinity="0"/>
-      <geom type="cylinder" pos="0 0 0.4" size="0.18 0.4" rgba="0 0 0 0" group="3"/>
-    </body>
+    <!-- plant_entry REMOVED — collision cylinder in hallway traps Go2 -->
 
     <geom name="rug_hall_carpet" type="mesh" mesh="m_rugRectangle_carpet" euler="1.5708 0 1.5708" pos="10 5 0.005"
           rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
     <geom name="rug_hall_darker" type="mesh" mesh="m_rugRectangle_carpetDarker" euler="1.5708 0 1.5708" pos="10 5 0.005"
           rgba="0.61 0.30 0.29 1" contype="0" conaffinity="0"/>
 
-    <body name="plant_hall" pos="13 9.0 0">
-      <geom type="mesh" mesh="m_pottedPlant_wood" euler="1.5708 0 0" material="mat_walnut" contype="0" conaffinity="0"/>
-      <geom type="mesh" mesh="m_pottedPlant_woodDark" euler="1.5708 0 0" material="mat_walnut" contype="0" conaffinity="0"/>
-      <geom type="mesh" mesh="m_pottedPlant_plant" euler="1.5708 0 0" rgba="0.18 0.82 0.58 1" contype="0" conaffinity="0"/>
-      <geom type="cylinder" pos="0 0 0.35" size="0.14 0.35" rgba="0 0 0 0" group="3"/>
-    </body>
+    <!-- plant_hall REMOVED — collision cylinder in hallway traps Go2 -->
 
     <geom name="art_hall1" type="box" pos="6.02 3 1.5" size="0.015 0.35 0.25"
           material="painting_mat" contype="0" conaffinity="0"/>
