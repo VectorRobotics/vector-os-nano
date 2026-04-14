@@ -1,0 +1,15 @@
+{
+  "project": "v2.0-vectorengine-unification",
+  "current_phase": "spec",
+  "spec_status": "draft",
+  "plan_status": "pending",
+  "tasks_status": "pending",
+  "tasks_progress": { "total": 0, "completed": 0, "in_progress": 0, "pending": 0 },
+  "test_metrics": { "total_tests": 3651, "passed": 3651, "failed": 0, "coverage_percent": 0 },
+  "history": [
+    { "timestamp": "2026-04-14T01:00:00Z", "action": "init", "agent": "architect", "details": "v1.9.0 VGG task framework overhaul — global abort, async skills, P0 stop" },
+    { "timestamp": "2026-04-14T01:00:00Z", "action": "spec_approved", "agent": "ceo", "details": "v1.9.0 approved" },
+    { "timestamp": "2026-04-14T17:00:00Z", "action": "scope_change", "agent": "architect", "details": "v1.9.0 升级为 v2.0 — 统一 VectorEngine + VGG 全面升级。删除 robo/cli/web legacy。" },
+    { "timestamp": "2026-04-14T17:00:00Z", "action": "spec_draft", "agent": "architect", "details": "v2.0 spec: 4 phases — unify MCP, abort signal, VGG upgrade, engine quality" }
+  ]
+}
