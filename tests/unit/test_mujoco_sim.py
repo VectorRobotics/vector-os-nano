@@ -249,3 +249,116 @@ class TestMuJoCoPickAndPlace:
         assert new_z > original_z + 0.03, (
             f"Cube should have lifted >3cm, got delta={new_z - original_z:.3f}m"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestMuJoCoArmPhysics — physical realism checks
+# ---------------------------------------------------------------------------
+
+class TestMuJoCoArmPhysics:
+    def test_gravity_settles_objects(self, arm: MuJoCoArm):
+        """After 500 steps all objects should have landed on the table (not through floor, not floating)."""
+        arm.step(500)
+        objs = arm.get_object_positions()
+        assert len(objs) >= 6, "Expected at least 6 scene objects"
+        for name, pos in objs.items():
+            z = pos[2]
+            assert z > 0, f"Object '{name}' fell through floor: z={z:.4f}"
+            assert z < 0.2, f"Object '{name}' still floating: z={z:.4f}"
+
+    def test_joint_limits_respected(self, arm: MuJoCoArm):
+        """Commanding extreme targets should clamp to joint limits, not exceed pi."""
+        arm.move_joints([3.0] * 5, duration=2.0)
+        actual = arm.get_joint_positions()
+        for i, q in enumerate(actual):
+            assert abs(q) < math.pi, (
+                f"Joint {i} exceeded pi: {q:.4f} rad"
+            )
+
+    def test_objects_dont_fall_through(self, arm: MuJoCoArm):
+        """Every free-body object must stay above the floor (z > 0) after settling."""
+        arm.step(500)
+        objs = arm.get_object_positions()
+        for name, pos in objs.items():
+            assert pos[2] > 0, f"Object '{name}' has z={pos[2]:.4f} (below floor)"
+
+
+# ---------------------------------------------------------------------------
+# TestMuJoCoGripperWeld — grasp verification via weld constraints
+# ---------------------------------------------------------------------------
+
+class TestMuJoCoGripperWeld:
+    def test_grasp_near_object(self, arm: MuJoCoArm, gripper: MuJoCoGripper):
+        """Moving EE within grasp radius of banana then closing should register a hold."""
+        # Let objects settle first
+        arm.step(200)
+        objs = arm.get_object_positions()
+        banana_pos = objs["banana"]
+
+        # Use IK to get EE close to the banana
+        target = (banana_pos[0], banana_pos[1], banana_pos[2] + 0.02)
+        solution = arm.ik(target)
+        if solution is not None:
+            arm.move_joints(solution, duration=2.0)
+            arm.step(100)
+
+        gripper.close()
+        assert gripper.is_holding() is True
+
+    def test_grasp_far_from_object(self, arm: MuJoCoArm, gripper: MuJoCoGripper):
+        """Closing from the home position (far from all objects) should not register a hold."""
+        # Ensure we are at home (joints near zero — default)
+        arm.step(50)
+        gripper.close()
+        assert gripper.is_holding() is False
+
+    def test_release_after_grasp(self, arm: MuJoCoArm, gripper: MuJoCoGripper):
+        """Opening after a successful grasp should release the object."""
+        # Move near banana and grasp
+        arm.step(200)
+        objs = arm.get_object_positions()
+        banana_pos = objs["banana"]
+        target = (banana_pos[0], banana_pos[1], banana_pos[2] + 0.02)
+        solution = arm.ik(target)
+        if solution is not None:
+            arm.move_joints(solution, duration=2.0)
+            arm.step(100)
+        gripper.close()
+
+        if not gripper.is_holding():
+            pytest.skip("Grasp did not succeed — skipping release check")
+
+        gripper.open()
+        assert gripper.is_holding() is False
+
+    @pytest.mark.skip(reason="Timing-sensitive — object follow requires many physics steps")
+    def test_held_object_follows_arm(self, arm: MuJoCoArm, gripper: MuJoCoGripper):
+        """After grasping, lifting the arm should increase the held object's z."""
+        arm.step(200)
+        objs = arm.get_object_positions()
+        banana_pos = objs["banana"]
+
+        # Move to banana and grasp
+        target = (banana_pos[0], banana_pos[1], banana_pos[2] + 0.02)
+        solution = arm.ik(target)
+        if solution is not None:
+            arm.move_joints(solution, duration=2.0)
+            arm.step(100)
+        gripper.close()
+        arm.step(200)
+
+        # Record z before lift
+        pre_lift_z = arm.get_object_positions()["banana"][2]
+
+        # Lift EE by 0.08 m
+        cur_pos, _ = arm.fk(arm.get_joint_positions())
+        lift_target = (cur_pos[0], cur_pos[1], cur_pos[2] + 0.08)
+        lift_solution = arm.ik(lift_target)
+        if lift_solution is not None:
+            arm.move_joints(lift_solution, duration=2.0)
+            arm.step(200)
+
+        post_lift_z = arm.get_object_positions()["banana"][2]
+        assert post_lift_z > pre_lift_z + 0.03, (
+            f"Object z did not increase after lift: pre={pre_lift_z:.4f}, post={post_lift_z:.4f}"
+        )

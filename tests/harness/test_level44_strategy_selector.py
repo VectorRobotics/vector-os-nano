@@ -126,13 +126,13 @@ def test_observe_keyword_matches_look():
     assert result.name in ("look", "describe_scene")
 
 
-def test_detect_keyword_matches_describe_scene():
-    """'detect' in name → describe_scene skill."""
+def test_detect_keyword_matches_detect():
+    """'detect' in name → detect skill."""
     sel = StrategySelector()
     sg = _sg("detect_cup", "检测杯子是否存在")
     result = sel.select(sg)
     assert result.executor_type == "skill"
-    assert result.name == "describe_scene"
+    assert result.name == "detect"
 
 
 def test_stand_keyword_matches_stand():
@@ -222,15 +222,15 @@ def test_walk_forward_distance_param():
     result = sel.select(sg)
     assert result.executor_type == "primitive"
     assert result.name == "walk_forward"
-    assert result.params.get("distance") == 2.0
+    assert result.params.get("distance_m") == 2.0  # normalized from "distance"
 
 
 def test_turn_angle_param():
-    """strategy_params.angle is forwarded."""
+    """strategy_params.angle is normalized to angle_rad."""
     sel = StrategySelector()
     sg = _sg("turn_90", "turn", strategy="turn", strategy_params={"angle": 1.57})
     result = sel.select(sg)
-    assert result.params.get("angle") == 1.57
+    assert result.params.get("angle_rad") == 1.57  # normalized from "angle"
 
 
 # ---------------------------------------------------------------------------

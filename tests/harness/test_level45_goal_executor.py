@@ -540,7 +540,8 @@ class TestEdgeCases:
         )
         trace = executor.execute(tree)
 
-        fake_primitive.assert_called_once_with(x=1)
+        # After inspect.signature filtering, unknown params are stripped from mocks
+        fake_primitive.assert_called_once()
         assert trace.steps[0].success is True
 
     def test_primitive_exception_fails_step(self):
