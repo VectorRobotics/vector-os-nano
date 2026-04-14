@@ -27,6 +27,18 @@
 
 ---
 
+<h3 align="center">Demo</h3>
+
+<p align="center">
+  <a href="https://drive.google.com/file/d/1a0Y46zHZ9VNUqBVCpGbyP9m2getLlIio/view">
+    <img src="images/compressed_demo.gif" width="700" alt="Click to watch full demo video">
+  </a>
+  <br>
+  <i>Click to watch full demo video</i>
+</p>
+
+---
+
 ## Architecture
 
 Two entry points, one engine:
@@ -95,6 +107,12 @@ vector> stop
 
 **Slash commands:** `/help` `/model` `/tools` `/status` `/login` `/compact` `/clear` `/copy` `/export`
 
+<p align="center">
+  <img src="images/agent.png" width="700" alt="vector-cli with Go2 simulation">
+  <br>
+  <i>vector-cli controlling Go2 in MuJoCo: natural language conversation with V (right), live simulation (left).</i>
+</p>
+
 ## VGG: Verified Goal Graph
 
 All actionable commands flow through the VGG cognitive layer. LLM decomposes complex tasks into verifiable sub-goal trees. Simple commands get 1-step GoalTrees without LLM call.
@@ -132,6 +150,12 @@ TARE (frontier exploration)
 
 Sim-to-real: the nav stack is identical to what runs on real Unitree Go2 with Livox MID360 LiDAR. Switching sim to real requires only changing the bridge node.
 
+<p align="center">
+  <img src="images/go2nav.png" width="700" alt="Go2 navigation in MuJoCo">
+  <br>
+  <i>Go2 autonomous navigation: house environment (top), RViz with LiDAR + terrain analysis + path planning (bottom-left), first-person camera (bottom-right).</i>
+</p>
+
 Navigation parameters tunable via `config/nav.yaml`:
 ```yaml
 navigation:
@@ -163,6 +187,18 @@ arm.connect()
 agent = Agent(arm=arm)
 agent.execute_skill("pick", {"object_label": "banana"})
 ```
+
+<p align="center">
+  <img src="images/setup.png" width="700" alt="SO-101 real hardware">
+  <br>
+  <i>Real hardware: SO-101 arm with RealSense D405, VLM object detection, natural language control.</i>
+</p>
+
+<p align="center">
+  <img src="images/sim_setup.png" width="700" alt="MuJoCo arm simulation">
+  <br>
+  <i>MuJoCo simulation: SO-101 arm with graspable objects, CLI conversation with V.</i>
+</p>
 
 ## SkillFlow -- Declarative Skill Routing
 
@@ -201,6 +237,12 @@ vector-os-mcp --sim                  # SSE on :8100
 
 MCP tools: all 22 skills + natural_language + run_goal + diagnostics + debug_perception
 MCP resources: world://state, world://objects, world://robot, camera://overhead, camera://front, camera://side, camera://live
+
+<p align="center">
+  <img src="images/mcp_claude.png" width="700" alt="Claude Code controlling robot via MCP">
+  <br>
+  <i>Claude Code operating the robot via MCP: terminal (top) + live camera RGB + depth (bottom).</i>
+</p>
 
 ## Project Structure
 
@@ -246,6 +288,12 @@ config/
 | Robot Arm | LeRobot SO-ARM100 (6-DOF, 3D-printed) | ~$150 |
 | Camera | Intel RealSense D405 | ~$270 |
 | GPU | Any NVIDIA with 8+ GB VRAM | (existing) |
+
+<p align="center">
+  <img src="images/skillgen.png" width="700" alt="Autonomous skill generation">
+  <br>
+  <i>Claude Agent autonomously designing, implementing, and executing new robot skills.</i>
+</p>
 
 ## Nav Stack Dependencies
 
