@@ -13,6 +13,44 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Nav config loader (lazy, module-level cache)
+# ---------------------------------------------------------------------------
+
+_NAV_CFG: dict | None = None
+
+
+def _load_nav_config() -> dict:
+    """Load nav.yaml with defaults. Searches relative paths then falls back."""
+    global _NAV_CFG
+    if _NAV_CFG is not None:
+        return _NAV_CFG
+
+    import yaml
+
+    _search = [
+        "config/nav.yaml",
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "config", "nav.yaml"),
+    ]
+    for path in _search:
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    data = yaml.safe_load(f) or {}
+                _NAV_CFG = data
+                return _NAV_CFG
+            except Exception as exc:
+                logger.warning("nav.yaml load failed (%s), using defaults", exc)
+    _NAV_CFG = {}
+    return _NAV_CFG
+
+
+def _nav(key: str, default: float) -> float:
+    """Look up a navigation parameter by key, return default if absent."""
+    cfg = _load_nav_config()
+    nav_section = cfg.get("navigation", {})
+    return float(nav_section.get(key, default))
+
 
 class Go2ROS2Proxy:
     """Proxy that implements the same interface as MuJoCoGo2 but via ROS2 topics.
@@ -33,6 +71,8 @@ class Go2ROS2Proxy:
         self._last_odom: Any = None
         self._last_camera_frame: Any = None  # numpy (H, W, 3) uint8
         self._last_depth_frame: Any = None   # numpy (H, W) float32 metres
+        self._last_camera_ts: float = 0.0    # monotonic time of last /camera/image
+        self._last_depth_ts: float = 0.0     # monotonic time of last /camera/depth
         # Tracks the last time a /path message arrived from localPlanner.
         # Used by navigate_to() FAR probe phase to detect whether FAR has a
         # routing graph. Value 0.0 means no_path_received yet.
@@ -159,6 +199,7 @@ class Go2ROS2Proxy:
             frame = np.frombuffer(msg.data, dtype=np.uint8)
             frame = frame.reshape((msg.height, msg.width, 3))
             self._last_camera_frame = frame
+            self._last_camera_ts = time.monotonic()
         except Exception:
             pass
 
@@ -172,6 +213,7 @@ class Go2ROS2Proxy:
             frame = np.frombuffer(msg.data, dtype=np.float32)
             frame = frame.reshape((msg.height, msg.width))
             self._last_depth_frame = frame
+            self._last_depth_ts = time.monotonic()
         except Exception:
             pass
 
@@ -201,8 +243,13 @@ class Go2ROS2Proxy:
 
         Received from /camera/image topic published by Go2VNavBridge.
         Returns a black frame if no image has been received yet.
+        Logs a warning if the cached frame is more than 1 second old.
         """
         import numpy as np
+        if self._last_camera_ts > 0:
+            age = time.monotonic() - self._last_camera_ts
+            if age > 1.0:
+                logger.warning("[GO2] Camera frame is %.1fs old", age)
         if self._last_camera_frame is not None:
             return self._last_camera_frame.copy()
         return np.zeros((height, width, 3), dtype=np.uint8)
@@ -212,8 +259,13 @@ class Go2ROS2Proxy:
 
         Received from /camera/depth topic (32FC1) published by Go2VNavBridge.
         Returns a zero frame if no depth has been received yet.
+        Logs a warning if the cached frame is more than 1 second old.
         """
         import numpy as np
+        if self._last_depth_ts > 0:
+            age = time.monotonic() - self._last_depth_ts
+            if age > 1.0:
+                logger.warning("[GO2] Depth frame is %.1fs old", age)
         if self._last_depth_frame is not None:
             return self._last_depth_frame.copy()
         return np.zeros((height, width), dtype=np.float32)
@@ -377,8 +429,8 @@ class Go2ROS2Proxy:
         logger.info("[NAV] navigate_to(%.2f, %.2f) timeout=%.0fs", x, y, timeout)
 
         start_time = time.time()
-        _ARRIVAL_DIST: float = 0.8
-        _FAR_PROBE_S: float = 3.0    # shorter probe — door-chain is reliable backup
+        _ARRIVAL_DIST: float = _nav("arrival_radius", 0.8)
+        _FAR_PROBE_S: float = _nav("far_probe_timeout", 3.0)  # shorter probe — door-chain is reliable backup
         _MIN_PROBE_S: float = 1.5    # minimum wait
 
         # Reset waypoint timestamp to ignore stale /way_point from TARE.

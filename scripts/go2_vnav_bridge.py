@@ -70,6 +70,45 @@ import numpy as np
 
 from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 
+# ---------------------------------------------------------------------------
+# Nav config loader (lazy, module-level cache)
+# ---------------------------------------------------------------------------
+
+_NAV_CFG: dict | None = None
+
+
+def _load_nav_config() -> dict:
+    """Load nav.yaml with defaults. Searches relative paths then falls back."""
+    global _NAV_CFG
+    if _NAV_CFG is not None:
+        return _NAV_CFG
+
+    import yaml
+
+    _search = [
+        str(_repo / "config" / "nav.yaml"),
+        "config/nav.yaml",
+    ]
+    for path in _search:
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    data = yaml.safe_load(f) or {}
+                _NAV_CFG = data
+                return _NAV_CFG
+            except Exception:
+                pass
+    _NAV_CFG = {}
+    return _NAV_CFG
+
+
+def _nav(key: str, default: float) -> float:
+    """Look up a navigation parameter by key, return default if absent."""
+    cfg = _load_nav_config()
+    nav_section = cfg.get("navigation", {})
+    return float(nav_section.get(key, default))
+
+
 # Sensor mounting offset — on top of Go2 head, above all leg geoms.
 # Must match mujoco_go2.py _LIDAR_OFFSET and nav stack sensorOffset.
 _SENSOR_X: float = 0.3
@@ -81,7 +120,8 @@ _SENSOR_Z: float = 0.2
 # Ceiling at ~2.4m → intensity ~2.0 → FAR sees obstacle everywhere → no V-Graph edges.
 # 1.8m preserves all meaningful navigation features (walls, door frames, furniture)
 # while excluding ceiling returns that FAR interprets as obstacles.
-_CEILING_FILTER_HEIGHT: float = 1.8
+# Loaded from config/nav.yaml at startup; fallback keeps original behaviour.
+_CEILING_FILTER_HEIGHT: float = _nav("ceiling_filter_height", 1.8)
 
 
 class TerrainAccumulator:
@@ -1292,11 +1332,12 @@ class Go2VNavBridge(Node):
                     self._wall_escape_until = now + 4.0  # pure reverse, no strafe
                 else:
                     open_side = "right" if right_d > left_d else "left"
+                    _escape_dur = _nav("wall_escape_duration", 2.5)
                     self.get_logger().warn(
                         f"Stuck 8s — escape: reverse 1s + strafe {open_side}"
                     )
                     self._wall_escape_phase2 = now + 1.0   # 1s reverse
-                    self._wall_escape_until = now + 2.5     # 1.5s strafe
+                    self._wall_escape_until = now + _escape_dur  # strafe until end
                 self._current_path = []
                 self._stuck_count = 0
                 self._stuck_history.append((odom.x, odom.y))

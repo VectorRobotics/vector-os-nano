@@ -503,19 +503,54 @@ def _launch_ros2_stack(go2: Any) -> None:
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     script = os.path.join(repo, "scripts", "launch_nav_only.sh")
     if os.path.isfile(script):
-        log_fh = open("/tmp/vector_nav_only.log", "w")
+        log_path = "/tmp/vector_nav_only.log"
+        # Truncate log if it has grown beyond 5 MB to prevent unbounded disk use
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 5 * 1024 * 1024:
+            with open(log_path, "w") as _f:
+                _f.write("")  # truncate
+        log_fh = open(log_path, "a")
         proc = subprocess.Popen(
             [script], stdout=log_fh, stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,
         )
 
+        # Use a list so the monitor thread can mutate the proc reference.
+        proc_ref = [proc]
+
+        def _nav_health_monitor(proc_ref: list, script: str, log_fh: Any, console: Any) -> None:
+            """Daemon thread: poll nav stack every 5s, restart if crashed."""
+            while True:
+                time.sleep(5)
+                current = proc_ref[0]
+                if current.poll() is not None:
+                    exit_code = current.returncode
+                    console.print(f"  [red]nav stack crashed (exit {exit_code}), restarting...[/]")
+                    try:
+                        new_proc = subprocess.Popen(
+                            [script], stdout=log_fh, stderr=subprocess.STDOUT,
+                            preexec_fn=os.setsid,
+                        )
+                        proc_ref[0] = new_proc
+                        time.sleep(3)  # let it initialize
+                        console.print("  [green]nav stack restarted[/]")
+                    except Exception as exc:
+                        console.print(f"  [red]nav stack restart failed: {exc}[/]")
+
+        monitor = threading.Thread(
+            target=_nav_health_monitor,
+            args=(proc_ref, script, log_fh, console),
+            daemon=True,
+        )
+        monitor.start()
+
         def _cleanup():
+            current = proc_ref[0]
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                proc.wait(timeout=5)
+                os.killpg(os.getpgid(current.pid), signal.SIGTERM)
+                current.wait(timeout=5)
             except Exception:
                 try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    os.killpg(os.getpgid(current.pid), signal.SIGKILL)
                 except Exception:
                     pass
             log_fh.close()

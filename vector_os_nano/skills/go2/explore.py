@@ -57,71 +57,32 @@ def _deploy_tare_config() -> None:
 
 
 def _start_tare() -> bool:
-    """Start TARE autonomous exploration planner as a subprocess."""
-    global _tare_proc
+    """Check that TARE autonomous exploration planner is already running.
 
+    TARE must be launched by _launch_ros2_stack() (via launch_explore.sh) before
+    exploration starts.  This function only detects a running TARE process — it
+    does NOT start one.  Launching TARE here would create a second process group
+    with broken DDS connectivity.
+
+    Always deploys the Go2-tuned config first so a running TARE picks up the
+    latest margins on its next restart.
+    """
     # Always deploy config first — even if TARE is already running,
     # so the next restart picks up latest margins.
     _deploy_tare_config()
 
-    if _tare_proc is not None and _tare_proc.poll() is None:
-        return True  # we launched it, it's running with our config
-
-    # Check if TARE is already running (from launch_explore.sh or previous explore)
-    # Do NOT kill it — a working TARE in the launch process group has proper
-    # DDS connectivity. Killing and restarting in a new subprocess breaks comms.
+    # Check if TARE is already running (launched by _launch_ros2_stack / launch_explore.sh)
     if shutil.which("pgrep"):
         result = subprocess.run(["pgrep", "-f", "tare_planner_node"], capture_output=True)
         if result.returncode == 0:
             logger.info("[EXPLORE] TARE already running — reusing")
             return True
 
-    try:
-        # Verify deployed config is correct
-        tare_install = os.path.expanduser(
-            "~/Desktop/vector_navigation_stack/install/tare_planner/share/tare_planner"
-        )
-        deployed = os.path.join(tare_install, "indoor_small.yaml")
-        if os.path.isfile(deployed):
-            with open(deployed) as f:
-                content = f.read()
-            extend = "true" if "kExtendWayPoint : true" in content else "false"
-            logger.info("[EXPLORE] TARE config check: kExtendWayPoint=%s file=%s", extend, deployed)
-
-        # TARE needs ROS2 sourced — launch via bash
-        cmd = "source /opt/ros/jazzy/setup.bash && "
-        nav_stack = os.path.expanduser("~/Desktop/vector_navigation_stack")
-        cmd += f"source {nav_stack}/install/setup.bash && "
-        # Log which config TARE actually loads
-        cmd += f"echo 'TARE loading: {tare_install}/indoor_small.yaml' && "
-        cmd += "ros2 launch tare_planner explore.launch scenario:=indoor_small"
-
-        log_fh = open("/tmp/vector_tare.log", "w")
-        _tare_proc = subprocess.Popen(
-            ["bash", "-c", cmd],
-            stdout=log_fh, stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
-        )
-
-        import atexit
-
-        def _cleanup_tare():
-            try:
-                os.killpg(os.getpgid(_tare_proc.pid), signal.SIGTERM)
-                _tare_proc.wait(timeout=3)
-            except Exception:
-                try:
-                    os.killpg(os.getpgid(_tare_proc.pid), signal.SIGKILL)
-                except Exception:
-                    pass
-            log_fh.close()
-
-        atexit.register(_cleanup_tare)
-        logger.info("[EXPLORE] TARE planner started")
-        return True
-    except Exception as exc:
-        logger.error("[EXPLORE] TARE start failed: %s", exc)
-        return False
+    logger.warning(
+        "[EXPLORE] TARE not running. Launch the nav stack first via "
+        "sim/hardware stack startup (launch_explore.sh). Exploration cannot start."
+    )
+    return False
 
 
 def _stop_tare() -> None:
@@ -460,12 +421,26 @@ def _verify_nav_stack() -> None:
 # ---------------------------------------------------------------------------
 
 def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
-    """Background thread: start TARE, seed planner, then monitor rooms.
+    """Background thread: verify TARE is running, seed planner, then monitor rooms.
 
     Everything runs here — execute() returns immediately.
     Runs indefinitely until _explore_cancel is set.
+
+    TARE must already be running (started by _launch_ros2_stack via launch_explore.sh).
+    If TARE is not detected, emits an error event and exits immediately.
     """
     global _explore_running, _explore_visited
+
+    # Guard: TARE must be pre-launched by the nav stack startup.
+    if not _start_tare():
+        _emit("error", {
+            "reason": "tare_not_running",
+            "message": (
+                "TARE planner is not running. Start the nav stack first "
+                "(launch_explore.sh or sim stack startup)."
+            ),
+        })
+        return
 
     _explore_visited.clear()
     _explore_running = True
@@ -522,6 +497,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     _prev_room: str | None = None
     _start_time = time.monotonic()
     _last_status_time = _start_time
+    _last_progress_time = _start_time
 
     try:
         while not _explore_cancel.is_set():
@@ -544,6 +520,16 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                         "total": _total,
                         "position": [round(x, 1), round(y, 1)],
                         "current_room": room or "?",
+                    })
+
+                # Periodic progress every 5s (unconditional — fires even with no new rooms)
+                if time.monotonic() - _last_progress_time >= 5.0:
+                    _last_progress_time = time.monotonic()
+                    _emit("progress", {
+                        "rooms_found": len(_explore_visited),
+                        "total": _total,
+                        "position": [round(x, 1), round(y, 1)],
+                        "elapsed": round(elapsed),
                     })
 
                 # Record position in SceneGraph.

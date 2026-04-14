@@ -189,52 +189,85 @@ class VectorEngine:
         _backend = backend or self._backend
         self._vgg_agent = agent
         self._vgg_step_callback = on_vgg_step
-        try:
-            # ObjectMemory — sync from SceneGraph if available
-            try:
-                from vector_os_nano.vcli.cognitive.object_memory import ObjectMemory
-                _sg_ref = getattr(agent, "_spatial_memory", None)
-                if _sg_ref is not None:
-                    self._object_memory = ObjectMemory()
-                    self._object_memory.sync_from_scene_graph(_sg_ref)
-                    logger.debug(
-                        "ObjectMemory initialized with %d objects",
-                        len(self._object_memory._objects),
-                    )
-                else:
-                    self._object_memory = None
-            except ImportError:
-                self._object_memory = None
 
+        # ObjectMemory — sync from SceneGraph if available.
+        # Isolated try/except: failure here must not block the rest of VGG init.
+        try:
+            from vector_os_nano.vcli.cognitive.object_memory import ObjectMemory
+            _sg_ref = getattr(agent, "_spatial_memory", None)
+            if _sg_ref is not None:
+                self._object_memory = ObjectMemory()
+                self._object_memory.sync_from_scene_graph(_sg_ref)
+                logger.debug(
+                    "ObjectMemory initialized with %d objects",
+                    len(self._object_memory._objects),
+                )
+            else:
+                self._object_memory = None
+        except ImportError:
+            logger.info("VGG: ObjectMemory not available (missing import)")
+            self._object_memory = None
+        except Exception as exc:
+            logger.warning("VGG: ObjectMemory init failed: %s", exc)
+            self._object_memory = None
+
+        # Cognitive layer (GoalDecomposer, GoalVerifier, GoalExecutor, VGGHarness).
+        # Any failure here disables VGG — the engine falls back to tool_use path.
+        try:
             # Build primitives namespace for GoalVerifier
             ns = self._build_verifier_namespace(agent)
             stats = StrategyStats()
+        except Exception as exc:
+            logger.warning("VGG: verifier namespace build failed: %s", exc)
+            self._vgg_enabled = False
+            return
+
+        try:
             decomposer = GoalDecomposer(_backend, skill_registry=skill_registry)
+        except ImportError as exc:
+            logger.warning("VGG: GoalDecomposer not available: %s", exc)
+            self._vgg_enabled = False
+            return
+        except Exception as exc:
+            logger.warning("VGG: GoalDecomposer init failed: %s", exc)
+            self._vgg_enabled = False
+            return
+
+        try:
             verifier = GoalVerifier(ns)
             selector = StrategySelector(skill_registry=skill_registry, stats=stats)
+        except ImportError as exc:
+            logger.warning("VGG: cognitive layer not available: %s", exc)
+            self._vgg_enabled = False
+            return
+        except Exception as exc:
+            logger.warning("VGG: GoalVerifier/StrategySelector init failed: %s", exc)
+            self._vgg_enabled = False
+            return
 
-            # Build a SkillContext factory so GoalExecutor can execute skills.
-            # Skills need context.base, context.services etc. — wire from agent.
-            _agent_ref = agent
-            _skill_registry_ref = skill_registry
+        # Build a SkillContext factory so GoalExecutor can execute skills.
+        # Skills need context.base, context.services etc. — wire from agent.
+        _agent_ref = agent
+        _skill_registry_ref = skill_registry
 
-            def _build_context() -> Any:
-                from vector_os_nano.core.skill import SkillContext
-                _base = getattr(_agent_ref, "_base", None)
-                _sg = getattr(_agent_ref, "_spatial_memory", None)
-                _vlm = getattr(_agent_ref, "_vlm", None)
-                services: dict = {}
-                if _sg is not None:
-                    services["spatial_memory"] = _sg
-                if _skill_registry_ref is not None:
-                    services["skill_registry"] = _skill_registry_ref
-                if _vlm is not None:
-                    services["vlm"] = _vlm
-                return SkillContext(
-                    bases={"go2": _base} if _base is not None else {},
-                    services=services,
-                )
+        def _build_context() -> Any:
+            from vector_os_nano.core.skill import SkillContext
+            _base = getattr(_agent_ref, "_base", None)
+            _sg = getattr(_agent_ref, "_spatial_memory", None)
+            _vlm = getattr(_agent_ref, "_vlm", None)
+            services: dict = {}
+            if _sg is not None:
+                services["spatial_memory"] = _sg
+            if _skill_registry_ref is not None:
+                services["skill_registry"] = _skill_registry_ref
+            if _vlm is not None:
+                services["vlm"] = _vlm
+            return SkillContext(
+                bases={"go2": _base} if _base is not None else {},
+                services=services,
+            )
 
+        try:
             executor = GoalExecutor(
                 strategy_selector=selector,
                 verifier=verifier,
@@ -243,6 +276,16 @@ class VectorEngine:
                 stats=stats,
                 visual_verifier_agent=agent,
             )
+        except ImportError as exc:
+            logger.warning("VGG: GoalExecutor not available: %s", exc)
+            self._vgg_enabled = False
+            return
+        except Exception as exc:
+            logger.warning("VGG: GoalExecutor init failed: %s", exc)
+            self._vgg_enabled = False
+            return
+
+        try:
             self._goal_decomposer = decomposer
             self._goal_executor = executor
             self._vgg_harness = VGGHarness(
@@ -258,8 +301,11 @@ class VectorEngine:
             )
             self._vgg_enabled = True
             logger.debug("VGG pipeline initialised successfully")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("VGG initialisation failed (%s) — VGG disabled", exc)
+        except ImportError as exc:
+            logger.warning("VGG: VGGHarness not available: %s", exc)
+            self._vgg_enabled = False
+        except Exception as exc:
+            logger.warning("VGG: harness init failed: %s", exc)
             self._vgg_enabled = False
 
     def _build_verifier_namespace(self, agent: Any) -> dict[str, Any]:

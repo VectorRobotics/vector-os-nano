@@ -24,6 +24,46 @@ from vector_os_nano.core.types import SkillResult
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Nav config loader (lazy, module-level cache)
+# ---------------------------------------------------------------------------
+
+_NAV_CFG: dict | None = None
+
+
+def _load_nav_config() -> dict:
+    """Load nav.yaml with defaults. Searches relative paths then falls back."""
+    import os
+    import yaml
+
+    global _NAV_CFG
+    if _NAV_CFG is not None:
+        return _NAV_CFG
+
+    _search = [
+        "config/nav.yaml",
+        os.path.join(os.path.dirname(__file__), "..", "..", "config", "nav.yaml"),
+    ]
+    for path in _search:
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    data = yaml.safe_load(f) or {}
+                _NAV_CFG = data
+                return _NAV_CFG
+            except Exception as exc:
+                logger.warning("nav.yaml load failed (%s), using defaults", exc)
+    _NAV_CFG = {}
+    return _NAV_CFG
+
+
+def _nav(key: str, default: float) -> float:
+    """Look up a navigation parameter by key, return default if absent."""
+    cfg = _load_nav_config()
+    nav_section = cfg.get("navigation", {})
+    return float(nav_section.get(key, default))
+
+
+# ---------------------------------------------------------------------------
 # Aliases -> canonical room name (Chinese + English + shortcuts)
 # ---------------------------------------------------------------------------
 
@@ -80,7 +120,8 @@ _WALK_SPEED: float = 0.6     # m/s
 _TURN_SPEED: float = 0.8     # rad/s
 _ARRIVAL_RADIUS: float = 0.5  # meters -- close enough to target (dead-reckoning helper)
 _DOORCHAIN_ARRIVAL_RADIUS: float = 0.8  # meters -- arrival threshold for nav stack door-chain
-_DOORCHAIN_WAYPOINT_TIMEOUT: float = 30.0  # seconds per waypoint in door-chain nav stack mode
+# Loaded from config/nav.yaml at first use; fallback keeps original behaviour
+_DOORCHAIN_WAYPOINT_TIMEOUT: float = _nav("waypoint_timeout", 30.0)
 
 _MIN_VISIT_COUNT: int = 1  # trust SceneGraph position after first visit
 
