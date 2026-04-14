@@ -2,7 +2,7 @@
   "project": "v2.0-vectorengine-unification",
   "current_phase": "spec",
   "spec_status": "approved",
-  "plan_status": "draft",
+  "plan_status": "approved",
   "tasks_status": "pending",
   "tasks_progress": { "total": 0, "completed": 0, "in_progress": 0, "pending": 0 },
   "test_metrics": { "total_tests": 3651, "passed": 3651, "failed": 0, "coverage_percent": 0 },
