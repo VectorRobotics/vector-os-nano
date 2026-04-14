@@ -141,6 +141,60 @@ class Session:
         self.token_usage = self.token_usage.add(usage)
         self.updated_at = self._now()
 
+    def compact(self, keep_recent: int = 12) -> tuple[int, int]:
+        """Compress old entries into a summary, keep last *keep_recent*.
+
+        Extracts user messages and assistant texts from old entries into a
+        single summary entry at the top.  Recent entries stay verbatim so
+        the LLM has full context for the current conversation.
+
+        Returns:
+            (before_count, after_count) of non-meta entries.
+        """
+        non_meta = self._non_meta_entries()
+        before = len(non_meta)
+        if before <= keep_recent:
+            return before, before
+
+        old_entries = non_meta[:-keep_recent]
+        recent_entries = non_meta[-keep_recent:]
+
+        # Build summary from old entries
+        summary_lines: list[str] = []
+        for entry in old_entries:
+            etype = entry.get("type", "")
+            if etype == "user":
+                content = entry.get("content", "")
+                if content and len(content) < 200:
+                    summary_lines.append(f"User: {content}")
+            elif etype == "assistant":
+                text = entry.get("text", "")
+                if text:
+                    # Truncate long assistant responses to first sentence
+                    first_line = text.split("\n")[0][:100]
+                    summary_lines.append(f"V: {first_line}")
+
+        if summary_lines:
+            summary_text = (
+                "[Earlier conversation summary]\n"
+                + "\n".join(summary_lines[-10:])  # keep last 10 exchanges
+            )
+            summary_entry = {
+                "type": "user",
+                "content": summary_text,
+                "ts": self._now(),
+            }
+            self._entries = [summary_entry] + recent_entries
+        else:
+            self._entries = recent_entries
+
+        # Re-add meta entries
+        meta = [e for e in self._entries if e.get("type") == "meta"]
+        self._entries = [e for e in self._entries if e.get("type") != "meta"] + meta
+        self.updated_at = self._now()
+
+        return before, len(self._non_meta_entries())
+
     # ------------------------------------------------------------------
     # Reconstruct Anthropic API message list
     # ------------------------------------------------------------------

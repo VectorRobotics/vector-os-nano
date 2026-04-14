@@ -735,11 +735,8 @@ def _handle_slash_command(
 
     elif cmd == "compact":
         if session is not None:
-            before = len(session._entries)
-            if before > 8:
-                session._entries = session._entries[-8:]
-            after = len(session._entries)
-            console.print(f"[dim]  Compacted: {before} -> {after} entries[/dim]")
+            before, after = session.compact(keep_recent=8)
+            console.print(f"[dim]  Compacted: {before} -> {after} entries (old context summarized)[/dim]")
         else:
             console.print("[dim]No session.[/dim]")
 
@@ -1485,10 +1482,10 @@ def main(argv: list[str] | None = None) -> None:
                         width=min(console.width, 80),
                     ))
 
-                # Auto-compact
+                # Auto-compact (summarize old context instead of truncating)
                 if len(session._entries) > 50:
-                    session._entries = session._entries[-12:]
-                    console.print(f"[dim]  auto-compacted to last 12 entries[/dim]")
+                    before, after = session.compact(keep_recent=12)
+                    console.print(f"[dim]  compacted {before} -> {after} entries (old context summarized)[/dim]")
 
                 # Token usage (show in/out breakdown)
                 if turn_result.usage:
