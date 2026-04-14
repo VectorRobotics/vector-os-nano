@@ -49,6 +49,46 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Message parameter extraction (keyword-based, no LLM)
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_DIR_MAP: list[tuple[tuple[str, ...], str]] = [
+    (("后退", "往后", "向后", "倒退", "backward", "back", "retreat", "reverse"), "backward"),
+    (("往左", "向左", "左走", "left"), "left"),
+    (("往右", "向右", "右走", "right"), "right"),
+    # forward is default — checked last or as fallback
+    (("往前", "向前", "前进", "forward", "ahead"), "forward"),
+]
+
+
+def _extract_direction(msg: str) -> str:
+    """Extract movement direction from user message. Default: forward."""
+    msg_lower = msg.lower()
+    for keywords, direction in _DIR_MAP:
+        for kw in keywords:
+            if kw in msg_lower:
+                return direction
+    return "forward"
+
+
+def _extract_number(msg: str, default: float = 1.0) -> float:
+    """Extract first number from message. Supports Chinese numerals."""
+    _CN_NUMS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+                "六": 6, "七": 7, "八": 8, "九": 9, "十": 10, "半": 0.5}
+    # Try Arabic numerals first
+    m = _re.search(r'(\d+(?:\.\d+)?)', msg)
+    if m:
+        return float(m.group(1))
+    # Try Chinese numerals
+    for cn, val in _CN_NUMS.items():
+        if cn in msg:
+            return float(val)
+    return default
+
+
+# ---------------------------------------------------------------------------
 # Value objects
 # ---------------------------------------------------------------------------
 
@@ -359,18 +399,32 @@ class VectorEngine:
         # Build verify expression based on skill type
         verify = self._verify_for_skill(skill_name, extracted)
 
-        # Build strategy params
+        # Build strategy params — extract from user message text
         params: dict = {}
-        if extracted:
-            # Navigate needs room param, detect needs query, etc.
-            skill_obj = skill_registry.get(skill_name)
-            if skill_obj and hasattr(skill_obj, "parameters"):
-                if "room" in skill_obj.parameters:
-                    params["room"] = extracted
-                elif "object_label" in skill_obj.parameters:
-                    params["object_label"] = extracted
-                elif "query" in skill_obj.parameters:
-                    params["query"] = extracted
+        skill_obj = skill_registry.get(skill_name) if skill_registry else None
+        skill_params = getattr(skill_obj, "parameters", {}) if skill_obj else {}
+
+        # Generic extraction: match param names to user message content
+        if "direction" in skill_params:
+            params["direction"] = _extract_direction(user_message)
+        if "distance" in skill_params:
+            params["distance"] = _extract_number(user_message, default=1.0)
+        if "angle" in skill_params:
+            params["angle"] = _extract_number(user_message, default=90.0)
+        if "speed" in skill_params:
+            speed = _extract_number(user_message, default=0.0)
+            if speed > 0:
+                params["speed"] = speed
+        if "room" in skill_params:
+            if extracted:
+                params["room"] = extracted
+            elif skill_name == "navigate":
+                # Navigate without room → skip fast path, let LLM handle
+                return None
+        if "object_label" in skill_params and extracted:
+            params["object_label"] = extracted
+        if "query" in skill_params and extracted:
+            params["query"] = extracted
 
         sub_goal = SubGoal(
             name=f"{skill_name}_goal",

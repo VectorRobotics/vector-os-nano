@@ -9,10 +9,23 @@ Priority order:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from vector_os_nano.vcli.cognitive.types import SubGoal
+
+
+def _word_match(keywords: tuple[str, ...], text: str) -> bool:
+    """Match keywords with word boundaries for ASCII, substring for CJK."""
+    for kw in keywords:
+        if kw.isascii():
+            if re.search(r'\b' + re.escape(kw) + r'\b', text):
+                return True
+        else:
+            if kw in text:
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -96,23 +109,25 @@ class StrategySelector:
             result = StrategyResult("skill", "look", {})
 
         # Detection
-        elif any(kw in combined for kw in ("detect", "find", "check", "检测", "找", "检查")):
+        elif _word_match(("detect", "find", "check"), combined) or any(
+            kw in combined for kw in ("检测", "找", "检查")
+        ):
             query = sub_goal.strategy_params.get("query", sub_goal.description)
-            result = StrategyResult("skill", "describe_scene", {"query": query})
+            result = StrategyResult("skill", "detect", {"query": query})
 
         # Stance — stand / sit
-        elif any(kw in combined for kw in ("stand",)):
+        elif _word_match(("stand",), combined):
             result = StrategyResult("skill", "stand", {})
 
-        elif any(kw in combined for kw in ("sit",)):
+        elif _word_match(("sit",), combined):
             result = StrategyResult("skill", "sit", {})
 
         # Stop (primitive before walk to avoid 'stop' being caught by nothing)
-        elif any(kw in combined for kw in ("stop",)):
+        elif _word_match(("stop",), combined):
             result = StrategyResult("primitive", "stop", {})
 
         # Movement primitives
-        elif any(kw in combined for kw in ("walk", "forward", "前进")):
+        elif _word_match(("walk", "forward"), combined) or "前进" in combined:
             dist = sub_goal.strategy_params.get("distance", 1.0)
             result = StrategyResult("primitive", "walk_forward", {"distance_m": dist})
 
@@ -192,7 +207,13 @@ class StrategySelector:
             return StrategyResult("skill", skill_name, params)
 
         if strategy in _PRIMITIVE_NAMES:
-            return StrategyResult("primitive", strategy, params)
+            # Normalize LLM-generated param names to match primitive signatures
+            normalized = dict(params) if params else {}
+            if strategy == "walk_forward" and "distance" in normalized:
+                normalized["distance_m"] = normalized.pop("distance")
+            if strategy == "turn" and "angle" in normalized:
+                normalized["angle_rad"] = normalized.pop("angle")
+            return StrategyResult("primitive", strategy, normalized)
 
         # Treat as a skill with the strategy name as-is
         return StrategyResult("skill", strategy, params)

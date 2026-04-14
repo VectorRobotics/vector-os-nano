@@ -908,13 +908,27 @@ def _setup_explore_events(console: Any) -> None:
             room = data.get("room", "?")
             visited = data.get("visited", 0)
             total = data.get("total", 8)
+            elapsed = data.get("elapsed_sec", 0)
             label = _ROOM_LABELS.get(room, room)
             bar = f"[{'#' * visited}{'.' * (total - visited)}]"
-            print(f"  >> {label} {bar} {visited}/{total}")
+            print(f"  >> {label} {bar} {visited}/{total} ({elapsed}s)")
 
-        elif event_type == "completed":
+        elif event_type == "status":
+            elapsed = data.get("elapsed_sec", 0)
+            rooms = data.get("rooms_found", 0)
+            total = data.get("total", 8)
+            room = data.get("current_room", "?")
+            pos = data.get("position", [0, 0])
+            print(f"  .. {elapsed}s | {rooms}/{total} rooms | at {room} ({pos[0]}, {pos[1]})")
+
+        elif event_type in ("completed", "complete"):
             rooms = data.get("rooms", [])
-            print(f"  >> Exploration complete! {len(rooms)} rooms discovered.")
+            reason = data.get("reason", "")
+            elapsed = data.get("elapsed_sec", 0)
+            if reason == "tare_finished":
+                print(f"  >> Exploration complete ({elapsed}s, TARE: all frontiers covered). {len(rooms)} rooms.")
+            else:
+                print(f"  >> Exploration complete ({elapsed}s). {len(rooms)} rooms.")
 
         elif event_type == "stopped":
             reason = data.get("reason", "unknown")

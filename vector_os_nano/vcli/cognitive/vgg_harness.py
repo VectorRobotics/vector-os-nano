@@ -235,6 +235,7 @@ class VGGHarness:
                     timeout_sec=sub_goal.timeout_sec,
                     depends_on=sub_goal.depends_on,
                     strategy="",  # force selector to pick fresh
+                    strategy_params=sub_goal.strategy_params,
                     fail_action="",
                 )
                 step = self._executor._execute_sub_goal(retry_goal)

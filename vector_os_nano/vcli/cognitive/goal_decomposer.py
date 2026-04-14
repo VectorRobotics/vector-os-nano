@@ -172,7 +172,7 @@ Response:
       "strategy": "navigate_skill",
       "timeout_sec": 60,
       "depends_on": [],
-      "strategy_params": {},
+      "strategy_params": {"room": "kitchen"},
       "fail_action": ""
     },
     {
@@ -189,14 +189,43 @@ Response:
       "name": "detect_cup",
       "description": "检测杯子是否存在",
       "verify": "len(detect_objects('cup')) > 0",
-      "strategy": "",
+      "strategy": "detect_skill",
       "timeout_sec": 10,
       "depends_on": ["observe_table"],
-      "strategy_params": {},
+      "strategy_params": {"query": "cup"},
       "fail_action": ""
     }
   ],
   "context_snapshot": "Robot is in hallway, kitchen is adjacent."
+}
+
+Task: "向前走2米然后右转90度"
+Response:
+{
+  "goal": "向前走2米然后右转90度",
+  "sub_goals": [
+    {
+      "name": "walk_forward_2m",
+      "description": "向前走2米",
+      "verify": "True",
+      "strategy": "walk_forward",
+      "timeout_sec": 30,
+      "depends_on": [],
+      "strategy_params": {"distance": 2.0, "speed": 0.3},
+      "fail_action": ""
+    },
+    {
+      "name": "turn_right_90",
+      "description": "右转90度",
+      "verify": "True",
+      "strategy": "turn",
+      "timeout_sec": 15,
+      "depends_on": ["walk_forward_2m"],
+      "strategy_params": {"angle": -90},
+      "fail_action": ""
+    }
+  ],
+  "context_snapshot": ""
 }"""
 
     def __init__(self, backend: Any, template_library: Any = None, skill_registry: Any = None) -> None:
@@ -213,7 +242,7 @@ Response:
         # Build strategies from actual registered skills
         if skill_registry is not None:
             try:
-                skill_names = {s.name for s in skill_registry.list_skills()}
+                skill_names = set(skill_registry.list_skills())
                 real_strategies = {f"{n}_skill" for n in skill_names} | {
                     "walk_forward", "turn", "scan_360",
                 }
@@ -296,6 +325,19 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
 5. strategy must be one of the KNOWN_STRATEGIES below, or an empty string "".
 6. Do NOT call any function not in the verify list. Do NOT use import, exec, or eval.
 7. verify expressions must be syntactically valid Python.
+8. strategy_params MUST contain the required parameters for the chosen strategy (see STRATEGY_PARAMS below).
+
+## STRATEGY_PARAMS (required keys per strategy)
+  - navigate_skill: {{"room": "<room_name>"}}
+  - walk_forward: {{"distance": <meters float>, "speed": <m/s float>}}
+  - turn: {{"angle": <degrees int, positive=left, negative=right>}}
+  - detect_skill: {{"query": "<object_name>"}}
+  - stand_skill: {{}}
+  - sit_skill: {{}}
+  - stop_skill: {{}}
+  - explore_skill: {{}}
+  - look_skill: {{}}
+  - scan_360: {{}}
 
 ## KNOWN_STRATEGIES
 {strategies_block}

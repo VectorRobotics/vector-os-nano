@@ -10,6 +10,7 @@ Execution flow per sub_goal:
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from collections import deque
@@ -417,7 +418,10 @@ class GoalExecutor:
             return False, f"Primitive not found: {name}"
 
         try:
-            retval = fn(**params)
+            sig = inspect.signature(fn)
+            accepted = set(sig.parameters.keys())
+            filtered = {k: v for k, v in params.items() if k in accepted}
+            retval = fn(**filtered)
             if isinstance(retval, bool):
                 return retval, ""
             return True, ""

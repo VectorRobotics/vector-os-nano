@@ -159,6 +159,7 @@ def _instantiate_sub_goal(sgt: SubGoalTemplate, params: dict[str, str]) -> SubGo
         timeout_sec=sgt.timeout_sec,
         depends_on=depends_on,
         fail_action=sgt.fail_action,
+        strategy_params=dict(params) if sgt.strategy else {},
     )
 
 
