@@ -531,6 +531,34 @@ class VectorEngine:
                 pass
         return "\n".join(parts) if parts else ""
 
+    def _emergency_stop(
+        self,
+        user_message: str,
+        session: Session,
+        agent: Any = None,
+        app_state: dict[str, Any] | None = None,
+    ) -> TurnResult:
+        """P0 stop bypass — execute StopSkill directly, no LLM call."""
+        from vector_os_nano.vcli.cognitive.abort import request_abort
+        request_abort()
+
+        # Kill any running VGG thread
+        cancel_ev = getattr(self, "_vgg_cancel", None)
+        if cancel_ev is not None:
+            cancel_ev.set()
+
+        # Execute stop skill if available
+        _agent = agent or getattr(self, "_vgg_agent", None)
+        if _agent is not None:
+            try:
+                _agent.execute_skill("stop", {})
+            except Exception:
+                pass
+
+        session.append_user(user_message)
+        session.append_assistant("Stopped.", None)
+        return TurnResult(text="Stopped.", tool_calls=[], stop_reason="end_turn", usage=TokenUsage())
+
     def _on_vgg_step(self, step: Any) -> None:
         """Callback invoked by GoalExecutor after each sub-goal completes."""
         cb = getattr(self, "_vgg_step_callback", None)
@@ -574,6 +602,18 @@ class VectorEngine:
             TurnResult with the final assistant text, all tool calls, stop reason, and
             cumulative token usage across all API round-trips in this turn.
         """
+        # --- P0 stop bypass: hardcoded match, no LLM, <100ms ---
+        _stop_words = {"stop", "停", "停下", "halt", "freeze", "别动", "停止"}
+        if user_message.strip().lower() in _stop_words:
+            return self._emergency_stop(user_message, session, agent, app_state)
+
+        # --- Clear abort flag at start of each new task ---
+        try:
+            from vector_os_nano.vcli.cognitive.abort import clear_abort
+            clear_abort()
+        except ImportError:
+            pass
+
         session.append_user(user_message)
 
         all_tool_calls: list[ToolCall] = []

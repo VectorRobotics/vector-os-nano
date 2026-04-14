@@ -95,6 +95,24 @@ class GoalExecutor:
         overall_success = True
 
         for sub_goal in ordered:
+            # --- Abort check ---
+            try:
+                from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+                if is_abort_requested():
+                    steps.append(StepRecord(
+                        sub_goal_name=sub_goal.name,
+                        strategy="",
+                        success=False,
+                        verify_result=False,
+                        duration_sec=0.0,
+                        error="aborted",
+                        fallback_used=False,
+                    ))
+                    overall_success = False
+                    break
+            except ImportError:
+                pass
+
             step = self._execute_sub_goal(sub_goal)
             steps.append(step)
 
@@ -394,9 +412,38 @@ class GoalExecutor:
             skill_result = skill.execute(params, context)
             success = bool(getattr(skill_result, "success", False))
             error = getattr(skill_result, "error_message", "") or ""
+
+            # --- Async skill wait: explore returns immediately, wait for completion ---
+            result_data = getattr(skill_result, "result_data", {}) or {}
+            if result_data.get("status") == "exploration_started":
+                success, error = self._wait_for_async_skill(name)
+
             return success, error
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
+
+    def _wait_for_async_skill(self, name: str) -> tuple[bool, str]:
+        """Block until an async skill (e.g. explore) completes or abort fires."""
+        try:
+            from vector_os_nano.vcli.cognitive.abort import is_abort_requested, wait_or_abort
+        except ImportError:
+            return True, ""
+
+        logger.info("GoalExecutor: waiting for async skill %r to complete", name)
+        for _ in range(300):  # max 10 min (300 * 2s)
+            if is_abort_requested():
+                return False, "aborted"
+            # Check if exploration finished
+            try:
+                from vector_os_nano.skills.go2.explore import is_exploring
+                if not is_exploring():
+                    return True, ""
+            except ImportError:
+                return True, ""
+            wait_or_abort(2.0)
+            if is_abort_requested():
+                return False, "aborted"
+        return False, f"async skill {name} timed out (10 min)"
 
     def _execute_primitive(self, name: str, params: dict) -> tuple[bool, str]:
         """Locate and call a primitive function.

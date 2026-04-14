@@ -557,6 +557,18 @@ class NavigateSkill:
 
         # Execute each waypoint via nav stack (obstacle avoidance)
         for wx, wy, label in waypoints:
+            # --- Abort check between waypoints ---
+            try:
+                from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+                if is_abort_requested():
+                    return SkillResult(
+                        success=False,
+                        error_message="Navigation aborted",
+                        diagnosis_code="aborted",
+                    )
+            except ImportError:
+                pass
+
             # Check arrival before sending — skip waypoint if already close enough
             cur_pos = base.get_position()
             if _distance(cur_pos[0], cur_pos[1], wx, wy) < _DOORCHAIN_ARRIVAL_RADIUS:

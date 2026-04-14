@@ -85,8 +85,17 @@ class VGGHarness:
         cfg = self._config
         failures: list[FailureRecord] = []
         best_trace: ExecutionTrace | None = None
+        tree: GoalTree | None = None
 
         for pipeline_attempt in range(cfg.max_pipeline_retries + 1):
+            # --- Abort check ---
+            try:
+                from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+                if is_abort_requested():
+                    break
+            except ImportError:
+                pass
+
             # --- Decompose (or use provided tree) ---
             if goal_tree is not None and pipeline_attempt == 0:
                 tree = goal_tree
@@ -169,6 +178,15 @@ class VGGHarness:
         ordered = self._executor._topological_sort(tree)
 
         for i, sub_goal in enumerate(ordered):
+            # --- Abort check ---
+            try:
+                from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+                if is_abort_requested():
+                    overall_success = False
+                    break
+            except ImportError:
+                pass
+
             step = self._execute_step_with_retry(sub_goal, i, cfg.max_step_retries)
             steps.append(step)
 
