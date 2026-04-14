@@ -63,7 +63,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from nav_msgs.msg import Odometry as OdometryMsg, Path
 from sensor_msgs.msg import PointCloud2, PointField, Joy, LaserScan as LaserScanMsg, Image, CompressedImage
-from geometry_msgs.msg import TwistStamped, Twist, TransformStamped, PointStamped
+from geometry_msgs.msg import TwistStamped, Twist, TransformStamped, PointStamped, PolygonStamped, Point32
 from std_msgs.msg import Float32, Header
 from tf2_ros import TransformBroadcaster
 import numpy as np
@@ -245,6 +245,7 @@ class Go2VNavBridge(Node):
         self.create_timer(0.5, self._publish_joy_speed)           # 2 Hz
         self.create_timer(1.0, self._safety_check)                # 1 Hz
         self.create_timer(2.0, self._stuck_detector)             # 0.5 Hz
+        self.create_timer(2.0, self._publish_nav_boundary)       # 0.5 Hz — TARE needs periodic boundary
 
         # Stuck detector state — triggers /reset_waypoint when no progress
         self._stuck_pos = None       # (x, y) at last check
@@ -354,6 +355,11 @@ class Go2VNavBridge(Node):
         if flag and not self._nav_enabled:
             self._nav_enabled = True
             self._exploration_finished = False  # reset for new explore/navigate
+            # Cancel startup terrain replay — new exploration generates fresh data.
+            # Without this, old terrain_map.npz makes TARE think area is already explored.
+            if self._terrain_replay_points:
+                self._terrain_replay_points = []
+                self.get_logger().info("Cancelled startup terrain replay for fresh exploration")
             self.get_logger().info("Navigation ENABLED (flag file detected)")
         elif not flag and self._nav_enabled:
             self._nav_enabled = False
@@ -712,22 +718,64 @@ class Go2VNavBridge(Node):
                 self.get_logger().warn(f"Camera render failed: {e}")
                 self._cam_err_logged = True
 
-    def _exploration_finish_cb(self, msg) -> None:
-        """TARE says exploration is complete — log it but don't stop nav.
+    def _publish_nav_boundary(self) -> None:
+        """Publish /navigation_boundary polygon from room_layout.yaml bounding box.
 
-        Previously this removed the nav flag, which killed path following.
-        But TARE can declare "finished" prematurely (terrain replay makes it
-        think coverage is already high). Let the user decide when to stop.
+        TARE only searches for frontiers WITHIN this boundary. Without it,
+        TARE's grid extends far beyond the walls and never finishes.
+        """
+        if not hasattr(self, "_boundary_pub"):
+            self._boundary_pub = self.create_publisher(
+                PolygonStamped, "/navigation_boundary", 5
+            )
+        if not hasattr(self, "_boundary_points"):
+            self._boundary_points = self._load_boundary_from_layout()
+        msg = PolygonStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "map"
+        for x, y in self._boundary_points:
+            p = Point32()
+            p.x, p.y, p.z = float(x), float(y), 0.0
+            msg.polygon.points.append(p)
+        self._boundary_pub.publish(msg)
+
+    def _load_boundary_from_layout(self) -> list[tuple[float, float]]:
+        """Compute boundary rectangle from go2_room.xml wall positions.
+
+        Apartment walls: X=[0, 20], Y=[0, 14]. Boundary 0.3m inside walls.
+        """
+        x_min, y_min = 0.0, 0.0
+        x_max, y_max = 20.0, 14.0
+        self.get_logger().info(f"Nav boundary: [{x_min},{y_min}]-[{x_max},{y_max}]")
+        return [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max), (x_min, y_min)]
+
+    def _exploration_finish_cb(self, msg) -> None:
+        """TARE says exploration is complete — replay terrain, then stop.
+
+        Sequence: terrain replay (seeds FAR V-Graph) → stop robot → notify explore skill.
         """
         if msg.data and not self._exploration_finished:
             self._exploration_finished = True
-            self.get_logger().warn(
-                "TARE reports exploration complete (user: type 'stop' to halt)"
-            )
+            self.get_logger().warn("TARE exploration complete — replaying terrain for FAR")
+            # Trigger terrain replay so FAR gets complete V-Graph data
+            try:
+                with open("/tmp/vector_terrain_replay", "w") as f:
+                    f.write("1")
+            except OSError:
+                pass
+            # Stop robot after short delay for terrain replay to start
+            self._go2.set_velocity(0.0, 0.0, 0.0)
+            self._current_path = []
+            # Signal explore skill
+            try:
+                with open("/tmp/vector_explore_finished", "w") as f:
+                    f.write("1")
+            except OSError:
+                pass
 
     def _path_cb(self, msg: Path) -> None:
         """Store path for Python follower + log."""
-        if not self._nav_enabled:
+        if not self._nav_enabled or self._exploration_finished:
             return
 
         odom = self._go2.get_odometry()
@@ -891,7 +939,7 @@ class Go2VNavBridge(Node):
 
         if self._wall_contact_time > 0.5:
             front_d, left_d, right_d, back_d = self._scan_surroundings()
-            all_tight = front_d < 0.5 and left_d < 0.4 and right_d < 0.4
+            all_tight = front_d < 0.35 and left_d < 0.30 and right_d < 0.30
             if all_tight and back_d > 0.5:
                 # Boxed in with only rear open — sustained reverse (3s)
                 self.get_logger().warn(
@@ -924,7 +972,7 @@ class Go2VNavBridge(Node):
         # Mode 2 (TURN):  heading error > 60° → stop, turn in place, then go
         # Hysteresis: TRACK→TURN at 60°, TURN→TRACK at 30° (prevents oscillation)
         _MAX_SPEED = 0.6               # m/s forward cruise (balance: speed vs stability)
-        _MAX_LAT = 0.10                # m/s max lateral speed
+        _MAX_LAT = 0.20                # m/s max lateral speed (indoor dodging)
         _MAX_YAW_RATE = 1.0            # rad/s max yaw rate
         _YAW_GAIN_TRACK = 4.0          # P-gain for yaw in tracking mode (gentle)
         _YAW_GAIN_TURN = 6.0           # P-gain for yaw in turn mode (snappy)
@@ -935,6 +983,17 @@ class Go2VNavBridge(Node):
         _SLOW_DWN_DIS = 1.0            # m — start decelerating
         _ACCEL = 0.03                  # m/s per step @ 20Hz (0→0.8 takes 1.3s)
         _PATH_TIMEOUT = 8.0            # seconds before path considered stale
+
+        # Stop immediately if exploration is done
+        if self._exploration_finished:
+            self._pf_speed *= 0.9
+            self._pf_lat *= 0.9
+            self._pf_yawrate *= 0.9
+            if abs(self._pf_speed) < 0.01: self._pf_speed = 0.0
+            if abs(self._pf_lat) < 0.01: self._pf_lat = 0.0
+            if abs(self._pf_yawrate) < 0.01: self._pf_yawrate = 0.0
+            self._go2.set_velocity(self._pf_speed, self._pf_lat, self._pf_yawrate)
+            return
 
         has_path = (self._current_path
                     and time.time() - self._path_time < _PATH_TIMEOUT)
@@ -950,10 +1009,12 @@ class Go2VNavBridge(Node):
                 if abs(self._pf_yawrate) < 0.01: self._pf_yawrate = 0.0
             else:
                 front_dist = self._check_front_obstacle()
-                if front_dist < 0.4:
-                    tgt_vx, tgt_yaw = -0.15, 0.3  # back away from wall + turn
+                if front_dist < 0.30:
+                    tgt_vx, tgt_yaw = -0.20, 0.4  # back away + turn harder
+                elif front_dist < 0.60:
+                    tgt_vx, tgt_yaw = 0.0, 0.3    # stop, turn to find new path
                 else:
-                    tgt_vx, tgt_yaw = 0.15, 0.0   # creep forward, NO turn (wait for path)
+                    tgt_vx, tgt_yaw = 0.05, 0.0   # gentle creep (was 0.15 — too aggressive)
                 _A = 0.03
                 if self._pf_speed < tgt_vx: self._pf_speed = min(tgt_vx, self._pf_speed + _A)
                 else: self._pf_speed = max(tgt_vx, self._pf_speed - _A)
@@ -998,17 +1059,21 @@ class Go2VNavBridge(Node):
 
         # --- Space-aware speed: slow in tight spaces, fast in open ---
         front_d, left_d, right_d, _back_d = self._scan_surroundings()
-        front_gap = front_d - 0.34   # body front extent
+        front_gap = front_d - 0.20   # lidar-to-front clearance (lidar on head, ~20cm from nose)
         left_gap = left_d - 0.19     # body side extent
         right_gap = right_d - 0.19
-        min_gap = min(front_gap, left_gap, right_gap)
 
-        if min_gap > 0.5:
-            space_speed = _MAX_SPEED                    # open space (0.5)
-        elif min_gap > 0.1:
-            space_speed = _MAX_SPEED * (min_gap / 0.5)  # proportional (0.1-0.5)
+        # Speed based on FRONT gap only — side obstacles don't slow forward motion
+        if front_gap > 0.5:
+            space_speed = _MAX_SPEED
+        elif front_gap > 0.1:
+            space_speed = _MAX_SPEED * (front_gap / 0.5)
         else:
-            space_speed = 0.10                           # tight crawl
+            space_speed = 0.10
+        # Only crawl when squeezed on BOTH sides AND front tight
+        min_side = min(left_gap, right_gap)
+        if min_side < 0.05 and front_gap < 0.2:
+            space_speed = min(space_speed, 0.10)
 
         # --- Path curvature: slow down BEFORE turns, not during ---
         # Look 3-5 points ahead on path. If direction changes significantly,
@@ -1048,12 +1113,16 @@ class Go2VNavBridge(Node):
             vyaw = _YAW_GAIN_TRACK * dir_diff
 
         elif self._pf_turning:
-            # MODE 2: TURN IN PLACE — heading error > 60°
-            # Stop linear motion, rotate toward path. No strafe (prevents orbiting).
-            # Minimal forward creep for MPC gait engagement.
-            vx = 0.05
-            vy = 0.0
-            vyaw = _YAW_GAIN_TURN * dir_diff
+            # MODE 2: TURN — heading error > 60°
+            # If target nearly behind (>120°): reverse toward it instead of spinning
+            if abs_err > 2.1:  # >120° — target is behind
+                vx = -0.15     # reverse toward target
+                vy = 0.0
+                vyaw = _YAW_GAIN_TURN * dir_diff * 0.5  # gentler yaw while reversing
+            else:
+                vx = 0.05      # minimal forward creep for gait engagement
+                vy = 0.0
+                vyaw = _YAW_GAIN_TURN * dir_diff
 
         else:
             # MODE 1: TRACKING — heading error < 60°
@@ -1087,7 +1156,7 @@ class Go2VNavBridge(Node):
         # Scale push by (1 - forward_speed_ratio) so fast-moving robot
         # gets gentler lateral push (prevents tipping at speed).
         _speed_ratio = min(1.0, abs(self._pf_speed) / _MAX_SPEED)
-        _push_scale = 0.3 * (1.0 - 0.5 * _speed_ratio)  # 0.3 at stop, 0.15 at max speed
+        _push_scale = 0.15 * (1.0 - 0.5 * _speed_ratio)  # 0.15 at stop, 0.075 at max speed
 
         if left_gap < _COMFORT:
             push_strength = (_COMFORT - max(0, left_gap)) / _COMFORT
@@ -1146,7 +1215,7 @@ class Go2VNavBridge(Node):
                 f"PyPF[{mode}]: vx={self._pf_speed:.2f} vy={self._pf_lat:.2f} "
                 f"yr={self._pf_yawrate:.2f} endD={end_dis:.1f} "
                 f"err={math.degrees(dir_diff):.0f}° "
-                f"spd={space_speed:.1f} gap={min_gap:.2f}"
+                f"spd={space_speed:.1f} gap=F{front_gap:.2f}/L{left_gap:.2f}/R{right_gap:.2f}"
             )
 
     def _log_diagnostics(self) -> None:
@@ -1196,7 +1265,7 @@ class Go2VNavBridge(Node):
             else:
                 self._stuck_count = 0
 
-            if self._stuck_count == 2:  # 4s — request TARE replan
+            if self._stuck_count == 1:  # 2s — request TARE replan early
                 msg = PointStamped()
                 msg.header.stamp = self.get_clock().now().to_msg()
                 msg.header.frame_id = "map"
@@ -1209,10 +1278,10 @@ class Go2VNavBridge(Node):
                     f"Stuck 4s at ({odom.x:.1f},{odom.y:.1f}) — "
                     f"sent /reset_waypoint to TARE"
                 )
-            elif self._stuck_count == 4:  # 8s — sustained escape maneuver
+            elif self._stuck_count == 2:  # 4s — sustained escape maneuver
                 now = time.time()
                 front_d, left_d, right_d, back_d = self._scan_surroundings()
-                all_tight = front_d < 0.5 and left_d < 0.4 and right_d < 0.4
+                all_tight = front_d < 0.35 and left_d < 0.30 and right_d < 0.30
                 if all_tight and back_d > 0.5:
                     # Boxed in — sustained reverse is the only way out
                     self.get_logger().warn(

@@ -520,6 +520,8 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     # to TARE entirely. The nav stack drives at up to 0.8 m/s on its own.
 
     _prev_room: str | None = None
+    _start_time = time.monotonic()
+    _last_status_time = _start_time
 
     try:
         while not _explore_cancel.is_set():
@@ -530,7 +532,19 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                     break
 
                 x, y = float(pos[0]), float(pos[1])
+                elapsed = time.monotonic() - _start_time
                 room = _spatial_memory.nearest_room(x, y) if _spatial_memory else None
+
+                # Periodic status every 30s
+                if time.monotonic() - _last_status_time >= 30.0:
+                    _last_status_time = time.monotonic()
+                    _emit("status", {
+                        "elapsed_sec": round(elapsed),
+                        "rooms_found": len(_explore_visited),
+                        "total": _total,
+                        "position": [round(x, 1), round(y, 1)],
+                        "current_room": room or "?",
+                    })
 
                 # Record position in SceneGraph.
                 # Room counting is informational only — TARE decides when to stop.
@@ -607,6 +621,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                         "room": room,
                         "visited": len(_explore_visited),
                         "total": _total,
+                        "elapsed_sec": round(elapsed),
                         "all_rooms": sorted(_explore_visited),
                     })
 
@@ -638,23 +653,36 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
             except Exception:
                 pass
 
+            # Check if TARE declared exploration complete (all frontiers covered)
+            if os.path.exists("/tmp/vector_explore_finished"):
+                try:
+                    os.remove("/tmp/vector_explore_finished")
+                except OSError:
+                    pass
+                logger.info("[EXPLORE] TARE exploration complete — all frontiers covered")
+                _emit("complete", {
+                    "reason": "tare_finished",
+                    "rooms": sorted(_explore_visited),
+                    "total": _total,
+                    "elapsed_sec": round(time.monotonic() - _start_time),
+                })
+                break
+
             _explore_cancel.wait(timeout=_POSITION_SAMPLE_INTERVAL)
 
-        # TARE decides when exploration is complete (frontier-based coverage).
-        # We do NOT auto-stop based on room count — that kills TARE before
-        # it builds a complete V-Graph. User stops with "stop" command.
+        # Normal exit: user stopped or TARE finished
         if not _explore_cancel.is_set():
             _emit("stopped", {"reason": "finished", "rooms": sorted(_explore_visited)})
 
-        # Trigger terrain replay so FAR gets the accumulated map data
+    finally:
+        # Terrain replay fires on ALL exit paths (finish, cancel, crash)
+        # so FAR always gets accumulated map data for V-Graph building.
         try:
             with open("/tmp/vector_terrain_replay", "w") as f:
                 f.write("1")
             logger.info("[EXPLORE] Triggered terrain replay for FAR")
         except OSError:
             pass
-
-    finally:
         _explore_running = False
 
 

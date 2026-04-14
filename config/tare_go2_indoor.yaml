@@ -17,12 +17,12 @@ tare_planner_node:
     pub_momentum_activation_count_topic_ : momentum_activation_count
 
     kAutoStart : false
-    kRushHome : true
+    kRushHome : false
     kUseTerrainHeight : false
     kCheckTerrainCollision : true
     kExtendWayPoint : true
     kUseLineOfSightLookAheadPoint : true
-    kNoExplorationReturnHome : true
+    kNoExplorationReturnHome : false
     kExtendWayPointDistanceBig : 1.5
     kExtendWayPointDistanceSmall : 0.8
     kKeyposeCloudDwzFilterLeafSize : 0.05
@@ -81,7 +81,7 @@ tare_planner_node:
     kConnectivityHeightDiffThr : 0.25
     kGreedyViewPointSampleRange : 3
     kLocalPathOptimizationItrMax : 10
-    kViewPointCollisionMargin : 0.35
+    kViewPointCollisionMargin : 0.25
     kViewPointCollisionMarginZPlus : 0.25
     kViewPointCollisionMarginZMinus : 0.25
     kCollisionGridZScale : 1.0

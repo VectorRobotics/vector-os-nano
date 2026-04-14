@@ -82,7 +82,7 @@ _ARRIVAL_RADIUS: float = 0.5  # meters -- close enough to target (dead-reckoning
 _DOORCHAIN_ARRIVAL_RADIUS: float = 0.8  # meters -- arrival threshold for nav stack door-chain
 _DOORCHAIN_WAYPOINT_TIMEOUT: float = 30.0  # seconds per waypoint in door-chain nav stack mode
 
-_MIN_VISIT_COUNT: int = 3  # trust SceneGraph position only after N visits
+_MIN_VISIT_COUNT: int = 1  # trust SceneGraph position after first visit
 
 
 # ---------------------------------------------------------------------------
@@ -92,27 +92,74 @@ _MIN_VISIT_COUNT: int = 3  # trust SceneGraph position only after N visits
 def _resolve_room(name: str, sg: Any = None) -> str | None:
     """Resolve a room name/alias to canonical room key.
 
+    Matching priority:
+    1. Exact alias match ("master bedroom" → master_bedroom)
+    2. Canonical underscore form ("master_bedroom" → master_bedroom)
+    3. Fuzzy: input words match room_id parts ("master room" → master_bedroom)
+    4. Fuzzy: input is substring of alias or vice versa
+
     If sg is provided, verifies the resolved room exists in the SceneGraph.
-    If sg is None, returns canonical name based on alias match only.
-    Returns None if unknown or not found in SceneGraph.
+    Returns None if unknown or not found.
     """
     if not name:
         return None
     key = name.strip().lower().replace("_", " ")
     canonical = key.replace(" ", "_")
-    # Check alias first
+
+    # Priority 1: exact alias
     alias_result = _ROOM_ALIASES.get(key)
     if alias_result:
         canonical = alias_result
-    # If we have a SceneGraph, verify room exists there
+
+    # Check SceneGraph
     if sg is not None and hasattr(sg, "get_room"):
         if sg.get_room(canonical) is not None:
             return canonical
-        return None  # room not in SceneGraph
-    # No SceneGraph — return canonical if it looks valid (alias matched)
+        # Priority 3: fuzzy match against all rooms in SceneGraph
+        all_rooms = [r.room_id for r in sg.get_all_rooms()] if hasattr(sg, "get_all_rooms") else []
+        fuzzy = _fuzzy_room_match(key, all_rooms)
+        if fuzzy is not None:
+            return fuzzy
+        return None
+
+    # No SceneGraph — alias-only
     if alias_result or canonical in _ROOM_ALIASES.values():
         return canonical
     return None
+
+
+def _fuzzy_room_match(query: str, room_ids: list[str]) -> str | None:
+    """Find best room match using word overlap and substring matching.
+
+    "master room" → "master_bedroom" (word "master" matches)
+    "guest" → "guest_bedroom" (alias substring)
+    Ignores generic words like "room" to avoid false positives.
+    """
+    if not query or not room_ids:
+        return None
+    _STOP_WORDS = {"room", "the", "a", "to", "go", "去", "到"}
+    query_words = set(query.split()) - _STOP_WORDS
+    if not query_words:
+        return None
+    best, best_score = None, 0
+    for rid in room_ids:
+        rid_words = set(rid.replace("_", " ").split()) - _STOP_WORDS
+        # Word overlap score (meaningful words only)
+        overlap = len(query_words & rid_words)
+        # Substring match on the non-stopword query
+        query_clean = "".join(sorted(query_words))
+        rid_clean = rid.replace("_", "")
+        if query_clean in rid_clean or rid_clean in query_clean:
+            overlap += 2
+        # Check aliases that map to this room
+        for alias, target in _ROOM_ALIASES.items():
+            if target == rid:
+                if alias in query or query in alias:
+                    overlap += 1
+                    break
+        if overlap > best_score:
+            best, best_score = rid, overlap
+    return best if best_score > 0 else None
 
 
 def _angle_between(x1: float, y1: float, x2: float, y2: float) -> float:
