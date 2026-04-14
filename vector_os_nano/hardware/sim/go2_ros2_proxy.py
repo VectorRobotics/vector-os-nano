@@ -9,7 +9,7 @@ import math
 import os
 import time
 import logging
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -390,7 +390,11 @@ class Go2ROS2Proxy:
     # ------------------------------------------------------------------
 
     def navigate_to(
-        self, x: float, y: float, timeout: float = 60.0
+        self,
+        x: float,
+        y: float,
+        timeout: float = 60.0,
+        on_progress: Callable[[float, float], None] | None = None,
     ) -> bool:
         """Navigate to (x, y) via FAR planner global route planning.
 
@@ -473,6 +477,7 @@ class Go2ROS2Proxy:
         _last_diag = 0.0
         _last_dist = float("inf")  # for stall detection
         _stall_time = 0.0
+        _last_progress = time.time()
         while time.time() < deadline:
             # --- Cancel check: stop command removes nav flag ---
             if not os.path.exists("/tmp/vector_nav_active"):
@@ -481,11 +486,34 @@ class Go2ROS2Proxy:
                 self.set_velocity(0.0, 0.0, 0.0)
                 return False
 
+            # --- Abort check (cognitive layer) ---
+            try:
+                from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+                if is_abort_requested():
+                    logger.info("[NAV] Abort requested — cancelling navigate_to")
+                    self._nav_goal = None
+                    return False
+            except ImportError:
+                pass
+
+            # --- Stall flag written by bridge _stuck_detector ---
+            if os.path.exists("/tmp/vector_nav_stalled"):
+                os.remove("/tmp/vector_nav_stalled")
+                logger.warning("[NAV] Stall flag detected — aborting navigate_to")
+                self._nav_goal = None
+                return False
+
             self._publish_goal_point(x, y)
             time.sleep(0.5)
 
             pos = self.get_position()
             dist = math.sqrt((pos[0] - x) ** 2 + (pos[1] - y) ** 2)
+
+            # --- Progress callback every 2s ---
+            now = time.time()
+            if on_progress is not None and now - _last_progress >= 2.0:
+                _last_progress = now
+                on_progress(dist, now - start_time)
 
             # --- Stall detection: if not getting closer, fall back to door-chain ---
             if dist < _last_dist - 0.1:

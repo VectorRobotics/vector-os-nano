@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
+import sys
 from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
@@ -460,7 +461,16 @@ class NavigateSkill:
             room_key, target[0], target[1],
         )
 
-        nav_result = context.base.navigate_to(target[0], target[1], timeout=45.0)
+        def _progress(dist: float, elapsed: float) -> None:
+            print(
+                f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed)}s",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        nav_result = context.base.navigate_to(
+            target[0], target[1], timeout=45.0, on_progress=_progress
+        )
 
         pos = context.base.get_position()
         dist = _distance(pos[0], pos[1], target[0], target[1])
@@ -617,7 +627,26 @@ class NavigateSkill:
                 continue
 
             logger.info("[NAV] Navigate to waypoint %s (%.1f, %.1f)", label, wx, wy)
-            ok = base.navigate_to(float(wx), float(wy), timeout=_DOORCHAIN_WAYPOINT_TIMEOUT)
+            cur_pos2 = base.get_position()
+            seg_dist = _distance(cur_pos2[0], cur_pos2[1], wx, wy)
+            print(
+                f"  >> 前往 {label} (距离 {seg_dist:.1f}m)",
+                file=sys.stderr,
+                flush=True,
+            )
+
+            def _progress(dist: float, elapsed: float) -> None:
+                print(
+                    f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed)}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            ok = base.navigate_to(
+                float(wx), float(wy),
+                timeout=_DOORCHAIN_WAYPOINT_TIMEOUT,
+                on_progress=_progress,
+            )
             if not ok:
                 # navigate_to returned False — timed out or rejected by nav stack
                 return SkillResult(
