@@ -4,7 +4,7 @@
 **Version:** v2.0-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
 
-## v2.0 架构统一 — Wave 1 完成
+## v2.0 架构统一 — Wave 1-3 完成
 
 ### 改了什么
 
@@ -73,9 +73,34 @@ vector-os-mcp     # MCP 服务器（Claude Code 用）
 - MCP 测试 52/52 通过
 - 0 个新回归
 
-## 下一步: v2.0 Wave 2 — Abort 信号
+## Wave 2: Abort 信号 — 完成
 
-全局 abort 信号：stop 命令 <100ms 中断 VGG 执行。统一架构后只需实现一次。
+- 全局 abort 模块 (vcli/cognitive/abort.py)
+- P0 stop 绕过: "stop/停/halt/freeze/别动/停止" 硬编码匹配, <100ms, 不走 LLM
+- VGGHarness + GoalExecutor + navigate + explore 全部检查 abort
+- async skill wait: explore 完成才执行下一步
+- 14 个测试全通过
+
+## Wave 3: 全栈升级 — 完成
+
+### 导航可靠性 (A1-A5)
+- Nav stack 健康监控 (5s poll, 崩溃自动重启)
+- 单一 TARE 启动 (explore 不再重复启动 TARE)
+- 卡死检测 30s 上限 (写 /tmp/vector_nav_stalled)
+- navigate_to 全局超时 + abort 检查
+- door-chain 超时动态分配 (remaining / n_waypoints, min 5s)
+
+### 反馈可观测性 (B1-B4)
+- 导航进度回调 (每 2s: "距目标 3.2m, 已走 6s")
+- 探索进度每 5s 报告 (rooms_found, position, elapsed)
+- Camera/depth 时间戳 + >1s 过期警告
+
+### 引擎质量 (C1-C6)
+- config/nav.yaml: 8 个可调参数 (ceiling, arrival, timeout, stall...)
+- GoalDecomposer prompt caching (cache_control ephemeral + instance cache)
+- World context 5s TTL 缓存 (emergency stop 失效)
+- 日志轮转 (5MB 截断)
+- VGG init 每组件独立 try/except + 命名错误日志
 
 ## VGG: Verified Goal Graph
 
@@ -160,4 +185,4 @@ vector-cli → "启动仿真" → MuJoCo Go2 + 室内环境
 
 - VGG complex decomposition quality depends on LLM model
 - Real-world room detection needs SLAM + spatial understanding
-- stop 命令无法中断 VGG 执行（Wave 2 修复）
+- C4 session 智能压缩尚未实现（低优先级，可后续迭代）
