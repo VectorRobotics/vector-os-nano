@@ -1,8 +1,8 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-11
-**Version:** v1.7.0-dev
-**Branch:** gazebo-better-render
+**Last updated:** 2026-04-14
+**Version:** v1.8.0
+**Branch:** master (merged from gazebo-better-render)
 
 ## VGG: Verified Goal Graph — Complete Framework
 
@@ -205,20 +205,14 @@ MuJoCo 3.6.0 支持:
 
 归档在 `web-viz-Isaac-sim` 分支。cmd_vel 链路未通。
 
-## FAR V-Graph 调参记录 (2026-04-09)
+## FAR V-Graph 配置 (2026-04-14, fixed)
 
-根本原因: `new_intensity_thred: 2.0` — bridge 的 intensity = height above ground，ceiling filter 1.8m 导致所有点 < 2.0，FAR 不认为有"新"障碍物 → V-Graph 不建。改为 0.5 后数据层有改善。
+`config/far_go2_indoor.yaml` 关键参数:
+- `new_intensity_thred: 0.5` — bridge intensity = height above ground, 1.8m ceiling filter后所有点<1.8, 阈值必须<1.0
+- `dynamic_obs_dacay_time: 999999` — 静态室内，障碍物数据不需要衰减
+- `connect_votes_size: 5` — 加速V-Graph边建立（原始10太慢）
 
-调参尝试:
-- `is_static_env: true` → 让 FAR 行为更差（obs 归零），不要用
-- 降低 `connect_votes_size` 10→3, `node_finalize_thred` 6→3 → 效果不明显
-- 增大 `dynamic_obs_dacay_time` 2→30, `new_points_decay_time` 1→15 → 效果更差
-
-最终配置: 只改 `new_intensity_thred: 0.5`，其余保持原始值。
-
-实际状态: FAR 数据层在工作 — `/free_paths` 18k-60k 点持续发布，`/global_path` 5-58 poses。V-Graph edges 存在但 RViz 看不到（PointCloud2 用 2px Points 渲染，不是线段）。
-
-结论: 不是 FAR 不工作，是 RViz 不适合显示 V-Graph。→ 自建 Web 可视化。
+FAR数据层正常: `/free_paths` 18k-60k点, `/global_path` 5-58 poses。
 
 ## Known Limitations
 
