@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import math
 import sys
+import time
 from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
@@ -553,13 +554,18 @@ class NavigateSkill:
             },
         )
 
-    def _dead_reckoning(self, room_key: str, context: SkillContext) -> SkillResult:
+    def _dead_reckoning(
+        self,
+        room_key: str,
+        context: SkillContext,
+        total_timeout: float = 45.0,
+    ) -> SkillResult:
         """Navigate via nav stack door chain using SceneGraph waypoints.
 
         Publishes each waypoint to /way_point via base.navigate_to() so the
-        localPlanner handles obstacle avoidance.  Each waypoint has a
-        _DOORCHAIN_WAYPOINT_TIMEOUT second budget; arrival is confirmed when
-        the robot is within _DOORCHAIN_ARRIVAL_RADIUS meters of the target.
+        localPlanner handles obstacle avoidance.  The total_timeout budget is
+        divided dynamically across remaining waypoints (min 5s each); arrival
+        is confirmed when within _DOORCHAIN_ARRIVAL_RADIUS meters of target.
         """
         base = context.base
         sg = context.services.get("spatial_memory")
@@ -607,7 +613,11 @@ class NavigateSkill:
             )
 
         # Execute each waypoint via nav stack (obstacle avoidance)
-        for wx, wy, label in waypoints:
+        # Dynamic per-waypoint timeout: divide remaining budget evenly across
+        # remaining waypoints, but never less than 5s per waypoint.
+        start_time = time.monotonic()
+
+        for i, (wx, wy, label) in enumerate(waypoints):
             # --- Abort check between waypoints ---
             try:
                 from vector_os_nano.vcli.cognitive.abort import is_abort_requested
@@ -620,13 +630,28 @@ class NavigateSkill:
             except ImportError:
                 pass
 
+            # Compute remaining budget for this waypoint
+            elapsed = time.monotonic() - start_time
+            remaining = total_timeout - elapsed
+            if remaining <= 0:
+                return SkillResult(
+                    success=False,
+                    error_message="Navigation timeout",
+                    diagnosis_code="navigation_failed",
+                )
+            n_remaining = len(waypoints) - i
+            per_wp = max(remaining / n_remaining, 5.0)
+
             # Check arrival before sending — skip waypoint if already close enough
             cur_pos = base.get_position()
             if _distance(cur_pos[0], cur_pos[1], wx, wy) < _DOORCHAIN_ARRIVAL_RADIUS:
                 logger.info("[NAV] Already within %.1fm of %s — skipping", _DOORCHAIN_ARRIVAL_RADIUS, label)
                 continue
 
-            logger.info("[NAV] Navigate to waypoint %s (%.1f, %.1f)", label, wx, wy)
+            logger.info(
+                "[NAV] Navigate to waypoint %s (%.1f, %.1f) timeout=%.0fs",
+                label, wx, wy, per_wp,
+            )
             cur_pos2 = base.get_position()
             seg_dist = _distance(cur_pos2[0], cur_pos2[1], wx, wy)
             print(
@@ -635,16 +660,16 @@ class NavigateSkill:
                 flush=True,
             )
 
-            def _progress(dist: float, elapsed: float) -> None:
+            def _progress(dist: float, elapsed_s: float) -> None:
                 print(
-                    f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed)}s",
+                    f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed_s)}s",
                     file=sys.stderr,
                     flush=True,
                 )
 
             ok = base.navigate_to(
                 float(wx), float(wy),
-                timeout=_DOORCHAIN_WAYPOINT_TIMEOUT,
+                timeout=per_wp,
                 on_progress=_progress,
             )
             if not ok:

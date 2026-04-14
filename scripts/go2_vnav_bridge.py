@@ -291,6 +291,7 @@ class Go2VNavBridge(Node):
         self._stuck_pos = None       # (x, y) at last check
         self._stuck_count = 0        # consecutive checks with < 0.3m progress
         self._stuck_history: list = []  # (x, y) positions where /reset_waypoint was sent
+        self._stuck_wall_clock: float = 0.0  # wall-clock time when first stuck detected
         self._reset_waypoint_pub = self.create_publisher(
             PointStamped, "/reset_waypoint", 5
         )
@@ -1290,6 +1291,7 @@ class Go2VNavBridge(Node):
         if not self._nav_enabled:
             self._stuck_count = 0
             self._stuck_pos = None
+            self._stuck_wall_clock = 0.0
             return
 
         odom = self._go2.get_odometry()
@@ -1301,9 +1303,31 @@ class Go2VNavBridge(Node):
             moved = math.sqrt(dx * dx + dy * dy)
 
             if moved < 0.1:
+                if self._stuck_count == 0:
+                    # First stuck tick — record wall-clock start
+                    self._stuck_wall_clock = time.time()
                 self._stuck_count += 1
+
+                # Wall-clock ceiling: abort navigation if stalled too long
+                _stall_timeout: float = _nav("stall_timeout", 30.0)
+                if self._stuck_wall_clock > 0.0 and (time.time() - self._stuck_wall_clock) > _stall_timeout:
+                    self.get_logger().error(
+                        "[NAV] Stalled for %.0fs, aborting navigation", _stall_timeout
+                    )
+                    self._go2.set_velocity(0.0, 0.0, 0.0)
+                    try:
+                        with open("/tmp/vector_nav_stalled", "w") as fh:
+                            fh.write("1")
+                    except OSError as exc:
+                        self.get_logger().warn(f"[NAV] Could not write stall flag: {exc}")
+                    # Reset stuck state so we don't fire again immediately
+                    self._stuck_count = 0
+                    self._stuck_pos = None
+                    self._stuck_wall_clock = 0.0
+                    return
             else:
                 self._stuck_count = 0
+                self._stuck_wall_clock = 0.0
 
             if self._stuck_count == 1:  # 2s — request TARE replan early
                 msg = PointStamped()
@@ -1340,6 +1364,7 @@ class Go2VNavBridge(Node):
                     self._wall_escape_until = now + _escape_dur  # strafe until end
                 self._current_path = []
                 self._stuck_count = 0
+                self._stuck_wall_clock = 0.0
                 self._stuck_history.append((odom.x, odom.y))
 
                 # Stuck loop: 3+ escapes at same spot → longer escape

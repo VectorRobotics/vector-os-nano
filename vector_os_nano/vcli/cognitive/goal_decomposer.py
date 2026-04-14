@@ -239,6 +239,8 @@ Response:
         """
         self._backend = backend
         self._template_library = template_library
+        # Cached system prompt — built once per instance, reused across decompose() calls.
+        self._cached_system_prompt: list[dict[str, Any]] | None = None
         # Build strategies from actual registered skills
         if skill_registry is not None:
             try:
@@ -278,7 +280,9 @@ Response:
             except Exception as exc:  # noqa: BLE001
                 _LOG.warning("GoalDecomposer: template_library match/instantiate failed: %s", exc)
 
-        system = self._build_system_prompt()
+        if self._cached_system_prompt is None:
+            self._cached_system_prompt = self._build_system_prompt()
+        system = self._cached_system_prompt
         messages = self._build_messages(task, world_context)
 
         try:
@@ -348,7 +352,13 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
 ## Example
 {self._EXAMPLE}
 """
-        return [{"type": "text", "text": text}]
+        return [
+            {
+                "type": "text",
+                "text": text,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
     def _build_messages(self, task: str, world_context: str) -> list[dict[str, Any]]:
         """Build the user messages list."""

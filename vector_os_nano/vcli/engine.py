@@ -165,6 +165,12 @@ class VectorEngine:
         self._goal_decomposer: Any = None
         self._goal_executor: Any = None
 
+        # World context cache — avoids repeated sensor/graph queries when robot is static
+        _WORLD_CONTEXT_TTL: float = 5.0  # seconds
+        self._world_context_ttl: float = _WORLD_CONTEXT_TTL
+        self._world_context_cache: str | None = None
+        self._world_context_ts: float = 0.0
+
     # ------------------------------------------------------------------
     # VGG — optional cognitive pipeline
     # ------------------------------------------------------------------
@@ -543,11 +549,25 @@ class VectorEngine:
         self._vgg_thread = t
 
     def _build_world_context(self) -> str:
-        """Build a brief world context string for the GoalDecomposer."""
+        """Build a brief world context string for the GoalDecomposer.
+
+        Results are cached for _world_context_ttl seconds to avoid repeated
+        sensor/graph queries when the robot has not moved.
+        """
+        now = time.monotonic()
+        if (
+            self._world_context_cache is not None
+            and now - self._world_context_ts < self._world_context_ttl
+        ):
+            return self._world_context_cache
+
         parts: list[str] = []
         agent = getattr(self, "_vgg_agent", None)
         if agent is None:
-            return ""
+            result = ""
+            self._world_context_cache = result
+            self._world_context_ts = now
+            return result
         base = getattr(agent, "_base", None)
         sg = getattr(agent, "_spatial_memory", None)
         if base:
@@ -575,7 +595,10 @@ class VectorEngine:
                     parts.append(f"Known rooms: {', '.join(rooms)}")
             except Exception:
                 pass
-        return "\n".join(parts) if parts else ""
+        result = "\n".join(parts) if parts else ""
+        self._world_context_cache = result
+        self._world_context_ts = now
+        return result
 
     def _emergency_stop(
         self,
@@ -587,6 +610,9 @@ class VectorEngine:
         """P0 stop bypass — execute StopSkill directly, no LLM call."""
         from vector_os_nano.vcli.cognitive.abort import request_abort
         request_abort()
+
+        # Invalidate world context cache — robot state changes after a stop
+        self._world_context_cache = None
 
         # Kill any running VGG thread
         cancel_ev = getattr(self, "_vgg_cancel", None)
