@@ -219,8 +219,23 @@ def render_response(text: str, width: int = 80) -> Panel:
     )
 
 
+def _strip_markdown(raw: str) -> str:
+    """Strip markdown formatting that should not appear in terminal output."""
+    # Bold: **text** or __text__
+    raw = re.sub(r"\*\*(.+?)\*\*", r"\1", raw)
+    raw = re.sub(r"__(.+?)__", r"\1", raw)
+    # Italic: *text* (single)
+    raw = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", raw)
+    # Headers: # ## ###
+    raw = re.sub(r"^#{1,3}\s+", "", raw, flags=re.MULTILINE)
+    # Horizontal rules
+    raw = re.sub(r"^---+\s*$", "", raw, flags=re.MULTILINE)
+    return raw
+
+
 def _append_highlighted_text(target: Text, raw: str) -> None:
     """Append text with file paths in teal and `inline code` highlighted."""
+    raw = _strip_markdown(raw)
     last = 0
     # Merge path and inline code patterns, process in order
     for m in re.finditer(r"(?P<path>(?<!\w)/[\w./\-_]+\.\w+)|(?P<code>`[^`]+`)", raw):
@@ -1068,25 +1083,34 @@ def main(argv: list[str] | None = None) -> None:
     _vgg_total = [0]
 
     def _vgg_step_display(step: Any) -> None:
-        """Print VGG step progress to console."""
+        """Print VGG step progress to console — human-readable."""
         _vgg_step_idx[0] += 1
         idx = _vgg_step_idx[0]
         total = _vgg_total[0]
         name = getattr(step, "sub_goal_name", "?")
         strategy = getattr(step, "strategy", "?")
         success = getattr(step, "success", False)
-        verify = getattr(step, "verify_result", False)
         dur = getattr(step, "duration_sec", 0.0)
         fallback = getattr(step, "fallback_used", False)
         err = getattr(step, "error", "")
 
-        tag = "[green]ok[/]" if success else "[red]fail[/]"
-        verify_tag = "[green]verified[/]" if verify else "[red]unverified[/]"
-        fb_tag = " [yellow](fallback)[/]" if fallback else ""
-        err_tag = f" [red]{err}[/]" if err and not success else ""
+        prefix = f"[{idx}/{total}]" if total > 0 else ""
 
-        prefix = f"[{idx}/{total}] " if total > 0 else ""
-        console.print(f"  [{TEAL}]>[/] {prefix}{name} via {strategy} ... {tag} {verify_tag}{fb_tag}{err_tag} [dim]{dur:.1f}s[/]")
+        if success:
+            console.print(f"  [{TEAL}]>[/] {prefix} {name} [green]done[/] [dim]{dur:.1f}s[/]")
+        elif err == "aborted":
+            console.print(f"  [{TEAL}]>[/] {prefix} {name} [yellow]aborted[/]")
+        else:
+            # Translate common errors to friendly messages
+            friendly = err
+            if "No rooms learned" in err or "room_not_explored" in err:
+                friendly = "no map yet — run explore first"
+            elif "navigation_failed" in err or "timed out" in err:
+                friendly = "navigation timed out"
+            elif "Skill not found" in err:
+                friendly = f"skill not available: {strategy}"
+            fb_tag = " [dim](tried fallback)[/]" if fallback else ""
+            console.print(f"  [{TEAL}]>[/] {prefix} {name} [red]failed[/] — {friendly}{fb_tag} [dim]{dur:.1f}s[/]")
 
     try:
         engine.init_vgg(
@@ -1362,8 +1386,13 @@ def main(argv: list[str] | None = None) -> None:
                     def _on_vgg_complete(trace: Any) -> None:
                         n_steps = len(trace.steps)
                         n_ok = sum(1 for s in trace.steps if s.success)
-                        tag = "[green]complete[/]" if trace.success else "[red]incomplete[/]"
-                        console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {tag}: {n_ok}/{n_steps} verified ({trace.total_duration_sec:.1f}s)")
+                        dur = trace.total_duration_sec
+                        if trace.success:
+                            console.print(f"  [{TEAL}]>[/] [green]all {n_steps} steps done[/] [dim]{dur:.1f}s[/]")
+                        elif n_ok > 0:
+                            console.print(f"  [{TEAL}]>[/] [yellow]{n_ok}/{n_steps} steps done[/], rest failed [dim]{dur:.1f}s[/]")
+                        else:
+                            console.print(f"  [{TEAL}]>[/] [red]task failed[/] — 0/{n_steps} steps succeeded [dim]{dur:.1f}s[/]")
 
                         # Record in session
                         step_summary = "\n".join(
