@@ -87,7 +87,7 @@ _SIM_DT: float = 1.0 / _SIM_HZ
 _CTRL_HZ: int = 200
 _CTRL_DECIM: int = _SIM_HZ // _CTRL_HZ
 
-_VIEWER_SYNC_EVERY: int = 8
+_VIEWER_SYNC_EVERY: int = 30
 
 # ---------------------------------------------------------------------------
 # Constants — sinusoidal trotting gait
@@ -939,7 +939,7 @@ class MuJoCoGo2:
         # With 20° downward tilt → world frame: -27° to +32°
         # This gives both ground hits (below horizontal) and wall hits (above)
         n_azimuth = 360
-        elevations = list(range(-7, 53, 2))  # -7° to +52° in 2° steps = 30 rings
+        elevations = list(range(-8, 53, 2))  # -8° to +52° in 2° steps, includes 0° for 2D scan
         mid_ring_ranges: list[float] = []
         points_3d: list[tuple[float, float, float, float]] = []
 
