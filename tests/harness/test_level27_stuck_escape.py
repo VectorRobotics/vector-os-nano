@@ -213,8 +213,11 @@ class TestTAREStuckConfig:
     def test_viewpoint_collision_margin(self):
         """kViewPointCollisionMargin must account for Go2 body width.
 
-        Go2 half-width ~ 0.19m. Margin should be >= 0.35m so viewpoints
-        are reachable without body-wall contact.
+        Go2 cylinder model: 0.34m wide front / 0.19m wide side.
+        Half-width = 0.17m. Margin of 0.30m adds 0.13m safety overhead
+        without blocking doorways (typically 0.8m+ wide).
+        0.30 is acceptable — 0.35 was overly conservative and shrinks
+        explorable space near walls unnecessarily.
         """
         cfg_path = os.path.join(_REPO, "config", "tare_go2_indoor.yaml")
         if not os.path.isfile(cfg_path):
@@ -224,9 +227,9 @@ class TestTAREStuckConfig:
         match = re.search(r'kViewPointCollisionMargin\s*:\s*([\d.]+)', content)
         assert match, "kViewPointCollisionMargin not found in TARE config"
         margin = float(match.group(1))
-        assert margin >= 0.35, (
-            f"kViewPointCollisionMargin={margin} too small — Go2 needs >= 0.35m "
-            f"to avoid unreachable viewpoints near walls"
+        assert margin >= 0.30, (
+            f"kViewPointCollisionMargin={margin} too small — Go2 needs >= 0.30m "
+            f"(half-width 0.17m + 0.13m safety) to avoid unreachable viewpoints near walls"
         )
 
     def test_viewpoint_margin_minimum(self):

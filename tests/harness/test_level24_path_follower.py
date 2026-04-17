@@ -27,9 +27,9 @@ class TestOmnidirectionalFollower:
         assert "pure forward tracking" in src.lower() or "< 0.52" in src
 
     def test_heading_gated_acceleration(self):
-        """Forward speed only when heading is aligned (C++ pure pursuit port)."""
+        """Forward speed only when heading is aligned (two-mode controller)."""
         src = _read_bridge()
-        assert "heading_ok" in src or "DIR_DIFF_THRE" in src
+        assert "_TRACK_THRE" in src or "_TRACK_RESUME" in src
 
     def test_strafe_for_moderate_error(self):
         """Uses lateral strafe when direction error is 30-90 degrees."""
@@ -53,7 +53,7 @@ class TestReactiveWallAvoidance:
     def test_front_safety_boundary(self):
         """When obstacle ahead within safety envelope, vx is reduced/stopped."""
         src = _read_bridge()
-        assert "front_d" in src and ("safe_front" in src or "SAFE_FRONT" in src or "BODY_FRONT" in src)
+        assert "front_gap" in src and ("_COMFORT" in src or "_DANGER" in src)
 
 
 class TestStuckRecovery:

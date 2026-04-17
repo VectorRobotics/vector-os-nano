@@ -185,7 +185,9 @@ class TestWanderBehavior:
         stopper = threading.Thread(target=_cancel_after_delay, daemon=True)
         stopper.start()
 
-        with patch.object(_explore, "_start_tare", return_value=False):
+        # _start_tare must return True (TARE running) to get past the guard
+        # clause. Patching subprocess.run makes pgrep return 0 → tare found.
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with patch("time.sleep", return_value=None):
                 _explore._exploration_loop(base, has_bridge=True)
 
@@ -203,7 +205,8 @@ class TestWanderBehavior:
         stopper = threading.Thread(target=_cancel_after, daemon=True)
         stopper.start()
 
-        with patch.object(_explore, "_start_tare", return_value=False):
+        # Must get past _start_tare guard to verify main loop behavior.
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with patch("time.sleep", return_value=None):
                 _explore._exploration_loop(base, has_bridge=True)
 
@@ -367,7 +370,7 @@ class TestExploreLoopContinuity:
 
         base.get_position = _pos
 
-        with patch.object(_explore, "_start_tare", return_value=False):
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with patch("time.sleep", return_value=None):
                 _explore._exploration_loop(base, has_bridge=True)
 
@@ -383,7 +386,7 @@ class TestExploreLoopContinuity:
 
         base.get_position = _pos
 
-        with patch.object(_explore, "_start_tare", return_value=False):
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with patch("time.sleep", return_value=None):
                 _explore._exploration_loop(base, has_bridge=True)
 
@@ -400,16 +403,11 @@ class TestExploreLoopContinuity:
 
         _explore._on_event = _on_event
 
-        with patch.object(_explore, "_start_tare", return_value=False):
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with patch("time.sleep", return_value=None):
                 _explore._exploration_loop(base, has_bridge=True)
 
         assert "stopped" in events
-        stopped_data = next(
-            (d for e, d in zip(events, [None])
-             if e == "stopped"), None
-        )
-        # Just check the event was emitted
         assert events.count("stopped") >= 1
 
     def test_room_entered_event_on_new_room(self):
@@ -472,7 +470,7 @@ class TestExploreLoopContinuity:
 
         base.get_position = _pos
 
-        with patch.object(_explore, "_start_tare", return_value=False):
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with patch("time.sleep", return_value=None):
                 _explore._exploration_loop(base, has_bridge=True)
 

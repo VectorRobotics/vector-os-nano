@@ -208,14 +208,15 @@ class TestBridgeTerrainWiring:
         assert "PointCloud2" in replay_body or "_pc_pub.publish" in replay_body
 
     def test_replay_frame_is_map(self):
-        """Replay publishes in 'map' frame (matching /registered_scan)."""
+        """Replay publishes in 'map' frame — set by _build_terrain_pc2 helper."""
         src = read_bridge_source()
-        replay_start = src.find("def _replay_terrain")
-        if replay_start < 0:
-            pytest.skip("_replay_terrain not found")
-        replay_end = src.find("\n    def ", replay_start + 1)
-        replay_body = src[replay_start:replay_end]
-        assert '"map"' in replay_body
+        # _replay_terrain delegates frame setup to _build_terrain_pc2
+        helper_start = src.find("def _build_terrain_pc2")
+        if helper_start < 0:
+            pytest.fail("_build_terrain_pc2 not found")
+        helper_end = src.find("\n    def ", helper_start + 1)
+        helper_body = src[helper_start:helper_end]
+        assert '"map"' in helper_body
 
 
 class TestClearMemoryTerrain:

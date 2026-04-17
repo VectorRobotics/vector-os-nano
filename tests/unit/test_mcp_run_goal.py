@@ -46,50 +46,9 @@ class TestRunGoalMCPTool:
         assert props["max_iterations"]["default"] == 10
         assert props["verify"]["default"] is True
 
-    def test_format_goal_result(self):
-        from vector_os_nano.mcp.tools import _format_goal_result
-        from vector_os_nano.core.types import GoalResult, ActionRecord
+    def test_format_vgg_trace_none(self):
+        from vector_os_nano.mcp.tools import _format_vgg_trace
 
-        result = GoalResult(
-            success=True,
-            goal="clean",
-            iterations=3,
-            total_duration_sec=10.0,
-            actions=[
-                ActionRecord(iteration=0, action="pick", skill_success=True)
-            ],
-            summary="Done.",
-            final_world_state={"objects": []},
-        )
-        raw = _format_goal_result(result)
-        data = json.loads(raw)
-        assert data["success"] is True
-        assert data["goal"] == "clean"
-        assert len(data["actions"]) == 1
-        assert data["actions"][0]["action"] == "pick"
-
-    def test_format_goal_result_failure(self):
-        from vector_os_nano.mcp.tools import _format_goal_result
-        from vector_os_nano.core.types import GoalResult
-
-        result = GoalResult(
-            success=False,
-            goal="fail task",
-            iterations=10,
-            total_duration_sec=30.0,
-            actions=[],
-            summary="Max iterations reached.",
-            final_world_state={},
-        )
-        raw = _format_goal_result(result)
-        data = json.loads(raw)
+        result = _format_vgg_trace(None)
+        data = json.loads(result)
         assert data["success"] is False
-        assert data["iterations"] == 10
-        assert "Max iterations" in data["summary"]
-
-    def test_format_goal_result_non_goal_result(self):
-        """Non-GoalResult input is returned as str()."""
-        from vector_os_nano.mcp.tools import _format_goal_result
-
-        assert _format_goal_result("already a string") == "already a string"
-        assert _format_goal_result(42) == "42"

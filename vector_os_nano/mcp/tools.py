@@ -7,6 +7,8 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.vcli.engine import VectorEngine
+    from vector_os_nano.vcli.session import Session
 
 
 def skills_to_mcp_tools(registry: SkillRegistry) -> list[dict]:
@@ -90,8 +92,8 @@ def build_diagnostics_tool() -> dict:
 def build_natural_language_tool() -> dict:
     """Build the natural_language meta-tool definition.
 
-    This tool passes free-form text through the full agent pipeline
-    (MATCH -> CLASSIFY -> PLAN -> EXECUTE -> ADAPT -> SUMMARIZE).
+    This tool passes free-form text through the full VectorEngine pipeline
+    (run_turn -> LLM tool_use loop -> TurnResult).
     """
     return {
         "name": "natural_language",
@@ -190,19 +192,24 @@ def skill_schema_to_mcp_tool(schema: dict) -> dict:
 
 
 async def handle_tool_call(
-    agent: Agent, tool_name: str, arguments: dict[str, Any]
+    agent: Agent,
+    engine: VectorEngine,
+    session: Session,
+    tool_name: str,
+    arguments: dict[str, Any],
 ) -> str:
-    """Handle an MCP tool call by routing to the appropriate skill or agent pipeline.
+    """Handle an MCP tool call by routing to the appropriate VectorEngine path.
 
-    If tool_name == "natural_language":
-        Run agent.execute(arguments["instruction"]) through full pipeline.
-    Else:
-        Build a skill instruction string and run through agent.execute().
+    Routing:
+    - "diagnostics"      -> read hardware state from agent directly
+    - "debug_perception" -> read perception pipeline from agent directly
+    - "run_goal"         -> engine.vgg_decompose + engine.vgg_execute
+    - "natural_language" -> engine.run_turn(instruction, session) -> TurnResult.text
+    - direct skill       -> engine.run_turn(f"{skill} {args}", session) -> TurnResult.text
 
-    Note: agent.execute() is synchronous, so this wraps it with asyncio.to_thread().
+    Note: engine.run_turn() is synchronous; wrapped with asyncio.to_thread().
 
-    Returns a structured JSON string for ExecutionResult, or plain text for
-    diagnostics / string responses.
+    Returns a string suitable for MCP TextContent.
     """
     import asyncio
 
@@ -215,24 +222,66 @@ async def handle_tool_call(
 
     if tool_name == "run_goal":
         goal = arguments.get("goal", "")
-        max_iter = arguments.get("max_iterations", 10)
-        verify = arguments.get("verify", True)
-        result = await asyncio.to_thread(
-            agent.run_goal, goal, max_iterations=max_iter, verify=verify
-        )
-        return _format_goal_result(result)
+        return await asyncio.to_thread(_run_goal_via_vgg, engine, goal)
 
     if tool_name == "natural_language":
         instruction = arguments.get("instruction", "")
-        result = await asyncio.to_thread(agent.execute, instruction)
-        world_state = agent.world.to_dict() if agent.world else None
-        return _format_execution_result(instruction, result, world_state=world_state)
+        turn_result = await asyncio.to_thread(engine.run_turn, instruction, session)
+        return turn_result.text
 
-    # Direct skill call: use structured params (bypasses string parsing)
-    result = await asyncio.to_thread(agent.execute_skill, tool_name, arguments)
-    label = _build_skill_instruction(tool_name, arguments)
-    world_state = agent.world.to_dict() if agent.world else None
-    return _format_execution_result(label, result, world_state=world_state)
+    # Direct skill call: build natural language instruction string and run through engine
+    instruction = _build_skill_instruction(tool_name, arguments)
+    turn_result = await asyncio.to_thread(engine.run_turn, instruction, session)
+    return turn_result.text
+
+
+def _run_goal_via_vgg(engine: Any, goal: str) -> str:
+    """Decompose a goal via VGG and execute it. Returns formatted trace as JSON string."""
+    tree = engine.vgg_decompose(goal)
+    if tree is None:
+        # VGG not available or goal not suitable — fall back to run_turn without session
+        # (MCP goal calls don't have a persistent session to pass here)
+        return f"VGG not available for goal: {goal!r}. Use natural_language tool instead."
+    try:
+        trace = engine.vgg_execute(tree)
+        return _format_vgg_trace(trace)
+    except Exception as exc:
+        return f"VGG execution failed: {exc}"
+
+
+def _format_vgg_trace(trace: Any) -> str:
+    """Format an ExecutionTrace from VGG into a JSON string for MCP consumers."""
+    import json
+
+    if trace is None:
+        return json.dumps({"success": False, "error": "No trace returned"})
+
+    # ExecutionTrace is a dataclass — convert to dict
+    try:
+        if hasattr(trace, "to_dict"):
+            return json.dumps(trace.to_dict(), ensure_ascii=False, indent=2)
+
+        # Fallback: manual serialisation
+        result: dict[str, Any] = {}
+        if hasattr(trace, "success"):
+            result["success"] = trace.success
+        if hasattr(trace, "goal"):
+            result["goal"] = trace.goal
+        if hasattr(trace, "steps"):
+            steps = []
+            for s in trace.steps:
+                step: dict[str, Any] = {}
+                for attr in ("name", "status", "error", "duration_sec", "result"):
+                    val = getattr(s, attr, None)
+                    if val is not None:
+                        step[attr] = val
+                steps.append(step)
+            result["steps"] = steps
+        if hasattr(trace, "error"):
+            result["error"] = trace.error
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        return json.dumps({"success": False, "error": f"Trace serialisation failed: {exc}"})
 
 
 def _run_debug_perception(agent: Agent, query: str) -> str:
@@ -469,69 +518,3 @@ def _build_skill_instruction(skill_name: str, arguments: dict[str, Any]) -> str:
             parts.append(str(value))
 
     return " ".join(parts)
-
-
-def _format_execution_result(
-    instruction: str, result: Any, world_state: dict | None = None
-) -> str:
-    """Format ExecutionResult as structured JSON for MCP consumers.
-
-    Returns JSON string with per-step diagnostics, world state, and robot state.
-    Falls back to plain text for non-ExecutionResult inputs (backward compat).
-    """
-    if isinstance(result, str):
-        return result
-
-    from vector_os_nano.core.types import ExecutionResult
-    import json
-
-    if not isinstance(result, ExecutionResult):
-        return str(result)
-
-    steps = []
-    for t in result.trace:
-        step: dict[str, Any] = {
-            "step_id": t.step_id,
-            "skill_name": t.skill_name,
-            "status": t.status,
-            "duration_sec": round(t.duration_sec, 3),
-            "result_data": t.result_data,
-        }
-        if t.error:
-            step["error"] = t.error
-        steps.append(step)
-
-    response: dict[str, Any] = {
-        "success": result.success,
-        "status": result.status,
-        "steps_completed": result.steps_completed,
-        "steps_total": result.steps_total,
-        "steps": steps,
-    }
-
-    if result.failure_reason:
-        response["failure_reason"] = result.failure_reason
-    if result.message:
-        response["message"] = result.message
-    if world_state is not None:
-        response["world_state"] = world_state
-
-    total_duration = sum(t.duration_sec for t in result.trace)
-    response["total_duration_sec"] = round(total_duration, 3)
-
-    return json.dumps(response, ensure_ascii=False, indent=2)
-
-
-def _format_goal_result(result: Any) -> str:
-    """Format a GoalResult as JSON for MCP.
-
-    Returns JSON string with goal, success, iterations, actions trace, summary,
-    and final world state.  Falls back to str() for non-GoalResult inputs.
-    """
-    import json
-    from vector_os_nano.core.types import GoalResult
-
-    if not isinstance(result, GoalResult):
-        return str(result)
-
-    return json.dumps(result.to_dict(), ensure_ascii=False, indent=2)

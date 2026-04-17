@@ -1,8 +1,17 @@
 """Tests for MuJoCoGo2 — Go2 quadruped in MuJoCo simulation."""
 import pytest
 
-# Skip if convex_mpc not installed
-pytest.importorskip("convex_mpc")
+# Skip entire module if mujoco is not installed.
+# convex_mpc tests are isolated in TestMuJoCoGo2ConvexMPC below.
+pytest.importorskip("mujoco", reason="mujoco not installed")
+
+
+def _has_convex_mpc() -> bool:
+    try:
+        import convex_mpc  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 class TestMuJoCoGo2Lifecycle:
@@ -33,6 +42,9 @@ class TestMuJoCoGo2Lifecycle:
         assert len(joints) == 12
         go2.disconnect()
 
+
+class TestMuJoCoGo2ConvexMPC:
+    @pytest.mark.skipif(not _has_convex_mpc(), reason="convex_mpc not installed")
     def test_imports(self):
         from convex_mpc.go2_robot_data import PinGo2Model
         from convex_mpc.mujoco_model import MuJoCo_GO2_Model
@@ -190,3 +202,223 @@ class TestMuJoCoGo2HAL:
         go2 = MuJoCoGo2(gui=False)
         # Check protocol satisfaction (structural typing)
         assert isinstance(go2, BaseProtocol)
+
+
+# ---------------------------------------------------------------------------
+# New test classes — sinusoidal backend (always available when mujoco present)
+# ---------------------------------------------------------------------------
+
+import time
+from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+
+
+class TestMuJoCoGo2SpeedCommand:
+    """Core velocity command tests using the sinusoidal backend."""
+
+    def test_set_velocity_forward(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.stand()
+            start = go2.get_position()
+            go2.set_velocity(0.3, 0, 0)
+            time.sleep(2.0)
+            go2.set_velocity(0, 0, 0)
+            end = go2.get_position()
+            displacement = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
+            assert displacement > 0.1, f"Forward displacement too small: {displacement:.3f}m"
+        finally:
+            go2.disconnect()
+
+    def test_set_velocity_lateral(self):
+        """Lateral vy command — sinusoidal gait hip abduction is small,
+        so we only verify the robot stays upright (doesn't crash)."""
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.stand()
+            go2.set_velocity(0, 0.2, 0)
+            time.sleep(2.0)
+            go2.set_velocity(0, 0, 0)
+            pos = go2.get_position()
+            assert pos[2] > 0.15, f"Robot fell during lateral walk: z={pos[2]:.3f}"
+        finally:
+            go2.disconnect()
+
+    def test_set_velocity_turn(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.stand()
+            start_heading = go2.get_heading()
+            go2.set_velocity(0, 0, 0.5)
+            time.sleep(2.0)
+            go2.set_velocity(0, 0, 0)
+            end_heading = go2.get_heading()
+            # Heading change can wrap; use absolute difference or angle distance
+            delta = abs(end_heading - start_heading)
+            # Wrap into [0, pi] range
+            if delta > 3.14159:
+                delta = abs(delta - 2 * 3.14159)
+            assert delta > 0.3, f"Heading change too small: {delta:.3f} rad"
+        finally:
+            go2.disconnect()
+
+    def test_set_velocity_stop(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.stand()
+            go2.set_velocity(0.3, 0, 0)
+            time.sleep(1.0)
+            go2.set_velocity(0, 0, 0)
+            time.sleep(0.5)
+            vel = go2.get_velocity()
+            speed = (vel[0] ** 2 + vel[1] ** 2 + vel[2] ** 2) ** 0.5
+            assert speed < 0.1, f"Robot still moving after stop: speed={speed:.3f} m/s"
+        finally:
+            go2.disconnect()
+
+
+class TestMuJoCoGo2StateQueries:
+    """Sensor and state interface tests."""
+
+    def test_get_position_3d(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            pos = go2.get_position()
+            assert len(pos) == 3
+            assert all(isinstance(v, float) for v in pos)
+        finally:
+            go2.disconnect()
+
+    def test_get_heading_float(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            heading = go2.get_heading()
+            assert isinstance(heading, float)
+        finally:
+            go2.disconnect()
+
+    def test_get_velocity_3d(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            vel = go2.get_velocity()
+            assert len(vel) == 3
+            assert all(isinstance(v, float) for v in vel)
+        finally:
+            go2.disconnect()
+
+    def test_get_joint_positions_12(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            joints = go2.get_joint_positions()
+            assert len(joints) == 12
+            assert all(isinstance(v, float) for v in joints)
+        finally:
+            go2.disconnect()
+
+    def test_odometry_timestamp_advances(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.stand()
+            odom1 = go2.get_odometry()
+            time.sleep(0.1)
+            odom2 = go2.get_odometry()
+            assert odom2.timestamp > odom1.timestamp, (
+                f"Timestamp did not advance: {odom1.timestamp} -> {odom2.timestamp}"
+            )
+        finally:
+            go2.disconnect()
+
+    def test_lidar_scan_structure(self):
+        go2 = MuJoCoGo2(gui=False, room=True)  # needs walls for ray hits
+        go2.connect()
+        try:
+            go2.stand()
+            scan = go2.get_lidar_scan()
+            assert len(scan.ranges) == 360, f"Expected 360 ranges, got {len(scan.ranges)}"
+        finally:
+            go2.disconnect()
+
+
+class TestMuJoCoGo2LifecycleEdgeCases:
+    """Edge case lifecycle tests."""
+
+    def test_double_disconnect(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        go2.disconnect()
+        # Second disconnect must not raise
+        go2.disconnect()
+
+    def test_require_connection_raises(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        # Not connected — get_position() must raise RuntimeError
+        with pytest.raises(RuntimeError):
+            go2.get_position()
+
+    def test_velocity_clipping(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.set_velocity(100.0, 100.0, 100.0)
+            with go2._cmd_lock:
+                vx, vy, vyaw = go2._cmd_vel
+            assert abs(vx) <= 0.8, f"vx not clipped: {vx}"
+            assert abs(vy) <= 0.4, f"vy not clipped: {vy}"
+            assert abs(vyaw) <= 4.0, f"vyaw not clipped: {vyaw}"
+        finally:
+            go2.disconnect()
+
+
+class TestMuJoCoGo2ResetPose:
+    """reset_pose() behaviour tests."""
+
+    def test_reset_preserves_xy(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.stand()
+            go2.walk(vx=0.3, vy=0.0, vyaw=0.0, duration=1.5)
+            before = go2.get_position()
+            go2.reset_pose()
+            after = go2.get_position()
+            assert abs(after[0] - before[0]) < 0.05, (
+                f"x changed too much after reset: {before[0]:.3f} -> {after[0]:.3f}"
+            )
+            assert abs(after[1] - before[1]) < 0.05, (
+                f"y changed too much after reset: {before[1]:.3f} -> {after[1]:.3f}"
+            )
+        finally:
+            go2.disconnect()
+
+    def test_reset_restores_height(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.stand()
+            go2.reset_pose()
+            z = go2.get_position()[2]
+            assert abs(z - 0.35) < 0.05, f"Height after reset unexpected: z={z:.3f}"
+        finally:
+            go2.disconnect()
+
+    def test_reset_zeros_velocity(self):
+        go2 = MuJoCoGo2(gui=False, room=False)
+        go2.connect()
+        try:
+            go2.stand()
+            go2.set_velocity(0.3, 0, 0)
+            time.sleep(0.5)
+            go2.reset_pose()
+            vel = go2.get_velocity()
+            speed = (vel[0] ** 2 + vel[1] ** 2 + vel[2] ** 2) ** 0.5
+            assert speed < 0.1, f"Velocity not zeroed after reset: speed={speed:.3f} m/s"
+        finally:
+            go2.disconnect()

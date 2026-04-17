@@ -123,9 +123,14 @@ class TestVlmTimeoutAtLeast25s:
 
     def test_httpx_client_uses_timeout_constant(self):
         source = _load_vlm_source()
-        # Verify the client is constructed with _TIMEOUT_S (not a hardcoded literal)
-        assert "httpx.Client(timeout=_TIMEOUT_S)" in source, (
-            "httpx.Client must use _TIMEOUT_S for the timeout parameter"
+        # After refactor: timeout is stored per-instance (self._timeout) to allow
+        # local/remote backends to have different values. Accept both patterns:
+        # - legacy: httpx.Client(timeout=_TIMEOUT_S)
+        # - current: httpx.Client(timeout=self._timeout)
+        uses_module_const = "httpx.Client(timeout=_TIMEOUT_S)" in source
+        uses_instance_var = "httpx.Client(timeout=self._timeout)" in source
+        assert uses_module_const or uses_instance_var, (
+            "httpx.Client must use _TIMEOUT_S or self._timeout for the timeout parameter"
         )
 
 

@@ -1,12 +1,12 @@
-"""Vector OS Nano — Python SDK for intelligent robot arm control.
+"""Vector OS Nano — Python SDK for robot arm and mobile base control.
 
 Quick start:
 
     from vector_os_nano import Agent, SO101, Skill, SkillResult
 
     arm = SO101(port="/dev/ttyACM0")
-    agent = Agent(arm=arm, llm_api_key="sk-...")
-    agent.execute("pick up the red cup")
+    agent = Agent(arm=arm)
+    agent.execute_skill("pick", {"object_label": "red cup"})
 
 The Agent, SO101, Skill, and SkillResult names are the four public entry
 points. Everything else is importable from sub-packages but not part of

@@ -57,71 +57,32 @@ def _deploy_tare_config() -> None:
 
 
 def _start_tare() -> bool:
-    """Start TARE autonomous exploration planner as a subprocess."""
-    global _tare_proc
+    """Check that TARE autonomous exploration planner is already running.
 
+    TARE must be launched by _launch_ros2_stack() (via launch_explore.sh) before
+    exploration starts.  This function only detects a running TARE process — it
+    does NOT start one.  Launching TARE here would create a second process group
+    with broken DDS connectivity.
+
+    Always deploys the Go2-tuned config first so a running TARE picks up the
+    latest margins on its next restart.
+    """
     # Always deploy config first — even if TARE is already running,
     # so the next restart picks up latest margins.
     _deploy_tare_config()
 
-    if _tare_proc is not None and _tare_proc.poll() is None:
-        return True  # we launched it, it's running with our config
-
-    # Check if TARE is already running (from launch_explore.sh or previous explore)
-    # Do NOT kill it — a working TARE in the launch process group has proper
-    # DDS connectivity. Killing and restarting in a new subprocess breaks comms.
+    # Check if TARE is already running (launched by _launch_ros2_stack / launch_explore.sh)
     if shutil.which("pgrep"):
         result = subprocess.run(["pgrep", "-f", "tare_planner_node"], capture_output=True)
         if result.returncode == 0:
             logger.info("[EXPLORE] TARE already running — reusing")
             return True
 
-    try:
-        # Verify deployed config is correct
-        tare_install = os.path.expanduser(
-            "~/Desktop/vector_navigation_stack/install/tare_planner/share/tare_planner"
-        )
-        deployed = os.path.join(tare_install, "indoor_small.yaml")
-        if os.path.isfile(deployed):
-            with open(deployed) as f:
-                content = f.read()
-            extend = "true" if "kExtendWayPoint : true" in content else "false"
-            logger.info("[EXPLORE] TARE config check: kExtendWayPoint=%s file=%s", extend, deployed)
-
-        # TARE needs ROS2 sourced — launch via bash
-        cmd = "source /opt/ros/jazzy/setup.bash && "
-        nav_stack = os.path.expanduser("~/Desktop/vector_navigation_stack")
-        cmd += f"source {nav_stack}/install/setup.bash && "
-        # Log which config TARE actually loads
-        cmd += f"echo 'TARE loading: {tare_install}/indoor_small.yaml' && "
-        cmd += "ros2 launch tare_planner explore.launch scenario:=indoor_small"
-
-        log_fh = open("/tmp/vector_tare.log", "w")
-        _tare_proc = subprocess.Popen(
-            ["bash", "-c", cmd],
-            stdout=log_fh, stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
-        )
-
-        import atexit
-
-        def _cleanup_tare():
-            try:
-                os.killpg(os.getpgid(_tare_proc.pid), signal.SIGTERM)
-                _tare_proc.wait(timeout=3)
-            except Exception:
-                try:
-                    os.killpg(os.getpgid(_tare_proc.pid), signal.SIGKILL)
-                except Exception:
-                    pass
-            log_fh.close()
-
-        atexit.register(_cleanup_tare)
-        logger.info("[EXPLORE] TARE planner started")
-        return True
-    except Exception as exc:
-        logger.error("[EXPLORE] TARE start failed: %s", exc)
-        return False
+    logger.warning(
+        "[EXPLORE] TARE not running. Launch the nav stack first via "
+        "sim/hardware stack startup (launch_explore.sh). Exploration cannot start."
+    )
+    return False
 
 
 def _stop_tare() -> None:
@@ -158,6 +119,29 @@ _spatial_memory: Any = None  # SceneGraph — set by ExploreSkill.execute()
 def is_exploring() -> bool:
     """Check if autonomous exploration is currently running."""
     return _explore_running
+
+
+def get_explore_status() -> dict:
+    """Get current exploration progress.
+
+    Returns dict with:
+        running: bool — is exploration active
+        rooms_found: list[str] — rooms discovered this session
+        rooms_found_count: int
+        total_expected: int — target room count (from SceneGraph)
+    """
+    total = 0
+    if _spatial_memory is not None:
+        try:
+            total = len(_spatial_memory.get_all_rooms())
+        except Exception:
+            pass
+    return {
+        "running": _explore_running,
+        "rooms_found": sorted(_explore_visited),
+        "rooms_found_count": len(_explore_visited),
+        "total_expected": total,
+    }
 
 
 def stop_tare_only() -> None:
@@ -437,12 +421,26 @@ def _verify_nav_stack() -> None:
 # ---------------------------------------------------------------------------
 
 def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
-    """Background thread: start TARE, seed planner, then monitor rooms.
+    """Background thread: verify TARE is running, seed planner, then monitor rooms.
 
     Everything runs here — execute() returns immediately.
     Runs indefinitely until _explore_cancel is set.
+
+    TARE must already be running (started by _launch_ros2_stack via launch_explore.sh).
+    If TARE is not detected, emits an error event and exits immediately.
     """
     global _explore_running, _explore_visited
+
+    # Guard: TARE must be pre-launched by the nav stack startup.
+    if not _start_tare():
+        _emit("error", {
+            "reason": "tare_not_running",
+            "message": (
+                "TARE planner is not running. Start the nav stack first "
+                "(launch_explore.sh or sim stack startup)."
+            ),
+        })
+        return
 
     _explore_visited.clear()
     _explore_running = True
@@ -497,6 +495,9 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     # to TARE entirely. The nav stack drives at up to 0.8 m/s on its own.
 
     _prev_room: str | None = None
+    _start_time = time.monotonic()
+    _last_status_time = _start_time
+    _last_progress_time = _start_time
 
     try:
         while not _explore_cancel.is_set():
@@ -507,22 +508,90 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                     break
 
                 x, y = float(pos[0]), float(pos[1])
+                elapsed = time.monotonic() - _start_time
                 room = _spatial_memory.nearest_room(x, y) if _spatial_memory else None
 
-                # Room detection is position-based via SceneGraph.nearest_room().
-                # In sim: SceneGraph is pre-seeded from config/room_layout.yaml.
-                # In real: rooms discovered via SLAM + spatial understanding.
+                # Periodic status every 30s
+                if time.monotonic() - _last_status_time >= 30.0:
+                    _last_status_time = time.monotonic()
+                    _emit("status", {
+                        "elapsed_sec": round(elapsed),
+                        "rooms_found": len(_explore_visited),
+                        "total": _total,
+                        "position": [round(x, 1), round(y, 1)],
+                        "current_room": room or "?",
+                    })
 
-                # Record EVERY position sample in SceneGraph.
-                # visit() uses running average → center converges as
-                # robot moves through the room.
+                # Periodic progress every 5s (unconditional — fires even with no new rooms)
+                if time.monotonic() - _last_progress_time >= 5.0:
+                    _last_progress_time = time.monotonic()
+                    _emit("progress", {
+                        "rooms_found": len(_explore_visited),
+                        "total": _total,
+                        "position": [round(x, 1), round(y, 1)],
+                        "elapsed": round(elapsed),
+                    })
+
+                # Record position in SceneGraph.
+                # Room counting is informational only — TARE decides when to stop.
                 if room is not None and _spatial_memory is not None:
                     try:
                         _spatial_memory.visit(room, x, y)
                     except Exception:
                         pass
 
-                # Door learning: detect room transitions and record door position.
+                    # Auto-observe hook: capture VLM scene description at new viewpoints.
+                    # Only triggers when VLM is available and position is a novel viewpoint.
+                    # VLM failures are non-blocking — exploration continues regardless.
+                    _vlm_hook = getattr(base, "_vlm", None)
+                    if _vlm_hook is not None:
+                        try:
+                            if _spatial_memory.should_add_viewpoint(room, x, y):
+                                _base_hook = getattr(base, "_base", base)
+                                frame = None
+                                if hasattr(_base_hook, "get_camera_frame"):
+                                    frame = _base_hook.get_camera_frame()
+                                if frame is not None:
+                                    desc_result = _vlm_hook.describe_scene(frame)
+                                    obj_result = _vlm_hook.find_objects(frame)
+                                    scene_summary = str(
+                                        getattr(desc_result, "summary", "")
+                                    )
+                                    detected = [
+                                        {
+                                            "category": str(getattr(o, "name", "")),
+                                            "confidence": float(
+                                                getattr(o, "confidence", 0.5)
+                                            ),
+                                        }
+                                        for o in (obj_result or [])
+                                    ]
+                                    object_names = [
+                                        d["category"] for d in detected if d["category"]
+                                    ]
+                                    heading = float(pos[3]) if len(pos) > 3 else 0.0
+                                    _spatial_memory.observe_with_viewpoint(
+                                        room=room,
+                                        x=x,
+                                        y=y,
+                                        heading=heading,
+                                        objects=object_names,
+                                        description=scene_summary,
+                                        detected_objects=detected,
+                                    )
+                                    logger.debug(
+                                        "[EXPLORE] Auto-observe: %d objects in %s",
+                                        len(detected),
+                                        room,
+                                    )
+                        except Exception as exc:
+                            logger.debug(
+                                "[EXPLORE] Auto-observe VLM failed (non-blocking): %s",
+                                exc,
+                            )
+
+                # Door learning: detect room transitions (uses nearest_room, not _in_room,
+                # because door detection should work at the boundary between rooms).
                 if _prev_room is not None and room is not None and room != _prev_room:
                     if _spatial_memory is not None:
                         _spatial_memory.add_door(_prev_room, room, x, y)
@@ -538,6 +607,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                         "room": room,
                         "visited": len(_explore_visited),
                         "total": _total,
+                        "elapsed_sec": round(elapsed),
                         "all_rooms": sorted(_explore_visited),
                     })
 
@@ -569,15 +639,36 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
             except Exception:
                 pass
 
+            # Check if TARE declared exploration complete (all frontiers covered)
+            if os.path.exists("/tmp/vector_explore_finished"):
+                try:
+                    os.remove("/tmp/vector_explore_finished")
+                except OSError:
+                    pass
+                logger.info("[EXPLORE] TARE exploration complete — all frontiers covered")
+                _emit("complete", {
+                    "reason": "tare_finished",
+                    "rooms": sorted(_explore_visited),
+                    "total": _total,
+                    "elapsed_sec": round(time.monotonic() - _start_time),
+                })
+                break
+
             _explore_cancel.wait(timeout=_POSITION_SAMPLE_INTERVAL)
 
-        if _total > 0 and len(_explore_visited) >= _total:
-            stop_tare_only()
-            _emit("completed", {"rooms": sorted(_explore_visited)})
-        elif not _explore_cancel.is_set():
+        # Normal exit: user stopped or TARE finished
+        if not _explore_cancel.is_set():
             _emit("stopped", {"reason": "finished", "rooms": sorted(_explore_visited)})
 
     finally:
+        # Terrain replay fires on ALL exit paths (finish, cancel, crash)
+        # so FAR always gets accumulated map data for V-Graph building.
+        try:
+            with open("/tmp/vector_terrain_replay", "w") as f:
+                f.write("1")
+            logger.info("[EXPLORE] Triggered terrain replay for FAR")
+        except OSError:
+            pass
         _explore_running = False
 
 

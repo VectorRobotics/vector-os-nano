@@ -52,11 +52,12 @@ def _make_explored_sg() -> SceneGraph:
 
 
 def _make_mock_base(x: float = 3.0, y: float = 2.5, z: float = 0.3, heading: float = 0.0) -> MagicMock:
-    """Mock base with get_position, get_heading, navigate_to, walk."""
+    """Mock base with get_position, get_heading, navigate_to, go_to_waypoint, walk."""
     base = MagicMock()
     base.get_position.return_value = [x, y, z]
     base.get_heading.return_value = heading
     base.navigate_to.return_value = True
+    base.go_to_waypoint.return_value = True  # _dead_reckoning prefers go_to_waypoint
     base.walk.return_value = None
     return base
 
@@ -205,11 +206,11 @@ def test_get_room_center_returns_none_for_unknown_room() -> None:
 
 
 def test_get_room_center_returns_none_insufficient_visits() -> None:
-    """Returns None if visit_count < _MIN_VISIT_COUNT (3)."""
+    """Returns None if room has never been visited (visit_count < _MIN_VISIT_COUNT=1)."""
     sg = SceneGraph()
-    sg.visit("new_room", 5.0, 5.0)  # only 1 visit
-    sg.visit("new_room", 5.1, 5.1)  # 2 visits — still below threshold
-    result = _get_room_center_from_memory(sg, "new_room")
+    # Room added to graph but never visited — get_room returns node with visit_count=0
+    # or get_room returns None entirely. Either way, result must be None.
+    result = _get_room_center_from_memory(sg, "never_visited_room")
     assert result is None
 
 
@@ -313,22 +314,30 @@ def test_navigate_no_base_returns_error() -> None:
 
 
 def test_dead_reckoning_uses_door_chain() -> None:
-    """_dead_reckoning builds waypoints from SceneGraph doors, not hardcoded dicts."""
+    """_dead_reckoning builds waypoints from SceneGraph doors, not hardcoded dicts.
+
+    _dead_reckoning now prefers base.go_to_waypoint() over base.navigate_to() to
+    avoid a recursive navigate_to -> FAR probe -> door-chain -> navigate_to cascade.
+    The fallback is base.navigate_to() when go_to_waypoint is unavailable.
+    """
     sg = _make_explored_sg()
 
-    # Place robot at living_room position
+    # Place robot at living_room position.
+    # base.go_to_waypoint is available — _dead_reckoning uses it in preference to navigate_to.
     base = _make_mock_base(x=3.0, y=2.5, z=0.3)
-    # Remove navigate_to so proxy mode is skipped
-    del base.navigate_to
+    base.go_to_waypoint.return_value = True  # nav stack succeeds for each waypoint
 
     ctx = _make_skill_context(base, sg)
 
     skill = NavigateSkill()
     result = skill._dead_reckoning("kitchen", ctx)
 
-    # Should have called walk() for each waypoint (door + destination)
-    # living_room -> hallway door -> kitchen door -> kitchen center
-    assert base.walk.call_count >= 1 or result.success
+    # _dead_reckoning must call base.go_to_waypoint at least once (one door in chain)
+    # and must succeed overall.
+    assert base.go_to_waypoint.call_count >= 1, (
+        f"Expected base.go_to_waypoint() calls, got {base.go_to_waypoint.call_count}"
+    )
+    assert result.success
 
 
 def test_dead_reckoning_no_sg_returns_error() -> None:

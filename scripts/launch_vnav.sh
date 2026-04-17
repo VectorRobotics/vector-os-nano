@@ -104,8 +104,8 @@ ros2 run terrain_analysis terrainAnalysis --ros-args \
   -p maxRelZ:=0.3 \
   -p limitGroundLift:=true \
   -p maxGroundLift:=0.05 \
-  -p minDyObsVFOV:=-55.0 \
-  -p maxDyObsVFOV:=10.0 &
+  -p minDyObsVFOV:=-30.0 \
+  -p maxDyObsVFOV:=35.0 &
 PIDS+=($!)
 ros2 run terrain_analysis_ext terrainAnalysisExt --ros-args \
   -p obstacleHeightThre:=0.15 \

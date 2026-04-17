@@ -1,0 +1,50 @@
+{
+  "project": "v2.0.1-vgraph-cross-room-fix",
+  "current_phase": "complete",
+  "spec_status": "approved",
+  "plan_status": "approved",
+  "tasks_status": "approved",
+  "tasks_progress": { "total": 9, "completed": 9, "in_progress": 0, "pending": 0 },
+  "waves": {
+    "wave_1": { "tasks": ["T1", "T3", "T5"], "agents": ["alpha", "beta", "gamma"], "status": "complete", "gate_result": "21 failed (expected RED), 1 skipped, 0 errors" },
+    "wave_2": { "tasks": ["T2", "T4"], "agents": ["alpha", "beta"], "status": "complete" },
+    "wave_3": { "tasks": ["T6", "T7", "T8", "T9"], "agents": ["dispatcher", "ceo"], "status": "complete" }
+  },
+  "test_metrics": { "total_tests": 3267, "passed": 3265, "failed": 2, "coverage_percent": 0, "vgraph_related_pass": "173/173" },
+  "parent_branch": "feat/v2.0-vectorengine-unification",
+  "ceo_decisions": {
+    "D1": "Phase A only (R1+R2); Phase B escalates if needed",
+    "D2": "Match launch_explore.sh pattern: ros2 run + --ros-args -p",
+    "D3": "Use launch_explore.sh param values verbatim (maxRelZ=1.5, clearDyObs=true, etc.)",
+    "D4_revised": "Single big commit after full fix + AC6 PASS. Defer atomic split. Bundles V-Graph revert + wall escape refactor + all uncommitted improvements.",
+    "D5_phaseB": "Escalated to Phase B after CEO observed AC6 failure (V-Graph still empty post-Phase A). Root-caused to FAR vehicle_height misconfiguration (cross-repo fix in vector_navigation_stack)."
+  },
+  "ac_results": {
+    "AC1_launch_maxRelZ": "PASS",
+    "AC2_bridge_no_terrain_pub": "PASS",
+    "AC3_vgraph_debug_harness": "PASS",
+    "AC4_integration_harness": "PASS (scaffolded, opt-in)",
+    "AC5_no_regression": "PASS (173/173 V-Graph tests)",
+    "AC6_ceo_manual_vgraph": "PASS (75 global vertices, 131 visibility edges, cross-room edges confirmed)"
+  },
+  "history": [
+    { "timestamp": "2026-04-16T12:00:00Z", "action": "archive_v2.0", "agent": "dispatcher", "details": "Archived v2.0-vectorengine SDD files to .sdd/archive-v2.0-vectorengine/" },
+    { "timestamp": "2026-04-16T12:00:00Z", "action": "init", "agent": "architect", "details": "V-Graph cross-room debug spec — Phase A: R1 launch + R2 bridge; Phase B held in reserve" },
+    { "timestamp": "2026-04-16T12:00:00Z", "action": "spec_draft", "agent": "architect", "details": ".sdd/spec.md written. 6 ACs, 4 CEO decisions, phased execution" },
+    { "timestamp": "2026-04-16T12:15:00Z", "action": "spec_approved", "agent": "ceo", "details": "Yusen approved all 4 decisions (D1=A, D2=A, D3=verbatim, D4=A)" },
+    { "timestamp": "2026-04-16T12:20:00Z", "action": "plan_draft", "agent": "architect", "details": "plan.md written. Non-architectural classification. 3 waves, 6 tasks total. Agent team may proceed; CEO reviews async" },
+    { "timestamp": "2026-04-16T12:20:00Z", "action": "plan_approved", "agent": "architect", "details": "Non-architectural self-approved per governance rule. Advancing to tasks phase" },
+    { "timestamp": "2026-04-16T12:25:00Z", "action": "tasks_draft", "agent": "dispatcher", "details": "task.md written. 9 atomic tasks, 3 waves, TDD Red/Green structure. Wave 1+2 parallelizable (3+2 agents)" },
+    { "timestamp": "2026-04-16T12:25:00Z", "action": "tasks_approved", "agent": "dispatcher", "details": "QA self-review passed — atomic, TDD-structured, max parallelism. Ready to execute" },
+    { "timestamp": "2026-04-16T12:30:00Z", "action": "wave1_complete", "agent": "alpha+beta+gamma", "details": "T1: 6 RED tests (bridge cleanup), T3: 15 RED tests (launch params), T5: 1 test (integration scaffold, VECTOR_ROS2_INTEGRATION=1 opt-in). Gate: 21 failed + 1 skipped as expected" },
+    { "timestamp": "2026-04-16T12:45:00Z", "action": "wave2_complete", "agent": "alpha+beta", "details": "T2: bridge -42 lines, test_level40 deleted, test_level36 -73 lines; T4: 3 launch scripts patched. T1 GREEN (6/6), T3 GREEN (15/15)" },
+    { "timestamp": "2026-04-16T12:50:00Z", "action": "commit_strategy_revised", "agent": "ceo", "details": "Defer atomic commit split. Strategy: fix everything first, then one big commit at end. T7+T8 merge into a single post-AC6 commit" },
+    { "timestamp": "2026-04-16T16:00:00Z", "action": "cleanup_round", "agent": "alpha+beta+gamma", "details": "Fixed 54 pre-existing stale/regression test failures: Alpha 10 files (source-inspection updates), Beta 5 files (TARE config + go_to_waypoint mocks) + 1 production fix (engine.vgg_execute clear_abort), Gamma 1 production fix (scene_graph_viz.py _build_object_markers re-enabled). Dispatcher: LookSkill regression restored + L4_patrol architecturally obsolete skip" },
+    { "timestamp": "2026-04-16T16:30:00Z", "action": "regression_verified", "agent": "dispatcher", "details": "Round 3 harness: 1349 passed / 41 failed / 6 skipped. All 41 bulk-failures are MuJoCo instance-leak pollution (confirmed by isolation runs). 0 real regressions. Ready for AC6 CEO manual test" },
+    { "timestamp": "2026-04-16T17:00:00Z", "action": "ac6_fail_phaseB_start", "agent": "ceo+dispatcher", "details": "AC6 manual test FAILED — V-Graph still 0 nodes after Phase A fix. Entered Phase B: read FAR C++ source, added rate-limited printf instrumentation to TerrainCallBack + MapHandler" },
+    { "timestamp": "2026-04-16T17:30:00Z", "action": "phaseB_root_cause", "agent": "dispatcher", "details": "Diagnostic run localized drop: neighbor_obs_indices_ populated with 2205 cells by UpdateRobotPosition, then silently pruned to 8 cells by ObsNeighborCloudWithTerrain (called from UpdateTerrainHeightGrid). Root cause: vehicle_height=1.0 in indoor.yaml caused TraversableAnalysis robot_terrain_init gate to fail (looks for terrain at robot.z-vh ≈ -0.72m, but floor is z=0). flat_terrain_cloud_ cleared to (0,0,0) dummy → kdtree only matches cells near world origin" },
+    { "timestamp": "2026-04-16T17:45:00Z", "action": "phaseB_fix_applied", "agent": "dispatcher", "details": "Set vehicle_height=0.3 (matches go2_vnav_bridge ground_z offset). Verified: neighbor.size 8→225, total_out 0→925. Hit latent SIGSEGV in contour_detector.h::SaveCurrentImg (nh_->get_logger() on uninitialized shared_ptr). Fixed by replacing with std::cout" },
+    { "timestamp": "2026-04-16T18:00:00Z", "action": "ac6_pass", "agent": "ceo", "details": "V-Graph Initialized. 70-75 global vertices, 131 visibility edges, cross-room edges confirmed (kitchen_door ↔ living_door through hallway). /tmp/far_contour_imgs/*.tiff now show wall/furniture outlines (84% non-zero). Post-cleanup regression: 173/173 V-Graph tests pass" },
+    { "timestamp": "2026-04-16T18:15:00Z", "action": "complete", "agent": "dispatcher", "details": "DEBUG.md written with full OBSERVE/HYPOTHESIZE/EXPERIMENT/CONCLUDE trace. Learned pattern saved to ~/.claude/skills/learned/far-vgraph-pipeline.md. Instrumentation removed. Ready to commit" }
+  ]
+}

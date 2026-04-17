@@ -1,0 +1,44 @@
+# ros_gz_bridge topic mapping — Gazebo Harmonic <-> ROS2 Jazzy
+#
+# Direction:
+#   GZ_TO_ROS — Gazebo publishes, ROS2 subscribes (sensor data, state)
+#   ROS_TO_GZ — ROS2 publishes, Gazebo subscribes (commands)
+#
+# Note: topic_name is the ROS2 topic name.
+# gz_topic_name (if different) maps to the Gazebo-side topic.
+
+# Livox MID-360 point cloud → nav stack
+# Gazebo publishes /scan/points, ROS2 needs /registered_scan
+- ros_topic_name: /registered_scan
+  gz_topic_name: /scan/points
+  ros_type_name: "sensor_msgs/msg/PointCloud2"
+  gz_type_name: "gz.msgs.PointCloudPacked"
+  direction: GZ_TO_ROS
+
+# D435 RGB camera → VLM perception
+- ros_topic_name: /camera/image
+  gz_topic_name: /camera/image
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# D435 depth camera → depth projection / obstacle avoidance
+- ros_topic_name: /camera/depth
+  gz_topic_name: /camera/depth
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# Velocity commands → Gazebo Go2
+- ros_topic_name: /cmd_vel_nav
+  gz_topic_name: /cmd_vel_nav
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+# IMU data
+- ros_topic_name: /imu/data
+  gz_topic_name: /imu
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS

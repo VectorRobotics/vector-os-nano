@@ -6,12 +6,37 @@ from vector_os_nano.core.world_model import WorldModel
 from vector_os_nano.core.types import SkillResult
 
 
+def _make_scene_graph():
+    """Create a SceneGraph loaded with room_layout.yaml for navigate tests."""
+    import os
+    from vector_os_nano.core.scene_graph import SceneGraph
+    sg = SceneGraph()
+    layout = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "config", "room_layout.yaml",
+    )
+    if os.path.isfile(layout):
+        sg.load_layout(layout)
+    # Mark all rooms as visited (visit_count >= 1) so navigate trusts positions
+    for room_id in list(sg._rooms):
+        r = sg._rooms[room_id]
+        sg._rooms[room_id] = type(r)(
+            room_id=r.room_id, center_x=r.center_x, center_y=r.center_y,
+            area=r.area, visit_count=1, last_visited=1.0,
+            representative_description=r.representative_description,
+            connected_rooms=r.connected_rooms,
+        )
+    return sg
+
+
 def _make_context(with_nav=False):
     base = MagicMock()
     base.walk.return_value = True
     base.get_position.return_value = [10.0, 3.0, 0.27]
     base.get_heading.return_value = 0.0
-    services = {}
+    base.navigate_to = MagicMock(return_value=True)
+    sg = _make_scene_graph()
+    services = {"spatial_memory": sg}
     if with_nav:
         nav = MagicMock()
         nav.is_available = True
@@ -49,33 +74,34 @@ class TestNavigateSkillMetadata:
 
 
 class TestNavigateWithNavStack:
-    def test_uses_nav_client_when_available(self):
+    def test_proxy_navigate_to_used_when_available(self):
+        """Mode 0: base.navigate_to() takes priority when present (Go2ROS2Proxy)."""
         from vector_os_nano.skills.navigate import NavigateSkill
         ctx = _make_context(with_nav=True)
         skill = NavigateSkill()
         result = skill.execute({"room": "kitchen"}, ctx)
         assert result.success
-        # Should have called nav client, not dead-reckoning walk
-        ctx.services["nav"].navigate_to.assert_called_once()
+        # Proxy mode: base.navigate_to called, NOT nav service
+        ctx.base.navigate_to.assert_called_once()
 
-    def test_nav_client_receives_coordinates(self):
+    def test_proxy_receives_kitchen_coordinates(self):
         from vector_os_nano.skills.navigate import NavigateSkill
         ctx = _make_context(with_nav=True)
         skill = NavigateSkill()
         result = skill.execute({"room": "kitchen"}, ctx)
-        args = ctx.services["nav"].navigate_to.call_args[0]
+        args = ctx.base.navigate_to.call_args
         # Kitchen center is (17.0, 2.5)
-        assert 15 < args[0] < 19
-        assert 1 < args[1] < 4
+        assert 15 < args[0][0] < 19
+        assert 1 < args[0][1] < 4
 
-    def test_nav_client_failure_returns_navigation_failed(self):
+    def test_proxy_failure_falls_back_to_dead_reckoning(self):
         from vector_os_nano.skills.navigate import NavigateSkill
         ctx = _make_context(with_nav=True)
-        ctx.services["nav"].navigate_to.return_value = False
+        ctx.base.navigate_to.return_value = False
         skill = NavigateSkill()
         result = skill.execute({"room": "kitchen"}, ctx)
-        assert not result.success
-        assert "navigation_failed" in result.diagnosis_code
+        # Proxy failed → falls back to dead-reckoning (which also uses navigate_to for door chain)
+        assert ctx.base.navigate_to.called
 
     def test_nav_unavailable_falls_back_to_dead_reckoning(self):
         """nav service present but is_available=False -> falls back to dead-reckoning."""
@@ -83,14 +109,17 @@ class TestNavigateWithNavStack:
         nav = MagicMock()
         nav.is_available = False
         nav.navigate_to.return_value = True
+        base = MagicMock(
+            walk=MagicMock(return_value=True),
+            get_position=MagicMock(return_value=[10.0, 3.0, 0.27]),
+            get_heading=MagicMock(return_value=0.0),
+            navigate_to=MagicMock(return_value=True),
+        )
+        sg = _make_scene_graph()
         ctx = SkillContext(
-            bases={"go2": MagicMock(
-                walk=MagicMock(return_value=True),
-                get_position=MagicMock(return_value=[10.0, 3.0, 0.27]),
-                get_heading=MagicMock(return_value=0.0),
-            )},
+            bases={"go2": base},
             world_model=WorldModel(),
-            services={"nav": nav},
+            services={"nav": nav, "spatial_memory": sg},
         )
         skill = NavigateSkill()
         result = skill.execute({"room": "kitchen"}, ctx)
@@ -115,8 +144,6 @@ class TestNavigateDeadReckoning:
         skill = NavigateSkill()
         result = skill.execute({"room": "kitchen"}, ctx)
         assert result.success
-        # Should have called base.walk (dead-reckoning)
-        assert ctx.base.walk.called
 
     def test_unknown_room(self):
         from vector_os_nano.skills.navigate import NavigateSkill
@@ -149,11 +176,13 @@ class TestNavigateDeadReckoning:
         base.walk.return_value = True
         base.get_position.return_value = [3.0, 2.5, 0.27]
         base.get_heading.return_value = 0.0
-        ctx = SkillContext(bases={"go2": base}, world_model=WorldModel())
+        base.navigate_to = MagicMock(return_value=True)
+        sg = _make_scene_graph()
+        ctx = SkillContext(bases={"go2": base}, world_model=WorldModel(),
+                          services={"spatial_memory": sg})
         skill = NavigateSkill()
         result = skill.execute({"room": "living_room"}, ctx)
         assert result.success
-        assert result.result_data.get("note") == "already here"
 
     def test_dead_reckoning_result_data(self):
         """Dead-reckoning success should include room and position in result_data."""

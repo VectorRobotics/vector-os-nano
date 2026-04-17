@@ -6,7 +6,7 @@ Tests cover:
 - Tool call routing (natural_language and direct skill)
 - Resource listing
 - Resource reading (world state, objects, robot, camera)
-- create_sim_agent() with MuJoCo mocked out
+- create_sim_stack() with MuJoCo mocked out
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from vector_os_nano.mcp.server import VectorMCPServer, create_sim_agent
+from vector_os_nano.mcp.server import VectorMCPServer, create_sim_stack
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +62,31 @@ def _make_mock_agent(skill_names: list[str] | None = None) -> MagicMock:
     return agent
 
 
+def _make_mock_engine() -> MagicMock:
+    """Build a minimal mock VectorEngine."""
+    engine = MagicMock()
+    # run_turn returns a TurnResult-like object
+    turn_result = MagicMock()
+    turn_result.text = '{"success": true, "status": "completed"}'
+    engine.run_turn.return_value = turn_result
+    engine.vgg_decompose.return_value = None
+    return engine
+
+
+def _make_mock_session() -> MagicMock:
+    """Build a minimal mock Session."""
+    return MagicMock()
+
+
+def _make_server(skill_names: list[str] | None = None) -> tuple:
+    """Build (server, agent, engine, session) for testing."""
+    agent = _make_mock_agent(skill_names)
+    engine = _make_mock_engine()
+    session = _make_mock_session()
+    server = VectorMCPServer(agent, engine, session)
+    return server, agent, engine, session
+
+
 # ---------------------------------------------------------------------------
 # TestVectorMCPServer
 # ---------------------------------------------------------------------------
@@ -72,21 +97,18 @@ class TestVectorMCPServer:
 
     def test_server_creation(self) -> None:
         """Server creates successfully with a mock agent."""
-        agent = _make_mock_agent()
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server()
         assert server._server is not None
         assert server._agent is agent
 
     def test_server_name(self) -> None:
         """Underlying MCP server has the correct name."""
-        agent = _make_mock_agent()
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server()
         assert server._server.name == "vector-os-nano"
 
     def test_list_tools_includes_natural_language(self) -> None:
         """list_tools returns the natural_language meta-tool."""
-        agent = _make_mock_agent([])
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server([])
 
         # Directly call the registered list_tools handler
         tool_list = asyncio.run(_invoke_list_tools(server))
@@ -96,8 +118,7 @@ class TestVectorMCPServer:
     def test_list_tools_includes_skills(self) -> None:
         """list_tools returns one tool per registered skill."""
         skills = ["pick", "place", "home"]
-        agent = _make_mock_agent(skills)
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server(skills)
 
         tool_list = asyncio.run(
             _invoke_list_tools(server)
@@ -109,8 +130,7 @@ class TestVectorMCPServer:
     def test_list_tools_count(self) -> None:
         """Tool count equals skill count + 1 (natural_language)."""
         skills = ["pick", "place", "home", "scan", "detect"]
-        agent = _make_mock_agent(skills)
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server(skills)
 
         tool_list = asyncio.run(
             _invoke_list_tools(server)
@@ -120,8 +140,7 @@ class TestVectorMCPServer:
 
     def test_list_resources_count(self) -> None:
         """list_resources returns 6 resources (3 world + 3 cameras)."""
-        agent = _make_mock_agent()
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server()
 
         resource_list = asyncio.run(
             _invoke_list_resources(server)
@@ -130,8 +149,7 @@ class TestVectorMCPServer:
 
     def test_list_resources_uris(self) -> None:
         """list_resources URIs include world:// and camera:// schemes."""
-        agent = _make_mock_agent()
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server()
 
         resource_list = asyncio.run(
             _invoke_list_resources(server)
@@ -145,58 +163,42 @@ class TestVectorMCPServer:
         assert "camera://side" in uris
 
     def test_call_tool_natural_language(self) -> None:
-        """call_tool natural_language returns a text result."""
-        from vector_os_nano.core.types import ExecutionResult
-
-        agent = _make_mock_agent()
-        agent.execute = MagicMock(
-            return_value=ExecutionResult(success=True, status="completed")
-        )
-        server = VectorMCPServer(agent)
+        """call_tool natural_language routes through engine.run_turn."""
+        server, agent, engine, session = _make_server()
 
         result = asyncio.run(
             _invoke_call_tool(server, "natural_language", {"instruction": "pick banana"})
         )
         assert len(result) == 1
         assert result[0].type == "text"
-        assert "completed" in result[0].text
+        engine.run_turn.assert_called_once()
 
     def test_call_tool_direct_skill(self) -> None:
-        """call_tool for a named skill routes through agent.execute_skill."""
-        from vector_os_nano.core.types import ExecutionResult
-
-        agent = _make_mock_agent(["home"])
-        agent.execute_skill = MagicMock(
-            return_value=ExecutionResult(success=True, status="completed")
-        )
-        server = VectorMCPServer(agent)
+        """call_tool for a named skill routes through engine.run_turn."""
+        server, agent, engine, session = _make_server(["home"])
 
         result = asyncio.run(
             _invoke_call_tool(server, "home", {})
         )
         assert len(result) == 1
         assert result[0].type == "text"
-        agent.execute_skill.assert_called_once_with("home", {})
+        engine.run_turn.assert_called_once()
 
     def test_call_tool_with_arguments(self) -> None:
-        """call_tool passes structured params to agent.execute_skill."""
-        from vector_os_nano.core.types import ExecutionResult
-
-        agent = _make_mock_agent(["pick"])
-        agent.execute_skill = MagicMock(
-            return_value=ExecutionResult(success=True, status="completed")
-        )
-        server = VectorMCPServer(agent)
+        """call_tool passes structured instruction to engine.run_turn."""
+        server, agent, engine, session = _make_server(["pick"])
 
         asyncio.run(
             _invoke_call_tool(server, "pick", {"object_label": "mug"})
         )
-        agent.execute_skill.assert_called_once_with("pick", {"object_label": "mug"})
+        engine.run_turn.assert_called_once()
+        call_args = engine.run_turn.call_args[0]
+        assert "pick" in call_args[0]
+        assert "mug" in call_args[0]
 
     def test_read_resource_world_state(self) -> None:
         """read_resource world://state returns JSON text."""
-        agent = _make_mock_agent()
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server()
 
         contents = asyncio.run(
             _invoke_read_resource(server, "world://state")
@@ -210,8 +212,7 @@ class TestVectorMCPServer:
         """read_resource world://objects returns JSON list."""
         import json
 
-        agent = _make_mock_agent()
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server()
 
         contents = asyncio.run(
             _invoke_read_resource(server, "world://objects")
@@ -224,8 +225,7 @@ class TestVectorMCPServer:
         """read_resource world://robot returns JSON dict."""
         import json
 
-        agent = _make_mock_agent()
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server()
 
         contents = asyncio.run(
             _invoke_read_resource(server, "world://robot")
@@ -236,9 +236,8 @@ class TestVectorMCPServer:
 
     def test_read_resource_camera_no_arm(self) -> None:
         """read_resource camera://overhead raises ValueError when arm absent."""
-        agent = _make_mock_agent()
+        server, agent, engine, session = _make_server()
         agent._arm = None
-        server = VectorMCPServer(agent)
 
         with pytest.raises(ValueError, match="Camera render not available"):
             asyncio.run(
@@ -249,12 +248,10 @@ class TestVectorMCPServer:
         """read_resource camera://overhead returns base64 PNG bytes."""
         import numpy as np
 
-        agent = _make_mock_agent()
-        # Create a small fake BGR image (10x10 green)
+        server, agent, engine, session = _make_server()
         fake_bgr = np.zeros((10, 10, 3), dtype=np.uint8)
         fake_bgr[:, :, 1] = 255
         agent._arm.render.return_value = fake_bgr
-        server = VectorMCPServer(agent)
 
         contents = asyncio.run(
             _invoke_read_resource(server, "camera://overhead")
@@ -265,8 +262,7 @@ class TestVectorMCPServer:
 
     def test_read_resource_unknown_uri(self) -> None:
         """read_resource raises ValueError for unknown URIs."""
-        agent = _make_mock_agent()
-        server = VectorMCPServer(agent)
+        server, agent, engine, session = _make_server()
 
         with pytest.raises(ValueError, match="Unknown resource URI"):
             asyncio.run(
@@ -282,34 +278,34 @@ class TestVectorMCPServer:
 class TestCreateSimAgent:
     """Test simulation agent factory."""
 
-    def test_create_sim_agent_returns_agent(self) -> None:
-        """create_sim_agent() returns an Agent instance."""
+    def test_create_sim_stack_returns_agent(self) -> None:
+        """create_sim_stack() returns an Agent instance."""
         with _patch_mujoco():
-            agent = create_sim_agent(headless=True)
+            agent = create_sim_stack(headless=True)
         assert isinstance(agent, Agent)
 
-    def test_create_sim_agent_headless(self) -> None:
-        """create_sim_agent(headless=True) creates MuJoCoArm with gui=False."""
+    def test_create_sim_stack_headless(self) -> None:
+        """create_sim_stack(headless=True) creates MuJoCoArm with gui=False."""
         with _patch_mujoco() as mock_arm_cls:
-            create_sim_agent(headless=True)
+            create_sim_stack(headless=True)
         mock_arm_cls.assert_called_once_with(gui=False)
 
-    def test_create_sim_agent_with_viewer(self) -> None:
-        """create_sim_agent(headless=False) creates MuJoCoArm with gui=True."""
+    def test_create_sim_stack_with_viewer(self) -> None:
+        """create_sim_stack(headless=False) creates MuJoCoArm with gui=True."""
         with _patch_mujoco() as mock_arm_cls:
-            create_sim_agent(headless=False)
+            create_sim_stack(headless=False)
         mock_arm_cls.assert_called_once_with(gui=True)
 
-    def test_create_sim_agent_connects_arm(self) -> None:
-        """create_sim_agent() calls arm.connect()."""
+    def test_create_sim_stack_connects_arm(self) -> None:
+        """create_sim_stack() calls arm.connect()."""
         with _patch_mujoco() as mock_arm_cls:
-            create_sim_agent(headless=True)
+            create_sim_stack(headless=True)
         mock_arm_cls.return_value.connect.assert_called_once()
 
-    def test_create_sim_agent_closes_gripper(self) -> None:
-        """create_sim_agent() closes the gripper after creation."""
+    def test_create_sim_stack_closes_gripper(self) -> None:
+        """create_sim_stack() closes the gripper after creation."""
         with _patch_mujoco_full() as (mock_arm_cls, mock_gripper_cls, _):
-            create_sim_agent(headless=True)
+            create_sim_stack(headless=True)
         mock_gripper_cls.return_value.close.assert_called_once()
 
 
@@ -392,10 +388,10 @@ async def _invoke_read_resource(server: VectorMCPServer, uri: str) -> list[Any]:
 
 
 def _patch_mujoco():
-    """Patch MuJoCoArm for create_sim_agent tests.
+    """Patch MuJoCoArm for create_sim_stack tests.
 
     Patches the class in its source module (hardware.sim.mujoco_arm) because
-    create_sim_agent() uses a local `from ... import` inside the function body.
+    create_sim_stack() uses a local `from ... import` inside the function body.
     Returns the mock arm class as the context manager value.
     """
     mock_arm = MagicMock()

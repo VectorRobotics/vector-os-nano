@@ -1,0 +1,19 @@
+# Navigation parameters — tunable without code changes
+navigation:
+  ceiling_filter_height: 1.0     # meters, points above this filtered from /registered_scan
+  # Tradeoff: FAR needs obstacle points for corner detection + V-Graph edges,
+  # but too many wall points block V-Graph visibility through 0.8m doorways.
+  # 0.8m: V-Graph disappeared — too few points for FAR corner detection.
+  # 1.0m: obstacle band 0.5-1.0m (0.5m thick) — enough corners, thin enough for doors.
+  # 1.8m: obstacle band 0.5-1.8m (1.3m thick) — too dense, doors invisible.
+  arrival_radius: 0.8            # meters, consider arrived when closer than this
+  far_probe_timeout: 3.0         # seconds, wait for FAR response before fallback
+  waypoint_timeout: 30.0         # seconds, per-waypoint timeout in door-chain
+  stall_threshold: 0.3           # meters, minimum progress per stuck check interval
+  stall_timeout: 30.0            # seconds, abort if no progress for this long
+  wall_escape_duration: 2.5      # seconds, reverse + strafe escape maneuver
+
+exploration:
+  progress_interval: 5.0         # seconds, minimum interval between progress reports
+  seed_walk_duration: 2.0        # seconds, initial forward walk before TARE starts
+  seed_walk_speed: 0.3           # m/s

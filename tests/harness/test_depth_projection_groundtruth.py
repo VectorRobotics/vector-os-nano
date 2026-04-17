@@ -594,5 +594,5 @@ class TestAtomicCapturePattern:
 
         # Verify frame was actually captured (not None / empty)
         assert frame is not None
-        assert frame.shape == (240, 320, 3)
+        assert frame.shape == (480, 640, 3)
         assert frame.dtype == np.uint8

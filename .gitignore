@@ -23,6 +23,7 @@ venv/
 config/workspace_calibration.yaml
 config/user.yaml
 *.npz
+*.ply
 # Note: vector_os_nano/ is the SOURCE PACKAGE, not a venv. Do NOT ignore it.
 test_run.py
 test_hardware.py
@@ -37,3 +38,8 @@ mjmodel.mjb
 .vector/
 oauth_credentials.json
 .gitnexus
+.claude/
+.webui_secret_key
+CLAUDE.md
+lib/
+MUJOCO_LOG.TXT

@@ -1,0 +1,172 @@
+<?xml version="1.0"?>
+<!--
+  Vector OS Nano — Go2 external sensors
+  Adds Livox MID-360 lidar + RealSense D435 to Go2 URDF.
+
+  Sensor mounting matches real Go2 hardware:
+    - MID-360: shoulder-mounted behind head, 20 deg forward tilt
+    - D435: in front of MID-360, slight downward tilt
+
+  Uses real mesh files for visual representation.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Mesh path — absolute to avoid fragile relative paths -->
+  <xacro:property name="sensor_mesh_dir"
+    value="/home/yusen/Desktop/vector_os_nano/gazebo/models/go2/meshes/sensors"/>
+
+  <!-- ============================================================ -->
+  <!-- Livox MID-360 LiDAR                                          -->
+  <!-- Shoulder-mounted, just behind head, 20 deg forward tilt      -->
+  <!-- ============================================================ -->
+
+  <joint name="mid360_joint" type="fixed">
+    <parent link="trunk"/>
+    <child link="mid360_link"/>
+    <origin xyz="0.15 0.0 0.10" rpy="0 0.349 0"/>
+  </joint>
+
+  <link name="mid360_link">
+    <inertial>
+      <mass value="0.265"/>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0003"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://${sensor_mesh_dir}/lidar_3d_v1.dae" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <gazebo reference="mid360_link">
+    <sensor name="mid360_lidar" type="gpu_lidar">
+      <topic>/scan</topic>
+      <gz_frame_id>mid360_link</gz_frame_id>
+      <always_on>true</always_on>
+      <update_rate>10</update_rate>
+      <visualize>true</visualize>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>30</samples>
+            <resolution>1</resolution>
+            <min_angle>-0.122</min_angle>
+            <max_angle>0.908</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!-- ============================================================ -->
+  <!-- RealSense D435 RGB-D Camera                                   -->
+  <!-- In front of MID-360, on head, 5 deg downward tilt            -->
+  <!-- ============================================================ -->
+
+  <joint name="d435_joint" type="fixed">
+    <parent link="trunk"/>
+    <child link="d435_link"/>
+    <origin xyz="0.27 0.0 0.08" rpy="0 0.087 0"/>
+  </joint>
+
+  <link name="d435_link">
+    <inertial>
+      <mass value="0.072"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.00005" ixy="0" ixz="0" iyy="0.00005" iyz="0" izz="0.00003"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 1.5708"/>
+      <geometry>
+        <mesh filename="file://${sensor_mesh_dir}/realsense.dae" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.09 0.025"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <gazebo reference="d435_link">
+    <sensor name="d435_rgb" type="camera">
+      <topic>/camera/image</topic>
+      <gz_frame_id>d435_link</gz_frame_id>
+      <always_on>true</always_on>
+      <update_rate>30</update_rate>
+      <visualize>false</visualize>
+      <camera>
+        <horizontal_fov>1.20</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>15.0</far>
+        </clip>
+        <optical_frame_id>d435_link</optical_frame_id>
+        <camera_info_topic>/camera/camera_info</camera_info_topic>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="d435_link">
+    <sensor name="d435_depth" type="depth_camera">
+      <topic>/camera/depth</topic>
+      <gz_frame_id>d435_link</gz_frame_id>
+      <always_on>true</always_on>
+      <update_rate>30</update_rate>
+      <visualize>false</visualize>
+      <camera>
+        <horizontal_fov>1.20</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R_FLOAT32</format>
+        </image>
+        <clip>
+          <near>0.3</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <!-- ============================================================ -->
+  <!-- Odometry publisher plugin (Gazebo doesn't publish odom by    -->
+  <!-- default — need this for /state_estimation via bridge)        -->
+  <!-- ============================================================ -->
+
+  <gazebo>
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base</robot_base_frame>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_topic>/model/go2/odometry</odom_topic>
+    </plugin>
+  </gazebo>
+
+</robot>

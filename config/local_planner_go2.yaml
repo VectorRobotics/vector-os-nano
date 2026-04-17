@@ -38,8 +38,8 @@ localPlanner:
     # front: 0.34m, back: 0.30m → total 0.64m
     # left: 0.25m, right: 0.25m → total 0.50m
     # Add 0.1m safety margin on each side for clearance
-    vehicleLength: 0.75    # 0.64 + 0.1 margin
-    vehicleWidth: 0.60     # 0.50 + 0.1 margin — prevents head/legs touching walls
+    vehicleLength: 0.55    # Go2 can pivot in place — effective turning footprint
+    vehicleWidth: 0.45     # 0.38 actual + 0.07 margin
 
     # Speed limits
     maxSpeed: 0.8
@@ -49,9 +49,9 @@ localPlanner:
     pathScale: 1.0         # was 0.8 — wider path search
     minPathScale: 0.5      # was 0.6 — allow tighter paths in doorways
     pathScaleStep: 0.1
-    minPathRange: 1.0      # was 0.8 — plan further ahead
+    minPathRange: 0.5      # short range for doorway traversal
     pathRangeStep: 0.5
-    adjacentRange: 3.5     # was 3.0 — consider wider area for obstacles
+    adjacentRange: 2.0     # smaller — reduces hesitation at doors
 
     # Goal tolerances
     goalClearRange: 0.5    # was 0.6 — more precise goal reaching

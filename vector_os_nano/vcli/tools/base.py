@@ -225,3 +225,63 @@ class ToolRegistry:
                 }
             )
         return schemas
+
+
+# ---------------------------------------------------------------------------
+# CategorizedToolRegistry
+# ---------------------------------------------------------------------------
+
+
+class CategorizedToolRegistry(ToolRegistry):
+    """Tool registry with category-based organization.
+
+    Extends ToolRegistry — all existing APIs work unchanged.
+    Categories allow grouping tools (code, robot, diag, system) and
+    enabling/disabling entire groups at runtime.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._categories: dict[str, list[str]] = {}
+        self._disabled: set[str] = set()
+
+    def register(self, tool_instance: Any, category: str = "default") -> None:  # type: ignore[override]
+        super().register(tool_instance)
+        self._categories.setdefault(category, []).append(tool_instance.name)
+
+    def enable_category(self, category: str) -> None:
+        """Re-enable a previously disabled category."""
+        self._disabled.discard(category)
+
+    def disable_category(self, category: str) -> None:
+        """Disable a category — its tools are excluded from to_anthropic_schemas()."""
+        self._disabled.add(category)
+
+    def is_category_enabled(self, category: str) -> bool:
+        """Return True if the category is currently enabled."""
+        return category not in self._disabled
+
+    def to_anthropic_schemas(self, categories: list[str] | None = None) -> list[dict[str, Any]]:
+        """Return schemas filtered by categories.
+
+        Args:
+            categories: If provided, only include tools from these categories.
+                        If None, include all tools from enabled categories
+                        (default behavior — backward compatible).
+        """
+        if categories is not None:
+            # Explicit category filter (from intent router)
+            allowed: set[str] = set()
+            for cat in categories:
+                allowed.update(self._categories.get(cat, []))
+            return [s for s in super().to_anthropic_schemas() if s["name"] in allowed]
+
+        # Default: exclude disabled categories
+        disabled_tools: set[str] = set()
+        for cat in self._disabled:
+            disabled_tools.update(self._categories.get(cat, []))
+        return [s for s in super().to_anthropic_schemas() if s["name"] not in disabled_tools]
+
+    def list_categories(self) -> dict[str, list[str]]:
+        """Return a copy of the {category: [tool_names]} mapping."""
+        return {k: list(v) for k, v in self._categories.items()}

@@ -1,0 +1,156 @@
+<?xml version="1.0" ?>
+<!--
+  Go2 navigation model for Gazebo Harmonic.
+  Simplified: fixed legs in standing pose, velocity-controlled base.
+  Purpose: nav testing (lidar + camera), not leg locomotion.
+  Locomotion fidelity comes from real hardware or RL sim (MJX).
+-->
+<sdf version="1.9">
+  <model name="go2">
+    <static>false</static>
+
+    <!-- Base link — entire robot as one rigid body -->
+    <link name="base_link">
+      <pose>0 0 0.32 0 0 0</pose>
+
+      <inertial>
+        <mass>15.0</mass>
+        <inertia>
+          <ixx>0.15</ixx><iyy>0.40</iyy><izz>0.35</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+
+      <!-- Body visual — Go2 trunk mesh -->
+      <visual name="trunk_visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>file:///home/yusen/Desktop/quadruped_ros2_control/install/go2_description/share/go2_description/meshes/trunk.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+
+      <!-- Body collision — simplified box -->
+      <collision name="body_collision">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <box><size>0.38 0.094 0.114</size></box>
+        </geometry>
+      </collision>
+
+      <!-- ==================== SENSORS ==================== -->
+
+      <!-- Livox MID-360 LiDAR — shoulder-mounted, 20 deg forward tilt -->
+      <visual name="lidar_visual">
+        <pose>0.15 0 0.10 0 -0.349 0</pose>
+        <geometry>
+          <mesh>
+            <uri>file:///home/yusen/Desktop/vector_os_nano/gazebo/models/go2/meshes/sensors/lidar_3d_v1.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+
+      <sensor name="mid360_lidar" type="gpu_lidar">
+        <pose>0.15 0 0.10 0 -0.349 0</pose>
+        <topic>/scan</topic>
+        <always_on>true</always_on>
+        <update_rate>10</update_rate>
+        <visualize>true</visualize>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>360</samples>
+              <resolution>1</resolution>
+              <min_angle>-3.14159</min_angle>
+              <max_angle>3.14159</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>30</samples>
+              <resolution>1</resolution>
+              <min_angle>-0.122</min_angle>
+              <max_angle>0.908</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>0.1</min>
+            <max>12.0</max>
+            <resolution>0.01</resolution>
+          </range>
+        </lidar>
+      </sensor>
+
+      <!-- RealSense D435 RGB camera -->
+      <visual name="d435_visual">
+        <pose>0.27 0 0.08 0 0.087 0</pose>
+        <geometry>
+          <mesh>
+            <uri>file:///home/yusen/Desktop/vector_os_nano/gazebo/models/go2/meshes/sensors/realsense.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+
+      <sensor name="d435_rgb" type="camera">
+        <pose>0.27 0 0.08 0 0.087 0</pose>
+        <topic>/camera/image</topic>
+        <always_on>true</always_on>
+        <update_rate>15</update_rate>
+        <visualize>false</visualize>
+        <camera>
+          <horizontal_fov>1.20</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.1</near><far>15.0</far></clip>
+        </camera>
+      </sensor>
+
+      <!-- RealSense D435 depth camera -->
+      <sensor name="d435_depth" type="depth_camera">
+        <pose>0.27 0 0.08 0 0.087 0</pose>
+        <topic>/camera/depth</topic>
+        <always_on>true</always_on>
+        <update_rate>15</update_rate>
+        <visualize>false</visualize>
+        <camera>
+          <horizontal_fov>1.20</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R_FLOAT32</format>
+          </image>
+          <clip><near>0.3</near><far>10.0</far></clip>
+        </camera>
+      </sensor>
+
+      <!-- IMU -->
+      <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>200</update_rate>
+        <topic>/imu</topic>
+      </sensor>
+    </link>
+
+    <!-- ==================== PLUGINS ==================== -->
+
+    <!-- Velocity control — accepts Twist on /cmd_vel, moves base directly -->
+    <plugin filename="gz-sim-velocity-control-system"
+            name="gz::sim::systems::VelocityControl">
+      <topic>/cmd_vel</topic>
+      <initial_linear>0 0 0</initial_linear>
+      <initial_angular>0 0 0</initial_angular>
+    </plugin>
+
+    <!-- Odometry publisher -->
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_topic>/model/go2/odometry</odom_topic>
+    </plugin>
+
+  </model>
+</sdf>

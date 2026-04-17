@@ -246,16 +246,30 @@ def test_navigate_skill_room_aliases() -> None:
 
 
 def test_arrival_threshold() -> None:
-    """navigate_to() arrival distance is between 0.5 m and 1.0 m."""
+    """navigate_to() arrival distance is between 0.5 m and 1.0 m.
+
+    After nav.yaml refactor, _ARRIVAL_DIST is set via _nav("arrival_radius", 0.8).
+    Accept both: literal type annotation AND _nav() call pattern.
+    """
     src = _proxy_source()
-    # Extract the _ARRIVAL_DIST value from the source
-    match = re.search(r'_ARRIVAL_DIST\s*:\s*float\s*=\s*([\d.]+)', src)
-    assert match is not None, (
-        "navigate_to must define _ARRIVAL_DIST threshold"
-    )
-    arrival_dist = float(match.group(1))
+    # Pattern 1 (legacy): _ARRIVAL_DIST: float = 0.8
+    match = re.search(r'_ARRIVAL_DIST\s*(?::\s*float\s*)?=\s*([\d.]+)', src)
+    if match:
+        arrival_dist = float(match.group(1))
+    else:
+        # Pattern 2 (current): _ARRIVAL_DIST = _nav("arrival_radius", 0.8)
+        # or _ARRIVAL = _nav("arrival_radius", 0.8)
+        match = re.search(
+            r'_ARRIVAL(?:_DIST)?\s*=\s*_nav\s*\([^,]+,\s*([\d.]+)\)',
+            src,
+        )
+        assert match is not None, (
+            "navigate_to must define _ARRIVAL_DIST or _ARRIVAL threshold "
+            "(literal or _nav() call)"
+        )
+        arrival_dist = float(match.group(1))
     assert 0.5 <= arrival_dist <= 1.0, (
-        f"_ARRIVAL_DIST={arrival_dist} must be in [0.5, 1.0] m"
+        f"arrival distance={arrival_dist} must be in [0.5, 1.0] m"
     )
 
 

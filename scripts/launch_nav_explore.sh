@@ -55,9 +55,20 @@ PIDS+=($!)
 sleep 1
 
 echo "[3/7] Starting terrain analysis..."
-ros2 run terrain_analysis terrainAnalysis &
+ros2 run terrain_analysis terrainAnalysis --ros-args \
+  -p clearDyObs:=true \
+  -p minDyObsDis:=0.14 \
+  -p minOutOfFovPointNum:=20 \
+  -p obstacleHeightThre:=0.15 \
+  -p maxRelZ:=1.5 \
+  -p limitGroundLift:=true \
+  -p maxGroundLift:=0.05 \
+  -p minDyObsVFOV:=-30.0 \
+  -p maxDyObsVFOV:=35.0 &
 PIDS+=($!)
-ros2 run terrain_analysis_ext terrainAnalysisExt &
+ros2 run terrain_analysis_ext terrainAnalysisExt --ros-args \
+  -p obstacleHeightThre:=0.15 \
+  -p maxRelZ:=1.5 &
 PIDS+=($!)
 sleep 3
 

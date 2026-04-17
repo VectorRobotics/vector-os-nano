@@ -47,7 +47,7 @@ from vector_os_nano.vcli.session import (
 )
 from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.prompt import build_system_prompt
-from vector_os_nano.vcli.tools import ToolRegistry, discover_all_tools
+from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_all_tools, discover_categorized_tools
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -219,8 +219,23 @@ def render_response(text: str, width: int = 80) -> Panel:
     )
 
 
+def _strip_markdown(raw: str) -> str:
+    """Strip markdown formatting that should not appear in terminal output."""
+    # Bold: **text** or __text__
+    raw = re.sub(r"\*\*(.+?)\*\*", r"\1", raw)
+    raw = re.sub(r"__(.+?)__", r"\1", raw)
+    # Italic: *text* (single)
+    raw = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", raw)
+    # Headers: # ## ###
+    raw = re.sub(r"^#{1,3}\s+", "", raw, flags=re.MULTILINE)
+    # Horizontal rules
+    raw = re.sub(r"^---+\s*$", "", raw, flags=re.MULTILINE)
+    return raw
+
+
 def _append_highlighted_text(target: Text, raw: str) -> None:
     """Append text with file paths in teal and `inline code` highlighted."""
+    raw = _strip_markdown(raw)
     last = 0
     # Merge path and inline code patterns, process in order
     for m in re.finditer(r"(?P<path>(?<!\w)/[\w./\-_]+\.\w+)|(?P<code>`[^`]+`)", raw):
@@ -488,19 +503,54 @@ def _launch_ros2_stack(go2: Any) -> None:
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     script = os.path.join(repo, "scripts", "launch_nav_only.sh")
     if os.path.isfile(script):
-        log_fh = open("/tmp/vector_nav_only.log", "w")
+        log_path = "/tmp/vector_nav_only.log"
+        # Truncate log if it has grown beyond 5 MB to prevent unbounded disk use
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 5 * 1024 * 1024:
+            with open(log_path, "w") as _f:
+                _f.write("")  # truncate
+        log_fh = open(log_path, "a")
         proc = subprocess.Popen(
             [script], stdout=log_fh, stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,
         )
 
+        # Use a list so the monitor thread can mutate the proc reference.
+        proc_ref = [proc]
+
+        def _nav_health_monitor(proc_ref: list, script: str, log_fh: Any, console: Any) -> None:
+            """Daemon thread: poll nav stack every 5s, restart if crashed."""
+            while True:
+                time.sleep(5)
+                current = proc_ref[0]
+                if current.poll() is not None:
+                    exit_code = current.returncode
+                    console.print(f"  [red]nav stack crashed (exit {exit_code}), restarting...[/]")
+                    try:
+                        new_proc = subprocess.Popen(
+                            [script], stdout=log_fh, stderr=subprocess.STDOUT,
+                            preexec_fn=os.setsid,
+                        )
+                        proc_ref[0] = new_proc
+                        time.sleep(3)  # let it initialize
+                        console.print("  [green]nav stack restarted[/]")
+                    except Exception as exc:
+                        console.print(f"  [red]nav stack restart failed: {exc}[/]")
+
+        monitor = threading.Thread(
+            target=_nav_health_monitor,
+            args=(proc_ref, script, log_fh, console),
+            daemon=True,
+        )
+        monitor.start()
+
         def _cleanup():
+            current = proc_ref[0]
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                proc.wait(timeout=5)
+                os.killpg(os.getpgid(current.pid), signal.SIGTERM)
+                current.wait(timeout=5)
             except Exception:
                 try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    os.killpg(os.getpgid(current.pid), signal.SIGKILL)
                 except Exception:
                     pass
             log_fh.close()
@@ -685,11 +735,8 @@ def _handle_slash_command(
 
     elif cmd == "compact":
         if session is not None:
-            before = len(session._entries)
-            if before > 8:
-                session._entries = session._entries[-8:]
-            after = len(session._entries)
-            console.print(f"[dim]  Compacted: {before} -> {after} entries[/dim]")
+            before, after = session.compact(keep_recent=8)
+            console.print(f"[dim]  Compacted: {before} -> {after} entries (old context summarized)[/dim]")
         else:
             console.print("[dim]No session.[/dim]")
 
@@ -889,7 +936,11 @@ _ROOM_LABELS: dict[str, str] = {
 
 
 def _setup_explore_events(console: Any) -> None:
-    """Hook exploration background events into Rich console output."""
+    """Hook exploration background events into console output.
+
+    Uses print() instead of console.print() because explore events fire
+    from a background thread — Rich Console is not thread-safe.
+    """
     try:
         from vector_os_nano.skills.go2.explore import set_event_callback
     except ImportError:
@@ -898,35 +949,43 @@ def _setup_explore_events(console: Any) -> None:
     def _on_explore_event(event_type: str, data: dict) -> None:
         if event_type == "started":
             total = data.get("total_rooms", 8)
-            console.print(f"  [dim]Exploration started ({total} rooms to discover)[/dim]")
+            print(f"  >> Exploration started ({total} rooms to discover)")
 
         elif event_type == "room_entered":
             room = data.get("room", "?")
             visited = data.get("visited", 0)
             total = data.get("total", 8)
+            elapsed = data.get("elapsed_sec", 0)
             label = _ROOM_LABELS.get(room, room)
             bar = f"[{'#' * visited}{'.' * (total - visited)}]"
-            console.print(
-                f"  [{TEAL}]>> {label}[/] [dim]{bar} {visited}/{total}[/dim]"
-            )
+            print(f"  >> {label} {bar} {visited}/{total} ({elapsed}s)")
 
-        elif event_type == "completed":
+        elif event_type == "status":
+            elapsed = data.get("elapsed_sec", 0)
+            rooms = data.get("rooms_found", 0)
+            total = data.get("total", 8)
+            room = data.get("current_room", "?")
+            pos = data.get("position", [0, 0])
+            print(f"  .. {elapsed}s | {rooms}/{total} rooms | at {room} ({pos[0]}, {pos[1]})")
+
+        elif event_type in ("completed", "complete"):
             rooms = data.get("rooms", [])
-            console.print(
-                f"  [green]Exploration complete![/] "
-                f"[dim]All {len(rooms)} rooms discovered.[/dim]"
-            )
+            reason = data.get("reason", "")
+            elapsed = data.get("elapsed_sec", 0)
+            if reason == "tare_finished":
+                print(f"  >> Exploration complete ({elapsed}s, TARE: all frontiers covered). {len(rooms)} rooms.")
+            else:
+                print(f"  >> Exploration complete ({elapsed}s). {len(rooms)} rooms.")
 
         elif event_type == "stopped":
             reason = data.get("reason", "unknown")
             rooms = data.get("rooms", [])
             if reason == "cancelled":
-                console.print(
-                    f"  [yellow]Exploration stopped.[/] "
-                    f"[dim]{len(rooms)} rooms discovered so far.[/dim]"
-                )
+                print(f"  >> Exploration stopped. {len(rooms)} rooms so far.")
             elif reason == "robot_fell":
-                console.print(f"  [red]Robot fell! Exploration aborted.[/]")
+                print("  >> Robot fell! Exploration aborted.")
+            else:
+                print(f"  >> Exploration {reason} — {len(rooms)} rooms.")
 
     set_event_callback(_on_explore_event)
 
@@ -957,14 +1016,20 @@ def main(argv: list[str] | None = None) -> None:
     # Agent (optional hardware)
     agent = _init_agent(args)
 
-    # Tools
-    registry: ToolRegistry = ToolRegistry()
-    for tool in discover_all_tools():
-        registry.register(tool)
+    # Tools (categorized registry for scalable tool management)
+    registry: CategorizedToolRegistry = CategorizedToolRegistry()
+    tools_list, cat_map = discover_categorized_tools()
+    for t in tools_list:
+        cat = "default"
+        for c, names in cat_map.items():
+            if t.name in names:
+                cat = c
+                break
+        registry.register(t, category=cat)
     if agent is not None:
         from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
         for skill_tool in wrap_skills(agent):
-            registry.register(skill_tool)
+            registry.register(skill_tool, category="robot")
 
     # Permissions
     permissions = PermissionContext(no_permission=args.no_permission)
@@ -986,16 +1051,53 @@ def main(argv: list[str] | None = None) -> None:
     else:
         session = create_session(metadata={"model": model})
 
-    # System prompt
-    system_prompt = build_system_prompt(agent=agent, cwd=Path.cwd())
+    # System prompt (with live robot context)
+    robot_ctx_provider = None
+    try:
+        from vector_os_nano.vcli.robot_context import RobotContextProvider
+        base = getattr(agent, "_base", None) if agent else None
+        sg = getattr(agent, "_spatial_memory", None) if agent else None
+        robot_ctx_provider = RobotContextProvider(base=base, scene_graph=sg)
+    except ImportError:
+        pass
+    system_prompt = build_system_prompt(agent=agent, cwd=Path.cwd(), robot_context=robot_ctx_provider)
+
+    # Wrap in DynamicSystemPrompt so robot state refreshes each turn
+    try:
+        from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
+        system_prompt = DynamicSystemPrompt(system_prompt, robot_ctx_provider)
+    except ImportError:
+        pass
+
+    # Intent router + hooks
+    intent_router = None
+    hooks = None
+    try:
+        from vector_os_nano.vcli.intent_router import IntentRouter
+        intent_router = IntentRouter()
+    except ImportError:
+        pass
+    try:
+        from vector_os_nano.vcli.hooks import ToolHookRegistry
+        hooks = ToolHookRegistry()
+    except ImportError:
+        pass
+
+    # Explore event streaming — wired via _setup_explore_events on first explore
+    _setup_explore_events(console)
 
     # Backend + engine (deferred if no API key — /login can set it up)
     engine: VectorEngine | None = None
     if api_key:
         backend = create_backend(provider=provider, api_key=api_key, model=model, base_url=base_url)
-        engine = VectorEngine(backend=backend, registry=registry, system_prompt=system_prompt, permissions=permissions)
+        engine = VectorEngine(
+            backend=backend, registry=registry, system_prompt=system_prompt,
+            permissions=permissions, intent_router=intent_router, hooks=hooks,
+        )
 
     # Mutable app state
+    _spatial_memory = getattr(agent, "_spatial_memory", None) if agent else None
+    _skill_registry = getattr(agent, "_skill_registry", None) if agent else None
     app_state: dict[str, Any] = {
         "agent": agent,
         "registry": registry,
@@ -1004,7 +1106,54 @@ def main(argv: list[str] | None = None) -> None:
         "provider": provider,
         "api_key": api_key,
         "base_url": base_url,
+        "scene_graph": _spatial_memory,
+        "skill_registry": _skill_registry,
     }
+
+    # VGG cognitive layer (optional)
+    _vgg_step_idx = [0]
+    _vgg_total = [0]
+
+    def _vgg_step_display(step: Any) -> None:
+        """Print VGG step progress to console — human-readable."""
+        _vgg_step_idx[0] += 1
+        idx = _vgg_step_idx[0]
+        total = _vgg_total[0]
+        name = getattr(step, "sub_goal_name", "?")
+        strategy = getattr(step, "strategy", "?")
+        success = getattr(step, "success", False)
+        dur = getattr(step, "duration_sec", 0.0)
+        fallback = getattr(step, "fallback_used", False)
+        err = getattr(step, "error", "")
+
+        prefix = f"[{idx}/{total}]" if total > 0 else ""
+
+        if success:
+            console.print(f"  [{TEAL}]>[/] {prefix} {name} [green]done[/] [dim]{dur:.1f}s[/]")
+        elif err == "aborted":
+            console.print(f"  [{TEAL}]>[/] {prefix} {name} [yellow]aborted[/]")
+        else:
+            # Translate common errors to friendly messages
+            friendly = err
+            if "No rooms learned" in err or "room_not_explored" in err:
+                friendly = "no map yet — run explore first"
+            elif "navigation_failed" in err or "timed out" in err:
+                friendly = "navigation timed out"
+            elif "Skill not found" in err:
+                friendly = f"skill not available: {strategy}"
+            fb_tag = " [dim](tried fallback)[/]" if fallback else ""
+            console.print(f"  [{TEAL}]>[/] {prefix} {name} [red]failed[/] — {friendly}{fb_tag} [dim]{dur:.1f}s[/]")
+
+    try:
+        engine.init_vgg(
+            agent=agent,
+            skill_registry=_skill_registry,
+            on_vgg_step=_vgg_step_display,
+        )
+        if engine._vgg_enabled:
+            console.print(f"[dim]  VGG cognitive layer: enabled[/dim]")
+    except Exception:
+        pass
 
     # Banner — detect auth source for display
     from vector_os_nano.vcli.config import load_claude_oauth
@@ -1116,37 +1265,184 @@ def main(argv: list[str] | None = None) -> None:
                             )
                         )
 
-                def _format_params_brief(p: dict[str, Any]) -> str:
-                    if not p:
+                def _format_tool_display(name: str, p: dict[str, Any]) -> str:
+                    """Context-aware tool call display."""
+                    if name == "file_read":
+                        path = p.get("file_path", "")
+                        short = path.split("/")[-1] if "/" in path else path
+                        offset = p.get("offset", 0)
+                        limit = p.get("limit", "")
+                        loc = f":{offset}-{offset + limit}" if offset and limit else ""
+                        return f"[dim]read[/] {short}{loc}"
+                    if name == "file_edit":
+                        path = p.get("file_path", "")
+                        short = path.split("/")[-1] if "/" in path else path
+                        old = str(p.get("old_string", ""))[:30]
+                        new = str(p.get("new_string", ""))[:30]
+                        return f"[dim]edit[/] {short}: [red]{old}[/] [dim]→[/] [green]{new}[/]"
+                    if name == "file_write":
+                        path = p.get("file_path", "")
+                        short = path.split("/")[-1] if "/" in path else path
+                        return f"[dim]write[/] {short}"
+                    if name == "bash":
+                        cmd = str(p.get("command", ""))[:60]
+                        return f"[dim]$[/] {cmd}"
+                    if name == "navigate":
+                        room = p.get("room", "?")
+                        return f"[dim]navigate →[/] {room}"
+                    if name == "explore":
+                        return "[dim]explore[/] starting background exploration"
+                    if name in ("walk", "turn", "stand", "sit", "lie_down", "stop"):
+                        parts = [name]
+                        if p.get("direction"):
+                            parts.append(str(p["direction"]))
+                        if p.get("distance"):
+                            parts.append(f"{p['distance']}m")
+                        if p.get("angle"):
+                            parts.append(f"{p['angle']}°")
+                        return "[dim]" + " ".join(parts) + "[/]"
+                    if name == "skill_reload":
+                        return f"[dim]reload[/] {p.get('skill_name', '?')}"
+                    if name == "scene_graph_query":
+                        qt = p.get("query_type", "?")
+                        room = p.get("room", "")
+                        return f"[dim]scene_graph[/] {qt}" + (f" ({room})" if room else "")
+                    if name in ("ros2_topics", "ros2_nodes"):
+                        action = p.get("action", "?")
+                        topic = p.get("topic", p.get("node", ""))
+                        return f"[dim]{name}[/] {action}" + (f" {topic}" if topic else "")
+                    if name == "ros2_log":
+                        return f"[dim]log[/] {p.get('log_name', '?')}"
+                    if name in ("glob", "grep"):
+                        pattern = p.get("pattern", "")[:40]
+                        return f"[dim]{name}[/] {pattern}"
+                    if name == "nav_state":
+                        return "[dim]nav_state[/]"
+                    if name == "terrain_status":
+                        return "[dim]terrain_status[/]"
+                    if name == "start_simulation":
+                        st = p.get("sim_type", "go2")
+                        return f"[dim]sim start[/] {st}"
+                    # Fallback: generic display
+                    if p:
+                        items = [f"{k}={str(v)[:20]}" for k, v in list(p.items())[:2]]
+                        return f"[dim]{name}[/]({', '.join(items)})"
+                    return f"[dim]{name}[/]"
+
+                def _format_result_summary(name: str, result: Any) -> str:
+                    """Extract key info from tool result for display."""
+                    if result.is_error:
+                        content = result.content or ""
+                        # Show first line of error + suggested action
+                        lines = content.split("\n")
+                        msg = lines[0][:60]
+                        suggested = next((l for l in lines if l.startswith("Suggested:")), "")
+                        if suggested:
+                            return f"  [dim]{msg}[/]\n    [yellow]{suggested}[/]"
+                        return f"  [dim]{msg}[/]"
+
+                    meta = result.metadata if hasattr(result, "metadata") else {}
+                    if not meta:
                         return ""
-                    items: list[str] = []
-                    for k, v in list(p.items())[:3]:
-                        v_str = str(v)
-                        if len(v_str) > 40:
-                            v_str = v_str[:37] + "..."
-                        if isinstance(v, str):
-                            v_str = f'"{v_str}"'
-                        items.append(f"{k}={v_str}")
-                    suffix = ", ..." if len(p) > 3 else ""
-                    return ", ".join(items) + suffix
+
+                    # Navigate: show arrival info
+                    if name == "navigate":
+                        room = meta.get("room", "")
+                        state = meta.get("robot_state_after", {})
+                        pos = state.get("position", [])
+                        if room and pos:
+                            return f"  [dim]▸ 到达 {room} ({pos[0]}, {pos[1]})[/]"
+                        if room:
+                            return f"  [dim]▸ 到达 {room}[/]"
+                    # Explore: show status
+                    if name == "explore":
+                        status = meta.get("status", "")
+                        rooms = meta.get("rooms_visited", meta.get("all_rooms", []))
+                        if rooms:
+                            return f"  [dim]▸ {len(rooms)} rooms discovered[/]"
+                    # Where am i
+                    if name == "where_am_i":
+                        room = meta.get("room", "")
+                        pos = meta.get("position", [])
+                        if room:
+                            return f"  [dim]▸ {room} ({pos[0]}, {pos[1]})[/]" if pos else f"  [dim]▸ {room}[/]"
+                    # Motor skills: show post-state
+                    state = meta.get("robot_state_after", {})
+                    if state:
+                        room = state.get("room", "")
+                        pos = state.get("position", [])
+                        if room and pos:
+                            return f"  [dim]▸ pos=({pos[0]}, {pos[1]}) room={room}[/]"
+
+                    return ""
+
+                _tool_displays: dict[str, str] = {}
 
                 def on_tool_start(name: str, p: dict[str, Any]) -> None:
                     _tool_start_times[name] = time.monotonic()
-                    ps = _format_params_brief(p)
-                    if ps:
-                        console.print(f"  [{TEAL}]{name}[/]([dim]{ps}[/]) ...", end="")
-                    else:
-                        console.print(f"  [{TEAL}]{name}[/]() ...", end="")
+                    _tool_displays[name] = _format_tool_display(name, p)
 
                 def on_tool_end(name: str, result: Any) -> None:
                     elapsed = time.monotonic() - _tool_start_times.pop(name, time.monotonic())
+                    display = _tool_displays.pop(name, name)
                     tag = "[green]ok[/]" if not result.is_error else "[red]fail[/]"
-                    console.print(f" {tag} [dim]{elapsed:.1f}s[/]")
+                    console.print(f"  [{TEAL}]▸[/] {display} {tag} [dim]{elapsed:.1f}s[/]")
+
+                    # Show result summary for important tools
+                    summary = _format_result_summary(name, result)
+                    if summary:
+                        console.print(summary)
 
                     # Hook explore event callback after sim/explore tools run
                     if name in ("start_simulation", "explore"):
                         _setup_explore_events(console)
 
+                # --- VGG: try cognitive pipeline ---
+                # Covers both complex tasks AND motor actions (navigate, patrol)
+                goal_tree = engine.vgg_decompose(user_input)
+                if goal_tree is not None:
+                    # Show plan BEFORE execution
+                    console.print()
+                    console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {goal_tree.goal}")
+                    for i, sg in enumerate(goal_tree.sub_goals, 1):
+                        dep = f" (after {', '.join(sg.depends_on)})" if sg.depends_on else ""
+                        strat = f" [dim]via {sg.strategy}[/]" if sg.strategy else ""
+                        console.print(f"  [{TEAL}]>[/]   [{i}/{len(goal_tree.sub_goals)}] {sg.name} — {sg.description}{strat}{dep}")
+                    console.print()
+
+                    # Reset step counter for callback
+                    _vgg_step_idx[0] = 0
+                    _vgg_total[0] = len(goal_tree.sub_goals)
+
+                    # Execute async — CLI remains responsive
+                    def _on_vgg_complete(trace: Any) -> None:
+                        n_steps = len(trace.steps)
+                        n_ok = sum(1 for s in trace.steps if s.success)
+                        dur = trace.total_duration_sec
+                        if trace.success:
+                            console.print(f"  [{TEAL}]>[/] [green]all {n_steps} steps done[/] [dim]{dur:.1f}s[/]")
+                        elif n_ok > 0:
+                            console.print(f"  [{TEAL}]>[/] [yellow]{n_ok}/{n_steps} steps done[/], rest failed [dim]{dur:.1f}s[/]")
+                        else:
+                            console.print(f"  [{TEAL}]>[/] [red]task failed[/] — 0/{n_steps} steps succeeded [dim]{dur:.1f}s[/]")
+
+                        # Record in session
+                        step_summary = "\n".join(
+                            f"  {s.sub_goal_name}: {'ok' if s.success else 'FAILED'}"
+                            + (f" ({s.error})" if s.error else "")
+                            for s in trace.steps
+                        )
+                        session.append_user(user_input)
+                        session.append_assistant(
+                            f"[VGG executed]\nGoal: {trace.goal_tree.goal}\n"
+                            f"Result: {'success' if trace.success else 'partial failure'}\n"
+                            f"Steps:\n{step_summary}"
+                        )
+
+                    engine.vgg_execute_async(goal_tree, on_complete=_on_vgg_complete)
+                    continue  # CLI immediately available for next input
+
+                # --- Normal tool_use path ---
                 thinking_panel = Panel(
                     Text("thinking...", style="dim italic"),
                     title=V_LABEL,
@@ -1186,10 +1482,10 @@ def main(argv: list[str] | None = None) -> None:
                         width=min(console.width, 80),
                     ))
 
-                # Auto-compact
+                # Auto-compact (summarize old context instead of truncating)
                 if len(session._entries) > 50:
-                    session._entries = session._entries[-12:]
-                    console.print(f"[dim]  auto-compacted to last 12 entries[/dim]")
+                    before, after = session.compact(keep_recent=12)
+                    console.print(f"[dim]  compacted {before} -> {after} entries (old context summarized)[/dim]")
 
                 # Token usage (show in/out breakdown)
                 if turn_result.usage:

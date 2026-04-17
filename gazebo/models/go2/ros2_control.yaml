@@ -1,0 +1,109 @@
+# ros2_control configuration for Go2 quadruped — Gazebo Harmonic simulation
+#
+# Hardware plugin: gz_quadruped_hardware/GazeboSimSystem
+#   (loaded via gz_quadruped_hardware::GazeboSimQuadrupedPlugin in model.sdf)
+#
+# Controller: unitree_guide_controller/UnitreeGuideController
+#   Built from ~/Desktop/quadruped_ros2_control/install/
+#
+# Joint order follows unitree_guide_controller convention: FR/FL/RR/RL
+# Command interfaces: position, velocity, effort, kp, kd (PD + torque)
+# State interfaces:   position, velocity, effort
+
+controller_manager:
+  ros__parameters:
+    update_rate: 1000  # Hz — matches quadruped_ros2_control reference config
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    imu_sensor_broadcaster:
+      type: imu_sensor_broadcaster/IMUSensorBroadcaster
+
+    unitree_guide_controller:
+      type: unitree_guide_controller/UnitreeGuideController
+
+imu_sensor_broadcaster:
+  ros__parameters:
+    sensor_name: "imu_sensor"
+    frame_id: "imu_link"
+
+unitree_guide_controller:
+  ros__parameters:
+    update_rate: 200  # Hz
+
+    joints:
+      - FR_hip_joint
+      - FR_thigh_joint
+      - FR_calf_joint
+      - FL_hip_joint
+      - FL_thigh_joint
+      - FL_calf_joint
+      - RR_hip_joint
+      - RR_thigh_joint
+      - RR_calf_joint
+      - RL_hip_joint
+      - RL_thigh_joint
+      - RL_calf_joint
+
+    command_interfaces:
+      - position
+      - velocity
+      - effort
+      - kp
+      - kd
+
+    state_interfaces:
+      - position
+      - velocity
+      - effort
+
+    feet_names:
+      - FR_foot
+      - FL_foot
+      - RR_foot
+      - RL_foot
+
+    imu_name: "imu_sensor"
+    base_name: "base"
+
+    imu_interfaces:
+      - orientation.w
+      - orientation.x
+      - orientation.y
+      - orientation.z
+      - angular_velocity.x
+      - angular_velocity.y
+      - angular_velocity.z
+      - linear_acceleration.x
+      - linear_acceleration.y
+      - linear_acceleration.z
+
+    # Standing and down positions (radians) for 12 joints in FR/FL/RR/RL order
+    stand_pos:
+      - 0.0
+      - 0.8
+      - -1.5
+      - 0.0
+      - 0.8
+      - -1.5
+      - 0.0
+      - 0.8
+      - -1.5
+      - 0.0
+      - 0.8
+      - -1.5
+
+    down_pos:
+      - -0.01
+      - 1.27
+      - -2.8
+      - 0.01
+      - 1.27
+      - -2.8
+      - -0.3
+      - 1.31
+      - -2.8
+      - 0.3
+      - 1.31
+      - -2.8

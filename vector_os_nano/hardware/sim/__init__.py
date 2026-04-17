@@ -4,12 +4,14 @@ Provides drop-in replacements for hardware arm and gripper,
 allowing skills and the Agent to run in headless simulation
 without physical hardware.
 
-Two backends available:
+Three backends available:
     MuJoCo (recommended) — higher fidelity contact physics, real grasping
     PyBullet (legacy)    — lighter weight, basic simulation
+    Isaac Sim            — photorealistic, requires Docker + ROS2
 
-All physics engines are imported lazily; importing this module does NOT
-require mujoco or pybullet to be installed.
+MuJoCo and PyBullet are imported eagerly. Isaac Sim proxies are imported
+lazily inside try/except blocks because they depend on rclpy which is only
+available in ROS2 environments.
 """
 from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
 from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
@@ -26,3 +28,25 @@ __all__ = [
     "SimulatedArm",
     "SimulatedGripper",
 ]
+
+# Isaac Sim proxies — optional, require rclpy (ROS2 must be sourced).
+try:
+    from vector_os_nano.hardware.sim.isaac_sim_proxy import IsaacSimProxy
+
+    __all__ += ["IsaacSimProxy"]
+except Exception:
+    pass
+
+try:
+    from vector_os_nano.hardware.sim.isaac_sim_arm_proxy import IsaacSimArmProxy
+
+    __all__ += ["IsaacSimArmProxy"]
+except Exception:
+    pass
+
+try:
+    from vector_os_nano.hardware.sim.gazebo_go2_proxy import GazeboGo2Proxy
+
+    __all__ += ["GazeboGo2Proxy"]
+except Exception:
+    pass

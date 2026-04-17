@@ -17,12 +17,12 @@ tare_planner_node:
     pub_momentum_activation_count_topic_ : momentum_activation_count
 
     kAutoStart : false
-    kRushHome : true
+    kRushHome : false
     kUseTerrainHeight : false
     kCheckTerrainCollision : true
     kExtendWayPoint : true
     kUseLineOfSightLookAheadPoint : true
-    kNoExplorationReturnHome : true
+    kNoExplorationReturnHome : false
     kExtendWayPointDistanceBig : 1.5
     kExtendWayPointDistanceSmall : 0.8
     kKeyposeCloudDwzFilterLeafSize : 0.05
@@ -49,7 +49,7 @@ tare_planner_node:
 
     kSurfaceCloudDwzLeafSize : 0.4
     kCollisionCloudDwzLeafSize : 0.05
-    kKeyposeGraphCollisionCheckRadius : 0.15
+    kKeyposeGraphCollisionCheckRadius : 0.20
     kKeyposeGraphCollisionCheckPointNumThr : 1
     kKeyposeCloudStackNum : 5
     kPointCloudRowNum : 50
@@ -68,7 +68,7 @@ tare_planner_node:
     keypose_graph/kAddEdgeToLastKeyposeDistThr : 0.5
     keypose_graph/kAddEdgeVerticalThreshold : 0.5
     keypose_graph/kAddEdgeCollisionCheckResolution : 0.1
-    keypose_graph/kAddEdgeCollisionCheckRadius : 0.2
+    keypose_graph/kAddEdgeCollisionCheckRadius : 0.25
     keypose_graph/kAddEdgeCollisionCheckPointNumThr : 1
 
     # ViewPointManager
@@ -81,7 +81,8 @@ tare_planner_node:
     kConnectivityHeightDiffThr : 0.25
     kGreedyViewPointSampleRange : 3
     kLocalPathOptimizationItrMax : 10
-    kViewPointCollisionMargin : 0.35
+    # Go2 body 0.34m wide + legs — viewpoints must clear obstacles by 0.30m
+    kViewPointCollisionMargin : 0.30
     kViewPointCollisionMarginZPlus : 0.25
     kViewPointCollisionMarginZMinus : 0.25
     kCollisionGridZScale : 1.0

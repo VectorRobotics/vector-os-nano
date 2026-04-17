@@ -75,16 +75,28 @@
       <geom size="0.05 0.045" pos="0.285 0 0.01" type="cylinder" class="collision" />
       <geom size="0.047" pos="0.293 0 -0.06" class="collision" />
       <site name="imu" pos="-0.02557 0 0.04232" />
-      <!-- RealSense D435 mounted on Go2 head, looking forward (+X in body) -->
-      <!-- D435 body: 90x25x25mm. pos: 0.3m forward, 0.05m up from CoM -->
-      <!-- xyaxes: X_cam=body_-Y (right in image), Y_cam=body_+Z (up in image) -->
-      <!-- This makes camera look along body +X with slight -5deg downward tilt -->
-      <body name="d435_camera" pos="0.30 0.0 0.05" euler="-5 0 0">
-        <geom type="box" size="0.045 0.0125 0.0125" rgba="0.15 0.15 0.15 1" mass="0.072"
+
+      <!-- Livox MID-360 — shoulder area, 20 deg FORWARD tilt -->
+      <!-- pos: x=0.15 (shoulder), z=0.14 (on bracket above trunk top) -->
+      <!-- euler: +0.349 rad around Y = forward lean (top tilts toward +X) -->
+      <body name="mid360_lidar" pos="0.15 0.0 0.14" euler="0 0.349 0">
+        <geom type="cylinder" size="0.012 0.04" pos="0 0 -0.04" rgba="0.4 0.4 0.4 1"
+              mass="0.05" contype="0" conaffinity="0" />
+        <geom type="cylinder" size="0.05 0.03" rgba="0.15 0.15 0.15 1" mass="0.265"
               contype="0" conaffinity="0" />
-        <geom type="cylinder" size="0.008 0.005" pos="0.02 0.0 0.0" euler="0 90 0"
+        <site name="mid360_site" pos="0 0 0.03" />
+      </body>
+
+      <!-- RealSense D435 — in front of lidar, HORIZONTAL (wide along Y) -->
+      <!-- pos: x=0.25 (forward of lidar), z=0.10 (slightly lower) -->
+      <!-- euler: +0.087 rad around Y = 5 deg nose-down -->
+      <!-- box: 25mm deep (X) x 90mm wide (Y) x 25mm tall (Z) -->
+      <body name="d435_camera" pos="0.25 0.0 0.10" euler="0 0.087 0">
+        <geom type="box" size="0.0125 0.045 0.0125" rgba="0.15 0.15 0.15 1" mass="0.072"
+              contype="0" conaffinity="0" />
+        <geom type="cylinder" size="0.008 0.005" pos="0.0 0.02 0.0" euler="1.5708 0 0"
               rgba="0.1 0.1 0.3 1" contype="0" conaffinity="0" />
-        <geom type="cylinder" size="0.008 0.005" pos="-0.02 0.0 0.0" euler="0 90 0"
+        <geom type="cylinder" size="0.008 0.005" pos="0.0 -0.02 0.0" euler="1.5708 0 0"
               rgba="0.1 0.1 0.3 1" contype="0" conaffinity="0" />
         <camera name="d435_rgb" pos="0 0 0" xyaxes="0 -1 0 0 0 1" fovy="42" />
         <camera name="d435_depth" pos="0 0 0" xyaxes="0 -1 0 0 0 1" fovy="42" />

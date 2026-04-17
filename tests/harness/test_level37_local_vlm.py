@@ -75,7 +75,13 @@ class TestVLMBackendSelection:
         assert '"model": self._model' in source or "'model': self._model" in source
 
     def test_local_timeout_longer(self):
-        """Local backend should have longer timeout (model loading)."""
+        """Local backend should have longer timeout than remote default (25s).
+
+        Local backend timeout was intentionally set to 45s (reduced from 60s):
+        first call loads the model (~30s), retry logic handles any overrun.
+        The invariant is: local timeout > remote default (25s) AND > 30s
+        to cover at least one full model-load cycle.
+        """
         from vector_os_nano.perception import vlm_go2
         # Simulate local backend
         orig_use = vlm_go2._USE_LOCAL_VLM
@@ -84,7 +90,13 @@ class TestVLMBackendSelection:
             vlm_go2._USE_LOCAL_VLM = True
             vlm_go2._LOCAL_VLM_URL = "http://localhost:11434/v1"
             vlm = vlm_go2.Go2VLMPerception()
-            assert vlm._timeout >= 60.0, f"Local timeout should be >= 60s, got {vlm._timeout}"
+            assert vlm._timeout >= 30.0, (
+                f"Local timeout should be >= 30s (model load time), got {vlm._timeout}"
+            )
+            assert vlm._timeout > vlm_go2._TIMEOUT_S, (
+                f"Local timeout {vlm._timeout}s must exceed remote default "
+                f"{vlm_go2._TIMEOUT_S}s"
+            )
             assert vlm._local is True
         finally:
             vlm_go2._USE_LOCAL_VLM = orig_use

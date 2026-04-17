@@ -14,7 +14,7 @@ rooms:
   study:          [17.0, 7.5]
   master_bedroom: [3.5,  12.0]
   guest_bedroom:  [16.0, 12.0]
-  bathroom:       [8.5,  12.0]
+  bathroom:       [9.5,  12.0]
   hallway:        [10.0, 5.0]
 
 doors:
@@ -24,4 +24,4 @@ doors:
   study-hallway:          [13.5, 8.0]
   master_bedroom-hallway: [3.0,  10.5]
   guest_bedroom-hallway:  [16.0, 10.0]
-  bathroom-hallway:       [8.5,  10.5]
+  bathroom-hallway:       [8.5,  10.0]

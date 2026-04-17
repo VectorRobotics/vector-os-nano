@@ -52,16 +52,6 @@ ik = [
     "pin>=3.9.0",
 ]
 
-# TUI: Dashboard terminal interface
-tui = [
-    "textual>=0.40",
-]
-
-# Web: Localhost web dashboard with AI chat
-web = [
-    "fastapi>=0.100",
-    "uvicorn[standard]>=0.20",
-]
 
 # Simulation: MuJoCo (recommended) + PyBullet (legacy)
 sim = [
@@ -84,7 +74,7 @@ mcp = [
 go2 = ["casadi>=3.6", "pin>=3.0"]
 
 all = [
-    "vector-os-nano[perception,ik,tui,sim,web,mcp]",
+    "vector-os-nano[perception,ik,sim,mcp]",
 ]
 
 # Development tools
@@ -95,8 +85,6 @@ dev = [
 ]
 
 [project.scripts]
-vector-os = "run:main"
-vector-os-dashboard = "run:main_dashboard"
 vector-os-mcp = "vector_os_nano.mcp.server:main_sync"
 vector-cli = "vector_os_nano.vcli.cli:main"
 

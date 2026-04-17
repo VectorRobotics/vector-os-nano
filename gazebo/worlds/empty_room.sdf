@@ -1,0 +1,195 @@
+<?xml version="1.0" ?>
+<!--
+  empty_room.sdf  —  Minimal single-room world for Gazebo Harmonic (SDF 1.9)
+
+  Room interior dimensions: 5.0 m (x) x 6.0 m (y) x 2.5 m (z)
+  Ground plane: 10 m x 10 m (collision/visual surface at z=0)
+  Walls (4): 0.15 m thick, centred on room perimeter at z=1.25 m
+
+  Wall layout:
+    wall_north  pos=(0,  3, 1.25)  size=(5.3, 0.15, 2.5)
+    wall_south  pos=(0, -3, 1.25)  size=(5.3, 0.15, 2.5)
+    wall_east   pos=(2.5, 0, 1.25) size=(0.15, 6.0, 2.5)
+    wall_west   pos=(-2.5, 0, 1.25) size=(0.15, 6.0, 2.5)
+
+  Materials:
+    Floor  — wood-tone #C4A882  (ambient/diffuse 0.77 0.66 0.51)
+    Walls  — painted drywall #E8E8E8 (ambient/diffuse 0.91 0.91 0.91)
+-->
+<sdf version="1.9">
+  <world name="empty_room">
+
+    <!-- Physics: 1 ms fixed step, real-time factor 1.0, DART solver -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Gravity -->
+    <gravity>0 0 -9.81</gravity>
+
+    <!-- Required Gazebo Harmonic system plugins -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-contact-system"
+            name="gz::sim::systems::Contact"/>
+
+    <!-- Sun: primary directional light casting shadows -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Ceiling point light -->
+    <light type="point" name="ceiling_lamp">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 2.4 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>10</range>
+        <constant>0.5</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- ===== Ground plane 10 m x 10 m ===== -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <!-- 10 x 10 m surface — well above the 4 x 5 m minimum -->
+              <size>10 10</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>10 10</size>
+            </plane>
+          </geometry>
+          <!-- Wood-tone floor material (#C4A882) -->
+          <material>
+            <ambient>0.77 0.66 0.51 1</ambient>
+            <diffuse>0.77 0.66 0.51 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== Walls — painted drywall (#E8E8E8) ===== -->
+
+    <!-- North wall: closes the +y side -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 3 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.3 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.3 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- South wall: closes the -y side -->
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -3 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.3 0.15 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.3 0.15 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- East wall: closes the +x side -->
+    <model name="wall_east">
+      <static>true</static>
+      <pose>2.5 0 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 6.0 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 6.0 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- West wall: closes the -x side -->
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-2.5 0 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.15 6.0 2.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.15 6.0 2.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.91 0.91 0.91 1</ambient>
+            <diffuse>0.91 0.91 0.91 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

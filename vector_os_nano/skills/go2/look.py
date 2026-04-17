@@ -97,14 +97,15 @@ class LookSkill:
 
         room: str = room_id.room if room_id.room != "unknown" else _fallback_room(context)
 
-        # Record room visit to spatial memory (no objects)
+        # Record room visit to spatial memory with detected objects.
+        objects = list(scene.objects)
         spatial_memory = context.services.get("spatial_memory")
         if spatial_memory is not None:
             try:
                 if hasattr(spatial_memory, "observe_with_viewpoint"):
                     spatial_memory.observe_with_viewpoint(
                         room, float(pos[0]), float(pos[1]),
-                        float(heading), [], scene.summary,
+                        float(heading), objects, scene.summary,
                     )
                 else:
                     spatial_memory.visit(room, float(pos[0]), float(pos[1]))
@@ -112,8 +113,8 @@ class LookSkill:
                 logger.warning("[LOOK] spatial_memory update failed: %s", exc)
 
         logger.info(
-            "[LOOK] room=%s confidence=%.2f summary=%s",
-            room, room_id.confidence, scene.summary,
+            "[LOOK] room=%s confidence=%.2f objects=%d summary=%s",
+            room, room_id.confidence, len(objects), scene.summary,
         )
 
         return SkillResult(
@@ -123,6 +124,7 @@ class LookSkill:
                 "summary": scene.summary,
                 "details": scene.details,
                 "room_confidence": room_id.confidence,
+                "objects": objects,
             },
         )
 

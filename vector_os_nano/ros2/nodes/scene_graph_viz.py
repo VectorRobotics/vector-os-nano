@@ -656,9 +656,9 @@ def build_scene_graph_markers(
     vp_markers, mid = _build_viewpoint_markers(header, scene_graph, mid)
     markers.extend(vp_markers)
 
-    # Objects + labels — disabled (object detection removed)
-    # obj_markers, mid = _build_object_markers(header, scene_graph, mid)
-    # markers.extend(obj_markers)
+    # Objects + labels
+    obj_markers, mid = _build_object_markers(header, scene_graph, mid)
+    markers.extend(obj_markers)
 
     # Robot arrow + body
     robot_markers, mid = _build_robot_markers(

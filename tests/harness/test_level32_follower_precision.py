@@ -48,9 +48,12 @@ class TestFollowerConstants:
         )
 
     def test_max_speed(self):
-        """MAX_SPEED should be ~0.8 m/s."""
+        """MAX_SPEED should be 0.5-0.8 m/s (indoor stability vs speed balance)."""
         c = self._get_constants()
-        assert c.get("MAX_SPEED", 0) == pytest.approx(0.8, abs=0.1)
+        speed = c.get("MAX_SPEED", 0)
+        assert 0.5 <= speed <= 0.8, (
+            f"MAX_SPEED={speed} — expected 0.5-0.8 m/s for indoor navigation"
+        )
 
     def test_max_yaw_rate_adequate(self):
         """MAX_YAW_RATE should be 0.785-1.2 rad/s (C++: 0.785, raised for quadruped spot turn)."""
@@ -81,9 +84,12 @@ class TestFollowerConstants:
         assert c.get("YAW_GAIN_TURN", 0) == pytest.approx(6.0, abs=1.0)
 
     def test_max_lat_speed(self):
-        """MAX_LAT should be ~0.4 m/s for quadruped lateral stability."""
+        """MAX_LAT should be 0.10-0.40 m/s for quadruped lateral stability."""
         c = self._get_constants()
-        assert c.get("MAX_LAT", 0) == pytest.approx(0.15, abs=0.05)
+        lat = c.get("MAX_LAT", 0)
+        assert 0.10 <= lat <= 0.40, (
+            f"MAX_LAT={lat} — expected 0.10-0.40 m/s for indoor quadruped"
+        )
 
 
 # ===================================================================

@@ -1,11 +1,11 @@
-"""L36: Terrain replay publishes to all FAR input topics.
+"""L36: Terrain replay publishes to /registered_scan only.
 
 Tests verify the bridge's terrain replay configuration by static source
 analysis — no ROS2 or MuJoCo required.
 
-The key invariant: _replay_terrain() must publish the same PointCloud2
-message to /registered_scan, /terrain_map, and /terrain_map_ext so FAR
-receives V-Graph data regardless of the terrainAnalysis range filter.
+The key invariant: _replay_terrain() must publish the saved terrain to
+/registered_scan via _pc_pub only. The removed terrain_map/terrain_map_ext
+publishers are no longer part of the bridge.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def _get_init_body(source: str) -> str:
 # ---------------------------------------------------------------------------
 
 class TestTerrainReplayPublisherDeclarations:
-    """Verify __init__ declares all three terrain publishers."""
+    """Verify __init__ declares _pc_pub for /registered_scan."""
 
     def test_bridge_has_registered_scan_publisher(self):
         """Bridge must have _pc_pub publishing to /registered_scan."""
@@ -60,56 +60,13 @@ class TestTerrainReplayPublisherDeclarations:
         assert "_pc_pub" in init
         assert '"/registered_scan"' in init
 
-    def test_bridge_has_terrain_map_publisher(self):
-        """Bridge must have _terrain_map_pub publishing to /terrain_map."""
-        src = read_bridge_source()
-        init = _get_init_body(src)
-        assert "_terrain_map_pub" in init, (
-            "Go2VNavBridge.__init__ must declare self._terrain_map_pub"
-        )
-
-    def test_bridge_has_terrain_map_ext_publisher(self):
-        """Bridge must have _terrain_map_ext_pub publishing to /terrain_map_ext."""
-        src = read_bridge_source()
-        init = _get_init_body(src)
-        assert "_terrain_map_ext_pub" in init, (
-            "Go2VNavBridge.__init__ must declare self._terrain_map_ext_pub"
-        )
-
-    def test_terrain_map_topic_string_present(self):
-        """'/terrain_map' topic string must appear in __init__."""
-        src = read_bridge_source()
-        init = _get_init_body(src)
-        assert '"/terrain_map"' in init, (
-            "'/terrain_map' topic must be used in __init__ publisher declaration"
-        )
-
-    def test_terrain_map_ext_topic_string_present(self):
-        """'/terrain_map_ext' topic string must appear in __init__."""
-        src = read_bridge_source()
-        init = _get_init_body(src)
-        assert '"/terrain_map_ext"' in init, (
-            "'/terrain_map_ext' topic must be used in __init__ publisher declaration"
-        )
-
-    def test_terrain_publishers_use_reliable_qos(self):
-        """Both new terrain publishers should use reliable_qos (matching registered_scan)."""
-        src = read_bridge_source()
-        init = _get_init_body(src)
-        # Count occurrences of reliable_qos in init around terrain_map publishers
-        # We look for both publisher names near reliable_qos references
-        assert init.count("reliable_qos") >= 3, (
-            "Expected at least 3 reliable_qos usages in __init__ "
-            "(/registered_scan, /terrain_map, /terrain_map_ext)"
-        )
-
 
 # ---------------------------------------------------------------------------
-# Part 2: Static analysis — _replay_terrain publishes to all three topics
+# Part 2: Static analysis — _replay_terrain publishes only to /registered_scan
 # ---------------------------------------------------------------------------
 
 class TestReplayTerrainMethodPublishes:
-    """Verify _replay_terrain() calls publish on all three publishers."""
+    """Verify _replay_terrain() publishes only to _pc_pub (/registered_scan)."""
 
     def test_replay_publishes_to_registered_scan(self):
         """_replay_terrain must call self._pc_pub.publish(msg)."""
@@ -119,48 +76,48 @@ class TestReplayTerrainMethodPublishes:
             "_replay_terrain must call self._pc_pub.publish(msg)"
         )
 
-    def test_replay_publishes_to_terrain_map(self):
-        """_replay_terrain must call self._terrain_map_pub.publish(msg)."""
+    def test_replay_does_not_publish_to_terrain_map(self):
+        """_replay_terrain must NOT call _terrain_map_pub.publish (removed)."""
         src = read_bridge_source()
         body = _get_method_body(src, "_replay_terrain")
-        assert "_terrain_map_pub.publish" in body, (
-            "_replay_terrain must call self._terrain_map_pub.publish(msg) "
-            "to bypass terrainAnalysis range filter for FAR planner"
+        assert "_terrain_map_pub.publish" not in body, (
+            "_replay_terrain must not publish to /terrain_map — publisher removed"
         )
 
-    def test_replay_publishes_to_terrain_map_ext(self):
-        """_replay_terrain must call self._terrain_map_ext_pub.publish(msg)."""
+    def test_replay_does_not_publish_to_terrain_map_ext(self):
+        """_replay_terrain must NOT call _terrain_map_ext_pub.publish (removed)."""
         src = read_bridge_source()
         body = _get_method_body(src, "_replay_terrain")
-        assert "_terrain_map_ext_pub.publish" in body, (
-            "_replay_terrain must call self._terrain_map_ext_pub.publish(msg) "
-            "to bypass terrainAnalysis range filter for FAR planner"
+        assert "_terrain_map_ext_pub.publish" not in body, (
+            "_replay_terrain must not publish to /terrain_map_ext — publisher removed"
         )
 
-    def test_replay_publishes_exactly_three_topics(self):
-        """_replay_terrain must call .publish() exactly three times."""
+    def test_replay_publishes_exactly_one_topic(self):
+        """_replay_terrain must call .publish() exactly once (registered_scan only)."""
         src = read_bridge_source()
         body = _get_method_body(src, "_replay_terrain")
         publish_count = body.count(".publish(")
-        assert publish_count == 3, (
-            f"_replay_terrain should call .publish() 3 times "
-            f"(registered_scan, terrain_map, terrain_map_ext), found {publish_count}"
+        assert publish_count == 1, (
+            f"_replay_terrain should call .publish() once (/registered_scan only), "
+            f"found {publish_count}"
         )
 
     def test_replay_uses_map_frame(self):
-        """_replay_terrain publishes in 'map' frame (required by FAR planner)."""
+        """_replay_terrain delegates to _build_terrain_pc2 which sets 'map' frame."""
         src = read_bridge_source()
-        body = _get_method_body(src, "_replay_terrain")
-        assert '"map"' in body, (
-            "_replay_terrain must set header.frame_id = 'map'"
+        # _replay_terrain delegates to _build_terrain_pc2; check the helper sets 'map'
+        helper_body = _get_method_body(src, "_build_terrain_pc2")
+        assert '"map"' in helper_body, (
+            "_build_terrain_pc2 must set header.frame_id = 'map'"
         )
 
     def test_replay_uses_pointcloud2(self):
-        """_replay_terrain builds and publishes a PointCloud2 message."""
+        """_replay_terrain delegates to _build_terrain_pc2 which builds a PointCloud2."""
         src = read_bridge_source()
-        body = _get_method_body(src, "_replay_terrain")
-        assert "PointCloud2" in body, (
-            "_replay_terrain must create a PointCloud2 message"
+        # _replay_terrain delegates to _build_terrain_pc2; check the helper uses PointCloud2
+        helper_body = _get_method_body(src, "_build_terrain_pc2")
+        assert "PointCloud2" in helper_body, (
+            "_build_terrain_pc2 must create a PointCloud2 message"
         )
 
 
@@ -225,53 +182,6 @@ class TestReplayTerrainBehavior:
             spec.loader.exec_module(mod)
 
         return mod
-
-    def test_replay_calls_all_three_publishers(self):
-        """_replay_terrain must call .publish() on all three publisher mocks."""
-        src = read_bridge_source()
-        # Verify via static analysis (behavioral mock is complex due to full init)
-        # Confirm all three publish calls are present in the method body
-        body = _get_method_body(src, "_replay_terrain")
-        for attr in ("_pc_pub", "_terrain_map_pub", "_terrain_map_ext_pub"):
-            assert f"{attr}.publish" in body, (
-                f"_replay_terrain must call self.{attr}.publish(msg)"
-            )
-
-    def test_replay_message_format_consistent(self):
-        """All three publish calls use the same 'msg' variable."""
-        src = read_bridge_source()
-        body = _get_method_body(src, "_replay_terrain")
-
-        # Parse AST to verify all three calls use the same argument
-        # Wrap in a class/function to make it parseable
-        wrapped = "class _Dummy:\n" + "\n".join(
-            "    " + line for line in body.splitlines()
-        )
-        try:
-            tree = ast.parse(wrapped)
-        except SyntaxError:
-            pytest.skip("AST parse failed — manual verification needed")
-
-        publish_args: list[str] = []
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "publish"
-                and node.args
-            ):
-                # Extract the argument name
-                arg = node.args[0]
-                if isinstance(arg, ast.Name):
-                    publish_args.append(arg.id)
-
-        assert len(publish_args) == 3, (
-            f"Expected 3 .publish() calls, found {len(publish_args)}: {publish_args}"
-        )
-        assert len(set(publish_args)) == 1, (
-            f"All three publish calls must use the same message variable, "
-            f"found different args: {publish_args}"
-        )
 
     def test_replay_guard_stops_after_max_frames(self):
         """_replay_terrain stops publishing after _terrain_replay_max frames."""

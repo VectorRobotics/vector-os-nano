@@ -26,17 +26,26 @@ logger = logging.getLogger(__name__)
 
 
 class VectorMCPServer:
-    """MCP server backed by a Vector OS Nano Agent instance.
+    """MCP server backed by a Vector OS Nano Agent + VectorEngine.
 
     Registers all skills as tools (via mcp/tools.py) and world state +
     camera renders as resources (via mcp/resources.py).
 
     Args:
-        agent: A fully initialised Agent instance.
+        agent: A fully initialised Agent instance (hardware container).
+        engine: A fully initialised VectorEngine instance.
+        session: A Session instance for conversation history.
     """
 
-    def __init__(self, agent: Agent) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        engine: Any,
+        session: Any,
+    ) -> None:
         self._agent = agent
+        self._engine = engine
+        self._session = session
         self._server = Server("vector-os-nano")
         self._register_handlers()
 
@@ -47,6 +56,8 @@ class VectorMCPServer:
 
         server = self._server
         agent = self._agent
+        engine = self._engine
+        session = self._session
 
         @server.list_tools()
         async def list_tools() -> list[types.Tool]:
@@ -64,7 +75,7 @@ class VectorMCPServer:
         async def call_tool(
             name: str, arguments: dict
         ) -> list[types.TextContent | types.ImageContent]:
-            result_text = await handle_tool_call(agent, name, arguments or {})
+            result_text = await handle_tool_call(agent, engine, session, name, arguments or {})
             return [types.TextContent(type="text", text=result_text)]
 
         @server.list_resources()
@@ -165,7 +176,65 @@ class VectorMCPServer:
 
 
 # ---------------------------------------------------------------------------
-# Agent factories
+# Engine builder
+# ---------------------------------------------------------------------------
+
+
+def _build_engine(agent: Agent) -> tuple[Any, Any]:
+    """Build a VectorEngine + Session from an Agent (hardware container).
+
+    Mirrors the CLI engine creation flow in vcli/cli.py.
+
+    Args:
+        agent: A fully initialised Agent (hardware container).
+
+    Returns:
+        (engine, session) tuple ready for VectorMCPServer.
+    """
+    from vector_os_nano.vcli.config import resolve_credentials  # noqa: PLC0415
+    from vector_os_nano.vcli.backends import create_backend  # noqa: PLC0415
+    from vector_os_nano.vcli.tools import CategorizedToolRegistry, discover_categorized_tools  # noqa: PLC0415
+    from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills  # noqa: PLC0415
+    from vector_os_nano.vcli.prompt import build_system_prompt  # noqa: PLC0415
+    from vector_os_nano.vcli.engine import VectorEngine  # noqa: PLC0415
+    from vector_os_nano.vcli.session import create_session  # noqa: PLC0415
+
+    # 1. Resolve credentials (Claude OAuth > env > config)
+    api_key, provider, model, base_url = resolve_credentials()
+
+    # 2. LLM backend
+    backend = create_backend(provider=provider, api_key=api_key, model=model, base_url=base_url)
+
+    # 3. Tool registry: built-in tools + skill wrappers
+    registry: CategorizedToolRegistry = CategorizedToolRegistry()
+    tools_list, cat_map = discover_categorized_tools()
+    for t in tools_list:
+        cat = "default"
+        for c, names in cat_map.items():
+            if t.name in names:
+                cat = c
+                break
+        registry.register(t, category=cat)
+    for skill_tool in wrap_skills(agent):
+        registry.register(skill_tool, category="robot")
+
+    # 4. System prompt
+    system_prompt = build_system_prompt(agent=agent)
+
+    # 5. Engine
+    engine = VectorEngine(backend=backend, registry=registry, system_prompt=system_prompt)
+
+    # 6. VGG cognitive layer
+    engine.init_vgg(agent=agent, skill_registry=agent._skill_registry)
+
+    # 7. Session
+    session = create_session(metadata={"source": "mcp", "model": model})
+
+    return engine, session
+
+
+# ---------------------------------------------------------------------------
+# Agent / stack factories
 # ---------------------------------------------------------------------------
 
 
@@ -268,7 +337,7 @@ def _start_camera_viewer(perception: Any) -> None:
     _log("[MCP] Camera viewer started — RGB + depth with annotations (ESC to close)")
 
 
-def create_sim_agent(headless: bool = True) -> Agent:
+def create_sim_stack(headless: bool = True) -> Agent:
     """Create an Agent with MuJoCo simulation backend.
 
     Mirrors run.py _init_sim() for MCP use.
@@ -278,7 +347,7 @@ def create_sim_agent(headless: bool = True) -> Agent:
                   If False, open an interactive viewer.
 
     Returns:
-        A fully connected Agent ready for skill execution.
+        A fully connected Agent ready for VectorEngine use.
     """
     from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm  # noqa: PLC0415
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper  # noqa: PLC0415
@@ -331,18 +400,18 @@ def create_sim_agent(headless: bool = True) -> Agent:
     )
     agent._calibration = calibration
 
-    _log(f"[MCP] Sim agent ready. Skills: {agent.skills}")
+    _log(f"[MCP] Sim stack ready. Skills: {agent.skills}")
     return agent
 
 
-def create_hardware_agent() -> Agent:
+def create_hardware_stack() -> Agent:
     """Create an Agent with real SO-101 hardware.
 
     Mirrors run.py _init_hardware() for MCP use.
     Starts: SO-101 arm + RealSense D405 + Moondream VLM + EdgeTAM tracker.
 
     Returns:
-        A fully connected Agent ready for skill execution.
+        A fully connected Agent ready for VectorEngine use.
     """
     cfg = _load_config_with_fallback()
     api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY")
@@ -437,11 +506,22 @@ def create_hardware_agent() -> Agent:
     # Start live camera feed (hardware mode only, daemon thread).
     _start_camera_viewer(perception)
 
-    _log(f"[MCP] Hardware agent ready. Skills: {agent.skills}")
+    _log(f"[MCP] Hardware stack ready. Skills: {agent.skills}")
     _log(f"[MCP] Arm: {'connected' if arm else 'NOT available'}")
     _log(f"[MCP] Perception: {'ready' if perception else 'NOT available'}")
     _log(f"[MCP] Calibration: {'loaded' if calibration else 'NOT loaded'}")
     return agent
+
+
+# Keep old names as aliases for backward compatibility with any external callers
+def create_sim_agent(headless: bool = True) -> Agent:
+    """Deprecated alias for create_sim_stack(). Use create_sim_stack() instead."""
+    return create_sim_stack(headless=headless)
+
+
+def create_hardware_agent() -> Agent:
+    """Deprecated alias for create_hardware_stack(). Use create_hardware_stack() instead."""
+    return create_hardware_stack()
 
 
 def _load_config_with_fallback() -> dict:
@@ -509,18 +589,21 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    # Create agent
+    # Create agent (hardware container)
     if args.hardware:
-        agent = create_hardware_agent()
+        agent = create_hardware_stack()
     elif args.sim:
-        agent = create_sim_agent(headless=False)
+        agent = create_sim_stack(headless=False)
     elif args.sim_headless:
-        agent = create_sim_agent(headless=True)
+        agent = create_sim_stack(headless=True)
     else:
         # Default: sim with viewer
-        agent = create_sim_agent(headless=False)
+        agent = create_sim_stack(headless=False)
 
-    server = VectorMCPServer(agent)
+    # Build engine + session
+    engine, session = _build_engine(agent)
+
+    server = VectorMCPServer(agent, engine, session)
     try:
         if args.stdio:
             await server.run_stdio()

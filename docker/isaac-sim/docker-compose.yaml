@@ -1,0 +1,130 @@
+# Vector OS Nano — Isaac Sim 5.1 simulation backend
+#
+# Usage:
+#   # Headless (default):
+#   docker compose up
+#
+#   # With GUI (requires X11 forwarding on host):
+#   ISAAC_HEADLESS=false docker compose up
+#
+#   # Choose scene:
+#   ISAAC_SCENE=room docker compose up
+#
+# Requirements:
+#   - nvidia-container-toolkit installed on host
+#   - Host running Ubuntu 24.04 with ROS2 Jazzy
+#   - GPU with Vulkan + CUDA support
+
+services:
+  isaac-sim:
+    image: vector-isaac-sim:latest
+    container_name: vector-isaac-sim
+
+    # ── GPU passthrough ───────────────────────────────────────────────────────
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, graphics, utility, video]
+
+    # ── Host networking — required for cross-container DDS discovery ──────────
+    # With network_mode: host, ROS2 topics published inside the container are
+    # visible to the ROS2 Jazzy host without any port mapping or DDS router.
+    network_mode: host
+
+    # ── Runtime flags ─────────────────────────────────────────────────────────
+    runtime: nvidia
+
+    # ── Environment ───────────────────────────────────────────────────────────
+    environment:
+      # EULA auto-accept (required for non-interactive mode)
+      - ACCEPT_EULA=Y
+      - OMNI_KIT_ACCEPT_EULA=YES
+
+      # DDS
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=/opt/cyclonedds.xml
+
+      # Isaac Sim rendering
+      # Set HEADLESS=false + DISPLAY env to get a viewport window (needs X11).
+      - ISAAC_HEADLESS=${ISAAC_HEADLESS:-true}
+      - DISPLAY=${DISPLAY:-:0}
+
+      # Scene: flat | room | apartment | navigation | hospital
+      - ISAAC_SCENE=${ISAAC_SCENE:-flat}
+
+      # Physics step rate (Hz). Bridge publishes at sub-multiples.
+      - ISAAC_PHYSICS_HZ=${ISAAC_PHYSICS_HZ:-200}
+
+      # Nucleus server (set to empty to use local bundled assets)
+      - OMNI_SERVER=${OMNI_SERVER:-}
+      - OMNI_USER=${OMNI_USER:-}
+      - OMNI_PASS=${OMNI_PASS:-}
+
+      # NVIDIA driver path (required by Omniverse)
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
+
+    # ── Volumes ───────────────────────────────────────────────────────────────
+    volumes:
+      # USD scenes: mount project scenes so they can be edited on host
+      - ./scenes:/vector/scenes:ro
+
+      # Persistent caches (Isaac Sim 5.1 uses uid 1234, not root)
+      - isaac_main_cache:/isaac-sim/.cache:rw
+      - isaac_compute_cache:/isaac-sim/.nv/ComputeCache:rw
+      - isaac_logs:/isaac-sim/.nvidia-omniverse/logs:rw
+      - isaac_data:/isaac-sim/.local/share/ov/data:rw
+
+      # Log output accessible from host for debugging
+      - ${VECTOR_LOG_DIR:-/tmp/vector_isaac_logs}:/vector/logs
+
+      # X11 socket for GUI mode (harmless if HEADLESS=true)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+    # ── Health check ──────────────────────────────────────────────────────────
+    # Polls for /state_estimation topic. Declares healthy once the bridge is
+    # publishing. Timeout: 3 minutes (Isaac Sim shader compilation takes time).
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - |
+          source /opt/ros/humble/setup.bash &&
+          timeout 5 ros2 topic hz /state_estimation --once 2>/dev/null | grep -q average
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
+
+    # ── Restart policy ────────────────────────────────────────────────────────
+    restart: "no"
+
+    # ── Security ──────────────────────────────────────────────────────────────
+    # ipc: host is needed by Omniverse for shared memory between Kit processes
+    ipc: host
+    privileged: false
+    security_opt:
+      - no-new-privileges:true
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  isaac_main_cache:
+    driver: local
+  isaac_compute_cache:
+    driver: local
+  isaac_logs:
+    driver: local
+  isaac_data:
+    driver: local

@@ -40,8 +40,11 @@ class TestTareExtensionDistance:
         assert cfg["kSensorRange"] == 3.0
 
     def test_auto_start(self):
+        # kAutoStart is False by design: the robot waits for /start_exploration
+        # signal rather than exploring immediately on launch. This avoids
+        # premature movement before the operator confirms the scene is safe.
         cfg = _load_tare_config()
-        assert cfg["kAutoStart"] is True
+        assert cfg["kAutoStart"] is False
 
     def test_collision_margin(self):
         cfg = _load_tare_config()

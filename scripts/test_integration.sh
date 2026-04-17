@@ -58,9 +58,20 @@ PIDS+=($!); sleep 6
 
 ros2 run sensor_scan_generation sensorScanGeneration > /dev/null 2>&1 &
 PIDS+=($!)
-ros2 run terrain_analysis terrainAnalysis > /dev/null 2>&1 &
+ros2 run terrain_analysis terrainAnalysis --ros-args \
+  -p clearDyObs:=true \
+  -p minDyObsDis:=0.14 \
+  -p minOutOfFovPointNum:=20 \
+  -p obstacleHeightThre:=0.15 \
+  -p maxRelZ:=1.5 \
+  -p limitGroundLift:=true \
+  -p maxGroundLift:=0.05 \
+  -p minDyObsVFOV:=-30.0 \
+  -p maxDyObsVFOV:=35.0 > /dev/null 2>&1 &
 PIDS+=($!)
-ros2 run terrain_analysis_ext terrainAnalysisExt > /dev/null 2>&1 &
+ros2 run terrain_analysis_ext terrainAnalysisExt --ros-args \
+  -p obstacleHeightThre:=0.15 \
+  -p maxRelZ:=1.5 > /dev/null 2>&1 &
 PIDS+=($!); sleep 5
 
 # Check nav stack topics

@@ -133,15 +133,15 @@ class TestLevel1CameraVLM:
     # ------------------------------------------------------------------
 
     def test_camera_frame_shape(self, go2):
-        """get_camera_frame() returns a (240, 320, 3) uint8 RGB array."""
+        """get_camera_frame() returns a (480, 640, 3) uint8 RGB array."""
         frame = go2.get_camera_frame()
 
         assert frame is not None, "get_camera_frame() returned None"
         assert isinstance(frame, np.ndarray), (
             f"Expected np.ndarray, got {type(frame)}"
         )
-        assert frame.shape == (240, 320, 3), (
-            f"Expected shape (240, 320, 3), got {frame.shape}"
+        assert frame.shape == (480, 640, 3), (
+            f"Expected shape (480, 640, 3), got {frame.shape}"
         )
         assert frame.dtype == np.uint8, (
             f"Expected dtype uint8, got {frame.dtype}"

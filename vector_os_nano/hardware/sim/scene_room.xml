@@ -1,0 +1,607 @@
+<mujoco model="go2 house">
+  <compiler angle="radian" meshdir="/home/yusen/Desktop/vector_os_nano/vector_os_nano/hardware/sim/assets" texturedir="/home/yusen/Desktop/vector_os_nano/vector_os_nano/hardware/sim/assets" autolimits="true"/>
+  <include file="/home/yusen/Desktop/vector_os_nano/vector_os_nano/hardware/sim/go2.xml"/>
+
+  <option cone="elliptic" impratio="100"/>
+
+  <statistic center="10 7 0.5" extent="12"/>
+
+  <visual>
+    <headlight diffuse="0.5 0.5 0.5" ambient="0.4 0.4 0.4" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-120" elevation="-25" offwidth="1280" offheight="960"/>
+    <map znear="0.05" zfar="50" shadowclip="0.5"/>
+    <quality shadowsize="1024"/>
+  </visual>
+
+  <!--
+    HOUSE LAYOUT — 20m x 14m — top-down view
+
+          0      6           14     20
+     14  +======+=====+=+====+======+
+         |Master| Bath|L|  Guest BR |
+         |  BR  | room|a|  (8x4)   |
+         |(7x4) |(3x4)|u|          |
+     10  +=D====+=D===+D+=====D====+
+         |      |                  |
+         |Dining|  OPEN HALLWAY    | Study
+         |Room  |  + GALLERY       | (6x5)
+         |(6x5) |  (8m x 10m)     |
+      5  +=D====+  open plan      +=D=====+
+         |      |                  |       |
+         |Living|  Go2 starts     |Kitchen |
+         |Room  |  (10, 3)        |(6x5)  |
+         |(6x5) |                  |       |
+      0  +======+==================+=======+
+
+    D = doorway (1.2m gap)
+    Central hall is ONE open space from y=0..10, x=6..14
+  -->
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.88 0.90 0.95" rgb2="0.65 0.70 0.80"
+             width="512" height="3072"/>
+
+    <!-- Wall texture (subtle plaster) -->
+    <texture type="2d" name="wall_tex" builtin="gradient"
+             rgb1="0.94 0.93 0.91" rgb2="0.90 0.89 0.87" width="128" height="128"/>
+
+    <!-- Floor textures -->
+    <texture type="2d" name="wood_tex" builtin="checker"
+             rgb1="0.78 0.68 0.48" rgb2="0.74 0.64 0.45" width="200" height="200"/>
+    <texture type="2d" name="tile_tex" builtin="checker"
+             rgb1="0.90 0.90 0.88" rgb2="0.80 0.80 0.78" width="150" height="150"/>
+    <texture type="2d" name="carpet_tex" builtin="flat"
+             rgb1="0.50 0.52 0.56" rgb2="0.45 0.47 0.51" width="100" height="100"/>
+    <texture type="2d" name="marble_tex" builtin="checker"
+             rgb1="0.92 0.90 0.85" rgb2="0.85 0.82 0.77" width="120" height="120"/>
+    <texture type="2d" name="bath_tex" builtin="checker"
+             rgb1="0.85 0.90 0.92" rgb2="0.75 0.80 0.82" width="80" height="80"/>
+
+    <material name="wood_mat" texture="wood_tex" texuniform="true" texrepeat="10 10" reflectance="0.12"/>
+    <material name="tile_mat" texture="tile_tex" texuniform="true" texrepeat="8 8" reflectance="0.25"/>
+    <material name="carpet_mat" texture="carpet_tex" texuniform="true" texrepeat="3 3" reflectance="0.02"/>
+    <material name="marble_mat" texture="marble_tex" texuniform="true" texrepeat="10 12" reflectance="0.2"/>
+    <material name="bath_tile" texture="bath_tex" texuniform="true" texrepeat="6 6" reflectance="0.3"/>
+
+    <material name="wall_mat" texture="wall_tex" texuniform="true" texrepeat="4 4" reflectance="0.04"/>
+    <material name="accent_wall" rgba="0.82 0.85 0.90 1" reflectance="0.04"/>
+
+    <!-- Furniture materials (used for collision boxes, some overrides) -->
+    <material name="dark_wood" rgba="0.35 0.22 0.12 1" reflectance="0.12"/>
+    <material name="rug_red" rgba="0.60 0.15 0.12 1" reflectance="0.02"/>
+    <material name="rug_blue" rgba="0.15 0.25 0.45 1" reflectance="0.02"/>
+    <material name="rug_beige" rgba="0.82 0.75 0.62 1" reflectance="0.02"/>
+    <material name="painting_mat" rgba="0.85 0.65 0.40 1" reflectance="0.05"/>
+
+    <!-- Furniture PNG textures (furniture_sim, Apache 2.0) -->
+    <texture type="2d" name="tex_oak" file="furniture/wood2.png"/>
+    <texture type="2d" name="tex_walnut" file="furniture/wood1.png"/>
+    <texture type="2d" name="tex_cherry" file="furniture/wood4.png"/>
+    <texture type="2d" name="tex_pine" file="furniture/wood0.png"/>
+    <texture type="2d" name="tex_steel" file="furniture/metal0.png"/>
+    <texture type="2d" name="tex_chrome" file="furniture/metal1.png"/>
+    <texture type="2d" name="tex_marble" file="furniture/stone0.png"/>
+    <texture type="2d" name="tex_ceramic" file="furniture/stone1.png"/>
+
+    <!-- Textured furniture materials -->
+    <material name="mat_oak" texture="tex_oak" texuniform="true" texrepeat="3 3" reflectance="0.12"/>
+    <material name="mat_walnut" texture="tex_walnut" texuniform="true" texrepeat="3 3" reflectance="0.12"/>
+    <material name="mat_cherry" texture="tex_cherry" texuniform="true" texrepeat="3 3" reflectance="0.10"/>
+    <material name="mat_pine" texture="tex_pine" texuniform="true" texrepeat="4 4" reflectance="0.08"/>
+    <material name="mat_steel" texture="tex_steel" texuniform="true" texrepeat="2 2" reflectance="0.40"/>
+    <material name="mat_chrome" texture="tex_chrome" texuniform="true" texrepeat="2 2" reflectance="0.50"/>
+    <material name="mat_marble" texture="tex_marble" texuniform="true" texrepeat="4 4" reflectance="0.25"/>
+    <material name="mat_ceramic" texture="tex_ceramic" texuniform="true" texrepeat="3 3" reflectance="0.20"/>
+
+    <!-- ==================== FURNITURE MESHES (Kenney CC0) ==================== -->
+    <!-- Y-up OBJ → Z-up MuJoCo via euler="1.5708 0 0" on geom -->
+
+    <!-- Sofa -->
+    <mesh name="m_loungeSofa_carpet" file="furniture/loungeSofa_carpet.obj" scale="2.2 2.2 2.2" inertia="shell"/>
+    <mesh name="m_loungeSofa_wood" file="furniture/loungeSofa_wood.obj" scale="2.2 2.2 2.2" inertia="shell"/>
+
+    <!-- Coffee Table -->
+    <mesh name="m_coffee_table" file="furniture/tableCoffee.obj" scale="1.8 1.8 1.8" inertia="shell"/>
+
+    <!-- TV Console -->
+    <mesh name="m_tv_console" file="furniture/cabinetTelevision.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+
+    <!-- TV -->
+    <mesh name="m_televisionModern_metalDark" file="furniture/televisionModern_metalDark.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_televisionModern_metal" inertia="shell" file="furniture/televisionModern_metal.obj" scale="1.7 1.7 1.7"/>
+
+    <!-- Floor Lamp -->
+    <mesh name="m_lampRoundFloor_metal" file="furniture/lampRoundFloor_metal.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_lampRoundFloor_lamp" file="furniture/lampRoundFloor_lamp.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+
+    <!-- Rug -->
+    <mesh name="m_rugRectangle_carpet" file="furniture/rugRectangle_carpet.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_rugRectangle_carpetDarker" file="furniture/rugRectangle_carpetDarker.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+
+    <!-- Dining Table -->
+    <mesh name="m_dining_table" file="furniture/table.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+
+    <!-- Chair -->
+    <mesh name="m_chair" file="furniture/chair.obj" scale="2.1 2.1 2.1" inertia="shell"/>
+
+    <!-- Potted Plant -->
+    <!-- pottedPlant meshes removed — collision cylinders trap Go2 -->
+
+    <!-- Sideboard -->
+    <mesh name="m_sideTableDrawers_wood" file="furniture/sideTableDrawers_wood.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_sideTableDrawers_defaultMat" inertia="shell" file="furniture/sideTableDrawers_defaultMat.obj" scale="2.0 2.0 2.0"/>
+    <mesh name="m_sideTableDrawers_metal" inertia="shell" file="furniture/sideTableDrawers_metal.obj" scale="2.0 2.0 2.0"/>
+
+    <!-- Kitchen Cabinet Drawer -->
+    <mesh name="m_kitchenCabinetDrawer_metal" file="furniture/kitchenCabinetDrawer_metal.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_kitchenCabinetDrawer_wood" file="furniture/kitchenCabinetDrawer_wood.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_kitchenCabinetDrawer_woodDark" inertia="shell" file="furniture/kitchenCabinetDrawer_woodDark.obj" scale="2.0 2.0 2.0"/>
+
+    <!-- Kitchen Stove -->
+    <mesh name="m_kitchenStove_metal" file="furniture/kitchenStove_metal.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_kitchenStove_wood" file="furniture/kitchenStove_wood.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_kitchenStove_metalDark" file="furniture/kitchenStove_metalDark.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_kitchenStove_carpetWhite" inertia="shell" file="furniture/kitchenStove_carpetWhite.obj" scale="2.0 2.0 2.0"/>
+    <mesh name="m_kitchenStove_glass" inertia="shell" file="furniture/kitchenStove_glass.obj" scale="2.0 2.0 2.0"/>
+
+    <!-- Fridge -->
+    <mesh name="m_kitchenFridgeLarge_metalLight" file="furniture/kitchenFridgeLarge_metalLight.obj" scale="1.9 1.9 1.9" inertia="shell"/>
+    <mesh name="m_kitchenFridgeLarge_metalMedium" file="furniture/kitchenFridgeLarge_metalMedium.obj" scale="1.9 1.9 1.9" inertia="shell"/>
+
+    <!-- Bar Stool -->
+    <mesh name="m_stoolBar_wood" file="furniture/stoolBar_wood.obj" scale="1.8 1.8 1.8" inertia="shell"/>
+    <mesh name="m_stoolBar_carpet" file="furniture/stoolBar_carpet.obj" scale="1.8 1.8 1.8" inertia="shell"/>
+
+    <!-- Desk -->
+    <mesh name="m_desk_wood" file="furniture/desk_wood.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_desk_metal" inertia="shell" file="furniture/desk_metal.obj" scale="2.0 2.0 2.0"/>
+
+    <!-- Computer Screen -->
+    <mesh name="m_computerScreen_metalDark" file="furniture/computerScreen_metalDark.obj" scale="1.6 1.6 1.6" inertia="shell"/>
+    <mesh name="m_computerScreen_metal" file="furniture/computerScreen_metal.obj" scale="1.6 1.6 1.6" inertia="shell"/>
+
+    <!-- Desk Chair -->
+    <mesh name="m_chairDesk_metalMedium" file="furniture/chairDesk_metalMedium.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_chairDesk_carpet" file="furniture/chairDesk_carpet.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+
+    <!-- Bookcase -->
+    <mesh name="m_bookshelf" file="furniture/bookcaseOpen.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+
+    <!-- Double Bed -->
+    <mesh name="m_bedDouble_carpet" file="furniture/bedDouble_carpet.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_bedDouble_carpetWhite" file="furniture/bedDouble_carpetWhite.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_bedDouble_metal" file="furniture/bedDouble_metal.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+    <mesh name="m_bedDouble_wood" file="furniture/bedDouble_wood.obj" scale="2.0 2.0 2.0" inertia="shell"/>
+
+    <!-- Cabinet Bed Drawer (nightstand) -->
+    <mesh name="m_cabinetBedDrawer_wood" file="furniture/cabinetBedDrawer_wood.obj" scale="1.9 1.9 1.9" inertia="shell"/>
+    <mesh name="m_cabinetBedDrawer_defaultMat" inertia="shell" file="furniture/cabinetBedDrawer_defaultMat.obj" scale="1.9 1.9 1.9"/>
+    <mesh name="m_cabinetBedDrawer_metal" file="furniture/cabinetBedDrawer_metal.obj" scale="1.9 1.9 1.9" inertia="shell"/>
+
+    <!-- Single Bed -->
+    <mesh name="m_bedSingle_carpet" file="furniture/bedSingle_carpet.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_bedSingle_carpetWhite" file="furniture/bedSingle_carpetWhite.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_bedSingle_metal" file="furniture/bedSingle_metal.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_bedSingle_wood" file="furniture/bedSingle_wood.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+
+    <!-- Dresser (cabinetBedDrawerTable) -->
+    <mesh name="m_dresser_wood" file="furniture/cabinetBedDrawerTable_wood.obj" scale="1.9 1.9 1.9" inertia="shell"/>
+    <mesh name="m_dresser_defaultMat" file="furniture/cabinetBedDrawerTable_defaultMat.obj" scale="1.9 1.9 1.9" inertia="shell"/>
+    <mesh name="m_dresser_metal" file="furniture/cabinetBedDrawerTable_metal.obj" scale="1.9 1.9 1.9" inertia="shell"/>
+
+    <!-- Bathtub -->
+    <mesh name="m_bathtub_carpetWhite" file="furniture/bathtub_carpetWhite.obj" scale="1.4 1.4 1.4" inertia="shell"/>
+    <mesh name="m_bathtub_metalLight" file="furniture/bathtub_metalLight.obj" scale="1.4 1.4 1.4" inertia="shell"/>
+    <mesh name="m_bathtub_metalDark" inertia="shell" file="furniture/bathtub_metalDark.obj" scale="1.4 1.4 1.4"/>
+
+    <!-- Bathroom Sink (vanity) -->
+    <mesh name="m_bathroomSink_defaultMat" file="furniture/bathroomSink_defaultMat.obj" scale="1.5 1.5 1.5" inertia="shell"/>
+    <mesh name="m_bathroomSink_metalLight" file="furniture/bathroomSink_metalLight.obj" scale="1.5 1.5 1.5" inertia="shell"/>
+    <mesh name="m_bathroomSink_carpetWhite" inertia="shell" file="furniture/bathroomSink_carpetWhite.obj" scale="1.5 1.5 1.5"/>
+
+    <!-- Washer -->
+    <mesh name="m_washer_metalLight" file="furniture/washer_metalLight.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_washer_metalMedium" file="furniture/washer_metalMedium.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_washer_metalDark" inertia="shell" file="furniture/washer_metalDark.obj" scale="1.7 1.7 1.7"/>
+    <mesh name="m_washer_metal" file="furniture/washer_metal.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_washer_glass" inertia="shell" file="furniture/washer_glass.obj" scale="1.7 1.7 1.7"/>
+    <mesh name="m_washer_defaultMat" inertia="shell" file="furniture/washer_defaultMat.obj" scale="1.7 1.7 1.7"/>
+
+    <!-- Dryer -->
+    <mesh name="m_dryer_metalLight" file="furniture/dryer_metalLight.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_dryer_metalMedium" file="furniture/dryer_metalMedium.obj" scale="1.7 1.7 1.7" inertia="shell"/>
+    <mesh name="m_dryer_metalDark" inertia="shell" file="furniture/dryer_metalDark.obj" scale="1.7 1.7 1.7"/>
+
+    <!-- Side Table (hallway console) -->
+    <mesh name="m_sideTable_wood" file="furniture/sideTable_wood.obj" scale="1.8 1.8 1.8" inertia="shell"/>
+    <mesh name="m_sideTable_defaultMat" inertia="shell" file="furniture/sideTable_defaultMat.obj" scale="1.8 1.8 1.8"/>
+  </asset>
+
+  <worldbody>
+    <!-- ==================== LIGHTING ==================== -->
+    <light name="light_living" pos="3 2.5 2.7" dir="0 0 -1" diffuse="0.55 0.50 0.42" cutoff="65" castshadow="false"/>
+    <light name="light_dining" pos="3 7.5 2.7" dir="0 0 -1" diffuse="0.55 0.50 0.42" cutoff="65" castshadow="false"/>
+    <light name="light_kitchen" pos="17 2.5 2.7" dir="0 0 -1" diffuse="0.60 0.58 0.52" cutoff="65" castshadow="false"/>
+    <light name="light_study" pos="17 7.5 2.7" dir="0 0 -1" diffuse="0.55 0.52 0.45" cutoff="65" castshadow="false"/>
+    <light name="light_hall_a" pos="10 3 2.7" dir="0 0 -1" diffuse="0.50 0.48 0.42" cutoff="55" castshadow="false"/>
+    <light name="light_hall_b" pos="10 7 2.7" dir="0 0 -1" diffuse="0.50 0.48 0.42" cutoff="55" castshadow="false"/>
+    <light name="light_master" pos="3.5 12 2.7" dir="0 0 -1" diffuse="0.50 0.45 0.38" cutoff="60" castshadow="false"/>
+    <light name="light_guest" pos="16 12 2.7" dir="0 0 -1" diffuse="0.50 0.45 0.38" cutoff="60" castshadow="false"/>
+    <light name="light_bath" pos="8.5 12 2.7" dir="0 0 -1" diffuse="0.55 0.55 0.55" cutoff="55" castshadow="false"/>
+    <light name="sun" pos="10 7 4" dir="0 0 -1" directional="true" diffuse="0.35 0.35 0.35"/><!-- sun only shadow caster -->
+    <light name="fill_hall" pos="10 5 0.5" dir="0 0 1" diffuse="0.15 0.14 0.12" castshadow="false"/>
+    <light name="fill_living" pos="3 2.5 0.5" dir="0 0 1" diffuse="0.12 0.11 0.10" castshadow="false"/>
+    <light name="fill_dining" pos="3 7.5 0.5" dir="0 0 1" diffuse="0.12 0.11 0.10" castshadow="false"/>
+    <light name="fill_kitchen" pos="17 2.5 0.5" dir="0 0 1" diffuse="0.14 0.14 0.12" castshadow="false"/>
+
+    <!-- ==================== FLOORS ==================== -->
+    <geom name="floor" type="plane" pos="10 7 0" size="10.5 7.5 0.05" material="marble_mat"/>
+    <geom name="floor_raycast" type="box" pos="10 7 -0.02" size="10.5 7.5 0.01"
+          contype="0" conaffinity="0" group="3" rgba="0 0 0 0"/>
+    <geom name="ceiling" type="box" pos="10 7 2.85" size="10.5 7.5 0.05" material="wall_mat"
+          contype="0" conaffinity="0" group="3"/>
+    <geom name="f_living" type="box" pos="3 2.5 0.001" size="3 2.5 0.001" material="wood_mat" contype="0" conaffinity="0"/>
+    <geom name="f_dining" type="box" pos="3 7.5 0.001" size="3 2.5 0.001" material="wood_mat" contype="0" conaffinity="0"/>
+    <geom name="f_kitchen" type="box" pos="17 2.5 0.001" size="3 2.5 0.001" material="tile_mat" contype="0" conaffinity="0"/>
+    <geom name="f_study" type="box" pos="17 7.5 0.001" size="3 2.5 0.001" material="wood_mat" contype="0" conaffinity="0"/>
+    <geom name="f_master" type="box" pos="3.5 12 0.001" size="3.5 2 0.001" material="carpet_mat" contype="0" conaffinity="0"/>
+    <geom name="f_guest" type="box" pos="16 12 0.001" size="4 2 0.001" material="carpet_mat" contype="0" conaffinity="0"/>
+    <geom name="f_bath" type="box" pos="8.5 12 0.001" size="1.5 2 0.001" material="bath_tile" contype="0" conaffinity="0"/>
+
+    <!-- ==================== EXTERIOR WALLS ==================== -->
+    <geom name="ew_south" type="box" pos="10 -0.05 1.4" size="10.1 0.05 1.4" material="wall_mat"/>
+    <geom name="ew_north" type="box" pos="10 14.05 1.4" size="10.1 0.05 1.4" material="wall_mat"/>
+    <geom name="ew_west" type="box" pos="-0.05 7 1.4" size="0.05 7.1 1.4" material="wall_mat"/>
+    <geom name="ew_east" type="box" pos="20.05 7 1.4" size="0.05 7.1 1.4" material="wall_mat"/>
+
+    <!-- ==================== INTERIOR WALLS ==================== -->
+    <geom name="iw_l1" type="box" pos="6 1.2 1.4" size="0.05 1.2 1.4" material="accent_wall"/>
+    <geom name="iw_l2" type="box" pos="6 4.3 1.4" size="0.05 0.7 1.4" material="accent_wall"/>
+    <geom name="iw_l3" type="box" pos="6 6.2 1.4" size="0.05 1.2 1.4" material="accent_wall"/>
+    <geom name="iw_l4" type="box" pos="6 9.3 1.4" size="0.05 0.7 1.4" material="accent_wall"/>
+    <geom name="iw_r1" type="box" pos="14 1.2 1.4" size="0.05 1.2 1.4" material="accent_wall"/>
+    <geom name="iw_r2" type="box" pos="14 4.3 1.4" size="0.05 0.7 1.4" material="accent_wall"/>
+    <geom name="iw_r3" type="box" pos="14 6.2 1.4" size="0.05 1.2 1.4" material="accent_wall"/>
+    <geom name="iw_r4" type="box" pos="14 9.3 1.4" size="0.05 0.7 1.4" material="accent_wall"/>
+    <geom name="iw_ld1" type="box" pos="1.2 5 1.4" size="1.2 0.05 1.4" material="accent_wall"/>
+    <geom name="iw_ld2" type="box" pos="4.8 5 1.4" size="1.2 0.05 1.4" material="accent_wall"/>
+    <geom name="iw_ks1" type="box" pos="15.2 5 1.4" size="1.2 0.05 1.4" material="accent_wall"/>
+    <geom name="iw_ks2" type="box" pos="18.8 5 1.4" size="1.2 0.05 1.4" material="accent_wall"/>
+    <geom name="iw_b1" type="box" pos="1.2 10 1.4" size="1.2 0.05 1.4" material="wall_mat"/>
+    <geom name="iw_b2" type="box" pos="4.8 10 1.4" size="1.2 0.05 1.4" material="wall_mat"/>
+    <geom name="iw_b3" type="box" pos="6.95 10 1.4" size="0.95 0.05 1.4" material="wall_mat"/>
+    <geom name="iw_b4" type="box" pos="10.55 10 1.4" size="1.45 0.05 1.4" material="wall_mat"/><!-- sealed laundry door -->
+    <geom name="iw_b5" type="box" pos="13.0 10 1.4" size="1.0 0.05 1.4" material="wall_mat"/>
+    <geom name="iw_b6" type="box" pos="14.7 10 1.4" size="0.7 0.05 1.4" material="wall_mat"/>
+    <geom name="iw_b7" type="box" pos="18.3 10 1.4" size="1.7 0.05 1.4" material="wall_mat"/>
+    <geom name="iw_bath_w" type="box" pos="7 12 1.4" size="0.05 2.05 1.4" material="wall_mat"/>
+    <!-- iw_bath_e REMOVED — bathroom + laundry merged into one room -->
+    <geom name="iw_laund_e" type="box" pos="12 12 1.4" size="0.05 2.05 1.4" material="wall_mat"/>
+
+
+    <!-- ==================== LIVING ROOM (x=0..6, y=0..5) ==================== -->
+
+    <body name="sofa_main" pos="1.8 1.0 0">
+      <geom type="mesh" mesh="m_loungeSofa_carpet" euler="1.5708 0 0" pos="1.08 0.45 0" rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_loungeSofa_wood" euler="1.5708 0 0" pos="1.08 0.45 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="1.1 0.45 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="coffee_tbl" pos="1.8 2.3 0">
+      <geom type="mesh" mesh="m_coffee_table" euler="1.5708 0 0" pos="-0.24 0.18 0" rgba="0.90 0.60 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.20" size="0.6 0.35 0.20" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="tv_console" pos="0.5 3.5 0">
+      <geom type="mesh" mesh="m_tv_console" euler="1.5708 0 0" pos="0.80 0.25 0" rgba="0.90 0.60 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.30" size="0.8 0.25 0.30" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="tv_screen" pos="0.5 3.5 0.62">
+      <geom type="mesh" mesh="m_televisionModern_metalDark" euler="1.5708 0 0" rgba="0.31 0.39 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_televisionModern_metal" euler="1.5708 0 0" rgba="0.74 0.82 0.84 1" contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="lamp_living" pos="0.4 4.2 0">
+      <geom type="mesh" mesh="m_lampRoundFloor_metal" euler="1.5708 0 0" pos="0.10 0.10 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_lampRoundFloor_lamp" euler="1.5708 0 0" pos="0.10 0.10 0" rgba="1.0 0.91 0.59 1" contype="0" conaffinity="0"/>
+      <geom type="cylinder" pos="0 0 0.7" size="0.12 0.7" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <geom name="rug_living_carpet" type="mesh" mesh="m_rugRectangle_carpet" euler="1.5708 0 0" pos="2.0 2.0 0.005"
+          rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+    <geom name="rug_living_darker" type="mesh" mesh="m_rugRectangle_carpetDarker" euler="1.5708 0 0" pos="2.0 2.0 0.005"
+          rgba="0.61 0.30 0.29 1" contype="0" conaffinity="0"/>
+
+    <geom name="art_living" type="box" pos="0.02 2.5 1.5" size="0.02 0.4 0.3"
+          material="painting_mat" contype="0" conaffinity="0"/>
+
+
+    <!-- ==================== DINING ROOM (x=0..6, y=5..10) ==================== -->
+
+    <body name="dining_table" pos="3 7.5 0">
+      <geom type="mesh" mesh="m_dining_table" euler="1.5708 0 0" pos="0.84 0.45 0" rgba="0.90 0.60 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.33" size="0.84 0.45 0.33" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="dchair1" pos="2.0 7.5 0">
+      <geom type="mesh" mesh="m_chair" euler="1.5708 0 0" pos="0.21 0.21 0" material="mat_oak" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.21 0.21 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+    <body name="dchair2" pos="4.0 7.5 0">
+      <geom type="mesh" mesh="m_chair" euler="1.5708 0 3.1416" pos="-0.21 -0.21 0" material="mat_oak" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.21 0.21 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+    <body name="dchair3" pos="3.0 6.7 0">
+      <geom type="mesh" mesh="m_chair" euler="1.5708 0 1.5708" pos="0.21 -0.21 0" material="mat_oak" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.21 0.21 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+    <body name="dchair4" pos="3.0 8.3 0">
+      <geom type="mesh" mesh="m_chair" euler="1.5708 0 -1.5708" pos="-0.21 0.21 0" material="mat_oak" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.21 0.21 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="sideboard" pos="0.5 8.5 0">
+      <geom type="mesh" mesh="m_sideTableDrawers_wood" euler="1.5708 0 0" pos="0.51 0.20 0" material="mat_cherry" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_sideTableDrawers_defaultMat" euler="1.5708 0 0" pos="0.51 0.20 0" rgba="1.0 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_sideTableDrawers_metal" euler="1.5708 0 0" pos="0.51 0.20 0" rgba="0.74 0.82 0.84 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.38" size="0.53 0.22 0.38" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <!-- plant_dining REMOVED — collision cylinder traps Go2 -->
+
+
+    <!-- ==================== KITCHEN (x=14..20, y=0..5) ==================== -->
+
+    <body name="counter_east" pos="19.2 1.0 0">
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_metal" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_wood" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_cherry" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_woodDark" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.43 0.45 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+    <body name="counter_east2" pos="19.2 2.0 0">
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_metal" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_wood" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_cherry" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_woodDark" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.43 0.45 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+    <body name="counter_east3" pos="19.2 3.0 0">
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_metal" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_wood" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_cherry" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_woodDark" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.43 0.45 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="counter_south" pos="15.5 0.5 0">
+      <geom type="mesh" mesh="m_kitchenStove_metal" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_steel" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenStove_wood" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_cherry" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenStove_metalDark" euler="1.5708 0 0" pos="0.43 0.45 0" rgba="0.31 0.39 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenStove_carpetWhite" euler="1.5708 0 0" pos="0.43 0.45 0" rgba="0.97 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenStove_glass" euler="1.5708 0 0" pos="0.43 0.45 0" rgba="0.70 0.83 0.77 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.43 0.45 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="counter_south2" pos="16.5 0.5 0">
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_metal" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_wood" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_cherry" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_woodDark" euler="1.5708 0 0" pos="0.43 0.45 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.43 0.45 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="island" pos="17 2.8 0">
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_metal" euler="1.5708 0 1.5708" pos="0.45 -0.43 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_wood" euler="1.5708 0 1.5708" pos="0.45 -0.43 0" material="mat_cherry" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenCabinetDrawer_woodDark" euler="1.5708 0 1.5708" pos="0.45 -0.43 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.45" size="0.43 0.45 0.45" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="fridge" pos="19.2 4.3 0">
+      <geom type="mesh" mesh="m_kitchenFridgeLarge_metalLight" euler="1.5708 0 0" pos="0.49 0.26 0" material="mat_steel" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_kitchenFridgeLarge_metalMedium" euler="1.5708 0 0" pos="0.49 0.26 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.88" size="0.5 0.38 0.88" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="stool1" pos="16.0 2.8 0">
+      <geom type="mesh" mesh="m_stoolBar_wood" euler="1.5708 0 0" pos="0.24 0.21 0" material="mat_oak" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_stoolBar_carpet" euler="1.5708 0 0" pos="0.24 0.21 0" rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+      <geom type="cylinder" pos="0 0 0.38" size="0.17 0.38" rgba="0 0 0 0" group="3"/>
+    </body>
+    <body name="stool2" pos="18.0 2.8 0">
+      <geom type="mesh" mesh="m_stoolBar_wood" euler="1.5708 0 0" pos="0.24 0.21 0" material="mat_oak" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_stoolBar_carpet" euler="1.5708 0 0" pos="0.24 0.21 0" rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+      <geom type="cylinder" pos="0 0 0.38" size="0.17 0.38" rgba="0 0 0 0" group="3"/>
+    </body>
+
+
+    <!-- ==================== STUDY (x=14..20, y=5..10) ==================== -->
+
+    <body name="desk" pos="19.0 7.5 0">
+      <geom type="mesh" mesh="m_desk_wood" euler="1.5708 0 0" pos="0.71 0.37 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_desk_metal" euler="1.5708 0 0" pos="0.71 0.37 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.38" size="0.73 0.39 0.38" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="monitor" pos="19.0 7.5 0.77">
+      <geom type="mesh" mesh="m_computerScreen_metalDark" euler="1.5708 0 0" pos="0.31 0.08 0" rgba="0.31 0.39 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_computerScreen_metal" euler="1.5708 0 0" pos="0.31 0.08 0" rgba="0.74 0.82 0.84 1" contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="desk_chair" pos="18.0 7.5 0">
+      <geom type="mesh" mesh="m_chairDesk_metalMedium" euler="1.5708 0 0" pos="0.28 0.27 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_chairDesk_carpet" euler="1.5708 0 0" pos="0.28 0.27 0" rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.50" size="0.28 0.27 0.50" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="bookshelf" pos="17 5.3 0">
+      <geom type="mesh" mesh="m_bookshelf" euler="1.5708 0 0" pos="0.40 0.25 0" rgba="0.90 0.60 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.88" size="0.40 0.25 0.88" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <geom name="rug_study_carpet" type="mesh" mesh="m_rugRectangle_carpet" euler="1.5708 0 0" pos="17.5 7.5 0.005"
+          rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+    <geom name="rug_study_darker" type="mesh" mesh="m_rugRectangle_carpetDarker" euler="1.5708 0 0" pos="17.5 7.5 0.005"
+          rgba="0.61 0.30 0.29 1" contype="0" conaffinity="0"/>
+
+    <!-- plant_study REMOVED — collision cylinder traps Go2 -->
+
+
+    <!-- ==================== MASTER BEDROOM (x=0..7, y=10..14) ==================== -->
+
+    <body name="master_bed" pos="1.5 12 0">
+      <geom type="mesh" mesh="m_bedDouble_carpet" euler="1.5708 0 0" pos="0.96 1.12 0" rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bedDouble_carpetWhite" euler="1.5708 0 0" pos="0.96 1.12 0" rgba="0.97 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bedDouble_metal" euler="1.5708 0 0" pos="0.96 1.12 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bedDouble_wood" euler="1.5708 0 0" pos="0.96 1.12 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.35" size="0.96 1.12 0.35" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="nightstand_l" pos="1.5 10.6 0">
+      <geom type="mesh" mesh="m_cabinetBedDrawer_wood" euler="1.5708 0 0" pos="0.23 0.18 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_cabinetBedDrawer_defaultMat" euler="1.5708 0 0" pos="0.23 0.18 0" rgba="1.0 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_cabinetBedDrawer_metal" euler="1.5708 0 0" pos="0.23 0.18 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.25" size="0.25 0.20 0.25" rgba="0 0 0 0" group="3"/>
+    </body>
+    <body name="nightstand_r" pos="1.5 13.4 0">
+      <geom type="mesh" mesh="m_cabinetBedDrawer_wood" euler="1.5708 0 0" pos="0.23 0.18 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_cabinetBedDrawer_defaultMat" euler="1.5708 0 0" pos="0.23 0.18 0" rgba="1.0 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_cabinetBedDrawer_metal" euler="1.5708 0 0" pos="0.23 0.18 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.25" size="0.25 0.20 0.25" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="wardrobe" pos="5.5 13.3 0">
+      <geom type="mesh" mesh="m_bookshelf" euler="1.5708 0 0" pos="0.40 0.25 0" rgba="0.90 0.60 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.88" size="0.40 0.30 0.88" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <geom name="rug_master_carpet" type="mesh" mesh="m_rugRectangle_carpet" euler="1.5708 0 0" pos="3 12 0.005"
+          rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+    <geom name="rug_master_darker" type="mesh" mesh="m_rugRectangle_carpetDarker" euler="1.5708 0 0" pos="3 12 0.005"
+          rgba="0.61 0.30 0.29 1" contype="0" conaffinity="0"/>
+
+
+    <!-- ==================== GUEST BEDROOM (x=12..20, y=10..14) ==================== -->
+
+    <body name="guest_bed" pos="17.5 12 0">
+      <geom type="mesh" mesh="m_bedSingle_carpet" euler="1.5708 0 0" pos="1.14 0.96 0" rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bedSingle_carpetWhite" euler="1.5708 0 0" pos="1.14 0.96 0" rgba="0.97 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bedSingle_metal" euler="1.5708 0 0" pos="1.14 0.96 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bedSingle_wood" euler="1.5708 0 0" pos="1.14 0.96 0" material="mat_oak" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.32" size="0.5 0.96 0.32" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="guest_nightstand" pos="16.3 12.5 0">
+      <geom type="mesh" mesh="m_cabinetBedDrawer_wood" euler="1.5708 0 0" pos="0.23 0.18 0" material="mat_walnut" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_cabinetBedDrawer_defaultMat" euler="1.5708 0 0" pos="0.23 0.18 0" rgba="1.0 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_cabinetBedDrawer_metal" euler="1.5708 0 0" pos="0.23 0.18 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.25" size="0.25 0.20 0.25" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="dresser" pos="13 13.3 0">
+      <geom type="mesh" mesh="m_dresser_wood" euler="1.5708 0 0" pos="0.23 0.18 0" rgba="0.90 0.60 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_dresser_defaultMat" euler="1.5708 0 0" pos="0.23 0.18 0" rgba="1.0 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_dresser_metal" euler="1.5708 0 0" pos="0.23 0.18 0" rgba="0.74 0.82 0.84 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.25" size="0.25 0.20 0.25" rgba="0 0 0 0" group="3"/>
+    </body>
+
+
+    <!-- ==================== BATHROOM (x=7..10, y=10..14) ==================== -->
+
+    <body name="bathtub" pos="8.5 13.2 0">
+      <geom type="mesh" mesh="m_bathtub_carpetWhite" euler="1.5708 0 0" pos="0.83 0.39 0" material="mat_ceramic" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bathtub_metalLight" euler="1.5708 0 0" pos="0.83 0.39 0" material="mat_ceramic" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bathtub_metalDark" euler="1.5708 0 0" pos="0.83 0.39 0" rgba="0.31 0.39 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.30" size="0.83 0.39 0.30" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <body name="vanity" pos="7.5 11 0">
+      <geom type="mesh" mesh="m_bathroomSink_defaultMat" euler="1.5708 0 0" pos="0.26 0.22 0" material="mat_ceramic" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bathroomSink_metalLight" euler="1.5708 0 0" pos="0.26 0.22 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_bathroomSink_carpetWhite" euler="1.5708 0 0" pos="0.26 0.22 0" material="mat_ceramic" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.42" size="0.26 0.22 0.42" rgba="0 0 0 0" group="3"/>
+    </body>
+
+
+    <!-- ==================== LAUNDRY (merged into bathroom, x=7..12, y=10..14) ==================== -->
+
+    <body name="washer" pos="11 11 0">
+      <geom type="mesh" mesh="m_washer_metalLight" euler="1.5708 0 0" pos="0.33 0.26 0" material="mat_steel" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_washer_metalMedium" euler="1.5708 0 0" pos="0.33 0.26 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_washer_metalDark" euler="1.5708 0 0" pos="0.33 0.26 0" rgba="0.31 0.39 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_washer_metal" euler="1.5708 0 0" pos="0.33 0.26 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_washer_glass" euler="1.5708 0 0" pos="0.33 0.26 0" rgba="0.70 0.83 0.77 1" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_washer_defaultMat" euler="1.5708 0 0" pos="0.33 0.26 0" rgba="1.0 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.40" size="0.33 0.33 0.40" rgba="0 0 0 0" group="3"/>
+    </body>
+    <body name="dryer_unit" pos="11 12 0">
+      <geom type="mesh" mesh="m_dryer_metalLight" euler="1.5708 0 0" pos="0.33 0.27 0" material="mat_steel" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_dryer_metalMedium" euler="1.5708 0 0" pos="0.33 0.27 0" material="mat_chrome" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_dryer_metalDark" euler="1.5708 0 0" pos="0.33 0.27 0" rgba="0.31 0.39 0.39 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.40" size="0.33 0.33 0.40" rgba="0 0 0 0" group="3"/>
+    </body>
+
+
+    <!-- ==================== CENTRAL HALLWAY DECOR ==================== -->
+
+    <body name="console_table" pos="6.5 5 0">
+      <geom type="mesh" mesh="m_sideTable_wood" euler="1.5708 0 0" pos="0.46 0.18 0" material="mat_cherry" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="m_sideTable_defaultMat" euler="1.5708 0 0" pos="0.46 0.18 0" rgba="1.0 1.0 1.0 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0 0.35" size="0.48 0.20 0.35" rgba="0 0 0 0" group="3"/>
+    </body>
+
+    <!-- plant_entry REMOVED — collision cylinder in hallway traps Go2 -->
+
+    <geom name="rug_hall_carpet" type="mesh" mesh="m_rugRectangle_carpet" euler="1.5708 0 1.5708" pos="10 5 0.005"
+          rgba="0.94 0.37 0.34 1" contype="0" conaffinity="0"/>
+    <geom name="rug_hall_darker" type="mesh" mesh="m_rugRectangle_carpetDarker" euler="1.5708 0 1.5708" pos="10 5 0.005"
+          rgba="0.61 0.30 0.29 1" contype="0" conaffinity="0"/>
+
+    <!-- plant_hall REMOVED — collision cylinder in hallway traps Go2 -->
+
+    <geom name="art_hall1" type="box" pos="6.02 3 1.5" size="0.015 0.35 0.25"
+          material="painting_mat" contype="0" conaffinity="0"/>
+    <geom name="art_hall2" type="box" pos="13.98 6.5 1.5" size="0.015 0.4 0.3"
+          material="painting_mat" contype="0" conaffinity="0"/>
+
+
+    <!-- ==================== BASEBOARDS (visual only) ==================== -->
+    <geom name="bb_south" type="box" pos="10 0.06 0.04" size="10.0 0.01 0.04"
+          material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="bb_north" type="box" pos="10 13.94 0.04" size="10.0 0.01 0.04"
+          material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="bb_west" type="box" pos="0.06 7 0.04" size="0.01 7.0 0.04"
+          material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="bb_east" type="box" pos="19.94 7 0.04" size="0.01 7.0 0.04"
+          material="dark_wood" contype="0" conaffinity="0"/>
+
+    <!-- ==================== DOOR FRAMES (visual only) ==================== -->
+    <geom name="df_living_l" type="box" pos="6 2.38 1.1" size="0.06 0.03 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_living_r" type="box" pos="6 3.62 1.1" size="0.06 0.03 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_living_t" type="box" pos="6 3.0 2.23" size="0.06 0.62 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_dining_l" type="box" pos="6 7.38 1.1" size="0.06 0.03 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_dining_r" type="box" pos="6 8.62 1.1" size="0.06 0.03 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_dining_t" type="box" pos="6 8.0 2.23" size="0.06 0.62 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_kitchen_l" type="box" pos="14 2.38 1.1" size="0.06 0.03 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_kitchen_r" type="box" pos="14 3.62 1.1" size="0.06 0.03 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_kitchen_t" type="box" pos="14 3.0 2.23" size="0.06 0.62 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_study_l" type="box" pos="14 7.38 1.1" size="0.06 0.03 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_study_r" type="box" pos="14 8.62 1.1" size="0.06 0.03 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_study_t" type="box" pos="14 8.0 2.23" size="0.06 0.62 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_ld_l" type="box" pos="2.38 5 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_ld_r" type="box" pos="3.62 5 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_ld_t" type="box" pos="3.0 5 2.23" size="0.62 0.06 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_ks_l" type="box" pos="16.38 5 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_ks_r" type="box" pos="17.62 5 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_ks_t" type="box" pos="17.0 5 2.23" size="0.62 0.06 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_master_l" type="box" pos="2.38 10 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_master_r" type="box" pos="3.62 10 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_master_t" type="box" pos="3.0 10 2.23" size="0.62 0.06 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_bath_l" type="box" pos="7.88 10 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_bath_r" type="box" pos="9.12 10 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_bath_t" type="box" pos="8.5 10 2.23" size="0.62 0.06 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_guest_l" type="box" pos="15.38 10 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_guest_r" type="box" pos="16.62 10 1.1" size="0.03 0.06 1.1" material="dark_wood" contype="0" conaffinity="0"/>
+    <geom name="df_guest_t" type="box" pos="16.0 10 2.23" size="0.62 0.06 0.03" material="dark_wood" contype="0" conaffinity="0"/>
+
+  </worldbody>
+</mujoco>

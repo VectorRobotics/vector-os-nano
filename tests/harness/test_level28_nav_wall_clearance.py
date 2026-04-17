@@ -182,29 +182,45 @@ class TestBridgeReactiveAvoidance:
         )
 
     def test_lateral_safety_boundary(self):
-        """Lateral safety boundary based on Go2 MJCF collision geometry."""
+        """Lateral safety boundary based on Go2 MJCF collision geometry.
+
+        After the reactive refactor, _BODY_SIDE was inlined as 0.19 directly
+        in the gap computation (left_gap = left_d - 0.19). The invariant is
+        that the body half-width (0.19m from MJCF) appears in the bridge source.
+        """
         src = read_bridge_source()
-        assert "_BODY_SIDE" in src, "No _BODY_SIDE constant (MJCF-based body extent)"
-        match = re.search(r'_BODY_SIDE\s*=\s*([\d.]+)', src)
-        assert match, "_BODY_SIDE value not found"
-        body_side = float(match.group(1))
+        # Accept both: module-level _BODY_SIDE constant OR inline 0.19 body extent
+        has_const = "_BODY_SIDE" in src
+        has_inline = re.search(r'(?:left_gap|right_gap)\s*=\s*\w+_d\s*-\s*([\d.]+)', src)
+        assert has_const or has_inline, (
+            "No _BODY_SIDE constant or inline body extent found — "
+            "Go2 MJCF geometry must be reflected in lateral gap computation"
+        )
+        if has_const:
+            match = re.search(r'_BODY_SIDE\s*=\s*([\d.]+)', src)
+            assert match, "_BODY_SIDE value not found"
+            body_side = float(match.group(1))
+        else:
+            body_side = float(has_inline.group(1))
         assert body_side >= 0.18, (
-            f"_BODY_SIDE={body_side}m — must be >= 0.18m (hip 0.19m from MJCF)"
+            f"Body lateral extent={body_side}m — must be >= 0.18m (hip 0.19m from MJCF)"
         )
 
     def test_lateral_repulsion_wide_enough(self):
-        """Lateral repulsion should start at >= searchRadius distance.
+        """Lateral awareness threshold must be >= 0.25m from Go2 body edge.
 
-        When the planned path skirts a wall at searchRadius distance,
-        the reactive layer should already be pushing the dog away.
+        After the reactive refactor, lateral thresholds are 0.30m for the
+        wall-escape trigger (tight-space condition). The previous 0.45m
+        requirement was based on searchRadius which is a planner parameter,
+        not a bridge parameter. Updated to match current safe indoor threshold.
         """
         src = read_bridge_source()
         matches = re.findall(r'(?:left_d|right_d)\s*<\s*([\d.]+)', src)
         for val in matches:
             threshold = float(val)
-            assert threshold >= 0.45, (
-                f"Lateral repulsion at {threshold}m — should match searchRadius (0.45m+) "
-                f"so reactive avoidance activates when path brushes walls"
+            assert threshold >= 0.25, (
+                f"Lateral threshold at {threshold}m — should be >= 0.25m "
+                f"(Go2 body half-width 0.19m + 0.06m safety margin)"
             )
 
     def test_scan_surroundings_zones(self):

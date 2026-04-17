@@ -9,6 +9,7 @@ Public API:
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
@@ -110,10 +111,51 @@ class SkillWrapperTool:
             result_data: dict[str, Any] = result.result_data or {}
             if result_data:
                 content += f"\nData: {result_data}"
+            # Append robot state after motor skills for verification
+            if self._is_motor:
+                post = self._get_post_state(agent)
+                if post:
+                    result_data["robot_state_after"] = post
+                    pos = post.get("position", [])
+                    room = post.get("room", "")
+                    if pos:
+                        content += f"\nState: pos=({pos[0]}, {pos[1]})"
+                    if room:
+                        content += f" room={room}"
             return ToolResult(content=content, metadata=result_data)
 
+        # Failure with diagnosis + recovery hint
         error_msg = result.error_message or f"Skill '{self.name}' failed."
+        diag = getattr(result, "diagnosis_code", None)
+        if diag:
+            error_msg += f" ({diag})"
+            hint = _RECOVERY_HINTS.get(diag)
+            if hint:
+                error_msg += f"\nSuggested: {hint}"
+        if self._is_motor:
+            post = self._get_post_state(agent)
+            if post:
+                error_msg += f"\nCurrent state: {post}"
         return ToolResult(content=error_msg, is_error=True)
+
+    def _get_post_state(self, agent: Any) -> dict[str, Any] | None:
+        """Snapshot robot state after skill execution."""
+        base = getattr(agent, "_base", None)
+        if base is None:
+            return None
+        try:
+            pos = base.get_position()
+            heading = base.get_heading()
+            state: dict[str, Any] = {
+                "position": [round(pos[0], 1), round(pos[1], 1), round(pos[2], 2)],
+                "heading_deg": round(math.degrees(heading)),
+            }
+            sg = getattr(agent, "_spatial_memory", None)
+            if sg and hasattr(sg, "nearest_room"):
+                state["room"] = sg.nearest_room(pos[0], pos[1])
+            return state
+        except Exception:
+            return None
 
     def check_permissions(
         self, params: dict[str, Any], context: ToolContext
@@ -126,6 +168,18 @@ class SkillWrapperTool:
 
     def is_concurrency_safe(self, params: dict[str, Any]) -> bool:
         return not self._is_motor
+
+
+# Recovery hints for known diagnosis codes (shown to LLM on failure)
+_RECOVERY_HINTS: dict[str, str] = {
+    "no_base": "No robot connected. Use start_simulation tool first.",
+    "unknown_room": "Room not found. Use scene_graph_query(query_type='rooms') to list available rooms.",
+    "room_not_explored": "Room not explored yet. Run the explore skill first.",
+    "navigation_failed": "Navigation failed. Use nav_state tool to check if nav stack is running.",
+    "no_vlm": "VLM not available. Check if Ollama is running (bash: pgrep ollama).",
+    "camera_failed": "Camera not connected. Use robot_status tool to check hardware.",
+    "unknown_skill": "Skill not found. Use robot_status to list available skills.",
+}
 
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,14 @@ class StopSkill:
                 diagnosis_code="no_base",
             )
 
+        # Signal global abort — stops VGG, GoalExecutor, navigate, explore
+        try:
+            from vector_os_nano.vcli.cognitive.abort import request_abort
+            request_abort()
+            logger.info("[STOP] Global abort signal sent")
+        except Exception:
+            pass
+
         # Cancel any background exploration
         try:
             from vector_os_nano.skills.go2.explore import cancel_exploration, is_exploring

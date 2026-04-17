@@ -230,7 +230,8 @@ class TestTareCollisionMargins:
         search_radius = float(sr_match.group(1))
 
         diff = abs(tare_margin - search_radius)
-        assert diff <= 0.15, (
+        # Use round() to avoid floating-point representation errors (e.g. 0.15000000000000002)
+        assert round(diff, 10) <= 0.15, (
             f"TARE margin ({tare_margin}) and searchRadius ({search_radius}) "
             f"differ by {diff:.2f}m (should be within 0.15m)"
         )

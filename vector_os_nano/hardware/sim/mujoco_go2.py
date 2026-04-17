@@ -87,7 +87,7 @@ _SIM_DT: float = 1.0 / _SIM_HZ
 _CTRL_HZ: int = 200
 _CTRL_DECIM: int = _SIM_HZ // _CTRL_HZ
 
-_VIEWER_SYNC_EVERY: int = 8
+_VIEWER_SYNC_EVERY: int = 30
 
 # ---------------------------------------------------------------------------
 # Constants — sinusoidal trotting gait
@@ -327,11 +327,13 @@ class MuJoCoGo2:
     """
 
     def __init__(
-        self, gui: bool = False, room: bool = True, backend: str = "auto"
+        self, gui: bool = False, room: bool = True, backend: str = "auto",
+        viewer_track: bool = True,
     ) -> None:
         self._gui: bool = gui
         self._room: bool = room
         self._backend_pref: str = backend
+        self._viewer_track: bool = viewer_track
         self._mj: _Go2Model | None = None
         self._viewer: Any = None
         self._connected: bool = False
@@ -418,9 +420,9 @@ class MuJoCoGo2:
                 if self._viewer is not None:
                     self._viewer.cam.type = mj.mjtCamera.mjCAMERA_FREE
                     if self._room:
-                        self._viewer.cam.lookat[:] = [10.0, 7.0, 0.0]
-                        self._viewer.cam.distance = 22.0
-                        self._viewer.cam.elevation = -65
+                        self._viewer.cam.lookat[:] = [10.0, 3.0, 0.3]
+                        self._viewer.cam.distance = 5.5
+                        self._viewer.cam.elevation = -20
                         self._viewer.cam.azimuth = -90
                     else:
                         self._viewer.cam.lookat[:] = [0.0, 0.0, 0.3]
@@ -573,6 +575,9 @@ class MuJoCoGo2:
                 scan_counter = 0
 
             if self._viewer is not None and sim_step % _VIEWER_SYNC_EVERY == 0:
+                if self._viewer_track:
+                    pos = self._mj.data.qpos[0:3]
+                    self._viewer.cam.lookat[:] = [float(pos[0]), float(pos[1]), 0.3]
                 self._viewer.sync()
 
             sim_step += 1
@@ -671,6 +676,9 @@ class MuJoCoGo2:
                 scan_counter = 0
 
             if self._viewer is not None and sim_step % _VIEWER_SYNC_EVERY == 0:
+                if self._viewer_track:
+                    pos = self._mj.data.qpos[0:3]
+                    self._viewer.cam.lookat[:] = [float(pos[0]), float(pos[1]), 0.3]
                 self._viewer.sync()
 
             sim_step += 1
@@ -790,7 +798,7 @@ class MuJoCoGo2:
         return self._last_pointcloud
 
     def get_camera_frame(
-        self, width: int = 320, height: int = 240,
+        self, width: int = 640, height: int = 480,
     ) -> "np.ndarray":
         """Render first-person RGB from d435_rgb camera mounted on Go2 head.
 
@@ -804,13 +812,15 @@ class MuJoCoGo2:
 
         if not hasattr(self, "_cam_renderer"):
             self._cam_renderer = mj.Renderer(self._mj.model, height, width)
+            self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
+            self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_REFLECTION] = True
 
         cam_id = self._mj.model.cam("d435_rgb").id
         self._cam_renderer.update_scene(self._mj.data, camera=cam_id)
         return self._cam_renderer.render().copy()
 
     def get_depth_frame(
-        self, width: int = 320, height: int = 240,
+        self, width: int = 640, height: int = 480,
     ) -> "np.ndarray":
         """Render depth from d435_depth camera mounted on Go2 head.
 
@@ -823,6 +833,7 @@ class MuJoCoGo2:
         if not hasattr(self, "_depth_renderer"):
             self._depth_renderer = mj.Renderer(self._mj.model, height, width)
             self._depth_renderer.enable_depth_rendering()
+            self._depth_renderer.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
 
         cam_id = self._mj.model.cam("d435_depth").id
         self._depth_renderer.update_scene(self._mj.data, camera=cam_id)
@@ -849,7 +860,7 @@ class MuJoCoGo2:
         )
 
     def get_rgbd_frame(
-        self, width: int = 320, height: int = 240,
+        self, width: int = 640, height: int = 480,
     ) -> tuple["np.ndarray", "np.ndarray"]:
         """Render aligned RGB + depth from the same camera pose.
 
@@ -898,7 +909,7 @@ class MuJoCoGo2:
 
         # Sensor mounting: on top of Go2 head — above all leg geoms.
         # 0.3m forward (head position) + 0.2m up (above trunk top).
-        # At -30° tilt, nearest ground hit ≈ 0.35m ahead of lidar →
+        # At -20° tilt, nearest ground hit ≈ 0.9m ahead of lidar →
         # well past front legs (~0.1m ahead of lidar). No self-hits.
         # Must match bridge _SENSOR_X/_SENSOR_Z and nav stack sensorOffset.
         _LIDAR_OFFSET_X = 0.3
@@ -918,17 +929,17 @@ class MuJoCoGo2:
 
         robot_body_id = self._mj.base_bid
 
-        # Scan beam tilt: 30° downward from sensor horizontal plane
+        # Scan beam tilt: 20° downward from sensor horizontal plane
         # (sensor frame itself is NOT tilted — only the beams are)
-        tilt_rad = math.radians(-30.0)
+        tilt_rad = math.radians(-20.0)
         cos_tilt = math.cos(tilt_rad)
         sin_tilt = math.sin(tilt_rad)
 
         # Livox MID360 FOV: -7° to +52° (asymmetric, 59° range)
-        # With 30° downward tilt → world frame: -37° to +22°
+        # With 20° downward tilt → world frame: -27° to +32°
         # This gives both ground hits (below horizontal) and wall hits (above)
         n_azimuth = 360
-        elevations = list(range(-7, 53, 2))  # -7° to +52° in 2° steps = 30 rings
+        elevations = list(range(-8, 53, 2))  # -8° to +52° in 2° steps, includes 0° for 2D scan
         mid_ring_ranges: list[float] = []
         points_3d: list[tuple[float, float, float, float]] = []
 
