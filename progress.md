@@ -4,6 +4,19 @@
 **Version:** v2.1-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
 
+## 🔴 OPEN BUGS — next session (2026-04-19 live REPL)
+
+After `e0a7e33` (VGG context fix), Yusen's `vector-cli go2sim with_arm=1`
+**still broken**. Full detail: `docs/pick_top_down_known_issues.md`.
+
+1. **rclpy "Executor is already spinning"** — 3 proxy 各自 spin 冲突，需共享 `MultiThreadedExecutor`
+2. **"Cannot locate target object"** — `抓前面绿色` pick 找不到物体（label 不匹配？populate 没跑？需 debug log 定位）
+3. **"No perception backend"** — VGG fallback 到 detect_*, 但 with_arm 无 perception
+
+4 commits 在本地分支，未 push 到远端（等 live REPL 验证通过再 push）。
+
+---
+
 ## v2.1 Phase B+C refactor — ROS2 bridge for arm, full stack + arm together (2026-04-19)
 
 **Problem Yusen reported**: `go2sim` with `with_arm=1` started bare MuJoCo
