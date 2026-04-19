@@ -259,8 +259,14 @@ class VectorEngine:
         def _build_context() -> Any:
             from vector_os_nano.core.skill import SkillContext
             _base = getattr(_agent_ref, "_base", None)
+            _arm = getattr(_agent_ref, "_arm", None)
+            _gripper = getattr(_agent_ref, "_gripper", None)
+            _perception = getattr(_agent_ref, "_perception", None)
             _sg = getattr(_agent_ref, "_spatial_memory", None)
             _vlm = getattr(_agent_ref, "_vlm", None)
+            _wm = getattr(_agent_ref, "_world_model", None)
+            _config = getattr(_agent_ref, "_config", None) or {}
+            _cal = getattr(_agent_ref, "_calibration", None)
             services: dict = {}
             if _sg is not None:
                 services["spatial_memory"] = _sg
@@ -268,9 +274,21 @@ class VectorEngine:
                 services["skill_registry"] = _skill_registry_ref
             if _vlm is not None:
                 services["vlm"] = _vlm
+            # Populate arms / grippers / perception_sources too — manipulation
+            # skills (pick_top_down, PickSkill, HomeSkill, etc.) read
+            # context.arm / context.gripper and previously got None because
+            # this builder only wired base + services.
             return SkillContext(
+                arms={"default": _arm} if _arm is not None else {},
+                grippers={"default": _gripper} if _gripper is not None else {},
                 bases={"go2": _base} if _base is not None else {},
+                perception_sources=(
+                    {"default": _perception} if _perception is not None else {}
+                ),
                 services=services,
+                world_model=_wm,
+                calibration=_cal,
+                config=_config,
             )
 
         try:
