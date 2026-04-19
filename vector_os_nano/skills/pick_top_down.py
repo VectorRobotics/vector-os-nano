@@ -44,10 +44,12 @@ logger = logging.getLogger(__name__)
 
 # Z offset above object centre used for pre-grasp hover (meters, world frame).
 # Piper's reach envelope is largely below its base (z ≈ 0.34 m when Go2 stands).
-# At top-down orientation, target z > Piper_base - 2cm forces the arm into
-# near-fully-folded configs that IK can't solve. 4 cm is a safe margin for
-# objects up to ~8 cm tall (grasp clearance still 4 cm above object top).
-_DEFAULT_PRE_GRASP_HEIGHT: float = 0.04
+# At top-down orientation, target z > Piper_base − 2 cm forces the arm into
+# near-fully-folded configs that IK can't solve. 5 cm keeps pre-grasp below
+# the base for 8-cm-tall cylinders (center z ≈ 0.25 → pre-grasp 0.30).
+# Larger than the object's half-height plus ~1 cm so the fingers clear the
+# object top on approach; short objects may need a smaller override.
+_DEFAULT_PRE_GRASP_HEIGHT: float = 0.05
 
 # Extra Z offset applied to the grasp target (object z + this). Small positive
 # value keeps the jaws wrapping the upper body of the object rather than

@@ -26,11 +26,12 @@ import sys
 import textwrap
 from pathlib import Path
 
-# Each tuple = (object_id, init_z_on_table)
-_TARGETS: list[tuple[str, float]] = [
-    ("pickable_bottle_blue",  0.279),
-    ("pickable_bottle_green", 0.249),
-    ("pickable_can_red",      0.244),
+# Object ids to sweep. Initial z is measured at runtime (after settling)
+# so scene edits don't silently break the baseline.
+_TARGETS: list[str] = [
+    "pickable_bottle_blue",
+    "pickable_bottle_green",
+    "pickable_can_red",
 ]
 
 # Minimum vertical lift (in cm) to count as a successful grasp.
@@ -39,47 +40,89 @@ _MIN_LIFT_CM: float = 1.0
 # Child script that actually runs the pick. Kept as inline template so the
 # verification works whether the repo is cloned or symlinked anywhere.
 _CHILD_TEMPLATE = textwrap.dedent("""
-    import os, sys, logging, mujoco
+    import os, sys, time, logging, mujoco
     os.environ["VECTOR_SIM_WITH_ARM"] = "1"
     logging.basicConfig(level=logging.ERROR, stream=sys.stderr)
-    from vector_os_nano.vcli.tools.sim_tool import SimStartTool
-    from vector_os_nano.skills.pick_top_down import PickTopDownSkill
+    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
+    from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
+    from vector_os_nano.core.world_model import WorldModel, ObjectState
     from vector_os_nano.core.skill import SkillContext
+    from vector_os_nano.skills.pick_top_down import PickTopDownSkill
+    from vector_os_nano.vcli.tools.sim_tool import SimStartTool
 
     OBJ = "{obj_id}"
-    INIT_Z = {init_z}
 
-    agent = SimStartTool._start_go2_local(gui=False)
+    # Direct hardware path — no ROS2 bridge, pure in-process MuJoCo. This
+    # bypasses the production proxy flow but exercises the same IK / grasp
+    # logic the proxy uses.
+    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+    go2.connect()
+    piper = MuJoCoPiper(go2); piper.connect()
+    gripper = MuJoCoPiperGripper(go2); gripper.connect()
+    time.sleep(0.5)  # let dog stand + physics settle
+
+    # Teleport the dog next to the pick_table (at x=11.0) so objects are
+    # in arm reach. The verify script isn't meant to test walking — that's
+    # exercised by Walk/Navigate skill tests elsewhere. We just want a
+    # deterministic starting pose for the grasp pipeline.
+    import mujoco as _mj
+    go2._pause_physics()
     try:
-        skill = PickTopDownSkill()
-        ctx = SkillContext(
-            arm=agent._arm, gripper=agent._gripper, base=agent._base,
-            world_model=agent._world_model, config=agent._config,
-        )
-        result = skill.execute({{"object_id": OBJ}}, ctx)
+        d = go2._mj.data
+        d.qpos[0] = 10.65  # 35 cm behind table — all 3 objects reachable
+        d.qpos[1] = 2.95   # 5 cm off the row centreline so the dog's
+                           # trunk teleport doesn't induce a contact
+                           # impulse on the bottle at y=3.00
 
-        m, d = agent._base._mj.model, agent._base._mj.data
+        d.qpos[2] = 0.28
+        d.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]  # identity quat (face +X)
+        d.qvel[:] = 0.0
+        _mj.mj_forward(go2._mj.model, d)
+    finally:
+        go2._resume_physics()
+    time.sleep(0.8)  # let everything settle after teleport
+
+    try:
+        # Snapshot the object's settled z BEFORE the pick — used as the
+        # baseline for lift measurement so MJCF edits don't silently break
+        # the test.
+        m = go2._mj.model
+        d = go2._mj.data
         bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, OBJ)
-        lift_cm = (float(d.body(bid).xpos[2]) - INIT_Z) * 100
+        init_z_measured = float(d.body(bid).xpos[2])
+
+        wm = WorldModel()
+        SimStartTool._populate_pickables_from_mjcf(wm, go2._scene_xml_path)
+
+        ctx = SkillContext(
+            arm=piper, gripper=gripper, base=go2,
+            world_model=wm, config={{}},
+        )
+        result = PickTopDownSkill().execute({{"object_id": OBJ}}, ctx)
+
+        final_z = float(d.body(bid).xpos[2])
+        lift_cm = (final_z - init_z_measured) * 100
         held = bool(result.result_data.get("grasped_heuristic"))
 
         print(f"RESULT obj={{OBJ}} success={{result.success}} "
+              f"init_z={{init_z_measured:.3f}} final_z={{final_z:.3f}} "
               f"lift={{lift_cm:+.2f}}cm held={{held}} "
               f"diag={{result.result_data.get('diagnosis')}}")
         sys.exit(0 if result.success else 2)
     finally:
-        try: agent._base.disconnect()
+        try: gripper.disconnect()
         except Exception: pass
-        try: agent._arm.disconnect()
+        try: piper.disconnect()
         except Exception: pass
-        try: agent._gripper.disconnect()
+        try: go2.disconnect()
         except Exception: pass
 """).strip()
 
 
-def _run_one(obj_id: str, init_z: float, repo: Path, verbose: bool) -> tuple[bool, str]:
+def _run_one(obj_id: str, repo: Path, verbose: bool) -> tuple[bool, str]:
     """Run a single pick in a fresh subprocess. Returns (ok, summary)."""
-    child_script = _CHILD_TEMPLATE.format(obj_id=obj_id, init_z=init_z)
+    child_script = _CHILD_TEMPLATE.format(obj_id=obj_id)
     venv_py = repo / ".venv-nano" / "bin" / "python"
     py = str(venv_py) if venv_py.exists() else sys.executable
 
@@ -117,16 +160,16 @@ def main() -> int:
     repo = Path(__file__).resolve().parent.parent
     targets = _TARGETS
     if args.object:
-        targets = [(o, z) for o, z in _TARGETS if o == args.object]
+        targets = [o for o in _TARGETS if o == args.object]
         if not targets:
             print(f"unknown object id: {args.object!r}", file=sys.stderr)
             return 2
 
     print(f"=== verify_pick_top_down: {len(targets)} objects × {args.repeat} repeats ===")
     results: list[tuple[str, bool, str]] = []
-    for obj_id, init_z in targets:
+    for obj_id in targets:
         for i in range(args.repeat):
-            ok, summary = _run_one(obj_id, init_z, repo, args.verbose)
+            ok, summary = _run_one(obj_id, repo, args.verbose)
             print(f"[{i+1}/{args.repeat}] {summary}  {'PASS' if ok else 'FAIL'}")
             results.append((obj_id, ok, summary))
 

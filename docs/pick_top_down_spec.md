@@ -128,40 +128,69 @@ r = skill.execute({"target_xyz": [10.4, 3.0, 0.25]}, ctx)
 
 | key | default | what it does |
 |---|---|---|
-| `pre_grasp_height` | 0.04 m | vertical offset of pre-grasp hover above object centre |
+| `pre_grasp_height` | 0.05 m | vertical offset of pre-grasp hover above object centre |
 | `grasp_z_above` | 0.01 m | vertical offset of grasp target above object centre |
 
 ## Scene
 
-Three pickable cylinders sit on a `pick_table` at (10.4, 3.0, 0) — 50 cm
-in front of the Go2 spawn point (9.9, 3.0). Top of the table is at
-z = 0.20 m. Defined in `vector_os_nano/hardware/sim/go2_room.xml`:
+Three pickable cylinders sit on a `pick_table` at (11.0, 3.0, 0) —
+**1.1 m in front** of the Go2 spawn point (9.9, 3.0), so the dog must
+walk ~60 cm forward before the arm is in range. Table is 40×50×20 cm.
+Defined in `vector_os_nano/hardware/sim/go2_room.xml`:
 
-- `pickable_bottle_blue` — cylinder r=2.5 cm, h=16 cm, blue
-- `pickable_bottle_green` — cylinder r=3.0 cm, h=10 cm, green
-- `pickable_can_red` — cylinder r=3.3 cm, h=9 cm, red
+- `pickable_bottle_blue` — cylinder r=2.8 cm, h=8 cm, blue,   at (11.0, 2.85)
+- `pickable_bottle_green` — cylinder r=2.8 cm, h=8 cm, green, at (11.0, 3.00)
+- `pickable_can_red` — cylinder r=3.3 cm, h=8 cm, red,        at (11.0, 3.15)
+
+Objects share the same height (simplifies a single `pre_grasp_height`).
+Radii 2.8-3.3 cm fit the 35 mm Piper jaw half-open / 0 mm closed range
+with healthy contact margin. Friction bumped to `2.0` tangential since
+the gripper has no force sensor — position-only grip slips on low-friction
+or thin (<2.5 cm radius) cylinders.
 
 Names MUST begin with `pickable_` for auto-registration into
 `world_model` on sim connect.
 
 ## Hardware layer
 
-- `MuJoCoPiper` (`vector_os_nano/hardware/sim/mujoco_piper.py`) —
-  ArmProtocol. Ctrl writes go to live `MjData`; FK / IK run on an
-  isolated `MjModel` + `MjData` loaded separately from the same MJCF.
-  The isolation prevents races with the Go2 1 kHz physics thread.
-  The IK base pose is sync'd from live at the start of each
-  `ik_top_down` call, under a brief (<1 ms) physics pause.
-- `MuJoCoPiperGripper` (`mujoco_piper_gripper.py`) —
-  GripperProtocol. Single `piper_gripper` position actuator writes
-  ctrl[18] of the live data. Fully closed = 0 m, fully open = 0.035 m
-  per finger (70 mm total jaw separation).
+Two implementations of the same protocols — use **one** depending on
+mode. Both are ArmProtocol / GripperProtocol compatible; the skill
+doesn't care which is behind the context.
+
+| implementation | when used | pros / cons |
+|---|---|---|
+| `MuJoCoPiper` / `MuJoCoPiperGripper` | Direct sim — arm shares MuJoCoGo2's MjData in the same process (tests, `verify_pick_top_down.py`) | Fast, no ROS2 dep. Requires MuJoCoGo2 in the same process, so incompatible with the subprocess nav stack. |
+| `PiperROS2Proxy` / `PiperGripperROS2Proxy` | Production REPL (`go2sim` with_arm=1) — bridge process owns the arm, main process proxies through ROS2 topics | Full nav stack + rviz + arm coexist. Latency ~2 ms through ROS2 pub/sub — fine for 50 Hz servo. |
+
+ROS2 topics (bridge ↔ proxy):
+
+| topic | direction | type | purpose |
+|---|---|---|---|
+| `/piper/joint_state` | bridge → proxy | `sensor_msgs/JointState` | 6 arm + 1 gripper position, 20 Hz |
+| `/piper/joint_cmd` | proxy → bridge | `std_msgs/Float64MultiArray` | 6 arm joint targets (rad) |
+| `/piper/gripper_cmd` | proxy → bridge | `std_msgs/Float64` | 0.0=closed, 1.0=open (normalized) |
+
+IK / FK always runs locally in the main process on an **isolated**
+`MjModel` loaded from the same MJCF. Concurrent MuJoCo API calls on the
+same `MjModel` as a 1 kHz physics thread segfault intermittently —
+isolation is mandatory. The proxy reads the dog base pose from
+`Go2ROS2Proxy.get_position()` + `get_heading()` (yaw-only quaternion,
+flat-floor assumption).
 
 ## Integration
 
-`sim_tool.SimStartTool` routes `with_arm=True` to the **local** (in-
-process) start path (`_start_go2_local`) instead of the subprocess nav-
-stack path. Local mode runs MuJoCoGo2 + MuJoCoPiper + MuJoCoPiperGripper
+`sim_tool.SimStartTool._start_go2` now launches the full subprocess
+(`scripts/launch_explore.sh`) for BOTH `with_arm=True` and `with_arm=False`.
+The subprocess-side bridge (`scripts/go2_vnav_bridge.py`) detects the
+arm via `nq >= 27` in the loaded model and auto-enables the `/piper/*`
+topic bridging. Main process constructs `PiperROS2Proxy` +
+`PiperGripperROS2Proxy`, wires them into the agent, and registers
+`PickTopDownSkill`. **Rviz + nav stack + arm all available in a single
+`go2sim with_arm=1` session.**
+
+Legacy local (in-process) path:
+`sim_tool.SimStartTool` routes `with_arm=True` to the subprocess
+launcher. Local mode runs MuJoCoGo2 + MuJoCoPiper + MuJoCoPiperGripper
 in the same Python process so the arm can share the MJCF's `MjData`.
 Trade-off: the nav stack (TARE, FAR, door-chain) is NOT launched in
 this mode, so explore / door-chain skills will not work simultaneously

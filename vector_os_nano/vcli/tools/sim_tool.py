@@ -201,7 +201,14 @@ class SimStartTool:
             except Exception:
                 pass
 
-        # Arm-only sims have no subprocess, just disconnect
+        # Arm + gripper (SO-101 arm-only sim, OR PiperROS2Proxy in go2-with-arm)
+        gripper = getattr(agent, "_gripper", None)
+        if gripper is not None:
+            try:
+                gripper.disconnect()
+                parts.append(f"{type(gripper).__name__} disconnected")
+            except Exception:
+                pass
         if arm is not None:
             try:
                 arm.disconnect()
@@ -224,27 +231,22 @@ class SimStartTool:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _populate_pickables(world_model: Any, go2: Any) -> int:
+    def _populate_pickables_from_mjcf(world_model: Any, scene_xml_path: str) -> int:
         """Register every body whose name starts with 'pickable_' as an ObjectState.
 
-        Runs once on connect — objects are static at spawn. If they move at
-        runtime (e.g. a successful grasp lifts one), world_model entries are
-        refreshed by the skills that touch them, not by this scan.
+        Loads the MJCF locally in the main process (independent of the
+        bridge subprocess's MuJoCo instance). Uses the MJCF's DEFAULT
+        body positions — i.e. what's written in the XML, not the post-
+        physics-settled state. Sim-to-sim the drift is <1 cm, fine for
+        grasp targeting since the skill has its own grasp-z offset.
         """
         import mujoco  # local import to avoid hard dep at module load
         from vector_os_nano.core.world_model import ObjectState
 
-        model = go2._mj.model
-        data = go2._mj.data
-        # Do NOT call mj_forward here — the physics thread is running and
-        # mj_forward on the live model races with mj_step (segfaults in
-        # extended tests). The physics loop updates xpos after every step,
-        # so data.body(bid).xpos is already current.
+        model = mujoco.MjModel.from_xml_path(scene_xml_path)
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
 
-        # Human-readable label = body name with 'pickable_' stripped and
-        # underscores turned into spaces, reordered so the colour comes first:
-        #   pickable_bottle_blue  → "blue bottle"
-        #   pickable_can_red      → "red can"
         def _label(body_name: str) -> str:
             stem = body_name[len("pickable_"):]
             parts = stem.split("_")
@@ -264,83 +266,13 @@ class SimStartTool:
                 x=float(pos[0]), y=float(pos[1]), z=float(pos[2]),
                 confidence=1.0,
                 state="on_table",
-                properties={"source": "mjcf_body_scan"},
+                properties={"source": "mjcf_scan"},
             ))
             count += 1
         return count
 
-    # ------------------------------------------------------------------
-    # Local in-process Go2 + Piper (manipulation demo mode)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _start_go2_local(gui: bool = True) -> Any:
-        """In-process MuJoCoGo2 + MuJoCoPiper + MuJoCoPiperGripper.
-
-        Used when with_arm=True for manipulation demos: no nav stack
-        subprocess, so arm hardware can share the same MjModel/MjData as the
-        dog. Trade-off: no FAR/TARE nav stack in this mode — explore/door-chain
-        skills won't work. Manipulation skills (pick_top_down) do.
-        """
-        import os
-        import time as _time
-        from vector_os_nano.core.agent import Agent  # type: ignore[import]
-        from vector_os_nano.core.config import load_config
-        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-        from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
-        from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
-
-        os.environ["VECTOR_SIM_WITH_ARM"] = "1"
-        go2 = MuJoCoGo2(gui=gui, room=True, backend="mpc")
-        go2.connect()
-        _time.sleep(0.8)  # let dog stand + physics settle
-
-        piper = MuJoCoPiper(go2)
-        piper.connect()
-        gripper = MuJoCoPiperGripper(go2)
-        gripper.connect()
-
-        # Config for API key + skill tunables
-        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)
-        ))))
-        cfg_path = os.path.join(repo, "config", "user.yaml")
-        cfg = load_config(cfg_path) if os.path.exists(cfg_path) else {}
-        api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY", "")
-
-        agent = Agent(base=go2, arm=piper, gripper=gripper,
-                      llm_api_key=api_key, config=cfg)
-
-        # Populate world_model with pickable_* scene objects
-        n = SimStartTool._populate_pickables(agent._world_model, go2)
-        logger.info("[sim_tool] local go2+piper: registered %d pickable objects", n)
-
-        # Skills: Go2 locomotion subset (walk/turn/stand only — nav skills need
-        # the ROS2 bridge which we skipped) + manipulation skills.
-        from vector_os_nano.skills.go2.walk import WalkSkill
-        from vector_os_nano.skills.go2.turn import TurnSkill
-        from vector_os_nano.skills.go2.stance import StandSkill, SitSkill, LieDownSkill
-        from vector_os_nano.skills.go2.where_am_i import WhereAmISkill
-        from vector_os_nano.skills.go2.stop import StopSkill
-        from vector_os_nano.skills.pick_top_down import PickTopDownSkill
-        for s in (
-            WalkSkill(), TurnSkill(),
-            StandSkill(), SitSkill(), LieDownSkill(),
-            WhereAmISkill(), StopSkill(),
-            PickTopDownSkill(),
-        ):
-            agent._skill_registry.register(s)
-
-        return agent
-
     @staticmethod
     def _start_go2(gui: bool = True, with_arm: bool = False) -> Any:
-        # with_arm=True routes to the in-process path so MuJoCoPiper can
-        # share the same MjModel/MjData as MuJoCoGo2. That path has no
-        # nav stack (no FAR/TARE), intended for manipulation demos only.
-        if with_arm:
-            return SimStartTool._start_go2_local(gui=gui)
-
         import os
         import signal
         import subprocess
@@ -411,12 +343,50 @@ class SimStartTool:
         cfg = load_config(cfg_path) if os.path.exists(cfg_path) else {}
         api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY", "")
 
-        agent = Agent(base=base, llm_api_key=api_key, config=cfg)
+        # Piper arm + gripper proxies — bridge advertises /piper/* topics
+        # when VECTOR_SIM_WITH_ARM=1 was set in child_env above.
+        piper_arm = None
+        piper_gripper = None
+        if with_arm:
+            try:
+                from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+                scene_xml = str(_build_room_scene_xml(with_arm=True))
+
+                from vector_os_nano.hardware.sim.piper_ros2_proxy import (
+                    PiperROS2Proxy, PiperGripperROS2Proxy,
+                )
+                piper_arm = PiperROS2Proxy(base_proxy=base, scene_xml_path=scene_xml)
+                piper_arm.connect()
+                piper_gripper = PiperGripperROS2Proxy()
+                piper_gripper.connect()
+                logger.info("[sim_tool] Piper proxies connected (arm + gripper)")
+            except Exception as exc:
+                logger.error("[sim_tool] Piper proxy setup failed: %s", exc)
+                piper_arm = None
+                piper_gripper = None
+
+        agent = Agent(base=base, arm=piper_arm, gripper=piper_gripper,
+                      llm_api_key=api_key, config=cfg)
+
+        # Populate world_model with pickable_* scene objects (MJCF scan in
+        # main process — independent of the bridge subprocess's MuJoCo).
+        if with_arm:
+            try:
+                from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+                scene_xml = str(_build_room_scene_xml(with_arm=True))
+                n = SimStartTool._populate_pickables_from_mjcf(agent._world_model, scene_xml)
+                logger.info("[sim_tool] registered %d pickable objects", n)
+            except Exception as exc:
+                logger.warning("[sim_tool] pickable scan failed: %s", exc)
 
         # Go2 skills
         from vector_os_nano.skills.go2 import get_go2_skills  # type: ignore[import]
         for skill in get_go2_skills():
             agent._skill_registry.register(skill)
+        # Piper manipulation skill — only useful when arm proxy connected
+        if piper_arm is not None:
+            from vector_os_nano.skills.pick_top_down import PickTopDownSkill
+            agent._skill_registry.register(PickTopDownSkill())
 
         # VLM perception (GPT-4o via OpenRouter)
         if api_key:

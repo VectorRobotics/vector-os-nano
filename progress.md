@@ -1,8 +1,77 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-17
+**Last updated:** 2026-04-19
 **Version:** v2.1-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
+
+## v2.1 Phase B+C refactor — ROS2 bridge for arm, full stack + arm together (2026-04-19)
+
+**Problem Yusen reported**: `go2sim` with `with_arm=1` started bare MuJoCo
+with no rviz / no nav stack (my earlier `_start_go2_local` took an
+in-process shortcut). Could not navigate + manipulate in one session.
+Plus objects were 50 cm from dog — too close, dog didn't need to move.
+
+### Architecture change
+Removed `_start_go2_local`. `with_arm=True` now goes through the same
+subprocess path as `with_arm=False` — `launch_explore.sh` brings up
+bridge + nav stack + rviz. The bridge (`scripts/go2_vnav_bridge.py`)
+detects the arm (MuJoCo `nq ≥ 27`) and auto-enables three ROS2 topics:
+
+- `/piper/joint_state`  bridge→ (JointState, 20 Hz, 6 arm + gripper)
+- `/piper/joint_cmd`    →bridge (Float64MultiArray, 6 targets)
+- `/piper/gripper_cmd`  →bridge (Float64, 0..1 normalized)
+
+Main process uses new `PiperROS2Proxy` + `PiperGripperROS2Proxy`
+(`vector_os_nano/hardware/sim/piper_ros2_proxy.py`) that implement
+ArmProtocol / GripperProtocol via these topics. IK / FK runs locally
+in the main process on an **isolated** MjModel loaded from the same
+MJCF — concurrent MuJoCo API on one model segfaults. Dog base pose
+pulled from `Go2ROS2Proxy.get_position()` + `get_heading()` (yaw-only
+quaternion, flat-floor assumption).
+
+### Scene changes
+- `pick_table` moved from (10.4, 3.0) to (11.0, 3.0) — **1.1 m from
+  dog spawn** so the dog has to walk ~60 cm forward before picking.
+- Table enlarged to 40×50 cm so objects can spread laterally.
+- Three objects same h=8 cm, radii 2.8-3.3 cm (thin bottles <2.5 cm
+  radius can't be held reliably by Piper's 35 mm jaws with position-
+  only control). Arranged in a row at y=2.85 / 3.00 / 3.15.
+- Friction bumped to 2.0 tangential to help grip without force
+  sensor.
+
+### sim_tool wiring
+`_start_go2` after Go2ROS2Proxy connects:
+- If `with_arm=True`, construct `PiperROS2Proxy` + `PiperGripperROS2Proxy`,
+  register `PickTopDownSkill`, populate `world_model` via
+  `_populate_pickables_from_mjcf` (loads scene XML locally).
+- `SimStopTool._shutdown_agent` also disconnects arm/gripper cleanly.
+
+### Pitfalls documented
+- MuJoCo API concurrency: any call on a shared MjModel while another
+  thread runs mj_step can segfault. IK **must** use an isolated
+  model.
+- Dog teleport to y=3.0 aligns with a bottle at y=3.0 → physics
+  contact impulse knocks the bottle off the table. Offset dog y by
+  5 cm in verify_pick_top_down.py to avoid.
+- Short bottles (h < pre_grasp_height + half_h) clip on pre-grasp
+  descent. All 3 verify objects standardized to h=8 cm.
+- `grasp_heuristic=False` with `lift<1cm` = gripper missed. Check
+  jaw separation at close for debugging.
+
+### Test status
+- 30 unit tests still pass (17 MuJoCoPiper direct + 13 skill mocks)
+- E2E verify — in-flight retest after refactor (see next session note)
+
+### Pending
+- **Yusen verify**: does `go2sim with_arm=1` now bring up rviz + nav
+  stack + arm? Manual check needed.
+- **Mobile manipulation**: skill now REQUIRES dog to be close enough
+  (55 cm from target). User must walk dog manually or via navigate.
+- Place/drop skill (reverse flow) still not written.
+
+---
+
+
 
 ## v2.1 Phase B+C —— Piper top-down 抓取 pipeline (2026-04-17)
 

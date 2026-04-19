@@ -310,6 +310,17 @@ class Go2VNavBridge(Node):
         except ImportError:
             self._sg_json_pub = None
 
+        # Piper arm bridging — enabled when the MuJoCo model has the arm
+        # joints (i.e. scene_room_piper.xml was loaded via VECTOR_SIM_WITH_ARM=1).
+        # Topics:
+        #   /piper/joint_state  (JointState, 7 joints)  — published at 20 Hz
+        #   /piper/joint_cmd    (Float64MultiArray, 6)  — arm joint position targets
+        #   /piper/gripper_cmd  (Float64, 0..1)        — 0=closed, 1=open (normalized)
+        # Command callbacks write directly to data.ctrl; no interpolation here —
+        # the main-process PiperROS2Proxy publishes at 50 Hz during move_joints.
+        self._piper_enabled: bool = False
+        self._init_piper_bridge()
+
         # Diagnostic counters — track message flow for TARE data-starvation debugging.
         # Logged every 10s at INFO level via _log_diagnostics timer.
         self._diag_odom_count: int = 0
@@ -503,6 +514,111 @@ class Go2VNavBridge(Node):
         doesn't match MuJoCo Go2 body frame. Needs proper frame transform
         analysis before enabling. Using Python _follow_path instead."""
         pass
+
+    # ------------------------------------------------------------------
+    # Piper arm bridging (active only when the loaded MJCF contains the arm)
+    # ------------------------------------------------------------------
+
+    def _init_piper_bridge(self) -> None:
+        """Wire the Piper arm into ROS2 topics if the model has it.
+
+        The bridge owns MuJoCoGo2's MjData; the arm's joints live in the
+        same data buffer (nq >= 27 means Piper is mounted). We bridge
+        directly via actuator-index writes — no MuJoCoPiper wrapper here,
+        since we only need pass-through forwarding of ctrl values.
+        """
+        import mujoco
+
+        model = self._go2._mj.model
+        if model.nq < 27:
+            self.get_logger().info("Piper bridge: arm not in model, skipping.")
+            return
+
+        # Cache arm joint qpos addresses (for state publishing)
+        arm_joint_names = [f"piper_joint{i}" for i in range(1, 7)]
+        try:
+            self._piper_joint_qpos_adr: list[int] = []
+            for name in arm_joint_names:
+                jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+                if jid < 0:
+                    raise RuntimeError(f"joint {name} missing")
+                self._piper_joint_qpos_adr.append(int(model.jnt_qposadr[jid]))
+
+            # Cache arm actuator ids (for cmd writes)
+            self._piper_act_ids: list[int] = []
+            for name in arm_joint_names:
+                aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
+                if aid < 0:
+                    raise RuntimeError(f"actuator {name} missing")
+                self._piper_act_ids.append(int(aid))
+
+            # Gripper joint + actuator
+            gjid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "piper_joint7")
+            gaid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "piper_gripper")
+            if gjid < 0 or gaid < 0:
+                raise RuntimeError("piper gripper joint/actuator missing")
+            self._piper_gripper_qpos_adr: int = int(model.jnt_qposadr[gjid])
+            self._piper_gripper_act_id: int = int(gaid)
+        except Exception as exc:
+            self.get_logger().error(f"Piper bridge init failed: {exc}")
+            return
+
+        # ROS2 topics
+        from sensor_msgs.msg import JointState
+        from std_msgs.msg import Float64, Float64MultiArray
+
+        self._piper_state_pub = self.create_publisher(
+            JointState, "/piper/joint_state", 10
+        )
+        self.create_subscription(
+            Float64MultiArray, "/piper/joint_cmd", self._piper_joint_cmd_cb, 10
+        )
+        self.create_subscription(
+            Float64, "/piper/gripper_cmd", self._piper_gripper_cmd_cb, 10
+        )
+        self.create_timer(1.0 / 20.0, self._publish_piper_state)  # 20 Hz
+
+        self._piper_enabled = True
+        self.get_logger().info(
+            "Piper bridge: enabled (6 arm + 1 gripper joints, topics /piper/*)"
+        )
+
+    def _piper_joint_cmd_cb(self, msg) -> None:
+        """Write 6 arm joint ctrl targets from /piper/joint_cmd."""
+        if not self._piper_enabled:
+            return
+        if len(msg.data) != 6:
+            self.get_logger().warn(
+                f"/piper/joint_cmd expected 6 values, got {len(msg.data)}"
+            )
+            return
+        data = self._go2._mj.data
+        for i, aid in enumerate(self._piper_act_ids):
+            data.ctrl[aid] = float(msg.data[i])
+
+    def _piper_gripper_cmd_cb(self, msg) -> None:
+        """Write gripper ctrl from /piper/gripper_cmd (0.0=closed, 1.0=open)."""
+        if not self._piper_enabled:
+            return
+        # Normalized 0..1 -> joint7 ctrl range 0..0.035
+        x = float(msg.data)
+        x = max(0.0, min(1.0, x))
+        self._go2._mj.data.ctrl[self._piper_gripper_act_id] = x * 0.035
+
+    def _publish_piper_state(self) -> None:
+        """Publish /piper/joint_state at 20 Hz: 6 arm + 1 gripper positions."""
+        if not self._piper_enabled:
+            return
+        from sensor_msgs.msg import JointState
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = [f"piper_joint{i}" for i in range(1, 7)] + ["piper_joint7"]
+        data = self._go2._mj.data
+        msg.position = [
+            float(data.qpos[adr]) for adr in self._piper_joint_qpos_adr
+        ]
+        msg.position.append(float(data.qpos[self._piper_gripper_qpos_adr]))
+        self._piper_state_pub.publish(msg)
 
     def _cmd_vel_cb(self, msg: Twist) -> None:
         self._go2.set_velocity(msg.linear.x, msg.linear.y, msg.angular.z)
