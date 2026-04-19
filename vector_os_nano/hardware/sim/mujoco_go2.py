@@ -424,6 +424,9 @@ class MuJoCoGo2:
             model = mj.MjModel.from_xml_path(str(scene_path))
             data = mj.MjData(model)
             self._mj = _Go2Model(model, data)
+            # Expose for downstream consumers that need to load an isolated
+            # MjModel from the same MJCF (e.g. MuJoCoPiper's IK).
+            self._scene_xml_path = str(scene_path)
 
             # Place Go2 in the entry hall (center of house)
             data.qpos[0] = 10.0
@@ -443,6 +446,7 @@ class MuJoCoGo2:
             model = mj.MjModel.from_xml_path(str(scene_path))
             data = mj.MjData(model)
             self._mj = _Go2Model(model, data)
+            self._scene_xml_path = str(scene_path)
 
             # Apply home keyframe (standing pose at origin)
             key_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_KEY, "stand")

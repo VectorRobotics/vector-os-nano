@@ -564,6 +564,35 @@
           material="painting_mat" contype="0" conaffinity="0"/>
 
 
+    <!-- ==================== PICK TABLE (demo grasping) ==================== -->
+    <!-- Low side table ~50cm in front of Go2 spawn (9.9, 3.0). Three pickable
+         objects on top: two bottles + one can (cylinder primitives). Object
+         bodies named "pickable_*" so MuJoCoGo2 auto-registers them into the
+         world_model on connect. Free joint on each object so PickTopDownSkill
+         can lift them off the table. -->
+    <body name="pick_table" pos="10.4 3.0 0">
+      <geom type="box" pos="0 0 0.10" size="0.15 0.15 0.10" material="mat_oak"/>
+    </body>
+
+    <body name="pickable_bottle_blue" pos="10.35 2.90 0.285">
+      <freejoint/>
+      <geom type="cylinder" size="0.025 0.08" rgba="0.20 0.40 0.85 1"
+            mass="0.1" friction="1 0.05 0.001" priority="2"/>
+    </body>
+
+    <body name="pickable_bottle_green" pos="10.40 3.00 0.255">
+      <freejoint/>
+      <geom type="cylinder" size="0.030 0.05" rgba="0.25 0.70 0.35 1"
+            mass="0.08" friction="1 0.05 0.001" priority="2"/>
+    </body>
+
+    <body name="pickable_can_red" pos="10.45 3.08 0.250">
+      <freejoint/>
+      <geom type="cylinder" size="0.033 0.045" rgba="0.85 0.25 0.20 1"
+            mass="0.07" friction="1 0.05 0.001" priority="2"/>
+    </body>
+
+
     <!-- ==================== BASEBOARDS (visual only) ==================== -->
     <geom name="bb_south" type="box" pos="10 0.06 0.04" size="10.0 0.01 0.04"
           material="dark_wood" contype="0" conaffinity="0"/>

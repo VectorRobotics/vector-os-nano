@@ -395,6 +395,7 @@
                     <joint name="piper_joint6" pos="0 0 0" axis="0 0 1" range="-3.14 3.14"/>
                     <geom class="piper_visual" quat="0.707105 0 0 0.707108" material="piper_gray_mat" mesh="piper_link6"/>
                     <geom class="piper_collision" size="0.0264136 0.0296273" pos="-0.000316499 -5.15037e-08 0.0332864" quat="0.00759712 -0.00727331 0.707074 0.707062"/>
+                    <site name="piper_ee_site" pos="0 0 0.13" rgba="1 1 0 0.6"/>
                     <body name="piper_link7" pos="0 0 0.13503" quat="1.89468e-08 1.89469e-08 0.707108 0.707105" gravcomp="1">
                       <inertial pos="-0.000277778 -0.0467673 -0.00921029" quat="0.46134 0.536174 -0.553273 0.439968" mass="0.0264823" diaginertia="0.001 0.001 0.001"/>
                       <joint name="piper_joint7" class="piper_finger" pos="0 0 0" axis="0 0 -1" range="0 0.035"/>

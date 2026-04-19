@@ -1,8 +1,64 @@
 # Vector OS Nano SDK — Progress
 
 **Last updated:** 2026-04-17
-**Version:** v2.0-dev (branch: feat/v2.0-vectorengine-unification)
+**Version:** v2.1-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
+
+## v2.1 Phase B+C —— Piper top-down 抓取 pipeline (2026-04-17)
+
+### 交付
+- `MuJoCoPiper` (`hardware/sim/mujoco_piper.py`) — ArmProtocol 实现。用**独立的** MjModel+MjData 跑 FK/IK（避开 physics 1kHz 线程的并发 segfault）。IK 是 6-DoF Jacobian DLS + 多 seed（canned "top-down ready" 初值），可靠收敛。
+- `MuJoCoPiperGripper` (`hardware/sim/mujoco_piper_gripper.py`) — GripperProtocol。位置控制 `piper_gripper` actuator，open/close/is_holding/get_position。
+- `PickTopDownSkill` (`skills/pick_top_down.py`) — 从 world_model 读目标位姿 → IK pre_grasp → IK grasp → open → move → descent → close → lift → hold. 不回 home（避免 wrist 转 90° 把物体翻出）。
+- 场景物体：`pick_table` + 3 个 `pickable_*` cylinder（蓝瓶/绿瓶/红罐）加到 `go2_room.xml`，距狗 spawn 50cm。
+- `ee_site` (piper.xml link6) — grasp 参考坐标系，FK/IK 都瞄准这个点。
+- `sim_tool._start_go2_local` — `with_arm=True` 走**进程内** sim（没有 nav stack，但 arm 能共享 MuJoCo 状态）。world_model 在 connect 时扫描 `pickable_*` body 自动注册。
+- `MuJoCoGo2._scene_xml_path` — 暴露加载的 scene 路径给下游（MuJoCoPiper 的独立 IK model 需要）。
+
+### 关键设计决策（避开了 5 个连续的并发 bug）
+1. **只读 live data 会崩**：IK 期间读 `data.qpos` 并发 physics `mj_step` 间歇性 segfault → 换成 brief `_pause_physics` during snapshot read
+2. **共享 model 读取也会崩**：即使 `mj_forward(m, scratch)` 的 m 是 const，MuJoCo 底层的并发仍不安全 → IK 用**独立 load 的** MjModel + MjData
+3. **多次 MjData allocation 积累**：每次 IK 分配新 scratch 数据 = 崩 → connect 时一次性 load 独立模型，所有 IK 复用
+4. **`mj_forward` in `_populate_pickables` 崩**：scan pickable 时多余的 mj_forward 和 physics 抢 → 删掉，physics 自己更新 xpos
+5. **Home pose 松手**：grasp 后回 URDF-zero 让 wrist 从向下转到朝前，物体翻出 → 不回 home，停在 pre-grasp
+
+### 测试
+| 测试 | 规模 | 结果 |
+|---|---|---|
+| `test_mujoco_piper.py` unit | 17 tests (FK/IK/move/gripper/fixtures) | 17/17 passed |
+| `test_pick_top_down.py` mock | 13 tests (失败模式/调用顺序/参数 routing) | 13/13 passed |
+| `verify_pick_top_down.py --repeat 10` E2E headless | 3 objects × 10 = 30 picks in fresh subprocesses | 30/30 passed |
+| 物体 lift | blue 1.6cm / green 2.1cm / red 2.1cm | held=True 每次 |
+
+### 使用方式
+```bash
+# REPL:
+vector-cli
+> go2sim            # 选 with_arm=1 (进入 manipulation mode, 无 nav stack)
+> 抓起蓝色瓶子     # or "pick up the blue bottle", "grab red can" 等
+
+# 纯验证:
+.venv-nano/bin/python scripts/verify_pick_top_down.py --repeat 5
+
+# pytest:
+.venv-nano/bin/python -m pytest tests/hardware/sim/test_mujoco_piper.py tests/skills/test_pick_top_down.py
+```
+
+### 显式假设（demo-quality，完整列表见 `docs/pick_top_down_spec.md`）
+- 只做 top-down（夹爪永远朝世界 -Z）
+- 物体位姿事先已知（`world_model` 从 MJCF `pickable_*` body 读）
+- 狗站立不动，无 base-arm 协调
+- 无碰撞检测（狗身、墙、其他物体都不查）
+- 物体半径 ≤3cm、质量 ≤0.2kg、粗体可 top-down 抓取
+- 抓后不回 home，停在 pre-grasp 位姿保持夹持
+
+### 遗留 / 未完成
+- **Real hardware 未接**：需要 Piper ROS2 driver
+- **nav-stack + arm 同会话不能用**：with_arm=True 走进程内路径，没 FAR/TARE。要两者共存需加 `PiperROS2Proxy`（下个 phase）
+- Place / drop skill 未写（pick 现在只到 hold，不能放下）
+- 无感知路径（object.pose 只从 world_model 读，不做 RealSense/SAM3D 检测）
+
+---
 
 ## v2.1 Phase A —— Piper 手臂挂载 + 双模式仿真 (2026-04-17)
 
