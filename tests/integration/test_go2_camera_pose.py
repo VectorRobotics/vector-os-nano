@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import pytest
 
 from vector_os_nano.hardware.sim.go2_ros2_proxy import Go2ROS2Proxy

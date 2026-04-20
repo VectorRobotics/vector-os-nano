@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
@@ -102,6 +101,7 @@ def _wait_stable(
 @skill(
     aliases=[
         "去拿", "去抓", "拿来", "取来", "去取",
+        "抓起", "抓来",   # v2.3 hot-fix: route "抓起 X" to mobile variant
         "fetch", "go grab", "go get",
     ],
     direct=False,
@@ -160,9 +160,6 @@ class MobilePickSkill:
         from vector_os_nano.skills.pick_top_down import PickTopDownSkill
 
         self._pick = PickTopDownSkill()
-        # M3: DetectSkill is lazy-cached on first auto-detect call to avoid
-        # importing at module load; once built it is reused per skill instance.
-        self._detect: Any | None = None
 
     # ------------------------------------------------------------------
     # execute
@@ -199,27 +196,11 @@ class MobilePickSkill:
         target = self._pick._resolve_target(params, context.world_model)
 
         # v2.3: perception-driven auto-detect retry on world_model miss
-        if target is None and context.perception is not None and context.calibration is not None:
-            from vector_os_nano.skills.utils import label_to_en_query
+        if target is None:
+            from vector_os_nano.skills.utils import run_autodetect_retry
 
-            query_raw = params.get("object_label") or params.get("object_id")
-            en_query = label_to_en_query(query_raw)
-            if en_query:
-                logger.info("[MOBILE-PICK] world_model miss; auto-detect query=%r", en_query)
-                try:
-                    if self._detect is None:
-                        from vector_os_nano.skills.detect import DetectSkill
-                        self._detect = DetectSkill()
-                    det_result = self._detect.execute({"query": en_query}, context)
-                except Exception as exc:
-                    logger.warning("[MOBILE-PICK] auto-detect crashed: %s", exc)
-                    det_result = None
-                if (
-                    det_result is not None
-                    and det_result.success
-                    and det_result.result_data.get("count", 0) > 0
-                ):
-                    target = self._pick._resolve_target(params, context.world_model)
+            if run_autodetect_retry(params, context, log_tag="MOBILE-PICK") > 0:
+                target = self._pick._resolve_target(params, context.world_model)
 
         if target is None:
             query = params.get("object_label") or params.get("object_id") or ""

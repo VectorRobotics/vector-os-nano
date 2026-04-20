@@ -395,3 +395,134 @@ def test_execute_object_not_found_error_message_lists_known_objects():
     assert "red can" in result.error_message
     # result_data keeps the structured copy too
     assert "blue bottle" in result.result_data["known_objects"]
+
+
+# ---------------------------------------------------------------------------
+# v2.3 hot-fix: PickTopDown auto-detect retry (symmetric with MobilePick).
+# Gaps LLM routing where "抓 X" is sent to pick_top_down instead of mobile_pick.
+# ---------------------------------------------------------------------------
+
+
+def test_pick_top_down_auto_detect_on_miss_then_hit():
+    """world_model empty + perception+calibration wired → DetectSkill is invoked,
+    world_model gets populated, retry resolves, and the skill proceeds."""
+    from unittest.mock import MagicMock, patch
+
+    arm = _MockArm()
+    gripper = _MockGripper()
+    wm = _mkworld()  # empty
+    # Extend SkillContext kwargs to include perception+calibration
+    ctx = SkillContext(
+        arm=arm, gripper=gripper, base=SimpleNamespace(),
+        world_model=wm, config={},
+        perception=MagicMock(),
+        calibration=MagicMock(),
+    )
+
+    def fake_detect_execute(params, c):
+        c.world_model.add_object(ObjectState(
+            object_id="pickable_bottle_blue", label="blue bottle",
+            x=11.0, y=3.0, z=0.25, confidence=0.9,
+        ))
+        from vector_os_nano.core.types import SkillResult as _SR
+        return _SR(success=True, result_data={"count": 1, "diagnosis": "ok"})
+
+    skill = PickTopDownSkill()
+    with patch(
+        "vector_os_nano.skills.detect.DetectSkill",
+        return_value=MagicMock(execute=fake_detect_execute),
+    ):
+        result = skill.execute({"object_label": "blue bottle"}, ctx)
+
+    # skill should proceed past resolve (i.e. not object_not_found).
+    assert result.result_data.get("diagnosis") != "object_not_found"
+    # one object persisted to world model
+    assert len(wm.get_objects()) == 1
+
+
+def test_pick_top_down_no_retry_when_perception_none():
+    """Backward-compat: if perception is None, no auto-detect; keep existing UX."""
+    arm = _MockArm()
+    gripper = _MockGripper()
+    wm = _mkworld()
+    ctx = _mkctx(arm, gripper, wm)  # perception not set → None
+    skill = PickTopDownSkill()
+    result = skill.execute({"object_label": "blue bottle"}, ctx)
+    assert result.success is False
+    assert result.result_data["diagnosis"] == "object_not_found"
+
+
+def test_pick_top_down_no_retry_when_calibration_none():
+    """perception wired but calibration None → guard prevents retry."""
+    from unittest.mock import MagicMock
+
+    arm = _MockArm()
+    gripper = _MockGripper()
+    wm = _mkworld()
+    ctx = SkillContext(
+        arm=arm, gripper=gripper, base=SimpleNamespace(),
+        world_model=wm, config={},
+        perception=MagicMock(),
+        calibration=None,
+    )
+    skill = PickTopDownSkill()
+    result = skill.execute({"object_label": "blue bottle"}, ctx)
+    assert result.success is False
+    assert result.result_data["diagnosis"] == "object_not_found"
+
+
+def test_pick_top_down_vlm_returns_empty_then_object_not_found():
+    """DetectSkill returns count=0 → _resolve_target still None → not_found."""
+    from unittest.mock import MagicMock, patch
+    from vector_os_nano.core.types import SkillResult as _SR
+
+    arm = _MockArm()
+    gripper = _MockGripper()
+    wm = _mkworld()
+    ctx = SkillContext(
+        arm=arm, gripper=gripper, base=SimpleNamespace(),
+        world_model=wm, config={},
+        perception=MagicMock(),
+        calibration=MagicMock(),
+    )
+
+    empty_detect = MagicMock(execute=MagicMock(
+        return_value=_SR(success=True, result_data={"count": 0, "diagnosis": "no_detections"}),
+    ))
+    skill = PickTopDownSkill()
+    with patch(
+        "vector_os_nano.skills.detect.DetectSkill",
+        return_value=empty_detect,
+    ):
+        result = skill.execute({"object_label": "blue bottle"}, ctx)
+
+    assert result.success is False
+    assert result.result_data["diagnosis"] == "object_not_found"
+
+
+def test_pick_top_down_detect_crash_does_not_crash_skill():
+    """DetectSkill.execute raises → helper catches → skill reports object_not_found."""
+    from unittest.mock import MagicMock, patch
+
+    arm = _MockArm()
+    gripper = _MockGripper()
+    wm = _mkworld()
+    ctx = SkillContext(
+        arm=arm, gripper=gripper, base=SimpleNamespace(),
+        world_model=wm, config={},
+        perception=MagicMock(),
+        calibration=MagicMock(),
+    )
+
+    def boom(params, c):
+        raise RuntimeError("VLM network exploded")
+
+    skill = PickTopDownSkill()
+    with patch(
+        "vector_os_nano.skills.detect.DetectSkill",
+        return_value=MagicMock(execute=boom),
+    ):
+        result = skill.execute({"object_label": "blue bottle"}, ctx)
+
+    assert result.success is False
+    assert result.result_data["diagnosis"] == "object_not_found"
