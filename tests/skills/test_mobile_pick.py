@@ -452,3 +452,234 @@ def test_wait_stable_returns_false_on_timeout():
         result = _wait_stable(base, max_speed=0.05, settle_duration=2.0, timeout=3.0)
 
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Auto-detect retry tests — T5 Deliverable B
+# ---------------------------------------------------------------------------
+
+
+def _make_context_with_perception(
+    base=None, arm=None, gripper=None, world_model=None, config=None,
+    perception=None, calibration=None,
+):
+    """Build a SkillContext with perception + calibration support."""
+    return SkillContext(
+        base=base,
+        arm=arm,
+        gripper=gripper,
+        world_model=world_model,
+        config=config or {},
+        perception=perception,
+        calibration=calibration,
+    )
+
+
+def test_mobile_pick_auto_detect_on_miss_then_hit():
+    """world_model miss → auto-detect fires → object added → skill proceeds past resolve.
+
+    DetectSkill.execute is patched to return count=1 and add an object to world_model.
+    The second call to _resolve_target returns the target (side_effect: None then hit).
+    """
+    from vector_os_nano.core.world_model import ObjectState, WorldModel
+
+    empty_wm = WorldModel()
+    base = _make_base(pos=(5.0, 5.0, 0.28), heading=0.0)
+    perception = MagicMock()
+    calibration = MagicMock()
+
+    skill_inst = MobilePickSkill()
+    mock_pick = MagicMock()
+
+    # First _resolve_target call → None; second → valid target (after DetectSkill adds object)
+    target_hit = (_OBJ_ID, _OBJ_XYZ)
+    mock_pick._resolve_target.side_effect = [None, target_hit]
+    mock_pick.execute.return_value = SkillResult(
+        success=True,
+        result_data={"diagnosis": "ok", "object_id": _OBJ_ID, "grasp_world": list(_OBJ_XYZ)},
+    )
+    skill_inst._pick = mock_pick
+
+    # DetectSkill.execute: add object to world_model and return count=1
+    def fake_detect_execute(params, ctx):
+        obj = ObjectState(
+            object_id=_OBJ_ID,
+            label="blue bottle",
+            x=_OBJ_XYZ[0],
+            y=_OBJ_XYZ[1],
+            z=_OBJ_XYZ[2],
+            confidence=0.91,
+        )
+        ctx.world_model.add_object(obj)
+        return SkillResult(
+            success=True,
+            result_data={"count": 1, "objects": [{"object_id": _OBJ_ID}], "diagnosis": "ok"},
+        )
+
+    ctx = _make_context_with_perception(
+        base=base,
+        arm=MagicMock(),
+        gripper=MagicMock(),
+        world_model=empty_wm,
+        perception=perception,
+        calibration=calibration,
+    )
+
+    with (
+        patch(
+            "vector_os_nano.skills.detect.DetectSkill",
+            return_value=MagicMock(execute=fake_detect_execute),
+        ),
+        patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
+        patch("vector_os_nano.skills.mobile_pick._wait_stable", return_value=True),
+        patch("time.sleep"),
+    ):
+        result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
+
+    # Skill should proceed past resolve (not object_not_found)
+    assert result.success
+    assert mock_pick._resolve_target.call_count == 2
+    mock_pick.execute.assert_called_once()
+    # Object was added to world_model
+    assert len(empty_wm.get_objects()) == 1
+
+
+def test_mobile_pick_no_retry_when_perception_none():
+    """context.perception is None → no auto-detect retry → object_not_found."""
+    from vector_os_nano.core.world_model import WorldModel
+
+    empty_wm = WorldModel()
+    base = _make_base(pos=(5.0, 5.0, 0.28), heading=0.0)
+
+    skill_inst = MobilePickSkill()
+    mock_pick = MagicMock()
+    mock_pick._resolve_target.return_value = None
+    skill_inst._pick = mock_pick
+
+    ctx = _make_context_with_perception(
+        base=base,
+        arm=MagicMock(),
+        gripper=MagicMock(),
+        world_model=empty_wm,
+        perception=None,
+        calibration=MagicMock(),
+    )
+
+    with patch("time.sleep"):
+        result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
+
+    assert not result.success
+    assert result.result_data["diagnosis"] == "object_not_found"
+    # _resolve_target called exactly once — no retry
+    assert mock_pick._resolve_target.call_count == 1
+    mock_pick.execute.assert_not_called()
+
+
+def test_mobile_pick_no_retry_when_calibration_none():
+    """context.calibration is None → no auto-detect retry → object_not_found."""
+    from vector_os_nano.core.world_model import WorldModel
+
+    empty_wm = WorldModel()
+    base = _make_base(pos=(5.0, 5.0, 0.28), heading=0.0)
+
+    skill_inst = MobilePickSkill()
+    mock_pick = MagicMock()
+    mock_pick._resolve_target.return_value = None
+    skill_inst._pick = mock_pick
+
+    ctx = _make_context_with_perception(
+        base=base,
+        arm=MagicMock(),
+        gripper=MagicMock(),
+        world_model=empty_wm,
+        perception=MagicMock(),
+        calibration=None,
+    )
+
+    with patch("time.sleep"):
+        result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
+
+    assert not result.success
+    assert result.result_data["diagnosis"] == "object_not_found"
+    assert mock_pick._resolve_target.call_count == 1
+    mock_pick.execute.assert_not_called()
+
+
+def test_mobile_pick_vlm_returns_empty_then_object_not_found():
+    """DetectSkill returns count=0 → _resolve_target still None → object_not_found."""
+    from vector_os_nano.core.world_model import WorldModel
+
+    empty_wm = WorldModel()
+    base = _make_base(pos=(5.0, 5.0, 0.28), heading=0.0)
+    perception = MagicMock()
+    calibration = MagicMock()
+
+    skill_inst = MobilePickSkill()
+    mock_pick = MagicMock()
+    # Both calls to _resolve_target return None (no object added)
+    mock_pick._resolve_target.return_value = None
+    skill_inst._pick = mock_pick
+
+    fake_det_empty = MagicMock()
+    fake_det_empty.execute.return_value = SkillResult(
+        success=True,
+        result_data={"count": 0, "objects": [], "diagnosis": "no_detections"},
+    )
+
+    ctx = _make_context_with_perception(
+        base=base,
+        arm=MagicMock(),
+        gripper=MagicMock(),
+        world_model=empty_wm,
+        perception=perception,
+        calibration=calibration,
+    )
+
+    with (
+        patch("vector_os_nano.skills.detect.DetectSkill", return_value=fake_det_empty),
+        patch("time.sleep"),
+    ):
+        result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
+
+    assert not result.success
+    assert result.result_data["diagnosis"] == "object_not_found"
+    fake_det_empty.execute.assert_called_once()
+    mock_pick.execute.assert_not_called()
+
+
+def test_mobile_pick_detect_crash_does_not_crash_skill():
+    """DetectSkill.execute raises RuntimeError → caught → object_not_found (graceful)."""
+    from vector_os_nano.core.world_model import WorldModel
+
+    empty_wm = WorldModel()
+    base = _make_base(pos=(5.0, 5.0, 0.28), heading=0.0)
+    perception = MagicMock()
+    calibration = MagicMock()
+
+    skill_inst = MobilePickSkill()
+    mock_pick = MagicMock()
+    mock_pick._resolve_target.return_value = None
+    skill_inst._pick = mock_pick
+
+    crashing_det = MagicMock()
+    crashing_det.execute.side_effect = RuntimeError("VLM service unavailable")
+
+    ctx = _make_context_with_perception(
+        base=base,
+        arm=MagicMock(),
+        gripper=MagicMock(),
+        world_model=empty_wm,
+        perception=perception,
+        calibration=calibration,
+    )
+
+    with (
+        patch("vector_os_nano.skills.detect.DetectSkill", return_value=crashing_det),
+        patch("time.sleep"),
+    ):
+        result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
+
+    # Must not raise — skill returns graceful failure
+    assert not result.success
+    assert result.result_data["diagnosis"] == "object_not_found"
+    mock_pick.execute.assert_not_called()

@@ -193,6 +193,28 @@ class MobilePickSkill:
 
         # --- Resolve target via pick's resolver ---
         target = self._pick._resolve_target(params, context.world_model)
+
+        # v2.3: perception-driven auto-detect retry on world_model miss
+        if target is None and context.perception is not None and context.calibration is not None:
+            from vector_os_nano.skills.detect import DetectSkill
+            from vector_os_nano.skills.utils import label_to_en_query
+
+            query_raw = params.get("object_label") or params.get("object_id")
+            en_query = label_to_en_query(query_raw)
+            if en_query:
+                logger.info("[MOBILE-PICK] world_model miss; auto-detect query=%r", en_query)
+                try:
+                    det_result = DetectSkill().execute({"query": en_query}, context)
+                except Exception as exc:
+                    logger.warning("[MOBILE-PICK] auto-detect crashed: %s", exc)
+                    det_result = None
+                if (
+                    det_result is not None
+                    and det_result.success
+                    and det_result.result_data.get("count", 0) > 0
+                ):
+                    target = self._pick._resolve_target(params, context.world_model)
+
         if target is None:
             query = params.get("object_label") or params.get("object_id") or ""
             known_labels = [
