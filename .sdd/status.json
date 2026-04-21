@@ -2,10 +2,10 @@
   "project": "vector_os_nano",
   "initiative": "v2.4 Perception Overhaul",
   "branch": "feat/v2.0-vectorengine-unification",
-  "current_phase": "plan",
+  "current_phase": "tasks",
   "spec_status": "draft",
   "plan_status": "draft",
-  "tasks_status": "pending",
+  "tasks_status": "draft",
   "execute_status": "pending",
   "direction_from_ceo": {
     "date": "2026-04-20",
@@ -85,6 +85,12 @@
       "action": "plan_draft",
       "agent": "architect (dispatcher acting)",
       "details": "plan.md drafted — 14 technical decisions, 11 module designs, SAM3/YOLOE both via ultralytics >=8.3.237 (single dep), SAM2.1 auto-fallback when sam3.pt missing (HF gate), numpy+scipy pointcloud (no hard open3d), Git-LFS for GSO meshes with script fallback, colour-fraction mask filter for 'blue bottle' subquery disambiguation. 10 risks tabulated. 10-task/6-wave execution sketch. Env probe: torch 2.11+cpu (CPU-only interpreter), ultralytics absent (needs pip add to [perception] extras), open3d + opencv + scipy already in deps."
+    },
+    {
+      "timestamp": "2026-04-20T17:10:00Z",
+      "action": "tasks_draft",
+      "agent": "dispatcher",
+      "details": "task.md drafted — 10 code tasks + QA wave + CEO smoke. 6 waves (0-probe, 1-modules×3, 2-integration×3, 3-scene+wire×2, 4-diagnostics×2, 5-QA parallel, 6-CEO). Serial subagent discipline per wave. Subagent prompt template included. Full TDD RED test lists per task. Estimated 2-3 days wall-clock at serial cadence. CEO approval still blocking pre-execution."
     }
   ]
 }
