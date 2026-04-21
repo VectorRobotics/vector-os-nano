@@ -1,93 +1,100 @@
 # Agent Status
 
-**Updated:** 2026-04-19 (v2.3 implementation landed, QA pending)
+**Updated:** 2026-04-20 (v2.4 perception overhaul SDD artifacts drafted while CEO away)
 **Branch:** `feat/v2.0-vectorengine-unification`
+**Upstream:** ahead by 5 commits (3 bookkeeping + spec + plan + task)
 
 ## Current state
 
-**v2.3 Go2 Perception Pipeline — IMPLEMENTATION DONE, QA PENDING**
+**v2.4 Perception Overhaul — SDD artifacts DRAFTED, awaiting CEO approval**
 
-All 6 code tasks + 1 docs task complete. 80 new tests green
-(188 cumulative). Full `抓 X` flow now runs against an empty
-world_model via Qwen VLM auto-detect. Ready for Wave 4 QA
-(code-review + security-review in parallel) and Yusen's
-live-REPL smoke.
+CEO (Yusen) directed YOLO + SAM 3 grounding + high-fidelity object assets during the 2026-04-20 debrief after v2.3 live-REPL smoke failed. CEO stepped away for a few hours and authorised autonomous drafting; artifacts are committed and pushed for review on return.
 
-## Wave summary
+v2.3 closed — all 10 v2.3 code commits on remote, SDD artifacts archived
+to `.sdd/archive-v2.3/`. Smoke identified root cause: Qwen VLM bbox–thumbnail
+coordinate-system bug (not the superficial xmat flip). v2.3.1 hot-fix
+spec preserved in `archive-v2.3/NEXT_SESSION.md` — G4 xmat fix carries
+forward into v2.4, but Qwen grounding is deleted entirely.
 
-| Wave | Tasks | Agents | Tests added | Gate |
-|------|-------|--------|-------------|------|
-| W1 | T1 Qwen · T2 Calibration · T3 Perception | Alpha · Beta · Gamma (serial after OOM lesson) | 44 | GREEN |
-| W2 | T4 sim_tool wire · T5 MobilePick + label helper | Alpha · Beta | 31 | GREEN |
-| W3 | T6 E2E dry-run harness | Alpha | 1 dry-run | GREEN |
-| W4 docs | T7 live REPL checklist + progress | Dispatcher (direct) | — | DONE |
-| W4 QA | code-review + security-review | subagents (pending) | — | PENDING |
-
-## Commit chain (v2.3, feat/v2.0-vectorengine-unification)
+## What landed this session (5 commits)
 
 ```
-37f32e7  [alpha] test(v2.3): verify_perception_pick.py E2E dry-run
-2b67c6f  [beta]  feat(v2.3): MobilePick auto-detects on world_model miss
-a77a2c6  [alpha] feat(v2.3): sim_tool wires Go2Perception + Go2Calibration
-24ae9b1  [gamma] feat(v2.3): Go2Perception — PerceptionProtocol for Go2 sim
-3ac9d58  [beta]  feat(v2.3): Go2Calibration — pose-driven camera-to-world
-f59c77e  [alpha] feat(v2.3): QwenVLMDetector — grounded 2D detection
+8dda396  docs(sdd): draft v2.4 task breakdown
+d3bcac1  docs(sdd): draft v2.4 perception plan
+88c82ec  docs(sdd): draft v2.4 perception overhaul spec
+e21fd8f  docs(sdd): archive v2.3 cycle to .sdd/archive-v2.3/
+43c0b26  docs(sdd): finalize v2.3 artifacts + v2.3.1 next-session spec
 ```
 
-## Runtime safety notes
+## v2.4 spec headlines
 
-First Wave 1 dispatch (3 parallel subagents) triggered OOM crash —
-each agent ran full `pytest tests/` which auto-loads MuJoCo from a
-cascade through `pipeline.py`. 3 concurrent MuJoCo contexts
-exhausted 64 GB RAM. Agents killed mid-flight, all files lost.
+Full details in `.sdd/spec.md`. Short form:
 
-Recovery strategy applied throughout v2.3:
-- Serial subagent dispatch (one at a time)
-- Subagents run only their own single test file, never full pytest
-- Dispatcher runs narrow-scope regressions at wave gates
-- Forbidden-import list in every subagent prompt
-  (pipeline, track_anything, mujoco, realsense, tracker)
+- **11 MUST goals** including YoloeDetector, Sam3Segmenter, mask→pointcloud
+  projection, sanity gates, xmat REP-103 fix, Google Scanned Objects
+  scene swap (10 meshes), Qwen removed from grounding.
+- **7 SHOULD** latency/coverage/diagnostic script targets.
+- **4 MAY** IOU fusion, domain randomisation; FoundationPose deferred v2.5.
+- **8 open questions** — CEO review required on: O3 (SAM3 vs SAM2.1
+  primary), O4 (object count — 10 vs 5 vs 20), O6 (delete or archive
+  QwenVLMDetector).
+- **Single new dep**: `ultralytics>=8.3.237` (bundles both YOLOE and SAM 3 via `SAM3SemanticPredictor`).
+- SAM 3 auto-falls back to SAM 2.1 when HF-gated weights absent.
 
-Memory `feedback_no_parallel_agents.md` updated with stricter rules.
+## v2.4 plan headlines
 
-## Known issues / debt
+Full details in `.sdd/plan.md`:
 
-- `VECTOR_SHARED_EXECUTOR=0` legacy spin path leaks (rollback-only).
-- `pytest-cov` C-tracer conflicts with `numpy 2.4.x` — coverage
-  measured via `sys.settrace` for `go2_perception`.
-- Camera `xmat` up-axis convention — self-consistent between
-  `get_camera_pose` Python fallback and `camera_to_world`, but may
-  diverge from MuJoCo `data.cam_xmat` in live usage. Flag for v2.4
-  if live smoke shows lateral offset error.
+- 14 technical decisions with rationale.
+- 11 module designs (new: `detectors/`, `segmenters/`, `pointcloud_projection`, `sanity_gates`; modified: `go2_perception`, `go2_ros2_proxy`, `go2_room.xml`, `sim_tool`, `detect`, `mobile_pick`; deleted: `vlm_qwen`).
+- Pointcloud math: numpy + scipy KDTree (open3d optional).
+- HSV colour-fraction filter for "blue bottle" subqueries (resolves query specificity without asking YOLOE for colour).
+- Git-LFS for GSO meshes; download-script fallback path documented.
+- 10 risks with mitigations (SAM 3 HF access being the top risk, solved by auto-fallback).
 
-## Live REPL verification
+## v2.4 task headlines
 
-Checklist: `docs/v2.3_live_repl_checklist.md` (5 steps + diagnosis
-ladder). Requires real `OPENROUTER_API_KEY` with Qwen2.5-VL-72B
-access.
+Full details in `.sdd/task.md`:
 
-## Next
+- 10 tasks across 6 waves + CEO smoke.
+- Serial subagent dispatch per wave (narrow pytest, no MuJoCo import in subagent prompts).
+- TDD RED→GREEN→REFACTOR per task with specific test names.
+- Subagent prompt template included.
+- Estimated wall-clock: 2–3 days.
 
-1. QA: code-reviewer + security-reviewer in parallel (Wave 4)
-2. Yusen final approval
-3. Live REPL smoke (Yusen)
-4. v2.4 seeds: EdgeTAM tracker, SAM3D masks, cam_xmat
-   reconciliation, mobile_helpers.py extraction
+## Env probe (zero-risk, done autonomously)
 
-## Reference
+See `agents/devlog/v24-env-probe.md`:
 
-- Spec: `.sdd/spec.md` (v2.3)
-- Plan: `.sdd/plan.md` (v2.3)
-- Tasks: `.sdd/task.md` (7/7 done; 6 code + 1 docs)
-- Archive: `.sdd/archive-v2.2/` (previous cycle frozen)
-- E2E: `scripts/verify_perception_pick.py --dry-run`
-- Live checklist: `docs/v2.3_live_repl_checklist.md`
+- `ultralytics` missing — T0 will add.
+- Local `/usr/bin/python3` torch is CPU-only; Yusen's GPU env distinct.
+- GSO repo sparse-cloned to `/tmp/gso_probe` — 1030 models confirmed.
+- Candidate list of **10 GSO pickable objects** drafted (to be finalised in T7).
+
+## Blocking decisions for CEO
+
+1. Approve spec as drafted, with any scope revisions? (`.sdd/spec.md`)
+2. Resolve 3 blocking open questions — O3 / O4 / O6 (listed at end of spec).
+3. Confirm path forward: execute v2.4 as planned (2–3 days), OR keep spec but delay implementation.
 
 ## Session starter (next time)
 
 ```
 cd ~/Desktop/vector_os_nano
-cat agents/devlog/status.md           # this file
-cat progress.md | head -100           # v2.3 change log
-python3 scripts/verify_perception_pick.py --dry-run  # 1s sanity
+cat agents/devlog/status.md                       # this file
+cat .sdd/spec.md                                   # v2.4 draft
+cat .sdd/plan.md                                   # v2.4 plan
+cat .sdd/task.md                                   # v2.4 task list
+cat agents/devlog/v24-env-probe.md                 # T0 prep
+git log --oneline 543dfd4..HEAD                    # this session's commits
 ```
+
+## Archived cycles (reference)
+
+- `.sdd/archive-v2.3/` — v2.3 Go2 Perception Pipeline (Qwen, 10 commits landed + smoke failed)
+- `.sdd/archive-v2.2/` — v2.2 Loco Manipulation Infrastructure
+- `.sdd/archive-v2.1-pick/` — v2.1 Piper top-down grasp
+- `.sdd/archive-v2.0-vectorengine/` — v2.0 VectorEngine unification
+- `.sdd/archive-mujoco-render/` — MuJoCo render milestone
+- `.sdd/archive-isaac-sim/` — Isaac Sim attempts
+- `.sdd/archive-gazebo/` — Gazebo attempts
