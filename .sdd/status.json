@@ -1,0 +1,84 @@
+{
+  "project": "vector_os_nano",
+  "initiative": "v2.4 Perception Overhaul",
+  "branch": "feat/v2.0-vectorengine-unification",
+  "current_phase": "spec",
+  "spec_status": "draft",
+  "plan_status": "pending",
+  "tasks_status": "pending",
+  "execute_status": "pending",
+  "direction_from_ceo": {
+    "date": "2026-04-20",
+    "decisions": [
+      "Introduce YOLO + SAM3 combo for grounding (replace Qwen VLM grounding path)",
+      "Upgrade object assets to higher fidelity meshes",
+      "Proceed autonomously while CEO away; CEO returns to review"
+    ]
+  },
+  "scope_summary": {
+    "new_modules": [
+      "perception/detectors/yoloe_detector.py",
+      "perception/segmenters/sam3_segmenter.py",
+      "perception/pointcloud_projection.py",
+      "perception/sanity_gates.py"
+    ],
+    "modified_modules": [
+      "perception/go2_perception.py",
+      "hardware/sim/go2_ros2_proxy.py (xmat fix)",
+      "hardware/sim/go2_room.xml (scene swap)",
+      "vcli/tools/sim_tool.py (wire-up)",
+      "skills/detect.py (CLI summary)",
+      "skills/mobile_pick.py (distance warning)"
+    ],
+    "removed_modules": [
+      "perception/vlm_qwen.py (grounding path dropped; describe/visual_query via vlm_go2 stays)"
+    ],
+    "new_ros2_interfaces": 0,
+    "new_dependencies": [
+      "ultralytics (YOLOE)",
+      "sam3 or facebookresearch/sam3 (segmentation)",
+      "open3d (pointcloud ops; may fall back to numpy)"
+    ],
+    "new_assets": "Google Scanned Objects subset (~10 meshes) via kevinzakka/mujoco_scanned_objects",
+    "deferred_to_v25": [
+      "FoundationPose 6-DoF",
+      "IOU temporal fusion M1",
+      "Domain randomization M2"
+    ],
+    "deferred_to_v30": [
+      "VoxelMap + CLIP persistent memory",
+      "Close-loop visual servoing",
+      "SAM 3D single-image reconstruction",
+      "Real hardware integration"
+    ]
+  },
+  "test_metrics": {
+    "baseline_from_v23": 194,
+    "target_new_unit_tests": 30,
+    "coverage_target_new_modules": 90
+  },
+  "qa_status": {
+    "code_review": "pending",
+    "security_review": "pending"
+  },
+  "history": [
+    {
+      "timestamp": "2026-04-20T16:00:00Z",
+      "action": "v23_archive",
+      "agent": "dispatcher",
+      "details": "v2.3 SDD artifacts archived to .sdd/archive-v2.3/. 2 bookkeeping commits pushed to remote."
+    },
+    {
+      "timestamp": "2026-04-20T16:05:00Z",
+      "action": "v24_init",
+      "agent": "dispatcher",
+      "details": "v2.4 perception overhaul initiated. CEO directed YOLO+SAM3 grounding + high-fidelity assets; CEO away 2-3h, dispatcher drafting spec/plan autonomously."
+    },
+    {
+      "timestamp": "2026-04-20T16:10:00Z",
+      "action": "spec_draft",
+      "agent": "architect (dispatcher acting)",
+      "details": "spec.md drafted — 4 new perception modules, 6 modifications, 1 removal (QwenVLMDetector grounding), GSO scene swap. 11 MUST + 7 SHOULD + 4 MAY goals. 8 open questions for CEO resolution (O3 SAM3 vs SAM2.1, O4 object count, O6 Qwen retention prioritised)."
+    }
+  ]
+}
