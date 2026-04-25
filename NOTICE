@@ -40,3 +40,28 @@ Hardware / firmware integrations referenced under their original licenses:
 Some third-party assets (e.g. MuJoCo Menagerie meshes) ship under their
 own attribution requirements. Their original LICENSE files are kept
 alongside the assets in this repository.
+
+------------------------------------------------------------------------
+Referenced (NOT bundled) sibling lab projects
+------------------------------------------------------------------------
+
+The following projects are consumed at runtime via ROS2 topic interfaces.
+Their sources are NOT included in this repository, NOT redistributed,
+and NOT a derivative work of this Apache 2.0 release. Users install them
+into separate ROS2 workspaces under their own license terms.
+
+  - SysNav (https://github.com/zwandering/SysNav)
+        License: PolyForm-Noncommercial-1.0.0
+        Authors: Haokun Zhu, Zongtai Li, Zihan Liu, Kevin Guo,
+                 Zhengzhi Lin, Yuxin Cai, Guofei Chen, Chen Lv,
+                 Wenshan Wang, Jean Oh, Ji Zhang
+        Affiliations: Carnegie Mellon University, New York University,
+                      Nanyang Technological University
+        Paper: arXiv 2603.06914 (2026)
+        Use:   Vector OS Nano subscribes to SysNav's
+               tare_planner/ObjectNodeList and tare_planner/RoomNodeList
+               topics through the apache-2.0 adapter at
+               vector_os_nano/integrations/sysnav_bridge/.
+
+  - Vector Navigation Stack (https://github.com/VectorRobotics/vector_navigation_stack)
+        Same lab — referenced via FAR / TARE planner ROS2 topics.

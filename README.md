@@ -308,6 +308,27 @@ cd vector_navigation_stack && colcon build
 
 Without the nav stack, basic Go2 skills (walk, turn, stand, dead-reckoning navigate) still work.
 
+## Semantic Scene Graph — SysNav Bringup
+
+Vector OS Nano's open-vocabulary scene graph (objects + rooms + spatial relations) consumes the output of [**SysNav**](https://github.com/zwandering/SysNav) — a sibling project from the same CMU Robotics Institute lab that publishes the field's standard `ObjectNode` / `RoomNode` topic contract.
+
+**SysNav is run as a separate ROS2 workspace and *not redistributed* in this repo.** Vector OS Nano's [`vector_os_nano/integrations/sysnav_bridge/`](vector_os_nano/integrations/sysnav_bridge/) subscribes to its published topics, converts each `tare_planner/ObjectNode` into a `vector_os_nano.core.world_model.ObjectState`, and seeds the in-process `WorldModel` for skill resolution.
+
+```bash
+# 1) SysNav (sibling workspace, follow its README to install)
+cd ~/Desktop
+git clone --recurse-submodules --branch unitree_go2 https://github.com/zwandering/SysNav.git
+cd SysNav && colcon build --symlink-install
+
+# 2) Bringup ordering
+source ~/Desktop/SysNav/install/setup.bash
+./system_real_robot_with_exploration_planner_go2.sh   # SysNav nodes
+# ... in another terminal:
+cd ~/Desktop/vector_os_nano && vector-cli go2sim       # our shell
+```
+
+See [`docs/sysnav_integration.md`](docs/sysnav_integration.md) for the full topic mapping, hardware requirements (Livox Mid-360 + 360-degree camera), and adapter contract. SysNav is licensed under PolyForm-Noncommercial-1.0.0; do not vendor its sources into this Apache 2.0 repository.
+
 ---
 
 ## License
@@ -332,6 +353,13 @@ By submitting a pull request, you agree that your contribution is licensed under
 ### Trademarks
 
 "Vector Robotics" and "Vector OS Nano" are trademarks of Vector Robotics. The Apache License does not grant permission to use these names except as required for describing the origin of the Work and reproducing the contents of the NOTICE file.
+
+### Acknowledgments — Sibling Lab Projects
+
+Vector OS Nano builds on prior and concurrent work from the **CMU Robotics Institute** group around Ji Zhang and the CMU-VLN collaboration:
+
+- **[SysNav](https://github.com/zwandering/SysNav)** &mdash; *Multi-Level Systematic Cooperation Enables Real-World, Cross-Embodiment Object Navigation* (Zhu, Li, Liu, Guo, Lin, Cai, Chen, Lv, Wang, Oh, Zhang. arXiv [2603.06914](https://arxiv.org/abs/2603.06914), 2026). Vector OS Nano consumes SysNav's published `ObjectNode` / `RoomNode` ROS2 topics as its semantic scene graph standard. SysNav itself is licensed PolyForm-Noncommercial-1.0.0 and is referenced as a peer ROS2 workspace, not bundled.
+- **[Vector Navigation Stack](https://github.com/VectorRobotics/vector_navigation_stack)** &mdash; FAR/TARE-derived planning + Unity simulator from the same lab.
 
 ---
 
