@@ -12,7 +12,8 @@ sysnav_sim_tool, xmat G3 fix). Tasks T6 (vnav_bridge sensor wiring) + G5 (launch
 were NOT delivered — sensors exist but do not wire into scripts/go2_vnav_bridge.py
 or a working launch file. Pipeline does not run end-to-end. CEO decision: infra retained,
 integration deferred to v2.5. Local manipulation (Piper pick/place) decoupled/deferred
-(skills in-tree, not registered by default). Branch fast-forward-mergeable to master.
+(skills in-tree, not registered by default). Branch is 34 commits ahead of
+origin/master; integrate via PR (NOT fast-forward — see Master merge readiness).
 
 CEO directive 2026-04-25: auto-approve architectural decisions, start
 implementation, emphasize broad test coverage. v2.4-perception-overhaul
@@ -104,13 +105,19 @@ TBD       T8 smoke_sysnav_sim.py + docs/sysnav_simulation.md
 
 ## Master merge readiness (2026-05-18)
 
-Branch is 165 commits ahead of origin/master, 0 behind, fast-forward-mergeable
-(3 merge-prep commits: a356b2b pause/decouple, f77eccd docs truth-up,
-deb0b18 test fixes). Green on the memory-safe subset (≈250 tests, chunked —
-see Test result above; full single-process run OOMs, pre-existing). Diff is
-+730K lines, of which ~660K is Piper/Menagerie vendored mesh assets under
-vector_os_nano/hardware, pre-existing since v2.1 — flagged for CEO merge
-decision, not introduced by this cleanup.
+Branch is 34 commits ahead of origin/master, 0 real-code commits behind
+(post-`git fetch` 2026-05-18). NOT fast-forward-mergeable: master already
+absorbed the v2.0 line via PR #8 (2026-04-16) + PR #7 sim-to-real-nav, so
+master carries merge commits not in this linear branch. BUT
+`git log --no-merges HEAD..origin/master` is EMPTY — master has zero code
+this branch lacks; the divergence is pure merge topology, no real conflict.
+Integration path: open a PR (repo convention, PR #7/#8 precedent) — GitHub
+merge expected conflict-free. The 34 = 4 merge-prep commits + the v2.4 work
+landed after the 2026-04-16 PR#8 point. Green on the memory-safe subset
+(≈250 tests, chunked — see Test result above; full single-process OOMs,
+pre-existing). Diff is +730K lines, ~660K = Piper/Menagerie vendored mesh
+assets under vector_os_nano/hardware, pre-existing since v2.1 — flagged for
+CEO merge decision, not introduced by this cleanup.
 
 Docs have been truth-corrected (2026-05-18):
 - status.md: v2.4 PAUSED narrative (infra + tests, T6 + G5 deferred)

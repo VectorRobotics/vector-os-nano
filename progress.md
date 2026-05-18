@@ -5,9 +5,13 @@
 **Base:** v1.8.0
 
 **2026-05-18 Master Merge Prep**
-Branch 165 commits ahead, fast-forward-mergeable (3 prep commits: pause/decouple,
-docs truth-up, test fixes). Green on the memory-safe test subset (≈250 tests,
-run chunked — whole `tests/unit` single-process OOMs a 64 GB host, pre-existing).
+Branch 34 commits ahead of origin/master (post-fetch). NOT fast-forward —
+master already merged v2.0 via PR #8 (2026-04-16) + PR #7; integrate via a
+new PR (`git log --no-merges HEAD..origin/master` empty → no real code
+conflict, master has nothing this branch lacks). 4 merge-prep commits
+(pause/decouple, docs truth-up, test fixes, count reconcile). Green on the
+memory-safe test subset (≈250 tests, run chunked — whole `tests/unit`
+single-process OOMs a 64 GB host, pre-existing).
 SysNav v2.4 infra + manipulation decoupled/paused (in-tree, not registered);
 pipeline integration (T6 + G5) deferred to v2.5. Docs truth-corrected; stale
 v2.2 checklist deleted. +730K-line diff is ~660K vendored Piper/Menagerie
