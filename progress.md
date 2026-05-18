@@ -5,9 +5,13 @@
 **Base:** v1.8.0
 
 **2026-05-18 Master Merge Prep**
-Branch 162 commits ahead, fast-forward-mergeable. All 215 tests green.
-v2.4 status corrected: SysNav infrastructure + tests delivered; pipeline integration (T6 + G5) + local manipulation deferred to v2.5.
-Living docs truth-corrected with STATUS headers. Stale v2.2 checklist deleted.
+Branch 165 commits ahead, fast-forward-mergeable (3 prep commits: pause/decouple,
+docs truth-up, test fixes). Green on the memory-safe test subset (≈250 tests,
+run chunked — whole `tests/unit` single-process OOMs a 64 GB host, pre-existing).
+SysNav v2.4 infra + manipulation decoupled/paused (in-tree, not registered);
+pipeline integration (T6 + G5) deferred to v2.5. Docs truth-corrected; stale
+v2.2 checklist deleted. +730K-line diff is ~660K vendored Piper/Menagerie
+mesh assets (pre-existing since v2.1) — flagged for CEO merge decision.
 
 ## v2.4 SysNav Simulation Integration — PAUSED / DEFERRED (2026-04-25 — 2026-05-18)
 
@@ -36,9 +40,13 @@ a working launch file, so the pipeline does not run end-to-end yet. Manipulation
   `go2_perception.py`, `go2_calibration.py`) + tests (~2570 LoC removed).
   `sim_tool.py` Qwen wire-up replaced by sysnav_bridge comment.
 
-Test totals: **215 green** (70 baseline + 145 new this cycle); 90 %
+Test totals (2026-05-18, post-decoupling): green on the memory-safe
+subset — `tests/skills` 90, sensors+sysnav_bridge+safe-integration 125,
+`tests/unit/vcli` prompt/sysnav 35 (≈250 tests, 0 failures). 90 %
 coverage gate met on every new module (modulo numpy 2.4 / coverage
-C-tracer flake noted in `feedback_no_parallel_agents.md`).
+C-tracer flake noted in `feedback_no_parallel_agents.md`). Full repo
+suite is run in CI shards — single-process `pytest tests/unit` OOMs a
+64 GB host (pre-existing repo characteristic, not v2.4-introduced).
 
 ### What was NOT delivered
 - **T6 Bridge Wiring**: `scripts/go2_vnav_bridge.py` was never modified to wire the 3 sensors into

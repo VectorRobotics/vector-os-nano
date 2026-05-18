@@ -59,8 +59,14 @@ Verified post-cleanup:
 | — | **T6 NOT DELIVERED** | ❌ deferred | — | vnav_bridge.py never modified to wire lidar360/pano360/gt_odom |
 | — | **G5 NOT DELIVERED** | ❌ deferred | — | sysnav_sim.launch.py never created; no working launch file |
 
-**Test result**: 215/215 green (70 baseline + 145 new this cycle, verified 2026-05-18).
-Coverage ≥ 90 % on each new module (modulo numpy 2.4 / coverage C-tracer flake).
+**Test result (2026-05-18, post-decoupling)**: green on the memory-safe
+subset run in chunks — `tests/skills` 90, sensors+sysnav_bridge unit +
+safe integration 125, `tests/unit/vcli` prompt/sysnav 35 (≈250 tests, 0
+failures). 3 tests fixed this session: 1 sysnav-pause contract + 2
+pre-existing stale prompt-brand assertions (red since a2ad980, 5 wks).
+NOTE: the full repo suite is NOT run as one process — `pytest tests/unit`
+whole-dir OOMs a 64 GB host (pre-existing repo characteristic; use CI
+shards / chunked runs). Coverage ≥ 90 % on each new module.
 Infrastructure is solid; pipeline is incomplete.
 
 ## Commit chain (v2.4 cycle, this branch)
@@ -98,9 +104,13 @@ TBD       T8 smoke_sysnav_sim.py + docs/sysnav_simulation.md
 
 ## Master merge readiness (2026-05-18)
 
-Branch is 162 commits ahead of origin/master, 0 behind, fast-forward-mergeable.
-All 215 tests green. Diff is +730K lines (mostly Piper/Menagerie vendored assets,
-pre-existing since v2.1, not a merge blocker).
+Branch is 165 commits ahead of origin/master, 0 behind, fast-forward-mergeable
+(3 merge-prep commits: a356b2b pause/decouple, f77eccd docs truth-up,
+deb0b18 test fixes). Green on the memory-safe subset (≈250 tests, chunked —
+see Test result above; full single-process run OOMs, pre-existing). Diff is
++730K lines, of which ~660K is Piper/Menagerie vendored mesh assets under
+vector_os_nano/hardware, pre-existing since v2.1 — flagged for CEO merge
+decision, not introduced by this cleanup.
 
 Docs have been truth-corrected (2026-05-18):
 - status.md: v2.4 PAUSED narrative (infra + tests, T6 + G5 deferred)
@@ -117,5 +127,7 @@ Living .md count: 21 (before cleanup), 20 (after v2.2 checklist deletion). All p
 cd ~/Desktop/vector_os_nano
 git log --oneline feat/v2.0-vectorengine-unification -10   # recent commits
 cat progress.md                       # current status
-.venv-nano/bin/python -m pytest tests/unit/hardware/sim/sensors tests/unit/integrations/sysnav_bridge tests/unit/vcli/test_sysnav_sim_tool.py tests/integration/test_sysnav_bridge_mapping.py -q   # verify 215 tests green
+# chunked (whole tests/unit OOMs a 64 GB host — never run it as one process):
+.venv-nano/bin/python -m pytest tests/skills -q
+.venv-nano/bin/python -m pytest tests/unit/hardware/sim/sensors tests/unit/integrations/sysnav_bridge tests/unit/vcli/test_sysnav_sim_tool.py tests/unit/vcli/test_prompt.py tests/integration/test_sysnav_bridge_mapping.py tests/integration/test_xmat_rep103_regression.py -q
 ```
