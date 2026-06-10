@@ -5,7 +5,10 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 
 - Branch: `feat/playground-vln` (off `master` @ PR #13 merge; gait-fix branch merged as PR #13).
   Campaign: third world — photoreal/semantic nav world (VLN-first, SysNav revival rides along);
-  M0 simulator selection underway, conclusion gates on owner (new external dependency).
+  M0 DONE: ADR-009 (Proposed) recommends pinned habitat-sim 0.3.3 conda-py3.9 subprocess +
+  bridge — spike-verified on the Linux box (photoreal RGB, equirect pano+depth, 819K-pt
+  unprojected cloud, GT odom). GATED on owner approval (new external dependency) + HM3D
+  agreement; interim scenes are license-free (test-scenes/HSSD/Replica).
 - Last updated: 2026-06-10.
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
