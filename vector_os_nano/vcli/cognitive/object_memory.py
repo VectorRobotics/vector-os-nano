@@ -6,6 +6,12 @@
 Wraps SceneGraph.ObjectNode with decay-based confidence so the robot can
 reason about how certain it is that an object is still where it last saw it.
 
+Read semantics (W2.3): after sync_from_scene_graph() the read methods
+(last_seen / objects_in_room / find_object) RE-QUERY the live SceneGraph at
+call time (TTL-gated), so verify/replan always see the freshest state. The
+exp-decay cache is the graceful fallback when the live store has nothing or
+fails. Without a SceneGraph ref the cache-only legacy behavior is unchanged.
+
 Decay model:
     effective_confidence = base_confidence * exp(-lambda * elapsed_seconds)
 
@@ -57,10 +63,19 @@ class ObjectMemory:
     All mutations are protected by an RLock for thread safety.
     """
 
-    def __init__(self, decay_lambda: float = 0.001) -> None:
+    def __init__(
+        self, decay_lambda: float = 0.001, live_refresh_ttl: float = 0.5
+    ) -> None:
         self._objects: dict[str, TrackedObject] = {}
         self._decay_lambda: float = decay_lambda
         self._lock: threading.RLock = threading.RLock()
+        # W2.3 — live re-query: sync_from_scene_graph stores the SceneGraph ref
+        # so the read methods can re-query the freshest state at call time.
+        # No ref (update()-only or from_dict-restored usage) => legacy cache-only
+        # behavior. The TTL caps re-query rate so hot verify loops don't thrash.
+        self._scene_graph: Any | None = None
+        self._live_refresh_ttl: float = live_refresh_ttl
+        self._last_refresh: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Core confidence calculation
@@ -93,35 +108,53 @@ class ObjectMemory:
         synced = 0
         rooms = scene_graph.get_all_rooms()
         with self._lock:
+            self._scene_graph = scene_graph  # W2.3: keep the live ref for re-query
             for room in rooms:
                 room_id: str = room.room_id
                 for node in scene_graph.find_objects_in_room(room_id):
-                    oid: str = node.object_id
-                    existing = self._objects.get(oid)
-                    if existing is not None:
-                        self._objects[oid] = TrackedObject(
-                            object_id=oid,
-                            category=node.category,
-                            room_id=room_id,
-                            x=node.x,
-                            y=node.y,
-                            last_seen=now,
-                            base_confidence=node.confidence,
-                            observation_count=existing.observation_count + 1,
-                        )
-                    else:
-                        self._objects[oid] = TrackedObject(
-                            object_id=oid,
-                            category=node.category,
-                            room_id=room_id,
-                            x=node.x,
-                            y=node.y,
-                            last_seen=now,
-                            base_confidence=node.confidence,
-                            observation_count=1,
-                        )
+                    self._merge_node(node, room_id, now)
                     synced += 1
         return synced
+
+    def _merge_node(self, node: Any, room_id: str, now: float) -> None:
+        """Merge one SceneGraph ObjectNode into the cache. Caller holds the lock."""
+        oid: str = node.object_id
+        existing = self._objects.get(oid)
+        self._objects[oid] = TrackedObject(
+            object_id=oid,
+            category=node.category,
+            room_id=room_id,
+            x=node.x,
+            y=node.y,
+            last_seen=now,
+            base_confidence=node.confidence,
+            observation_count=(existing.observation_count + 1) if existing else 1,
+        )
+
+    def _refresh_live(self, scope: str, query: Any) -> None:
+        """W2.3 — TTL-gated re-query of the live SceneGraph for one scope.
+
+        Merges the live result into the cache so the subsequent cache read
+        serves the freshest state. No-ops when there is no SceneGraph ref
+        (legacy behavior is byte-identical) or the scope was refreshed within
+        the TTL. A failing live query is swallowed — the exp-decay cache is
+        the graceful fallback (never raise into the GoalVerifier sandbox).
+        """
+        sg = self._scene_graph
+        if sg is None:
+            return
+        now = time.time()
+        with self._lock:
+            if now - self._last_refresh.get(scope, 0.0) < self._live_refresh_ttl:
+                return
+            self._last_refresh[scope] = now
+        try:
+            nodes = list(query(sg))
+        except Exception:
+            return
+        with self._lock:
+            for node in nodes:
+                self._merge_node(node, getattr(node, "room_id", "") or "", now)
 
     # ------------------------------------------------------------------
     # Queries
@@ -137,6 +170,9 @@ class ObjectMemory:
             or None if never seen.
         """
         cat_lower = category.lower().strip()
+        self._refresh_live(
+            f"cat:{cat_lower}", lambda sg: sg.find_objects_by_category(category)
+        )
         best: TrackedObject | None = None
         best_ts: float = -1.0
 
@@ -207,6 +243,9 @@ class ObjectMemory:
             List of dicts: {"object_id", "category", "x", "y", "confidence", "seconds_ago"}
             Sorted by confidence descending.
         """
+        self._refresh_live(
+            f"room:{room_id}", lambda sg: sg.find_objects_in_room(room_id)
+        )
         now = time.time()
         results: list[dict] = []
 
@@ -237,6 +276,9 @@ class ObjectMemory:
             Sorted by confidence descending.
         """
         cat_lower = category.lower().strip()
+        self._refresh_live(
+            f"cat:{cat_lower}", lambda sg: sg.find_objects_by_category(category)
+        )
         now = time.time()
         results: list[dict] = []
 

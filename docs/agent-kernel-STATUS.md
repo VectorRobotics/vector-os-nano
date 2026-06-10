@@ -60,7 +60,9 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 - **Phase E:** W1.1 learning-tier evidence gate (`85d59a2`) · W1.2 fail-loud world-registration
   preflight (`7afe2c0`) · W1.3 scene_graph TextLLM adapter (`c3103ad`) · W1.4 playground
   step-primitives wired live → **Wave 1 complete**; W2.4 typed `failure_class` into replan
-  (`14ae43c`).
+  (`14ae43c`) · **W2.3 ObjectMemory re-query-freshest** (2026-06-10, implemented inline after
+  the harness-flake warning: readers re-query the live SceneGraph TTL-gated, decay cache as
+  fallback, byte-identical without a ref; 46 level57 + 49 level60/61 green).
 - **This branch:** engine sync-exec gated on mjpython only — Linux REPL responsive (`fcc6b20`) ·
   go2 gated diagnostics + `get_sim_time()` (`6a39f6c`) · venv reconcile `.venv-nano`→`.venv`
   (`13a9429`) · **the gait sim-dt fix** (`d7e158b`) · docs: tricky-bugs casebook + STATUS condense
@@ -68,14 +70,10 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
-1. **Phase E Wave 2 (resume point): W2.3 ObjectMemory re-query-freshest** — the verify
-   predicates `objects_in_room`/`find_object` (bound in `engine.py` `init_vgg`) read a
-   once-synced stale `ObjectMemory`; make reads re-query the live SceneGraph (store the ref in
-   `sync_from_scene_graph`, decay-cache fallback, byte-identical when no ref). NOTE: two prior
-   automated attempts died to a workflow harness flake (implement agent finished edits but never
-   returned) — implement inline or re-run. Then W2.1 (daemon + run-registry + status/stop/log) /
-   W2.2 (RUN_ID watchdog orphan sweep) — both need process-lifecycle coordination if a parallel
-   GUI session is running — or Wave 3. Plan: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md).
+1. **Phase E Wave 2 (resume point): W2.1 (daemon + run-registry + status/stop/log) /
+   W2.2 (RUN_ID watchdog orphan sweep)** — both need process-lifecycle coordination if a
+   parallel GUI session is running — or Wave 3. (W2.3 SHIPPED 2026-06-10 — see Shipped.)
+   Plan: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md).
 2. **Named-vs-generic grasp (owner picked (a)+(b); (a) shipped, (b) NEXT):** a NAMED target must
    bind or the step fails loudly — never silently grab the nearest (that's a FALSE SUCCESS:
    grabbed a non-apple, reported done). Generic grabs ("抓个东西") keep unbound→nearest. Wire
