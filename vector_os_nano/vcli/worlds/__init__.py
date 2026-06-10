@@ -11,6 +11,11 @@ a robot agent is connected.
 from __future__ import annotations
 
 from vector_os_nano.vcli.worlds.base import DecomposeVocab, World
+from vector_os_nano.vcli.worlds.blueprint import (
+    BlueprintWorld,
+    WorldBlueprint,
+    blueprint_of,
+)
 from vector_os_nano.vcli.worlds.dev import DevWorld, dev_verify_namespace
 from vector_os_nano.vcli.worlds.registry import (
     WorldRegistry,
@@ -23,6 +28,9 @@ from vector_os_nano.vcli.worlds.robot import RobotWorld
 __all__ = [
     "World",
     "DecomposeVocab",
+    "WorldBlueprint",
+    "BlueprintWorld",
+    "blueprint_of",
     "DevWorld",
     "RobotWorld",
     "dev_verify_namespace",

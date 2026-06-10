@@ -304,6 +304,10 @@ relative to `vector_os_nano/`.
 
 **Worlds** (`vcli/worlds/`)
 - `base.py` — the `World` protocol (the four-thing contract).
+- `blueprint.py` — frozen `WorldBlueprint` value object (W3.1): `blueprint_of(world)` derives a
+  declarative, diffable snapshot of any world's seam contributions; `BlueprintWorld` adapts it
+  back into a full `World` the engine consumes unchanged — parity with the imperative seam is
+  structural, and the imperative path stays authoritative.
 - `dev.py` — the robot-free dev/code world (default; build/test means).
 - `robot.py` — robot embodiments (Go2 with a base; SO-101 / Piper arm without one).
 - `registry.py` — `WorldRegistry`: world/scenario resolution (agent-driven `resolve_world` +

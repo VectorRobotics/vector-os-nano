@@ -83,7 +83,11 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    same-process flags, so the PubSub replacement is correctly empty until one exists.
    REMAINING in Wave 2: `--daemon` goal-runner design (what runs headless) — align with real
    need after M2. macOS: daemonize + sweep are /proc/fork-based, owner-unverified there.
-   Then Wave 3. (W2.3 SHIPPED — see Shipped.)
+   W3.1 WorldBlueprint SHIPPED 2026-06-10 (`vcli/worlds/blueprint.py`: frozen value object,
+   `blueprint_of()` single-source derivation, `BlueprintWorld` adapter = build-from-blueprint
+   with zero engine changes; `.blueprint()` sugar on worlds intentionally skipped — the
+   universal `blueprint_of` covers it). Wave 3 remaining: W3.2 capability factory (strategic,
+   M-L), W3.3 protocol-compliance (L). (W2.3 SHIPPED — see Shipped.)
    Plan: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md).
 2. **Named-vs-generic grasp — DONE (2026-06-10).** (a) target-aware `holding_object()` +
    `picked_object` shipped earlier; (b) shipped now: `verify_strengthen.strengthen_target_verify`
