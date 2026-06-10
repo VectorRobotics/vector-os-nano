@@ -73,9 +73,14 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
-1. **Phase E Wave 2 (resume point): W2.1 (daemon + run-registry + status/stop/log) /
-   W2.2 (RUN_ID watchdog orphan sweep)** — both need process-lifecycle coordination if a
-   parallel GUI session is running — or Wave 3. (W2.3 SHIPPED 2026-06-10 — see Shipped.)
+1. **Phase E Wave 2 (resume point): W2.1 mostly SHIPPED 2026-06-10** — `vcli/run_registry.py`
+   (frozen RunEntry, atomic JSON under `~/.vector-os-nano/runs/`, dead-PID sweep),
+   `vcli/daemon.py` (double-fork daemonize smoke-tested end-to-end on Linux, SIGTERM→SIGKILL
+   `stop_run`, `tail_log`), CLI `--status/--stop/--log` early-exit ops (live-verified).
+   REMAINING: `--daemon` CLI wiring needs a goal-runner design (what runs headless — a single
+   NL goal through `run_turn_unified`?) — do together with **W2.2 (RUN_ID watchdog orphan
+   sweep + /tmp flag retirement; coordinate with any parallel GUI session)**. macOS daemonize
+   is owner-unverified. Then Wave 3. (W2.3 SHIPPED — see Shipped.)
    Plan: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md).
 2. **Named-vs-generic grasp — DONE (2026-06-10).** (a) target-aware `holding_object()` +
    `picked_object` shipped earlier; (b) shipped now: `verify_strengthen.strengthen_target_verify`

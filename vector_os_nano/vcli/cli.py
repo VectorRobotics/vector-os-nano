@@ -296,7 +296,50 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-permission", action="store_true", help="Allow all tools without prompts")
     parser.add_argument("--verbose", action="store_true", help="Debug logging")
     parser.add_argument("--system-prompt", default=None, help="Path to custom system prompt file")
+    # W2.1 — background-run operations (early-exit; the REPL never starts).
+    parser.add_argument("--status", action="store_true",
+                        help="List registered background runs and exit")
+    parser.add_argument("--stop", default=None, metavar="RUN_ID",
+                        help="Stop a background run (SIGTERM, then SIGKILL) and exit")
+    parser.add_argument("--log", default=None, metavar="RUN_ID",
+                        help="Print the tail of a background run's log and exit")
     return parser.parse_args(argv)
+
+
+def _run_ops_dispatch(args: argparse.Namespace) -> bool:
+    """Handle the W2.1 run-operations flags. Returns True when one ran
+    (the caller exits without starting the REPL)."""
+    if not (args.status or args.stop or args.log):
+        return False
+    from vector_os_nano.vcli.daemon import stop_run, tail_log
+    from vector_os_nano.vcli.run_registry import RunRegistry
+
+    registry = RunRegistry()
+    if args.status:
+        runs = registry.list_runs()
+        if not runs:
+            console.print("[dim]no background runs[/dim]")
+        for r in runs:
+            import datetime as _dt
+            started = _dt.datetime.fromtimestamp(r.started_at).strftime("%H:%M:%S")
+            console.print(
+                f"  {r.run_id}  pid={r.pid}  world={r.world or '-'}"
+                f"{('/' + r.scenario) if r.scenario else ''}  since {started}"
+            )
+    elif args.stop:
+        ok = stop_run(registry, args.stop)
+        console.print(
+            f"[green]stopped {args.stop}[/green]" if ok
+            else f"[red]unknown run {args.stop!r}[/red] — try --status"
+        )
+    elif args.log:
+        entry = registry.get(args.log)
+        if entry is None:
+            console.print(f"[red]unknown run {args.log!r}[/red] — try --status")
+        else:
+            from pathlib import Path as _P
+            console.print(tail_log(str(_P(entry.log_dir) / f"{entry.run_id}.log")) or "[dim](empty)[/dim]")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1260,6 +1303,10 @@ def _ensure_sigint_under_mjpython() -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+
+    # W2.1 run ops are cheap early exits — before any re-exec/credential/agent init.
+    if _run_ops_dispatch(args):
+        return
 
     # --- macOS mjpython re-exec guard (must be before any credential/agent init) ---
     _maybe_reexec_under_mjpython(args)
