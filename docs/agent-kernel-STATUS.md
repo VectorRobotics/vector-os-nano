@@ -3,8 +3,10 @@
 One-page "where are we / what's next". Read this first when resuming; durable design is
 [ARCHITECTURE.md](ARCHITECTURE.md); hidden-bug lessons are [tricky-bugs.md](tricky-bugs.md).
 
-- Branch: `fix/go2-explore-gait-simdt` (off `master`; `feat/verified-agent-kernel` merged as PR #12).
-- Last updated: 2026-06-09.
+- Branch: `feat/playground-vln` (off `master` @ PR #13 merge; gait-fix branch merged as PR #13).
+  Campaign: third world — photoreal/semantic nav world (VLN-first, SysNav revival rides along);
+  M0 simulator selection underway, conclusion gates on owner (new external dependency).
+- Last updated: 2026-06-10.
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## Current state (2026-06-09)
@@ -90,8 +92,12 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 6. **Chores:** pin/vendor `convex_mpc` in `pyproject.toml` (a venv rebuild silently loses the
    numpy2 fixes — tricky-bugs Case 2) · cli.py 32 pre-existing ruff errors · canary test for the
    private `mujoco.viewer._MJPYTHON` probe (`viewer_mode`) · remove the TEMP gated diagnostics
-   when gait work is truly done · `~/Desktop/vector_os_nano` clone's `go2_vnav_bridge.py` is now
-   BEHIND this repo (sim-dt fix not synced) — sync or retire that clone.
+   when gait work is truly done. Linux clone (`~/Desktop/vector_os_nano`) reconciled 2026-06-10:
+   synced to master, `.venv` rebuilt (mujoco 3.9 / numpy 2.4.6 / pin 4.0 + convex_mpc editable),
+   `sim.sh` hardened (no silent system-python fallback). NOTE on Linux the known-red
+   `test_sim_tool_lifecycle_dev_to_arm_to_dev` is a process-killing SEGFAULT
+   (`mujoco.viewer.launch_passive` GL thread) — deselect it there; an intermittent
+   at-exit GL-teardown segfault was also observed once (suite results were complete).
 
 ## Run / verify
 
