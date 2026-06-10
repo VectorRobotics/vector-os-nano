@@ -1404,7 +1404,13 @@ class VectorEngine:
             self._world_context_cache = result
             self._world_context_ts = now
             return result
-        base = getattr(agent, "_base", None)
+        # W3.3: resolve the base by PROTOCOL (narrow read-only spec), not by
+        # private attribute name. Context building is a fail-safe surface, so
+        # a missing/non-conforming base resolves to None rather than raising.
+        from vector_os_nano.vcli.providers import BaseStateProvider, resolve_provider
+        base = resolve_provider(
+            agent, BaseStateProvider, what="base", required=False
+        )
         sg = getattr(agent, "_spatial_memory", None)
         if base:
             try:

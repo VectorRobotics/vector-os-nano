@@ -327,6 +327,10 @@ relative to `vector_os_nano/`.
   re-export shims. The Go2 base predicates (`at_position`/`facing`/`visited`) still live here.
 
 **Tools, routing, prompt, session, permissions**
+- `vcli/providers.py` — protocol-based provider resolution (W3.3): narrow `runtime_checkable`
+  specs (`BaseStateProvider`/`BaseMotionProvider`) + fail-loud `resolve_provider`/`ensure_provider`
+  ("no base provider met spec X: missing [...]") replacing getattr-by-string on agent internals;
+  `_base` seam migrated first, the rest incremental.
 - `vcli/tools/` — general tools (file/bash/glob/grep/web) + world-contributed tool wrappers.
 - `vcli/intent_router.py` — category-filtered routing that trims the tool/context surface.
 - `vcli/dynamic_prompt.py` — the composable system prompt rebuilt as world state changes.

@@ -86,8 +86,12 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    W3.1 WorldBlueprint SHIPPED 2026-06-10 (`vcli/worlds/blueprint.py`: frozen value object,
    `blueprint_of()` single-source derivation, `BlueprintWorld` adapter = build-from-blueprint
    with zero engine changes; `.blueprint()` sugar on worlds intentionally skipped — the
-   universal `blueprint_of` covers it). Wave 3 remaining: W3.2 capability factory (strategic,
-   M-L), W3.3 protocol-compliance (L). (W2.3 SHIPPED — see Shipped.)
+   universal `blueprint_of` covers it). W3.3 FIRST SLICE SHIPPED 2026-06-10 (`vcli/providers.py`: narrow runtime_checkable
+   Base{State,Motion}Provider + fail-loud resolve/ensure with named missing methods; `_base`
+   seam migrated — locomotion `_require_base` + engine context builder; py3.12 getattr_static
+   quirk handled with a dynamic-attr fallback so MagicMock doubles keep working; remaining
+   getattr sites migrate incrementally). Wave 3 remaining: W3.2 capability factory (strategic,
+   M-L), W3.3 rest of the getattr sites. (W2.3 SHIPPED — see Shipped.)
    Plan: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md).
 2. **Named-vs-generic grasp — DONE (2026-06-10).** (a) target-aware `holding_object()` +
    `picked_object` shipped earlier; (b) shipped now: `verify_strengthen.strengthen_target_verify`
