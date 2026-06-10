@@ -63,12 +63,17 @@ except ImportError:
         "When a step acts on a SPECIFIC object/target named in the task, copy "
         "that target into the chosen strategy's object/object_label/query/target "
         "parameter — never leave a known target blank. "
+        "When the world context carries an 'Objects (live):' list, RESOLVE the "
+        "user's reference (any language, attributes like color/size included) to "
+        "the EXACT listed name whose name/attributes match, and bind THAT name — "
+        "the scene knows objects by those names, not by the user's wording. If "
+        "nothing listed matches, bind the user's wording as-is; the step will "
+        "fail loudly and you can re-bind on replan from the fresh list. "
         "Use each strategy's 'suggested verify' predicate EXACTLY as written for "
         "that step's verify expression: put the target ONLY in strategy_params, "
         "never as an argument inside the verify expression. The verifier checks "
-        "deterministic ground-truth state, not your target string — so e.g. a "
-        "detect step verifies with len(detect_objects()) > 0, NOT "
-        "detect_objects('<your target>')."
+        "deterministic ground-truth state (or the step's own recorded output via "
+        "step_output()), not your target string."
     )
 
 logger = logging.getLogger(__name__)
@@ -1426,10 +1431,57 @@ class VectorEngine:
                     parts.append(f"Known rooms: {', '.join(rooms)}")
             except Exception:
                 pass
+        # Stage 3 (referring-expression grounding): surface the LIVE object set
+        # so the decomposer can resolve a reference ("the red cup" / "红色杯子")
+        # to an EXACT scene name at plan/replan time. Deterministic plumbing
+        # only — the LLM is the language component; the kernel just reports
+        # names (+ attribute hints) from the world model, falling back to the
+        # sim oracle's ground-truth body names. Capped to bound the prompt.
+        objects_line = self._live_objects_line(agent)
+        if objects_line:
+            parts.append(objects_line)
         result = "\n".join(parts) if parts else ""
         self._world_context_cache = result
         self._world_context_ts = now
         return result
+
+    _LIVE_OBJECTS_CAP = 20
+
+    @staticmethod
+    def _live_objects_line(agent: Any) -> str:
+        """Return 'Objects (live): ...' from the freshest available source.
+
+        Priority: world-model objects (label + property hints — what detect
+        populated) > sim-oracle body names (ground truth when no detect ran).
+        Fail-safe '' on any error; never raises into context building.
+        """
+        entries: list[str] = []
+        try:
+            wm = getattr(agent, "_world_model", None)
+            if wm is not None:
+                for obj in wm.get_objects():
+                    label = obj.label or obj.object_id
+                    props = getattr(obj, "properties", None) or {}
+                    hints = ",".join(
+                        f"{k}={v}" for k, v in sorted(props.items())
+                        if isinstance(v, (str, int, float))
+                    )
+                    entries.append(f"{label} ({hints})" if hints else label)
+        except Exception:  # noqa: BLE001
+            entries = []
+        if not entries:
+            try:
+                arm = getattr(agent, "_arm", None) or getattr(agent, "arm", None)
+                if arm is not None and hasattr(arm, "get_object_positions"):
+                    entries = sorted(arm.get_object_positions().keys())
+            except Exception:  # noqa: BLE001
+                entries = []
+        if not entries:
+            return ""
+        cap = VectorEngine._LIVE_OBJECTS_CAP
+        shown, extra = entries[:cap], len(entries) - cap
+        suffix = f" (+{extra} more)" if extra > 0 else ""
+        return "Objects (live): " + ", ".join(shown) + suffix
 
     def _emergency_stop(
         self,

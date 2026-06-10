@@ -44,11 +44,17 @@ _TARGET_BINDING_GUIDANCE: str = (
     "When a step acts on a SPECIFIC object/target named in the task, copy that "
     "target into the chosen strategy's object/object_label/query/target "
     "parameter — never leave a known target blank. "
+    "When the world context carries an 'Objects (live):' list, RESOLVE the "
+    "user's reference (any language, attributes like color/size included) to "
+    "the EXACT listed name whose name/attributes match, and bind THAT name — "
+    "the scene knows objects by those names, not by the user's wording. If "
+    "nothing listed matches, bind the user's wording as-is; the step will "
+    "fail loudly and you can re-bind on replan from the fresh list. "
     "Use each strategy's 'suggested verify' predicate EXACTLY as written for that "
     "step's verify expression: put the target ONLY in strategy_params, never as an "
     "argument inside the verify expression. The verifier checks deterministic "
-    "ground-truth state, not your target string — so e.g. a detect step verifies "
-    "with len(detect_objects()) > 0, NOT detect_objects('<your target>')."
+    "ground-truth state (or the step's own recorded output via step_output()), "
+    "not your target string."
 )
 
 _DEFAULT_PLANNER_INTRO: str = (

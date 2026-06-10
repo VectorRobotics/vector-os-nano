@@ -98,9 +98,15 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    is now `len(step_output('objects')) > 0` (was the false-passing query-less oracle call);
    `step_output` is unioned into every world's decompose allowlist (kernel-provided, like
    `answer`). Verify now consumes the step's own alias-aware observation (Rule 4).
-4. **Stage 3 grounding remainder:** VLM `MuJoCoPerception`/`DetectSkill` perception path,
-   referring-expression resolution ("the red cup" → object_id), ObjectMemory re-sync (=W2.3).
-   **Phase C.3/C.4** (real specialized model in the robot world) stays blocked behind this
+4. **Stage 3 grounding remainder:** referring-expression resolution SHIPPED 2026-06-10 —
+   `world_context` now carries `Objects (live): ...` (world-model labels + property hints,
+   sim-oracle body-name fallback, capped, fail-safe) and `_TARGET_BINDING_GUIDANCE` teaches
+   resolving the user's reference (any language, attributes) to the EXACT listed name at
+   plan/replan time; an unresolved binding fails loudly and replan re-binds from the fresh
+   list (kernel stays deterministic — the LLM is the language component; combined with the
+   #2b target-aware verify the wrong-object path cannot false-pass). STILL OPEN: the VLM
+   `MuJoCoPerception`/`DetectSkill` real-perception path on no-oracle hardware.
+   **Phase C.3/C.4** stays blocked behind that
    ([agent-kernel-phase-c-plan.md](agent-kernel-phase-c-plan.md)).
 5. **Owner-gated window checks (cannot verify headless):** R2-1 `--sim-go2` macOS in-process
    window (opens, no segfault, walk animates; frozen-when-idle is expected v1) · R2-4 single ^C
