@@ -44,6 +44,15 @@ class Scenario:
             position against the named box, so a navigation sub-goal can verify
             "reached the kitchen" by scene name without hand-passing coordinates.
             Empty (the default) means the scene declares no named rooms.
+        sim_backend: the simulator backend this scenario targets. ``"mujoco"``
+            (the default — every pre-existing preset) loads ``scene_xml`` as
+            MJCF; other backends (e.g. ``"habitat"``, ADR-009) interpret
+            ``scene_ref`` instead. The kernel never imports a backend from this
+            field — it is data the world/boot layer dispatches on.
+        scene_ref: backend-generic scene reference for non-MJCF backends
+            (e.g. a dataset-relative scene id such as
+            ``"hm3d/minival/00800-TEEsavR23oF"``). Empty for MJCF scenarios,
+            which keep using ``scene_xml``.
     """
 
     id: str
@@ -53,3 +62,5 @@ class Scenario:
     object_names: tuple[str, ...] = field(default_factory=tuple)
     place_region: tuple[float, float, float, float] | None = None
     rooms: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
+    sim_backend: str = "mujoco"
+    scene_ref: str = ""

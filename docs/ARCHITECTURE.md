@@ -307,7 +307,10 @@ relative to `vector_os_nano/`.
 **Playground track** (`playground/` — a separate, parallel-developed world track; ADR-008)
 - `world.py` / `scenario.py` / `catalog.py` — embodiment-aware `PlaygroundWorld` + frozen `Scenario`
   + the preset catalog (arm: `tabletop`, `tabletop_tray`; quadruped: `go2_room`); registers into the
-  kernel `WorldRegistry` via a lazy hook.
+  kernel `WorldRegistry` via a lazy hook. `Scenario` is sim-backend-aware (additive
+  `sim_backend`/`scene_ref` fields, default `"mujoco"`/`""`): an MJCF scenario loads `scene_xml`,
+  a non-MJCF backend (e.g. habitat, ADR-009) dispatches on `scene_ref` — the kernel never
+  imports a simulator from this data.
 - `verify/` — sim-oracle verify predicates contributed across the seam. The ARM predicates
   (`holding_object`/`arm_at_home`/`placed_count`/`detect_objects`/`describe_scene`) are SINGLE-SOURCED
   in the kernel at `vcli/worlds/arm_sim_oracle.py` (so `RobotWorld` can reuse them without the kernel

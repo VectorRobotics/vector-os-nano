@@ -9,6 +9,9 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   bridge — spike-verified on the Linux box (photoreal RGB, equirect pano+depth, 819K-pt
   unprojected cloud, GT odom). GATED on owner approval (new external dependency) + HM3D
   agreement; interim scenes are license-free (test-scenes/HSSD/Replica).
+  M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
+  a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
+  (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
 - Last updated: 2026-06-10.
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
