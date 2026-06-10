@@ -1,9 +1,10 @@
 # Verified Agent Kernel — Phase E Plan (dimos-informed hardening + substrate)
 
-- Status: **PROPOSAL — not started. No code yet.** This document only stages the work;
-  nothing here is implemented. Each item is independently shippable and keeps the canonical
-  suite green.
-- Date: 2026-06-08
+- Status: **IN PROGRESS.** Wave 1 complete (W1.1–W1.4) + W2.4 shipped on
+  `feat/verified-agent-kernel` (merged via PR #11/#12); W2.3 shipped 2026-06-10 on
+  `feat/playground-vln`. OPEN: W2.1 + W2.2 (pair — process-lifecycle coordination), Wave 3.
+  Each item is independently shippable and keeps the canonical suite green.
+- Date: 2026-06-08 (status updated 2026-06-10)
 - Branch: `feat/verified-agent-kernel` (HEAD `25ef2ba`; canonical `tests/vcli tests/unit/vcli`
   baseline 863 passed / 4 skipped)
 - Related: [ARCHITECTURE.md](ARCHITECTURE.md), [agent-kernel-STATUS.md](agent-kernel-STATUS.md),
@@ -268,7 +269,7 @@ same-process flags first.
 
 **Effort L / Impact med.**
 
-### W2.3 — ObjectMemory re-query-freshest read
+### W2.3 — ObjectMemory re-query-freshest read — SHIPPED 2026-06-10 (`de4869b`)
 
 **Goal.** Eliminate sync-once-then-stale so verify/replan see the freshest object state.
 
