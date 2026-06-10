@@ -64,6 +64,10 @@ def daemonize(
     os.dup2(log_fd, 1)
     os.dup2(log_fd, 2)
 
+    # W2.2: tag this run — every descendant inherits the env var, so the
+    # watchdog can sweep strays by tag even after a SIGKILL.
+    os.environ["VECTOR_RUN_ID"] = run_id
+
     registry = RunRegistry(root=registry_root)
     registry.register(
         RunEntry(
@@ -120,6 +124,12 @@ def stop_run(registry: RunRegistry, run_id: str, term_timeout: float = 5.0) -> b
         except OSError as exc:
             logger.warning("stop_run(%s): SIGKILL failed: %s", run_id, exc)
         _wait_dead(time.time() + 2.0)
+    # W2.2: reap any tagged descendants the main process left behind.
+    try:
+        from vector_os_nano.vcli.watchdog import sweep_orphans
+        sweep_orphans(run_id)
+    except Exception as exc:  # noqa: BLE001 — sweep is best-effort cleanup
+        logger.warning("stop_run(%s): orphan sweep failed: %s", run_id, exc)
     registry.remove(run_id)
     return True
 

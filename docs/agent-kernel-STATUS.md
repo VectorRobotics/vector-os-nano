@@ -73,14 +73,17 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
-1. **Phase E Wave 2 (resume point): W2.1 mostly SHIPPED 2026-06-10** — `vcli/run_registry.py`
-   (frozen RunEntry, atomic JSON under `~/.vector-os-nano/runs/`, dead-PID sweep),
-   `vcli/daemon.py` (double-fork daemonize smoke-tested end-to-end on Linux, SIGTERM→SIGKILL
-   `stop_run`, `tail_log`), CLI `--status/--stop/--log` early-exit ops (live-verified).
-   REMAINING: `--daemon` CLI wiring needs a goal-runner design (what runs headless — a single
-   NL goal through `run_turn_unified`?) — do together with **W2.2 (RUN_ID watchdog orphan
-   sweep + /tmp flag retirement; coordinate with any parallel GUI session)**. macOS daemonize
-   is owner-unverified. Then Wave 3. (W2.3 SHIPPED — see Shipped.)
+1. **Phase E Wave 2: W2.1 + W2.2 SHIPPED 2026-06-10** — `run_registry.py` (frozen RunEntry,
+   atomic JSON, dead-PID sweep) · `daemon.py` (double-fork daemonize Linux-smoke-tested,
+   SIGTERM→SIGKILL `stop_run` + tagged-orphan sweep, `tail_log`) · CLI `--status/--stop/--log`
+   (live-verified) · `watchdog.py` (stdlib `/proc` environ scan — psutil deliberately NOT
+   added, dependency gate avoided; every run tags `VECTOR_RUN_ID`, descendants inherit, sweep
+   reaps strays even after SIGKILL — proven on a real killed process tree). W2.2 flag survey:
+   ALL current `/tmp/vector_*` flags are agent↔bridge CROSS-process contract (9 files) — zero
+   same-process flags, so the PubSub replacement is correctly empty until one exists.
+   REMAINING in Wave 2: `--daemon` goal-runner design (what runs headless) — align with real
+   need after M2. macOS: daemonize + sweep are /proc/fork-based, owner-unverified there.
+   Then Wave 3. (W2.3 SHIPPED — see Shipped.)
    Plan: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md).
 2. **Named-vs-generic grasp — DONE (2026-06-10).** (a) target-aware `holding_object()` +
    `picked_object` shipped earlier; (b) shipped now: `verify_strengthen.strengthen_target_verify`
