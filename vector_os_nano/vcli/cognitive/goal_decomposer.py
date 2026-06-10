@@ -785,6 +785,15 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
             strategy_params = {}
         fail_action = str(raw.get("fail_action", ""))
 
+        # Named-target strengthening (backlog #2b): a step whose params bind a
+        # named target must verify against THAT target, not "holding anything".
+        # Runs BEFORE _validate_verify so the rewritten expression still passes
+        # the AST allowlist like any LLM-authored one. Stricter-only.
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            strengthen_target_verify,
+        )
+        verify = strengthen_target_verify(verify, strategy_params)
+
         # Validate verify expression
         verify = self._validate_verify(verify)
         if verify is None:

@@ -1199,9 +1199,22 @@ class VectorEngine:
             "stop": "True",
             "walk": "True",
             "turn": "True",
+            # backlog #2b: a fast-path pick must carry the holding predicate,
+            # target-bound when a target was extracted (strengthened below) —
+            # never the trivially-true sentinel.
+            "pick": "holding_object()",
         }
         template = _VERIFY_MAP.get(skill_name, "True")
-        return template.replace("{arg}", arg) if "{arg}" in template else template
+        verify = template.replace("{arg}", arg) if "{arg}" in template else template
+        try:
+            from vector_os_nano.vcli.cognitive.verify_strengthen import (
+                strengthen_target_verify,
+            )
+            return strengthen_target_verify(
+                verify, {"object_label": arg} if arg else {}
+            )
+        except ImportError:  # cognitive layer absent — engine degrades gracefully
+            return verify
 
     def _resolve_room_alias(self, room_input: str) -> str:
         """Resolve a room name/alias to canonical SceneGraph ID.

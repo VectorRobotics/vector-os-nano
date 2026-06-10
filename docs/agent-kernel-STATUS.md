@@ -77,11 +77,13 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    W2.2 (RUN_ID watchdog orphan sweep)** — both need process-lifecycle coordination if a
    parallel GUI session is running — or Wave 3. (W2.3 SHIPPED 2026-06-10 — see Shipped.)
    Plan: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md).
-2. **Named-vs-generic grasp (owner picked (a)+(b); (a) shipped, (b) NEXT):** a NAMED target must
-   bind or the step fails loudly — never silently grab the nearest (that's a FALSE SUCCESS:
-   grabbed a non-apple, reported done). Generic grabs ("抓个东西") keep unbound→nearest. Wire
-   pick's verify to the resolved target via target-aware `holding_object()` + the recorded
-   `picked_object`. Do NOT just remove unbound→nearest.
+2. **Named-vs-generic grasp — DONE (2026-06-10).** (a) target-aware `holding_object()` +
+   `picked_object` shipped earlier; (b) shipped now: `verify_strengthen.strengthen_target_verify`
+   rewrites a bare `holding_object()` to `holding_object('<target>')` whenever the step's params
+   bind a named target — applied at BOTH plan chokepoints (`_validate_sub_goal` for every LLM
+   decompose/replan; the engine 1-step fast path, whose pick verify is no longer the `True`
+   sentinel). Structural/stricter-only; `${...}` refs and `__` skipped. Generic grabs keep
+   unbound→nearest + bare form.
 3. **Detect-verify close-the-loop (R2-7 deeper):** a detect step's query-less verify
    (`len(detect_objects())>0`) FALSE-PASSES when the specific target is absent. Real fix: verify
    against the detect STEP's own alias-aware output (Rule 4), not a separate oracle call — the

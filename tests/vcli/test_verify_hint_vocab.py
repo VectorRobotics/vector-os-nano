@@ -206,8 +206,10 @@ def test_bound_pick_plan_passes_validation() -> None:
     assert tree.validation_notes == ()
     assert len(tree.sub_goals) == 1
     step = tree.sub_goals[0]
-    # The verify expression was accepted (not cleared to "").
-    assert step.verify == "holding_object()"
+    # The verify expression was accepted AND strengthened to the bound target
+    # (backlog #2b): a named pick verifies "holding the REQUESTED object",
+    # never the bare "holding anything" form that false-passes a wrong grab.
+    assert step.verify == "holding_object('banana')"
     # The strategy is kept (no hallucination clearing).
     assert step.strategy == "pick_skill"
     assert step.cleared_strategy == ""
