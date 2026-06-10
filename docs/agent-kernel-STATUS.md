@@ -15,7 +15,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 - Last updated: 2026-06-10.
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
-## Current state (2026-06-09)
+## Current state (2026-06-10)
 
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
@@ -66,47 +66,33 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
   (`14ae43c`) · **W2.3 ObjectMemory re-query-freshest** (2026-06-10, implemented inline after
   the harness-flake warning: readers re-query the live SceneGraph TTL-gated, decay cache as
   fallback, byte-identical without a ref; 46 level57 + 49 level60/61 green).
-- **This branch:** engine sync-exec gated on mjpython only — Linux REPL responsive (`fcc6b20`) ·
+- **2026-06-10 third-world campaign session (feat/playground-vln, 13 commits, autonomous loop):**
+  G0 Linux-clone bootstrap (.venv on the verified stack, sim.sh hardened) · M0 ADR-009
+  simulator selection (habitat-sim recommended, 2 hardware spikes: photoreal RGB, equirect
+  pano+depth, 819K-pt unprojected cloud, GT odom) · M1 backend-aware Scenario + non-MJCF world
+  registration proven · FALSE-SUCCESS class killed (#2b `verify_strengthen` named-target verify;
+  #3 kernel `step_output()` per-step self-verify) · Phase E Wave 2 complete (W2.1 run-registry/
+  daemon/CLI ops + W2.2 RUN_ID watchdog /proc sweep) · Stage 3 referring-expression grounding
+  (`Objects (live)` in world_context + exact-name binding guidance) · W3.1 WorldBlueprint ·
+  W3.3 first slice (protocol-based provider resolution, `_base` seam) · hygiene (dead examples/
+  deleted, doc truth-ups). Suite 1140→1186 green.
+- **This branch (gait fix, merged PR #13):** engine sync-exec gated on mjpython only — Linux REPL responsive (`fcc6b20`) ·
   go2 gated diagnostics + `get_sim_time()` (`6a39f6c`) · venv reconcile `.venv-nano`→`.venv`
   (`13a9429`) · **the gait sim-dt fix** (`d7e158b`) · docs: tricky-bugs casebook + STATUS condense
   (this commit).
 
 ## OPEN — prioritized backlog
 
-1. **Phase E Wave 2: W2.1 + W2.2 SHIPPED 2026-06-10** — `run_registry.py` (frozen RunEntry,
-   atomic JSON, dead-PID sweep) · `daemon.py` (double-fork daemonize Linux-smoke-tested,
-   SIGTERM→SIGKILL `stop_run` + tagged-orphan sweep, `tail_log`) · CLI `--status/--stop/--log`
-   (live-verified) · `watchdog.py` (stdlib `/proc` environ scan — psutil deliberately NOT
-   added, dependency gate avoided; every run tags `VECTOR_RUN_ID`, descendants inherit, sweep
-   reaps strays even after SIGKILL — proven on a real killed process tree). W2.2 flag survey:
-   ALL current `/tmp/vector_*` flags are agent↔bridge CROSS-process contract (9 files) — zero
-   same-process flags, so the PubSub replacement is correctly empty until one exists.
-   REMAINING in Wave 2: `--daemon` goal-runner design (what runs headless) — align with real
-   need after M2. macOS: daemonize + sweep are /proc/fork-based, owner-unverified there.
-   W3.1 WorldBlueprint SHIPPED 2026-06-10 (`vcli/worlds/blueprint.py`: frozen value object,
-   `blueprint_of()` single-source derivation, `BlueprintWorld` adapter = build-from-blueprint
-   with zero engine changes; `.blueprint()` sugar on worlds intentionally skipped — the
-   universal `blueprint_of` covers it). W3.3 FIRST SLICE SHIPPED 2026-06-10 (`vcli/providers.py`: narrow runtime_checkable
-   Base{State,Motion}Provider + fail-loud resolve/ensure with named missing methods; `_base`
-   seam migrated — locomotion `_require_base` + engine context builder; py3.12 getattr_static
-   quirk handled with a dynamic-attr fallback so MagicMock doubles keep working; remaining
-   getattr sites migrate incrementally). Wave 3 remaining: W3.2 capability factory (strategic,
-   M-L), W3.3 rest of the getattr sites. (W2.3 SHIPPED — see Shipped.)
-   Plan: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md).
-2. **Named-vs-generic grasp — DONE (2026-06-10).** (a) target-aware `holding_object()` +
-   `picked_object` shipped earlier; (b) shipped now: `verify_strengthen.strengthen_target_verify`
-   rewrites a bare `holding_object()` to `holding_object('<target>')` whenever the step's params
-   bind a named target — applied at BOTH plan chokepoints (`_validate_sub_goal` for every LLM
-   decompose/replan; the engine 1-step fast path, whose pick verify is no longer the `True`
-   sentinel). Structural/stricter-only; `${...}` refs and `__` skipped. Generic grabs keep
-   unbound→nearest + bare form.
-3. **Detect-verify close-the-loop — DONE (2026-06-10).** Kernel `step_output(path)` is injected
-   per-evaluation (executor binds it to the step's own `exec_output`; `GoalVerifier.evaluate`
-   gained an `extra_ns` overlay — sandbox unchanged, never persists). `DetectSkill.verify_hint`
-   is now `len(step_output('objects')) > 0` (was the false-passing query-less oracle call);
-   `step_output` is unioned into every world's decompose allowlist (kernel-provided, like
-   `answer`). Verify now consumes the step's own alias-aware observation (Rule 4).
-4. **Stage 3 grounding remainder:** referring-expression resolution SHIPPED 2026-06-10 —
+1. **M2 — the habitat third world itself: GATED on owner (DQ-2, ADR-009 approval + HM3D
+   agreement).** Everything ungated that M2/M3 need is in place: seam (M1), grounding
+   (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
+   On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
+   `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates
+   (at_position/visited/object_visible/geodesic_dist), `vector-cli --scenario hm3d_house`.
+2. **Phase E remainder:** `--daemon` goal-runner design (align with real need after M2) ·
+   W3.2 capability factory + model-zoo bridge (strategic — do WITH the C.3 owner framing,
+   not before it) · W3.3 remaining getattr-by-string sites (incremental, mechanical).
+3. **Stage 3 grounding remainder:** referring-expression resolution SHIPPED 2026-06-10 —
    `world_context` now carries `Objects (live): ...` (world-model labels + property hints,
    sim-oracle body-name fallback, capped, fail-safe) and `_TARGET_BINDING_GUIDANCE` teaches
    resolving the user's reference (any language, attributes) to the EXACT listed name at
@@ -116,10 +102,10 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    `MuJoCoPerception`/`DetectSkill` real-perception path on no-oracle hardware.
    **Phase C.3/C.4** stays blocked behind that
    ([agent-kernel-phase-c-plan.md](agent-kernel-phase-c-plan.md)).
-5. **Owner-gated window checks (cannot verify headless):** R2-1 `--sim-go2` macOS in-process
+4. **Owner-gated window checks (cannot verify headless):** R2-1 `--sim-go2` macOS in-process
    window (opens, no segfault, walk animates; frozen-when-idle is expected v1) · R2-4 single ^C
    aborts to prompt under mjpython, second ^C exits.
-6. **Chores:** pin/vendor `convex_mpc` in `pyproject.toml` (a venv rebuild silently loses the
+5. **Chores:** pin/vendor `convex_mpc` in `pyproject.toml` (a venv rebuild silently loses the
    numpy2 fixes — tricky-bugs Case 2) · cli.py 32 pre-existing ruff errors · version is still
    0.1.0 in pyproject/version.py while history speaks of v2.x (owner call) ·
    `ros2/nodes/agent_node.py` still calls the removed `agent.execute` (every /execute service
