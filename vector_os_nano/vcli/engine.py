@@ -1632,7 +1632,7 @@ class VectorEngine:
         )
 
     # ------------------------------------------------------------------
-    # Stage 5 (S5.3) — unified closed-loop controller (DARK-LAUNCHED)
+    # Stage 5 — unified closed-loop controller (LIVE since S5.4)
     # ------------------------------------------------------------------
 
     def run_turn_unified(
@@ -1647,12 +1647,12 @@ class VectorEngine:
         app_state: dict[str, Any] | None = None,
         on_reasoning: Callable[[str], None] | None = None,
     ) -> UnifiedTurnResult:
-        """Run ONE user turn through the unified closed loop (Stage 5, S5.3).
+        """Run ONE user turn through the unified closed loop (Stage 5).
 
-        DARK-LAUNCHED — nothing in ``cli.py`` / ``mcp/server.py`` calls this yet;
-        it is exercised by tests (and is reachable behind an opt-in only). The two
-        legacy paths (``run_turn`` and ``vgg_decompose``/``vgg_execute``) are left
-        intact and unmodified.
+        LIVE since the S5.4 cut-over: BOTH frontends (``cli.py`` and
+        ``mcp/tools.py``) call this by DEFAULT for every turn — chat included.
+        ``VECTOR_LEGACY_TURN=1`` restores the pre-cut-over open ``run_turn``
+        ReAct fork for one release as the fallback.
 
         North star (rule 1): every interaction is a CLOSED loop. This method ALWAYS
         produces a :class:`GoalTree` and runs the SAME harness loop (topo-execute

@@ -29,10 +29,13 @@ AI Agent (VectorEngine)
 ┌─────────────────────────────────────────────────────────────────┐
 │  vector-cli (vcli/cli.py)                                       │
 │                                                                 │
-│  用户输入 ──→ IntentRouter (意图分类)                             │
+│  用户输入 ──→ IntentRouter (意图分类 — 仅作路由提示, 不再分叉)      │
 │                  │                                              │
 │                  ↓                                              │
-│              VectorEngine.run_turn()                             │
+│       VectorEngine.run_turn_unified()  (Stage 5 统一闭环控制器:   │
+│       每一轮 — 含纯对话 — 都产出 verified trace; 其 tool_use      │
+│       路线在内部走 run_turn ReAct 循环。VECTOR_LEGACY_TURN=1     │
+│       可回退旧的开环 run_turn, 仅保留一个版本)                     │
 │                  │                                              │
 │                  ├── DynamicSystemPrompt                         │
 │                  │     ├── 角色设定 (缓存)                        │

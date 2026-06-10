@@ -98,7 +98,14 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    window (opens, no segfault, walk animates; frozen-when-idle is expected v1) · R2-4 single ^C
    aborts to prompt under mjpython, second ^C exits.
 6. **Chores:** pin/vendor `convex_mpc` in `pyproject.toml` (a venv rebuild silently loses the
-   numpy2 fixes — tricky-bugs Case 2) · cli.py 32 pre-existing ruff errors · canary test for the
+   numpy2 fixes — tricky-bugs Case 2) · cli.py 32 pre-existing ruff errors · version is still
+   0.1.0 in pyproject/version.py while history speaks of v2.x (owner call) ·
+   `ros2/nodes/agent_node.py` still calls the removed `agent.execute` (every /execute service
+   call errors into the broad except) · hygiene 2026-06-10: `examples/` DELETED (all five
+   taught the removed v0.1 `agent.execute` API and crashed on it; git history is the archive),
+   `run_turn_unified` dark-launch docstring corrected (it is live), phase-d Stage-4/5 status
+   headers truthed up, cli-tool-system diagram now shows the unified controller ·
+   canary test for the
    private `mujoco.viewer._MJPYTHON` probe (`viewer_mode`) · remove the TEMP gated diagnostics
    when gait work is truly done. Linux clone (`~/Desktop/vector_os_nano`) reconciled 2026-06-10:
    synced to master, `.venv` rebuilt (mujoco 3.9 / numpy 2.4.6 / pin 4.0 + convex_mpc editable),

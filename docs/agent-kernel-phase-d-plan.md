@@ -159,7 +159,8 @@ a marked live-LLM smoke).
 
 ## Stage 4 (control-flow IR + observation-driven replan)
 
-**Status: not started.** Depends on Stage 3 (grounding must be real before dynamic loops are useful).
+**Status: SHIPPED (foreach + the obs-driven replan hook; `until`/`if` remain future work —
+see STATUS).** The body below is the original plan, kept for design rationale.
 
 - Add `foreach`/`until`/`if` constructs to the goal model (`vcli/cognitive/types.py`, SubGoal shape).
 - Executor expands a `foreach` at runtime from the producing step's `result_data` output (e.g.
@@ -174,7 +175,9 @@ count, executes each pick/place, and passes per-step verify throughout.
 
 ## Stage 5 (unify the two planning paths)
 
-**Status: not started.** Depends on Stages 3-4.
+**Status: SHIPPED (S5.4 cut-over — `run_turn_unified` is the default for every turn in both
+frontends; `VECTOR_LEGACY_TURN=1` is the one-release fallback; the stage-5 plan doc was deleted
+as fully shipped).** The body below is the original sketch, kept for design rationale.
 
 Merge the VGG path and the `tool_use` path into one closed-loop controller. The two paths currently
 diverge at `run_turn`: VGG for "actions", tool_use for "conversation". Stage 5 makes VGG the unified
