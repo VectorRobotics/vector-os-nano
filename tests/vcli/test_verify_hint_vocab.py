@@ -9,7 +9,7 @@ PASSES the decompose validator — never model behaviour:
 
   1. ``Skill.to_schemas()`` surfaces each arm skill's declared ``verify_hint``
      (pick -> holding_object(), home -> arm_at_home(), detect ->
-     len(detect_objects()) > 0, place -> not holding_object()).
+     len(step_output('objects')) > 0, place -> not holding_object()).
   2. ``build_decompose_vocab`` derives, world-agnostically:
        - per-strategy ``suggested verify:`` lines in strategy_params_help,
        - a few-shot example whose verify expression IS a skill's verify_hint,
@@ -69,7 +69,7 @@ def test_to_schemas_includes_verify_hint_per_skill() -> None:
     by_name = {s["name"]: s for s in _arm_schemas()}
     assert by_name["pick"]["verify_hint"] == "holding_object()"
     assert by_name["home"]["verify_hint"] == "arm_at_home()"
-    assert by_name["detect"]["verify_hint"] == "len(detect_objects()) > 0"
+    assert by_name["detect"]["verify_hint"] == "len(step_output('objects')) > 0"  # backlog #3
     assert by_name["place"]["verify_hint"] == "not holding_object()"
 
 
@@ -77,13 +77,14 @@ def test_verify_hint_predicates_live_in_arm_verify_namespace() -> None:
     # Every non-trivial verify_hint must reference only predicates present in the
     # arm verify allowlist (Step 2) or the always-safe True literal — otherwise
     # the planner would be taught a verify the validator rejects.
-    allowed = set(_ARM_VERIFY_SIGS) | {"True", "len"}
+    allowed = set(_ARM_VERIFY_SIGS) | {"True", "len", "step_output"}
     for s in _arm_schemas():
         hint = s["verify_hint"]
         if hint == "True":
             continue
         # The predicate name is the token before the first "(".
-        for fn in ("holding_object", "arm_at_home", "detect_objects", "placed_count"):
+        # step_output is KERNEL-injected per-evaluation (backlog #3), not a world predicate.
+        for fn in ("holding_object", "arm_at_home", "detect_objects", "placed_count", "step_output"):
             if fn in hint:
                 assert fn in allowed
                 break
@@ -102,7 +103,7 @@ def test_params_help_carries_suggested_verify_per_skill() -> None:
     # Each skill's declared predicate is surfaced as a 'suggested verify' line.
     assert "suggested verify: holding_object()" in help_text
     assert "suggested verify: arm_at_home()" in help_text
-    assert "suggested verify: len(detect_objects()) > 0" in help_text
+    assert "suggested verify: len(step_output('objects')) > 0" in help_text  # backlog #3
     assert "suggested verify: not holding_object()" in help_text
 
 

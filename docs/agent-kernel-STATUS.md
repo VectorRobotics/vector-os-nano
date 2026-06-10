@@ -84,10 +84,12 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    decompose/replan; the engine 1-step fast path, whose pick verify is no longer the `True`
    sentinel). Structural/stricter-only; `${...}` refs and `__` skipped. Generic grabs keep
    unbound→nearest + bare form.
-3. **Detect-verify close-the-loop (R2-7 deeper):** a detect step's query-less verify
-   (`len(detect_objects())>0`) FALSE-PASSES when the specific target is absent. Real fix: verify
-   against the detect STEP's own alias-aware output (Rule 4), not a separate oracle call — the
-   language principle forbids CN/EN alias tables.
+3. **Detect-verify close-the-loop — DONE (2026-06-10).** Kernel `step_output(path)` is injected
+   per-evaluation (executor binds it to the step's own `exec_output`; `GoalVerifier.evaluate`
+   gained an `extra_ns` overlay — sandbox unchanged, never persists). `DetectSkill.verify_hint`
+   is now `len(step_output('objects')) > 0` (was the false-passing query-less oracle call);
+   `step_output` is unioned into every world's decompose allowlist (kernel-provided, like
+   `answer`). Verify now consumes the step's own alias-aware observation (Rule 4).
 4. **Stage 3 grounding remainder:** VLM `MuJoCoPerception`/`DetectSkill` perception path,
    referring-expression resolution ("the red cup" → object_id), ObjectMemory re-sync (=W2.3).
    **Phase C.3/C.4** (real specialized model in the robot world) stays blocked behind this

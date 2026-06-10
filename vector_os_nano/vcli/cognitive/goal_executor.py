@@ -32,6 +32,36 @@ from vector_os_nano.vcli.cognitive.types import (
 logger = logging.getLogger(__name__)
 
 
+def _make_step_output(exec_output: Any) -> Callable[..., Any]:
+    """Build the per-evaluation ``step_output(path='')`` verify function.
+
+    Bound to the CURRENT step's own structured output (backlog #3, Rule 4):
+    a verify expression can consume what THIS step observed — e.g. detect's
+    alias-aware ``objects`` list — instead of re-querying a separate oracle
+    that false-passes when the requested target is absent.
+
+    Pure dict/list traversal on dotted *path* segments (mirrors the
+    Blackboard's resolution style); any miss returns ``None`` (fail-safe —
+    never raises into the sandbox). ``path=''`` returns the whole output.
+    """
+
+    def step_output(path: str = "") -> Any:
+        if not path:
+            return exec_output
+        cur: Any = exec_output
+        for part in str(path).split("."):
+            if isinstance(cur, dict):
+                cur = cur.get(part)
+            elif isinstance(cur, list) and part.lstrip("-").isdigit():
+                idx = int(part)
+                cur = cur[idx] if -len(cur) <= idx < len(cur) else None
+            else:
+                return None
+        return cur
+
+    return step_output
+
+
 class GoalExecutor:
     """Executes a GoalTree, verifying each sub-goal and handling fallbacks."""
 
@@ -406,8 +436,11 @@ class GoalExecutor:
                 failure_class=failure_class,
             )
 
-        # Verify — yields (bool, raw value) from the same sandbox.
-        verify_result, verify_value = self._verify_and_value(sub_goal.verify)
+        # Verify — yields (bool, raw value) from the same sandbox. The step's
+        # own structured output is injected as step_output() (backlog #3).
+        verify_result, verify_value = self._verify_and_value(
+            sub_goal.verify, exec_output
+        )
 
         if verify_result:
             # Success path
@@ -476,8 +509,10 @@ class GoalExecutor:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("GoalExecutor: fallback strategy raised: %s", exc)
 
-            # Re-verify after fallback
-            verify_result_after, verify_value_after = self._verify_and_value(sub_goal.verify)
+            # Re-verify after fallback — against the freshest output in hand.
+            verify_result_after, verify_value_after = self._verify_and_value(
+                sub_goal.verify, fallback_output or exec_output
+            )
             # Prefer the fallback's output; fall back to the primary attempt's.
             fb_result_data = {
                 "output": fallback_output or exec_output,
@@ -710,18 +745,38 @@ class GoalExecutor:
     # Observation capture (Stage 1a)
     # ------------------------------------------------------------------
 
-    def _verify_and_value(self, expression: str) -> tuple[bool, Any]:
+    def _verify_and_value(
+        self, expression: str, exec_output: Any = None
+    ) -> tuple[bool, Any]:
         """Return ``(verify_bool, verify_value)`` for *expression*.
 
         Prefers the verifier's :meth:`evaluate` (which surfaces the raw value);
         falls back to :meth:`verify` (value = None) for any verifier — including
         test mocks — that only exposes ``verify``. The boolean result is always
         identical to what ``verify`` alone would have returned.
+
+        ``exec_output`` (backlog #3) is the CURRENT step's own structured
+        output. When given, a kernel ``step_output(path='')`` function is
+        injected per-evaluation so the verify can consume what THIS step
+        observed (Rule 4 — e.g. detect verifying its own alias-aware result)
+        instead of re-querying a separate oracle. Old-signature verifiers
+        (and mocks) keep working: a TypeError falls back to the bare call.
         """
+        extra_ns = (
+            {"step_output": _make_step_output(exec_output)}
+            if exec_output is not None
+            else None
+        )
         evaluate = getattr(self._verifier, "evaluate", None)
         if callable(evaluate):
             try:
-                outcome = evaluate(expression)
+                if extra_ns is not None:
+                    try:
+                        outcome = evaluate(expression, extra_ns=extra_ns)
+                    except TypeError:
+                        outcome = evaluate(expression)
+                else:
+                    outcome = evaluate(expression)
                 if isinstance(outcome, tuple) and len(outcome) == 2:
                     return bool(outcome[0]), outcome[1]
             except Exception as exc:  # noqa: BLE001

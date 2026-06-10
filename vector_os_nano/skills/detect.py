@@ -47,8 +47,12 @@ class DetectSkill:
 
     name: str = "detect"
     description: str = "Detect objects in the workspace using VLM. The query is a natural-language noun/phrase in ANY language (e.g. 'banana' / '香蕉' / 'red cup' / '红色杯子'), or 'all objects' to detect everything."
-    # Success predicate this skill is verified against (single-source for the planner).
-    verify_hint: str = "len(detect_objects()) > 0"
+    # Success predicate this skill is verified against (single-source for the
+    # planner). Backlog #3 (Rule 4): verify THIS step's own alias-aware output
+    # via the kernel-injected step_output() — never a separate query-less
+    # oracle call, which FALSE-PASSES when the requested target is absent but
+    # the scene holds other objects.
+    verify_hint: str = "len(step_output('objects')) > 0"
     parameters: dict = {
         "query": {
             "type": "string",

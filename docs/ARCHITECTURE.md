@@ -213,7 +213,12 @@ These are the contracts the kernel guarantees. Anything that violates them is a 
   hard timeout. The sandbox is **only ever stricter** than plain Python — never `eval` or
   `exec`, never an import escape. Verification is machine-checkable, not an LLM judge
   (an escalation ladder to a visual/VLM check exists for cases predicates cannot express;
-  LLM judging is the last resort, not the default).
+  LLM judging is the last resort, not the default). A verify can additionally consume the
+  CURRENT step's own structured output through the kernel-injected `step_output(path)`
+  function (a per-evaluation namespace overlay; the executor binds it to that step's
+  `exec_output`) — so e.g. a detect step verifies what IT observed, alias-aware, instead
+  of re-querying a separate oracle that false-passes when the requested target is absent.
+  The overlay never persists and the sandbox is not loosened.
 
 - **Closed-loop observation flow.** Each step's output is written to the per-run
   Blackboard. Downstream parameters bind to upstream outputs via `${step.output.path}`

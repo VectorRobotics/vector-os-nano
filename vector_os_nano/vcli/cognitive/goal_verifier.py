@@ -96,7 +96,7 @@ class GoalVerifier:
     # Public API
     # ------------------------------------------------------------------
 
-    def verify(self, expression: str) -> bool:
+    def verify(self, expression: str, extra_ns: "dict[str, Any] | None" = None) -> bool:
         """Evaluate *expression* in a restricted sandbox.
 
         Returns ``True`` if the expression evaluates to a truthy value.
@@ -105,9 +105,11 @@ class GoalVerifier:
         Thin wrapper over :meth:`evaluate` — returns only the bool so every
         existing caller and the evidence gate behave byte-identically.
         """
-        return self.evaluate(expression)[0]
+        return self.evaluate(expression, extra_ns=extra_ns)[0]
 
-    def evaluate(self, expression: str) -> tuple[bool, Any]:
+    def evaluate(
+        self, expression: str, extra_ns: "dict[str, Any] | None" = None
+    ) -> tuple[bool, Any]:
         """Evaluate *expression* in the same restricted sandbox as :meth:`verify`.
 
         Returns ``(bool(result), result)`` — the truthiness AND the raw value the
@@ -115,6 +117,14 @@ class GoalVerifier:
         compile/timeout/runtime error) returns ``(False, None)``. The raw-value
         path uses the IDENTICAL sandbox, AST checks, safe builtins, and timeout as
         the boolean path — nothing is loosened.
+
+        ``extra_ns`` (backlog #3) is a PER-CALL namespace overlay — e.g. the
+        executor injecting ``step_output`` bound to the current step's own
+        structured output, so a verify can consume what THIS step observed
+        (Rule 4) instead of re-querying a separate oracle. The overlay lives
+        only in this call's exec globals (``self._namespace`` is never
+        mutated), and the AST checks / safe builtins / timeout are identical —
+        the sandbox is not loosened.
         """
         if not expression or not expression.strip():
             _LOG.warning("GoalVerifier: empty expression")
@@ -175,6 +185,8 @@ class GoalVerifier:
             "__builtins__": _SAFE_BUILTINS,
         }
         exec_globals.update(self._namespace)
+        if extra_ns:
+            exec_globals.update(extra_ns)
 
         # Evaluate with timeout — returns the raw value or _EVAL_FAILED.
         raw = self._eval_with_timeout(code, exec_globals)

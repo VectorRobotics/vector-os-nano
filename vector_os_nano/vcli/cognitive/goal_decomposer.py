@@ -403,6 +403,19 @@ Loop example — "do <something> to every detected object, one by one":
             self.VERIFY_FUNCTIONS = frozenset(verify_functions)
         if verify_fn_signatures is not None:
             self._VERIFY_FN_SIGNATURES = dict(verify_fn_signatures)
+        # ``step_output`` is KERNEL-provided (the executor injects it per-step,
+        # bound to that step's own structured output — backlog #3 / Rule 4), so
+        # it is valid in EVERY world regardless of the injected vocab — union it
+        # in unconditionally, like ``answer`` on the strategy side.
+        self.VERIFY_FUNCTIONS = frozenset(self.VERIFY_FUNCTIONS | {"step_output"})
+        self._VERIFY_FN_SIGNATURES = {
+            **self._VERIFY_FN_SIGNATURES,
+            "step_output": (
+                "step_output(path='') -> Any  # THIS step's own structured output; "
+                "e.g. len(step_output('objects')) > 0 verifies what THIS detect "
+                "step itself found (not a separate scene query)"
+            ),
+        }
         if strategy_descriptions is not None:
             self._STRATEGY_DESCRIPTIONS = dict(strategy_descriptions)
         if strategy_params_help is not None:
