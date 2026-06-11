@@ -104,11 +104,27 @@ GO2_ROOM = Scenario(
     rooms=_GO2_ROOMS,
 )
 
+# M2 (ADR-009): the first photoreal third-world preset — a license-free
+# habitat test scene behind the conda-subprocess backend. embodiment="mobile"
+# selects the base predicate family (a kinematic navmesh base, not the go2
+# gait sim). rooms is honestly EMPTY: the test scene carries no semantic
+# annotations; real named rooms arrive with HM3D-Semantics (DQ-1) in M3 —
+# at_position/facing/geodesic_dist carry the verify story until then.
+APARTMENT = Scenario(
+    id="apartment",
+    embodiment="mobile",
+    scene_xml="",
+    task_hint="Navigate a photoreal scanned apartment (habitat backend).",
+    sim_backend="habitat",
+    scene_ref="habitat-test-scenes/apartment_1.glb",
+)
+
 # id -> Scenario. Additive: new preset scenes append here.
 SCENARIOS: dict[str, Scenario] = {
     TABLETOP.id: TABLETOP,
     TABLETOP_TRAY.id: TABLETOP_TRAY,
     GO2_ROOM.id: GO2_ROOM,
+    APARTMENT.id: APARTMENT,
 }
 
 

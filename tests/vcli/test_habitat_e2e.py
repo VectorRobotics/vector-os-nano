@@ -68,3 +68,60 @@ def test_snap_point_lands_on_navmesh(live_base) -> None:
     p = live_base.get_position()
     snapped = live_base.snap_point([p[0] + 0.2, p[1] + 0.2, p[2]])
     assert all(math.isfinite(v) for v in snapped)
+
+
+# ---------------------------------------------------------------------------
+# M2 acceptance (part 2) — verify predicates through the REAL sandbox
+# ---------------------------------------------------------------------------
+
+_APARTMENT = os.environ.get(
+    "VECTOR_HABITAT_APARTMENT",
+    str(Path.home() / "sandbox" / "habitat-spike" / "data" / "scene_datasets"
+        / "habitat-test-scenes" / "apartment_1.glb"),
+)
+
+
+@pytest.fixture(scope="module")
+def apartment_world_and_agent():
+    """The full M2 stack: registry world + real habitat base + agent stub."""
+    import dataclasses
+    from types import SimpleNamespace
+
+    from vector_os_nano.playground.catalog import get_scenario
+    from vector_os_nano.playground.world import PlaygroundWorld
+
+    scenario = dataclasses.replace(get_scenario("apartment"), scene_ref=_APARTMENT)
+    world = PlaygroundWorld(scenario)
+    base = HabitatBase(scene=_APARTMENT)
+    base.connect()
+    agent = SimpleNamespace(_base=base)
+    yield world, agent, base
+    base.disconnect()
+
+
+@pytest.mark.skipif(
+    not os.path.exists(_APARTMENT), reason="apartment_1 test scene not present"
+)
+def test_m2_acceptance_connect_walk_verify(apartment_world_and_agent) -> None:
+    """campaign M2 判据: headless connect→walk→verify 走通 (真谓词+真沙箱)."""
+    from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
+
+    world, agent, base = apartment_world_and_agent
+    verifier = GoalVerifier(world.build_verify_namespace(agent))
+
+    # Walk somewhere, then verify AT the actual position via the sandbox.
+    base.walk(vx=0.4, duration=1.5)
+    x, y, _ = base.get_position()
+    ok, _val = verifier.evaluate(f"at_position({x:.3f}, {y:.3f}, 0.5)")
+    assert ok is True
+    ok_far, _ = verifier.evaluate(f"at_position({x + 5.0:.3f}, {y + 5.0:.3f}, 0.5)")
+    assert ok_far is False  # the predicate discriminates, not rubber-stamps
+
+    # Geodesic oracle through the sandbox: near target small, far target larger.
+    ok_geo, near = verifier.evaluate(f"geodesic_dist({x:.3f}, {y:.3f})")
+    assert ok_geo is False or near < 0.25  # bool(0.0-ish) may be False; value is what matters
+    assert near == pytest.approx(0.0, abs=0.25)
+
+    h0 = base.get_heading()
+    ok_face, _ = verifier.evaluate(f"facing({h0:.4f}, 0.2)")
+    assert ok_face is True

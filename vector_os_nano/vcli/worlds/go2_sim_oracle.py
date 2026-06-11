@@ -220,3 +220,36 @@ def make_rooms_producer(
         return {"rooms": out, "count": len(out)}
 
     return rooms_producer
+
+
+def make_geodesic_dist(agent: Any) -> Callable[..., float]:
+    """Build ``geodesic_dist(x, y)`` bound to *agent* (M2, habitat oracle).
+
+    Returns the NAVMESH geodesic distance (metres) from the base's current
+    position to the target ``(x, y)`` when the connected base exposes a
+    ``geodesic_distance`` oracle (HabitatBase does); a verify expression like
+    ``geodesic_dist(3.0, 1.0) < 0.5`` is the standard VLN success criterion.
+    Fails safe to ``float('inf')`` — no base, no oracle support, bad args, or
+    an unreachable target all read as "infinitely far", so a < threshold
+    check is honestly False and nothing raises into the sandbox.
+    """
+
+    def geodesic_dist(x: Any, y: Any) -> float:
+        base = _get_base(agent)
+        if base is None or not callable(getattr(base, "geodesic_distance", None)):
+            return float("inf")
+        pos = _base_position(base)
+        if pos is None:
+            return float("inf")
+        try:
+            tx, ty = float(x), float(y)
+            d = float(base.geodesic_distance(list(pos), [tx, ty, pos[2]]))
+        except (TypeError, ValueError):
+            return float("inf")
+        except Exception:  # noqa: BLE001 — oracle hiccup reads as unreachable
+            return float("inf")
+        if not math.isfinite(d):
+            return float("inf")
+        return d
+
+    return geodesic_dist

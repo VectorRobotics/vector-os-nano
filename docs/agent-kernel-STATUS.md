@@ -87,8 +87,14 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    navmesh `try_step` kinematics, geodesic/snap/semantic-objects oracle ops) + `HabitatBridge`
    (PORT handshake, fail-loud, watchdog-tagged) + `HabitatBase` (full BaseProtocol + narrow
    provider specs; vy honestly unsupported) — REAL subprocess e2e green on the Linux box
-   (walk on skokloster navmesh, exact odom, geodesic consistency). Part 2 NEXT: world/scenario
-   (apartment_1 rooms) + verify predicates + `--scenario` wiring. Everything ungated that M2/M3 need is in place: seam (M1), grounding
+   (walk on skokloster navmesh, exact odom, geodesic consistency). Part 2 SHIPPED — M2 COMPLETE: `apartment` preset (embodiment `mobile`, license-free
+   apartment_1, rooms honestly empty until HM3D-Semantics/DQ-1), `geodesic_dist` predicate
+   (kernel oracle, fail-safe inf — the VLN success criterion), `--scenario apartment` boots
+   the kinematic base via `_maybe_init_habitat_agent` (M1 `sim_backend` dispatch), and the
+   acceptance e2e passes LIVE: registry world → real conda-subprocess base → real GoalVerifier
+   sandbox evaluating at_position (discriminating) / geodesic_dist / facing. NEXT: M3 VLN
+   slice (NL instruction → decompose → navigate → geodesic verify; RGB render op + VLM
+   detect/describe on real renders). Everything ungated that M2/M3 need is in place: seam (M1), grounding
    (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
    On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
    `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates

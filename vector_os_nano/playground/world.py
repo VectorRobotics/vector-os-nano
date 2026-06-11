@@ -66,17 +66,22 @@ class PlaygroundWorld:
         """The hardware family this scenario targets (e.g. ``"arm"``/``"go2"``)."""
         return self._scenario.embodiment
 
+    # Embodiments that carry a mobile base. "go2" is the MuJoCo quadruped;
+    # "mobile" is a backend-agnostic kinematic base (habitat third world, M2).
+    _BASE_EMBODIMENTS = ("go2", "mobile")
+
     def has_base(self) -> bool:
-        """True for a mobile-base scenario (Go2), False for an arm scenario.
+        """True for a mobile-base scenario, False for an arm scenario.
 
         Reported from the scenario's embodiment so callers/tests can inspect the
         world's intent. NOTE: the engine still gates the base primitives in the
         decompose vocab from the *connected agent* (``agent._base``), not from
-        the world — keeping the mechanism world-agnostic. A go2 scenario backed
-        by an agent that has a ``_base`` therefore puts walk_forward/turn/
-        scan_360 + the go2 skills in vocab and enables base verify predicates.
+        the world — keeping the mechanism world-agnostic. A mobile scenario
+        backed by an agent that has a ``_base`` therefore puts walk_forward/
+        turn/scan_360 + the base skills in vocab and enables base verify
+        predicates.
         """
-        return self._scenario.embodiment == "go2"
+        return self._scenario.embodiment in self._BASE_EMBODIMENTS
 
     def is_robot(self) -> bool:
         # Both arm and base scenarios drive (simulated) robot hardware.
@@ -131,11 +136,19 @@ class PlaygroundWorld:
         # The scenario's named rooms become the source of truth for visited(),
         # so a navigation sub-goal verifies "reached <room>" by scene name
         # without hand-passing raw coordinates.
+        from vector_os_nano.playground.verify.base_predicates import (
+            make_geodesic_dist,
+        )
+
         rooms = self._scenario.rooms
         return {
             "at_position": make_at_position(agent),
             "facing": make_facing(agent),
             "visited": make_visited(agent, rooms),
+            # M2: navmesh geodesic distance (the VLN success criterion) — binds
+            # for every base embodiment, fails safe to inf when the connected
+            # base has no geodesic oracle (e.g. the MuJoCo go2).
+            "geodesic_dist": make_geodesic_dist(agent),
         }
 
     # The strategy name a decompose plan emits for the detect PRODUCING step. It

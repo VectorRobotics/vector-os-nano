@@ -27,10 +27,13 @@ from vector_os_nano.vcli.worlds import WorldRegistry
 
 
 class TestScenarioBackendFields:
-    def test_existing_presets_default_to_mujoco(self) -> None:
-        """Additive evolution: every shipped preset is untouched by the new
-        fields — sim_backend defaults to 'mujoco', scene_ref to ''."""
-        for scenario_id, scenario in SCENARIOS.items():
+    def test_preexisting_mjcf_presets_untouched(self) -> None:
+        """Additive evolution: the original MJCF presets are untouched by the
+        backend fields — sim_backend defaults to 'mujoco', scene_ref to ''.
+        (The M2 'apartment' preset is the first NON-default user and is
+        asserted separately in test_habitat_world.py.)"""
+        for scenario_id in ("tabletop", "tabletop_tray", "go2_room"):
+            scenario = SCENARIOS[scenario_id]
             assert scenario.sim_backend == "mujoco", scenario_id
             assert scenario.scene_ref == "", scenario_id
 

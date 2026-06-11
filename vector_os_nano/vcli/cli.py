@@ -535,6 +535,35 @@ def enter_scenario(scenario_id: str, app_state: dict[str, Any]) -> Any:
     return world
 
 
+def _maybe_init_habitat_agent(args: argparse.Namespace, world: Any) -> Any:
+    """Boot the habitat kinematic base for a habitat-backend scenario (M2).
+
+    Dispatches on the resolved world's ``scenario.sim_backend`` — data the M1
+    seam carries — so the kernel never imports a simulator from config. Lazy
+    domain imports mirror the playground scenario resolution path. Returns an
+    ``Agent`` with the connected base, or None (loudly) on any failure so the
+    REPL still starts with fail-safe predicates.
+    """
+    scenario = getattr(world, "scenario", None)
+    if scenario is None or getattr(scenario, "sim_backend", "mujoco") != "habitat":
+        return None
+    try:
+        from vector_os_nano.core.agent import Agent  # type: ignore[import]
+        from vector_os_nano.playground.habitat import HabitatBase
+        from vector_os_nano.playground.habitat.scenes import resolve_scene_ref
+
+        scene = resolve_scene_ref(scenario.scene_ref)
+        console.print(
+            f"[dim]  Starting habitat scene '{scenario.id}' ({scene}) ...[/dim]"
+        )
+        base = HabitatBase(scene=scene)
+        base.connect()
+        return Agent(base=base)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]habitat scenario boot failed: {exc}[/red]")
+        return None
+
+
 def _init_agent(args: argparse.Namespace) -> Any:
     if not (args.sim or args.sim_go2):
         return None
@@ -1345,6 +1374,11 @@ def main(argv: list[str] | None = None) -> None:
     # BEFORE the verifier namespace is built, so the merge picks up its predicates.
     agent = _init_agent(args)
     world = _resolve_active_world(args, agent)
+    # M2 (ADR-009): a habitat-backend scenario boots its own kinematic base
+    # when no sim agent was requested — same lazy domain wiring as the
+    # scenario resolution above; failure is loud, the REPL still starts.
+    if agent is None:
+        agent = _maybe_init_habitat_agent(args, world)
 
     # Tools (categorized registry for scalable tool management)
     registry: CategorizedToolRegistry = CategorizedToolRegistry()
