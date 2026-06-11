@@ -82,6 +82,15 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
+0. **OWNER LIVE-TEST FINDING (2026-06-11, vector-cli --scenario apartment): the persona /
+   status surface does not know the habitat world exists.** Banner correctly shows
+   `Base: habitat_kinematic` and the SysNav feed is up, but asking "怎么启动" gets "还没跑
+   仿真" + Go2/arm sim offers, and "怎么启动habitat kinematic" sends the LLM into bash/tool
+   exploration. Root: `robot_status` tool + DynamicSystemPrompt's robot-state block (and the
+   persona's sim-start guidance) are MuJoCo-era — they must reflect a connected habitat
+   base/world: base name, scenario id, position, live world-model object count, and "the
+   world is ALREADY running; no start needed". Fix first next session.
+
 1. **M2 — the habitat third world: OWNER APPROVED DQ-2 (2026-06-10) — IN PROGRESS.**
    Part 1 SHIPPED: `playground/habitat/` server (standalone py3.9, conda subprocess, JSON/socket,
    navmesh `try_step` kinematics, geodesic/snap/semantic-objects oracle ops) + `HabitatBridge`
