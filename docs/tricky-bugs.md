@@ -63,3 +63,21 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** PYTHONPATH to a missing dir fails silent — when debugging "version
   mismatch" symptoms, print `module.__file__` to verify WHICH copy is actually loaded;
   single-source interpreter resolution.
+
+## Case 4 — 50 Hz odom capped at 21 Hz: the executor, not the workload (2026-06, fixed `cd20c9f`)
+
+- **Symptom:** the N1 `/state_estimation` timer (50 Hz) measured 21-25 Hz live, while
+  the underlying stream-channel roundtrip averaged 0.24 ms — three orders of magnitude
+  of headroom.
+- **Why hidden:** the obvious suspect was the ~1 s pano callback blocking the timer
+  (same node, default MutuallyExclusiveCallbackGroup). Moving the fast path to its own
+  callback group changed nothing — the misdirection survived one "fix".
+- **Root cause (measured, discriminating experiment):** rclpy's MultiThreadedExecutor
+  itself caps a 50 Hz Python timer at ~29 Hz on this box — with or WITHOUT pano load.
+  A SingleThreadedExecutor hits 50.0 Hz exactly.
+- **Fix:** fast path (state timer + /cmd_vel sub) lives on its own NODE;
+  `HabitatSysnavBridge.spin_in_background()` runs one SingleThreadedExecutor thread
+  per node.
+- **Lesson:** in rclpy, callback-rate problems are as likely the EXECUTOR as the
+  callback. Benchmark the empty loop before blaming the workload, and prefer one
+  STE per rate-critical node over one MTE for everything.
