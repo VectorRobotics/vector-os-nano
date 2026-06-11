@@ -109,9 +109,13 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    PointCloud2 layout, /state_estimation GT odom). rclpy works IN the venv; the node
    roundtrip is integration-tested (discovery-then-drain pattern — single-threaded wait-set
    starvation documented in the test). Live: real pano pair + plausible world cloud verified.
-   Part B NEXT: build the SysNav sibling workspace (~/Desktop/SysNav exists, src-only, never
-   colcon-built; heavy python deps — budget-boxed attempt) and close /object_nodes_list →
-   LiveSysnavBridge → WorldModel (the M4 acceptance: non-empty object nodes). Everything ungated that M2/M3 need is in place: seam (M1), grounding
+   Part B: `tare_planner` BUILT in the sibling workspace (3m34s, msgs importable) and the
+   CONSUMPTION path is green with REAL messages — stub /object_nodes_list →
+   LiveSysnavBridge → WorldModel (sysnav_<id> canonical ids, VLM-confirmed confidence 1.0 —
+   the v2.4 contract works unchanged; tests/integration/test_sysnav_consumption_path.py,
+   skips where the workspace isn't sourced). FULL M4 acceptance (real semantic_mapping
+   producing nodes from the habitat pano/cloud) is GATED on DQ-3: ~1-2GB perception weights
+   (SAM2 .pt + YOLOE .pt + tensorrt pip + engine export) — owner decision pending. Everything ungated that M2/M3 need is in place: seam (M1), grounding
    (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
    On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
    `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates
