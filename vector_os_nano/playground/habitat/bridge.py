@@ -48,11 +48,19 @@ class HabitatBridge:
     """Spawn + talk to one habitat server. One bridge per scene/run."""
 
     def __init__(
-        self, scene: str, *, boot_timeout: float = 120.0, gui: bool = False
+        self,
+        scene: str,
+        *,
+        boot_timeout: float = 120.0,
+        gui: bool = False,
+        dataset_config: str = "",
+        navmesh: str = "",
     ) -> None:
         self._scene = scene
         self._boot_timeout = boot_timeout
         self._gui = gui
+        self._dataset_config = dataset_config
+        self._navmesh = navmesh
         self._proc: subprocess.Popen | None = None
         self._sock: socket.socket | None = None
         self._rfile: Any = None
@@ -91,6 +99,10 @@ class HabitatBridge:
         argv = [habitat_python(), "-u", str(_SERVER_PATH), "--scene", self._scene]
         if self._gui:
             argv.append("--gui")  # live first-person viewer (server-side window)
+        if self._dataset_config:
+            argv += ["--dataset-config", self._dataset_config]
+        if self._navmesh:
+            argv += ["--navmesh", self._navmesh]
         return argv
 
     def _read_port_handshake(self) -> int:

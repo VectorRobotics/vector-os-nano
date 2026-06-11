@@ -544,7 +544,7 @@ class TestHabitatGuiPlumbing:
         seen: dict = {}
 
         class _StubBridge:
-            def __init__(self, scene, gui=False):
+            def __init__(self, scene, gui=False, **kw):
                 seen["scene"] = scene
                 seen["gui"] = gui
 

@@ -16,6 +16,23 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 
 ## Current state (2026-06-11)
 
+- **Campaign #2 (全栈居住世界, ~/.vector-nano-loop/) — N0 SHIPPED: composed ReplicaCAD
+  dataset scenes + the `house` preset.** `Scenario.scene_dataset_config` (additive field):
+  when set, `scene_ref` is a dataset scene-instance NAME, not a file; the repo side
+  resolves the dataset config + the AUTHORED navmesh (`scenes.py` —
+  `resolve_scene_dataset_config`/`preflight_scene_instance`/`dataset_navmesh_path`;
+  bare habitat_sim ignores the dataset's `navmesh_instances` mapping, spike-verified)
+  and the server takes `--dataset-config`/`--navmesh` plus `--agent-radius/height`
+  with a `recompute_navmesh` fallback. `--scenario house` = ReplicaCAD apt_1
+  (CC-BY-4.0; ~49 m² navigable, 120 placed objects; 5 hand-labeled world-frame rooms).
+  LIVE acceptance (`~/sandbox/live_test_house.py`): all room-pair geodesics finite,
+  every room center snaps inside its box, cross-house navigate tv_corner→entryway
+  10.6 m with geodesic remaining 0.098 (< 0.5 criterion), photoreal furnished render;
+  GUI window present in the X11 tree (visual quality = owner check). Scene data stays
+  OUTSIDE the repo (`~/sandbox/habitat-spike/data`; downloader:
+  `python -m habitat_sim.utils.datasets_download --uids replica_cad_dataset`).
+  Next: N1 — streaming cmd_vel velocity mode (background integration thread,
+  ≥50 Hz /state_estimation decoupled from the 2 Hz pano).
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape

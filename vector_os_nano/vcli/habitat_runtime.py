@@ -67,17 +67,34 @@ def boot_habitat_agent(
     """
     from vector_os_nano.core.agent import Agent  # type: ignore[import]
     from vector_os_nano.playground.habitat import HabitatBase
-    from vector_os_nano.playground.habitat.scenes import resolve_scene_ref
+    from vector_os_nano.playground.habitat.scenes import (
+        dataset_navmesh_path,
+        preflight_scene_instance,
+        resolve_scene_dataset_config,
+        resolve_scene_ref,
+    )
 
     scenario = world.scenario
-    scene = resolve_scene_ref(scenario.scene_ref)
+    if scenario.scene_dataset_config:
+        # Composed dataset scene (N0): scene_ref is an instance NAME the
+        # dataset config resolves; the authored navmesh rides along because
+        # bare habitat_sim ignores the dataset's navmesh_instances mapping.
+        dataset_config = resolve_scene_dataset_config(scenario.scene_dataset_config)
+        scene = preflight_scene_instance(dataset_config, scenario.scene_ref)
+        navmesh = dataset_navmesh_path(dataset_config, scene)
+    else:
+        dataset_config = ""
+        navmesh = ""
+        scene = resolve_scene_ref(scenario.scene_ref)
     show_gui = resolve_habitat_gui(gui)
     _emit(
         on_status,
         f"Starting habitat scene '{scenario.id}' ({scene}) "
         f"[viewer window: {'on' if show_gui else 'off'}] ...",
     )
-    base = HabitatBase(scene=scene, gui=show_gui)
+    base = HabitatBase(
+        scene=scene, gui=show_gui, dataset_config=dataset_config, navmesh=navmesh
+    )
     base.connect()
     agent = Agent(base=base)
 

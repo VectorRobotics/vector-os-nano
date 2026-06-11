@@ -52,7 +52,14 @@ class Scenario:
         scene_ref: backend-generic scene reference for non-MJCF backends
             (e.g. a dataset-relative scene id such as
             ``"hm3d/minival/00800-TEEsavR23oF"``). Empty for MJCF scenarios,
-            which keep using ``scene_xml``.
+            which keep using ``scene_xml``. When ``scene_dataset_config`` is
+            set, this is a dataset scene-instance NAME (e.g. ``"apt_1"``)
+            instead of a file path.
+        scene_dataset_config: optional habitat ``scene_dataset_config.json``
+            reference (absolute, or relative to ``VECTOR_HABITAT_DATA``) for
+            composed dataset scenes (stage + furniture + lighting — e.g.
+            ReplicaCAD, N0). Empty (the default) means ``scene_ref`` is a
+            plain scene file.
     """
 
     id: str
@@ -64,3 +71,4 @@ class Scenario:
     rooms: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
     sim_backend: str = "mujoco"
     scene_ref: str = ""
+    scene_dataset_config: str = ""

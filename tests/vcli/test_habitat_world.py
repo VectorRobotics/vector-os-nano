@@ -110,7 +110,10 @@ class TestCliHabitatDispatch:
         from vector_os_nano.vcli.cli import _maybe_init_habitat_agent
 
         class _FakeBase:
-            def __init__(self, scene: str, gui: bool = False) -> None:
+            def __init__(
+                self, scene: str, gui: bool = False,
+                dataset_config: str = "", navmesh: str = "",
+            ) -> None:
                 self.scene = scene
                 self.gui = gui
                 self.connected = False

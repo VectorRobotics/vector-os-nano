@@ -113,9 +113,21 @@ class _Viewer:
 
 
 class HabitatServer:
-    def __init__(self, scene: str, gui: bool = False) -> None:
+    def __init__(
+        self,
+        scene: str,
+        gui: bool = False,
+        dataset_config: str = "",
+        navmesh: str = "",
+        agent_radius: float = 0.1,
+        agent_height: float = 1.5,
+    ) -> None:
         cfg = habitat_sim.SimulatorConfiguration()
         cfg.scene_id = scene
+        if dataset_config:
+            # Composed dataset scene (N0): scene is an instance NAME the
+            # dataset config resolves (stage + furniture + lighting).
+            cfg.scene_dataset_config_file = dataset_config
         agent_cfg = habitat_sim.agent.AgentConfiguration()
         # M3: an always-on egocentric RGB camera (256x256 — VLM-sized, cheap).
         rgb = habitat_sim.CameraSensorSpec()
@@ -148,6 +160,18 @@ class HabitatServer:
             agent_cfg.sensor_specifications.append(viewer_rgb)
         self.sim = habitat_sim.Simulator(habitat_sim.Configuration(cfg, [agent_cfg]))
         self.agent = self.sim.get_agent(0)
+        # Navmesh: bare-glb scenes auto-load a sidecar .navmesh; dataset
+        # scenes do NOT (bare habitat_sim ignores navmesh_instances), so the
+        # repo side hands us the authored one explicitly. Last resort:
+        # recompute from the loaded geometry with the agent's footprint.
+        if not self.sim.pathfinder.is_loaded and navmesh:
+            self.sim.pathfinder.load_nav_mesh(navmesh)
+        if not self.sim.pathfinder.is_loaded:
+            settings = habitat_sim.NavMeshSettings()
+            settings.set_defaults()
+            settings.agent_radius = agent_radius
+            settings.agent_height = agent_height
+            self.sim.recompute_navmesh(self.sim.pathfinder, settings)
         # Start somewhere legal on the navmesh.
         if self.sim.pathfinder.is_loaded:
             state = self.agent.get_state()
@@ -401,9 +425,24 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--gui", action="store_true",
                     help="open a live first-person viewer window")
+    ap.add_argument("--dataset-config", default="",
+                    help="scene_dataset_config.json for composed dataset scenes")
+    ap.add_argument("--navmesh", default="",
+                    help="authored navmesh to load explicitly (dataset scenes)")
+    ap.add_argument("--agent-radius", type=float, default=0.1,
+                    help="agent footprint radius for navmesh recompute fallback")
+    ap.add_argument("--agent-height", type=float, default=1.5,
+                    help="agent height for navmesh recompute fallback")
     args = ap.parse_args()
 
-    server = HabitatServer(args.scene, gui=args.gui)
+    server = HabitatServer(
+        args.scene,
+        gui=args.gui,
+        dataset_config=args.dataset_config,
+        navmesh=args.navmesh,
+        agent_radius=args.agent_radius,
+        agent_height=args.agent_height,
+    )
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

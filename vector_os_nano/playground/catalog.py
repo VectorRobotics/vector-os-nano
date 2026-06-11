@@ -119,12 +119,40 @@ APARTMENT = Scenario(
     scene_ref="habitat-test-scenes/apartment_1.glb",
 )
 
+# N0 (campaign #2): the first LARGE composed scene — ReplicaCAD apt_1
+# (CC-BY-4.0; ~13m x 7m navigable, 120 placed objects, authored navmesh).
+# Loaded through the dataset config (stage + furniture + lighting), so
+# scene_ref is the scene-instance NAME, not a file. Rooms are hand-labeled
+# world-frame boxes derived from the scene instance's furniture anchors
+# (tv/tvstand at x~-7.7, dining table_01 at (-5.2,-2.5), sofa strip at
+# y~-4, fridge/kitchen_counter at y~2, door2/shoe rack at x~2) and
+# live-verified against the authored navmesh (snap + geodesic harness).
+_HOUSE_ROOMS: dict[str, tuple[float, float, float, float]] = {
+    "tv_corner": (-8.2, -3.7, -6.6, -1.0),
+    "dining": (-6.6, -3.6, -4.1, -1.2),
+    "living_room": (-4.1, -4.7, 0.9, -2.4),
+    "kitchen": (-3.6, 1.0, 0.2, 2.8),
+    "entryway": (1.2, 1.2, 3.2, 2.8),
+}
+
+HOUSE = Scenario(
+    id="house",
+    embodiment="mobile",
+    scene_xml="",
+    task_hint="Navigate a large multi-room ReplicaCAD apartment (habitat backend).",
+    rooms=_HOUSE_ROOMS,
+    sim_backend="habitat",
+    scene_ref="apt_1",
+    scene_dataset_config="replica_cad/replicaCAD.scene_dataset_config.json",
+)
+
 # id -> Scenario. Additive: new preset scenes append here.
 SCENARIOS: dict[str, Scenario] = {
     TABLETOP.id: TABLETOP,
     TABLETOP_TRAY.id: TABLETOP_TRAY,
     GO2_ROOM.id: GO2_ROOM,
     APARTMENT.id: APARTMENT,
+    HOUSE.id: HOUSE,
 }
 
 
