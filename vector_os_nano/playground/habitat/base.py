@@ -127,6 +127,25 @@ class HabitatBase:
     def supports_lidar(self) -> bool:
         return False
 
+    # -- navigation + perception (M3) ---------------------------------------
+    def navigate_to(self, x: float, y: float, tol: float = 0.2) -> dict:
+        """Shortest-path navigate to world (x, y). Blocking; returns the
+        server's outcome dict: reached / remaining geodesic / final state.
+        Honest failure: an unreachable or wall-stuck goal returns
+        reached=False — the verify predicate is the judge, never this flag."""
+        self._require_connected()
+        return self._bridge.request(
+            {"op": "navigate_to", "x": x, "y": y, "tol": tol}
+        )
+
+    def render_rgb_png(self) -> bytes:
+        """Egocentric 256x256 RGB as PNG bytes (the VLM perception input)."""
+        import base64
+
+        self._require_connected()
+        resp = self._bridge.request({"op": "render"})
+        return base64.b64decode(resp["png_base64"])
+
     # -- oracle passthroughs (verify predicates, M2 part 2) -----------------
     def geodesic_distance(self, a: list[float], b: list[float]) -> float:
         self._require_connected()

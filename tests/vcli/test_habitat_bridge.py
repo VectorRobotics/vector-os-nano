@@ -74,6 +74,21 @@ class FakeHabitatServer(threading.Thread):
         if op == "objects":
             return {"ok": True, "objects": [{"name": "sofa_1", "category": "sofa",
                                              "pos": [1.0, 2.0, 0.4]}]}
+        if op == "navigate_to":
+            # flat floor: teleport-walk straight to the goal, always reached
+            self.pos[0], self.pos[1] = req["x"], req["y"]
+            return {"reached": True, "remaining": 0.0, **self._state()}
+        if op == "render":
+            import base64, io, struct, zlib
+            # minimal valid 1x1 PNG (no PIL dep in the py3.12 venv)
+            sig = b"\x89PNG\r\n\x1a\n"
+            def chunk(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+            ihdr = chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            idat = chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00"))
+            png = sig + ihdr + idat + chunk(b"IEND", b"")
+            return {"ok": True, "png_base64": base64.b64encode(png).decode(),
+                    "width": 1, "height": 1}
         if op == "shutdown":
             return {"ok": True, "bye": True}
         return {"ok": False, "error": f"unknown op {op!r}"}
@@ -163,3 +178,16 @@ class TestFailureModes:
         bridge = HabitatBridge(scene="x.glb")
         with pytest.raises(HabitatBridgeError, match="VECTOR_HABITAT_PYTHON"):
             bridge.start()
+
+
+class TestM3Ops:
+    def test_navigate_to_reaches_goal(self, fake_base) -> None:
+        base, _ = fake_base
+        out = base.navigate_to(3.0, 4.0)
+        assert out["reached"] is True
+        assert base.get_position()[:2] == [3.0, 4.0]
+
+    def test_render_returns_png_bytes(self, fake_base) -> None:
+        base, _ = fake_base
+        png = base.render_rgb_png()
+        assert png.startswith(b"\x89PNG")

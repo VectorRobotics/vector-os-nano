@@ -60,7 +60,13 @@ class HabitatServer:
         cfg = habitat_sim.SimulatorConfiguration()
         cfg.scene_id = scene
         agent_cfg = habitat_sim.agent.AgentConfiguration()
-        agent_cfg.sensor_specifications = []  # M2 is navigation-only; sensors come in M3
+        # M3: an always-on egocentric RGB camera (256x256 — VLM-sized, cheap).
+        rgb = habitat_sim.CameraSensorSpec()
+        rgb.uuid = "rgb"
+        rgb.sensor_type = habitat_sim.SensorType.COLOR
+        rgb.resolution = [256, 256]
+        rgb.position = [0.0, 1.2, 0.0]  # eye height on the agent
+        agent_cfg.sensor_specifications = [rgb]
         self.sim = habitat_sim.Simulator(habitat_sim.Configuration(cfg, [agent_cfg]))
         self.agent = self.sim.get_agent(0)
         # Start somewhere legal on the navmesh.
@@ -100,6 +106,74 @@ class HabitatServer:
         st.rotation = _yaw_quat(yaw)
         self.agent.set_state(st)
         return self.get_state()
+
+    # -- navigation -------------------------------------------------------
+    def navigate_to(self, x: float, y: float, tol: float = 0.2) -> dict:
+        """Follow the navmesh shortest path to world (x, y). Deterministic,
+        bounded: per-waypoint, face the waypoint (kinematic yaw set) and
+        advance via try_step; break when progress stalls (stuck/unreachable).
+        """
+        st = self.agent.get_state()
+        start = np.array(st.position, dtype=np.float32)
+        goal_world = [float(x), float(y), _hab_to_world(start)[2]]
+        goal = self.sim.pathfinder.snap_point(_world_to_hab(goal_world))
+
+        path = habitat_sim.ShortestPath()
+        path.requested_start = start
+        path.requested_end = np.array(goal, dtype=np.float32)
+        if not self.sim.pathfinder.find_path(path) or not list(path.points):
+            return {"reached": False, "reason": "no_path", **self.get_state()}
+
+        pos = start
+        yaw = _quat_yaw(st.rotation)
+        step_len = 0.15
+        for wp in list(path.points)[1:]:
+            wp = np.array(wp, dtype=np.float32)
+            stall = 0
+            for _ in range(400):  # hard bound per waypoint
+                delta = wp - pos
+                planar = math.hypot(float(delta[0]), float(delta[2]))
+                if planar <= tol:
+                    break
+                # face the waypoint (habitat: forward = -Z rotated by yaw)
+                yaw = math.atan2(-float(delta[0]), -float(delta[2]))
+                fwd = np.array([-math.sin(yaw), 0.0, -math.cos(yaw)], dtype=np.float32)
+                target = pos + fwd * min(step_len, planar)
+                new_pos = np.array(
+                    self.sim.pathfinder.try_step(pos, target), dtype=np.float32
+                )
+                if float(np.linalg.norm(new_pos - pos)) < 1e-4:
+                    stall += 1
+                    if stall >= 3:
+                        break  # wall-stuck: stop honestly, verify will judge
+                else:
+                    stall = 0
+                pos = new_pos
+        st.position = pos
+        st.rotation = _yaw_quat(yaw)
+        self.agent.set_state(st)
+        out = self.get_state()
+        gd = self.geodesic_distance(out["pos"], [float(x), float(y), out["pos"][2]])
+        out["reached"] = bool(gd <= max(tol * 2.0, 0.4))
+        out["remaining"] = gd
+        return out
+
+    def render(self) -> dict:
+        """Egocentric RGB as base64 PNG (lazy PIL — conda env ships it)."""
+        import base64
+        import io
+
+        from PIL import Image  # lazy: only the render op needs it
+
+        obs = self.sim.get_sensor_observations()
+        rgb = obs["rgb"]
+        buf = io.BytesIO()
+        Image.fromarray(rgb[..., :3]).save(buf, format="PNG")
+        return {
+            "png_base64": base64.b64encode(buf.getvalue()).decode("ascii"),
+            "width": int(rgb.shape[1]),
+            "height": int(rgb.shape[0]),
+        }
 
     # -- navigation oracle ----------------------------------------------
     def geodesic_distance(self, a: "list[float]", b: "list[float]") -> float:
@@ -149,6 +223,15 @@ class HabitatServer:
             }
         if op == "stop":
             return {"ok": True, **self.get_state()}
+        if op == "navigate_to":
+            return {
+                "ok": True,
+                **self.navigate_to(
+                    float(req["x"]), float(req["y"]), float(req.get("tol", 0.2))
+                ),
+            }
+        if op == "render":
+            return {"ok": True, **self.render()}
         if op == "geodesic_distance":
             return {"ok": True, "distance": self.geodesic_distance(req["a"], req["b"])}
         if op == "snap_point":

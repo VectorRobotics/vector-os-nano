@@ -125,3 +125,38 @@ def test_m2_acceptance_connect_walk_verify(apartment_world_and_agent) -> None:
     h0 = base.get_heading()
     ok_face, _ = verifier.evaluate(f"facing({h0:.4f}, 0.2)")
     assert ok_face is True
+
+
+# ---------------------------------------------------------------------------
+# M3 muscle layer — shortest-path navigation + egocentric render (live)
+# ---------------------------------------------------------------------------
+
+
+def test_navigate_to_far_point_and_render(apartment_world_and_agent) -> None:
+    """Navigate across the apartment to a far navmesh point; verify with the
+    geodesic predicate (the M3 success criterion); render an egocentric frame."""
+    world, agent, base = apartment_world_and_agent
+
+    # Pick a target meaningfully far away: probe a few snapped offsets and
+    # keep the one with the largest finite geodesic distance from here.
+    here = base.get_position()
+    best, best_d = None, 0.0
+    for dx, dy in ((4, 0), (-4, 0), (0, 4), (0, -4), (3, 3), (-3, -3)):
+        cand = base.snap_point([here[0] + dx, here[1] + dy, here[2]])
+        d = base.geodesic_distance(here, cand)
+        import math as _m
+        if _m.isfinite(d) and d > best_d:
+            best, best_d = cand, d
+    assert best is not None and best_d > 1.0, "no far navigable target found"
+
+    out = base.navigate_to(best[0], best[1])
+    assert out["reached"] is True, f"navigation failed: {out}"
+
+    from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
+
+    verifier = GoalVerifier(world.build_verify_namespace(agent))
+    ok, dist = verifier.evaluate(f"geodesic_dist({best[0]:.3f}, {best[1]:.3f}) < 0.5")
+    assert ok is True, f"geodesic verify failed (dist check returned {dist})"
+
+    png = base.render_rgb_png()
+    assert png.startswith(b"\x89PNG") and len(png) > 2000  # a real image, not a stub

@@ -92,9 +92,12 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    (kernel oracle, fail-safe inf — the VLN success criterion), `--scenario apartment` boots
    the kinematic base via `_maybe_init_habitat_agent` (M1 `sim_backend` dispatch), and the
    acceptance e2e passes LIVE: registry world → real conda-subprocess base → real GoalVerifier
-   sandbox evaluating at_position (discriminating) / geodesic_dist / facing. NEXT: M3 VLN
-   slice (NL instruction → decompose → navigate → geodesic verify; RGB render op + VLM
-   detect/describe on real renders). Everything ungated that M2/M3 need is in place: seam (M1), grounding
+   sandbox evaluating at_position (discriminating) / geodesic_dist / facing. M3 muscle layer SHIPPED (2026-06-10): server `navigate_to` (shortest-path waypoint
+   following, deterministic + bounded, honest stuck-stop) + always-on 256x256 egocentric RGB
+   + `render` op (base64 PNG, lazy PIL in the conda env); `HabitatBase.navigate_to/render_rgb_png`.
+   Live e2e: cross-apartment navigation verified by `geodesic_dist < 0.5` through the REAL
+   sandbox + a real PNG frame. M3 REMAINING: skill/vocab wiring for the mobile world + the
+   NL slice itself (≥5 instructions, real deepseek, fully deterministic verify). Everything ungated that M2/M3 need is in place: seam (M1), grounding
    (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
    On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
    `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates
@@ -130,7 +133,8 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    `sim.sh` hardened (no silent system-python fallback). NOTE on Linux the known-red
    `test_sim_tool_lifecycle_dev_to_arm_to_dev` is a process-killing SEGFAULT
    (`mujoco.viewer.launch_passive` GL thread) — deselect it there; an intermittent
-   at-exit GL-teardown segfault was also observed once (suite results were complete).
+   at-exit GL-teardown segfault observed twice now (GLFW 'not initialized' warning, AFTER the
+   summary prints — results complete both times; treat exit 139 with a complete tail as green).
 
 ## Run / verify
 
