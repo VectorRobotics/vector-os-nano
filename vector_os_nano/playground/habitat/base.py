@@ -40,9 +40,12 @@ class HabitatBase:
         gui: bool = False,
         dataset_config: str = "",
         navmesh: str = "",
+        robot_glb: str = "",
+        viewer_mode: str = "",
     ) -> None:
         self._bridge = HabitatBridge(
-            scene, gui=gui, dataset_config=dataset_config, navmesh=navmesh
+            scene, gui=gui, dataset_config=dataset_config, navmesh=navmesh,
+            robot_glb=robot_glb, viewer_mode=viewer_mode,
         )
         self._connected = False
         self._warned_vy = False
@@ -167,6 +170,17 @@ class HabitatBase:
 
         self._require_connected()
         resp = self._bridge.request({"op": "render"})
+        return base64.b64decode(resp["png_base64"])
+
+    def viewer_frame_png(self) -> bytes:
+        """Viewer-camera frame as PNG bytes (N3: the third-person view that
+        shows the robot body; headless acceptance + owner artifacts)."""
+        import base64
+
+        self._require_connected()
+        resp = self._bridge.request({"op": "viewer_frame"})
+        if "png_base64" not in resp:
+            raise RuntimeError(resp.get("error", "viewer frame unavailable"))
         return base64.b64decode(resp["png_base64"])
 
     def get_pano(self) -> dict:

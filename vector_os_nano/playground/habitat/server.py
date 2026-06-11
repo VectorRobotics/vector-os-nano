@@ -131,6 +131,8 @@ class HabitatServer:
         navmesh: str = "",
         agent_radius: float = 0.1,
         agent_height: float = 1.5,
+        robot_glb: str = "",
+        viewer_mode: str = "first",
     ) -> None:
         cfg = habitat_sim.SimulatorConfiguration()
         cfg.scene_id = scene
@@ -138,6 +140,7 @@ class HabitatServer:
             # Composed dataset scene (N0): scene is an instance NAME the
             # dataset config resolves (stage + furniture + lighting).
             cfg.scene_dataset_config_file = dataset_config
+        self._viewer_mode = viewer_mode if viewer_mode in ("first", "chase") else "first"
         agent_cfg = habitat_sim.agent.AgentConfiguration()
         # M3: an always-on egocentric RGB camera (256x256 — VLM-sized, cheap).
         rgb = habitat_sim.CameraSensorSpec()
@@ -159,14 +162,20 @@ class HabitatServer:
         pano_depth.resolution = [960, 1920]
         pano_depth.position = [0.0, 1.2, 0.0]
         agent_cfg.sensor_specifications = [rgb, pano_rgb, pano_depth]
-        if gui:
-            # Dedicated viewer camera (gui runs only — headless behavior is
-            # byte-identical without it). 512x512 native beats upscaling 256.
+        if gui or robot_glb:
+            # Dedicated viewer camera (gui runs AND headless body checks).
+            # 512x512 native beats upscaling 256. N3: 'chase' mode mounts it
+            # behind/above the agent looking down — the third-person view
+            # that shows the robot body; 'first' keeps the eye view.
             viewer_rgb = habitat_sim.CameraSensorSpec()
             viewer_rgb.uuid = "viewer_rgb"
             viewer_rgb.sensor_type = habitat_sim.SensorType.COLOR
             viewer_rgb.resolution = [512, 512]
-            viewer_rgb.position = [0.0, 1.2, 0.0]
+            if self._viewer_mode == "chase":
+                viewer_rgb.position = [0.0, 1.7, 1.3]
+                viewer_rgb.orientation = [-0.45, 0.0, 0.0]
+            else:
+                viewer_rgb.position = [0.0, 1.2, 0.0]
             agent_cfg.sensor_specifications.append(viewer_rgb)
         self.sim = habitat_sim.Simulator(habitat_sim.Configuration(cfg, [agent_cfg]))
         self.agent = self.sim.get_agent(0)
@@ -205,6 +214,23 @@ class HabitatServer:
         threading.Thread(
             target=self._integration_loop, daemon=True, name="habitat-stream"
         ).start()
+        # N3 — visible robot body: one rigid GLB (no joint animation, Tier A)
+        # kinematically glued to the pose authority. Best-effort: a missing/
+        # broken asset never blocks the world.
+        self._body = None
+        if robot_glb:
+            try:
+                import os as _os
+
+                otm = self.sim.get_object_template_manager()
+                ids = otm.load_configs(_os.path.dirname(robot_glb))
+                rom = self.sim.get_rigid_object_manager()
+                self._body = rom.add_object_by_template_id(ids[0])
+                self._body.motion_type = habitat_sim.physics.MotionType.KINEMATIC
+                self._place_body()
+            except Exception as exc:  # noqa: BLE001
+                print(f"robot body disabled: {exc}", file=sys.stderr, flush=True)
+                self._body = None
         self._viewer = None
         if gui:
             try:
@@ -214,6 +240,72 @@ class HabitatServer:
             except Exception as exc:  # noqa: BLE001 — viewer is best-effort
                 print(f"viewer disabled: {exc}", file=sys.stderr, flush=True)
                 self._viewer = None
+
+    # -- robot body (N3) --------------------------------------------------
+    def _place_body(self) -> None:
+        """Glue the body to the pose authority (op thread only). Model faces
+        +x in the GLB; habitat forward is -z at yaw 0 — hence the +pi/2."""
+        if self._body is None:
+            return
+        import magnum as mn
+
+        pos, yaw, _, _ = self._read_pose()
+        self._body.translation = mn.Vector3(
+            float(pos[0]), float(pos[1]), float(pos[2])
+        )
+        self._body.rotation = mn.Quaternion.rotation(
+            mn.Rad(yaw + math.pi / 2.0), mn.Vector3.y_axis()
+        )
+
+    def _hide_body(self) -> None:
+        """Teleport the body out of view before EGOCENTRIC renders — the eye
+        sensors sit inside the head mesh (0.3.3 has no per-sensor masking)."""
+        if self._body is None:
+            return
+        import magnum as mn
+
+        self._body.translation = mn.Vector3(0.0, -100.0, 0.0)
+
+    def _render_viewer_rgb(self):
+        """Draw the viewer camera only (never the heavy equirect pair),
+        body placed or hidden per viewer mode. Returns the RGB array."""
+        if self._viewer_mode == "chase":
+            self._place_body()
+        else:
+            self._hide_body()  # eye camera sits inside the head
+        sensor = self.sim._sensors["viewer_rgb"]
+        sensor.draw_observation()
+        return sensor.get_observation()
+
+    def viewer_frame(self, body: bool = True) -> dict:
+        """Viewer-camera frame as base64 PNG (headless N3 acceptance + owner
+        artifacts). Requires the viewer sensor (gui or robot body runs).
+        ``body=False`` renders with the body hidden — the acceptance
+        discriminator proving the robot is actually in view."""
+        import base64
+        import io
+
+        from PIL import Image
+
+        if "viewer_rgb" not in getattr(self.sim, "_sensors", {}):
+            return {"error": "no viewer sensor (boot with --gui or --robot-glb)"}
+        self._sync_agent()
+        if body:
+            rgb = self._render_viewer_rgb()
+        else:
+            self._hide_body()
+            sensor = self.sim._sensors["viewer_rgb"]
+            sensor.draw_observation()
+            rgb = sensor.get_observation()
+        buf = io.BytesIO()
+        Image.fromarray(rgb[..., :3]).save(buf, format="PNG")
+        return {
+            "png_base64": base64.b64encode(buf.getvalue()).decode("ascii"),
+            "width": int(rgb.shape[1]),
+            "height": int(rgb.shape[0]),
+            "viewer_mode": self._viewer_mode,
+            "body": self._body is not None,
+        }
 
     def emit_frame(self) -> None:
         """Render the viewer camera and hand the frame to the window (gui only).
@@ -227,11 +319,7 @@ class HabitatServer:
         try:
             import cv2
 
-            # Render ONLY the viewer camera (get_sensor_observations would
-            # also render the heavy 960x1920 equirect pair on every step).
-            sensor = self.sim._sensors["viewer_rgb"]
-            sensor.draw_observation()
-            rgb = sensor.get_observation()
+            rgb = self._render_viewer_rgb()
             frame = cv2.cvtColor(rgb[..., :3], cv2.COLOR_RGB2BGR)
             st = self.get_state()
             hud = (
@@ -425,6 +513,7 @@ class HabitatServer:
         from PIL import Image  # lazy: only the render op needs it
 
         self._sync_agent()  # render at the authoritative pose
+        self._hide_body()   # egocentric: the eye sits inside the head mesh
         obs = self.sim.get_sensor_observations()
         rgb = obs["rgb"]
         buf = io.BytesIO()
@@ -444,6 +533,7 @@ class HabitatServer:
         import base64
 
         pos, yaw = self._sync_agent()  # pose-synced: report the rendered pose
+        self._hide_body()  # the pano must never see our own head interior
         obs = self.sim.get_sensor_observations()
         rgb = np.ascontiguousarray(obs["pano_rgb"][..., :3], dtype=np.uint8)
         depth = np.ascontiguousarray(obs["pano_depth"], dtype=np.float32)
@@ -524,6 +614,8 @@ class HabitatServer:
             }
         if op == "render":
             return {"ok": True, **self.render()}
+        if op == "viewer_frame":
+            return {"ok": True, **self.viewer_frame(bool(req.get("body", True)))}
         if op == "pano":
             return {"ok": True, **self.pano()}
         if op == "geodesic_distance":
@@ -593,6 +685,11 @@ def main() -> int:
                     help="agent footprint radius for navmesh recompute fallback")
     ap.add_argument("--agent-height", type=float, default=1.5,
                     help="agent height for navmesh recompute fallback")
+    ap.add_argument("--robot-glb", default="",
+                    help="rigid robot-body GLB glued to the agent pose (N3)")
+    ap.add_argument("--viewer-mode", default="first",
+                    choices=("first", "chase"),
+                    help="viewer camera: first-person eye or third-person chase")
     args = ap.parse_args()
 
     server = HabitatServer(
@@ -602,6 +699,8 @@ def main() -> int:
         navmesh=args.navmesh,
         agent_radius=args.agent_radius,
         agent_height=args.agent_height,
+        robot_glb=args.robot_glb,
+        viewer_mode=args.viewer_mode,
     )
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

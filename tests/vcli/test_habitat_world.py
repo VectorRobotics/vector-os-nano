@@ -112,7 +112,7 @@ class TestCliHabitatDispatch:
         class _FakeBase:
             def __init__(
                 self, scene: str, gui: bool = False,
-                dataset_config: str = "", navmesh: str = "",
+                dataset_config: str = "", navmesh: str = "", **kw,
             ) -> None:
                 self.scene = scene
                 self.gui = gui

@@ -39,6 +39,30 @@ def _emit(on_status: Callable[[str], None] | None, line: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def resolve_habitat_viewer(requested: str | None = None) -> str:
+    """Viewer camera mode: ``VECTOR_HABITAT_VIEWER`` env (first|chase) >
+    caller request > default 'chase' (N3 — the owner wants to SEE the robot;
+    'first' restores the pre-N3 eye view)."""
+    env = os.environ.get("VECTOR_HABITAT_VIEWER", "")
+    if env in ("first", "chase"):
+        return env
+    if requested in ("first", "chase"):
+        return requested
+    return "chase"
+
+
+def resolve_robot_glb() -> str:
+    """The composed rigid robot-body asset (N3), or '' when not built.
+
+    External runtime data (never vendored): built once by
+    ``scripts/build_g1_glb.py`` into the habitat data root.
+    """
+    from vector_os_nano.playground.habitat.scenes import habitat_data_root
+
+    p = habitat_data_root() / "robots" / "unitree_g1" / "g1_rigid.glb"
+    return str(p) if p.exists() else ""
+
+
 def resolve_habitat_gui(requested: bool | None = None) -> bool:
     """Decide whether the habitat server opens its live viewer window.
 
@@ -87,13 +111,23 @@ def boot_habitat_agent(
         navmesh = ""
         scene = resolve_scene_ref(scenario.scene_ref)
     show_gui = resolve_habitat_gui(gui)
+    robot_glb = resolve_robot_glb()
+    viewer_mode = resolve_habitat_viewer() if robot_glb else "first"
+    if not robot_glb:
+        _emit(
+            on_status,
+            "robot body asset missing (scripts/build_g1_glb.py builds it) — "
+            "first-person view only",
+        )
     _emit(
         on_status,
         f"Starting habitat scene '{scenario.id}' ({scene}) "
-        f"[viewer window: {'on' if show_gui else 'off'}] ...",
+        f"[viewer window: {'on' if show_gui else 'off'}"
+        f"{', ' + viewer_mode + ' view' if show_gui else ''}] ...",
     )
     base = HabitatBase(
-        scene=scene, gui=show_gui, dataset_config=dataset_config, navmesh=navmesh
+        scene=scene, gui=show_gui, dataset_config=dataset_config, navmesh=navmesh,
+        robot_glb=robot_glb, viewer_mode=viewer_mode,
     )
     base.connect()
     agent = Agent(base=base)

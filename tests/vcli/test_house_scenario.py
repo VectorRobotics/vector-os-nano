@@ -165,7 +165,8 @@ class TestBasePassthrough:
         seen: dict = {}
 
         class _FakeBridge:
-            def __init__(self, scene, *, gui=False, dataset_config="", navmesh=""):
+            def __init__(self, scene, *, gui=False, dataset_config="",
+                         navmesh="", **kw):
                 seen.update(
                     scene=scene, gui=gui,
                     dataset_config=dataset_config, navmesh=navmesh,
@@ -182,6 +183,70 @@ class TestBasePassthrough:
         }
 
 
+class TestN3RobotBody:
+    def test_bridge_argv_carries_body_flags(self) -> None:
+        from vector_os_nano.playground.habitat.bridge import HabitatBridge
+
+        argv = HabitatBridge(
+            "apt_1", robot_glb="/d/g1.glb", viewer_mode="chase"
+        )._server_argv()
+        assert argv[argv.index("--robot-glb") + 1] == "/d/g1.glb"
+        assert argv[argv.index("--viewer-mode") + 1] == "chase"
+
+    def test_bridge_argv_omits_when_unset(self) -> None:
+        from vector_os_nano.playground.habitat.bridge import HabitatBridge
+
+        argv = HabitatBridge("/abs/scene.glb")._server_argv()
+        assert "--robot-glb" not in argv and "--viewer-mode" not in argv
+
+    def test_resolve_viewer_env_overrides(self, monkeypatch) -> None:
+        from vector_os_nano.vcli.habitat_runtime import resolve_habitat_viewer
+
+        monkeypatch.setenv("VECTOR_HABITAT_VIEWER", "first")
+        assert resolve_habitat_viewer("chase") == "first"
+        monkeypatch.delenv("VECTOR_HABITAT_VIEWER")
+        assert resolve_habitat_viewer("first") == "first"
+        assert resolve_habitat_viewer() == "chase"  # N3 default: SEE the robot
+
+    def test_resolve_robot_glb_detects_asset(self, tmp_path, monkeypatch) -> None:
+        from vector_os_nano.vcli.habitat_runtime import resolve_robot_glb
+
+        monkeypatch.setenv("VECTOR_HABITAT_DATA", str(tmp_path))
+        assert resolve_robot_glb() == ""
+        glb = tmp_path / "robots" / "unitree_g1" / "g1_rigid.glb"
+        glb.parent.mkdir(parents=True)
+        glb.write_bytes(b"glTF")
+        assert resolve_robot_glb() == str(glb)
+
+    def test_boot_threads_body_to_base(self, tmp_path, monkeypatch) -> None:
+        import dataclasses as dc
+
+        import vector_os_nano.playground.habitat as hab
+        from vector_os_nano.vcli.habitat_runtime import boot_habitat_agent
+
+        class _FakeBase:
+            def __init__(self, scene, gui=False, dataset_config="", navmesh="",
+                         robot_glb="", viewer_mode=""):
+                self.robot_glb = robot_glb
+                self.viewer_mode = viewer_mode
+
+            def connect(self) -> None:
+                pass
+
+        monkeypatch.setattr(hab, "HabitatBase", _FakeBase)
+        monkeypatch.setenv("VECTOR_HABITAT_DATA", str(tmp_path))
+        monkeypatch.setenv("VECTOR_HABITAT_GUI", "0")
+        glb = tmp_path / "robots" / "unitree_g1" / "g1_rigid.glb"
+        glb.parent.mkdir(parents=True)
+        glb.write_bytes(b"glTF")
+        f = tmp_path / "scene.glb"
+        f.write_bytes(b"")
+        scenario = dc.replace(get_scenario("apartment"), scene_ref=str(f))
+        agent = boot_habitat_agent(PlaygroundWorld(scenario))
+        assert agent._base.robot_glb == str(glb)
+        assert agent._base.viewer_mode == "chase"
+
+
 class TestBootWiring:
     def test_boot_resolves_dataset_and_navmesh(self, tmp_path, monkeypatch) -> None:
         import vector_os_nano.playground.habitat as hab
@@ -190,7 +255,8 @@ class TestBootWiring:
         cfg = _make_dataset(tmp_path)
 
         class _FakeBase:
-            def __init__(self, scene, gui=False, dataset_config="", navmesh=""):
+            def __init__(self, scene, gui=False, dataset_config="", navmesh="",
+                         **kw):
                 self.scene = scene
                 self.gui = gui
                 self.dataset_config = dataset_config
@@ -232,7 +298,8 @@ class TestBootWiring:
         from vector_os_nano.vcli.habitat_runtime import boot_habitat_agent
 
         class _FakeBase:
-            def __init__(self, scene, gui=False, dataset_config="", navmesh=""):
+            def __init__(self, scene, gui=False, dataset_config="", navmesh="",
+                         **kw):
                 self.scene = scene
                 self.dataset_config = dataset_config
                 self.navmesh = navmesh

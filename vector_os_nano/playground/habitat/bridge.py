@@ -90,12 +90,16 @@ class HabitatBridge:
         gui: bool = False,
         dataset_config: str = "",
         navmesh: str = "",
+        robot_glb: str = "",
+        viewer_mode: str = "",
     ) -> None:
         self._scene = scene
         self._boot_timeout = boot_timeout
         self._gui = gui
         self._dataset_config = dataset_config
         self._navmesh = navmesh
+        self._robot_glb = robot_glb
+        self._viewer_mode = viewer_mode
         self._proc: subprocess.Popen | None = None
         self._sock: socket.socket | None = None
         self._rfile: Any = None
@@ -141,6 +145,10 @@ class HabitatBridge:
             argv += ["--dataset-config", self._dataset_config]
         if self._navmesh:
             argv += ["--navmesh", self._navmesh]
+        if self._robot_glb:
+            argv += ["--robot-glb", self._robot_glb]
+        if self._viewer_mode:
+            argv += ["--viewer-mode", self._viewer_mode]
         return argv
 
     def _read_port_handshake(self) -> int:

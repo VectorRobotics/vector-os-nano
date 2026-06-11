@@ -65,9 +65,28 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   0.49 < 0.5, final pose on-mesh. Goal-picking lessons live in the harness
   comments (room centers can BE furniture; pathFollower halts at the path
   END — stopDisThre 0.4 — so near-furniture goals end ~0.6 m short).
-  Next: N3 — visible robot body (Menagerie G1/Go2 mesh) + third-person
-  follow camera; FAR (/odom_world /scan_cloud remap) when N4 needs
-  long-range waypoints.
+  **N3 SHIPPED: the G1 is VISIBLE — third-person chase view.**
+  `scripts/build_g1_glb.py` composes the Menagerie unitree_g1 (BSD-3,
+  local checkout) visual meshes at the "home" keyframe into ONE rigid
+  y-up GLB (offline, sandbox venv with mujoco+trimesh; output lands under
+  the habitat data root with an `.object_config.json` + LICENSE copy —
+  never in git). The server loads it as a KINEMATIC rigid object glued to
+  the pose authority (`_place_body`, +π/2 yaw for the +x→-z forward
+  remap); egocentric renders (256 rgb, equirect pano) teleport-hide it —
+  the eye sensors sit inside the head mesh and 0.3.3 has no per-sensor
+  masking. Viewer gains `--viewer-mode first|chase` (chase = behind/above,
+  pitched down; runtime default CHASE via `resolve_habitat_viewer`, env
+  `VECTOR_HABITAT_VIEWER` overrides) and a `viewer_frame` op (base64 PNG,
+  `body=False` discriminator) consumed by `HabitatBase.viewer_frame_png`.
+  LIVE (`~/sandbox/live_test_body.py` ALL PASS): body occupies 1.33% of
+  the chase frame (with/without diff), ego pano byte-stable with the body
+  present (no self-occlusion), pano min depth 0.755 (not inside a mesh),
+  60.8% frame change after navigate; X11 window check PASS in chase mode.
+  Artifacts /tmp/n3_chase_*.png; visual quality = owner check.
+  Next: N4 — full-stack VLN: NavigateToPointSkill rewired through the nav
+  stack (/way_point; oracle becomes verify-only), SysNav re-verify on the
+  fixed cloud (sensor-pose + cubemap depth), ≥4 NL instructions incl. an
+  honest failure.
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape
