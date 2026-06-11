@@ -146,6 +146,27 @@ class HabitatBase:
         resp = self._bridge.request({"op": "render"})
         return base64.b64decode(resp["png_base64"])
 
+    def get_pano(self) -> dict:
+        """Pose-synced equirect panorama (M4): rgb uint8 HxWx3, depth f32 HxW,
+        plus the world pos/heading captured in the SAME frame."""
+        import base64
+
+        import numpy as np
+
+        self._require_connected()
+        r = self._bridge.request({"op": "pano"})
+        h, w = int(r["height"]), int(r["width"])
+        return {
+            "rgb": np.frombuffer(
+                base64.b64decode(r["rgb_b64"]), dtype=np.uint8
+            ).reshape(h, w, 3),
+            "depth": np.frombuffer(
+                base64.b64decode(r["depth_b64"]), dtype=np.float32
+            ).reshape(h, w),
+            "pos": [float(v) for v in r["pos"]],
+            "heading": float(r["heading"]),
+        }
+
     # -- oracle passthroughs (verify predicates, M2 part 2) -----------------
     def geodesic_distance(self, a: list[float], b: list[float]) -> float:
         self._require_connected()

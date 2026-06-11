@@ -66,7 +66,19 @@ class HabitatServer:
         rgb.sensor_type = habitat_sim.SensorType.COLOR
         rgb.resolution = [256, 256]
         rgb.position = [0.0, 1.2, 0.0]  # eye height on the agent
-        agent_cfg.sensor_specifications = [rgb]
+        # M4: equirectangular color+depth panoramas (Theta-Z1-shaped, 1:2) —
+        # the SysNav input pair (cloud_image_fusion pano + unprojected cloud).
+        pano_rgb = habitat_sim.EquirectangularSensorSpec()
+        pano_rgb.uuid = "pano_rgb"
+        pano_rgb.sensor_type = habitat_sim.SensorType.COLOR
+        pano_rgb.resolution = [512, 1024]
+        pano_rgb.position = [0.0, 1.2, 0.0]
+        pano_depth = habitat_sim.EquirectangularSensorSpec()
+        pano_depth.uuid = "pano_depth"
+        pano_depth.sensor_type = habitat_sim.SensorType.DEPTH
+        pano_depth.resolution = [512, 1024]
+        pano_depth.position = [0.0, 1.2, 0.0]
+        agent_cfg.sensor_specifications = [rgb, pano_rgb, pano_depth]
         self.sim = habitat_sim.Simulator(habitat_sim.Configuration(cfg, [agent_cfg]))
         self.agent = self.sim.get_agent(0)
         # Start somewhere legal on the navmesh.
@@ -175,6 +187,27 @@ class HabitatServer:
             "height": int(rgb.shape[0]),
         }
 
+    def pano(self) -> dict:
+        """Equirectangular color+depth panorama, pose-synced (M4, SysNav input).
+
+        Raw arrays (base64 of contiguous bytes — no PNG, no PIL): the repo
+        side rebuilds them with numpy.frombuffer. depth is float32 metres.
+        """
+        import base64
+
+        obs = self.sim.get_sensor_observations()
+        rgb = np.ascontiguousarray(obs["pano_rgb"][..., :3], dtype=np.uint8)
+        depth = np.ascontiguousarray(obs["pano_depth"], dtype=np.float32)
+        state = self.get_state()
+        return {
+            "rgb_b64": base64.b64encode(rgb.tobytes()).decode("ascii"),
+            "depth_b64": base64.b64encode(depth.tobytes()).decode("ascii"),
+            "height": int(depth.shape[0]),
+            "width": int(depth.shape[1]),
+            "pos": state["pos"],
+            "heading": state["heading"],
+        }
+
     # -- navigation oracle ----------------------------------------------
     def geodesic_distance(self, a: "list[float]", b: "list[float]") -> float:
         path = habitat_sim.ShortestPath()
@@ -232,6 +265,8 @@ class HabitatServer:
             }
         if op == "render":
             return {"ok": True, **self.render()}
+        if op == "pano":
+            return {"ok": True, **self.pano()}
         if op == "geodesic_distance":
             return {"ok": True, "distance": self.geodesic_distance(req["a"], req["b"])}
         if op == "snap_point":

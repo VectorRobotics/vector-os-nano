@@ -102,8 +102,16 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    (tests/vcli/test_habitat_nl_slice.py, VECTOR_LIVE_LLM=1): 5 NL instructions 中/英 incl. a
    two-waypoint chain, real LLM + real conda subprocess + real harness, all verified-done,
    ≥4 hard-evidence, every verify a deterministic sandbox predicate (geodesic_dist /
-   at_position / True) — never an LLM judge. THE THIRD-WORLD CAMPAIGN (M0-M3) IS COMPLETE;
-   M4 SysNav revival + M5 flagship demo await the owner's next directive + DQ-1 (HM3D). Everything ungated that M2/M3 need is in place: seam (M1), grounding
+   at_position / True) — never an LLM judge. M0-M3 COMPLETE. **M4 IN PROGRESS (owner directive 2026-06-11)** — Part A SHIPPED:
+   habitat equirect color+depth pano op (512x1024, pose-synced) + `HabitatSysnavBridge`
+   publishing the SysNav input triplet (/camera/image equirect RGB, /registered_scan
+   WORLD-frame cloud unprojected from the same-frame depth — reuses the tested LidarSample
+   PointCloud2 layout, /state_estimation GT odom). rclpy works IN the venv; the node
+   roundtrip is integration-tested (discovery-then-drain pattern — single-threaded wait-set
+   starvation documented in the test). Live: real pano pair + plausible world cloud verified.
+   Part B NEXT: build the SysNav sibling workspace (~/Desktop/SysNav exists, src-only, never
+   colcon-built; heavy python deps — budget-boxed attempt) and close /object_nodes_list →
+   LiveSysnavBridge → WorldModel (the M4 acceptance: non-empty object nodes). Everything ungated that M2/M3 need is in place: seam (M1), grounding
    (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
    On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
    `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates

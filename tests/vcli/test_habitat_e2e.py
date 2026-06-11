@@ -160,3 +160,34 @@ def test_navigate_to_far_point_and_render(apartment_world_and_agent) -> None:
 
     png = base.render_rgb_png()
     assert png.startswith(b"\x89PNG") and len(png) > 2000  # a real image, not a stub
+
+
+def test_pano_pair_is_real_and_pose_synced(apartment_world_and_agent) -> None:
+    """M4: equirect color+depth pair with the pose captured in the same frame."""
+    import numpy as np
+
+    _, _, base = apartment_world_and_agent
+    pano = base.get_pano()
+    assert pano["rgb"].shape == (512, 1024, 3)
+    assert pano["depth"].shape == (512, 1024)
+    finite = pano["depth"][np.isfinite(pano["depth"]) & (pano["depth"] > 0)]
+    assert finite.size > 10000 and 0.2 < float(finite.min()) < float(finite.max()) < 50.0
+    assert float(pano["rgb"].std()) > 5.0  # a real scene, not a blank buffer
+    assert len(pano["pos"]) == 3 and np.isfinite(pano["heading"])
+
+
+def test_unprojected_pano_cloud_is_plausible(apartment_world_and_agent) -> None:
+    """M4: the /registered_scan source — world-frame cloud around the agent."""
+    import numpy as np
+
+    from vector_os_nano.playground.habitat.sysnav_bridge import (
+        unproject_equirect_depth,
+    )
+
+    _, _, base = apartment_world_and_agent
+    pano = base.get_pano()
+    pts = unproject_equirect_depth(pano["depth"], pano["pos"], pano["heading"])
+    assert len(pts) > 5000
+    center = np.array([pano["pos"][0], pano["pos"][1], pano["pos"][2] + 1.2])
+    dists = np.linalg.norm(pts - center, axis=1)
+    assert 0.05 < float(dists.min()) and float(np.median(dists)) < 10.0
