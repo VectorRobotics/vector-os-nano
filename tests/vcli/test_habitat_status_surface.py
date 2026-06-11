@@ -280,8 +280,9 @@ class TestSimStartHabitat:
         fake_agent = _mobile_agent()
         booted: dict = {}
 
-        def _boot(world, on_status=None):
+        def _boot(world, on_status=None, gui=None):
             booted["world"] = world
+            booted["gui"] = gui
             return fake_agent
 
         monkeypatch.setattr(habitat_runtime, "boot_habitat_agent", _boot)
@@ -291,6 +292,7 @@ class TestSimStartHabitat:
         )
         assert not res.is_error, res.content
         assert booted["world"].name == "apartment"
+        assert booted["gui"] is True  # tool default: a visible viewer window
         assert app["agent"] is fake_agent
         assert app["world"].name == "apartment"
         assert app["scenario"] == "apartment"
@@ -497,7 +499,81 @@ class TestHabitatRuntime:
 
 
 # ---------------------------------------------------------------------------
-# 7. IntentRouter — "启动habitat模拟" / "启动sysnav" reach the sim tools
+# 7. GUI viewer plumbing — "我需要能看到的sim" (owner live-test finding #2)
+#    The conda habitat build is HEADLESS (no native window possible); the
+#    server instead opens a live first-person OpenCV viewer when --gui is on.
+# ---------------------------------------------------------------------------
+
+
+class TestHabitatGuiPlumbing:
+    def test_resolve_gui_env_override_wins(self, monkeypatch) -> None:
+        from vector_os_nano.vcli.habitat_runtime import resolve_habitat_gui
+
+        monkeypatch.setenv("VECTOR_HABITAT_GUI", "0")
+        assert resolve_habitat_gui(requested=True) is False
+        monkeypatch.setenv("VECTOR_HABITAT_GUI", "1")
+        assert resolve_habitat_gui(requested=False) is True
+
+    def test_resolve_gui_requested_beats_display_default(self, monkeypatch) -> None:
+        from vector_os_nano.vcli.habitat_runtime import resolve_habitat_gui
+
+        monkeypatch.delenv("VECTOR_HABITAT_GUI", raising=False)
+        monkeypatch.setenv("DISPLAY", ":0")
+        assert resolve_habitat_gui(requested=False) is False
+        assert resolve_habitat_gui(requested=True) is True
+        assert resolve_habitat_gui() is True  # desktop default: visible
+
+    def test_resolve_gui_headless_box_defaults_off(self, monkeypatch) -> None:
+        from vector_os_nano.vcli.habitat_runtime import resolve_habitat_gui
+
+        monkeypatch.delenv("VECTOR_HABITAT_GUI", raising=False)
+        monkeypatch.delenv("DISPLAY", raising=False)
+        assert resolve_habitat_gui() is False
+
+    def test_bridge_argv_carries_gui_flag(self) -> None:
+        from vector_os_nano.playground.habitat.bridge import HabitatBridge
+
+        on = HabitatBridge("scene.glb", gui=True)._server_argv()
+        off = HabitatBridge("scene.glb", gui=False)._server_argv()
+        assert "--gui" in on
+        assert "--gui" not in off
+
+    def test_habitat_base_passes_gui_to_bridge(self, monkeypatch) -> None:
+        import vector_os_nano.playground.habitat.base as base_mod
+
+        seen: dict = {}
+
+        class _StubBridge:
+            def __init__(self, scene, gui=False):
+                seen["scene"] = scene
+                seen["gui"] = gui
+
+        monkeypatch.setattr(base_mod, "HabitatBridge", _StubBridge)
+        base_mod.HabitatBase(scene="x.glb", gui=True)
+        assert seen == {"scene": "x.glb", "gui": True}
+
+    def test_sim_tool_gui_false_propagates(self, monkeypatch) -> None:
+        from vector_os_nano.vcli import habitat_runtime
+        from vector_os_nano.vcli.tools.sim_tool import SimStartTool
+
+        booted: dict = {}
+
+        def _boot(world, on_status=None, gui=None):
+            booted["gui"] = gui
+            return _mobile_agent()
+
+        monkeypatch.setattr(habitat_runtime, "boot_habitat_agent", _boot)
+        app = TestSimStartHabitat()._app()
+        res = SimStartTool().execute(
+            {"sim_type": "habitat", "scenario": "apartment", "gui": False},
+            _ctx(None, app),
+        )
+        assert not res.is_error, res.content
+        assert booted["gui"] is False
+
+
+# ---------------------------------------------------------------------------
+# 8. IntentRouter — "启动habitat模拟" / "启动sysnav" reach the sim tools
 # ---------------------------------------------------------------------------
 
 

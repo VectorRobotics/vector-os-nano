@@ -39,7 +39,27 @@ def _emit(on_status: Callable[[str], None] | None, line: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def boot_habitat_agent(world: Any, on_status: Callable[[str], None] | None = None) -> Any:
+def resolve_habitat_gui(requested: bool | None = None) -> bool:
+    """Decide whether the habitat server opens its live viewer window.
+
+    Precedence: explicit ``VECTOR_HABITAT_GUI`` env (operator override: "0"
+    forces headless, "1" forces the window) > the caller's request (the
+    start_simulation ``gui`` param) > desktop default (window when DISPLAY
+    is present — the owner wants to SEE the sim; CI/headless boxes get none).
+    """
+    env = os.environ.get("VECTOR_HABITAT_GUI")
+    if env in ("0", "1"):
+        return env == "1"
+    if requested is not None:
+        return bool(requested)
+    return bool(os.environ.get("DISPLAY"))
+
+
+def boot_habitat_agent(
+    world: Any,
+    on_status: Callable[[str], None] | None = None,
+    gui: bool | None = None,
+) -> Any:
     """Boot the kinematic habitat base for ``world`` and return a ready Agent.
 
     Raises on any failure — callers decide how loud to surface it (the CLI
@@ -51,8 +71,13 @@ def boot_habitat_agent(world: Any, on_status: Callable[[str], None] | None = Non
 
     scenario = world.scenario
     scene = resolve_scene_ref(scenario.scene_ref)
-    _emit(on_status, f"Starting habitat scene '{scenario.id}' ({scene}) ...")
-    base = HabitatBase(scene=scene)
+    show_gui = resolve_habitat_gui(gui)
+    _emit(
+        on_status,
+        f"Starting habitat scene '{scenario.id}' ({scene}) "
+        f"[viewer window: {'on' if show_gui else 'off'}] ...",
+    )
+    base = HabitatBase(scene=scene, gui=show_gui)
     base.connect()
     agent = Agent(base=base)
 

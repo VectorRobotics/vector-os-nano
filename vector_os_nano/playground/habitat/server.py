@@ -55,8 +55,65 @@ def _world_to_hab(p) -> np.ndarray:
     return np.array([-float(p[1]), float(p[2]), -float(p[0])], dtype=np.float32)
 
 
+class _Viewer:
+    """Live first-person window (the habitat conda build is HEADLESS — no
+    native window exists; this displays the offscreen EGL frames instead).
+
+    All HighGUI calls (namedWindow/imshow/waitKey) happen in ONE daemon
+    thread; producers hand BGR frames over a small queue (drop-oldest, the
+    display never back-pressures the sim). A user closing the window simply
+    stops the display — the sim keeps running.
+    """
+
+    def __init__(self, title: str) -> None:
+        import queue
+        import threading
+
+        import cv2  # noqa: F401 — fail here, loudly, before the thread starts
+
+        self._title = title
+        self._queue: "queue.Queue" = queue.Queue(maxsize=2)
+        self._dead = False
+        threading.Thread(target=self._loop, daemon=True, name="habitat-viewer").start()
+
+    def push(self, frame_bgr) -> None:
+        if self._dead:
+            return
+        import queue
+
+        try:
+            self._queue.put_nowait(frame_bgr)
+        except queue.Full:
+            try:
+                self._queue.get_nowait()
+                self._queue.put_nowait(frame_bgr)
+            except queue.Empty:
+                pass
+
+    def _loop(self) -> None:
+        import queue
+
+        import cv2
+
+        cv2.namedWindow(self._title, cv2.WINDOW_AUTOSIZE)
+        while True:
+            try:
+                frame = self._queue.get(timeout=0.1)
+                cv2.imshow(self._title, frame)
+            except queue.Empty:
+                pass
+            cv2.waitKey(1)
+            try:
+                if cv2.getWindowProperty(self._title, cv2.WND_PROP_VISIBLE) < 1:
+                    self._dead = True  # user closed the window; sim continues
+                    return
+            except Exception:  # noqa: BLE001
+                self._dead = True
+                return
+
+
 class HabitatServer:
-    def __init__(self, scene: str) -> None:
+    def __init__(self, scene: str, gui: bool = False) -> None:
         cfg = habitat_sim.SimulatorConfiguration()
         cfg.scene_id = scene
         agent_cfg = habitat_sim.agent.AgentConfiguration()
@@ -80,6 +137,15 @@ class HabitatServer:
         pano_depth.resolution = [960, 1920]
         pano_depth.position = [0.0, 1.2, 0.0]
         agent_cfg.sensor_specifications = [rgb, pano_rgb, pano_depth]
+        if gui:
+            # Dedicated viewer camera (gui runs only — headless behavior is
+            # byte-identical without it). 512x512 native beats upscaling 256.
+            viewer_rgb = habitat_sim.CameraSensorSpec()
+            viewer_rgb.uuid = "viewer_rgb"
+            viewer_rgb.sensor_type = habitat_sim.SensorType.COLOR
+            viewer_rgb.resolution = [512, 512]
+            viewer_rgb.position = [0.0, 1.2, 0.0]
+            agent_cfg.sensor_specifications.append(viewer_rgb)
         self.sim = habitat_sim.Simulator(habitat_sim.Configuration(cfg, [agent_cfg]))
         self.agent = self.sim.get_agent(0)
         # Start somewhere legal on the navmesh.
@@ -87,6 +153,46 @@ class HabitatServer:
             state = self.agent.get_state()
             state.position = self.sim.pathfinder.get_random_navigable_point()
             self.agent.set_state(state)
+        self._viewer = None
+        if gui:
+            try:
+                title = f"Vector Habitat — {scene.rsplit('/', 1)[-1]}"
+                self._viewer = _Viewer(title)
+                self.emit_frame()  # first frame before any motion
+            except Exception as exc:  # noqa: BLE001 — viewer is best-effort
+                print(f"viewer disabled: {exc}", file=sys.stderr, flush=True)
+                self._viewer = None
+
+    def emit_frame(self) -> None:
+        """Render the viewer camera and hand the frame to the window (gui only).
+
+        Sim access stays on THIS (op) thread — habitat_sim is not thread-safe;
+        the viewer thread only displays. Never raises (display must not break
+        the protocol loop).
+        """
+        if self._viewer is None or self._viewer._dead:
+            return
+        try:
+            import cv2
+
+            # Render ONLY the viewer camera (get_sensor_observations would
+            # also render the heavy 960x1920 equirect pair on every step).
+            sensor = self.sim._sensors["viewer_rgb"]
+            sensor.draw_observation()
+            rgb = sensor.get_observation()
+            frame = cv2.cvtColor(rgb[..., :3], cv2.COLOR_RGB2BGR)
+            st = self.get_state()
+            hud = (
+                f"pos ({st['pos'][0]:.1f}, {st['pos'][1]:.1f})  "
+                f"heading {math.degrees(st['heading']):.0f} deg"
+            )
+            cv2.putText(frame, hud, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(frame, hud, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            self._viewer.push(frame)
+        except Exception as exc:  # noqa: BLE001
+            print(f"viewer frame failed: {exc}", file=sys.stderr, flush=True)
 
     # -- state ----------------------------------------------------------
     def get_state(self) -> dict:
@@ -115,6 +221,11 @@ class HabitatServer:
                 )
             else:
                 pos = target
+            if self._viewer is not None:
+                st.position = pos
+                st.rotation = _yaw_quat(yaw)
+                self.agent.set_state(st)
+                self.emit_frame()
         st.position = pos
         st.rotation = _yaw_quat(yaw)
         self.agent.set_state(st)
@@ -162,6 +273,11 @@ class HabitatServer:
                 else:
                     stall = 0
                 pos = new_pos
+                if self._viewer is not None:
+                    st.position = pos
+                    st.rotation = _yaw_quat(yaw)
+                    self.agent.set_state(st)
+                    self.emit_frame()
         st.position = pos
         st.rotation = _yaw_quat(yaw)
         self.agent.set_state(st)
@@ -283,9 +399,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--scene", required=True)
     ap.add_argument("--port", type=int, default=0)
+    ap.add_argument("--gui", action="store_true",
+                    help="open a live first-person viewer window")
     args = ap.parse_args()
 
-    server = HabitatServer(args.scene)
+    server = HabitatServer(args.scene, gui=args.gui)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

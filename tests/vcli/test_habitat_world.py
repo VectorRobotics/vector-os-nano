@@ -110,8 +110,9 @@ class TestCliHabitatDispatch:
         from vector_os_nano.vcli.cli import _maybe_init_habitat_agent
 
         class _FakeBase:
-            def __init__(self, scene: str) -> None:
+            def __init__(self, scene: str, gui: bool = False) -> None:
                 self.scene = scene
+                self.gui = gui
                 self.connected = False
 
             def connect(self) -> None:
@@ -119,6 +120,7 @@ class TestCliHabitatDispatch:
 
         monkeypatch.setattr(hab, "HabitatBase", _FakeBase)
         monkeypatch.setenv("VECTOR_HABITAT_DATA", "/nonexistent")
+        monkeypatch.setenv("VECTOR_HABITAT_GUI", "0")  # deterministic headless
         # Point the scenario's ref at a real temp file via absolute override.
         import tempfile
 

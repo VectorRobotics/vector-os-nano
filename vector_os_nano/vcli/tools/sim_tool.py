@@ -95,9 +95,10 @@ class SimStartTool:
             "gui": {
                 "type": "boolean",
                 "description": (
-                    "Open the viewer window (default: true). When the user says "
-                    "'headless' / '无窗口' / 'no window', pass gui=false to run "
-                    "without a display. A window is the default; gui=false suppresses it."
+                    "Open the viewer window (default: true). Applies to 'arm' "
+                    "(MuJoCo viewer) and 'habitat' (live first-person window). "
+                    "When the user says 'headless' / '无窗口' / 'no window', "
+                    "pass gui=false to run without a display."
                 ),
                 "default": True,
             },
@@ -158,7 +159,7 @@ class SimStartTool:
         try:
             if sim_type == "habitat":
                 agent, habitat_world = self._start_habitat(
-                    params.get("scenario", "apartment")
+                    params.get("scenario", "apartment"), gui=gui
                 )
             elif backend == "isaac":
                 if sim_type == "go2":
@@ -283,7 +284,7 @@ class SimStartTool:
         )
 
     @staticmethod
-    def _start_habitat(scenario_id: str) -> tuple[Any, Any]:
+    def _start_habitat(scenario_id: str, gui: bool = True) -> tuple[Any, Any]:
         """Boot the habitat world for ``scenario_id``; return (agent, world).
 
         Fails loud: unknown id raises KeyError listing the valid set
@@ -304,7 +305,7 @@ class SimStartTool:
                 f"(sim_backend={backend!r}); use start_simulation(sim_type="
                 f"{'go2' if backend == 'mujoco' else backend!r}) for it"
             )
-        agent = habitat_runtime.boot_habitat_agent(world)
+        agent = habitat_runtime.boot_habitat_agent(world, gui=gui)
         # Symmetry with the --scenario launch path: the env flag opts into
         # wiring the SysNav feed at boot. Best-effort here — the dedicated
         # sysnav_perception tool is the loud path.

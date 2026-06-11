@@ -96,9 +96,22 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    `sysnav_perception(start/stop/status)` runs the perception pair ("启动sysnav") —
    fail-loud preflights, idempotent, torn down by stop_simulation too. IntentRouter routes
    habitat/sysnav phrases to the sim tools; the `system` category (robot_status) is enabled
-   on NL sim start. Tests: tests/vcli/test_habitat_status_surface.py (30) + LIVE on the real
+   on NL sim start. Tests: tests/vcli/test_habitat_status_surface.py (36) + LIVE on the real
    conda subprocess: status surface verified AND the full sysnav tool chain (start → 4 real
    objects sofa/light/picture into the world model → status → stop) — owner re-test pending.
+   **Owner finding #2 (2026-06-11, "我需要能看到的sim"): FIXED — live viewer window.** The
+   pinned conda habitat build is the HEADLESS variant (no native window possible), so
+   `server.py --gui` opens a live first-person OpenCV window (512² dedicated sensor rendered
+   per-step during walk/navigate via the single-sensor draw API — the heavy equirect pair is
+   NOT re-rendered; HighGUI confined to one viewer thread; user-closing the window never
+   kills the sim). Plumbed end-to-end: `HabitatBridge(gui)`/`HabitatBase(gui)` →
+   `habitat_runtime.resolve_habitat_gui` (env `VECTOR_HABITAT_GUI=0/1` override > tool `gui`
+   param > DISPLAY-present default ON) → both entry paths. conda env addition:
+   opencv-python==4.9.0.80 (numpy-1-compatible; NOTE pip first pulled cv2 4.13 and silently
+   upgraded numpy→2.0.2 breaking habitat-sim — re-pinned numpy==1.26.4 + pillow==10.4.0; the
+   .venv-sysnav numpy lesson now applies to the habitat-spike env too). LIVE-verified:
+   X11 tree shows "Vector Habitat — apartment_1.glb" + motion driven (walk + navigate,
+   reached=True). Owner re-test pending.
 
 1. **M2 — the habitat third world: OWNER APPROVED DQ-2 (2026-06-10) — IN PROGRESS.**
    Part 1 SHIPPED: `playground/habitat/` server (standalone py3.9, conda subprocess, JSON/socket,

@@ -47,9 +47,12 @@ class HabitatBridgeError(RuntimeError):
 class HabitatBridge:
     """Spawn + talk to one habitat server. One bridge per scene/run."""
 
-    def __init__(self, scene: str, *, boot_timeout: float = 120.0) -> None:
+    def __init__(
+        self, scene: str, *, boot_timeout: float = 120.0, gui: bool = False
+    ) -> None:
         self._scene = scene
         self._boot_timeout = boot_timeout
+        self._gui = gui
         self._proc: subprocess.Popen | None = None
         self._sock: socket.socket | None = None
         self._rfile: Any = None
@@ -70,7 +73,7 @@ class HabitatBridge:
         if not _SERVER_PATH.exists():
             raise HabitatBridgeError(f"server script missing: {_SERVER_PATH}")
         self._proc = subprocess.Popen(
-            [py, "-u", str(_SERVER_PATH), "--scene", self._scene],
+            self._server_argv(),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -83,6 +86,12 @@ class HabitatBridge:
         pong = self.request({"op": "ping"})
         if not pong.get("pong"):
             raise HabitatBridgeError(f"handshake ping failed: {pong}")
+
+    def _server_argv(self) -> "list[str]":
+        argv = [habitat_python(), "-u", str(_SERVER_PATH), "--scene", self._scene]
+        if self._gui:
+            argv.append("--gui")  # live first-person viewer (server-side window)
+        return argv
 
     def _read_port_handshake(self) -> int:
         assert self._proc is not None and self._proc.stdout is not None

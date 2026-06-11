@@ -325,8 +325,11 @@ relative to `vector_os_nano/`.
 - `habitat/` — the photoreal third-world backend (ADR-009, M2–M5): `server.py` (STANDALONE
   py3.9 script run by the pinned conda interpreter — navmesh kinematics via `try_step`,
   shortest-path `navigate_to`, egocentric RGB + equirect color/depth pano, geodesic/semantic
-  oracle ops, JSON-per-line socket with a PORT handshake); `bridge.py` (thread-safe client,
-  `VECTOR_RUN_ID`-tagged subprocess, fail-loud); `base.py` (`HabitatBase` — the full
+  oracle ops, JSON-per-line socket with a PORT handshake; `--gui` opens a live first-person
+  OpenCV viewer window — the conda habitat build is HEADLESS, so the window displays the
+  offscreen EGL frames, per-step during walk/navigate, HighGUI confined to one viewer
+  thread); `bridge.py` (thread-safe client, `VECTOR_RUN_ID`-tagged subprocess, fail-loud,
+  forwards `--gui`); `base.py` (`HabitatBase(scene, gui)` — the full
   `BaseProtocol` + narrow provider specs, kinematic, vy honestly unsupported); `scenes.py`
   (`VECTOR_HABITAT_DATA` ref resolution); `sysnav_bridge.py` (the SysNav input triplet:
   equirect image cropped to the 1920x640 contract, world-frame cloud from pure equirect-depth

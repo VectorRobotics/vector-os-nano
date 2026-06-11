@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 class HabitatBase:
     """Kinematic mobile base in a photoreal habitat scene."""
 
-    def __init__(self, scene: str) -> None:
-        self._bridge = HabitatBridge(scene)
+    def __init__(self, scene: str, gui: bool = False) -> None:
+        self._bridge = HabitatBridge(scene, gui=gui)
         self._connected = False
 
     @property
