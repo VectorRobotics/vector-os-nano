@@ -66,17 +66,18 @@ class HabitatServer:
         rgb.sensor_type = habitat_sim.SensorType.COLOR
         rgb.resolution = [256, 256]
         rgb.position = [0.0, 1.2, 0.0]  # eye height on the agent
-        # M4: equirectangular color+depth panoramas (Theta-Z1-shaped, 1:2) —
-        # the SysNav input pair (cloud_image_fusion pano + unprojected cloud).
+        # M4: equirectangular color+depth panoramas at the SysNav camera
+        # contract scale — full 960x1920 here; the bridge crops ±60° vertical
+        # (rows 160:800) to the 1920x640 cloud_image_fusion expects.
         pano_rgb = habitat_sim.EquirectangularSensorSpec()
         pano_rgb.uuid = "pano_rgb"
         pano_rgb.sensor_type = habitat_sim.SensorType.COLOR
-        pano_rgb.resolution = [512, 1024]
+        pano_rgb.resolution = [960, 1920]
         pano_rgb.position = [0.0, 1.2, 0.0]
         pano_depth = habitat_sim.EquirectangularSensorSpec()
         pano_depth.uuid = "pano_depth"
         pano_depth.sensor_type = habitat_sim.SensorType.DEPTH
-        pano_depth.resolution = [512, 1024]
+        pano_depth.resolution = [960, 1920]
         pano_depth.position = [0.0, 1.2, 0.0]
         agent_cfg.sensor_specifications = [rgb, pano_rgb, pano_depth]
         self.sim = habitat_sim.Simulator(habitat_sim.Configuration(cfg, [agent_cfg]))

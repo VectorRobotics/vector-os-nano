@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 
 _EYE_HEIGHT_M = 1.2  # pano sensors mount (mirrors server.py specs)
 
+# SysNav camera contract (cloud_image_fusion CAMERA_PARA): a 1920x640 equirect
+# with 120° vertical FOV — i.e. a full 960-row equirect cropped 30° (160 rows)
+# top and bottom. The server renders 960x1920; we publish rows [160:800].
+_SYSNAV_IMG_WIDTH = 1920
+_SYSNAV_IMG_HEIGHT = 640
+_SYSNAV_CROP_TOP = 160
+
+
+def crop_to_sysnav_image(rgb: np.ndarray) -> np.ndarray:
+    """Crop a full equirect pano to the SysNav 1920x640 ±60° contract."""
+    h, w = rgb.shape[0], rgb.shape[1]
+    if (h, w) == (_SYSNAV_IMG_HEIGHT, _SYSNAV_IMG_WIDTH):
+        return rgb
+    if w != _SYSNAV_IMG_WIDTH or h < _SYSNAV_CROP_TOP + _SYSNAV_IMG_HEIGHT:
+        raise ValueError(
+            f"pano {h}x{w} cannot satisfy the SysNav "
+            f"{_SYSNAV_IMG_HEIGHT}x{_SYSNAV_IMG_WIDTH} contract"
+        )
+    return rgb[_SYSNAV_CROP_TOP:_SYSNAV_CROP_TOP + _SYSNAV_IMG_HEIGHT]
+
 
 def unproject_equirect_depth(
     depth: np.ndarray,
@@ -133,7 +153,14 @@ class HabitatSysnavBridge:
             logger.warning("sysnav bridge: pano fetch failed: %s", exc)
             return
         now = self.node.get_clock().now().to_msg()
-        self._pub_image.publish(self._image_msg(pano["rgb"], now))
+        try:
+            img = crop_to_sysnav_image(pano["rgb"])
+        except ValueError as exc:
+            logger.warning("sysnav bridge: %s — publishing uncropped", exc)
+            img = pano["rgb"]
+        self._pub_image.publish(self._image_msg(img, now))
+        # The cloud keeps the FULL sphere (richer for voxel clustering); the
+        # fusion projects it onto the cropped image with its own model.
         pts = unproject_equirect_depth(pano["depth"], pano["pos"], pano["heading"])
         self._pub_cloud.publish(self._cloud_msg(pts, now))
         self._pub_odom.publish(self._odom_msg(pano["pos"], pano["heading"], now))
@@ -187,3 +214,56 @@ class HabitatSysnavBridge:
             self.node.destroy_node()
         except Exception:  # noqa: BLE001
             pass
+
+
+def main(argv: "list[str] | None" = None) -> int:
+    """Run the habitat→SysNav feed standalone:
+
+        python -m vector_os_nano.playground.habitat.sysnav_bridge \\
+            --scene <path|scenario-ref> [--hz 2] [--wander]
+
+    Boots the habitat conda subprocess, publishes the SysNav input triplet,
+    and (with --wander) keeps navigating to random navmesh points so the
+    semantic mapper sees varied viewpoints. Ctrl-C to stop; the watchdog
+    sweeps strays by VECTOR_RUN_ID on abnormal exit.
+    """
+    import argparse
+    import random
+    import time
+
+    import rclpy
+
+    from vector_os_nano.playground.habitat.base import HabitatBase
+    from vector_os_nano.playground.habitat.scenes import resolve_scene_ref
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--scene", required=True)
+    ap.add_argument("--hz", type=float, default=2.0)
+    ap.add_argument("--wander", action="store_true",
+                    help="keep navigating to random navmesh points")
+    args = ap.parse_args(argv)
+
+    base = HabitatBase(scene=resolve_scene_ref(args.scene))
+    base.connect()
+    bridge = HabitatSysnavBridge(base, hz=args.hz)
+    logger.info("habitat sysnav feed up — Ctrl-C to stop")
+    next_wander = time.time() + 5.0
+    try:
+        while rclpy.ok():
+            rclpy.spin_once(bridge.node, timeout_sec=0.1)
+            if args.wander and time.time() >= next_wander:
+                here = base.get_position()
+                dx, dy = random.uniform(-4, 4), random.uniform(-4, 4)
+                tgt = base.snap_point([here[0] + dx, here[1] + dy, here[2]])
+                base.navigate_to(tgt[0], tgt[1])
+                next_wander = time.time() + 5.0
+    except KeyboardInterrupt:
+        pass
+    finally:
+        bridge.destroy()
+        base.disconnect()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

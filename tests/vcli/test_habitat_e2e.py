@@ -168,8 +168,8 @@ def test_pano_pair_is_real_and_pose_synced(apartment_world_and_agent) -> None:
 
     _, _, base = apartment_world_and_agent
     pano = base.get_pano()
-    assert pano["rgb"].shape == (512, 1024, 3)
-    assert pano["depth"].shape == (512, 1024)
+    assert pano["rgb"].shape == (960, 1920, 3)
+    assert pano["depth"].shape == (960, 1920)
     finite = pano["depth"][np.isfinite(pano["depth"]) & (pano["depth"] > 0)]
     assert finite.size > 10000 and 0.2 < float(finite.min()) < float(finite.max()) < 50.0
     assert float(pano["rgb"].std()) > 5.0  # a real scene, not a blank buffer

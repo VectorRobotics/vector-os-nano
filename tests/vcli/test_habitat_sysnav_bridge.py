@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from vector_os_nano.playground.habitat.sysnav_bridge import (
+    crop_to_sysnav_image,
     make_pointcloud2_parts,
     unproject_equirect_depth,
 )
@@ -157,3 +158,21 @@ class TestBridgeNodeRoundtrip:
         finally:
             sub_node.destroy_node()
             bridge.destroy()
+
+
+class TestSysnavImageContract:
+    def test_full_pano_crops_to_1920x640(self) -> None:
+        full = np.zeros((960, 1920, 3), dtype=np.uint8)
+        full[160] = 7   # first kept row
+        full[799] = 9   # last kept row
+        out = crop_to_sysnav_image(full)
+        assert out.shape == (640, 1920, 3)
+        assert out[0, 0, 0] == 7 and out[-1, 0, 0] == 9
+
+    def test_already_contract_shape_passthrough(self) -> None:
+        img = np.zeros((640, 1920, 3), dtype=np.uint8)
+        assert crop_to_sysnav_image(img) is img
+
+    def test_incompatible_shape_raises(self) -> None:
+        with pytest.raises(ValueError, match="contract"):
+            crop_to_sysnav_image(np.zeros((512, 1024, 3), dtype=np.uint8))
