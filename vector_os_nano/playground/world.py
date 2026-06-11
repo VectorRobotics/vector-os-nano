@@ -88,8 +88,17 @@ class PlaygroundWorld:
         return True
 
     def persona_blocks(self) -> tuple[str, str]:
-        # Reuse the robot persona for now; a playground-specific persona is a
-        # later increment if the tabletop task needs distinct tool instructions.
+        # ADR-006 thing #4: the world owns its persona. Habitat scenarios get
+        # the habitat persona (the world is ALREADY running — the MuJoCo
+        # launch guidance would send the LLM hunting for launch scripts);
+        # MuJoCo scenarios keep the robot persona unchanged.
+        if getattr(self._scenario, "sim_backend", "mujoco") == "habitat":
+            from vector_os_nano.vcli.prompt import (
+                HABITAT_ROLE_PROMPT,
+                HABITAT_TOOL_INSTRUCTIONS,
+            )
+
+            return HABITAT_ROLE_PROMPT, HABITAT_TOOL_INSTRUCTIONS
         return ROBOT_ROLE_PROMPT, ROBOT_TOOL_INSTRUCTIONS
 
     def register_tools(self, registry: Any, agent: Any) -> None:

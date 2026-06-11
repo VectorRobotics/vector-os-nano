@@ -547,66 +547,24 @@ def _maybe_init_habitat_agent(args: argparse.Namespace, world: Any) -> Any:
     scenario = getattr(world, "scenario", None)
     if scenario is None or getattr(scenario, "sim_backend", "mujoco") != "habitat":
         return None
+    from vector_os_nano.vcli import habitat_runtime
+
     try:
-        from vector_os_nano.core.agent import Agent  # type: ignore[import]
-        from vector_os_nano.playground.habitat import HabitatBase
-        from vector_os_nano.playground.habitat.scenes import resolve_scene_ref
-
-        scene = resolve_scene_ref(scenario.scene_ref)
-        console.print(
-            f"[dim]  Starting habitat scene '{scenario.id}' ({scene}) ...[/dim]"
+        agent = habitat_runtime.boot_habitat_agent(
+            world, on_status=lambda line: console.print(f"[dim]  {line}[/dim]")
         )
-        base = HabitatBase(scene=scene)
-        base.connect()
-        agent = Agent(base=base)
-        # Base-only world: the registry-derived decompose vocab must teach
-        # ONLY base-capable skills (rule 3 — single-source, no split-brain;
-        # the arm defaults would put pick/place in the planner's mouth with
-        # no arm attached). Rebuild the registry with the mobile set.
-        # TODO: promote to a public Agent API (skills_replace=...) later.
-        from vector_os_nano.core.skill import SkillRegistry
-        from vector_os_nano.skills.go2.stop import StopSkill
-        from vector_os_nano.skills.go2.turn import TurnSkill
-        from vector_os_nano.skills.go2.walk import WalkSkill
-        from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
-
-        registry = SkillRegistry()
-        for s in (WalkSkill(), TurnSkill(), StopSkill(), NavigateToPointSkill()):
-            registry.register(s)
-        agent._skill_registry = registry
 
         # M4/M5 — semantic perception into the REPL agent (opt-in):
         # VECTOR_HABITAT_SYSNAV=1 starts the in-process pano/cloud/odom feed
         # (same base, thread-safe bridge) and the /object_nodes_list consumer
         # into THIS agent's world model. The SysNav nodes themselves run
-        # outside the REPL (scripts/launch_sysnav_nodes.sh) — heavy GPU procs.
+        # outside the REPL (scripts/launch_sysnav_nodes.sh, or the
+        # sysnav_perception tool mid-session) — heavy GPU procs.
         if os.environ.get("VECTOR_HABITAT_SYSNAV") == "1":
             try:
-                import threading
-
-                from rclpy.executors import MultiThreadedExecutor
-
-                from vector_os_nano.integrations.sysnav_bridge.live_bridge import (
-                    LiveSysnavBridge,
-                )
-                from vector_os_nano.playground.habitat.sysnav_bridge import (
-                    HabitatSysnavBridge,
-                )
-
-                feed = HabitatSysnavBridge(base, hz=2.0)
-                executor = MultiThreadedExecutor()
-                executor.add_node(feed.node)
-                threading.Thread(
-                    target=executor.spin, daemon=True, name="habitat-sysnav-feed"
-                ).start()
-                consumer = LiveSysnavBridge(world_model=agent._world_model)
-                consumer.start()
-                agent._sysnav_feed = feed          # keep refs alive with the agent
-                agent._sysnav_consumer = consumer
-                console.print(
-                    "[dim]  SysNav feed up (/camera/image /registered_scan "
-                    "/state_estimation); objects flow into the world model — "
-                    "launch the SysNav nodes via scripts/launch_sysnav_nodes.sh[/dim]"
+                habitat_runtime.wire_sysnav_feed(
+                    agent,
+                    on_status=lambda line: console.print(f"[dim]  {line}[/dim]"),
                 )
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[yellow]SysNav wiring skipped: {exc}[/yellow]")
@@ -1480,7 +1438,10 @@ def main(argv: list[str] | None = None) -> None:
         base = getattr(agent, "_base", None) if agent else None
         sg = getattr(agent, "_spatial_memory", None) if agent else None
         arm = getattr(agent, "_arm", None) if agent else None
-        robot_ctx_provider = RobotContextProvider(base=base, scene_graph=sg, arm=arm)
+        wm = getattr(agent, "_world_model", None) if agent else None
+        robot_ctx_provider = RobotContextProvider(
+            base=base, scene_graph=sg, arm=arm, world=world, world_model=wm
+        )
     except ImportError:
         pass
     system_prompt = build_system_prompt(

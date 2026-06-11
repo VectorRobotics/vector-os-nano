@@ -315,11 +315,13 @@ relative to `vector_os_nano/`.
 
 **Playground track** (`playground/` — a separate, parallel-developed world track; ADR-008)
 - `world.py` / `scenario.py` / `catalog.py` — embodiment-aware `PlaygroundWorld` + frozen `Scenario`
-  + the preset catalog (arm: `tabletop`, `tabletop_tray`; quadruped: `go2_room`); registers into the
-  kernel `WorldRegistry` via a lazy hook. `Scenario` is sim-backend-aware (additive
-  `sim_backend`/`scene_ref` fields, default `"mujoco"`/`""`): an MJCF scenario loads `scene_xml`,
-  a non-MJCF backend (e.g. habitat, ADR-009) dispatches on `scene_ref` — the kernel never
-  imports a simulator from this data.
+  + the preset catalog (arm: `tabletop`, `tabletop_tray`; quadruped: `go2_room`; habitat:
+  `apartment`); registers into the kernel `WorldRegistry` via a lazy hook. `Scenario` is
+  sim-backend-aware (additive `sim_backend`/`scene_ref` fields, default `"mujoco"`/`""`): an MJCF
+  scenario loads `scene_xml`, a non-MJCF backend (e.g. habitat, ADR-009) dispatches on
+  `scene_ref` — the kernel never imports a simulator from this data. The world's persona
+  (ADR-006 thing #4) is backend-selected: habitat scenarios get the habitat persona (the world
+  is ALREADY running — no launch guidance), MJCF scenarios keep the robot persona.
 - `habitat/` — the photoreal third-world backend (ADR-009, M2–M5): `server.py` (STANDALONE
   py3.9 script run by the pinned conda interpreter — navmesh kinematics via `try_step`,
   shortest-path `navigate_to`, egocentric RGB + equirect color/depth pano, geodesic/semantic
@@ -334,6 +336,15 @@ relative to `vector_os_nano/`.
   in the kernel at `vcli/worlds/arm_sim_oracle.py` (so `RobotWorld` can reuse them without the kernel
   importing the playground); `playground/verify/arm_predicates.py` + `scene_predicates.py` are thin
   re-export shims. The Go2 base predicates (`at_position`/`facing`/`visited`) still live here.
+
+- `vcli/habitat_runtime.py` — the CLI-layer habitat runtime, SINGLE-SOURCED for both entry
+  paths (`--scenario apartment` at launch AND `start_simulation(sim_type="habitat")` mid-session,
+  the NL path "启动habitat模拟"): `boot_habitat_agent` (kinematic base + mobile-only skill
+  registry), `wire_sysnav_feed` (in-process pano/cloud/odom feed + `/object_nodes_list`
+  consumer, fail-loud — a no-op consumer is never accepted), `launch_sysnav_nodes` /
+  `shutdown_sysnav` (the heavy perception pair as a watchable process group). Imports the
+  habitat world lazily inside functions only — the same user-requested lazy-domain pattern as
+  the CLI scenario resolution; the engine/kernel still never imports a world.
 
 **Tools, routing, prompt, session, permissions**
 - `vcli/providers.py` — protocol-based provider resolution (W3.3): narrow `runtime_checkable`

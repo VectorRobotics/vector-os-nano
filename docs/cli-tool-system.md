@@ -50,7 +50,7 @@ AI Agent (VectorEngine)
 │                  │     ├── general: web_fetch                     │
 │                  │     ├── robot:   场景图/世界查询 (+臂控技能)     │
 │                  │     ├── diag:    ROS2话题/节点/日志、导航/地形   │
-│                  │     ├── sim:     start/stop_simulation         │
+│                  │     ├── sim:     start/stop_simulation, sysnav │
 │                  │     └── system:  状态、热加载、foxglove         │
 │                  │                                              │
 │                  ├── ToolHookRegistry                            │
@@ -119,7 +119,7 @@ class CategorizedToolRegistry(ToolRegistry):
 | `general` | web_fetch | 网页抓取 |
 | `robot` | world_query, scene_graph_query（+ 臂控时 10 个技能工具） | 空间查询 + 机械臂控制 |
 | `diag` | ros2_topics, ros2_nodes, ros2_log, nav_state, terrain_status | ROS2 诊断 |
-| `sim` | start_simulation, stop_simulation | 仿真管理 |
+| `sim` | start_simulation, stop_simulation, sysnav_perception | 仿真与语义感知管理 |
 | `system` | robot_status, skill_reload, open_foxglove | 系统状态与热加载 |
 
 ### 扩展策略
@@ -330,8 +330,9 @@ Nav stack: running
 | ros2_log | diag | 是 | allow | 读取机器人日志 |
 | nav_state | diag | 是 | allow | 导航/探索状态 |
 | terrain_status | diag | 是 | allow | 地形地图文件信息 |
-| start_simulation | sim | 否 | ask | 启动 MuJoCo 仿真 |
-| stop_simulation | sim | 否 | ask | 停止 MuJoCo 仿真 |
+| start_simulation | sim | 否 | ask | 启动仿真（arm/go2/habitat） |
+| stop_simulation | sim | 否 | ask | 停止仿真（含 SysNav 拆除） |
+| sysnav_perception | sim | 否 | ask | SysNav 语义感知 start/stop/status |
 | robot_status | system | 是 | allow | 硬件连接状态 |
 | skill_reload | system | 否 | ask | 热加载技能模块 |
 | open_foxglove | system | 是 | allow | 打开 Foxglove 可视化 |
@@ -405,7 +406,8 @@ vcli/
     ├── bash_tool.py        # bash
     ├── search_tools.py     # glob, grep
     ├── robot.py            # world_query, robot_status
-    ├── sim_tool.py         # start_simulation, stop_simulation
+    ├── sim_tool.py         # start_simulation (arm/go2/habitat), stop_simulation
+    ├── sysnav_tool.py      # sysnav_perception (语义感知生命周期)
     ├── web_tool.py         # web_fetch
     ├── skill_wrapper.py    # SkillWrapperTool + wrap_skills() + 恢复提示
     ├── scene_graph_tool.py # scene_graph_query（7种查询）

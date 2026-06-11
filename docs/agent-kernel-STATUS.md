@@ -11,7 +11,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
   a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
   (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
-- Last updated: 2026-06-10.
+- Last updated: 2026-06-11.
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## Current state (2026-06-11)
@@ -82,14 +82,23 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
-0. **OWNER LIVE-TEST FINDING (2026-06-11, vector-cli --scenario apartment): the persona /
-   status surface does not know the habitat world exists.** Banner correctly shows
-   `Base: habitat_kinematic` and the SysNav feed is up, but asking "怎么启动" gets "还没跑
-   仿真" + Go2/arm sim offers, and "怎么启动habitat kinematic" sends the LLM into bash/tool
-   exploration. Root: `robot_status` tool + DynamicSystemPrompt's robot-state block (and the
-   persona's sim-start guidance) are MuJoCo-era — they must reflect a connected habitat
-   base/world: base name, scenario id, position, live world-model object count, and "the
-   world is ALREADY running; no start needed". Fix first next session.
+0. ~~OWNER LIVE-TEST FINDING #0 (status/persona surface blind to the habitat world)~~ —
+   **FIXED 2026-06-11 + NL sim startup shipped, live-verified.** (a) Persona is now
+   backend-selected by `PlaygroundWorld.persona_blocks()`: habitat scenarios get
+   `HABITAT_ROLE_PROMPT`/`HABITAT_TOOL_INSTRUCTIONS` ("the world is ALREADY RUNNING", no
+   MuJoCo launch_explore.sh guidance). (b) `RobotContextProvider` takes `world`+`world_model`:
+   the [Robot State] block carries `World: 'apartment' — habitat ... RUNNING` + live object
+   count, and the go2 "Nav stack: stopped" lines no longer leak into non-MuJoCo worlds.
+   (c) `robot_status` reports world/scenario/live-objects/SysNav state and falls back to
+   `app_state["agent"]` mid-turn. (d) NL startup: `start_simulation(sim_type="habitat",
+   scenario=...)` boots the world conversationally ("启动habitat模拟") via the new
+   single-sourced `vcli/habitat_runtime.py` (same code path as `--scenario apartment`);
+   `sysnav_perception(start/stop/status)` runs the perception pair ("启动sysnav") —
+   fail-loud preflights, idempotent, torn down by stop_simulation too. IntentRouter routes
+   habitat/sysnav phrases to the sim tools; the `system` category (robot_status) is enabled
+   on NL sim start. Tests: tests/vcli/test_habitat_status_surface.py (30) + LIVE on the real
+   conda subprocess: status surface verified AND the full sysnav tool chain (start → 4 real
+   objects sofa/light/picture into the world model → status → stop) — owner re-test pending.
 
 1. **M2 — the habitat third world: OWNER APPROVED DQ-2 (2026-06-10) — IN PROGRESS.**
    Part 1 SHIPPED: `playground/habitat/` server (standalone py3.9, conda subprocess, JSON/socket,
