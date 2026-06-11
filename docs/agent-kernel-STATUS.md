@@ -121,8 +121,19 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    lesson: uv silently upgraded numpy when adding spacy/rerun — re-pin after every install
    batch). Harness: scripts/verify_habitat_sysnav.py. FOLLOW-UPS: object z-coords look
    frame-shifted (sofa z=-1.57) — audit the fusion pixel/extrinsic convention vs our equirect;
-   old MuJoCo-era SysnavSimTool stays unregistered (superseded by the habitat runner — a CLI
-   tool surface can ride with M5). Everything ungated that M2/M3 need is in place: seam (M1), grounding
+   old MuJoCo-era SysnavSimTool stays unregistered (superseded by the habitat runner).
+   **M5 (2026-06-11): demo harness shipped + owner live-testing handover.**
+   scripts/demo_third_world.py runs the full visible loop (semantic objects → NL → navigate →
+   deterministic verify, artifacts under ~/sandbox/m5_demo/). The demo EXPOSED and we FIXED two
+   real gaps: (1) Objects (live) now carries per-label best-confidence COORDS (semantic
+   navigation was vacuous without them); (2) navigate-to-OBJECT false success killed — the
+   navigate analogue of #2b: NavigateToPointSkill takes a `label` param resolved against the
+   LIVE world model, unknown object FAILS LOUDLY with the known-object set (tested), guidance
+   forbids inventing x/y. HabitatBridge.request is now thread-safe (demo drives nav + pano
+   from two threads). Demo verdict PARTIAL (3/4: one run hit the LLM shortening strategy
+   'navigate_to'→'navigate' — fail-loud worked; naming-affordance polish item). CLI handover:
+   VECTOR_HABITAT_SYSNAV=1 wires the pano feed + /object_nodes_list consumer into the REPL
+   agent (scripts/launch_sysnav_nodes.sh runs the perception pair). Owner testing live. Everything ungated that M2/M3 need is in place: seam (M1), grounding
    (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
    On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
    `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates

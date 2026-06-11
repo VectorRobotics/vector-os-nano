@@ -50,6 +50,7 @@ _TARGET_BINDING_GUIDANCE: str = (
     "the scene knows objects by those names, not by the user's wording. If "
     "nothing listed matches, bind the user's wording as-is; the step will "
     "fail loudly and you can re-bind on replan from the fresh list. "
+    "For an instruction that targets a NAMED object's location, bind the object's LABEL into params when the strategy supports it (the skill resolves live coordinates and fails loudly if the object is unknown) — NEVER invent x/y for an object. "
     "Use each strategy's 'suggested verify' predicate EXACTLY as written for that "
     "step's verify expression: put the target ONLY in strategy_params, never as an "
     "argument inside the verify expression. The verifier checks deterministic "

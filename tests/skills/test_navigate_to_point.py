@@ -59,3 +59,36 @@ class TestNavigateToPoint:
 
     def test_verify_hint_is_the_vln_criterion(self) -> None:
         assert NavigateToPointSkill.verify_hint == "geodesic_dist(x, y) < 0.5"
+
+
+class TestSemanticLabelGoal:
+    def _wm(self, *objs):
+        from vector_os_nano.core.world_model import ObjectState, WorldModel
+
+        wm = WorldModel()
+        for o in objs:
+            wm.add_object(o)
+        return wm
+
+    def test_label_resolves_to_best_confidence_instance(self) -> None:
+        from vector_os_nano.core.world_model import ObjectState
+
+        base = _nav_base()
+        wm = self._wm(
+            ObjectState("sofa_a", "sofa", x=1.0, y=1.0, confidence=0.7),
+            ObjectState("sofa_b", "sofa", x=9.0, y=9.0, confidence=0.95),
+        )
+        ctx = SimpleNamespace(base=base, world_model=wm)
+        res = NavigateToPointSkill().execute({"label": "sofa"}, ctx)
+        assert res.success is True
+        assert base.calls[0][:2] == (9.0, 9.0)  # the 0.95-confidence one
+
+    def test_unknown_label_fails_loud_with_known_set(self) -> None:
+        from vector_os_nano.core.world_model import ObjectState
+
+        wm = self._wm(ObjectState("sofa_0", "sofa", x=1.0, y=2.0))
+        ctx = SimpleNamespace(base=_nav_base(), world_model=wm)
+        res = NavigateToPointSkill().execute({"label": "游泳池"}, ctx)
+        assert res.success is False
+        assert res.result_data["diagnosis"] == "object_not_found"
+        assert "sofa" in res.error_message  # tells the replanner what EXISTS

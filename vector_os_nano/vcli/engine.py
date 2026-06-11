@@ -69,6 +69,7 @@ except ImportError:
         "the scene knows objects by those names, not by the user's wording. If "
         "nothing listed matches, bind the user's wording as-is; the step will "
         "fail loudly and you can re-bind on replan from the fresh list. "
+        "For an instruction that targets a NAMED object's location, bind the object's LABEL into params when the strategy supports it (the skill resolves live coordinates and fails loudly if the object is unknown) — NEVER invent x/y for an object. "
         "Use each strategy's 'suggested verify' predicate EXACTLY as written for "
         "that step's verify expression: put the target ONLY in strategy_params, "
         "never as an argument inside the verify expression. The verifier checks "
@@ -1465,14 +1466,25 @@ class VectorEngine:
         try:
             wm = getattr(agent, "_world_model", None)
             if wm is not None:
+                # Collapse to the highest-confidence instance per label and
+                # carry its COORDINATES — a referring expression is only
+                # resolvable into an actionable binding (navigate_to(x, y) +
+                # geodesic verify) when the planner can read real positions.
+                best: dict[str, Any] = {}
                 for obj in wm.get_objects():
                     label = obj.label or obj.object_id
+                    cur = best.get(label)
+                    if cur is None or obj.confidence > cur.confidence:
+                        best[label] = obj
+                for label in sorted(best):
+                    obj = best[label]
+                    parts_o = [f"x={obj.x:.2f}", f"y={obj.y:.2f}"]
                     props = getattr(obj, "properties", None) or {}
-                    hints = ",".join(
+                    parts_o += [
                         f"{k}={v}" for k, v in sorted(props.items())
                         if isinstance(v, (str, int, float))
-                    )
-                    entries.append(f"{label} ({hints})" if hints else label)
+                    ]
+                    entries.append(f"{label}({','.join(parts_o)})")
         except Exception:  # noqa: BLE001
             entries = []
         if not entries:

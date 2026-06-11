@@ -39,15 +39,26 @@ class NavigateToPointSkill:
     # strategy_params (the planner copies the literal coordinates).
     verify_hint: str = "geodesic_dist(x, y) < 0.5"
     parameters: dict = {
+        "label": {
+            "type": "string",
+            "required": False,
+            "description": (
+                "Target OBJECT label (e.g. 'sofa'). PREFER this for any "
+                "'go to the <object>' instruction: the skill resolves the "
+                "object's live coordinates from the world model and FAILS "
+                "LOUDLY if no such object is known — never invent x/y for "
+                "an object."
+            ),
+        },
         "x": {
             "type": "number",
-            "required": True,
-            "description": "Target world x coordinate in metres.",
+            "required": False,
+            "description": "Target world x coordinate in metres (coordinate-style goals).",
         },
         "y": {
             "type": "number",
-            "required": True,
-            "description": "Target world y coordinate in metres.",
+            "required": False,
+            "description": "Target world y coordinate in metres (coordinate-style goals).",
         },
         "tol": {
             "type": "number",
@@ -77,14 +88,36 @@ class NavigateToPointSkill:
                 ),
                 result_data={"diagnosis": "no_navigate_support"},
             )
-        try:
-            x, y = float(params["x"]), float(params["y"])
-        except (KeyError, TypeError, ValueError):
-            return SkillResult(
-                success=False,
-                error_message="navigate_to requires numeric x and y",
-                result_data={"diagnosis": "bad_params"},
-            )
+
+        # Semantic goal: resolve the label against the LIVE world model — the
+        # navigate analogue of named-grasp #2b. An unknown object fails LOUDLY
+        # (never silently navigate to invented coordinates: that is a FALSE
+        # SUCCESS — went somewhere, reported arrival at a phantom).
+        label = str(params.get("label", "") or "").strip()
+        if label:
+            wm = getattr(context, "world_model", None)
+            matches = wm.get_objects_by_label(label) if wm is not None else []
+            if not matches:
+                known = sorted({o.label for o in wm.get_objects()}) if wm else []
+                return SkillResult(
+                    success=False,
+                    error_message=(
+                        f"no object matching {label!r} in the live world model; "
+                        f"known objects: {known or '<none>'}"
+                    ),
+                    result_data={"diagnosis": "object_not_found", "label": label},
+                )
+            best = max(matches, key=lambda o: o.confidence)
+            x, y = float(best.x), float(best.y)
+        else:
+            try:
+                x, y = float(params["x"]), float(params["y"])
+            except (KeyError, TypeError, ValueError):
+                return SkillResult(
+                    success=False,
+                    error_message="navigate_to requires a label OR numeric x and y",
+                    result_data={"diagnosis": "bad_params"},
+                )
         tol = float(params.get("tol", 0.2) or 0.2)
 
         logger.info("[NAVIGATE_TO] -> (%.2f, %.2f) tol=%.2f", x, y, tol)

@@ -574,6 +574,42 @@ def _maybe_init_habitat_agent(args: argparse.Namespace, world: Any) -> Any:
         for s in (WalkSkill(), TurnSkill(), StopSkill(), NavigateToPointSkill()):
             registry.register(s)
         agent._skill_registry = registry
+
+        # M4/M5 — semantic perception into the REPL agent (opt-in):
+        # VECTOR_HABITAT_SYSNAV=1 starts the in-process pano/cloud/odom feed
+        # (same base, thread-safe bridge) and the /object_nodes_list consumer
+        # into THIS agent's world model. The SysNav nodes themselves run
+        # outside the REPL (scripts/launch_sysnav_nodes.sh) — heavy GPU procs.
+        if os.environ.get("VECTOR_HABITAT_SYSNAV") == "1":
+            try:
+                import threading
+
+                from rclpy.executors import MultiThreadedExecutor
+
+                from vector_os_nano.integrations.sysnav_bridge.live_bridge import (
+                    LiveSysnavBridge,
+                )
+                from vector_os_nano.playground.habitat.sysnav_bridge import (
+                    HabitatSysnavBridge,
+                )
+
+                feed = HabitatSysnavBridge(base, hz=2.0)
+                executor = MultiThreadedExecutor()
+                executor.add_node(feed.node)
+                threading.Thread(
+                    target=executor.spin, daemon=True, name="habitat-sysnav-feed"
+                ).start()
+                consumer = LiveSysnavBridge(world_model=agent._world_model)
+                consumer.start()
+                agent._sysnav_feed = feed          # keep refs alive with the agent
+                agent._sysnav_consumer = consumer
+                console.print(
+                    "[dim]  SysNav feed up (/camera/image /registered_scan "
+                    "/state_estimation); objects flow into the world model — "
+                    "launch the SysNav nodes via scripts/launch_sysnav_nodes.sh[/dim]"
+                )
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[yellow]SysNav wiring skipped: {exc}[/yellow]")
         return agent
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]habitat scenario boot failed: {exc}[/red]")

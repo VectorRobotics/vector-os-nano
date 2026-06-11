@@ -49,6 +49,7 @@ class TestLiveObjectsInWorldContext:
         assert "Objects (live):" in ctx
         assert "cup_red" in ctx and "cup_blue" in ctx
         assert "color=red" in ctx  # attribute hint surfaces for resolution
+        assert "x=" in ctx and "y=" in ctx  # COORDS make the binding actionable
 
     def test_sim_oracle_fallback_when_world_model_empty(self) -> None:
         arm = SimpleNamespace(
@@ -77,6 +78,22 @@ class TestLiveObjectsInWorldContext:
         line = next(l for l in ctx.splitlines() if l.startswith("Objects (live):"))
         assert line.count("obj_") <= 20
         assert "(+20 more)" in line
+
+    def test_duplicate_labels_collapse_to_best_confidence(self) -> None:
+        """271 detections of 11 labels must not flood the prompt: one entry
+        per label, the highest-confidence instance carries the coords."""
+        agent = SimpleNamespace(
+            _base=None, _spatial_memory=None,
+            _world_model=_wm(
+                ObjectState("sofa_a", "sofa", x=1.0, y=1.0, confidence=0.7),
+                ObjectState("sofa_b", "sofa", x=9.0, y=9.0, confidence=0.95),
+                ObjectState("desk_0", "desk", x=2.0, y=0.5, confidence=0.7),
+            ),
+        )
+        ctx = _engine_with_agent(agent)._build_world_context(force=True)
+        line = next(l for l in ctx.splitlines() if l.startswith("Objects (live):"))
+        assert line.count("sofa") == 1
+        assert "x=9.00" in line and "y=9.00" in line  # the 0.95-confidence one
 
     def test_oracle_failure_is_silent(self) -> None:
         def _boom() -> dict:

@@ -320,6 +320,15 @@ relative to `vector_os_nano/`.
   `sim_backend`/`scene_ref` fields, default `"mujoco"`/`""`): an MJCF scenario loads `scene_xml`,
   a non-MJCF backend (e.g. habitat, ADR-009) dispatches on `scene_ref` — the kernel never
   imports a simulator from this data.
+- `habitat/` — the photoreal third-world backend (ADR-009, M2–M5): `server.py` (STANDALONE
+  py3.9 script run by the pinned conda interpreter — navmesh kinematics via `try_step`,
+  shortest-path `navigate_to`, egocentric RGB + equirect color/depth pano, geodesic/semantic
+  oracle ops, JSON-per-line socket with a PORT handshake); `bridge.py` (thread-safe client,
+  `VECTOR_RUN_ID`-tagged subprocess, fail-loud); `base.py` (`HabitatBase` — the full
+  `BaseProtocol` + narrow provider specs, kinematic, vy honestly unsupported); `scenes.py`
+  (`VECTOR_HABITAT_DATA` ref resolution); `sysnav_bridge.py` (the SysNav input triplet:
+  equirect image cropped to the 1920x640 contract, world-frame cloud from pure equirect-depth
+  unprojection, GT odom; plus the standalone `--wander` feed runner).
 - `verify/` — sim-oracle verify predicates contributed across the seam. The ARM predicates
   (`holding_object`/`arm_at_home`/`placed_count`/`detect_objects`/`describe_scene`) are SINGLE-SOURCED
   in the kernel at `vcli/worlds/arm_sim_oracle.py` (so `RobotWorld` can reuse them without the kernel

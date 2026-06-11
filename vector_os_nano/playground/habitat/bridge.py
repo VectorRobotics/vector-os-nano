@@ -17,6 +17,7 @@ import logging
 import os
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,10 @@ class HabitatBridge:
         self._sock: socket.socket | None = None
         self._rfile: Any = None
         self._wfile: Any = None
+        # One in-flight request at a time: the M5 demo drives navigation and
+        # the pano timer from different threads over this single socket —
+        # interleaved writes would corrupt the line protocol.
+        self._lock = threading.Lock()
 
     # -- lifecycle -------------------------------------------------------
     def start(self) -> None:
@@ -121,11 +126,12 @@ class HabitatBridge:
 
     # -- protocol ---------------------------------------------------------
     def request(self, payload: dict) -> dict:
-        if self._wfile is None or self._rfile is None:
-            raise HabitatBridgeError("bridge not connected (call start())")
-        self._wfile.write(json.dumps(payload) + "\n")
-        self._wfile.flush()
-        line = self._rfile.readline()
+        with self._lock:
+            if self._wfile is None or self._rfile is None:
+                raise HabitatBridgeError("bridge not connected (call start())")
+            self._wfile.write(json.dumps(payload) + "\n")
+            self._wfile.flush()
+            line = self._rfile.readline()
         if not line:
             raise HabitatBridgeError("habitat server closed the connection")
         resp = json.loads(line)
