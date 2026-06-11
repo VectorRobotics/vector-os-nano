@@ -35,6 +35,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SYSNAV = Path(os.environ.get("VECTOR_SYSNAV_WS", str(Path.home() / "Desktop" / "SysNav")))
 VENV_PY = str(REPO / ".venv" / "bin" / "python")
+# SysNav nodes run on THEIR OWN interpreter (numpy 1.26 per its requirement.txt:
+# ROS Jazzy's cv_bridge C extension is numpy-1-ABI and segfaults under the repo
+# venv's numpy 2.4). Falls back to the repo venv if the sibling env is absent.
+_SYSNAV_VENV = SYSNAV / ".venv-sysnav" / "bin" / "python"
+SYSNAV_PY = str(_SYSNAV_VENV) if _SYSNAV_VENV.exists() else VENV_PY
 SCENE = os.environ.get("VECTOR_HABITAT_SCENE_REF", "habitat-test-scenes/apartment_1.glb")
 
 
@@ -61,9 +66,14 @@ def main() -> int:
 
     env = dict(os.environ)
     env["VECTOR_RUN_ID"] = run_id
+    # Import the SysNav python package straight from src (the symlink-install
+    # egg-link is not PYTHONPATH-resolvable), plus the vendored sam2.
+    pkg_path = str(SYSNAV / "src/semantic_mapping")
     sam2_path = str(SYSNAV / "src/semantic_mapping/semantic_mapping/external/sam2")
     env_sysnav = dict(env)
-    env_sysnav["PYTHONPATH"] = sam2_path + ":" + env.get("PYTHONPATH", "")
+    env_sysnav["PYTHONPATH"] = (
+        pkg_path + ":" + sam2_path + ":" + env.get("PYTHONPATH", "")
+    )
 
     procs: list[subprocess.Popen] = []
     try:
@@ -76,13 +86,13 @@ def main() -> int:
         params = str(SYSNAV / "install/semantic_mapping/share/semantic_mapping/mapping_mecanum_sim.yaml")
         procs.append(_spawn(
             "detection_node",
-            f"{VENV_PY} -c 'from semantic_mapping.detection_node import main; main()' "
+            f"{SYSNAV_PY} -c 'from semantic_mapping.detection_node import main; main()' "
             f"--ros-args --params-file {params}",
             SYSNAV, env_sysnav, logdir,
         ))
         procs.append(_spawn(
             "semantic_mapping_node",
-            f"{VENV_PY} -c 'from semantic_mapping.semantic_mapping_node import main; main()' "
+            f"{SYSNAV_PY} -c 'from semantic_mapping.semantic_mapping_node import main; main()' "
             f"--ros-args --params-file {params}",
             SYSNAV, env_sysnav, logdir,
         ))

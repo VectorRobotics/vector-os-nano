@@ -113,9 +113,16 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    CONSUMPTION path is green with REAL messages — stub /object_nodes_list →
    LiveSysnavBridge → WorldModel (sysnav_<id> canonical ids, VLM-confirmed confidence 1.0 —
    the v2.4 contract works unchanged; tests/integration/test_sysnav_consumption_path.py,
-   skips where the workspace isn't sourced). FULL M4 acceptance (real semantic_mapping
-   producing nodes from the habitat pano/cloud) is GATED on DQ-3: ~1-2GB perception weights
-   (SAM2 .pt + YOLOE .pt + tensorrt pip + engine export) — owner decision pending. Everything ungated that M2/M3 need is in place: seam (M1), grounding
+   skips where the workspace isn't sourced). **M4 COMPLETE (2026-06-11, DQ-3 approved)**: the FULL SysNav graph runs on the photoreal
+   world — habitat pano → detection_node (YOLOE-26x TensorRT engine, exported on this GPU) →
+   semantic_mapping_node (SAM2.1 base+) → /object_nodes_list → LiveSysnavBridge → WorldModel
+   produced REAL labelled nodes (sofa/light/picture in apartment_1, conf 0.70 unverified tier).
+   SysNav runs on ITS OWN venv (.venv-sysnav, numpy 1.26 — ROS cv_bridge is numpy-1-ABI;
+   lesson: uv silently upgraded numpy when adding spacy/rerun — re-pin after every install
+   batch). Harness: scripts/verify_habitat_sysnav.py. FOLLOW-UPS: object z-coords look
+   frame-shifted (sofa z=-1.57) — audit the fusion pixel/extrinsic convention vs our equirect;
+   old MuJoCo-era SysnavSimTool stays unregistered (superseded by the habitat runner — a CLI
+   tool surface can ride with M5). Everything ungated that M2/M3 need is in place: seam (M1), grounding
    (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
    On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
    `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates
