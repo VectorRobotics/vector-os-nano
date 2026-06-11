@@ -232,7 +232,19 @@ class StrategySelector:
             and top.success_rate > _STATS_MIN_SUCCESS_RATE
             and top.strategy_name != result.name
         ):
-            return self._resolve_explicit(top.strategy_name, sub_goal.strategy_params)
+            cand = self._resolve_explicit(top.strategy_name, sub_goal.strategy_params)
+            # GUARD (N4 live finding): stats persist across worlds/lives — a
+            # go2-era 'navigate' ranking must never override a VALID route in
+            # a world where that skill does not exist. A candidate resolving
+            # invalid, or to a skill this registry does not have, keeps the
+            # rule-based result (never promote a phantom).
+            if cand.executor_type == "invalid":
+                return result
+            if cand.executor_type == "skill":
+                valid = self._registered_skill_names()
+                if valid is not None and cand.name not in valid:
+                    return result
+            return cand
 
         return result
 
@@ -240,17 +252,24 @@ class StrategySelector:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _route(self, name: str, params: dict) -> StrategyResult:
+    def _route(self, name: str, params: dict) -> "StrategyResult | None":
         """Route a keyword-matched perception/planning step (Phase C.2).
 
         If a routable capability named *name* is registered, dispatch to it (and
         let measured stats later promote a better-performing alternative for the
         same sub-goal pattern); otherwise fall back to the classical skill of the
-        same name. Inert until a world registers such a capability, so dev/robot
-        routing is unchanged today.
+        same name — PROVIDED this world's registry actually has it. The go2-era
+        keyword ladder must never route to a phantom in another world (N4 live
+        finding: 'go/到' routed habitat steps to the unregistered 'navigate';
+        M5's 'Skill not found: look' was the same hole). Returning None lets
+        select() fall through to the registry ALIAS match, which resolves the
+        same wording against the real skill set.
         """
         if name in self._capability_names:
             return StrategyResult("capability", name, params)
+        valid = self._registered_skill_names()
+        if valid is not None and name not in valid:
+            return None  # unknown in THIS world — fall through to alias match
         return StrategyResult("skill", name, params)
 
     def _registered_skill_names(self) -> "frozenset[str] | None":

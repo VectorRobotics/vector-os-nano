@@ -1139,6 +1139,13 @@ class VectorEngine:
         if getattr(_skill_for_steps, "__skill_auto_steps__", None):
             return None
 
+        # NavigateToPointSkill (N4): the fast path can neither bind numeric
+        # x/y nor resolve a semantic label, and its verify must carry the SAME
+        # coordinates as the params (the anti-false-pass contract) — always
+        # the LLM planner's job.
+        if skill_name == "navigate_to":
+            return None
+
         # Resolve room alias to canonical ID (e.g. "客房" → "guest_bedroom")
         # so verify expressions and params use the same IDs as SceneGraph.
         resolved_room = ""

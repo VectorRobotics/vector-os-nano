@@ -98,10 +98,28 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   flow and heights are now physically plausible — floor z=-1.54 reference:
   sofa 0.55 m, light 2.63 m (ceiling), picture 1.49 m (wall); the old
   sofa-at-floor-level (-1.57) z-shift is gone (cubemap-depth + sensor-pose
-  fixes). Next: N4 part B — the VLN acceptance: ≥4 NL instructions 中/英
-  (semantic goal via SysNav label, long chain, honest unreachable failure)
-  through the REAL stack end-to-end; strategy-name affinity
-  (navigate_to→navigate) folded in.
+  fixes).
+  **N4 part B-1: full-stack VLN 4/5 + THREE cross-world contamination
+  guards (the live run exposed a kernel bug family).** LIVE
+  (`~/sandbox/live_test_vln_fullstack.py` ALL PASS): real LLM + SysNav GPU
+  perception (sofa/chair/desk… in the live world model) + REAL nav stack
+  simultaneously; EN coord 18 s and ZH two-waypoint chain 125 s
+  verified-done with every navigation transport=nav_stack; relative motion
+  ✓; 走到游泳池旁边 fails honestly. The guards (all three were live
+  failures first): (1) goal_decomposer strategy-name AFFINITY — an
+  unambiguous prefix ('navigate') resolves to the known strategy (M5
+  finding closed); (2) TEMPLATE-instantiation guard — a matched experience
+  template carrying strategies unknown in THIS world is rejected, plan
+  fresh (instantiate() used to bypass validation entirely);
+  (3) StrategySelector guards — the go2 keyword ladder no longer routes to
+  skills this registry doesn't have (M5 'Skill not found: look' was the
+  same hole) and a stats override never promotes a phantom; the engine
+  fast path excludes navigate_to (cannot bind x/y or the geodesic verify).
+  OPEN for N4 completion: semantic label goals need STANDOFF semantics —
+  the planner binds the OBJECT's own coords with verify < 0.5 but the nav
+  stack honestly stops at the furniture clearance boundary (sofa run:
+  1.55 m short) — teach object-goal verify < 1.5 + label-path tol floor
+  ~1.0, re-run the 5-instruction acceptance to 5/5.
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape

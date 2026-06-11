@@ -461,18 +461,53 @@ Loop example — "do <something> to every detected object, one by one":
             Validated GoalTree. Never raises — falls back to a single-step
             GoalTree on any parsing or communication failure.
         """
-        # Template check — skip LLM when a reusable template matches
+        # Template check — skip LLM when a reusable template matches.
+        # GUARD (rule 3/8, N4 live finding): templates are compiled from PAST
+        # experience, possibly in a DIFFERENT world (a go2-era "先走到X然后Y"
+        # template carries strategy 'navigate' — not a habitat skill), and
+        # instantiate() bypasses the LLM-path strategy validation entirely.
+        # A template whose strategies are not all known in THIS world is
+        # REJECTED (plan fresh via the LLM) — never half-run a stale plan.
         if self._template_library is not None:
             try:
                 match_result = self._template_library.match(task)
                 if match_result is not None:
                     template, params = match_result
-                    return self._template_library.instantiate(template, params)
+                    tree = self._template_library.instantiate(template, params)
+                    if self._tree_strategies_known(tree):
+                        return tree
+                    _LOG.warning(
+                        "GoalDecomposer: matched template carries strategies "
+                        "unknown in this world — rejected; planning fresh"
+                    )
             except Exception as exc:  # noqa: BLE001
                 _LOG.warning("GoalDecomposer: template_library match/instantiate failed: %s", exc)
 
         if self._cached_system_prompt is None:
             self._cached_system_prompt = self._build_system_prompt()
+        return self._decompose_via_llm(task, world_context)
+
+    def _tree_strategies_known(self, tree: Any) -> bool:
+        """True when every strategy in *tree* is valid in THIS world's vocab.
+
+        The template-instantiation guard: checks top-level sub_goals and any
+        foreach body steps; '' (selector keyword routing) and 'answer' (kernel
+        dispatch) are always valid.
+        """
+        try:
+            for sg in getattr(tree, "sub_goals", ()) or ():
+                names = [getattr(sg, "strategy", "")]
+                foreach = getattr(sg, "foreach", None)
+                for body in getattr(foreach, "body", ()) or ():
+                    names.append(getattr(body, "strategy", ""))
+                for s in names:
+                    if s and s != "answer" and s not in self.KNOWN_STRATEGIES:
+                        return False
+        except Exception:  # noqa: BLE001 — malformed tree: reject, plan fresh
+            return False
+        return True
+
+    def _decompose_via_llm(self, task: str, world_context: str) -> "GoalTree":
         system = self._cached_system_prompt
         messages = self._build_messages(task, world_context)
 
@@ -866,6 +901,28 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
         # world). This applies on EVERY decompose, including replan, because the
         # harness re-decomposes through this same validator.
         cleared_strategy = ""
+        if strategy and strategy != "answer" and strategy not in self.KNOWN_STRATEGIES:
+            # Name affinity (M5 finding): LLMs occasionally shorten a strategy
+            # ("navigate_to" -> "navigate"). Resolve DETERMINISTICALLY when the
+            # name has an unambiguous prefix relation with exactly ONE known
+            # strategy (>=3 chars — no absurd one-letter matches); anything
+            # ambiguous still falls through to the loud clearing below.
+            if len(strategy) >= 3:
+                cands = sorted(
+                    k for k in self.KNOWN_STRATEGIES
+                    if k.startswith(strategy) or strategy.startswith(k)
+                )
+                if len(cands) == 1:
+                    _LOG.info(
+                        "GoalDecomposer: strategy %r resolved to %r "
+                        "(unambiguous prefix affinity)", strategy, cands[0],
+                    )
+                    if notes is not None:
+                        notes.append(
+                            f"strategy {strategy!r} resolved to {cands[0]!r} "
+                            f"(unambiguous prefix affinity)"
+                        )
+                    strategy = cands[0]
         if strategy and strategy != "answer" and strategy not in self.KNOWN_STRATEGIES:
             _LOG.warning(
                 "GoalDecomposer: unknown strategy %r in sub_goal %r — clearing "
