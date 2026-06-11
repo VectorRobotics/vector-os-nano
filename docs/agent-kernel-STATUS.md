@@ -127,9 +127,21 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   sub-half-metre was oracle fiction). FINAL RUN all-AS-EXPECTED: EN coord
   16 s, ZH two-waypoint chain 50 s, 走到sofa那里 32 s — every navigation
   transport=nav_stack — relative motion, and 走到游泳池旁边 honest
-  failure. Traces ~/sandbox/n4_vln/. Next: N5 hobbyist path — one-click
-  setup (self-checking), QUICKSTART.md, pure-NL flow, 30-min new-user
-  target.
+  failure. Traces ~/sandbox/n4_vln/.
+  **N5 part A SHIPPED: one-click setup + QUICKSTART.**
+  `scripts/setup_house_world.sh` — idempotent, SELF-CHECKING (each step
+  verifies its result; a provisioned box prints all OK and exits 0,
+  `--check` audits without changes, a bare box reports actionable [MISS]
+  items and exits 1 — both paths tested): habitat conda env + the numpy
+  1.26 re-pin + ReplicaCAD (CC-BY-4.0, license-noted) + Menagerie clone +
+  G1 GLB build (isolated build venv) + repo venv check + status-only
+  lines for the optional siblings (ROS2/nav stack/SysNav — PolyForm-NC
+  stays get-it-yourself). `QUICKSTART.md` (root, operator-facing):
+  prerequisites → setup → launch → optional nav-stack/SysNav layers →
+  honest troubleshooting (numpy pin, clearance stopping, DISPLAY).
+  Next: N5 part B — clean-environment drill of the provision legs (fresh
+  data root), pure-NL flow polish, hobbyist mini-research (fill #5),
+  then the campaign closes.
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape
