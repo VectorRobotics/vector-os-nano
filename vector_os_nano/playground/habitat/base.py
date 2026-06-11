@@ -13,9 +13,10 @@ lives in MuJoCo; this base is navmesh-kinematic (the VLN convention):
   ``pathfinder.try_step`` (slides along walls, never leaves the mesh).
 - ``vy`` is unsupported (``supports_holonomic`` is False); a non-zero vy is
   ignored with a log line rather than faked.
-- ``set_velocity`` applies ONE 0.1 s kinematic step per call (documented
-  v1 limitation — there is no physics thread; streaming nav-stack control
-  is out of M2 scope).
+- ``set_velocity`` is a NON-BLOCKING streaming command (N1): the server's
+  50 Hz integration thread applies it until superseded or its 0.6 s
+  deadman stops the robot. State reads and velocity writes go over the
+  bridge's STREAM channel, so they never queue behind a pano render.
 - Odometry is exact ground truth from the simulator state.
 """
 from __future__ import annotations
@@ -44,6 +45,7 @@ class HabitatBase:
             scene, gui=gui, dataset_config=dataset_config, navmesh=navmesh
         )
         self._connected = False
+        self._warned_vy = False
 
     @property
     def name(self) -> str:
@@ -91,11 +93,18 @@ class HabitatBase:
             return False
 
     def set_velocity(self, vx: float, vy: float, vyaw: float) -> None:
-        # v1: one instantaneous 0.1 s kinematic step per call (no physics loop).
+        """Non-blocking streaming command (N1): the server's integration
+        thread applies it until superseded; its deadman stops a stale
+        stream. Safe at nav-stack rates — never blocks on a render."""
         self._require_connected()
+        if abs(vy) > 1e-6 and not self._warned_vy:
+            logger.info(
+                "HabitatBase.set_velocity: vy unsupported (kinematic), ignored"
+            )
+            self._warned_vy = True
         try:
-            self._bridge.request(
-                {"op": "walk", "vx": vx, "vyaw": vyaw, "duration": 0.1}
+            self._bridge.stream_request(
+                {"op": "set_velocity", "vx": vx, "vyaw": vyaw}
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("HabitatBase.set_velocity failed: %s", exc)
@@ -109,7 +118,13 @@ class HabitatBase:
         return float(self._state()["heading"])
 
     def get_velocity(self) -> list[float]:
-        return [0.0, 0.0, 0.0]  # kinematic: no persistent velocity state
+        vel = self._state().get("vel")
+        return [float(v) for v in vel] if vel else [0.0, 0.0, 0.0]
+
+    def get_state(self) -> dict:
+        """One-roundtrip pose+velocity snapshot (stream channel): the 50 Hz
+        odom publisher's read — pos / heading / vel in one request."""
+        return self._state()
 
     def get_odometry(self) -> Odometry:
         import math
@@ -193,7 +208,7 @@ class HabitatBase:
     # -- internals ----------------------------------------------------------
     def _state(self) -> dict:
         self._require_connected()
-        return self._bridge.request({"op": "get_state"})
+        return self._bridge.stream_request({"op": "get_state"})
 
     def _require_connected(self) -> None:
         if not self._connected:

@@ -24,20 +24,38 @@ from vector_os_nano.vcli.providers import BaseMotionProvider, BaseStateProvider
 
 
 class FakeHabitatServer(threading.Thread):
-    """Flat-floor kinematic re-implementation of server.py's contract."""
+    """Flat-floor kinematic re-implementation of server.py's contract.
+
+    Accepts MULTIPLE connections like the real server (N1: the bridge opens
+    a second STREAM channel for state/velocity ops); ``connections`` counts
+    them so tests can assert the routing actually used a second socket.
+    """
 
     def __init__(self) -> None:
         super().__init__(daemon=True)
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.bind(("127.0.0.1", 0))
-        self._sock.listen(1)
+        self._sock.listen(4)
         self.port = self._sock.getsockname()[1]
         self.pos = [0.0, 0.0, 0.0]
         self.heading = 0.0
+        self.connections = 0
+        self.last_cmd: "tuple[float, float] | None" = None
 
     def run(self) -> None:  # pragma: no cover - thread body
-        conn, _ = self._sock.accept()
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                return
+            self.connections += 1
+            threading.Thread(
+                target=self._serve, args=(conn,), daemon=True
+            ).start()
+
+    def _serve(self, conn) -> None:  # pragma: no cover - thread body
         rf, wf = conn.makefile("r"), conn.makefile("w")
+        req: dict = {}
         for line in rf:
             req = json.loads(line)
             resp = self.handle(req)
@@ -46,16 +64,24 @@ class FakeHabitatServer(threading.Thread):
             if req.get("op") == "shutdown":
                 break
         conn.close()
-        self._sock.close()
+        if req.get("op") == "shutdown":
+            self._sock.close()  # main-channel shutdown ends the fake
 
     def _state(self) -> dict:
-        return {"ok": True, "pos": list(self.pos), "heading": self.heading}
+        return {
+            "ok": True, "pos": list(self.pos), "heading": self.heading,
+            "vel": [self.last_cmd[0], 0.0, self.last_cmd[1]]
+            if self.last_cmd else [0.0, 0.0, 0.0],
+        }
 
     def handle(self, req: dict) -> dict:
         op = req.get("op")
         if op == "ping":
             return {"ok": True, "pong": True}
         if op in ("get_state", "stop"):
+            return self._state()
+        if op == "set_velocity":
+            self.last_cmd = (req.get("vx", 0.0), req.get("vyaw", 0.0))
             return self._state()
         if op == "walk":
             vx, vyaw, dur = req["vx"], req["vyaw"], req["duration"]
@@ -100,6 +126,7 @@ def fake_base(monkeypatch):
     server.start()
 
     def _fake_start(bridge_self: HabitatBridge) -> None:
+        bridge_self._port = server.port  # stream channel can lazy-open (N1)
         bridge_self._sock = socket.create_connection(("127.0.0.1", server.port))
         bridge_self._rfile = bridge_self._sock.makefile("r", encoding="utf-8")
         bridge_self._wfile = bridge_self._sock.makefile("w", encoding="utf-8")
@@ -191,3 +218,45 @@ class TestM3Ops:
         base, _ = fake_base
         png = base.render_rgb_png()
         assert png.startswith(b"\x89PNG")
+
+
+class TestN1StreamChannel:
+    def test_set_velocity_routes_via_second_connection(self, fake_base) -> None:
+        base, server = fake_base
+        assert server.connections == 1  # main channel only so far
+        base.set_velocity(0.5, 0.0, 0.3)
+        assert server.last_cmd == (0.5, 0.3)
+        assert server.connections == 2  # the stream channel lazy-opened
+
+    def test_state_reads_share_the_stream_channel(self, fake_base) -> None:
+        base, server = fake_base
+        base.set_velocity(0.2, 0.0, 0.0)
+        base.get_position()
+        base.get_heading()
+        assert base.get_velocity() == [0.2, 0.0, 0.0]
+        assert server.connections == 2  # one stream channel, reused
+
+    def test_get_state_snapshot_has_pose_and_vel(self, fake_base) -> None:
+        base, _ = fake_base
+        base.set_velocity(0.4, 0.0, -0.1)
+        st = base.get_state()
+        assert set(st) >= {"pos", "heading", "vel"}
+        assert st["vel"] == [0.4, 0.0, -0.1]
+
+    def test_no_port_falls_back_to_main_channel(self, fake_base) -> None:
+        base, server = fake_base
+        base._bridge._port = None  # pre-N1 fakes / direct-wired bridges
+        base._bridge._stream = None
+        assert base.get_position() == [0.0, 0.0, 0.0]
+        assert server.connections == 1  # never opened a second socket
+
+    def test_vy_warns_once_and_is_not_faked(self, fake_base, caplog) -> None:
+        base, server = fake_base
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            base.set_velocity(0.0, 1.0, 0.0)
+            base.set_velocity(0.0, 1.0, 0.0)
+        hits = [r for r in caplog.records if "vy unsupported" in r.message]
+        assert len(hits) == 1  # warned once, not per-tick spam
+        assert server.last_cmd == (0.0, 0.0)  # vy never smuggled into vx/vyaw

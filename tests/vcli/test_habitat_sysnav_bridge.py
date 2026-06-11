@@ -160,6 +160,93 @@ class TestBridgeNodeRoundtrip:
             bridge.destroy()
 
 
+@pytest.mark.skipif(not _rclpy_available(), reason="rclpy not importable")
+class TestN1StateAndCmdVel:
+    def _bridge(self, fake):
+        from vector_os_nano.playground.habitat.sysnav_bridge import (
+            HabitatSysnavBridge,
+        )
+
+        # hz tiny so the pano timer never fires during the test window;
+        # state_hz=0 so ticks are driven explicitly (deterministic).
+        return HabitatSysnavBridge(fake, hz=0.01, state_hz=0.0)
+
+    def test_publish_state_once_carries_twist(self) -> None:
+        import rclpy
+        import time
+        from nav_msgs.msg import Odometry
+
+        fake = SimpleNamespace(
+            get_state=lambda: {
+                "pos": [2.0, -1.0, 0.1], "heading": 0.5, "vel": [0.3, 0.0, -0.2],
+            }
+        )
+        bridge = self._bridge(fake)
+        got: dict = {}
+        sub_node = rclpy.create_node("state_probe")
+        sub_node.create_subscription(
+            Odometry, "/state_estimation", lambda m: got.setdefault("odom", m), 10
+        )
+        try:
+            deadline = time.time() + 5.0
+            while (
+                time.time() < deadline
+                and bridge._pub_odom_fast.get_subscription_count() != 1
+            ):
+                rclpy.spin_once(sub_node, timeout_sec=0.02)
+            bridge.publish_state_once()
+            for _ in range(100):
+                if got:
+                    break
+                rclpy.spin_once(sub_node, timeout_sec=0.05)
+            odom = got["odom"]
+            assert odom.pose.pose.position.x == pytest.approx(2.0)
+            assert odom.twist.twist.linear.x == pytest.approx(0.3)
+            assert odom.twist.twist.angular.z == pytest.approx(-0.2)
+        finally:
+            sub_node.destroy_node()
+            bridge.destroy()
+
+    def test_cmd_vel_streams_into_the_base(self) -> None:
+        import rclpy
+        import time
+        from geometry_msgs.msg import Twist
+
+        seen: list = []
+        fake = SimpleNamespace(
+            set_velocity=lambda vx, vy, vyaw: seen.append((vx, vy, vyaw))
+        )
+        bridge = self._bridge(fake)
+        pub_node = rclpy.create_node("cmd_probe")
+        pub = pub_node.create_publisher(Twist, "/cmd_vel", 10)
+        try:
+            deadline = time.time() + 5.0
+            while time.time() < deadline and pub.get_subscription_count() != 1:
+                rclpy.spin_once(bridge.fast_node, timeout_sec=0.02)
+            msg = Twist()
+            msg.linear.x = 0.7
+            msg.angular.z = -0.4
+            pub.publish(msg)
+            for _ in range(100):
+                if seen:
+                    break
+                rclpy.spin_once(bridge.fast_node, timeout_sec=0.05)
+            assert seen and seen[0] == (0.7, 0.0, -0.4)
+        finally:
+            pub_node.destroy_node()
+            bridge.destroy()
+
+    def test_state_fetch_failure_keeps_ticking(self) -> None:
+        def _boom() -> dict:
+            raise RuntimeError("stream down")
+
+        bridge = self._bridge(SimpleNamespace(get_state=_boom))
+        try:
+            bridge.publish_state_once()  # logs a warning, never raises
+        finally:
+            bridge.destroy()
+
+
 class TestSysnavImageContract:
     def test_full_pano_crops_to_1920x640(self) -> None:
         full = np.zeros((960, 1920, 3), dtype=np.uint8)

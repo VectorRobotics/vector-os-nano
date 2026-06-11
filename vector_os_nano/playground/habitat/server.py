@@ -20,6 +20,14 @@ Kinematics: ``walk`` integrates vx/vyaw in fixed dt steps, each step
 navmesh-constrained via ``pathfinder.try_step`` (the VLN-CE recipe —
 sliding along walls, never leaving the mesh). No dynamics; this world's
 fidelity budget is photoreal vision + navigation, not gait physics.
+
+Streaming (N1): a 50 Hz integration thread consumes ``set_velocity``
+commands (0.6 s deadman) against a single pose/velocity authority; the
+agent object is a render puppet synced on the op thread before any render.
+Extra socket connections are served as STREAM channels (restricted op set
+that never touches the simulator), so high-rate state polls and cmd_vel
+writes never queue behind a pano render on the main channel.
+``pathfinder.try_step`` concurrent with renders is spike-verified safe.
 """
 from __future__ import annotations
 
@@ -28,6 +36,8 @@ import json
 import math
 import socket
 import sys
+import threading
+import time
 
 import habitat_sim
 import numpy as np
@@ -177,6 +187,24 @@ class HabitatServer:
             state = self.agent.get_state()
             state.position = self.sim.pathfinder.get_random_navigable_point()
             self.agent.set_state(state)
+        # N1 — single pose/velocity authority (habitat frame). Op thread,
+        # stream handlers and the integration thread all read/write THIS
+        # under the lock; the agent object is a render puppet synced via
+        # _sync_agent() on the op thread only (habitat_sim is not
+        # thread-safe; pathfinder.try_step concurrent with renders is the
+        # one exception, spike-verified).
+        st0 = self.agent.get_state()
+        self._state_lock = threading.Lock()
+        self._pos = np.array(st0.position, dtype=np.float32)
+        self._yaw = _quat_yaw(st0.rotation)
+        self._vx = self._vyaw = 0.0          # applied (reported) velocity
+        self._cmd_vx = self._cmd_vyaw = 0.0  # streaming command
+        self._cmd_time = 0.0                 # monotonic stamp of last command
+        self._lease = 0                      # op-thread motion loops own the pose
+        self._closing = False
+        threading.Thread(
+            target=self._integration_loop, daemon=True, name="habitat-stream"
+        ).start()
         self._viewer = None
         if gui:
             try:
@@ -218,41 +246,118 @@ class HabitatServer:
         except Exception as exc:  # noqa: BLE001
             print(f"viewer frame failed: {exc}", file=sys.stderr, flush=True)
 
+    # -- streaming pose authority (N1) -----------------------------------
+    _STREAM_HZ = 50.0
+    _CMD_TIMEOUT_S = 0.6  # deadman: a stale cmd stream must stop the robot
+
+    def _read_pose(self) -> "tuple[np.ndarray, float, float, float]":
+        with self._state_lock:
+            return self._pos.copy(), self._yaw, self._vx, self._vyaw
+
+    def _write_pose(self, pos, yaw: float) -> None:
+        with self._state_lock:
+            self._pos = np.array(pos, dtype=np.float32)
+            self._yaw = float(yaw)
+
+    def _acquire_lease(self) -> None:
+        with self._state_lock:
+            self._lease += 1
+            self._cmd_vx = self._cmd_vyaw = 0.0  # explicit motion preempts streaming
+
+    def _release_lease(self) -> None:
+        with self._state_lock:
+            self._lease = max(0, self._lease - 1)
+
+    def _sync_agent(self) -> "tuple[np.ndarray, float]":
+        """Apply the authoritative pose to the agent (render puppet).
+
+        Op thread ONLY. Returns the (pos, yaw) snapshot that was applied so
+        renders report exactly the pose they were taken at.
+        """
+        pos, yaw, _, _ = self._read_pose()
+        st = self.agent.get_state()
+        st.position = pos
+        st.rotation = _yaw_quat(yaw)
+        self.agent.set_state(st)
+        return pos, yaw
+
+    def set_velocity(self, vx: float, vyaw: float) -> dict:
+        with self._state_lock:
+            self._cmd_vx = float(vx)
+            self._cmd_vyaw = float(vyaw)
+            self._cmd_time = time.monotonic()
+        return self.get_state()
+
+    def _integration_loop(self) -> None:
+        period = 1.0 / self._STREAM_HZ
+        last = time.monotonic()
+        while not self._closing:
+            time.sleep(period)
+            now = time.monotonic()
+            dt = min(now - last, 4.0 * period)  # clamp scheduler hiccups
+            last = now
+            with self._state_lock:
+                if self._lease:
+                    self._vx = self._vyaw = 0.0
+                    continue
+                vx, vyaw = self._cmd_vx, self._cmd_vyaw
+                if now - self._cmd_time > self._CMD_TIMEOUT_S:
+                    vx = vyaw = 0.0  # publisher stopped/died: stop the robot
+                if vx == 0.0 and vyaw == 0.0:
+                    self._vx = self._vyaw = 0.0
+                    continue
+                yaw = self._yaw + vyaw * dt
+                fwd = np.array(
+                    [-math.sin(yaw), 0.0, -math.cos(yaw)], dtype=np.float32
+                )
+                target = self._pos + fwd * (vx * dt)
+                if self.sim.pathfinder.is_loaded:
+                    self._pos = np.array(
+                        self.sim.pathfinder.try_step(self._pos, target),
+                        dtype=np.float32,
+                    )
+                else:
+                    self._pos = target
+                self._yaw = yaw
+                self._vx, self._vyaw = vx, vyaw
+
     # -- state ----------------------------------------------------------
     def get_state(self) -> dict:
-        st = self.agent.get_state()
+        pos, yaw, vx, vyaw = self._read_pose()
         return {
-            "pos": _hab_to_world(st.position),
-            "heading": _quat_yaw(st.rotation),
-            "hab_pos": [float(v) for v in st.position],
+            "pos": _hab_to_world(pos),
+            "heading": yaw,
+            "hab_pos": [float(v) for v in pos],
+            "vel": [vx, 0.0, vyaw],
         }
 
     # -- motion ---------------------------------------------------------
     def walk(self, vx: float, vyaw: float, duration: float, dt: float = 0.1) -> dict:
-        st = self.agent.get_state()
-        pos = np.array(st.position, dtype=np.float32)
-        yaw = _quat_yaw(st.rotation)
-        steps = max(1, int(round(duration / dt)))
-        step_dt = duration / steps
-        for _ in range(steps):
-            yaw += vyaw * step_dt
-            # forward in habitat frame for current yaw
-            fwd = np.array([-math.sin(yaw), 0.0, -math.cos(yaw)], dtype=np.float32)
-            target = pos + fwd * (vx * step_dt)
-            if self.sim.pathfinder.is_loaded:
-                pos = np.array(
-                    self.sim.pathfinder.try_step(pos, target), dtype=np.float32
+        self._acquire_lease()
+        try:
+            pos, yaw, _, _ = self._read_pose()
+            steps = max(1, int(round(duration / dt)))
+            step_dt = duration / steps
+            for _ in range(steps):
+                yaw += vyaw * step_dt
+                # forward in habitat frame for current yaw
+                fwd = np.array(
+                    [-math.sin(yaw), 0.0, -math.cos(yaw)], dtype=np.float32
                 )
-            else:
-                pos = target
-            if self._viewer is not None:
-                st.position = pos
-                st.rotation = _yaw_quat(yaw)
-                self.agent.set_state(st)
-                self.emit_frame()
-        st.position = pos
-        st.rotation = _yaw_quat(yaw)
-        self.agent.set_state(st)
+                target = pos + fwd * (vx * step_dt)
+                if self.sim.pathfinder.is_loaded:
+                    pos = np.array(
+                        self.sim.pathfinder.try_step(pos, target), dtype=np.float32
+                    )
+                else:
+                    pos = target
+                self._write_pose(pos, yaw)
+                if self._viewer is not None:
+                    self._sync_agent()
+                    self.emit_frame()
+            self._write_pose(pos, yaw)
+        finally:
+            self._release_lease()
         return self.get_state()
 
     # -- navigation -------------------------------------------------------
@@ -261,8 +366,7 @@ class HabitatServer:
         bounded: per-waypoint, face the waypoint (kinematic yaw set) and
         advance via try_step; break when progress stalls (stuck/unreachable).
         """
-        st = self.agent.get_state()
-        start = np.array(st.position, dtype=np.float32)
+        start, yaw, _, _ = self._read_pose()
         goal_world = [float(x), float(y), _hab_to_world(start)[2]]
         goal = self.sim.pathfinder.snap_point(_world_to_hab(goal_world))
 
@@ -272,39 +376,41 @@ class HabitatServer:
         if not self.sim.pathfinder.find_path(path) or not list(path.points):
             return {"reached": False, "reason": "no_path", **self.get_state()}
 
-        pos = start
-        yaw = _quat_yaw(st.rotation)
-        step_len = 0.15
-        for wp in list(path.points)[1:]:
-            wp = np.array(wp, dtype=np.float32)
-            stall = 0
-            for _ in range(400):  # hard bound per waypoint
-                delta = wp - pos
-                planar = math.hypot(float(delta[0]), float(delta[2]))
-                if planar <= tol:
-                    break
-                # face the waypoint (habitat: forward = -Z rotated by yaw)
-                yaw = math.atan2(-float(delta[0]), -float(delta[2]))
-                fwd = np.array([-math.sin(yaw), 0.0, -math.cos(yaw)], dtype=np.float32)
-                target = pos + fwd * min(step_len, planar)
-                new_pos = np.array(
-                    self.sim.pathfinder.try_step(pos, target), dtype=np.float32
-                )
-                if float(np.linalg.norm(new_pos - pos)) < 1e-4:
-                    stall += 1
-                    if stall >= 3:
-                        break  # wall-stuck: stop honestly, verify will judge
-                else:
-                    stall = 0
-                pos = new_pos
-                if self._viewer is not None:
-                    st.position = pos
-                    st.rotation = _yaw_quat(yaw)
-                    self.agent.set_state(st)
-                    self.emit_frame()
-        st.position = pos
-        st.rotation = _yaw_quat(yaw)
-        self.agent.set_state(st)
+        self._acquire_lease()
+        try:
+            pos = start
+            step_len = 0.15
+            for wp in list(path.points)[1:]:
+                wp = np.array(wp, dtype=np.float32)
+                stall = 0
+                for _ in range(400):  # hard bound per waypoint
+                    delta = wp - pos
+                    planar = math.hypot(float(delta[0]), float(delta[2]))
+                    if planar <= tol:
+                        break
+                    # face the waypoint (habitat: forward = -Z rotated by yaw)
+                    yaw = math.atan2(-float(delta[0]), -float(delta[2]))
+                    fwd = np.array(
+                        [-math.sin(yaw), 0.0, -math.cos(yaw)], dtype=np.float32
+                    )
+                    target = pos + fwd * min(step_len, planar)
+                    new_pos = np.array(
+                        self.sim.pathfinder.try_step(pos, target), dtype=np.float32
+                    )
+                    if float(np.linalg.norm(new_pos - pos)) < 1e-4:
+                        stall += 1
+                        if stall >= 3:
+                            break  # wall-stuck: stop honestly, verify will judge
+                    else:
+                        stall = 0
+                    pos = new_pos
+                    self._write_pose(pos, yaw)
+                    if self._viewer is not None:
+                        self._sync_agent()
+                        self.emit_frame()
+            self._write_pose(pos, yaw)
+        finally:
+            self._release_lease()
         out = self.get_state()
         gd = self.geodesic_distance(out["pos"], [float(x), float(y), out["pos"][2]])
         out["reached"] = bool(gd <= max(tol * 2.0, 0.4))
@@ -318,6 +424,7 @@ class HabitatServer:
 
         from PIL import Image  # lazy: only the render op needs it
 
+        self._sync_agent()  # render at the authoritative pose
         obs = self.sim.get_sensor_observations()
         rgb = obs["rgb"]
         buf = io.BytesIO()
@@ -336,17 +443,19 @@ class HabitatServer:
         """
         import base64
 
+        pos, yaw = self._sync_agent()  # pose-synced: report the rendered pose
         obs = self.sim.get_sensor_observations()
         rgb = np.ascontiguousarray(obs["pano_rgb"][..., :3], dtype=np.uint8)
         depth = np.ascontiguousarray(obs["pano_depth"], dtype=np.float32)
-        state = self.get_state()
+        if self._viewer is not None:
+            self.emit_frame()  # streaming motion: window refreshes per pano
         return {
             "rgb_b64": base64.b64encode(rgb.tobytes()).decode("ascii"),
             "depth_b64": base64.b64encode(depth.tobytes()).decode("ascii"),
             "height": int(depth.shape[0]),
             "width": int(depth.shape[1]),
-            "pos": state["pos"],
-            "heading": state["heading"],
+            "pos": _hab_to_world(pos),
+            "heading": yaw,
         }
 
     # -- navigation oracle ----------------------------------------------
@@ -396,7 +505,16 @@ class HabitatServer:
                 ),
             }
         if op == "stop":
+            with self._state_lock:  # stop kills the streaming command too
+                self._cmd_vx = self._cmd_vyaw = 0.0
             return {"ok": True, **self.get_state()}
+        if op == "set_velocity":
+            return {
+                "ok": True,
+                **self.set_velocity(
+                    float(req.get("vx", 0.0)), float(req.get("vyaw", 0.0))
+                ),
+            }
         if op == "navigate_to":
             return {
                 "ok": True,
@@ -417,6 +535,48 @@ class HabitatServer:
         if op == "shutdown":
             return {"ok": True, "bye": True}
         return {"ok": False, "error": f"unknown op {op!r}"}
+
+
+# Ops a STREAM channel may run: pure pose/cmd state, never the simulator —
+# so a handler thread per extra connection is safe and never queues behind
+# a render on the main channel.
+_STREAM_OPS = frozenset({"ping", "get_state", "set_velocity"})
+
+
+def _serve_stream(conn: socket.socket, server: "HabitatServer") -> None:
+    rfile = conn.makefile("r", encoding="utf-8")
+    wfile = conn.makefile("w", encoding="utf-8")
+    try:
+        for line in rfile:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+            except json.JSONDecodeError as exc:
+                resp = {"ok": False, "error": f"bad json: {exc}"}
+            else:
+                op = req.get("op", "")
+                if op not in _STREAM_OPS:
+                    resp = {
+                        "ok": False,
+                        "error": f"op {op!r} not allowed on the stream channel "
+                                 f"(allowed: {sorted(_STREAM_OPS)})",
+                    }
+                else:
+                    try:
+                        resp = server.handle(req)
+                    except Exception as exc:  # noqa: BLE001
+                        resp = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            wfile.write(json.dumps(resp) + "\n")
+            wfile.flush()
+    except Exception:  # noqa: BLE001 — a dead stream client never kills the sim
+        pass
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass
 
 
 def main() -> int:
@@ -447,10 +607,28 @@ def main() -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", args.port))
-    sock.listen(1)
+    sock.listen(4)
     print(f"PORT {sock.getsockname()[1]}", flush=True)
 
     conn, _ = sock.accept()
+
+    def _accept_streams() -> None:
+        # Every connection after the first is a STREAM channel (restricted
+        # op set, own handler thread). The listener closing ends the loop.
+        while True:
+            try:
+                extra, _ = sock.accept()
+            except OSError:
+                return
+            threading.Thread(
+                target=_serve_stream, args=(extra, server),
+                daemon=True, name="habitat-stream-conn",
+            ).start()
+
+    threading.Thread(
+        target=_accept_streams, daemon=True, name="habitat-stream-accept"
+    ).start()
+
     rfile = conn.makefile("r", encoding="utf-8")
     wfile = conn.makefile("w", encoding="utf-8")
     for line in rfile:
@@ -470,8 +648,9 @@ def main() -> int:
         wfile.flush()
         if req.get("op") == "shutdown":
             break
+    server._closing = True  # stop the integration thread
     conn.close()
-    sock.close()
+    sock.close()  # unblocks the stream acceptor
     server.sim.close()
     return 0
 

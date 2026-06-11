@@ -11,6 +11,13 @@ Publishes the THREE input topics the SysNav sibling workspace consumes
                          unprojected from the SAME pose-synced equirect depth
 - ``/state_estimation``  nav_msgs/Odometry — exact ground-truth pose
 
+N1 makes this ALSO the locomotion boundary: a second timer publishes
+``/state_estimation`` at nav-stack rate (50 Hz default, with twist) off the
+bridge's STREAM channel — never queued behind the pano render — and a
+``/cmd_vel`` (geometry_msgs/Twist) subscription streams velocity commands
+into the base. The 2 Hz pano tick keeps publishing the pose-synced triplet
+(M4 contract unchanged).
+
 The v2.4 MuJoCo sensors stalled on semantically EMPTY renders; this bridge
 finally delivers the wiring on real visuals. rclpy imports are lazy (module
 imports clean without ROS2); the unprojection is a PURE function tested
@@ -123,9 +130,12 @@ class HabitatSysnavBridge:
         base: Any,
         hz: float = 2.0,
         *,
+        state_hz: float = 50.0,
+        cmd_vel_topic: str = "/cmd_vel",
         node_name: str = "habitat_sysnav_bridge",
     ) -> None:
         import rclpy  # noqa: PLC0415 — lazy by design
+        from geometry_msgs.msg import Twist
         from nav_msgs.msg import Odometry
         from rclpy.node import Node
         from sensor_msgs.msg import Image, PointCloud2, PointField
@@ -143,7 +153,49 @@ class HabitatSysnavBridge:
         self._pub_cloud = self.node.create_publisher(PointCloud2, "/registered_scan", 5)
         self._pub_odom = self.node.create_publisher(Odometry, "/state_estimation", 10)
         self._timer = self.node.create_timer(1.0 / hz, self.publish_once)
-        logger.info("HabitatSysnavBridge up at %.1f Hz", hz)
+        # N1: fast odom off the stream channel + streaming velocity input,
+        # on a SEPARATE node. Live-measured: rclpy's MultiThreadedExecutor
+        # caps a 50 Hz timer at ~29 Hz (with or without pano load) while a
+        # SingleThreadedExecutor hits 50.0 — so the fast path gets its own
+        # node and spin_in_background() gives each node a dedicated
+        # single-threaded executor.
+        self.fast_node: "Node" = rclpy.create_node(node_name + "_fast")
+        self._pub_odom_fast = self.fast_node.create_publisher(
+            Odometry, "/state_estimation", 10
+        )
+        self._state_timer = None
+        if state_hz and state_hz > 0:
+            self._state_timer = self.fast_node.create_timer(
+                1.0 / state_hz, self.publish_state_once
+            )
+        self._sub_cmd = None
+        if cmd_vel_topic:
+            self._sub_cmd = self.fast_node.create_subscription(
+                Twist, cmd_vel_topic, self._on_cmd_vel, 10
+            )
+        self._executors: list = []
+        logger.info(
+            "HabitatSysnavBridge up (pano %.1f Hz, state %.1f Hz, cmd %s)",
+            hz, state_hz or 0.0, cmd_vel_topic or "<off>",
+        )
+
+    def spin_in_background(self) -> None:
+        """Spin both nodes, each on its OWN single-threaded executor thread
+        (the only configuration measured to sustain the 50 Hz fast path —
+        see the class docstring note on MultiThreadedExecutor). Idempotent."""
+        import threading
+
+        from rclpy.executors import SingleThreadedExecutor
+
+        if self._executors:
+            return
+        for node in (self.node, self.fast_node):
+            ex = SingleThreadedExecutor()
+            ex.add_node(node)
+            threading.Thread(
+                target=ex.spin, daemon=True, name=f"sysnav-{node.get_name()}"
+            ).start()
+            self._executors.append(ex)
 
     # one tick — also directly callable from tests (no timer needed)
     def publish_once(self) -> None:
@@ -164,6 +216,28 @@ class HabitatSysnavBridge:
         pts = unproject_equirect_depth(pano["depth"], pano["pos"], pano["heading"])
         self._pub_cloud.publish(self._cloud_msg(pts, now))
         self._pub_odom.publish(self._odom_msg(pano["pos"], pano["heading"], now))
+
+    def publish_state_once(self) -> None:
+        """Fast odom tick (N1) — one stream-channel roundtrip, with twist."""
+        try:
+            st = self._base.get_state()
+        except Exception as exc:  # noqa: BLE001 — keep ticking, log loud
+            logger.warning("sysnav bridge: state fetch failed: %s", exc)
+            return
+        now = self.fast_node.get_clock().now().to_msg()
+        self._pub_odom_fast.publish(
+            self._odom_msg(st["pos"], st["heading"], now, vel=st.get("vel"))
+        )
+
+    def _on_cmd_vel(self, msg: Any) -> None:
+        """Stream a /cmd_vel Twist into the base (non-blocking, deadman'd
+        server-side — a dead publisher stops the robot, never a runaway)."""
+        try:
+            self._base.set_velocity(
+                float(msg.linear.x), float(msg.linear.y), float(msg.angular.z)
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("sysnav bridge: cmd_vel apply failed: %s", exc)
 
     # -- message builders ---------------------------------------------------
     def _image_msg(self, rgb: np.ndarray, stamp: Any) -> Any:
@@ -197,7 +271,13 @@ class HabitatSysnavBridge:
         msg.is_dense = True
         return msg
 
-    def _odom_msg(self, pos: "list[float]", heading: float, stamp: Any) -> Any:
+    def _odom_msg(
+        self,
+        pos: "list[float]",
+        heading: float,
+        stamp: Any,
+        vel: "list[float] | None" = None,
+    ) -> Any:
         msg = self._Odometry()
         msg.header.stamp = stamp
         msg.header.frame_id = "map"
@@ -207,13 +287,23 @@ class HabitatSysnavBridge:
         msg.pose.pose.position.z = float(pos[2])
         msg.pose.pose.orientation.z = math.sin(heading / 2.0)
         msg.pose.pose.orientation.w = math.cos(heading / 2.0)
+        if vel:
+            msg.twist.twist.linear.x = float(vel[0])
+            msg.twist.twist.angular.z = float(vel[2])
         return msg
 
     def destroy(self) -> None:
-        try:
-            self.node.destroy_node()
-        except Exception:  # noqa: BLE001
-            pass
+        for ex in self._executors:
+            try:
+                ex.shutdown(timeout_sec=2.0)
+            except Exception:  # noqa: BLE001
+                pass
+        self._executors = []
+        for node in (self.node, self.fast_node):
+            try:
+                node.destroy_node()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def main(argv: "list[str] | None" = None) -> int:
@@ -246,11 +336,12 @@ def main(argv: "list[str] | None" = None) -> int:
     base = HabitatBase(scene=resolve_scene_ref(args.scene))
     base.connect()
     bridge = HabitatSysnavBridge(base, hz=args.hz)
+    bridge.spin_in_background()  # dedicated per-node executors (50 Hz fast path)
     logger.info("habitat sysnav feed up — Ctrl-C to stop")
     next_wander = time.time() + 5.0
     try:
         while rclpy.ok():
-            rclpy.spin_once(bridge.node, timeout_sec=0.1)
+            time.sleep(0.1)
             if args.wander and time.time() >= next_wander:
                 here = base.get_position()
                 dx, dy = random.uniform(-4, 4), random.uniform(-4, 4)

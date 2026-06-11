@@ -31,8 +31,23 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   GUI window present in the X11 tree (visual quality = owner check). Scene data stays
   OUTSIDE the repo (`~/sandbox/habitat-spike/data`; downloader:
   `python -m habitat_sim.utils.datasets_download --uids replica_cad_dataset`).
-  Next: N1 — streaming cmd_vel velocity mode (background integration thread,
-  ≥50 Hz /state_estimation decoupled from the 2 Hz pano).
+  **N1 SHIPPED: the streaming cmd_vel boundary.** The server runs a 50 Hz
+  integration thread (single pose/velocity authority; `try_step`-constrained;
+  0.6 s deadman; the agent object is now a render puppet synced on the op
+  thread; `try_step` concurrent with renders spike-verified). Extra socket
+  connections are STREAM channels (restricted op set {ping, get_state,
+  set_velocity} that never touches the sim) — `HabitatBase.set_velocity` is
+  non-blocking and state reads never queue behind a pano render (live: max
+  gap 29 ms under pano load). `HabitatSysnavBridge` adds a 50 Hz
+  `/state_estimation` timer (with twist) + a `/cmd_vel` subscriber on a
+  SEPARATE fast node with `spin_in_background()` per-node single-threaded
+  executors — rclpy's MultiThreadedExecutor was MEASURED capping a 50 Hz
+  timer at ~29 Hz (pano load irrelevant), STE hits 50.0. LIVE acceptance
+  (`~/sandbox/live_test_stream.py`, all PASS): 50 msgs/s odom, /cmd_vel at
+  10 Hz drives 1.0 m, deadman stops a stale stream, wall-slide never leaves
+  the navmesh. Next: N2 — point the real nav stack (terrain_analysis +
+  local_planner) at this feed; note FAR wants /odom_world + /scan_cloud
+  (remap or dual-publish).
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape

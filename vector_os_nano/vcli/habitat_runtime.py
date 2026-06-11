@@ -137,10 +137,8 @@ def wire_sysnav_feed(agent: Any, on_status: Callable[[str], None] | None = None)
     if getattr(agent, "_sysnav_feed", None) is not None:
         return  # already wired
 
-    import threading
-
     try:
-        from rclpy.executors import MultiThreadedExecutor
+        import rclpy  # noqa: F401
     except ImportError as exc:  # pragma: no cover — env-specific
         raise RuntimeError(f"rclpy unavailable — source ROS2 first: {exc}") from exc
 
@@ -159,19 +157,14 @@ def wire_sysnav_feed(agent: Any, on_status: Callable[[str], None] | None = None)
         )
 
     feed = HabitatSysnavBridge(agent._base, hz=2.0)
-    executor = MultiThreadedExecutor()
-    executor.add_node(feed.node)
-    threading.Thread(
-        target=executor.spin, daemon=True, name="habitat-sysnav-feed"
-    ).start()
+    feed.spin_in_background()  # per-node executors: 50 Hz odom + 2 Hz pano
 
     agent._sysnav_feed = feed          # keep refs alive with the agent
     agent._sysnav_consumer = consumer
-    agent._sysnav_executor = executor
     _emit(
         on_status,
-        "SysNav feed up (/camera/image /registered_scan /state_estimation); "
-        "objects flow into the world model",
+        "SysNav feed up (/camera/image /registered_scan /state_estimation 50Hz "
+        "+ /cmd_vel in); objects flow into the world model",
     )
 
 

@@ -44,6 +44,41 @@ class HabitatBridgeError(RuntimeError):
     """Subprocess spawn/handshake/protocol failure — always loud."""
 
 
+class _StreamChannel:
+    """A second connection to the server, served by a dedicated server-side
+    thread with a restricted op set ({ping, get_state, set_velocity}) that
+    never touches the simulator — 50 Hz state polls and cmd_vel writes never
+    queue behind a multi-hundred-ms pano render on the main channel (N1)."""
+
+    def __init__(self, port: int) -> None:
+        self._sock = socket.create_connection(("127.0.0.1", port), timeout=10.0)
+        self._sock.settimeout(10.0)
+        self._rfile = self._sock.makefile("r", encoding="utf-8")
+        self._wfile = self._sock.makefile("w", encoding="utf-8")
+        self._lock = threading.Lock()
+
+    def request(self, payload: dict) -> dict:
+        with self._lock:
+            self._wfile.write(json.dumps(payload) + "\n")
+            self._wfile.flush()
+            line = self._rfile.readline()
+        if not line:
+            raise HabitatBridgeError("habitat server closed the stream channel")
+        resp = json.loads(line)
+        if not resp.get("ok", False):
+            raise HabitatBridgeError(
+                f"server error for {payload.get('op')}: {resp.get('error', '<none>')}"
+            )
+        return resp
+
+    def close(self) -> None:
+        for f in (self._rfile, self._wfile, self._sock):
+            try:
+                f.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 class HabitatBridge:
     """Spawn + talk to one habitat server. One bridge per scene/run."""
 
@@ -65,6 +100,8 @@ class HabitatBridge:
         self._sock: socket.socket | None = None
         self._rfile: Any = None
         self._wfile: Any = None
+        self._port: int | None = None
+        self._stream: _StreamChannel | None = None
         # One in-flight request at a time: the M5 demo drives navigation and
         # the pano timer from different threads over this single socket —
         # interleaved writes would corrupt the line protocol.
@@ -87,6 +124,7 @@ class HabitatBridge:
             text=True,
         )
         port = self._read_port_handshake()
+        self._port = port
         self._sock = socket.create_connection(("127.0.0.1", port), timeout=30.0)
         self._sock.settimeout(60.0)
         self._rfile = self._sock.makefile("r", encoding="utf-8")
@@ -122,6 +160,9 @@ class HabitatBridge:
 
     def close(self) -> None:
         """Graceful shutdown; idempotent; escalates to kill."""
+        if self._stream is not None:
+            self._stream.close()
+            self._stream = None
         try:
             if self._wfile is not None:
                 self.request({"op": "shutdown"})
@@ -160,3 +201,15 @@ class HabitatBridge:
             raise HabitatBridgeError(f"server error for {payload.get('op')}: "
                                      f"{resp.get('error', '<none>')}")
         return resp
+
+    def stream_request(self, payload: dict) -> dict:
+        """Request on the STREAM channel (lazy-opened second connection).
+
+        Falls back to the main channel when no port is known — fake-server
+        tests bypass ``start()`` and old single-accept fakes stay valid.
+        """
+        if self._stream is None:
+            if self._port is None:
+                return self.request(payload)
+            self._stream = _StreamChannel(self._port)
+        return self._stream.request(payload)
