@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""NavigateToPointSkill — shortest-path navigation to world (x, y) — M3.
+"""NavigateToPointSkill — navigation to world (x, y) — M3, nav-stack N4.
 
-Base-generic: any connected base exposing ``navigate_to(x, y, tol)`` (the
-habitat kinematic base today; a future nav-stack base tomorrow) can run it.
-The skill's success comes from the base's honest outcome, and the suggested
-verify is the deterministic VLN criterion ``geodesic_dist(x, y) < 0.5`` —
+Base-generic: any connected base exposing ``navigate_to(x, y, tol)`` can run
+it. N4 transport selection: when the REAL nav stack is alive (the base's
+``_nav_feed`` reports an active pathFollower), navigation goes through it —
+/way_point in, sensor-driven /navigation_cmd_vel out, euclidean progress
+monitoring only. The sim-oracle ``base.navigate_to`` is the FALLBACK
+(nav stack down / pure-sim installs), and the verify criterion
+``geodesic_dist(x, y) < 0.5`` stays the deterministic judge either way —
 the planner binds the SAME coordinates into params and verify, so a stuck
-or unreachable navigation can never false-pass.
+or unreachable navigation can never false-pass. ``result_data.transport``
+records which path ran (honest provenance).
 """
 from __future__ import annotations
 
@@ -120,8 +124,16 @@ class NavigateToPointSkill:
                 )
         tol = float(params.get("tol", 0.2) or 0.2)
 
-        logger.info("[NAVIGATE_TO] -> (%.2f, %.2f) tol=%.2f", x, y, tol)
-        out = base.navigate_to(x, y, tol)
+        feed = getattr(base, "_nav_feed", None)
+        use_nav = feed is not None and feed.nav_stack_active()
+        logger.info(
+            "[NAVIGATE_TO] -> (%.2f, %.2f) tol=%.2f via %s",
+            x, y, tol, "nav_stack" if use_nav else "sim_oracle",
+        )
+        if use_nav:
+            out = feed.navigate_to(x, y, tol)
+        else:
+            out = base.navigate_to(x, y, tol)
         reached = bool(out.get("reached", False))
         remaining = float(out.get("remaining", float("inf")))
         result_data = {
@@ -129,6 +141,7 @@ class NavigateToPointSkill:
             "reached": reached,
             "remaining_geodesic_m": remaining,
             "position": out.get("pos"),
+            "transport": out.get("transport", "sim_oracle"),
             "diagnosis": "ok" if reached else str(out.get("reason", "nav_stuck")),
         }
         return SkillResult(

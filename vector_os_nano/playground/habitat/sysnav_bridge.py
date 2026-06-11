@@ -231,6 +231,11 @@ class HabitatSysnavBridge:
         self._pub_speed = self.fast_node.create_publisher(Float32, "/speed", 5)
         self._Float32 = Float32
         self._speed_timer = self.fast_node.create_timer(0.5, self._publish_speed)
+        # N4: waypoint goals INTO the nav stack (the FAR/TARE interface).
+        from geometry_msgs.msg import PointStamped
+
+        self._PointStamped = PointStamped
+        self._pub_way = self.fast_node.create_publisher(PointStamped, "/way_point", 5)
         self._executors: list = []
         logger.info(
             "HabitatSysnavBridge up (pano %.1f Hz, state %.1f Hz, cmd %s)",
@@ -286,6 +291,75 @@ class HabitatSysnavBridge:
         msg = self._Float32()
         msg.data = self._nav_speed
         self._pub_speed.publish(msg)
+
+    # -- nav-stack navigation (N4) ---------------------------------------
+    def nav_stack_active(self) -> bool:
+        """True when a pathFollower is alive (someone publishes
+        /navigation_cmd_vel) — the discriminator the navigate skill uses to
+        pick sensor navigation over the sim oracle."""
+        try:
+            return self.fast_node.count_publishers("/navigation_cmd_vel") > 0
+        except Exception:  # noqa: BLE001
+            return False
+
+    def send_waypoint(self, x: float, y: float) -> None:
+        wp = self._PointStamped()
+        wp.header.stamp = self.fast_node.get_clock().now().to_msg()
+        wp.header.frame_id = "map"
+        wp.point.x, wp.point.y = float(x), float(y)
+        self._pub_way.publish(wp)
+
+    def navigate_to(
+        self,
+        x: float,
+        y: float,
+        tol: float = 0.5,
+        *,
+        timeout_s: float = 90.0,
+        stall_s: float = 12.0,
+        poll_s: float = 0.5,
+    ) -> dict:
+        """SENSOR navigation: publish /way_point and watch progress.
+
+        The whole loop is oracle-free — progress is EUCLIDEAN distance from
+        live odometry (the navmesh oracle stays verify-only). Honest
+        outcomes: pathFollower halts at the END of the planned path
+        (stopDisThre 0.4), so ``tol`` is floored at 0.5; no euclidean
+        progress for ``stall_s`` (grace 5 s) returns reached=False with
+        reason 'stall' (blocked/unreachable goals stop honestly).
+        """
+        import math as _math
+        import time as _time
+
+        tol = max(float(tol), 0.5)
+        deadline = _time.monotonic() + timeout_s
+        grace_until = _time.monotonic() + 5.0
+        best = float("inf")
+        best_at = _time.monotonic()
+        pos = self._base.get_position()
+        while _time.monotonic() < deadline:
+            self.send_waypoint(x, y)
+            _time.sleep(poll_s)
+            pos = self._base.get_position()
+            d = _math.hypot(pos[0] - x, pos[1] - y)
+            if d <= tol:
+                return {
+                    "reached": True, "remaining": d, "pos": pos,
+                    "transport": "nav_stack",
+                }
+            if d < best - 0.1:
+                best, best_at = d, _time.monotonic()
+            elif (_time.monotonic() > grace_until
+                  and _time.monotonic() - best_at > stall_s):
+                return {
+                    "reached": False, "remaining": d, "pos": pos,
+                    "transport": "nav_stack", "reason": "stall",
+                }
+        d = _math.hypot(pos[0] - x, pos[1] - y)
+        return {
+            "reached": False, "remaining": d, "pos": pos,
+            "transport": "nav_stack", "reason": "timeout",
+        }
 
     def publish_state_once(self) -> None:
         """Fast odom tick (N1/N2) — one stream-channel roundtrip, with twist

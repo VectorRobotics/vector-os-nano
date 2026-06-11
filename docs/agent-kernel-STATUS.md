@@ -83,10 +83,25 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   present (no self-occlusion), pano min depth 0.755 (not inside a mesh),
   60.8% frame change after navigate; X11 window check PASS in chase mode.
   Artifacts /tmp/n3_chase_*.png; visual quality = owner check.
-  Next: N4 — full-stack VLN: NavigateToPointSkill rewired through the nav
-  stack (/way_point; oracle becomes verify-only), SysNav re-verify on the
-  fixed cloud (sensor-pose + cubemap depth), ≥4 NL instructions incl. an
-  honest failure.
+  **N4 part A SHIPPED: the navigate skill drives the REAL nav stack + the
+  SysNav z-frame finding is RESOLVED.** `NavigateToPointSkill` now selects
+  transport: when `base._nav_feed` (attached by `wire_sysnav_feed`) reports
+  a live pathFollower, navigation publishes `/way_point` and monitors
+  EUCLIDEAN progress only (`HabitatSysnavBridge.navigate_to` — 5 s grace,
+  stall/timeout honest failures; the navmesh oracle stays verify-only);
+  sim-oracle `base.navigate_to` is the fallback, and
+  `result_data.transport` records provenance. LIVE
+  (`~/sandbox/live_test_nav_skill.py` ALL PASS): stack-down → sim_oracle;
+  cross-room via nav_stack in 12 s (verify geodesic 0.43); goal inside a
+  counter stalls honestly (success=False, diagnosis=stall). SysNav
+  re-verify on the FIXED cloud (M4 harness, apartment_1): object nodes
+  flow and heights are now physically plausible — floor z=-1.54 reference:
+  sofa 0.55 m, light 2.63 m (ceiling), picture 1.49 m (wall); the old
+  sofa-at-floor-level (-1.57) z-shift is gone (cubemap-depth + sensor-pose
+  fixes). Next: N4 part B — the VLN acceptance: ≥4 NL instructions 中/英
+  (semantic goal via SysNav label, long chain, honest unreachable failure)
+  through the REAL stack end-to-end; strategy-name affinity
+  (navigate_to→navigate) folded in.
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape

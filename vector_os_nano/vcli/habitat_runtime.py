@@ -195,6 +195,9 @@ def wire_sysnav_feed(agent: Any, on_status: Callable[[str], None] | None = None)
 
     agent._sysnav_feed = feed          # keep refs alive with the agent
     agent._sysnav_consumer = consumer
+    # N4: the navigate skill discovers the nav-stack transport via the base
+    # (SkillContext carries the base, not the agent).
+    agent._base._nav_feed = feed
     _emit(
         on_status,
         "SysNav feed up (/camera/image /registered_scan /state_estimation 50Hz "
@@ -295,6 +298,9 @@ def shutdown_sysnav(agent: Any) -> list[str]:
         except Exception:  # noqa: BLE001
             pass
         agent._sysnav_feed = None
+        base = getattr(agent, "_base", None)
+        if base is not None and getattr(base, "_nav_feed", None) is not None:
+            base._nav_feed = None
 
     return lines
 
