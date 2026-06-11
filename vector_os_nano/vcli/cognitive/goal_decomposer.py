@@ -938,6 +938,14 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
             cleared_strategy = strategy
             strategy = ""
 
+        # Navigate contract repair (N4): params and verify must carry the SAME
+        # coordinates; when the planner bound them only into the verify, copy
+        # them into the missing params (deterministic, never overwrites).
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            backfill_target_params,
+        )
+        strategy_params = backfill_target_params(strategy, strategy_params, verify)
+
         # Validate depends_on
         raw_deps = raw.get("depends_on", [])
         if not isinstance(raw_deps, list):

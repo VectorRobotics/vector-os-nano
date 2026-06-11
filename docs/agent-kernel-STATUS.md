@@ -115,11 +115,21 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   skills this registry doesn't have (M5 'Skill not found: look' was the
   same hole) and a stats override never promotes a phantom; the engine
   fast path excludes navigate_to (cannot bind x/y or the geodesic verify).
-  OPEN for N4 completion: semantic label goals need STANDOFF semantics —
-  the planner binds the OBJECT's own coords with verify < 0.5 but the nav
-  stack honestly stops at the furniture clearance boundary (sofa run:
-  1.55 m short) — teach object-goal verify < 1.5 + label-path tol floor
-  ~1.0, re-run the 5-instruction acceptance to 5/5.
+  **N4 COMPLETE — full-stack VLN 5/5.** Final pieces: (a) semantic
+  STANDOFF — label goals floor tol at 1.5 and verify with
+  `at_position(x, y, 1.6)` (EUCLIDEAN: an object's centre sits OFF the
+  navmesh, which distorts geodesic); (b) `backfill_target_params`
+  (verify_strengthen) — coords the planner bound only into the verify are
+  deterministically copied into missing navigate params (the same-coords
+  contract, repaired kernel-side); (c) coordinate-goal verify CALIBRATED
+  to the real controller: < 0.8 (five live runs showed the follower parks
+  within ~0.4 m of the planned path END and plans end early near clutter —
+  sub-half-metre was oracle fiction). FINAL RUN all-AS-EXPECTED: EN coord
+  16 s, ZH two-waypoint chain 50 s, 走到sofa那里 32 s — every navigation
+  transport=nav_stack — relative motion, and 走到游泳池旁边 honest
+  failure. Traces ~/sandbox/n4_vln/. Next: N5 hobbyist path — one-click
+  setup (self-checking), QUICKSTART.md, pure-NL flow, 30-min new-user
+  target.
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape

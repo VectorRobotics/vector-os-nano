@@ -34,6 +34,7 @@ class _FakeFeed:
 
     def navigate_to(self, x, y, tol=0.5, **kw):
         self.calls.append((x, y))
+        self.last_tol = tol
         return {
             "reached": self._reached, "remaining": 0.3 if self._reached else 4.2,
             "pos": [x, y, 0.0], "transport": "nav_stack",
@@ -76,6 +77,40 @@ class TestTransportSelection:
         assert r.success is False
         assert r.result_data["diagnosis"] == "stall"
         assert r.result_data["transport"] == "nav_stack"
+
+
+class TestSemanticStandoff:
+    def _wm(self):
+        obj = SimpleNamespace(label="sofa", confidence=0.7, x=-2.1, y=-3.8)
+        return SimpleNamespace(
+            get_objects_by_label=lambda label: [obj] if label == "sofa" else [],
+            get_objects=lambda: [obj],
+        )
+
+    def test_label_goal_floors_tol(self) -> None:
+        # "go to the sofa" must stop at standoff, not on the sofa (N4).
+        base = _OracleBase()
+        feed = _FakeFeed(active=True)
+        base._nav_feed = feed
+        ctx = SkillContext(base=base, world_model=self._wm())
+        r = NavigateToPointSkill().execute({"label": "sofa"}, ctx)
+        assert r.success is True
+        assert feed.last_tol >= 1.5
+
+    def test_label_goal_keeps_larger_explicit_tol(self) -> None:
+        base = _OracleBase()
+        feed = _FakeFeed(active=True)
+        base._nav_feed = feed
+        ctx = SkillContext(base=base, world_model=self._wm())
+        NavigateToPointSkill().execute({"label": "sofa", "tol": 2.0}, ctx)
+        assert feed.last_tol == 2.0
+
+    def test_coordinate_goal_tol_unchanged(self) -> None:
+        base = _OracleBase()
+        feed = _FakeFeed(active=True)
+        base._nav_feed = feed
+        NavigateToPointSkill().execute({"x": 1.0, "y": 2.0, "tol": 0.3}, _ctx(base))
+        assert feed.last_tol == 0.3
 
 
 def _rclpy_available() -> bool:

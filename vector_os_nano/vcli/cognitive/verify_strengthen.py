@@ -52,3 +52,34 @@ def strengthen_target_verify(verify: str, strategy_params: dict[str, Any] | None
             return verify
         return f"holding_object({name!r})"
     return verify
+
+
+def backfill_target_params(
+    strategy: str, strategy_params: "dict[str, Any]", verify: str
+) -> "dict[str, Any]":
+    """Copy navigate-style target coordinates from *verify* into missing params.
+
+    The navigate contract binds the SAME coordinates into params and verify
+    (anti-false-pass). LLM plans occasionally carry them only in the verify
+    (N4 live finding: 'navigate_to requires a label OR numeric x and y' while
+    the verify held geodesic_dist(-4.5, -3.2) < 0.5). Deterministic repair of
+    the planner's own stated intent — never overwrites existing params, only
+    fires for navigate_to* strategies with a coordinate-style verify.
+    """
+    import re
+
+    if not str(strategy).startswith("navigate_to"):
+        return strategy_params
+    params = strategy_params if isinstance(strategy_params, dict) else {}
+    if params.get("label") or ("x" in params and "y" in params):
+        return params
+    m = re.search(
+        r"(?:geodesic_dist|at_position)\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
+        verify or "",
+    )
+    if not m:
+        return params
+    out = dict(params)
+    out.setdefault("x", float(m.group(1)))
+    out.setdefault("y", float(m.group(2)))
+    return out

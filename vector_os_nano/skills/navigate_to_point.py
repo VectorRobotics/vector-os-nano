@@ -41,7 +41,19 @@ class NavigateToPointSkill:
     typical_duration_sec: float = 20.0
     # The deterministic VLN success criterion. Bind the SAME x, y here and in
     # strategy_params (the planner copies the literal coordinates).
-    verify_hint: str = "geodesic_dist(x, y) < 0.5"
+    # STANDOFF (N4): an object-label goal verifies < 1.5 — a real robot stops
+    # at the furniture clearance boundary, never ON the object's coordinates.
+    # Calibrated to the REAL controller (N4, five live runs): the follower
+    # parks within ~0.4 m of the planned path END and local plans end early
+    # near clutter — coordinate arrival is honestly ~0.7 m, not the oracle's
+    # teleport precision.
+    verify_hint: str = (
+        "geodesic_dist(x, y) < 0.8 for coordinate goals; for object-label "
+        "goals use at_position(x, y, 1.6) with the object's listed "
+        "coordinates — EUCLIDEAN standoff (an object's centre sits OFF the "
+        "navmesh, which distorts geodesic distance; the robot parks at "
+        "furniture clearance, never on the object)"
+    )
     parameters: dict = {
         "label": {
             "type": "string",
@@ -51,7 +63,8 @@ class NavigateToPointSkill:
                 "'go to the <object>' instruction: the skill resolves the "
                 "object's live coordinates from the world model and FAILS "
                 "LOUDLY if no such object is known — never invent x/y for "
-                "an object."
+                "an object. Object goals stop at furniture STANDOFF "
+                "(~1.5m) — verify them with at_position(x, y, 1.6)."
             ),
         },
         "x": {
@@ -113,6 +126,12 @@ class NavigateToPointSkill:
                 )
             best = max(matches, key=lambda o: o.confidence)
             x, y = float(best.x), float(best.y)
+            # Semantic standoff: "go to the sofa" means NEAR it. The nav
+            # stack plans up to the furniture clearance boundary and the
+            # follower halts at the path END — a tight tolerance on the
+            # object's OWN coordinates can never be met (N4 live finding).
+            params = dict(params)
+            params["tol"] = max(float(params.get("tol", 0.0) or 0.0), 1.5)
         else:
             try:
                 x, y = float(params["x"]), float(params["y"])
