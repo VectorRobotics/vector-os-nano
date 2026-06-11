@@ -7,8 +7,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   Campaign: third world — photoreal/semantic nav world (VLN-first, SysNav revival rides along);
   M0 DONE: ADR-009 (Proposed) recommends pinned habitat-sim 0.3.3 conda-py3.9 subprocess +
   bridge — spike-verified on the Linux box (photoreal RGB, equirect pano+depth, 819K-pt
-  unprojected cloud, GT odom). GATED on owner approval (new external dependency) + HM3D
-  agreement; interim scenes are license-free (test-scenes/HSSD/Replica).
+  unprojected cloud, GT odom). owner APPROVED 2026-06-10; HM3D agreement (DQ-1) still pending — interim scenes are license-free (test-scenes/HSSD/Replica).
   M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
   a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
   (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
@@ -83,8 +82,13 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
-1. **M2 — the habitat third world itself: GATED on owner (DQ-2, ADR-009 approval + HM3D
-   agreement).** Everything ungated that M2/M3 need is in place: seam (M1), grounding
+1. **M2 — the habitat third world: OWNER APPROVED DQ-2 (2026-06-10) — IN PROGRESS.**
+   Part 1 SHIPPED: `playground/habitat/` server (standalone py3.9, conda subprocess, JSON/socket,
+   navmesh `try_step` kinematics, geodesic/snap/semantic-objects oracle ops) + `HabitatBridge`
+   (PORT handshake, fail-loud, watchdog-tagged) + `HabitatBase` (full BaseProtocol + narrow
+   provider specs; vy honestly unsupported) — REAL subprocess e2e green on the Linux box
+   (walk on skokloster navmesh, exact odom, geodesic consistency). Part 2 NEXT: world/scenario
+   (apartment_1 rooms) + verify predicates + `--scenario` wiring. Everything ungated that M2/M3 need is in place: seam (M1), grounding
    (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
    On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
    `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates
