@@ -558,7 +558,23 @@ def _maybe_init_habitat_agent(args: argparse.Namespace, world: Any) -> Any:
         )
         base = HabitatBase(scene=scene)
         base.connect()
-        return Agent(base=base)
+        agent = Agent(base=base)
+        # Base-only world: the registry-derived decompose vocab must teach
+        # ONLY base-capable skills (rule 3 — single-source, no split-brain;
+        # the arm defaults would put pick/place in the planner's mouth with
+        # no arm attached). Rebuild the registry with the mobile set.
+        # TODO: promote to a public Agent API (skills_replace=...) later.
+        from vector_os_nano.core.skill import SkillRegistry
+        from vector_os_nano.skills.go2.stop import StopSkill
+        from vector_os_nano.skills.go2.turn import TurnSkill
+        from vector_os_nano.skills.go2.walk import WalkSkill
+        from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
+
+        registry = SkillRegistry()
+        for s in (WalkSkill(), TurnSkill(), StopSkill(), NavigateToPointSkill()):
+            registry.register(s)
+        agent._skill_registry = registry
+        return agent
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]habitat scenario boot failed: {exc}[/red]")
         return None

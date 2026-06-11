@@ -131,3 +131,7 @@ class TestCliHabitatDispatch:
             assert agent is not None
             assert agent._base.connected is True
             assert agent._base.scene == f.name
+            # The decompose vocab derives from this registry (rule 3): a
+            # base-only world teaches ONLY base-capable skills — no arm set.
+            taught = set(agent._skill_registry.list_skills())
+            assert taught == {"walk", "turn", "stop", "navigate_to"}

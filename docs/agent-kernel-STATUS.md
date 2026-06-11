@@ -14,7 +14,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 - Last updated: 2026-06-10.
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
-## Current state (2026-06-10)
+## Current state (2026-06-11)
 
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
@@ -96,8 +96,14 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    following, deterministic + bounded, honest stuck-stop) + always-on 256x256 egocentric RGB
    + `render` op (base64 PNG, lazy PIL in the conda env); `HabitatBase.navigate_to/render_rgb_png`.
    Live e2e: cross-apartment navigation verified by `geodesic_dist < 0.5` through the REAL
-   sandbox + a real PNG frame. M3 REMAINING: skill/vocab wiring for the mobile world + the
-   NL slice itself (≥5 instructions, real deepseek, fully deterministic verify). Everything ungated that M2/M3 need is in place: seam (M1), grounding
+   sandbox + a real PNG frame. **M3 COMPLETE (2026-06-11)**: `NavigateToPointSkill` (base-generic, verify_hint =
+   the VLN criterion) + mobile skill set (walk/turn/stop/navigate_to — the habitat agent's
+   registry is rebuilt base-only per rule 3, no arm skills taught) + LIVE acceptance
+   (tests/vcli/test_habitat_nl_slice.py, VECTOR_LIVE_LLM=1): 5 NL instructions 中/英 incl. a
+   two-waypoint chain, real LLM + real conda subprocess + real harness, all verified-done,
+   ≥4 hard-evidence, every verify a deterministic sandbox predicate (geodesic_dist /
+   at_position / True) — never an LLM judge. THE THIRD-WORLD CAMPAIGN (M0-M3) IS COMPLETE;
+   M4 SysNav revival + M5 flagship demo await the owner's next directive + DQ-1 (HM3D). Everything ungated that M2/M3 need is in place: seam (M1), grounding
    (referring expressions, step_output verify), ops (registry/daemon/watchdog), WorldBlueprint.
    On approval: conda-py3.9 habitat subprocess + socket bridge (go2-sim pattern), kinematic
    `BaseProtocol` over navmesh `VelocityControl`/`try_step`, oracle predicates
