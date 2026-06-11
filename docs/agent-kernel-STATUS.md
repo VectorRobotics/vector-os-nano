@@ -222,45 +222,10 @@ behaviors are owner-window checks — never claim them verified headless.
   [ADR-008](architecture-decisions/ADR-008-playground-parallel-track.md)
 - Superseded docs live in git history (`git log --all -- <path>`). No working-tree archive.
 
-## Autonomous /loop prompt (the standing mission for owner-away iterations)
+## Autonomous loop
 
-Run via `/loop <this prompt>` (no interval => self-paced). Mission-oriented + high-autonomy: each firing
-advances the mission as far as it safely can, not a single tiny edit.
-
-> **Mission: advance vector-os-nano toward a generalizable PHYSICAL agent for robots.** Iterate autonomously
-> (owner away; auto-approve on; current work branch; ONLY this project, never UniLab). This is
-> a mission, not a checklist: make natural language truly control a robot through a grounded CLOSED loop
-> (understand -> decompose -> plan -> execute -> verify -> replan -> recover), generalizing across embodiments
-> (arm, go2, future) AND tasks. Simulation is a MEANS; the end is a physical robot agent. Push the LLM through
-> the whole cognitive layer (language, decomposition, planning, strategy/verify selection, recovery); keep
-> grounding/verify/safety DETERMINISTIC — verify is the moat, never LLM-graded. Prefer fixes that remove an
-> embodiment asymmetry or generalize a mechanism over one-off patches.
->
-> Each iteration, ORIENT then act with judgment — you have wide latitude:
-> - ORIENT: read `docs/agent-kernel-STATUS.md` (OPEN backlog + current state), `docs/ARCHITECTURE.md`,
->   `docs/tricky-bugs.md`, and memories `vector-os-nano-live-hardening` / `-language-layer` /
->   `workflow-model-tiering`. Optionally run the real cli + deepseek to feel current state and discover issues.
-> - CHOOSE a meaningful objective — a bug class, a capability, an architectural improvement — that moves the
->   mission forward. You MAY pursue a FARTHER goal across several workflows/edits in one iteration; don't
->   artificially stop at one tiny change. Decompose it yourself and advance as far as you safely can.
-> - BUILD: reproduce/diagnose first, then implement via focused dynamic **Workflows** (implement -> 2-3
->   adversarial reviewers -> critic), chaining as many as the objective needs. Pin agent models per
->   `workflow-model-tiering`. Write/extend tests for logic that matters; add evals where output quality matters.
-> - VERIFY HONESTLY: keep the canonical suite green (`.venv/bin/python -m pytest tests/vcli
->   tests/unit/vcli -q`); validate behavior headless with the real cli + deepseek wherever possible. Some
->   things only reproduce in the owner's mjpython window (GUI render, real-time timing, Ctrl-C under mjpython)
->   — reason carefully, add what headless coverage you can, and CLEARLY hand the visual/timing confirmation to
->   the owner. Never claim a GUI-visual works unverified.
-> - COMMIT + RECORD: self-review the real diff; green-then-commit in isolated, logically-scoped commits,
->   updating STATUS (+ ARCHITECTURE if structure/contracts changed; + tricky-bugs.md if a hidden bug was
->   cracked) and the relevant memory in the SAME commit (Doc Governance). Record what you did + what's next so
->   the next iteration resumes cleanly. **Do NOT push.**
->   `git checkout mjcf/go2/scene_room_piper.xml` if a go2 test dirtied it.
->
-> DON'T interrupt the owner to ask — make reasonable decisions and proceed. Only stop/surface on a GENUINE
-> blocker: the canonical suite goes red and you can't get it green (halt-on-red; salvage + commit partial
-> green), something needs the owner's GUI/hardware confirmation, or an action would be destructive /
-> irreversible / outward-facing (push, deploy, delete owner data). Otherwise keep advancing the mission,
-> iteration after iteration, then schedule the next one.
->
-> Current backlog: the **OPEN — prioritized backlog** section above (advance any; not exhaustive — discover more).
+Owner-away iterations are campaign-driven and live OUTSIDE the repo:
+`~/.vector-nano-loop/{constitution,campaign,journal,next-prompt,decision-queue}.md`.
+Start with `/loop` + the constitution prompt (constitution.md is the fixed state machine;
+campaign.md holds the current milestones). The standing-mission prompt that used to live
+here is superseded — git history has it.
