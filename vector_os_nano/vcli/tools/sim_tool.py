@@ -70,7 +70,9 @@ class SimStartTool:
 
     Backends: mujoco (default), gazebo (Gz Sim Harmonic), isaac (Docker, archived).
     sim_type='habitat' boots the kinematic photoreal world for a playground
-    scenario (default 'apartment') via the shared habitat runtime.
+    scenario (default 'house' — the flagship multi-room ReplicaCAD
+    world; 'apartment' is the smaller bare-scan preset) via the shared
+    habitat runtime.
     """
 
     input_schema: dict[str, Any] = {
@@ -86,10 +88,10 @@ class SimStartTool:
             },
             "scenario": {
                 "type": "string",
-                "default": "apartment",
+                "default": "house",
                 "description": (
                     "ONLY for sim_type='habitat': the playground scenario id "
-                    "to load (default 'apartment')"
+                    "to load (default 'house', the multi-room world)"
                 ),
             },
             "gui": {
@@ -159,7 +161,7 @@ class SimStartTool:
         try:
             if sim_type == "habitat":
                 agent, habitat_world = self._start_habitat(
-                    params.get("scenario", "apartment"), gui=gui
+                    params.get("scenario", "house"), gui=gui
                 )
             elif backend == "isaac":
                 if sim_type == "go2":

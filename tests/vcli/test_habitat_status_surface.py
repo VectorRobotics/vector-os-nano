@@ -272,6 +272,25 @@ class TestSimStartHabitat:
             reg.disable_category(c)
         return {"agent": None, "registry": reg, "engine": _FakeEngine()}
 
+    def test_default_scenario_is_house(self, monkeypatch) -> None:
+        # N5: "启动habitat模拟" with no scenario boots the FLAGSHIP house
+        # world (multi-room ReplicaCAD), not the bare-scan apartment.
+        from vector_os_nano.vcli import habitat_runtime
+        from vector_os_nano.vcli.tools.sim_tool import SimStartTool
+
+        booted: dict = {}
+
+        def _boot(world, on_status=None, gui=None):
+            booted["world"] = world
+            return _mobile_agent()
+
+        monkeypatch.setattr(habitat_runtime, "boot_habitat_agent", _boot)
+        app = self._app()
+        res = SimStartTool().execute({"sim_type": "habitat"}, _ctx(None, app))
+        assert not res.is_error, res.content
+        assert booted["world"].name == "house"
+        assert app["scenario"] == "house"
+
     def test_starts_habitat_via_runtime(self, monkeypatch) -> None:
         from vector_os_nano.vcli import habitat_runtime
         from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt

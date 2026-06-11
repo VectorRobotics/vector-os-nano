@@ -53,12 +53,17 @@ if [ -x "$HAB_PY" ] && "$HAB_PY" -c "import habitat_sim" 2>/dev/null; then
 elif [ -n "$CHECK_ONLY" ]; then
     miss "habitat env" "run without --check, or: conda create -n $CONDA_ENV python=3.9 && conda install -n $CONDA_ENV habitat-sim=0.3.3 headless -c conda-forge -c aihabitat"
 else
-    if ! command -v conda >/dev/null 2>&1; then
+    # conda is usually a SHELL FUNCTION (bashrc) — invisible to scripts;
+    # resolve the binary directly so non-interactive runs work too.
+    CONDA_BIN="${CONDA_EXE:-}"
+    [ -x "$CONDA_BIN" ] || CONDA_BIN="$(command -v conda 2>/dev/null || true)"
+    [ -x "$CONDA_BIN" ] || CONDA_BIN="$HOME/miniconda3/bin/conda"
+    if [ ! -x "$CONDA_BIN" ]; then
         miss "conda not found" "install miniconda first: https://docs.conda.io/en/latest/miniconda.html"
     else
         act "creating $CONDA_ENV (this downloads ~1 GB, takes minutes)"
-        conda create -y -n "$CONDA_ENV" python=3.9 >/dev/null \
-          && conda install -y -n "$CONDA_ENV" habitat-sim=0.3.3 headless \
+        "$CONDA_BIN" create -y -n "$CONDA_ENV" python=3.9 >/dev/null \
+          && "$CONDA_BIN" install -y -n "$CONDA_ENV" habitat-sim=0.3.3 headless \
                -c conda-forge -c aihabitat >/dev/null \
           && "$HAB_PY" -m pip install -q "numpy==1.26.4" "pillow==10.4.0" \
                "opencv-python==4.9.0.80"
@@ -101,7 +106,9 @@ elif [ -n "$CHECK_ONLY" ]; then
 else
     if ! command -v git-lfs >/dev/null 2>&1 && ! git lfs version >/dev/null 2>&1; then
         miss "git-lfs not installed" "sudo apt install git-lfs && git lfs install"
-    elif [ -x "$HAB_PY" ]; then
+    elif [ ! -x "$HAB_PY" ]; then
+        miss "ReplicaCAD needs the habitat env first" "fix step 1, then re-run"
+    else
         act "downloading ReplicaCAD (HF git-LFS; license CC-BY-4.0 by Meta)"
         mkdir -p "$DATA_PARENT"
         (cd "$DATA_PARENT/.." 2>/dev/null || cd "$DATA_PARENT"; \

@@ -139,9 +139,24 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   stays get-it-yourself). `QUICKSTART.md` (root, operator-facing):
   prerequisites → setup → launch → optional nav-stack/SysNav layers →
   honest troubleshooting (numpy pin, clearance stopping, DISPLAY).
-  Next: N5 part B — clean-environment drill of the provision legs (fresh
-  data root), pure-NL flow polish, hobbyist mini-research (fill #5),
-  then the campaign closes.
+  **N5 COMPLETE — CAMPAIGN #2 (全栈居住世界) CLOSED, all milestones
+  N0-N5 shipped.** Part B: (a) clean-environment drill — a FRESH conda
+  env + fresh data root provisioned end-to-end by the setup script in
+  1m24s real (fresh habitat env, ReplicaCAD download, G1 GLB build —
+  all [OK]; the drill also caught and fixed two script bugs: conda being
+  a shell function invisible to scripts, and a silent no-output path
+  when the habitat env is missing); (b) pure-NL flow live ALL PASS
+  (`~/sandbox/live_test_n5_nl_flow.py`): bare session →
+  start_simulation with NO scenario boots the HOUSE world (NL default
+  switched from apartment — the flagship is the multi-room world),
+  robot_status knows it, one real-LLM navigation verified-done,
+  stop_simulation clean; (c) hobbyist scan (fill #5): LeRobot (HF) is
+  the de-facto hobbyist entry point but is manipulation/learning-
+  centric (datasets, policies, LIBERO/Meta-World, GR00T) — NOT a
+  navigation/VLN sandbox; our photoreal-house + real-nav-stack +
+  deterministic-verify NL loop is complementary positioning, not
+  competition. Campaign scorecard in ~/.vector-nano-loop/journal.md;
+  master merge is the owner's gate (decision queue).
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape
