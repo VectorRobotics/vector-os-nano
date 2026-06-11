@@ -18,6 +18,7 @@ import pytest
 
 from vector_os_nano.playground.habitat.sysnav_bridge import (
     crop_to_sysnav_image,
+    filter_ceiling,
     make_pointcloud2_parts,
     unproject_equirect_depth,
 )
@@ -66,6 +67,49 @@ class TestUnprojection:
         full = unproject_equirect_depth(_flat_depth(), (0, 0, 0), 0.0, stride=1)
         sub = unproject_equirect_depth(_flat_depth(), (0, 0, 0), 0.0, stride=4)
         assert 0 < len(sub) < len(full)
+
+    def test_cubemap_face_depth_converted_to_euclidean(self) -> None:
+        # habitat equirect depth is cube-FACE z-depth (tricky-bugs Case 5):
+        # a pixel at 45° elevation straddles the down/forward face boundary
+        # where |û·n̂| = cos(45°), so face depth 1.0 must unproject to a
+        # point √2 from the camera — NOT 1.0.
+        h, w = 64, 128
+        d = np.full((h, w), 1.0, dtype=np.float32)
+        pts = unproject_equirect_depth(d, (0.0, 0.0, 0.0), 0.0, stride=1,
+                                       eye_height=0.0)
+        # ray: lat=-45°, lon=0 (forward-down) -> direction (√2/2, 0, -√2/2)
+        target = np.array([1.0, 0.0, -1.0])  # √2 along that ray
+        nearest = pts[np.argmin(np.linalg.norm(pts - target, axis=1))]
+        assert np.linalg.norm(nearest - target) < 0.08
+
+    def test_face_center_depth_unchanged(self) -> None:
+        # At a face CENTER the ray is the face normal: euclidean == z-depth.
+        h, w = 64, 128
+        d = np.full((h, w), 2.0, dtype=np.float32)
+        pts = unproject_equirect_depth(d, (0.0, 0.0, 0.0), 0.0, stride=1,
+                                       eye_height=0.0)
+        for target in ([2.0, 0.0, 0.0], [0.0, 0.0, 2.0], [0.0, -2.0, 0.0]):
+            t = np.array(target)
+            nearest = pts[np.argmin(np.linalg.norm(pts - t, axis=1))]
+            assert np.linalg.norm(nearest - t) < 0.15, target
+
+
+class TestCeilingFilter:
+    def test_drops_points_above_band(self) -> None:
+        pts = np.array(
+            [[0, 0, 0.1], [0, 0, 1.5], [0, 0, 2.4]], dtype=np.float32
+        )
+        out = filter_ceiling(pts, base_z=0.12, ceiling_m=1.8)
+        assert out[:, 2].max() <= 0.12 + 1.8
+        assert len(out) == 2
+
+    def test_none_is_passthrough(self) -> None:
+        pts = np.array([[0, 0, 9.0]], dtype=np.float32)
+        assert filter_ceiling(pts, 0.0, None) is pts
+
+    def test_empty_cloud_safe(self) -> None:
+        pts = np.zeros((0, 3), dtype=np.float32)
+        assert len(filter_ceiling(pts, 0.0, 1.8)) == 0
 
 
 class TestPointCloudParts:
@@ -244,6 +288,88 @@ class TestN1StateAndCmdVel:
         try:
             bridge.publish_state_once()  # logs a warning, never raises
         finally:
+            bridge.destroy()
+
+    def test_odom_is_sensor_pose_with_tf(self) -> None:
+        # N2 CMU contract: odom z = base z + eye height (the cloud's capture
+        # origin) and every fast tick broadcasts TF map->sensor.
+        import rclpy
+        import time
+        from tf2_msgs.msg import TFMessage
+
+        fake = SimpleNamespace(
+            get_state=lambda: {
+                "pos": [2.0, -1.0, 0.12], "heading": 0.0, "vel": [0, 0, 0],
+            }
+        )
+        bridge = self._bridge(fake)
+        got: dict = {}
+        sub_node = rclpy.create_node("tf_probe")
+        sub_node.create_subscription(
+            TFMessage, "/tf", lambda m: got.setdefault("tf", m), 10
+        )
+        try:
+            deadline = time.time() + 5.0
+            while time.time() < deadline and not got:
+                bridge.publish_state_once()
+                rclpy.spin_once(sub_node, timeout_sec=0.05)
+            tf = got["tf"].transforms[0]
+            assert tf.header.frame_id == "map"
+            assert tf.child_frame_id == "sensor"
+            assert tf.transform.translation.z == pytest.approx(0.12 + 1.2)
+        finally:
+            sub_node.destroy_node()
+            bridge.destroy()
+
+    def test_navigation_cmd_vel_stamped_reaches_base(self) -> None:
+        # pathFollower publishes TwistStamped /navigation_cmd_vel (N2).
+        import rclpy
+        import time
+        from geometry_msgs.msg import TwistStamped
+
+        seen: list = []
+        fake = SimpleNamespace(
+            set_velocity=lambda vx, vy, vyaw: seen.append((vx, vy, vyaw))
+        )
+        bridge = self._bridge(fake)
+        pub_node = rclpy.create_node("navcmd_probe")
+        pub = pub_node.create_publisher(TwistStamped, "/navigation_cmd_vel", 10)
+        try:
+            deadline = time.time() + 5.0
+            while time.time() < deadline and pub.get_subscription_count() != 1:
+                rclpy.spin_once(bridge.fast_node, timeout_sec=0.02)
+            msg = TwistStamped()
+            msg.twist.linear.x = 0.6
+            msg.twist.angular.z = 0.2
+            pub.publish(msg)
+            for _ in range(100):
+                if seen:
+                    break
+                rclpy.spin_once(bridge.fast_node, timeout_sec=0.05)
+            assert seen and seen[0] == (0.6, 0.0, 0.2)
+        finally:
+            pub_node.destroy_node()
+            bridge.destroy()
+
+    def test_speed_keepalive_published(self) -> None:
+        import rclpy
+        import time
+        from std_msgs.msg import Float32
+
+        bridge = self._bridge(SimpleNamespace())
+        got: dict = {}
+        sub_node = rclpy.create_node("speed_probe")
+        sub_node.create_subscription(
+            Float32, "/speed", lambda m: got.setdefault("speed", m), 5
+        )
+        try:
+            deadline = time.time() + 5.0
+            while time.time() < deadline and not got:
+                bridge._publish_speed()
+                rclpy.spin_once(sub_node, timeout_sec=0.05)
+            assert got["speed"].data == pytest.approx(0.8)
+        finally:
+            sub_node.destroy_node()
             bridge.destroy()
 
 

@@ -45,9 +45,29 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   timer at ~29 Hz (pano load irrelevant), STE hits 50.0. LIVE acceptance
   (`~/sandbox/live_test_stream.py`, all PASS): 50 msgs/s odom, /cmd_vel at
   10 Hz drives 1.0 m, deadman stops a stale stream, wall-slide never leaves
-  the navmesh. Next: N2 — point the real nav stack (terrain_analysis +
-  local_planner) at this feed; note FAR wants /odom_world + /scan_cloud
-  (remap or dual-publish).
+  the navmesh.
+  **N2 SHIPPED: the REAL nav stack drives the house.** Chain (no oracle
+  planning anywhere): habitat feed → terrain_analysis → localPlanner (G1
+  profile — head-mounted sensor offsets 0/0, 0.5 m footprint) → pathFollower
+  → /navigation_cmd_vel → streaming set_velocity. Feed additions (N2):
+  /state_estimation is the SENSOR pose (base + 1.2 m eye height, CMU
+  convention — may also fix the M4 "object z frame-shifted" follow-up,
+  SysNav re-verify deferred to N4) + TF map→sensor per fast tick + /speed
+  keep-alive (no /joy — the Go2 lesson) + /navigation_cmd_vel TwistStamped
+  subscription + optional scan ceiling filter. THE find: habitat equirect
+  DEPTH is cubemap-FACE z-depth, not euclidean ray distance (tricky-bugs
+  Case 5) — flat floors rippled ±14 cm and the planner saw obstacles
+  everywhere; `unproject_equirect_depth` now divides by the dominant ray
+  axis component (face-center/face-seam pinned by tests). Launcher:
+  scripts/launch_habitat_nav.sh (local-planner chain; FAR/TARE out of N2).
+  LIVE (`~/sandbox/live_test_nav_house.py` ALL PASS): kitchen→dining-south
+  6.05 m cross-room sensor navigation in 11 s, geodesic remaining
+  0.49 < 0.5, final pose on-mesh. Goal-picking lessons live in the harness
+  comments (room centers can BE furniture; pathFollower halts at the path
+  END — stopDisThre 0.4 — so near-furniture goals end ~0.6 m short).
+  Next: N3 — visible robot body (Menagerie G1/Go2 mesh) + third-person
+  follow camera; FAR (/odom_world /scan_cloud remap) when N4 needs
+  long-range waypoints.
 - **Go2 explore gait (飘/瘸腿): FIXED, owner-confirmed live.** Root cause was two-clock skew
   (physics ~0.65× real-time vs wall-tick velocity ramps in the nav bridge) — full case in
   [tricky-bugs.md](tricky-bugs.md) Case 1. Fix `d7e158b`: `_follow_path` ramps + wall-escape

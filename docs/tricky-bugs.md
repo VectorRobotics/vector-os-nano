@@ -81,3 +81,26 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** in rclpy, callback-rate problems are as likely the EXECUTOR as the
   callback. Benchmark the empty loop before blaming the workload, and prefer one
   STE per rate-critical node over one MTE for everything.
+
+## Case 5 — habitat equirect DEPTH is cubemap-face z-depth, not ray distance (2026-06, N2)
+
+- **Symptom:** the nav stack saw obstacles EVERYWHERE in the house world —
+  /free_paths width 0, robot frozen — while terrain_map data flowed normally.
+- **Why hidden:** the cloud had passed M4 acceptance ("plausible world cloud",
+  real SysNav objects out of it). The warp is smooth and looks right to the eye;
+  only quantitative flatness checks exposed a ±14 cm ripple on a FLAT floor.
+  (A first diagnosis bug compounded it: reading terrain_map intensity at the
+  wrong byte offset — PCL PointXYZI is 32-byte with intensity at 16 — produced
+  a fake "all 1.0" lead. Parse PointCloud2 by field offsets, never by column.)
+- **Root cause (discriminating experiment):** rendering the EMPTY stage and
+  comparing against the analytic ray-to-floor distance: every downward angle
+  returned the constant camera-to-floor HEIGHT (1.319) instead of
+  height/sin(elevation). habitat's EquirectangularSensor depth is the
+  perpendicular z-depth of whichever CUBEMAP FACE the ray samples.
+- **Fix:** `unproject_equirect_depth` converts euclidean = face_depth / |û·n̂|
+  (the largest axis component of the unit ray in the sensor frame); pinned by
+  a face-seam (45°, ×√2) and face-center (×1) test pair.
+- **Lesson:** never trust a depth convention without an analytic ground-truth
+  check (flat floor + trigonometry is free); "plausible-looking" point clouds
+  hide smooth systematic warps that downstream consumers turn into hard
+  failures.

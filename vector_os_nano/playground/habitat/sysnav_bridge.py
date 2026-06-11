@@ -18,6 +18,17 @@ bridge's STREAM channel — never queued behind the pano render — and a
 into the base. The 2 Hz pano tick keeps publishing the pose-synced triplet
 (M4 contract unchanged).
 
+N2 completes the CMU nav-stack contract: ``/state_estimation`` carries the
+SENSOR pose (base + eye height — the cloud's true capture origin; CMU
+convention is sensor-frame odometry, and the Go2 track did the same with
+its mast offset) + TF ``map→sensor`` per fast tick + ``/speed`` keep-alive
+(NO ``/joy`` — pathFollower's joystickHandler would zero autonomy speed,
+the Go2 lesson) + a ``/navigation_cmd_vel`` (TwistStamped, pathFollower's
+output) subscription, and an optional ceiling filter on the published
+cloud (``scan_ceiling_m`` above the BASE z) so terrain analysis never eats
+the roof. Static TF sensor→base_link comes from local_planner.launch.py —
+never duplicated here.
+
 The v2.4 MuJoCo sensors stalled on semantically EMPTY renders; this bridge
 finally delivers the wiring on real visuals. rclpy imports are lazy (module
 imports clean without ROS2); the unprojection is a PURE function tested
@@ -80,10 +91,26 @@ def unproject_equirect_depth(
     lat = (0.5 - rows / float(h)) * math.pi          # +pi/2 (up) .. -pi/2
     lon = (cols / float(w) - 0.5) * 2.0 * math.pi    # -pi .. +pi, 0 = ahead
     lon_g, lat_g = np.meshgrid(lon, lat)
+    cos_lat = np.cos(lat_g)
+
+    # habitat's EquirectangularSensor depth is the CUBEMAP-FACE z-depth
+    # (perpendicular to whichever cube face the ray samples), NOT the
+    # euclidean ray distance — spike-verified on the empty stage: every
+    # downward angle returned the constant camera-to-floor height instead
+    # of height/sin(elevation) (tricky-bugs Case 5; the warp made flat
+    # floors ripple ±14 cm and the nav stack saw obstacles everywhere).
+    # euclidean = face_depth / |û·n̂|, where |û·n̂| is the largest axis
+    # component of the unit ray in the sensor frame (sign-agnostic).
+    face_cos = np.maximum(
+        np.abs(np.sin(lat_g)),
+        np.maximum(
+            np.abs(cos_lat * np.cos(lon_g)), np.abs(cos_lat * np.sin(lon_g))
+        ),
+    )
+    d = d / face_cos
 
     # Bearing in the WORLD frame: heading at lon=0, turning RIGHT as lon grows.
     bearing = heading - lon_g
-    cos_lat = np.cos(lat_g)
     dirs = np.stack(
         [
             cos_lat * np.cos(bearing),   # world x
@@ -98,6 +125,19 @@ def unproject_equirect_depth(
         [pos_world[0], pos_world[1], pos_world[2] + eye_height], dtype=np.float32
     )
     return (pts + origin).astype(np.float32)
+
+
+def filter_ceiling(
+    points: np.ndarray, base_z: float, ceiling_m: "float | None"
+) -> np.ndarray:
+    """Drop points above ``base_z + ceiling_m`` (pure; None = no filter).
+
+    The full-sphere unprojection includes the roof; terrain analysis and the
+    local planner must never treat it as an obstacle band (the Go2 track's
+    ceiling_filter_height lesson)."""
+    if ceiling_m is None or len(points) == 0:
+        return points
+    return points[points[:, 2] <= float(base_z) + float(ceiling_m)]
 
 
 def make_pointcloud2_parts(points_xyz: np.ndarray) -> "tuple[bytes, list, int]":
@@ -132,15 +172,21 @@ class HabitatSysnavBridge:
         *,
         state_hz: float = 50.0,
         cmd_vel_topic: str = "/cmd_vel",
+        scan_ceiling_m: "float | None" = None,
+        nav_speed: float = 0.8,
         node_name: str = "habitat_sysnav_bridge",
     ) -> None:
         import rclpy  # noqa: PLC0415 — lazy by design
-        from geometry_msgs.msg import Twist
+        from geometry_msgs.msg import Twist, TwistStamped
         from nav_msgs.msg import Odometry
         from rclpy.node import Node
         from sensor_msgs.msg import Image, PointCloud2, PointField
+        from std_msgs.msg import Float32
+        from tf2_ros import TransformBroadcaster
 
         self._base = base
+        self._scan_ceiling = scan_ceiling_m
+        self._nav_speed = float(nav_speed)
         self._Image = Image
         self._PointCloud2 = PointCloud2
         self._PointField = PointField
@@ -163,16 +209,28 @@ class HabitatSysnavBridge:
         self._pub_odom_fast = self.fast_node.create_publisher(
             Odometry, "/state_estimation", 10
         )
+        self._tf_broadcaster = TransformBroadcaster(self.fast_node)
         self._state_timer = None
         if state_hz and state_hz > 0:
             self._state_timer = self.fast_node.create_timer(
                 1.0 / state_hz, self.publish_state_once
             )
         self._sub_cmd = None
+        self._sub_cmd_stamped = None
         if cmd_vel_topic:
             self._sub_cmd = self.fast_node.create_subscription(
                 Twist, cmd_vel_topic, self._on_cmd_vel, 10
             )
+            # pathFollower's output (N2): same handler, stamped envelope.
+            self._sub_cmd_stamped = self.fast_node.create_subscription(
+                TwistStamped, "/navigation_cmd_vel",
+                lambda m: self._on_cmd_vel(m.twist), 10,
+            )
+        # pathFollower keep-alive: /speed scales autonomy velocity. NO /joy —
+        # its joystickHandler zeros joySpeed when axes[4]==0 (the Go2 lesson).
+        self._pub_speed = self.fast_node.create_publisher(Float32, "/speed", 5)
+        self._Float32 = Float32
+        self._speed_timer = self.fast_node.create_timer(0.5, self._publish_speed)
         self._executors: list = []
         logger.info(
             "HabitatSysnavBridge up (pano %.1f Hz, state %.1f Hz, cmd %s)",
@@ -210,24 +268,54 @@ class HabitatSysnavBridge:
         except ValueError as exc:
             logger.warning("sysnav bridge: %s — publishing uncropped", exc)
             img = pano["rgb"]
-        self._pub_image.publish(self._image_msg(img, now))
-        # The cloud keeps the FULL sphere (richer for voxel clustering); the
-        # fusion projects it onto the cropped image with its own model.
-        pts = unproject_equirect_depth(pano["depth"], pano["pos"], pano["heading"])
-        self._pub_cloud.publish(self._cloud_msg(pts, now))
-        self._pub_odom.publish(self._odom_msg(pano["pos"], pano["heading"], now))
+        try:
+            self._pub_image.publish(self._image_msg(img, now))
+            # The cloud keeps the FULL sphere (richer for voxel clustering)
+            # unless a ceiling filter is set (nav profile); the fusion
+            # projects it onto the cropped image with its own model.
+            pts = unproject_equirect_depth(
+                pano["depth"], pano["pos"], pano["heading"]
+            )
+            pts = filter_ceiling(pts, pano["pos"][2], self._scan_ceiling)
+            self._pub_cloud.publish(self._cloud_msg(pts, now))
+            self._pub_odom.publish(self._odom_msg(pano["pos"], pano["heading"], now))
+        except Exception as exc:  # noqa: BLE001 — mid-destroy ticks must not raise
+            logger.debug("sysnav bridge: publish skipped: %s", exc)
+
+    def _publish_speed(self) -> None:
+        msg = self._Float32()
+        msg.data = self._nav_speed
+        self._pub_speed.publish(msg)
 
     def publish_state_once(self) -> None:
-        """Fast odom tick (N1) — one stream-channel roundtrip, with twist."""
+        """Fast odom tick (N1/N2) — one stream-channel roundtrip, with twist
+        and the TF map→sensor the nav stack expects."""
         try:
             st = self._base.get_state()
         except Exception as exc:  # noqa: BLE001 — keep ticking, log loud
             logger.warning("sysnav bridge: state fetch failed: %s", exc)
             return
-        now = self.fast_node.get_clock().now().to_msg()
-        self._pub_odom_fast.publish(
-            self._odom_msg(st["pos"], st["heading"], now, vel=st.get("vel"))
-        )
+        try:
+            now = self.fast_node.get_clock().now().to_msg()
+            msg = self._odom_msg(st["pos"], st["heading"], now, vel=st.get("vel"))
+            self._pub_odom_fast.publish(msg)
+            self._tf_broadcaster.sendTransform(self._tf_msg(msg))
+        except Exception as exc:  # noqa: BLE001 — mid-destroy ticks must not raise
+            logger.debug("sysnav bridge: state publish skipped: %s", exc)
+
+    def _tf_msg(self, odom: Any) -> Any:
+        from geometry_msgs.msg import TransformStamped  # cached by import system
+
+        t = TransformStamped()
+        t.header.stamp = odom.header.stamp
+        t.header.frame_id = "map"
+        t.child_frame_id = "sensor"
+        t.transform.translation.x = odom.pose.pose.position.x
+        t.transform.translation.y = odom.pose.pose.position.y
+        t.transform.translation.z = odom.pose.pose.position.z
+        t.transform.rotation.z = odom.pose.pose.orientation.z
+        t.transform.rotation.w = odom.pose.pose.orientation.w
+        return t
 
     def _on_cmd_vel(self, msg: Any) -> None:
         """Stream a /cmd_vel Twist into the base (non-blocking, deadman'd
@@ -284,7 +372,9 @@ class HabitatSysnavBridge:
         msg.child_frame_id = "sensor"
         msg.pose.pose.position.x = float(pos[0])
         msg.pose.pose.position.y = float(pos[1])
-        msg.pose.pose.position.z = float(pos[2])
+        # SENSOR pose (CMU convention): odometry reports the capture origin,
+        # not the base — the cloud is unprojected from base + eye height.
+        msg.pose.pose.position.z = float(pos[2]) + _EYE_HEIGHT_M
         msg.pose.pose.orientation.z = math.sin(heading / 2.0)
         msg.pose.pose.orientation.w = math.cos(heading / 2.0)
         if vel:
