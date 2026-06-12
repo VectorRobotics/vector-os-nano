@@ -82,6 +82,51 @@ class TestMalformedJson:
         assert out[1]["ok"] is True
 
 
+class TestRidEcho:
+    """#15 — the server echoes the request's ``rid`` so the bridge can pair
+    responses with requests and discard stale lines after a read timeout."""
+
+    def test_rid_echoed_on_main_channel(self, server_mod):
+        srv, out = _run(
+            server_mod,
+            '{"op": "state", "rid": 7}\n{"op": "shutdown", "rid": 8}\n')
+        assert out[0]["rid"] == 7
+        assert out[1]["rid"] == 8
+
+    def test_no_rid_no_echo(self, server_mod):
+        srv, out = _run(server_mod, '{"op": "shutdown"}\n')
+        assert "rid" not in out[0]
+
+    def test_handler_exception_still_echoes_rid(self, server_mod):
+        class _Boom(_FakeServer):
+            def handle(self, req):
+                raise RuntimeError("kaput")
+
+        wfile = io.StringIO()
+        server_mod._serve_main(
+            io.StringIO('{"op": "explode", "rid": 3}\n'), wfile, _Boom())
+        out = json.loads(wfile.getvalue().splitlines()[0])
+        assert out["ok"] is False and out["rid"] == 3
+
+
+class TestWalkDurationCap:
+    def test_walk_duration_capped(self, server_mod):
+        # an unbounded duration used to hold the op thread for minutes (#15)
+        seen = {}
+        srv = server_mod.HabitatServer.__new__(server_mod.HabitatServer)
+        srv.walk = lambda vx, vyaw, duration: seen.update(d=duration) or {}
+        srv.handle({"op": "walk", "vx": 1.0, "vyaw": 0.0, "duration": 9999.0})
+        assert seen["d"] <= server_mod._MAX_WALK_DURATION
+        assert seen["d"] > 0
+
+    def test_normal_duration_untouched(self, server_mod):
+        seen = {}
+        srv = server_mod.HabitatServer.__new__(server_mod.HabitatServer)
+        srv.walk = lambda vx, vyaw, duration: seen.update(d=duration) or {}
+        srv.handle({"op": "walk", "vx": 1.0, "vyaw": 0.0, "duration": 3.0})
+        assert seen["d"] == 3.0
+
+
 class TestShutdown:
     def test_shutdown_breaks_loop(self, server_mod):
         srv, out = _run(

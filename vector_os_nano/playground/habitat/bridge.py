@@ -44,6 +44,51 @@ class HabitatBridgeError(RuntimeError):
     """Subprocess spawn/handshake/protocol failure — always loud."""
 
 
+# #15 — per-op read-timeout tiers (seconds). The old flat 60 s socket timeout
+# vs unbounded paced motion ("walk 20 m" = 67 s) raised a BARE socket.timeout
+# and permanently offset the line protocol by one response.
+_OP_TIMEOUT_TIERS: "dict[str, float]" = {
+    "navigate_to": 300.0,     # paced cross-apartment path, generous bound
+    "pano": 120.0,            # equirect pair render
+    "render": 120.0,
+    "viewer_frame": 120.0,
+}
+_DEFAULT_OP_TIMEOUT = 60.0
+_WALK_TIMEOUT_MARGIN = 30.0
+
+
+class _BufferedLineReader:
+    """Line reader over a raw socket that SURVIVES read timeouts.
+
+    A ``makefile()`` reader refuses any further read after one timeout
+    ("cannot read from timed out object") and may tear a half-received line.
+    Here partial data stays buffered across calls, so the late response a
+    timeout abandoned is read INTACT by the next request and discarded by
+    rid (#15 resync path).
+    """
+
+    def __init__(self, sock: socket.socket) -> None:
+        self._sock = sock
+        self._buf = bytearray()
+
+    def readline(self, timeout: float) -> str:
+        deadline = time.monotonic() + timeout
+        while True:
+            i = self._buf.find(b"\n")
+            if i >= 0:
+                line = self._buf[: i + 1].decode("utf-8", "replace")
+                del self._buf[: i + 1]
+                return line
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise socket.timeout(f"no full line within {timeout:.1f}s")
+            self._sock.settimeout(remaining)
+            chunk = self._sock.recv(65536)
+            if not chunk:
+                return ""  # EOF
+            self._buf.extend(chunk)
+
+
 class _StreamChannel:
     """A second connection to the server, served by a dedicated server-side
     thread with a restricted op set ({ping, get_state, set_velocity}) that
@@ -112,6 +157,15 @@ class HabitatBridge:
         # the pano timer from different threads over this single socket —
         # interleaved writes would corrupt the line protocol.
         self._lock = threading.Lock()
+        # #15 — request/response pairing. Monotonic rid injected per request
+        # and echoed by the server; stale lines (a late answer to a request
+        # that timed out) are discarded by rid. ``_dead`` flips on protocol
+        # corruption (torn JSON / rid from the future): a main-channel
+        # reconnect is impossible by design (closing it shuts the server
+        # down), so corruption is terminal and LOUD — restart the world.
+        self._rid = 0
+        self._dead = False
+        self._reader: _BufferedLineReader | None = None  # lazy, over _sock
 
     # -- lifecycle -------------------------------------------------------
     def start(self) -> None:
@@ -187,6 +241,7 @@ class HabitatBridge:
             except Exception:  # noqa: BLE001
                 pass
         self._rfile = self._wfile = self._sock = None
+        self._reader = None
         if self._proc is not None:
             try:
                 self._proc.terminate()
@@ -199,20 +254,74 @@ class HabitatBridge:
             self._proc = None
 
     # -- protocol ---------------------------------------------------------
+    def _op_timeout(self, payload: dict) -> float:
+        """Estimated read timeout for this op (#15) — never a flat 60 s."""
+        op = payload.get("op", "")
+        if op == "walk":
+            return float(payload.get("duration", 1.0)) + _WALK_TIMEOUT_MARGIN
+        return _OP_TIMEOUT_TIERS.get(op, _DEFAULT_OP_TIMEOUT)
+
     def request(self, payload: dict) -> dict:
         with self._lock:
-            if self._wfile is None or self._rfile is None:
+            if self._dead:
+                raise HabitatBridgeError(
+                    "bridge dead after protocol desync — restart the habitat "
+                    "world (stop_simulation / start_simulation)")
+            if self._wfile is None or self._sock is None:
                 raise HabitatBridgeError("bridge not connected (call start())")
-            self._wfile.write(json.dumps(payload) + "\n")
+            if self._reader is None:
+                self._reader = _BufferedLineReader(self._sock)
+            self._rid += 1
+            rid = self._rid
+            timeout = self._op_timeout(payload)
+            self._wfile.write(json.dumps(dict(payload, rid=rid)) + "\n")
             self._wfile.flush()
-            line = self._rfile.readline()
-        if not line:
-            raise HabitatBridgeError("habitat server closed the connection")
-        resp = json.loads(line)
+            resp = self._read_matching(rid, timeout, payload.get("op", ""))
         if not resp.get("ok", False):
             raise HabitatBridgeError(f"server error for {payload.get('op')}: "
                                      f"{resp.get('error', '<none>')}")
         return resp
+
+    def _read_matching(self, rid: int, timeout: float, op: str) -> dict:
+        """Read lines until the response paired to ``rid`` arrives.
+
+        - stale rid (< ours): a late answer to a timed-out request — discard,
+          keep reading (the resync path; the protocol is line-aligned again).
+        - no rid in the response: legacy/fake server — accept as before.
+        - rid from the future / torn JSON: protocol corruption → bridge dead.
+        - read timeout: HabitatBridgeError naming the op and budget; the
+          socket stays open — the late line is discarded by rid next call.
+        Caller holds ``self._lock``.
+        """
+        while True:
+            try:
+                line = self._reader.readline(timeout)
+            except socket.timeout:
+                raise HabitatBridgeError(
+                    f"read timeout ({timeout:.0f}s) for op {op!r} (rid {rid}) "
+                    f"— a late response will be discarded by rid") from None
+            if not line:
+                self._dead = True
+                raise HabitatBridgeError("habitat server closed the connection")
+            try:
+                resp = json.loads(line)
+            except json.JSONDecodeError as exc:
+                self._dead = True
+                raise HabitatBridgeError(
+                    f"protocol corruption (torn line) for op {op!r}: {exc} "
+                    f"— bridge dead, restart the world") from None
+            got = resp.get("rid")
+            if got is None or got == rid:
+                return resp
+            if isinstance(got, int) and got < rid:
+                logger.warning(
+                    "habitat bridge: discarding stale response rid=%s "
+                    "(expecting %s)", got, rid)
+                continue
+            self._dead = True
+            raise HabitatBridgeError(
+                f"protocol desync for op {op!r}: got rid {got!r}, expected "
+                f"{rid} — bridge dead, restart the world")
 
     def stream_request(self, payload: dict) -> dict:
         """Request on the STREAM channel (lazy-opened second connection).

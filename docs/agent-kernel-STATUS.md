@@ -259,11 +259,21 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      ④ N6 real gait, route B = MuJoCo (owner decision; BUILD gated on a
      PROBE executive summary — DQ-7). DQ-4 (merge to master): owner says
      keep waiting.
-   - Batch-4 items remaining: #15 bridge request ids + timeout tiers +
-     forced reconnect, #16 paced-op op-thread starvation, #17 post-hoc
-     timeout re-verify + completed-step injection, #18 replan inheritance
-     by (strategy, sub_goal). DONE: #19 (campaign #3 R6); **#11 + #20
-     (campaign #4 R1)** — dependency-failure skip with UNIFIED semantics
+   - Batch-4 items remaining: #16 paced-op op-thread starvation, #17
+     post-hoc timeout re-verify + completed-step injection, #18 replan
+     inheritance by (strategy, sub_goal). DONE: #19 (campaign #3 R6);
+     **#15 (campaign #4 R2)** — request/response pairing: monotonic `rid`
+     injected by the bridge and echoed by the server; STALE lines (late
+     answers to timed-out requests) are discarded by rid — that is the
+     resync path (a main-channel reconnect is impossible by design: closing
+     it shuts the server down); torn JSON / future rid = bridge DEAD, loud.
+     Per-op read-timeout tiers (walk: duration+30 s; navigate_to 300 s;
+     pano/render/viewer_frame 120 s; default 60 s — the flat 60 s vs 67 s
+     "walk 20 m" desync is gone); timeouts raise HabitatBridgeError, never
+     bare socket.timeout. Reads moved off makefile() onto an internal
+     buffered line reader (makefile refuses reads after one timeout and
+     tears half-received lines). Server caps walk duration (120 s);
+     **#11 + #20 (campaign #4 R1)** — dependency-failure skip with UNIFIED semantics
      (a failed step poisons transitive dependents with a skipped
      StepRecord, failure_class="dep_skipped" added to FAILURE_CLASSES;
      GoalExecutor.execute no longer aborts the whole tree, both paths share

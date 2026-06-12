@@ -700,7 +700,9 @@ class HabitatServer:
                 **self.walk(
                     float(req.get("vx", 0.0)),
                     float(req.get("vyaw", 0.0)),
-                    float(req.get("duration", 1.0)),
+                    # #15 — cap: an unbounded duration holds the op thread
+                    # past every client read budget (走20米 = 67 s > 60 s).
+                    min(float(req.get("duration", 1.0)), _MAX_WALK_DURATION),
                 ),
             }
         if op == "stop":
@@ -752,6 +754,11 @@ class HabitatServer:
 # a pano render on the main channel.
 _STREAM_OPS = frozenset({"ping", "get_state", "set_velocity", "set_markers"})
 
+# #15 — server-side cap on a single walk op: the bridge budgets its read
+# timeout as duration + margin, so an uncapped duration could still starve
+# every queued op behind one command.
+_MAX_WALK_DURATION = 120.0
+
 
 def _serve_main(rfile, wfile, server) -> None:
     """Main-channel serve loop: one JSON object per line, answer every line.
@@ -777,6 +784,10 @@ def _serve_main(rfile, wfile, server) -> None:
                 resp = server.handle(req)
             except Exception as exc:  # noqa: BLE001 — report, never die mid-protocol
                 resp = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            # #15 — echo the request id so the bridge can pair responses
+            # with requests and discard stale lines after a read timeout.
+            if isinstance(req, dict) and "rid" in req:
+                resp["rid"] = req["rid"]
         wfile.write(json.dumps(resp) + "\n")
         wfile.flush()
         if op == "shutdown":
