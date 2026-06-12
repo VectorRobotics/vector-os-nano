@@ -223,6 +223,25 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
+-3. **DESIGN REVIEW 2026-06-12 — 26 confirmed findings, refactor plan AWAITING
+   CEO (docs/design-review-2026-06-12-plan.md).** Owner's third live-test
+   round hit the false-PASS family again ('走到厨房' = zero-motion verified
+   PASS: spawn is 1.53m from the kitchen CENTER, label tol 1.5/verify 1.6 —
+   live-pinned, success=True/0.00s/0.00m/outside the room rect). A 6-dimension
+   workflow review (35 agents, adversarially verified) confirmed the root
+   pattern: verify only ever measures END-STATE after execution (no pre-state
+   baseline anywhere), the evidence gate is hard-off for ALL playground worlds
+   (is_robot=True bypass), and verify has two hand-written sources defaulting
+   to the 'True' sentinel — so motion commands are structurally unverified on
+   the fast path. Plan: 4 TDD batches (~1.5-2 weeks): (1) kernel invariants —
+   pre-satisfied baseline + per-step evidence-gate exemptions + single-source
+   verify; (2) rooms-as-REGIONS + motion-evidence result contracts (root-fixes
+   the seed); (3) cross-layer param/unit/enum single-source (deg→rad, vy,
+   MOTOR_KEYWORDS→is_motor); (4) harness/bridge robustness (request ids,
+   timeout tiers, dependency-skip). 5 CEO decision points in the plan §4.
+   DO NOT point-fix items covered by the batches without reading the plan.
+
+
 -2. ~~OWNER RE-TEST FINDINGS 2026-06-12 ROUND 2~~ — **ALL FIXED + LIVE-VERIFIED
    2026-06-12 (~/sandbox/live_test_round2.py, all PASS; owner re-test
    pending).** Owner re-ran the NL flow (this time the ros_bootstrap worked:
