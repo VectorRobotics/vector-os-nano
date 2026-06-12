@@ -149,3 +149,44 @@ class TestFastPathPickVerify:
             VectorEngine._verify_for_skill("pick", "apple", PickSkill())
             == "holding_object('apple')"
         )
+
+
+class TestBackfillLabelFromVisited:
+    """R8 (owner GUI test regression): the LLM emitted a paramless navigate
+    with the target ONLY in the verify — `visited('sofa')`. Label-style
+    backfill mirrors the coordinate-style repair: deterministic, never
+    overwrites, navigate_to* only."""
+
+    def test_visited_label_backfilled(self):
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            backfill_target_params,
+        )
+
+        out = backfill_target_params(
+            "navigate_to_skill", {}, "visited('sofa')")
+        assert out["label"] == "sofa"
+
+    def test_existing_params_never_overwritten(self):
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            backfill_target_params,
+        )
+
+        out = backfill_target_params(
+            "navigate_to_skill", {"label": "kitchen"}, "visited('sofa')")
+        assert out["label"] == "kitchen"
+
+    def test_double_quotes_and_at_position_label(self):
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            backfill_target_params,
+        )
+
+        out = backfill_target_params(
+            'navigate_to_skill', {}, 'visited("entryway")')
+        assert out["label"] == "entryway"
+
+    def test_non_navigate_untouched(self):
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            backfill_target_params,
+        )
+
+        assert backfill_target_params("walk_skill", {}, "visited('sofa')") == {}

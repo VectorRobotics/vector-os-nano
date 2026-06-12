@@ -77,9 +77,16 @@ def backfill_target_params(
         r"(?:geodesic_dist|at_position)\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
         verify or "",
     )
-    if not m:
-        return params
-    out = dict(params)
-    out.setdefault("x", float(m.group(1)))
-    out.setdefault("y", float(m.group(2)))
-    return out
+    if m:
+        out = dict(params)
+        out.setdefault("x", float(m.group(1)))
+        out.setdefault("y", float(m.group(2)))
+        return out
+    # Label-style repair (R8, owner GUI-test regression): the plan put the
+    # target ONLY in a visited('<label>') verify — same stated-intent family.
+    lm = re.search(r"visited\(\s*['\"]([^'\"]+)['\"]\s*\)", verify or "")
+    if lm:
+        out = dict(params)
+        out.setdefault("label", lm.group(1))
+        return out
+    return params
