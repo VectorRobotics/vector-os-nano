@@ -253,12 +253,22 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      window screenshots, now the standard. Verified on screen: full-height
      G1, kitchen drive, paced walk, SysNav green labels (16 objects),
      real-LLM turns binding REAL predicates (visited/step_output).
-   - **CAMPAIGN #4 IN PROGRESS (2026-06-12, owner approved all four tracks;
-     ~/.vector-nano-loop/campaign.md)**: ① batch-4 robustness items ② LLM
-     param-completeness validator pass ③ one-command E2E GUI smoke script
-     ④ N6 real gait, route B = MuJoCo (owner decision; BUILD gated on a
-     PROBE executive summary — DQ-7). DQ-4 (merge to master): owner says
-     keep waiting.
+   - **CAMPAIGN #4 COMPLETE (2026-06-12, R1-R12, 8 green pushed commits,
+     suite 1458→1530)**: ① robustness batch DONE (#11 dep-skip unified
+     semantics, #15 rid pairing + timeout tiers, #16 ticketed navigation,
+     #17 post-hoc timeout honesty + completed-step injection, #18
+     target-aware replan inheritance, #20 serve-loop hardening; + Case 10
+     cross-thread render crash found/fixed via GUI) ② LLM param
+     robustness DONE (null-strip at parse seam Case 11, param_check
+     re-ask pass, retry re-routing keeps bindings, first-error survives
+     retries, timeout carries exec error) ③ E2E GUI smoke DONE
+     (scripts/e2e_gui_smoke.py — FINAL RUN 4/4 ok exit 0 on house:
+     kitchen verified-PASS, already_there, walk-20m PASS, lateral honest
+     refusal) ④ N6 gait PROBE DONE → **DQ-8 PENDING owner**: repo already
+     ships a real quadruped gait (mujoco_go2.py trot+MPC); decision = B1
+     Go2 reuse (~1-2 rounds, recommended) vs B2 G1 humanoid policy
+     (weeks). AWAITING OWNER: DQ-8 (gait route), DQ-4 (merge — owner said
+     wait). Env watch: 2× transient X/GL suite crashes (level71 family).
    - **BATCH 1 (robustness) COMPLETE + GUI-verified (campaign #4 R5)**:
      #18 — replan param inheritance is target-aware: match by (strategy,
      sub_goal name); strategy-level fallback only when the prior tree bound
