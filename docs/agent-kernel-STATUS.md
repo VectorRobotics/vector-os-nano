@@ -250,9 +250,18 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    'True' (tags `unverified: True`); the vocab shows '(unverified — no
    symbolic post-condition declared)' instead of suggesting the sentinel;
    navigate/look/describe_scene declare real templates and left RobotWorld's
-   transitional exemption set. Next: batch 2 — rooms as REGIONS + motion
-   evidence result contracts (server three-value contract, visited(room)
-   verify, walk/turn moved/duration result_data). Original review summary: Owner's third live-test
+   transitional exemption set. Batch 2 part 1 SHIPPED (round 5): (a) #10 — an
+   UNRESOLVED foreach producer path is now a LOUD replannable failure
+   (failure_class=exec_error carrying the producer's actually-available
+   keys) instead of a silent zero-iteration PASS; resolved-but-empty stays
+   an honest zero. (b) Rooms are REGIONS: landmarks carry their rect;
+   navigate's room branch sizes tol from the rect half-dims (drive ends
+   INSIDE; never the 1.5 object standoff that caused the '走到厨房' no-op),
+   result_data carries goal_kind, verify_hint teaches visited('<room>').
+   Next (round 6): server navigate_to three-value contract
+   {reached, already_there, moved_m, elapsed_s} + strict tol + sysnav_bridge
+   geodesic arrival check; round 7: walk/turn motion-evidence result
+   contract + real verify templates + live regression acceptance. Original review summary: Owner's third live-test
    round hit the false-PASS family again ('走到厨房' = zero-motion verified
    PASS: spawn is 1.53m from the kitchen CENTER, label tol 1.5/verify 1.6 —
    live-pinned, success=True/0.00s/0.00m/outside the room rect). A 6-dimension

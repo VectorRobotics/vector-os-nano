@@ -48,11 +48,13 @@ class NavigateToPointSkill:
     # near clutter — coordinate arrival is honestly ~0.7 m, not the oracle's
     # teleport precision.
     verify_hint: str = (
-        "geodesic_dist(x, y) < 0.8 for coordinate goals; for object-label "
-        "goals use at_position(x, y, 1.6) with the object's listed "
-        "coordinates — EUCLIDEAN standoff (an object's centre sits OFF the "
-        "navmesh, which distorts geodesic distance; the robot parks at "
-        "furniture clearance, never on the object)"
+        "geodesic_dist(x, y) < 0.8 for coordinate goals; for ROOM goals "
+        "(labels marked type=room) use visited('<label>') — true only when "
+        "the robot is INSIDE the room's rectangle; for object-label goals "
+        "use at_position(x, y, 1.6) with the object's listed coordinates — "
+        "EUCLIDEAN standoff (an object's centre sits OFF the navmesh, which "
+        "distorts geodesic distance; the robot parks at furniture clearance, "
+        "never on the object)"
     )
     parameters: dict = {
         "label": {
@@ -137,12 +139,31 @@ class NavigateToPointSkill:
                 )
             best = max(matches, key=lambda o: o.confidence)
             x, y = float(best.x), float(best.y)
-            # Semantic standoff: "go to the sofa" means NEAR it. The nav
-            # stack plans up to the furniture clearance boundary and the
-            # follower halts at the path END — a tight tolerance on the
-            # object's OWN coordinates can never be met (N4 live finding).
             params = dict(params)
-            params["tol"] = max(float(params.get("tol", 0.0) or 0.0), 1.5)
+            props = getattr(best, "properties", None) or {}
+            rect = props.get("rect") if props.get("type") == "room" else None
+            if rect is not None:
+                # ROOM goal (batch 2 #3): a room is a REGION — drive INTO the
+                # rect, never park at the 1.5 m object standoff (which can
+                # exceed the start distance and degrade to a no-op; the
+                # '走到厨房' seed). Tolerance from the rect's half-dims keeps
+                # the arrival point inside; visited('<label>') is the honest
+                # predicate (see verify_hint).
+                try:
+                    x0, y0, x1, y1 = (float(v) for v in rect)
+                    half_min = min(abs(x1 - x0), abs(y1 - y0)) / 2.0
+                    params["tol"] = max(0.3, min(half_min * 0.8, 1.5))
+                except (TypeError, ValueError):
+                    params["tol"] = max(float(params.get("tol", 0.0) or 0.0), 1.5)
+                goal_kind = "room"
+            else:
+                # OBJECT goal — semantic standoff: "go to the sofa" means NEAR
+                # it. The nav stack plans up to the furniture clearance
+                # boundary and the follower halts at the path END — a tight
+                # tolerance on the object's OWN coordinates can never be met
+                # (N4 live finding).
+                params["tol"] = max(float(params.get("tol", 0.0) or 0.0), 1.5)
+                goal_kind = "object"
         else:
             try:
                 x, y = float(params["x"]), float(params["y"])
@@ -152,6 +173,7 @@ class NavigateToPointSkill:
                     error_message="navigate_to requires a label OR numeric x and y",
                     result_data={"diagnosis": "bad_params"},
                 )
+            goal_kind = "coordinate"
         tol = float(params.get("tol", 0.2) or 0.2)
 
         feed = getattr(base, "_nav_feed", None)
@@ -168,6 +190,7 @@ class NavigateToPointSkill:
         remaining = float(out.get("remaining", float("inf")))
         result_data = {
             "target": [x, y],
+            "goal_kind": goal_kind,
             "reached": reached,
             "remaining_geodesic_m": remaining,
             "position": out.get("pos"),

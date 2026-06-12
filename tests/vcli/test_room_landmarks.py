@@ -84,10 +84,13 @@ class TestNavigateResolvesRoomLandmark:
         ctx = SimpleNamespace(base=_Base(), world_model=wm, agent=None)
         res = NavigateToPointSkill().execute({"label": "kitchen"}, ctx)
         assert res.success, res.error_message
-        # catalog rect (-3.6, 1.0, 0.2, 2.8) -> center (-1.7, 1.9); standoff tol
+        # catalog rect (-3.6, 1.0, 0.2, 2.8) -> center (-1.7, 1.9). Batch 2 #3:
+        # a room is a REGION — tol comes from the rect half-dims (<=0.9 for
+        # the kitchen) so the drive ends INSIDE, never the 1.5 object standoff
+        # (the original assertion here had FROZEN the wrong contract).
         x, y, tol = nav_calls[0]
         assert (round(x, 2), round(y, 2)) == (-1.7, 1.9)
-        assert tol >= 1.5
+        assert 0.3 <= tol <= 0.9
 
 
 class TestViewerSizeResolver:

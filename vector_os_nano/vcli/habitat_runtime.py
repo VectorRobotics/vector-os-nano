@@ -213,7 +213,10 @@ def seed_room_landmarks(world_model: Any, scenario: Any) -> int:
 
     for name, rect in rooms.items():
         x0, y0, x1, y1 = (float(v) for v in rect)
-        props = {"type": "room"}
+        # rect rides along: a room is a REGION (batch 2 #3) — navigate's
+        # room branch sizes its arrival tolerance from these half-dims and
+        # the honest predicate is visited('<name>') (inside-rect).
+        props = {"type": "room", "rect": [x0, y0, x1, y1]}
         alias = _ROOM_ALIASES.get(name)
         if alias:
             props["alias"] = alias

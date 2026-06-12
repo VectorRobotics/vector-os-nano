@@ -586,12 +586,15 @@ class GoalExecutor:
         ``<source_step>.<source_path>`` for a producer that stored the list at the
         top level. The first form that resolves to a list wins.
 
-        Returns an empty list when there is no blackboard, the path does not
-        resolve to a list, or resolution raises — an empty (or unresolved)
-        producer yields zero children, never an error.
+        Returns the resolved list, or ``None`` when the path does NOT resolve
+        (no blackboard, missing producer/key, or resolution raised). Batch 2
+        #10 (design review): "resolved to an empty list" (an honest zero —
+        nothing to iterate) and "never resolved" (a plan/producer contract
+        miss the replan must hear about) are DIFFERENT outcomes; the old code
+        collapsed both to zero silent iterations and let the tree PASS.
         """
         if self._blackboard is None:
-            return []
+            return None
         path = spec.source_path.strip(".")
         candidates = (
             f"${{{spec.source_step}.output.{path}}}",
@@ -602,16 +605,31 @@ class GoalExecutor:
                 resolved = self._blackboard.resolve(ref)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("GoalExecutor: foreach resolve raised: %s", exc)
-                return []
+                return None
             if isinstance(resolved, list):
                 return list(resolved)
-        logger.info(
-            "GoalExecutor: foreach source %r.%r did not resolve to a list — "
-            "zero iterations",
+        logger.warning(
+            "GoalExecutor: foreach source %r.%r did not resolve to a list",
             spec.source_step,
             spec.source_path,
         )
-        return []
+        return None
+
+    def _foreach_producer_keys(self, source_step: str) -> "list[str]":
+        """The producer step's actually-available top-level keys (for the
+        loud unresolved-foreach error — fed to the replan so the next plan
+        can bind the REAL path). Best-effort; never raises."""
+        try:
+            data = self._blackboard.get(source_step) if self._blackboard else None
+            if not isinstance(data, dict):
+                return []
+            keys = set(data.keys())
+            out = data.get("output")
+            if isinstance(out, dict):
+                keys |= {f"output.{k}" for k in out.keys()}
+            return sorted(keys)
+        except Exception:  # noqa: BLE001
+            return []
 
     def _execute_foreach(
         self,
@@ -639,6 +657,32 @@ class GoalExecutor:
             return records
 
         items = self._resolve_foreach_items(spec)
+        if items is None:
+            # Unresolved producer path — a loud, replannable failure (#10),
+            # never a silent zero-iteration PASS.
+            keys = self._foreach_producer_keys(spec.source_step)
+            err = (
+                f"foreach source '{spec.source_step}.{spec.source_path}' did "
+                f"not resolve to a list; producer's available keys: "
+                f"{keys or '<none — producer step missing or not captured>'}"
+            )
+            failed = StepRecord(
+                sub_goal_name=sub_goal.name,
+                strategy="foreach",
+                success=False,
+                verify_result=False,
+                duration_sec=0.0,
+                error=err,
+                fallback_used=False,
+                failure_class="exec_error",
+            )
+            records.append(failed)
+            if on_step is not None:
+                try:
+                    on_step(failed)
+                except Exception:  # noqa: BLE001
+                    pass
+            return records
         # The body runs once per item, but template-to-template ``depends_on`` must
         # still order the body (e.g. place_obj depends_on pick_obj). Order the body
         # ONCE by its intra-body deps; list order is the deterministic tie-break, so
