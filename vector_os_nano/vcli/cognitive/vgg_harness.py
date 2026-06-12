@@ -139,6 +139,7 @@ class VGGHarness:
         failures: list[FailureRecord] = []
         best_trace: ExecutionTrace | None = None
         tree: GoalTree | None = None
+        last_trace: ExecutionTrace | None = None  # #17: completed-step source
         obs_replans_used = 0  # S4-4: bounded observation-driven re-decomposes
 
         # Data binding (Stage 1b): one fresh Blackboard scoped to this run. The
@@ -168,7 +169,8 @@ class VGGHarness:
                 prior_notes = tuple(getattr(tree, "validation_notes", ()) or ())
                 prev_tree = tree
                 tree = self._decompose_with_context(
-                    task, fresh_context, failures, prior_notes
+                    task, fresh_context, failures, prior_notes,
+                    completed=self._completed_step_lines(last_trace),
                 )
                 if tree is None:
                     logger.warning("VGGHarness: decomposition failed on attempt %d", pipeline_attempt)
@@ -180,6 +182,7 @@ class VGGHarness:
 
             # --- Execute with step-level retry ---
             trace = self._execute_with_retry(tree, failures)
+            last_trace = trace
 
             # Track best result
             if best_trace is None or trace.success:
@@ -379,12 +382,30 @@ class VGGHarness:
         )
         return self._decompose_with_context(task, fresh_context, failures, prior_notes)
 
+    def _completed_step_lines(
+        self, trace: ExecutionTrace | None
+    ) -> tuple[str, ...]:
+        """One line per VERIFIED step of the previous attempt (#17).
+
+        The re-decompose used to see only failures, so it re-planned (and the
+        robot REPLAYED) motions that had already succeeded. Skipped /
+        visual-override steps don't count — only deterministic passes.
+        """
+        if trace is None:
+            return ()
+        return tuple(
+            f"{s.sub_goal_name} (strategy: {s.strategy or '?'}, verified)"
+            for s in trace.steps
+            if s.success and s.verify_result and not s.visual_override
+        )
+
     def _decompose_with_context(
         self,
         task: str,
         world_context: str,
         failures: list[FailureRecord],
         prior_validation_notes: tuple[str, ...] = (),
+        completed: tuple[str, ...] = (),
     ) -> GoalTree | None:
         """Decompose with failure history + prior validator feedback in context.
 
@@ -394,6 +415,14 @@ class VGGHarness:
         invalid so it stops hallucinating them.
         """
         enriched_context = world_context
+        if completed:
+            done_block = "\n".join(f"  - {line}" for line in completed)
+            enriched_context += (
+                "\n\nAlready COMPLETED and verified in the previous attempt "
+                "(do NOT plan these again — their outputs are still available "
+                "via ${step.path} bindings; plan only the remainder):\n"
+                f"{done_block}"
+            )
         if failures:
             failure_summary = "\n".join(
                 self._format_failure_line(f) for f in failures[-5:]  # last 5 failures

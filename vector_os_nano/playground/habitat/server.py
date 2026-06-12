@@ -213,6 +213,11 @@ class HabitatServer:
         self._cmd_vx = self._cmd_vyaw = 0.0  # streaming command
         self._cmd_time = 0.0                 # monotonic stamp of last command
         self._lease = 0                      # op-thread motion loops own the pose
+        # #16 — ticketed navigation (motion worker; op thread stays free)
+        self._nav_lock = threading.Lock()
+        self._nav_thread: "threading.Thread | None" = None
+        self._nav_result: "dict | None" = None
+        self._nav_cancel = False
         self._closing = False
         threading.Thread(
             target=self._integration_loop, daemon=True, name="habitat-stream"
@@ -522,6 +527,59 @@ class HabitatServer:
     def navigate_to(
         self, x: float, y: float, tol: float = 0.2, speed: float = 1.0
     ) -> dict:
+        """Synchronous navigate (legacy op): blocks the op thread for the
+        whole drive. Prefer navigate_start/navigate_status (#16) — the
+        ticketed worker frees the op thread so renders/panos interleave."""
+        return self._navigate_impl(x, y, tol, speed)
+
+    def navigate_start(
+        self, x: float, y: float, tol: float = 0.2, speed: float = 1.0
+    ) -> dict:
+        """#16 — start the drive on a motion worker; returns immediately.
+
+        One navigation in flight at a time (a second start is a loud error);
+        the ``stop`` op requests cancellation. try_step concurrent with
+        renders is spike-verified safe (module docstring), so the op thread
+        keeps serving render/pano between the client's status polls.
+        """
+        with self._nav_lock:
+            if self._nav_thread is not None and self._nav_thread.is_alive():
+                return {"ok": False, "error": "navigation already in flight "
+                                              "(poll navigate_status or send stop)"}
+            self._nav_cancel = False
+            self._nav_result = None
+
+            def _worker() -> None:
+                try:
+                    res = self._navigate_impl(x, y, tol, speed)
+                except Exception as exc:  # noqa: BLE001 — report via status
+                    res = {"reached": False, "already_there": False,
+                           "moved_m": 0.0,
+                           "reason": f"{type(exc).__name__}: {exc}"}
+                with self._nav_lock:
+                    self._nav_result = res
+
+            self._nav_thread = threading.Thread(
+                target=_worker, daemon=True, name="habitat-nav-worker")
+            self._nav_thread.start()
+        return {"ok": True, "started": True}
+
+    def navigate_status(self) -> dict:
+        """Ticket poll: done=False while the worker drives; done=True with
+        the final three-value result after (result=None if nothing ran)."""
+        with self._nav_lock:
+            t = self._nav_thread
+            if t is not None and t.is_alive():
+                return {"ok": True, "done": False}
+            return {"ok": True, "done": True, "result": self._nav_result}
+
+    def _nav_in_flight(self) -> bool:
+        with self._nav_lock:
+            return self._nav_thread is not None and self._nav_thread.is_alive()
+
+    def _navigate_impl(
+        self, x: float, y: float, tol: float = 0.2, speed: float = 1.0
+    ) -> dict:
         """Follow the navmesh shortest path to world (x, y). Deterministic,
         bounded: per-waypoint, face the waypoint (kinematic yaw set) and
         advance via try_step; break when progress stalls (stuck/unreachable).
@@ -571,6 +629,8 @@ class HabitatServer:
                 wp_tol = tol if wp_i == len(waypoints) - 1 else min(tol, 0.2)
                 stall = 0
                 for _ in range(400):  # hard bound per waypoint
+                    if self._nav_cancel:  # stop op requested cancel (#16)
+                        break
                     delta = wp - pos
                     planar = math.hypot(float(delta[0]), float(delta[2]))
                     if planar <= wp_tol:
@@ -599,6 +659,8 @@ class HabitatServer:
                         self.emit_frame()
                     if speed > 0.0 and step_moved > 0.0:
                         time.sleep(step_moved / speed)
+                if self._nav_cancel:
+                    break
             self._write_pose(pos, yaw)
         finally:
             self._release_lease()
@@ -695,6 +757,10 @@ class HabitatServer:
         if op == "get_state":
             return {"ok": True, **self.get_state()}
         if op == "walk":
+            if self._nav_in_flight():       # two pose writers would race (#16)
+                return {"ok": False,
+                        "error": "navigation already in flight — poll "
+                                 "navigate_status or send stop first"}
             return {
                 "ok": True,
                 **self.walk(
@@ -706,6 +772,7 @@ class HabitatServer:
                 ),
             }
         if op == "stop":
+            self._nav_cancel = True          # cancel a ticketed drive (#16)
             with self._state_lock:  # stop kills the streaming command too
                 self._cmd_vx = self._cmd_vyaw = 0.0
             return {"ok": True, **self.get_state()}
@@ -717,6 +784,10 @@ class HabitatServer:
                 ),
             }
         if op == "navigate_to":
+            if self._nav_in_flight():       # two pose writers would race (#16)
+                return {"ok": False,
+                        "error": "navigation already in flight — poll "
+                                 "navigate_status or send stop first"}
             return {
                 "ok": True,
                 **self.navigate_to(
@@ -726,6 +797,15 @@ class HabitatServer:
                     float(req.get("speed", 1.0)),
                 ),
             }
+        if op == "navigate_start":
+            return self.navigate_start(
+                float(req["x"]),
+                float(req["y"]),
+                float(req.get("tol", 0.2)),
+                float(req.get("speed", 1.0)),
+            )
+        if op == "navigate_status":
+            return self.navigate_status()
         if op == "set_markers":
             return {"ok": True, "count": self.set_markers(req.get("markers") or [])}
         if op == "render":

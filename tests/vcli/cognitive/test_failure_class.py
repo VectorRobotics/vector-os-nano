@@ -180,10 +180,12 @@ def test_success_step_has_empty_failure_class() -> None:
 
 
 def test_timeout_failure_class() -> None:
+    # Campaign #4 #17: a timed-out step that VERIFIES is an honest PASS with a
+    # timing warning — the timeout CLASS is for blown budget + verify miss.
     reg = _Registry({"slow_skill": _SlowSkill()})
     executor = GoalExecutor(
         strategy_selector=_Selector(_StrategyResult("skill", "slow_skill")),
-        verifier=_Verifier(True),
+        verifier=_Verifier(False),
         skill_registry=reg,
     )
     # timeout_sec=0.01 << 0.2s sleep, no typical_duration_sec floor -> timeout.

@@ -345,8 +345,10 @@ class TestTimeout:
         mock_selector = MagicMock()
         mock_selector.select.return_value = _strategy_mock("skill", "navigate", {})
 
+        # Campaign #4 #17: a timed-out step that VERIFIES is an honest PASS
+        # (timing warning) — timeout FAILURE requires the verify to miss too.
         mock_verifier = MagicMock()
-        mock_verifier.verify.return_value = True
+        mock_verifier.verify.return_value = False
 
         executor = GoalExecutor(
             strategy_selector=mock_selector,
@@ -357,6 +359,7 @@ class TestTimeout:
 
         assert trace.steps[0].success is False
         assert "timeout" in trace.steps[0].error.lower()
+        assert trace.steps[0].failure_class == "timeout"
         assert trace.success is False
 
     def test_within_timeout_succeeds(self):

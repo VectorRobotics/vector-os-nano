@@ -259,9 +259,20 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      ④ N6 real gait, route B = MuJoCo (owner decision; BUILD gated on a
      PROBE executive summary — DQ-7). DQ-4 (merge to master): owner says
      keep waiting.
-   - Batch-4 items remaining: #16 paced-op op-thread starvation, #17
-     post-hoc timeout re-verify + completed-step injection, #18 replan
-     inheritance by (strategy, sub_goal). DONE: #19 (campaign #3 R6);
+   - Batch-4 items remaining: #18 replan inheritance by (strategy,
+     sub_goal). DONE: #19 (campaign #3 R6); **#16 + #17 (campaign #4 R3)**
+     — ticketed navigation: server `navigate_start`/`navigate_status` run
+     the drive on a motion worker (one in flight; `stop` cancels via
+     `_nav_cancel`; walk/sync-navigate refuse while ticketed — two pose
+     writers would race); `HabitatBase.navigate_to` is caller-blocking but
+     polls the ticket every 0.25 s, so the bridge lock and op thread are
+     free between polls and renders/panos interleave with the drive
+     (legacy-server fallback to the sync op kept). Post-hoc timeout
+     honesty: a timed-out step that EXECUTED still runs verify — verified
+     → honest PASS with `result_data.timing_warning` (output captured, so
+     bindings survive); unverified → still failure_class="timeout". The
+     re-decompose context now names the previous attempt's verified steps
+     ("plan only the remainder" — outputs stay available via ${step.path});
      **#15 (campaign #4 R2)** — request/response pairing: monotonic `rid`
      injected by the bridge and echoed by the server; STALE lines (late
      answers to timed-out requests) are discarded by rid — that is the

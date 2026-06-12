@@ -179,15 +179,50 @@ class HabitatBase:
         return False
 
     # -- navigation + perception (M3) ---------------------------------------
+    # Watchdog bound for one ticketed drive: far above any in-apartment path
+    # (≤ ~40 m at 1 m/s) — a worker that outlives this is wedged, fail loud.
+    _NAV_TICKET_DEADLINE_S = 600.0
+    _NAV_POLL_INTERVAL_S = 0.25
+
     def navigate_to(self, x: float, y: float, tol: float = 0.2) -> dict:
-        """Shortest-path navigate to world (x, y). Blocking; returns the
-        server's outcome dict: reached / remaining geodesic / final state.
-        Honest failure: an unreachable or wall-stuck goal returns
-        reached=False — the verify predicate is the judge, never this flag."""
+        """Shortest-path navigate to world (x, y). Blocking for the CALLER,
+        but ticketed on the wire (#16): navigate_start returns immediately
+        and the result is collected via navigate_status polls — between
+        polls the bridge lock and the server op thread are free, so renders
+        and panos interleave with the drive instead of starving for its
+        whole wall-time. Returns the server's outcome dict: reached /
+        remaining geodesic / final state. Honest failure: an unreachable or
+        wall-stuck goal returns reached=False — the verify predicate is the
+        judge, never this flag. Falls back to the legacy synchronous op for
+        servers without the ticket ops (older fakes)."""
         self._require_connected()
-        return self._bridge.request(
-            {"op": "navigate_to", "x": x, "y": y, "tol": tol}
-        )
+        from vector_os_nano.playground.habitat.bridge import HabitatBridgeError
+
+        try:
+            start = self._bridge.request(
+                {"op": "navigate_start", "x": x, "y": y, "tol": tol}
+            )
+        except HabitatBridgeError as exc:
+            if "unknown op" not in str(exc):
+                raise
+            return self._bridge.request(            # legacy server
+                {"op": "navigate_to", "x": x, "y": y, "tol": tol}
+            )
+        if not start.get("started"):
+            raise HabitatBridgeError(f"navigate_start not accepted: {start}")
+        deadline = time.monotonic() + self._NAV_TICKET_DEADLINE_S
+        while time.monotonic() < deadline:
+            status = self._bridge.request({"op": "navigate_status"})
+            if status.get("done"):
+                result = status.get("result")
+                if not isinstance(result, dict):
+                    raise HabitatBridgeError(
+                        f"navigate ticket finished without a result: {status}")
+                return result
+            time.sleep(self._NAV_POLL_INTERVAL_S)
+        raise HabitatBridgeError(
+            f"navigate ticket did not complete within "
+            f"{self._NAV_TICKET_DEADLINE_S:.0f}s — worker wedged")
 
     def render_rgb_png(self) -> bytes:
         """Egocentric 256x256 RGB as PNG bytes (the VLM perception input)."""

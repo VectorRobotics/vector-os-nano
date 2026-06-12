@@ -458,27 +458,33 @@ class GoalExecutor:
         # because the LLM emitted a small timeout_sec (e.g. 15s). The floor is
         # opt-in — a skill without typical_duration_sec is unaffected.
         effective_timeout = self._effective_timeout(sub_goal.timeout_sec, strategy_name)
+        timeout_msg = ""
         if elapsed > effective_timeout:
-            error_msg = (
+            timeout_msg = (
                 f"timeout after {elapsed:.3f}s "
                 f"(limit {effective_timeout:.1f}s"
                 + (f"; plan said {sub_goal.timeout_sec:.1f}s"
                    if effective_timeout != sub_goal.timeout_sec else "")
                 + ")"
             )
-            logger.warning("GoalExecutor: %s — %s", sub_goal.name, error_msg)
-            return StepRecord(
-                sub_goal_name=sub_goal.name,
-                strategy=strategy_name,
-                success=False,
-                verify_result=False,
-                duration_sec=elapsed,
-                error=error_msg,
-                fallback_used=False,
-                result_data={"output": exec_output, "verify_value": None},
-                failure_class="timeout",  # W2.4: post-hoc step-timeout path
-                pre_satisfied=pre_satisfied,
-            )
+            logger.warning("GoalExecutor: %s — %s", sub_goal.name, timeout_msg)
+            # #17 (campaign #4): a slow-but-COMPLETED action still runs its
+            # verify below — verified means an honest PASS with a timing
+            # warning, not a replayed motion. Only an execution that also
+            # FAILED short-circuits here.
+            if not exec_success:
+                return StepRecord(
+                    sub_goal_name=sub_goal.name,
+                    strategy=strategy_name,
+                    success=False,
+                    verify_result=False,
+                    duration_sec=elapsed,
+                    error=timeout_msg,
+                    fallback_used=False,
+                    result_data={"output": exec_output, "verify_value": None},
+                    failure_class="timeout",  # W2.4: post-hoc step-timeout path
+                    pre_satisfied=pre_satisfied,
+                )
 
         # If execution itself failed (skill not found, unknown type, etc.),
         # mark the step failed immediately — no point verifying.
@@ -518,6 +524,9 @@ class GoalExecutor:
         if verify_result:
             # Success path
             result_data = {"output": exec_output, "verify_value": verify_value}
+            if timeout_msg:
+                # #17 — verified despite the budget: pass, but say so.
+                result_data["timing_warning"] = timeout_msg
             self._capture(sub_goal.name, result_data)
             return StepRecord(
                 sub_goal_name=sub_goal.name,
@@ -595,18 +604,24 @@ class GoalExecutor:
             }
             if verify_result_after:
                 self._capture(sub_goal.name, fb_result_data)
+            if verify_result_after and timeout_msg:
+                fb_result_data["timing_warning"] = timeout_msg
             return StepRecord(
                 sub_goal_name=sub_goal.name,
                 strategy=strategy_name,
                 success=verify_result_after,
                 verify_result=verify_result_after,
                 duration_sec=time.monotonic() - step_start,
-                error="" if verify_result_after else "failed after fallback",
+                error="" if verify_result_after else (
+                    f"{timeout_msg}; failed after fallback" if timeout_msg
+                    else "failed after fallback"),
                 fallback_used=True,
                 result_data=fb_result_data,
                 # W2.4: executed without error but verify is still False after the
-                # fallback -> a verify-miss. "" on the success branch.
-                failure_class="" if verify_result_after else "verify_fail",
+                # fallback -> a verify-miss. "" on the success branch; a step that
+                # ALSO blew its budget classifies as timeout (#17).
+                failure_class="" if verify_result_after else (
+                    "timeout" if timeout_msg else "verify_fail"),
                 pre_satisfied=pre_satisfied,
             )
 
@@ -617,10 +632,13 @@ class GoalExecutor:
             success=False,
             verify_result=False,
             duration_sec=time.monotonic() - step_start,
-            error="verification failed",
+            error=(f"{timeout_msg}; verification failed" if timeout_msg
+                   else "verification failed"),
             fallback_used=False,
             result_data={"output": exec_output, "verify_value": verify_value},
-            failure_class="verify_fail",  # W2.4: executed OK but verify was False
+            # W2.4: executed OK but verify was False; a step that ALSO blew
+            # its budget classifies as timeout (#17).
+            failure_class="timeout" if timeout_msg else "verify_fail",
             pre_satisfied=pre_satisfied,
         )
 

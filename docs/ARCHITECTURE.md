@@ -323,6 +323,12 @@ relative to `vector_os_nano/`.
   Layer-2 mid-tree re-decompose intentionally does NOT exist (design review §5) — the
   dead `max_redecompose` knob was deleted; Layer-1 step retry + Layer-3 whole-tree
   replan are the only retry tiers.
+  POST-HOC TIMEOUT HONESTY (campaign #4, #17): a step that blew its time budget but
+  EXECUTED still runs its verify — verified means an honest PASS carrying
+  `result_data.timing_warning` (its output is captured, bindings survive); unverified
+  stays `failure_class="timeout"`. The Layer-3 re-decompose context names the previous
+  attempt's verified steps so the replan plans only the remainder instead of replaying
+  succeeded motions.
 - `observation.py` — the verified-loop observation surface: a pure JSON-safe export view over the
   frozen types (`step_view` / `run_snapshot`) + plain-text renderers; what a front-end renders.
 
