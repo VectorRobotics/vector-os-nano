@@ -259,8 +259,24 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      ④ N6 real gait, route B = MuJoCo (owner decision; BUILD gated on a
      PROBE executive summary — DQ-7). DQ-4 (merge to master): owner says
      keep waiting.
-   - Batch-4 items remaining: #18 replan inheritance by (strategy,
-     sub_goal). DONE: #19 (campaign #3 R6); **#16 + #17 (campaign #4 R3)**
+   - **BATCH 1 (robustness) COMPLETE + GUI-verified (campaign #4 R5)**:
+     #18 — replan param inheritance is target-aware: match by (strategy,
+     sub_goal name); strategy-level fallback only when the prior tree bound
+     that strategy ONCE; ambiguity stays empty → bad_params feeds the
+     replan (the old "latest wins" sent BOTH navigates to sofa). GUI
+     acceptance on the live apartment scene: ticketed far navigate PASS
+     7.2 s with REAL motion across polls (HUD (-1.0,-0.2)→(-4.8,0.8),
+     screenshots /tmp/r5_fix_mid*.png), repeat → already_there 0.0 s
+     "(already satisfied pre-exec)", blocked walk → honest moved_short
+     FAIL. R5 also caught + fixed a REAL #16 bug live (tricky-bugs Case
+     10): the nav worker rendered off the op thread and the habitat
+     process died quietly — worker now drives with allow_render=False,
+     navigate_status animates on the op thread, and the bridge dead gate
+     reports its true cause. KNOWN (batch 2 evidence): deepseek-chat
+     twice bound bad params live ("走20米"→1.0 m; kitchen navigate with
+     EMPTY params despite verify visited('kitchen') — the decomposer
+     backfill did not fire on this path, investigate in batch 2).
+     DONE earlier: #19 (campaign #3 R6); **#16 + #17 (campaign #4 R3)**
      — ticketed navigation: server `navigate_start`/`navigate_status` run
      the drive on a motion worker (one in flight; `stop` cancels via
      `_nav_cancel`; walk/sync-navigate refuse while ticketed — two pose

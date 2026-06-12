@@ -59,14 +59,41 @@ class TestInheritReplanParams:
         merged = VGGHarness._inherit_replan_params(new, prev)
         assert merged is new
 
-    def test_latest_prior_binding_wins(self):
+    def test_ambiguous_same_strategy_left_empty(self):
+        """#18 (campaign #4): two prior navigates with DIFFERENT targets and a
+        replanned step matching neither name — the old 'latest wins' silently
+        bound BOTH replanned navigates to sofa. Ambiguity now stays EMPTY so
+        the step fails bad_params and the replan hears it (fail loud)."""
         prev = _tree(
             _sg("nav_a", "navigate_to_skill", {"label": "table"}),
             _sg("nav_b", "navigate_to_skill", {"label": "sofa"}),
         )
         new = _tree(_sg("nav_c", "navigate_to_skill"))
         merged = VGGHarness._inherit_replan_params(new, prev)
-        assert merged.sub_goals[0].strategy_params == {"label": "sofa"}
+        assert merged.sub_goals[0].strategy_params == {}
+
+    def test_name_match_wins_over_ambiguity(self):
+        """#18: (strategy, sub_goal name) pairing — each replanned step gets
+        ITS OWN prior binding even when the strategy appears twice."""
+        prev = _tree(
+            _sg("nav_a", "navigate_to_skill", {"label": "table"}),
+            _sg("nav_b", "navigate_to_skill", {"label": "sofa"}),
+        )
+        new = _tree(
+            _sg("nav_a", "navigate_to_skill"),
+            _sg("nav_b", "navigate_to_skill"),
+        )
+        merged = VGGHarness._inherit_replan_params(new, prev)
+        assert merged.sub_goals[0].strategy_params == {"label": "table"}
+        assert merged.sub_goals[1].strategy_params == {"label": "sofa"}
+
+    def test_single_step_strategy_fallback_keeps_working(self):
+        """#18: strategy-level fallback survives ONLY when the prior tree has
+        exactly one step with that strategy (no ambiguity to guess over)."""
+        prev = _tree(_sg("nav_old", "navigate_to_skill", {"label": "desk"}))
+        new = _tree(_sg("nav_renamed", "navigate_to_skill"))
+        merged = VGGHarness._inherit_replan_params(new, prev)
+        assert merged.sub_goals[0].strategy_params == {"label": "desk"}
 
     def test_multiple_new_steps_each_resolved(self):
         prev = _tree(_sg("nav", "navigate_to_skill", {"label": "sofa"}))

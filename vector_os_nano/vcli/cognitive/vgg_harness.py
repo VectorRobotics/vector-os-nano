@@ -306,11 +306,16 @@ class VGGHarness:
     ) -> "GoalTree":
         """Carry prior param bindings into a replanned tree (owner finding (c)).
 
-        For each sub-goal in *new_tree* whose ``strategy_params`` is EMPTY but
-        whose ``strategy`` appeared in *prev_tree* WITH params, inherit the
-        prior binding (the LATEST when several steps share the strategy).
-        Non-empty new params always win — the LLM may deliberately re-bind.
-        Deterministic, kernel-side; identity when nothing applies.
+        #18 (campaign #4) — TARGET-AWARE matching: a sub-goal in *new_tree*
+        with EMPTY ``strategy_params`` inherits by ``(strategy, sub_goal
+        name)`` first; the strategy-level fallback applies ONLY when the
+        prior tree bound that strategy in exactly ONE step (nothing to guess
+        over). Two prior navigates with different targets + a replanned step
+        matching neither name stays EMPTY — it fails bad_params and the
+        replan hears it, instead of the old 'latest wins' silently sending
+        BOTH navigates to the same target. Non-empty new params always win —
+        the LLM may deliberately re-bind. Deterministic, kernel-side;
+        identity when nothing applies.
         """
         if prev_tree is None:
             return new_tree
@@ -320,11 +325,14 @@ class VGGHarness:
             # LLM uses both forms across replans.
             return strategy[:-6] if strategy.endswith("_skill") else strategy
 
-        prior: dict[str, dict] = {}
+        by_key: dict[tuple[str, str], dict] = {}
+        strategy_bindings: dict[str, list[dict]] = {}
         for sg in prev_tree.sub_goals:
             if sg.strategy and sg.strategy_params:
-                prior[_norm(sg.strategy)] = sg.strategy_params  # latest wins
-        if not prior:
+                s = _norm(sg.strategy)
+                by_key[(s, sg.name)] = sg.strategy_params
+                strategy_bindings.setdefault(s, []).append(sg.strategy_params)
+        if not strategy_bindings:
             return new_tree
 
         import dataclasses
@@ -332,11 +340,14 @@ class VGGHarness:
         changed = False
         merged = []
         for sg in new_tree.sub_goals:
-            if not sg.strategy_params and _norm(sg.strategy) in prior:
-                sg = dataclasses.replace(
-                    sg, strategy_params=dict(prior[_norm(sg.strategy)])
-                )
-                changed = True
+            if not sg.strategy_params:
+                s = _norm(sg.strategy)
+                params = by_key.get((s, sg.name))
+                if params is None and len(strategy_bindings.get(s, ())) == 1:
+                    params = strategy_bindings[s][0]  # unambiguous fallback
+                if params is not None:
+                    sg = dataclasses.replace(sg, strategy_params=dict(params))
+                    changed = True
             merged.append(sg)
         if not changed:
             return new_tree

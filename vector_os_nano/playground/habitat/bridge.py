@@ -165,6 +165,7 @@ class HabitatBridge:
         # down), so corruption is terminal and LOUD — restart the world.
         self._rid = 0
         self._dead = False
+        self._dead_reason = ""   # cause shown by the dead gate (R5: EOF ≠ desync)
         self._reader: _BufferedLineReader | None = None  # lazy, over _sock
 
     # -- lifecycle -------------------------------------------------------
@@ -265,8 +266,9 @@ class HabitatBridge:
         with self._lock:
             if self._dead:
                 raise HabitatBridgeError(
-                    "bridge dead after protocol desync — restart the habitat "
-                    "world (stop_simulation / start_simulation)")
+                    f"bridge dead ({self._dead_reason or 'protocol failure'}) "
+                    "— restart the habitat world (stop_simulation / "
+                    "start_simulation)")
             if self._wfile is None or self._sock is None:
                 raise HabitatBridgeError("bridge not connected (call start())")
             if self._reader is None:
@@ -302,11 +304,13 @@ class HabitatBridge:
                     f"— a late response will be discarded by rid") from None
             if not line:
                 self._dead = True
+                self._dead_reason = "server closed the connection"
                 raise HabitatBridgeError("habitat server closed the connection")
             try:
                 resp = json.loads(line)
             except json.JSONDecodeError as exc:
                 self._dead = True
+                self._dead_reason = "torn protocol line"
                 raise HabitatBridgeError(
                     f"protocol corruption (torn line) for op {op!r}: {exc} "
                     f"— bridge dead, restart the world") from None
@@ -319,6 +323,7 @@ class HabitatBridge:
                     "(expecting %s)", got, rid)
                 continue
             self._dead = True
+            self._dead_reason = "rid desync"
             raise HabitatBridgeError(
                 f"protocol desync for op {op!r}: got rid {got!r}, expected "
                 f"{rid} — bridge dead, restart the world")

@@ -551,7 +551,13 @@ class HabitatServer:
 
             def _worker() -> None:
                 try:
-                    res = self._navigate_impl(x, y, tol, speed)
+                    # allow_render=False — habitat_sim agent/sensor access is
+                    # OP-THREAD-ONLY (emit_frame's contract); the worker only
+                    # does pathfinder math (try_step concurrent with renders
+                    # is spike-verified safe). R5 GUI finding: rendering from
+                    # this thread killed the whole habitat process mid-idle.
+                    res = self._navigate_impl(x, y, tol, speed,
+                                              allow_render=False)
                 except Exception as exc:  # noqa: BLE001 — report via status
                     res = {"reached": False, "already_there": False,
                            "moved_m": 0.0,
@@ -569,16 +575,28 @@ class HabitatServer:
         the final three-value result after (result=None if nothing ran)."""
         with self._nav_lock:
             t = self._nav_thread
-            if t is not None and t.is_alive():
-                return {"ok": True, "done": False}
-            return {"ok": True, "done": True, "result": self._nav_result}
+            in_flight = t is not None and t.is_alive()
+            result = self._nav_result
+        if in_flight:
+            # Op-thread animation: sync the render puppet to the worker's
+            # authoritative pose and push a viewer frame per poll (~4 FPS) —
+            # the worker itself never touches agent/sensors (thread contract).
+            if self._viewer is not None:
+                try:
+                    self._sync_agent()
+                    self.emit_frame()
+                except Exception:  # noqa: BLE001 — display never breaks protocol
+                    pass
+            return {"ok": True, "done": False}
+        return {"ok": True, "done": True, "result": result}
 
     def _nav_in_flight(self) -> bool:
         with self._nav_lock:
             return self._nav_thread is not None and self._nav_thread.is_alive()
 
     def _navigate_impl(
-        self, x: float, y: float, tol: float = 0.2, speed: float = 1.0
+        self, x: float, y: float, tol: float = 0.2, speed: float = 1.0,
+        allow_render: bool = True,
     ) -> dict:
         """Follow the navmesh shortest path to world (x, y). Deterministic,
         bounded: per-waypoint, face the waypoint (kinematic yaw set) and
@@ -654,7 +672,9 @@ class HabitatServer:
                     moved += step_moved
                     pos = new_pos
                     self._write_pose(pos, yaw)
-                    if self._viewer is not None:
+                    # allow_render=False on the nav worker: agent/sensor
+                    # access is op-thread-only; navigate_status animates.
+                    if self._viewer is not None and allow_render:
                         self._sync_agent()
                         self.emit_frame()
                     if speed > 0.0 and step_moved > 0.0:

@@ -160,13 +160,44 @@ class TestAsyncNavigateTicket:
         srv._nav_thread = None
         srv._nav_result = None
         srv._nav_cancel = False
+        srv._viewer = None
+        srv.seen_kwargs = {}
 
-        def _impl(x, y, tol, speed):
+        def _impl(x, y, tol, speed, allow_render=True):
+            srv.seen_kwargs["allow_render"] = allow_render
             _t.sleep(nav_time)
             return {"ok": True, "reached": True, "moved_m": 5.0,
                     "x": x, "y": y}
         srv._navigate_impl = _impl
         return srv
+
+    def test_worker_never_renders(self, server_mod):
+        """R5 GUI finding: the worker called _sync_agent/emit_frame off the
+        op thread and the habitat process DIED mid-session — habitat_sim
+        agent/sensor access is op-thread-only (emit_frame's own contract).
+        The worker drives with allow_render=False; animation comes from the
+        op thread on navigate_status polls."""
+        import time as _t
+        srv = self._srv(server_mod)
+        srv.handle({"op": "navigate_start", "x": 1, "y": 2})
+        deadline = _t.monotonic() + 2.0
+        while _t.monotonic() < deadline:
+            if srv.handle({"op": "navigate_status"})["done"]:
+                break
+            _t.sleep(0.02)
+        assert srv.seen_kwargs["allow_render"] is False
+
+    def test_status_poll_animates_on_op_thread(self, server_mod):
+        import time as _t
+        srv = self._srv(server_mod, nav_time=0.3)
+        calls = {"sync": 0, "emit": 0}
+        srv._viewer = object()                       # viewer present
+        srv._sync_agent = lambda: calls.__setitem__("sync", calls["sync"] + 1)
+        srv.emit_frame = lambda: calls.__setitem__("emit", calls["emit"] + 1)
+        srv.handle({"op": "navigate_start", "x": 1, "y": 2})
+        st = srv.handle({"op": "navigate_status"})   # in flight
+        assert st["done"] is False
+        assert calls["sync"] == 1 and calls["emit"] == 1
 
     def test_start_returns_immediately_and_status_completes(self, server_mod):
         srv = self._srv(server_mod)

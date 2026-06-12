@@ -186,3 +186,25 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** `dict.get(key, default)` on an LLM-supplied enum is a silent
   contract rewrite — validate at the boundary and let the schema TEACH the
   legal set, or the failure surfaces two layers away dressed as something else.
+
+## Case 10 — "protocol desync" that was really a cross-thread render killing the process (2026-06-12)
+
+- **Symptom:** GUI session: navigate fails instantly with "bridge dead after
+  protocol desync — restart the habitat world". Points hard at the (brand
+  new) rid-pairing protocol code.
+- **Why hidden:** three layers of misdirection. (1) The dead-GATE message
+  said "desync" for EVERY death cause — the actual flip was the EOF branch
+  (server closed the connection). (2) The server had died QUIETLY between
+  turns (stderr → DEVNULL), minutes after the action that doomed it. (3) The
+  doomed action was the previous round's #16 ticketed-navigate worker calling
+  `_sync_agent()`/`emit_frame()` — habitat_sim agent/sensor access is
+  OP-THREAD-ONLY (emit_frame's own docstring says so), and violating the
+  confinement crashes natively, off-schedule, with no Python trace.
+- **Fix:** the nav worker drives with `allow_render=False` (pathfinder math
+  only — `try_step` concurrent with renders IS spike-verified safe); the op
+  thread animates on each `navigate_status` poll (~4 FPS); the dead gate now
+  reports its actual cause (`_dead_reason`).
+- **Lesson:** when moving work onto a new thread, grep the moved code for
+  thread-confinement contracts FIRST — the crash from violating one lands
+  later, in another component, wearing that component's error message. And
+  never let a failure gate flatten distinct causes into one string.
