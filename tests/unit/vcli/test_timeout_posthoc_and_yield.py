@@ -147,3 +147,24 @@ class TestReplanCompletedInjection:
         h.run("task", "ctx")
         retry_ctx = decomposer.decompose.call_args_list[1].args[1]
         assert "COMPLETED" not in retry_ctx
+
+
+class TestTimeoutCarriesExecError:
+    """R11 (smoke walk_20m finding): a timed-out FAILED execution returned a
+    bare 'timeout after Xs' — the underlying exec error (e.g. moved_short
+    after hitting a wall) was masked, misleading the diagnosis again."""
+
+    def test_exec_error_surfaces_in_timeout_message(self):
+        def _slow_fail():
+            time.sleep(0.05)
+            raise RuntimeError("walk moved 4.8m of the requested 20.0m")
+
+        ex = _executor({"slowfail": _slow_fail})
+        sg = SubGoal(name="s", description="s", verify="True",
+                     timeout_sec=0.01)
+        step = ex._execute_sub_goal(sg)
+        assert step.success is False
+        assert step.failure_class == "timeout"
+        assert "timeout" in step.error
+        # the underlying execution error must ride along, not be replaced
+        assert "exec:" in step.error

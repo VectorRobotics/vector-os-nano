@@ -471,7 +471,9 @@ class GoalExecutor:
             # #17 (campaign #4): a slow-but-COMPLETED action still runs its
             # verify below — verified means an honest PASS with a timing
             # warning, not a replayed motion. Only an execution that also
-            # FAILED short-circuits here.
+            # FAILED short-circuits here — and it carries the UNDERLYING exec
+            # error (R11: a bare 'timeout' masked the real moved_short/wall
+            # diagnosis and misled the replan AND the human).
             if not exec_success:
                 return StepRecord(
                     sub_goal_name=sub_goal.name,
@@ -479,7 +481,8 @@ class GoalExecutor:
                     success=False,
                     verify_result=False,
                     duration_sec=elapsed,
-                    error=timeout_msg,
+                    error=(f"{timeout_msg}; exec: {exec_error}"
+                           if exec_error else timeout_msg),
                     fallback_used=False,
                     result_data={"output": exec_output, "verify_value": None},
                     failure_class="timeout",  # W2.4: post-hoc step-timeout path

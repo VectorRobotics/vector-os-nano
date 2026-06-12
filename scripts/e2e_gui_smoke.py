@@ -55,10 +55,12 @@ STEPS: "list[dict]" = [
     {
         "name": "walk_20m",
         "command": "往前走20米",
+        # a 20 m paced walk is ~40 s per attempt; Layer-1 retries + a Layer-3
+        # replan can legitimately take >240 s before the honest outcome lands
         "ok": [r"Outcome: \[PASS\]"],
         "honest": [r"moved [\d.]+m of the requested", r"bad_params",
-                   r"blocked or unsupported"],
-        "timeout": 240,
+                   r"blocked or unsupported", r"timeout after"],
+        "timeout": 420,
     },
     {
         "name": "walk_left_nonholonomic",
