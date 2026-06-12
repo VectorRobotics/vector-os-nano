@@ -647,7 +647,6 @@ class VectorEngine:
                 selector=selector,
                 config=HarnessConfig(
                     max_step_retries=2,
-                    max_redecompose=1,
                     max_pipeline_retries=1,
                 ),
                 on_step=self._on_vgg_step,

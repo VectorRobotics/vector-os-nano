@@ -36,7 +36,11 @@ FailureClass = Literal[
 
 # The closed set, for validation + tests. Excludes "" (the success sentinel).
 FAILURE_CLASSES: frozenset[str] = frozenset(
-    {"timeout", "verify_fail", "ik_fail", "tool_error", "exec_error"}
+    {"timeout", "verify_fail", "ik_fail", "tool_error", "exec_error",
+     # Batch 1 campaign #4 (#11): the step never RAN — a (transitive)
+     # depends_on ancestor failed, so executing it would act from an
+     # unestablished world state (the hardware-dangerous case).
+     "dep_skipped"}
 )
 
 # Diagnosis substrings (lowercased) that indicate an unreachable-target / IK

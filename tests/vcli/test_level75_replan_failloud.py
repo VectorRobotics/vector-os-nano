@@ -269,7 +269,7 @@ def test_replan_hallucination_fails_loud_end_to_end() -> None:
         decomposer=decomposer,
         executor=executor,
         selector=selector,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
     )
     trace = harness.run("g", "world")
 
@@ -322,7 +322,7 @@ def test_retry_preserves_loud_invalid_marker() -> None:
         decomposer=object(),
         executor=executor,
         selector=selector,
-        config=HarnessConfig(max_step_retries=2, max_redecompose=0, max_pipeline_retries=0),
+        config=HarnessConfig(max_step_retries=2, max_pipeline_retries=0),
     )
     trace = harness._execute_with_retry(tree, [])
     step = trace.steps[0]

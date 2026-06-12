@@ -300,7 +300,7 @@ def test_failure_class_threads_into_failure_record_and_context() -> None:
         decomposer=decomposer,
         executor=executor,
         selector=selector,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
     )
     tree = _plan(strategy="pick_skill")
     harness.run("pick the mug", "world", goal_tree=tree)
@@ -369,7 +369,7 @@ def test_failure_record_in_harness_carries_class_end_to_end() -> None:
         decomposer=object(),
         executor=executor,
         selector=selector,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
     )
     failures: list[FailureRecord] = []
     harness._execute_with_retry(_plan(strategy="pick_skill"), failures)

@@ -188,15 +188,30 @@ class TestVerification:
         assert trace.steps[1].success is True
         assert trace.steps[2].success is False
 
-    def test_first_failure_aborts_remaining_steps(self):
-        """Failure at step 1 must not execute steps 2 and 3."""
-        tree = _simple_tree("step1", "step2", "step3")
-        executor, _, _, _ = _make_executor(verify_side_effect=[False])
+    def test_failure_skips_dependents_runs_independents(self):
+        """Campaign #4 #11 — unified failure semantics (was: abort on first
+        failure). A failed step poisons its dependents with a skipped record;
+        INDEPENDENT steps still execute."""
+        sub_goals = (
+            SubGoal(name="step1", description="step1", verify="True",
+                    timeout_sec=10.0),
+            SubGoal(name="step2", description="step2", verify="True",
+                    timeout_sec=10.0, depends_on=("step1",)),
+            SubGoal(name="step3", description="step3", verify="True",
+                    timeout_sec=10.0),
+        )
+        tree = GoalTree(goal="test", sub_goals=sub_goals)
+        # step1 verify False (fails); step3 (independent) verify True (runs)
+        executor, _, _, _ = _make_executor(verify_side_effect=[False, True])
 
         trace = executor.execute(tree)
 
         assert trace.success is False
-        assert len(trace.steps) == 1  # only step1 recorded
+        by_name = {s.sub_goal_name: s for s in trace.steps}
+        assert set(by_name) == {"step1", "step2", "step3"}
+        assert by_name["step1"].success is False
+        assert by_name["step2"].failure_class == "dep_skipped"
+        assert by_name["step3"].success is True
 
     def test_verify_result_recorded_in_step(self):
         """verify_result field in StepRecord mirrors verifier output."""
@@ -387,17 +402,19 @@ class TestOnStepCallback:
         assert trace.success is True
 
     def test_on_step_called_even_on_failure(self):
-        """on_step called for the failing step too."""
+        """on_step called for the failing step too (and the independent step
+        that still runs under #11 unified semantics)."""
         tree = _simple_tree("a", "b")
         executor, _, mock_verifier, _ = _make_executor(
-            verify_side_effect=[False]
+            verify_side_effect=[False, True]
         )
 
         callback = MagicMock()
         executor.execute(tree, on_step=callback)
 
-        # Only 1 step executed (abort after first failure)
-        assert callback.call_count == 1
+        # a failed, b is independent → both executed, both reported
+        assert callback.call_count == 2
+        assert callback.call_args_list[0].args[0].success is False
 
 
 # ---------------------------------------------------------------------------

@@ -15,9 +15,13 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
+from vector_os_nano.vcli.cognitive.goal_executor import (
+    blocking_dependency,
+    skipped_step_record,
+)
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     GoalTree,
@@ -30,9 +34,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class HarnessConfig:
-    """Configuration for VGG retry behavior."""
+    """Configuration for VGG retry behavior.
+
+    Layer 2 (mid-tree re-decompose) intentionally does NOT exist: Layer-1
+    strategy retry + Layer-3 whole-tree replan cover it, and rewriting a
+    half-executed tree is high-complexity/low-yield (design review 2026-06-12
+    §5). The dead ``max_redecompose`` knob that promised it was deleted —
+    do not reintroduce.
+    """
     max_step_retries: int = 2       # per-step strategy retries (Layer 1)
-    max_redecompose: int = 1        # re-decompose attempts on step failure (Layer 2)
     max_pipeline_retries: int = 1   # full re-plan attempts (Layer 3)
     # Stage 4 (S4-4) — observation-driven mid-tree replan. The maximum number of
     # times the harness may re-decompose a SUCCEEDING run because a step's
@@ -517,6 +527,7 @@ class VGGHarness:
         trace_start = time.monotonic()
         steps: list[StepRecord] = []
         overall_success = True
+        failed_names: set[str] = set()
 
         ordered = self._executor._topological_sort(tree)
 
@@ -529,6 +540,29 @@ class VGGHarness:
                     break
             except ImportError:
                 pass
+
+            # #11 — dependency-failure skip (the contract the old comment here
+            # PROMISED without implementing). Shared helper with
+            # GoalExecutor.execute: one tree, one failure semantics.
+            blocked_by = blocking_dependency(sub_goal, failed_names)
+            if blocked_by:
+                skip = skipped_step_record(sub_goal, blocked_by)
+                steps.append(skip)
+                failed_names.add(sub_goal.name)  # poison transitively
+                overall_success = False
+                if self._on_step:
+                    try:
+                        self._on_step(skip)
+                    except Exception:
+                        pass
+                failures.append(FailureRecord(
+                    sub_goal_name=skip.sub_goal_name,
+                    strategy_tried=skip.strategy,
+                    error=skip.error,
+                    step_index=i,
+                    failure_class="dep_skipped",
+                ))
+                continue
 
             # Stage 4 (S4-2): a foreach node expands at runtime into N children.
             # Delegate the whole expansion to the executor (it reads the producing
@@ -552,6 +586,7 @@ class VGGHarness:
                             failure_class=getattr(child, "failure_class", ""),
                         ))
                         overall_success = False
+                        failed_names.add(sub_goal.name)  # poison dependents
                 continue
 
             step = self._execute_step_with_retry(sub_goal, i, cfg.max_step_retries)
@@ -576,8 +611,9 @@ class VGGHarness:
                     failure_class=getattr(step, "failure_class", ""),
                 ))
                 overall_success = False
-                # Don't break — try remaining steps that don't depend on this one
-                # (steps with depends_on referencing the failed step will skip)
+                failed_names.add(sub_goal.name)
+                # Don't break — independent steps still run; steps whose
+                # depends_on references this one get a skipped record above.
 
         total_duration = time.monotonic() - trace_start
         return ExecutionTrace(

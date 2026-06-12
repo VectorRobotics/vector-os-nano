@@ -9,7 +9,9 @@ Execution flow per sub_goal:
 3. Check elapsed time against timeout_sec
 4. Verify success condition via GoalVerifier
 5. On failure: attempt fail_action fallback, then re-verify
-6. Record StepRecord; abort remaining goals on failure
+6. Record StepRecord; a failure poisons its (transitive) dependents with a
+   skipped record (failure_class="dep_skipped") while independent goals
+   still run — the same contract the harness applies (#11, campaign #4)
 """
 from __future__ import annotations
 
@@ -33,6 +35,40 @@ from vector_os_nano.vcli.cognitive.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def blocking_dependency(sub_goal: SubGoal, failed_names: set[str]) -> str:
+    """Name of the first failed/skipped step this sub_goal depends on, or "".
+
+    Transitivity needs no graph walk: a skipped step's own name is added to
+    ``failed_names`` by the caller, so a chain a→b→c poisons c through b.
+    Single source for BOTH execution paths (GoalExecutor.execute and
+    VGGHarness._execute_with_retry) — one tree, one failure semantics (#11).
+    """
+    for dep in sub_goal.depends_on:
+        if dep in failed_names:
+            return dep
+    return ""
+
+
+def skipped_step_record(sub_goal: SubGoal, blocked_by: str) -> StepRecord:
+    """A StepRecord for a step that never ran: its dependency failed.
+
+    Executing it anyway would act from an unestablished world state (pick
+    after a failed navigate — the hardware-dangerous case). failure_class
+    "dep_skipped" is a first-class member of FAILURE_CLASSES so the replan
+    LLM can branch on it.
+    """
+    return StepRecord(
+        sub_goal_name=sub_goal.name,
+        strategy=sub_goal.strategy,
+        success=False,
+        verify_result=False,
+        duration_sec=0.0,
+        error=f"skipped: dependency '{blocked_by}' failed upstream",
+        fallback_used=False,
+        failure_class="dep_skipped",
+    )
 
 
 def _make_step_output(exec_output: Any) -> Callable[..., Any]:
@@ -200,7 +236,9 @@ class GoalExecutor:
            c. Verify success condition
            d. On failure: try fail_action, re-verify
            e. Record StepRecord; fire on_step callback
-        3. Abort on first failure; return ExecutionTrace.
+        3. A failed step poisons its (transitive) dependents: they get a
+           skipped StepRecord (failure_class="dep_skipped") and never run;
+           independent steps still execute. Same contract as the harness.
 
         Args:
             goal_tree: The GoalTree to execute.
@@ -213,6 +251,7 @@ class GoalExecutor:
         ordered = self._topological_sort(goal_tree)
         steps: list[StepRecord] = []
         overall_success = True
+        failed_names: set[str] = set()
 
         for sub_goal in ordered:
             # --- Abort check ---
@@ -239,6 +278,21 @@ class GoalExecutor:
             except ImportError:
                 pass
 
+            # #11 — dependency-failure skip (shared contract with the harness).
+            blocked_by = blocking_dependency(sub_goal, failed_names)
+            if blocked_by:
+                skip = skipped_step_record(sub_goal, blocked_by)
+                steps.append(skip)
+                failed_names.add(sub_goal.name)  # poison transitively
+                overall_success = False
+                if on_step is not None:
+                    try:
+                        on_step(skip)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "GoalExecutor: on_step callback raised: %s", exc)
+                continue
+
             # Stage 4 (S4-2): a foreach node is not a leaf step — it expands at
             # runtime into N concrete children (the body instantiated once per
             # item of the producing step's list). Execute the expansion in order;
@@ -248,7 +302,7 @@ class GoalExecutor:
                 steps.extend(expanded)
                 if any(not s.success for s in expanded):
                     overall_success = False
-                    break  # abort remaining
+                    failed_names.add(sub_goal.name)
                 continue
 
             step = self._execute_sub_goal(sub_goal)
@@ -265,7 +319,7 @@ class GoalExecutor:
 
             if not step.success:
                 overall_success = False
-                break  # abort remaining
+                failed_names.add(sub_goal.name)
 
         # Auto-save stats after full execution
         if self._stats is not None:

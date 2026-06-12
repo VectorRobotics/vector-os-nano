@@ -313,7 +313,16 @@ relative to `vector_os_nano/`.
   `StepRecord` carries `pre_satisfied` (INVARIANT I, campaign #3: every non-trivial predicate
   is evaluated BEFORE dispatch — 'was already true' and 'became true' are different Trues;
   surfaces as "(already satisfied pre-exec)") and a deterministic typed `failure_class` (W2.4: timeout/verify_fail/ik_fail/
-  tool_error/exec_error) threaded into the replan context so the re-decompose adapts by class.
+  tool_error/exec_error/dep_skipped) threaded into the replan context so the re-decompose adapts by class.
+  UNIFIED FAILURE SEMANTICS (campaign #4, #11): a failed step poisons its (transitive)
+  `depends_on` dependents — they get a skipped `StepRecord` (`failure_class="dep_skipped"`,
+  never executed: acting from an unestablished world state is the hardware-dangerous case)
+  while INDEPENDENT steps still run. One contract for BOTH paths (`GoalExecutor.execute`
+  no longer aborts the whole tree; `VGGHarness` no longer blindly continues into
+  dependents) via the shared `blocking_dependency`/`skipped_step_record` helpers.
+  Layer-2 mid-tree re-decompose intentionally does NOT exist (design review §5) — the
+  dead `max_redecompose` knob was deleted; Layer-1 step retry + Layer-3 whole-tree
+  replan are the only retry tiers.
 - `observation.py` — the verified-loop observation surface: a pure JSON-safe export view over the
   frozen types (`step_view` / `run_snapshot`) + plain-text renderers; what a front-end renders.
 

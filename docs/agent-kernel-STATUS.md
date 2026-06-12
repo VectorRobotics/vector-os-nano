@@ -253,15 +253,25 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      window screenshots, now the standard. Verified on screen: full-height
      G1, kitchen drive, paced walk, SysNav green labels (16 objects),
      real-LLM turns binding REAL predicates (visited/step_output).
-   - **HANDED OVER (batch 4, unstarted)**: #11 harness dependency-skip +
-     unified failure semantics, #15 bridge request ids + timeout tiers +
+   - **CAMPAIGN #4 IN PROGRESS (2026-06-12, owner approved all four tracks;
+     ~/.vector-nano-loop/campaign.md)**: ① batch-4 robustness items ② LLM
+     param-completeness validator pass ③ one-command E2E GUI smoke script
+     ④ N6 real gait, route B = MuJoCo (owner decision; BUILD gated on a
+     PROBE executive summary — DQ-7). DQ-4 (merge to master): owner says
+     keep waiting.
+   - Batch-4 items remaining: #15 bridge request ids + timeout tiers +
      forced reconnect, #16 paced-op op-thread starvation, #17 post-hoc
      timeout re-verify + completed-step injection, #18 replan inheritance
-     by (strategy, sub_goal), #19 done, #20 server req={} init.
-   - **Direction notes for the next campaign**: LLM output robustness
-     (deepseek-chat binds params/verify worse than v4-flash — consider a
-     param-completeness validator pass); N6 Tier B gait (owner saw the
-     rigid-body glide); E2E GUI smoke as a repeatable script.
+     by (strategy, sub_goal). DONE: #19 (campaign #3 R6); **#11 + #20
+     (campaign #4 R1)** — dependency-failure skip with UNIFIED semantics
+     (a failed step poisons transitive dependents with a skipped
+     StepRecord, failure_class="dep_skipped" added to FAILURE_CLASSES;
+     GoalExecutor.execute no longer aborts the whole tree, both paths share
+     blocking_dependency/skipped_step_record; dead max_redecompose knob
+     deleted from HarnessConfig — Layer-2 intentionally does not exist),
+     and the habitat server main loop is now `_serve_main` with op
+     localized per iteration (malformed first line no longer NameError-kills
+     the server; tests stub habitat_sim and drive the real loop).
    Known env reds: 3 deepseek .env + level71 (now SEGFAULTS the suite on
    this desktop — canonical command carries --deselect).
 

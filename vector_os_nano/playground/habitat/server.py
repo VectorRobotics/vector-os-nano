@@ -753,6 +753,36 @@ class HabitatServer:
 _STREAM_OPS = frozenset({"ping", "get_state", "set_velocity", "set_markers"})
 
 
+def _serve_main(rfile, wfile, server) -> None:
+    """Main-channel serve loop: one JSON object per line, answer every line.
+
+    ``op`` is localized per iteration (the stream handler's shape): a
+    malformed FIRST line used to leave ``req`` unbound and the shutdown
+    check then died on NameError, killing the whole server with stderr
+    swallowed (#20). A bad line now gets its error response and the loop
+    keeps serving.
+    """
+    for line in rfile:
+        line = line.strip()
+        if not line:
+            continue
+        op = ""
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError as exc:
+            resp = {"ok": False, "error": f"bad json: {exc}"}
+        else:
+            op = req.get("op", "") if isinstance(req, dict) else ""
+            try:
+                resp = server.handle(req)
+            except Exception as exc:  # noqa: BLE001 — report, never die mid-protocol
+                resp = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        wfile.write(json.dumps(resp) + "\n")
+        wfile.flush()
+        if op == "shutdown":
+            break
+
+
 def _serve_stream(conn: socket.socket, server: "HabitatServer") -> None:
     rfile = conn.makefile("r", encoding="utf-8")
     wfile = conn.makefile("w", encoding="utf-8")
@@ -851,23 +881,7 @@ def main() -> int:
 
     rfile = conn.makefile("r", encoding="utf-8")
     wfile = conn.makefile("w", encoding="utf-8")
-    for line in rfile:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except json.JSONDecodeError as exc:
-            resp = {"ok": False, "error": f"bad json: {exc}"}
-        else:
-            try:
-                resp = server.handle(req)
-            except Exception as exc:  # noqa: BLE001 — report, never die mid-protocol
-                resp = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-        wfile.write(json.dumps(resp) + "\n")
-        wfile.flush()
-        if req.get("op") == "shutdown":
-            break
+    _serve_main(rfile, wfile, server)
     server._closing = True  # stop the integration thread
     conn.close()
     sock.close()  # unblocks the stream acceptor
