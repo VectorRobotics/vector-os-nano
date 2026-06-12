@@ -116,11 +116,22 @@ class NavigateToPointSkill:
             matches = wm.get_objects_by_label(label) if wm is not None else []
             if not matches:
                 known = sorted({o.label for o in wm.get_objects()}) if wm else []
+                # An EMPTY world model means semantic perception has not run at
+                # all — replanning cannot help; tell the user the actual fix
+                # (owner finding (c): '走到sofa' burned replans on this).
+                if not known:
+                    hint = (
+                        " — the world model is EMPTY: semantic perception is "
+                        "not running. Start it first (say '启动sysnav' / "
+                        "'start sysnav'), wait for detections, then retry."
+                    )
+                else:
+                    hint = ""
                 return SkillResult(
                     success=False,
                     error_message=(
                         f"no object matching {label!r} in the live world model; "
-                        f"known objects: {known or '<none>'}"
+                        f"known objects: {known or '<none>'}{hint}"
                     ),
                     result_data={"diagnosis": "object_not_found", "label": label},
                 )

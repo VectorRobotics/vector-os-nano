@@ -68,8 +68,8 @@ honestly fails when a goal is unreachable:
 ```bash
 # terminal A (nav stack):
 ./scripts/launch_habitat_nav.sh
-# terminal B:
-source /opt/ros/jazzy/setup.bash
+# terminal B (no sourcing needed — vector-cli auto-sources ROS/SysNav
+# overlays when they exist on disk and re-launches itself once):
 .venv/bin/vector-cli --scenario house
 ```
 
@@ -79,7 +79,7 @@ nav_stack` in results) and falls back to the oracle when it's down.
 ## 4. Optional: semantic goals (SysNav)
 
 With the SysNav sibling workspace provisioned (PolyForm-NC license —
-obtain it yourself) and ROS2 sourced:
+obtain it yourself) — no terminal sourcing needed, any plain shell works:
 
 ```
 启动sysnav

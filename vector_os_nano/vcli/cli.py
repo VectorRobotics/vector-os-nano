@@ -1347,6 +1347,17 @@ def main(argv: list[str] | None = None) -> None:
     if _run_ops_dispatch(args):
         return
 
+    # Owner finding (b): an unsourced shell must still NL-start sysnav. Re-exec
+    # once with the ROS/SysNav overlays sourced when they exist on disk
+    # (LD_LIBRARY_PATH can only be set at process birth). No-op everywhere else.
+    from vector_os_nano.vcli.ros_bootstrap import maybe_reexec_with_ros
+    maybe_reexec_with_ros()
+    if os.environ.get("VECTOR_ROS_BOOTSTRAPPED"):
+        console.print(
+            "[dim]ROS env auto-sourced: "
+            f"{os.environ['VECTOR_ROS_BOOTSTRAPPED'].replace(':', ' + ')}[/dim]"
+        )
+
     # W2.2: tag this session so every descendant (sim subprocess, nav stack,
     # explore threads' children) inherits VECTOR_RUN_ID — the watchdog can then
     # sweep strays by tag after an abnormal exit. setdefault keeps an outer tag

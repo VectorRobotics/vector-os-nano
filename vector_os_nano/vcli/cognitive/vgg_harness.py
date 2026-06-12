@@ -156,12 +156,17 @@ class VGGHarness:
                 # repeating the hallucination. ``tree`` still holds the previous
                 # attempt's GoalTree here (None on the very first attempt).
                 prior_notes = tuple(getattr(tree, "validation_notes", ()) or ())
+                prev_tree = tree
                 tree = self._decompose_with_context(
                     task, fresh_context, failures, prior_notes
                 )
                 if tree is None:
                     logger.warning("VGGHarness: decomposition failed on attempt %d", pipeline_attempt)
                     break
+                # Owner finding (c): a replanned step reusing a strategy must
+                # never DEGRADE to empty params (the '走到sofa' replan lost
+                # {"label": "sofa"} and produced an opaque bad_params error).
+                tree = self._inherit_replan_params(tree, prev_tree)
 
             # --- Execute with step-level retry ---
             trace = self._execute_with_retry(tree, failures)
@@ -190,7 +195,7 @@ class VGGHarness:
                     )
                     if new_tree is None:
                         return trace  # re-decompose failed — keep the verified run
-                    tree = new_tree
+                    tree = self._inherit_replan_params(new_tree, tree)
                     trace = self._execute_with_retry(tree, failures)
                     if trace.success:
                         best_trace = trace
@@ -281,6 +286,48 @@ class VGGHarness:
             logger.warning("VGGHarness: observation_divergence raised: %s", exc)
             return None
         return reason if reason else None
+
+    @staticmethod
+    def _inherit_replan_params(
+        new_tree: "GoalTree", prev_tree: "GoalTree | None"
+    ) -> "GoalTree":
+        """Carry prior param bindings into a replanned tree (owner finding (c)).
+
+        For each sub-goal in *new_tree* whose ``strategy_params`` is EMPTY but
+        whose ``strategy`` appeared in *prev_tree* WITH params, inherit the
+        prior binding (the LATEST when several steps share the strategy).
+        Non-empty new params always win — the LLM may deliberately re-bind.
+        Deterministic, kernel-side; identity when nothing applies.
+        """
+        if prev_tree is None:
+            return new_tree
+
+        def _norm(strategy: str) -> str:
+            # 'navigate_to' and 'navigate_to_skill' are the same route — the
+            # LLM uses both forms across replans.
+            return strategy[:-6] if strategy.endswith("_skill") else strategy
+
+        prior: dict[str, dict] = {}
+        for sg in prev_tree.sub_goals:
+            if sg.strategy and sg.strategy_params:
+                prior[_norm(sg.strategy)] = sg.strategy_params  # latest wins
+        if not prior:
+            return new_tree
+
+        import dataclasses
+
+        changed = False
+        merged = []
+        for sg in new_tree.sub_goals:
+            if not sg.strategy_params and _norm(sg.strategy) in prior:
+                sg = dataclasses.replace(
+                    sg, strategy_params=dict(prior[_norm(sg.strategy)])
+                )
+                changed = True
+            merged.append(sg)
+        if not changed:
+            return new_tree
+        return dataclasses.replace(new_tree, sub_goals=tuple(merged))
 
     def _obs_replan_decompose(
         self,

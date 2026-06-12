@@ -306,6 +306,7 @@ def build_decompose_vocab(
     verify_signatures: dict[str, str],
     has_base: bool,
     planner_intro: str | None = None,
+    teach_base_primitives: bool | None = None,
 ) -> DecomposeVocab:
     """Build a DecomposeVocab from skill schemas and verify signatures.
 
@@ -322,6 +323,12 @@ def build_decompose_vocab(
             entirely (the arm must never be taught base primitives).
         planner_intro: Optional planner-intro override; a neutral robot-task
             default is used when None.
+        teach_base_primitives: Whether the vocab may teach the base primitives
+            at all. ``None`` (default) keeps the historical ``has_base``
+            behaviour; the engine passes the EXECUTABLE truth
+            (``primitives_ready()``) so a world whose primitive layer was
+            never wired stops putting scan_360/walk_forward in the planner's
+            mouth (owner finding (c), 2026-06-12).
 
     Returns:
         A DecomposeVocab whose strategies, descriptions, params-help, examples
@@ -332,7 +339,10 @@ def build_decompose_vocab(
         _strategy_name(str(s.get("name", ""))): str(s.get("description", ""))
         for s in schemas
     }
-    if has_base:
+    _teach = has_base if teach_base_primitives is None else (
+        has_base and teach_base_primitives
+    )
+    if _teach:
         strategy_names |= set(_BASE_PRIMITIVE_DESCRIPTIONS.keys())
         strategy_descriptions.update(_BASE_PRIMITIVE_DESCRIPTIONS)
 

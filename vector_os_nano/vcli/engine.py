@@ -668,6 +668,8 @@ class VectorEngine:
             build_decompose_vocab,
         )
 
+        from vector_os_nano.vcli.primitives import primitives_ready
+
         schemas = skill_registry.to_schemas()
         verify_signatures = self._verify_signatures_from_namespace(agent)
         vocab = build_decompose_vocab(
@@ -675,6 +677,9 @@ class VectorEngine:
             verify_signatures,
             has_base=has_base,
             planner_intro=self._NEUTRAL_PLANNER_INTRO,
+            # Executable truth: never teach base primitives a world can't run
+            # (owner finding (c) — scan_360 ghost in the habitat replan).
+            teach_base_primitives=primitives_ready(),
         )
         return vocab.as_kwargs()
 
@@ -726,12 +731,15 @@ class VectorEngine:
             build_decompose_vocab,
         )
 
+        from vector_os_nano.vcli.primitives import primitives_ready
+
         verify_signatures = self._verify_signatures_from_namespace(agent)
         vocab = build_decompose_vocab(
             [],
             verify_signatures,
             has_base=has_base,
             planner_intro=self._NEUTRAL_PLANNER_INTRO,
+            teach_base_primitives=primitives_ready(),
         )
         return vocab.as_kwargs()
 
@@ -813,8 +821,12 @@ class VectorEngine:
                 # Registered capability — always routable.
                 if name in capability_names:
                     continue
-                # Base primitive — valid only when the agent has a base.
-                if has_base and name in _PRIMITIVE_NAMES:
+                # Base primitive — valid only when the selector would actually
+                # route it (has_base AND an executable primitive layer; mirrors
+                # StrategySelector._primitive_routable, owner finding (c)).
+                if name in _PRIMITIVE_NAMES and getattr(
+                    selector, "_primitive_routable", lambda: has_base
+                )():
                     continue
                 # Strategies ending in "_skill" are the only ones the selector can
                 # reject at runtime with executor_type="invalid".
@@ -823,7 +835,10 @@ class VectorEngine:
                     # Also valid if the bare name itself is a registered skill or a
                     # base primitive (the selector accepts both forms).
                     if bare not in registered_names and not (
-                        has_base and bare in _PRIMITIVE_NAMES
+                        bare in _PRIMITIVE_NAMES
+                        and getattr(
+                            selector, "_primitive_routable", lambda: has_base
+                        )()
                     ):
                         bad_strategies.append(name)
                 # Non-_skill strategies not in any of the above categories are

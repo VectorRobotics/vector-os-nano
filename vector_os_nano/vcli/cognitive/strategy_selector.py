@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from vector_os_nano.vcli.cognitive.types import SubGoal
 
@@ -78,6 +78,7 @@ class StrategySelector:
         stats: Any = None,
         capability_names: "frozenset[str] | set[str] | None" = None,
         has_base: bool = True,
+        primitives_executable: "Callable[[], bool] | None" = None,
     ) -> None:
         self._skill_registry = skill_registry
         self._stats = stats
@@ -93,6 +94,13 @@ class StrategySelector:
         # resolution and the skill-registry alias match only. Defaults True so
         # go2/robot behaviour stays byte-identical.
         self._has_base = bool(has_base)
+        # Owner finding (c) 2026-06-12: routing to a base PRIMITIVE additionally
+        # requires the primitive layer to be EXECUTABLE (init_primitives wired
+        # a base) — has_base alone routed habitat replans to 'No hardware
+        # connected' ghosts (scan_360). Consulted lazily at route time; only
+        # enforced when a registry is injected (derived-vocab worlds), so
+        # registry-less legacy selectors stay byte-identical.
+        self._primitives_executable = primitives_executable
 
     # ------------------------------------------------------------------
     # Public API
@@ -173,17 +181,25 @@ class StrategySelector:
                 result = StrategyResult("skill", "sit", {})
 
             # Stop (primitive before walk to avoid 'stop' being caught by nothing)
+            # Primitive branches require the layer to be EXECUTABLE; otherwise
+            # result stays None and the registry alias match resolves the same
+            # wording against this world's real skills (stop/walk/turn).
             elif _word_match(("stop",), combined):
-                result = StrategyResult("primitive", "stop", {})
+                if self._primitive_routable():
+                    result = StrategyResult("primitive", "stop", {})
 
             # Movement primitives
             elif _word_match(("walk", "forward"), combined) or "前进" in combined:
-                dist = sub_goal.strategy_params.get("distance", 1.0)
-                result = StrategyResult("primitive", "walk_forward", {"distance_m": dist})
+                if self._primitive_routable():
+                    dist = sub_goal.strategy_params.get("distance", 1.0)
+                    result = StrategyResult(
+                        "primitive", "walk_forward", {"distance_m": dist}
+                    )
 
             elif any(kw in combined for kw in ("turn", "rotate", "转")):
-                angle = sub_goal.strategy_params.get("angle", 1.57)
-                result = StrategyResult("primitive", "turn", {"angle_rad": angle})
+                if self._primitive_routable():
+                    angle = sub_goal.strategy_params.get("angle", 1.57)
+                    result = StrategyResult("primitive", "turn", {"angle_rad": angle})
 
         # Priority 3: Skill registry alias match (all worlds)
         if result is None and self._skill_registry is not None:
@@ -251,6 +267,30 @@ class StrategySelector:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _primitive_routable(self) -> bool:
+        """True when a base-primitive route may be emitted.
+
+        Registry-less selectors (legacy go2) keep the by-convention behaviour.
+        With a registry injected, the route requires the primitive layer to be
+        executable: the injected checker, or the live ``primitives_ready``
+        truth when none was injected.
+        """
+        if not self._has_base:
+            return False
+        if self._registered_skill_names() is None:
+            return True  # legacy path — byte-identical
+        if self._primitives_executable is not None:
+            try:
+                return bool(self._primitives_executable())
+            except Exception:  # noqa: BLE001 — a broken checker never routes
+                return False
+        try:
+            from vector_os_nano.vcli.primitives import primitives_ready
+
+            return primitives_ready()
+        except Exception:  # noqa: BLE001
+            return False
 
     def _route(self, name: str, params: dict) -> "StrategyResult | None":
         """Route a keyword-matched perception/planning step (Phase C.2).
@@ -333,7 +373,9 @@ class StrategySelector:
                 valid is not None
                 and skill_name not in valid
                 and strategy not in self._capability_names
-                and not (self._has_base and skill_name in _PRIMITIVE_NAMES)
+                and not (
+                    skill_name in _PRIMITIVE_NAMES and self._primitive_routable()
+                )
             ):
                 return StrategyResult(
                     "invalid",
@@ -342,16 +384,27 @@ class StrategySelector:
                 )
             return StrategyResult("skill", skill_name, params)
 
-        # Base locomotion primitives are only routable on a world with a base;
-        # on a baseless world they would call _require_base() and raise.
-        if self._has_base and strategy in _PRIMITIVE_NAMES:
-            # Normalize LLM-generated param names to match primitive signatures
-            normalized = dict(params) if params else {}
-            if strategy == "walk_forward" and "distance" in normalized:
-                normalized["distance_m"] = normalized.pop("distance")
-            if strategy == "turn" and "angle" in normalized:
-                normalized["angle_rad"] = normalized.pop("angle")
-            return StrategyResult("primitive", strategy, normalized)
+        # Base locomotion primitives are only routable on a world with a base
+        # AND an executable primitive layer; on a baseless/unwired world they
+        # would call _require_base() and raise ('No hardware connected' ghosts).
+        if strategy in _PRIMITIVE_NAMES:
+            if self._primitive_routable():
+                # Normalize LLM-generated param names to primitive signatures
+                normalized = dict(params) if params else {}
+                if strategy == "walk_forward" and "distance" in normalized:
+                    normalized["distance_m"] = normalized.pop("distance")
+                if strategy == "turn" and "angle" in normalized:
+                    normalized["angle_rad"] = normalized.pop("angle")
+                return StrategyResult("primitive", strategy, normalized)
+            valid = self._registered_skill_names()
+            if valid is not None and strategy not in valid:
+                # Not executable as a primitive and not a skill in THIS world
+                # — fail loud with the valid set (rule 8), never a ghost.
+                return StrategyResult(
+                    "invalid",
+                    strategy,
+                    {"strategy": strategy, "valid_strategies": sorted(valid)},
+                )
 
         # Treat as a skill with the strategy name as-is
         return StrategyResult("skill", strategy, params)

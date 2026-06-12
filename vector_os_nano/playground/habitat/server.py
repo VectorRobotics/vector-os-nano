@@ -218,6 +218,7 @@ class HabitatServer:
         # kinematically glued to the pose authority. Best-effort: a missing/
         # broken asset never blocks the world.
         self._body = None
+        self._body_y_off = 0.0
         if robot_glb:
             try:
                 import os as _os
@@ -227,6 +228,11 @@ class HabitatServer:
                 rom = self.sim.get_rigid_object_manager()
                 self._body = rom.add_object_by_template_id(ids[0])
                 self._body.motion_type = habitat_sim.physics.MotionType.KINEMATIC
+                # habitat re-centers the render asset to its bb CENTER, so a
+                # floor-y translation sinks the body half its height. Lift by
+                # the local-frame feet depth (bb is translation-independent).
+                bb = self._body.root_scene_node.cumulative_bb
+                self._body_y_off = -float(bb.min.y)
                 self._place_body()
             except Exception as exc:  # noqa: BLE001
                 print(f"robot body disabled: {exc}", file=sys.stderr, flush=True)
@@ -251,7 +257,7 @@ class HabitatServer:
 
         pos, yaw, _, _ = self._read_pose()
         self._body.translation = mn.Vector3(
-            float(pos[0]), float(pos[1]), float(pos[2])
+            float(pos[0]), float(pos[1]) + self._body_y_off, float(pos[2])
         )
         self._body.rotation = mn.Quaternion.rotation(
             mn.Rad(yaw + math.pi / 2.0), mn.Vector3.y_axis()

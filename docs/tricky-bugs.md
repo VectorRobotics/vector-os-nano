@@ -104,3 +104,47 @@ Routine bugs do NOT belong here; git history covers those.
   check (flat floor + trigonometry is free); "plausible-looking" point clouds
   hide smooth systematic warps that downstream consumers turn into hard
   failures.
+
+## Case 6 — G1 body half-sunk in the floor: habitat re-centers render assets (2026-06-12)
+
+- **Symptom:** the robot looked TINY/misplaced next to furniture in the chase
+  view (~0.4 m apparent vs 1.32 m expected) — everything pointed at GLB
+  unit/scale or camera FOV.
+- **Why hidden:** the GLB itself was perfect (trimesh: 1.32 m tall, feet at
+  y=0, scale 1:1) and N3 acceptance only checked "body occupies pixels", not
+  WHERE. A half-sunk torso still occupies pixels.
+- **Root cause (discriminating experiment):** add the object in an empty stage
+  at translation (0,0,0) and read `root_scene_node.cumulative_bb`: min.y =
+  −0.661. habitat's object template loader re-centers a render asset to its
+  bounding-box CENTER — `translation` is the body's middle, not its feet, so
+  gluing translation.y to the navmesh floor sinks the body half its height.
+- **Fix:** measure once at body creation (`_body_y_off = -bb.min.y`, the bb is
+  translation-independent) and lift `_place_body` by it.
+- **Lesson:** for any engine, verify WHERE an asset's origin lands after
+  import (place at origin, read the world bb) before trusting position math;
+  "renders and moves" does not mean "stands on the floor".
+
+## Case 7 — replan ghosts: the vocab taught actions nothing could execute (2026-06-12)
+
+- **Symptom:** owner's `走到sofa` failed with "navigate_to requires a label OR
+  numeric x and y" — which points at the LLM binding params wrong. The scripted
+  harness passed the same goal.
+- **Why hidden:** the FIRST decompose was always correct (label bound, loud
+  object-not-found error). The garbage only appeared in REPLAN cascades, which
+  the harness never exercised with an EMPTY world model: replans (1) chased a
+  `scan_360` route taught by the derived vocab on `has_base` alone — but
+  NOTHING in production ever calls `init_primitives`, so every base primitive
+  raises 'No hardware connected'; (2) re-emitted navigate_to with the previous
+  step's `{"label": "sofa"}` dropped.
+- **Root cause:** teaching/routing decisions keyed on a static capability flag
+  (`has_base`) instead of the EXECUTABLE truth (is the primitive layer wired?),
+  plus no kernel guarantee that replanned steps keep prior param bindings.
+- **Fix:** `primitives_ready()` gates vocab teaching, all StrategySelector
+  primitive routes, and the engine preflight (registry-less legacy selectors
+  byte-identical); `VGGHarness._inherit_replan_params` carries prior bindings
+  into replanned same-strategy steps; an empty-world-model object goal now
+  names the actual fix (start sysnav).
+- **Lesson:** an action space must be derived from what can EXECUTE, not what
+  the embodiment theoretically supports — and replans must never degrade
+  params the previous plan had already bound. Test failure paths with the
+  world in its EMPTIEST state, not just the happy fixture.

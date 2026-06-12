@@ -223,30 +223,51 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
--1. **OWNER LIVE-TEST FINDINGS 2026-06-12 (post-campaign-#2, FIX FIRST next
-   session).** Owner ran the pure-NL flow in a plain terminal (no ROS sourced):
-   (a) **G1 body wrong in the chase view** — the robot renders TINY/misplaced
-   relative to the furniture (screenshot
-   ~/Pictures/Screenshots/'Screenshot from 2026-06-12 01-30-25.png': at
-   pos (-2.5, 0.6) the G1 looks ~0.4 m tall next to a bar table; expected
-   1.32 m). Hypotheses to discriminate: GLB unit/scale applied by habitat's
-   object template loader; chase-cam FOV/offset making it look small; body
-   placed at navmesh y (+0.12 float) — measure the rendered body height
-   against a known scene object headless before touching anything.
-   (b) **"启动sysnav" fails NL-start from an unsourced shell** — fail-loud
-   worked (told the owner to source ROS+SysNav), but the N5 promise is NL
-   start WITHOUT terminal rituals. Fix direction: run the consumer/feed in a
-   subprocess that sources the overlays itself (launch_sysnav_nodes already
-   does this for the GPU pair) or extend AMENT/PYTHONPATH programmatically
-   at tool start; the bare `vector-cli` symlink launcher could also source
-   ROS when present.
-   (c) **Walking/NL motion did not work in the owner's session** — mode
-   unknown (owner report, no transcript of the failing turn; the first
-   `启动habitat模拟` also hit a transient `Error: Connection error.` from
-   deepseek). Reproduce in a real CLI turn: NL walk + navigate after NL sim
-   start — suspect surface: the production turn pipeline (permissions on
-   motor tools / VGG rebuild after NL sim start / IntentRouter), since the
-   scripted harness path (engine.vgg_* direct) passed.
+-1. ~~OWNER LIVE-TEST FINDINGS 2026-06-12~~ — **ALL THREE FIXED + LIVE-VERIFIED
+   2026-06-12 (owner re-test pending).**
+   (a) **G1 tiny/misplaced in chase view — FIXED.** Not scale, not FOV:
+   habitat re-centers a render asset to its bounding-box CENTER, so gluing
+   `translation.y` to the navmesh floor sank the 1.32 m body 0.66 m into the
+   floor (only the torso showed). `server.py` now measures the local bb once
+   at body creation (`_body_y_off = -bb.min.y`) and lifts `_place_body`.
+   Verified headless in the real house scene: world feet y == floor y, head
+   == floor + 1.322, full-height robot next to the same bar table from the
+   owner's screenshot (tricky-bugs Case 6; harness
+   ~/sandbox/habitat-spike/spike_body_fix_verify.py).
+   (b) **"启动sysnav" from an unsourced shell — FIXED.** `LD_LIBRARY_PATH`
+   is read at process birth, so in-process path injection can never import
+   rclpy. New `vcli/ros_bootstrap.py`: when the ROS/SysNav overlays exist on
+   disk but `AMENT_PREFIX_PATH` lacks them, `cli.main()` sources them in a
+   bash child, captures `env -0`, and re-execs itself ONCE
+   (`VECTOR_ROS_BOOTSTRAPPED` loop guard carries the overlay list for a dim
+   startup banner; `VECTOR_NO_ROS_BOOTSTRAP=1` opt-out, set by conftest so
+   pytest is never replaced by execve). No-ROS boxes, sourced shells, and
+   compose failures are silent no-ops. Live-verified from `env -i`: re-exec
+   banner + rclpy AND tare_planner.msg importable. Also fixes the GPU node
+   pair (its launcher relied on an inherited sourced shell). The owner's
+   leftover 01:29 REPL confirmed the diagnosis: its env had ROS sourced but
+   NOT SysNav.
+   (c) **NL walk/navigate failures — FIXED (three kernel defects, found by
+   replaying the owner's SAVED 19:42 session transcript
+   ~/.vector/sessions/fd95f71f*.jsonl).** `走到sofa` on an empty world model
+   exposed: (c1) a REPLAN could emit the same strategy with EMPTY params —
+   the owner's opaque "requires a label OR numeric x and y";
+   `VGGHarness._inherit_replan_params` now carries prior param bindings into
+   any replanned same-strategy step (suffix-form-normalized, non-empty new
+   params always win); (c2) the derived vocab taught base primitives
+   (walk_forward/turn/scan_360) on `has_base` alone while NOTHING in
+   production calls `init_primitives` — replans chased a 'No hardware
+   connected' scan_360 ghost; vocab (`teach_base_primitives`) +
+   StrategySelector routes + engine preflight now gate on the EXECUTABLE
+   truth (`primitives_ready()`); registry-less legacy selectors stay
+   byte-identical (tricky-bugs Case 7); (c3) object-not-found on an EMPTY
+   world model now tells the user the real fix ("start sysnav perception
+   first") instead of burning replans. `往前走一点` had actually SUCCEEDED
+   in the owner's transcript (walk_goal: ok) — it only LOOKED broken because
+   of (a)'s half-sunk robot. Live re-verified on the real house world + LLM:
+   走到sofa → honest guidance-carrying failure, no ghosts, label preserved
+   across replans; 往前走一点 → walk_skill, moved 1.00 m. The deepseek
+   "Error: Connection error." was transient (not reproduced).
 0. ~~OWNER LIVE-TEST FINDING #0 (status/persona surface blind to the habitat world)~~ —
    **FIXED 2026-06-11 + NL sim startup shipped, live-verified.** (a) Persona is now
    backend-selected by `PlaygroundWorld.persona_blocks()`: habitat scenarios get

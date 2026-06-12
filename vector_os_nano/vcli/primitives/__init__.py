@@ -57,6 +57,16 @@ def init_primitives(ctx: PrimitiveContext) -> None:
     world._ctx = ctx
 
 
+def primitives_ready() -> bool:
+    """The EXECUTABLE truth: has init_primitives() wired a context with a base?
+
+    Strategy routing must consult this, never just has_base — teaching or
+    routing base primitives in a world that never wired them produces
+    'No hardware connected' ghosts (owner finding (c), 2026-06-12).
+    """
+    return _ctx is not None and _ctx.base is not None
+
+
 def get_context() -> PrimitiveContext:
     """Return the current primitive context.
 
