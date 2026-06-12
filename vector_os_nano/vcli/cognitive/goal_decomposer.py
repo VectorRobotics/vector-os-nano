@@ -544,7 +544,13 @@ Loop example — "do <something> to every detected object, one by one":
                         exc,
                     )
                 else:
-                    return self._build_goal_tree(task, data)
+                    tree = self._build_goal_tree(task, data)
+                    # Batch 2 (campaign #4): deterministic param-completeness
+                    # check + ONE bounded re-ask. What stays broken after it
+                    # fails loud at the skill's bad_params gate (no silent
+                    # defaults). Template-path trees skip this: they were
+                    # compiled from verified runs.
+                    return self._param_completeness_pass(task, tree)
             else:
                 _LOG.warning(
                     "GoalDecomposer: no JSON found in response (attempt %d/%d)",
@@ -562,6 +568,61 @@ Loop example — "do <something> to every detected object, one by one":
             attempts,
         )
         return self._fallback_goal_tree(task)
+
+    def _param_completeness_pass(self, task: str, tree: "GoalTree") -> "GoalTree":
+        """Check params against the registry schema; re-ask the LLM ONCE.
+
+        Deterministic detection (param_check — rule 3 single source), bounded
+        repair: the correction prompt names each broken step's missing
+        required params / illegal enum values WITH the legal sets, and may
+        only rebind the named steps' params (never the tree structure).
+        Fail-soft everywhere: no registry → identity; garbage correction →
+        original tree (the skill's bad_params gate stays the judge).
+        """
+        if self._skill_registry is None:
+            return tree
+        try:
+            from vector_os_nano.vcli.cognitive.param_check import (
+                collect_param_issues,
+                merge_corrections,
+                render_issue_block,
+            )
+
+            issues = collect_param_issues(tree, self._skill_registry)
+            if not issues:
+                return tree
+            _LOG.warning(
+                "GoalDecomposer: %d step(s) with incomplete/illegal params "
+                "(%s) — one bounded re-ask",
+                len(issues), ", ".join(i["step"] for i in issues),
+            )
+            response = self._backend.call(
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Task: {task}\n\n{render_issue_block(issues)}"
+                    ),
+                }],
+                tools=[],
+                system=self._cached_system_prompt,
+                max_tokens=1024,
+            )
+            json_str = self._extract_json(response.text)
+            if json_str is None:
+                return tree
+            corrections = json.loads(json_str)
+            fixed = merge_corrections(tree, issues, corrections)
+            still = collect_param_issues(fixed, self._skill_registry)
+            if still:
+                _LOG.warning(
+                    "GoalDecomposer: params still broken after the re-ask "
+                    "(%s) — leaving for the bad_params gate",
+                    ", ".join(i["step"] for i in still),
+                )
+            return fixed
+        except Exception as exc:  # noqa: BLE001 — never break decompose
+            _LOG.warning("GoalDecomposer: param pass failed: %s", exc)
+            return tree
 
     def _retry_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Append a terse JSON-only nudge to the user turn for a bounded re-ask.

@@ -329,6 +329,15 @@ relative to `vector_os_nano/`.
   stays `failure_class="timeout"`. The Layer-3 re-decompose context names the previous
   attempt's verified steps so the replan plans only the remainder instead of replaying
   succeeded motions.
+  PARAM HONESTY (campaign #4, batch 2): a null/"" param value IS a missing param —
+  stripped at the decomposer parse seam so every downstream missing-check sees honest
+  missing-ness (some LLMs emit every schema key as null; tricky-bugs Case 11). After
+  parse, `param_check` compares each step's params against the skill's OWN declared
+  schema (rule 3 — registry single source: required flags + enum sets) and the
+  decomposer re-asks the LLM EXACTLY ONCE with the per-step missing/illegal lists and
+  legal sets (corrections may rebind only the named steps' params, never the tree
+  structure). What stays broken fails loud at the skill's bad_params gate — no silent
+  defaults, no LLM grading in the check itself.
 - `observation.py` — the verified-loop observation surface: a pure JSON-safe export view over the
   frozen types (`step_view` / `run_snapshot`) + plain-text renderers; what a front-end renders.
 

@@ -279,9 +279,16 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      returned useless params (tricky-bugs Case 11). Fix: null/"" stripped
      at the decomposer parse seam (a null value IS a missing param — the
      whole pipeline sees honest missing-ness) + `backfill_target_params`
-     treats null/"" as missing. Remaining batch-2: the bounded
-     param-completeness re-ask pass ("走20米"→1.0 m is a wrong-VALUE
-     case — stripping can't catch it).
+     treats null/"" as missing. **R7: the param-completeness pass is
+     in** — `cognitive/param_check.py` compares each step's params
+     against the skill's declared schema (required + enum, registry
+     single source); the decomposer re-asks the LLM exactly once with
+     the per-step missing/illegal lists + legal sets (corrections can
+     only rebind the named steps' params); still-broken → bad_params
+     gate. Remaining batch-2: GUI re-test (kitchen + 走20米) as the
+     batch closer. Note: a wrong VALUE inside a legal range ("走20米"
+     → distance=1.0) is only caught if the LLM omits/illegal-binds —
+     range/intent checking stays out of scope (no LLM grading).
      DONE earlier: #19 (campaign #3 R6); **#16 + #17 (campaign #4 R3)**
      — ticketed navigation: server `navigate_start`/`navigate_status` run
      the drive on a motion worker (one in flight; `stop` cancels via
