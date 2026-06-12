@@ -191,6 +191,12 @@ class StepRecord:
     # defaulted "" so every existing positional/keyword constructor is
     # byte-unaffected (rule 6).
     failure_class: str = ""
+    # Invariant I (design review 2026-06-12 #1): the NON-TRIVIAL predicate's
+    # value BEFORE the strategy ran. True means the goal state was already
+    # satisfied at dispatch time — 'became true' and 'was already true' are no
+    # longer the same True (the '走到厨房' zero-motion-PASS family). Always
+    # False for trivial/sentinel verifies. Additive + LAST + defaulted (rule 6).
+    pre_satisfied: bool = False
 
 
 @dataclass(frozen=True)

@@ -20,6 +20,9 @@ from collections import deque
 from typing import Any, Callable
 
 from vector_os_nano.vcli.cognitive.trace_store import step_evidence_ok
+from vector_os_nano.vcli.cognitive.trace_store import (
+    _NO_EVIDENCE as _NO_EVIDENCE_VERIFIES,
+)
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     ForEachSpec,
@@ -377,6 +380,12 @@ class GoalExecutor:
         # is frozen, so build a resolved copy rather than mutating in place.
         result = self._resolve_params(result)
 
+        # Invariant I (design review 2026-06-12 #1) — pre-execution baseline:
+        # evaluate a NON-TRIVIAL predicate BEFORE the strategy runs, so an
+        # initial-state PASS is visible instead of indistinguishable from
+        # earned success. Best-effort and fail-safe (errors -> False).
+        pre_satisfied = self._pre_satisfied(sub_goal.verify)
+
         # Execute strategy — captures the step's structured output (Stage 1a).
         exec_success, exec_error, exec_output = self._execute_strategy(result)
         elapsed = time.monotonic() - step_start
@@ -406,6 +415,7 @@ class GoalExecutor:
                 fallback_used=False,
                 result_data={"output": exec_output, "verify_value": None},
                 failure_class="timeout",  # W2.4: post-hoc step-timeout path
+                pre_satisfied=pre_satisfied,
             )
 
         # If execution itself failed (skill not found, unknown type, etc.),
@@ -434,6 +444,7 @@ class GoalExecutor:
                 fallback_used=False,
                 result_data={"output": exec_output, "verify_value": None},
                 failure_class=failure_class,
+                pre_satisfied=pre_satisfied,
             )
 
         # Verify — yields (bool, raw value) from the same sandbox. The step's
@@ -455,6 +466,7 @@ class GoalExecutor:
                 error="",
                 fallback_used=False,
                 result_data=result_data,
+                pre_satisfied=pre_satisfied,
             )
 
         # --- Phase 3: Visual verification fallback ---
@@ -490,6 +502,7 @@ class GoalExecutor:
                             fallback_used=False,
                             visual_override=True,  # not deterministic evidence
                             result_data=vo_result_data,
+                            pre_satisfied=pre_satisfied,
                         )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("GoalExecutor: visual verification failed: %s", exc)
@@ -532,6 +545,7 @@ class GoalExecutor:
                 # W2.4: executed without error but verify is still False after the
                 # fallback -> a verify-miss. "" on the success branch.
                 failure_class="" if verify_result_after else "verify_fail",
+                pre_satisfied=pre_satisfied,
             )
 
         # No fallback, verification failed
@@ -545,6 +559,7 @@ class GoalExecutor:
             fallback_used=False,
             result_data={"output": exec_output, "verify_value": verify_value},
             failure_class="verify_fail",  # W2.4: executed OK but verify was False
+            pre_satisfied=pre_satisfied,
         )
 
     # ------------------------------------------------------------------
@@ -744,6 +759,23 @@ class GoalExecutor:
     # ------------------------------------------------------------------
     # Observation capture (Stage 1a)
     # ------------------------------------------------------------------
+
+    def _pre_satisfied(self, verify: str) -> bool:
+        """The predicate's value BEFORE execution (invariant I).
+
+        Trivial sentinels ('', 'True' — trace_store's no-evidence set) are
+        never flagged: pre-eval on them is meaningless noise. Expressions
+        that cannot evaluate without the step's own output (step_output())
+        fail closed to False — the baseline never blocks execution.
+        """
+        expr = (verify or "").strip()
+        if expr in _NO_EVIDENCE_VERIFIES:
+            return False
+        try:
+            ok, _ = self._verify_and_value(expr, None)
+        except Exception:  # noqa: BLE001 — best-effort baseline
+            return False
+        return bool(ok)
 
     def _verify_and_value(
         self, expression: str, exec_output: Any = None

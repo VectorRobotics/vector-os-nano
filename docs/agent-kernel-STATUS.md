@@ -223,8 +223,16 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
--3. **DESIGN REVIEW 2026-06-12 — 26 confirmed findings, refactor plan AWAITING
-   CEO (docs/design-review-2026-06-12-plan.md).** Owner's third live-test
+-3. **DESIGN REVIEW 2026-06-12 — refactor plan APPROVED-BY-DIRECTIVE, campaign #3
+   loop EXECUTING (docs/design-review-2026-06-12-plan.md; decisions DQ-5 all
+   per recommendation; loop state ~/.vector-nano-loop/).** Batch 1 invariant I
+   SHIPPED (round 1): GoalExecutor evaluates every NON-TRIVIAL predicate
+   BEFORE dispatching the strategy; `StepRecord.pre_satisfied` (additive,
+   rule 6) records the baseline on all post-exec records; step views render
+   "(already satisfied pre-exec)" — 'became true' and 'was already true' are
+   no longer the same True. Trivial-sentinel set single-sourced from
+   trace_store. Next: invariant II (per-step evidence-gate exemptions),
+   invariant III (verify single source). Original review summary: Owner's third live-test
    round hit the false-PASS family again ('走到厨房' = zero-motion verified
    PASS: spawn is 1.53m from the kitchen CENTER, label tol 1.5/verify 1.6 —
    live-pinned, success=True/0.00s/0.00m/outside the room rect). A 6-dimension
