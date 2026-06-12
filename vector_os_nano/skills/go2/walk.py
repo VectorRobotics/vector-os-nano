@@ -29,6 +29,10 @@ _DIRECTION_MAP: dict[str, tuple[float, float]] = {
     "backward": (-1.0,  0.0),
     "left":     ( 0.0,  1.0),
     "right":    ( 0.0, -1.0),
+    # zh aliases — planners naturally emit them (#13 GUI-test finding)
+    "前": (1.0, 0.0), "前进": (1.0, 0.0),
+    "后": (-1.0, 0.0), "后退": (-1.0, 0.0),
+    "左": (0.0, 1.0), "右": (0.0, -1.0),
 }
 
 _DEFAULT_DIRECTION: str = "forward"
@@ -113,7 +117,19 @@ class WalkSkill:
                 result_data={"diagnosis": "bad_params"},
             )
 
-        vx_sign, vy_sign = _DIRECTION_MAP.get(direction, (1.0, 0.0))
+        if direction not in _DIRECTION_MAP:
+            # #13: an unknown enum value must never silently become forward
+            # (the GUI test watched '左'-as-unknown burn 3.3s walking the
+            # wrong way before this guard).
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"unknown walk direction {direction!r}; legal: "
+                    f"{sorted(set(_DIRECTION_MAP) - {'前', '前进', '后', '后退', '左', '右'})}"
+                ),
+                result_data={"diagnosis": "bad_params"},
+            )
+        vx_sign, vy_sign = _DIRECTION_MAP[direction]
         if vy_sign != 0.0 and not getattr(
             context.base, "supports_holonomic", True
         ):

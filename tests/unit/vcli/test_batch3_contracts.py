@@ -131,3 +131,42 @@ class TestConfirmExemptGate:
         w._robot_is_simulated = lambda: False  # pretend REAL hardware
         res = w.check_permissions({}, None)
         assert res.behavior == "allow"
+
+
+class TestDirectionEnumValidation:
+    """#13 second half: skills validate enum values — an unknown direction
+    must fail loud with the legal set, never silently walk forward (the GUI
+    test caught '左' coercing to forward and burning 3.3s on a wrong walk)."""
+
+    def _ctx(self):
+        class _Base:
+            supports_holonomic = True
+
+            def walk(self, vx, vy, vyaw, duration):
+                return True
+
+            def get_position(self):
+                return [0.0, 0.0, 0.0]
+
+        return SimpleNamespace(base=_Base(), world_model=None, agent=None)
+
+    def test_unknown_direction_is_bad_params(self):
+        from vector_os_nano.skills.go2.walk import WalkSkill
+
+        res = WalkSkill().execute({"direction": "sideways", "distance": 1.0},
+                                  self._ctx())
+        assert res.success is False
+        assert "forward" in (res.error_message or "")  # legal set named
+
+    def test_chinese_aliases_resolve(self):
+        from vector_os_nano.skills.go2.walk import _DIRECTION_MAP
+
+        for zh in ("前", "后", "左", "右"):
+            assert zh in _DIRECTION_MAP
+
+    def test_turn_unknown_direction_bad_params(self):
+        from vector_os_nano.skills.go2.turn import TurnSkill
+
+        res = TurnSkill().execute({"direction": "around", "angle": 90},
+                                  self._ctx())
+        assert res.success is False

@@ -87,8 +87,17 @@ class TurnSkill:
             )
         angle_rad: float = math.radians(abs(angle_deg))
 
+        if direction not in ("left", "right", "左", "右"):
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"unknown turn direction {direction!r}; legal: "
+                    "['left', 'right']"
+                ),
+                result_data={"diagnosis": "bad_params"},
+            )
         # Left = positive yaw (counter-clockwise), right = negative yaw (clockwise)
-        sign: float = 1.0 if direction == "left" else -1.0
+        sign: float = 1.0 if direction in ("left", "左") else -1.0
         vyaw: float = sign * _VYAW_SPEED
         duration: float = angle_rad / _VYAW_SPEED
 
