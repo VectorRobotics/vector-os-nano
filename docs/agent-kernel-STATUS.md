@@ -223,6 +223,30 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
+-1. **OWNER LIVE-TEST FINDINGS 2026-06-12 (post-campaign-#2, FIX FIRST next
+   session).** Owner ran the pure-NL flow in a plain terminal (no ROS sourced):
+   (a) **G1 body wrong in the chase view** — the robot renders TINY/misplaced
+   relative to the furniture (screenshot
+   ~/Pictures/Screenshots/'Screenshot from 2026-06-12 01-30-25.png': at
+   pos (-2.5, 0.6) the G1 looks ~0.4 m tall next to a bar table; expected
+   1.32 m). Hypotheses to discriminate: GLB unit/scale applied by habitat's
+   object template loader; chase-cam FOV/offset making it look small; body
+   placed at navmesh y (+0.12 float) — measure the rendered body height
+   against a known scene object headless before touching anything.
+   (b) **"启动sysnav" fails NL-start from an unsourced shell** — fail-loud
+   worked (told the owner to source ROS+SysNav), but the N5 promise is NL
+   start WITHOUT terminal rituals. Fix direction: run the consumer/feed in a
+   subprocess that sources the overlays itself (launch_sysnav_nodes already
+   does this for the GPU pair) or extend AMENT/PYTHONPATH programmatically
+   at tool start; the bare `vector-cli` symlink launcher could also source
+   ROS when present.
+   (c) **Walking/NL motion did not work in the owner's session** — mode
+   unknown (owner report, no transcript of the failing turn; the first
+   `启动habitat模拟` also hit a transient `Error: Connection error.` from
+   deepseek). Reproduce in a real CLI turn: NL walk + navigate after NL sim
+   start — suspect surface: the production turn pipeline (permissions on
+   motor tools / VGG rebuild after NL sim start / IntentRouter), since the
+   scripted harness path (engine.vgg_* direct) passed.
 0. ~~OWNER LIVE-TEST FINDING #0 (status/persona surface blind to the habitat world)~~ —
    **FIXED 2026-06-11 + NL sim startup shipped, live-verified.** (a) Persona is now
    backend-selected by `PlaygroundWorld.persona_blocks()`: habitat scenarios get
