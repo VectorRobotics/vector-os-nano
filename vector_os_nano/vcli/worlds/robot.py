@@ -31,9 +31,12 @@ class RobotWorld:
         # carry real predicates. Invariant III shrinks this set as skills
         # gain real verify hints; the set is BOUNDED and reviewed, never
         # derived from runtime state.
+        # navigate/look/describe_scene graduated in invariant III (they
+        # declare real verify templates now); motion skills remain until the
+        # batch-2 moved/duration result contract gives them real predicates.
         return frozenset({
             "explore", "patrol", "walk", "turn", "stand", "sit", "stop",
-            "navigate", "look", "where_am_i", "describe_scene",
+            "where_am_i",
         })
 
     def persona_blocks(self) -> tuple[str, str]:

@@ -344,6 +344,8 @@ class NavigateSkill:
     """
 
     name: str = "navigate"
+    # Invariant III: fast-path verify single source ({arg} = resolved room).
+    verify_template: str = "nearest_room() == '{arg}'"
     description: str = (
         "Navigate the robot to a named room. "
         "Use this when the user says 'go to X' or '去X'. "

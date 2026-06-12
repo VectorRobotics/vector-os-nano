@@ -130,15 +130,22 @@ class TestDecomposerValidateStrengthens:
 
 
 class TestFastPathPickVerify:
-    def test_verify_map_has_bare_holding_for_pick(self) -> None:
-        from vector_os_nano.vcli.engine import VectorEngine
-
-        assert VectorEngine._verify_for_skill("pick", "") == "holding_object()"
-
-    def test_fast_path_pick_with_target_is_target_aware(self) -> None:
+    # Invariant III: the verify comes from the SKILL's own verify_template
+    # (single source) — the engine no longer carries a second map.
+    def test_pick_template_gives_bare_holding(self) -> None:
+        from vector_os_nano.skills.pick import PickSkill
         from vector_os_nano.vcli.engine import VectorEngine
 
         assert (
-            VectorEngine._verify_for_skill("pick", "apple")
+            VectorEngine._verify_for_skill("pick", "", PickSkill())
+            == "holding_object()"
+        )
+
+    def test_fast_path_pick_with_target_is_target_aware(self) -> None:
+        from vector_os_nano.skills.pick import PickSkill
+        from vector_os_nano.vcli.engine import VectorEngine
+
+        assert (
+            VectorEngine._verify_for_skill("pick", "apple", PickSkill())
             == "holding_object('apple')"
         )

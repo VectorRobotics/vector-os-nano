@@ -1185,13 +1185,15 @@ class VectorEngine:
             if not resolved_room:
                 return None  # unknown room — let LLM handle
 
-        # Build verify expression using resolved canonical ID
+        # Build verify expression using resolved canonical ID — single-sourced
+        # from the SKILL's own verify_template (invariant III; the old
+        # hand-written second vocabulary in this method drifted and is gone).
+        skill_obj = skill_registry.get(skill_name) if skill_registry else None
         verify_arg = resolved_room if resolved_room else extracted
-        verify = self._verify_for_skill(skill_name, verify_arg)
+        verify = self._verify_for_skill(skill_name, verify_arg, skill_obj)
 
         # Build strategy params — extract from user message text
         params: dict = {}
-        skill_obj = skill_registry.get(skill_name) if skill_registry else None
         skill_params = getattr(skill_obj, "parameters", {}) if skill_obj else {}
 
         # Generic extraction: match param names to user message content
@@ -1229,27 +1231,23 @@ class VectorEngine:
         return GoalTree(goal=user_message, sub_goals=(sub_goal,))
 
     @staticmethod
-    def _verify_for_skill(skill_name: str, arg: str) -> str:
-        """Generate a verify expression for a known skill."""
-        _VERIFY_MAP: dict[str, str] = {
-            "navigate": "nearest_room() == '{arg}'" if arg else "True",
-            "explore": "True",  # async skill — launched = success, progress via events
-            "patrol": "True",   # async skill — launched = success
-            "look": "len(describe_scene()) > 0",
-            "describe_scene": "len(describe_scene()) > 0",
-            "where_am_i": "True",
-            "stand": "True",
-            "sit": "True",
-            "stop": "True",
-            "walk": "True",
-            "turn": "True",
-            # backlog #2b: a fast-path pick must carry the holding predicate,
-            # target-bound when a target was extracted (strengthened below) —
-            # never the trivially-true sentinel.
-            "pick": "holding_object()",
-        }
-        template = _VERIFY_MAP.get(skill_name, "True")
-        verify = template.replace("{arg}", arg) if "{arg}" in template else template
+    def _verify_for_skill(skill_name: str, arg: str, skill_obj: Any = None) -> str:
+        """Verify expression for a fast-path skill step — single source.
+
+        Invariant III (design review #5, rule 3): the SKILL's own
+        ``verify_template`` is the only origin (``{arg}`` substituted with the
+        extracted/resolved target). A skill without a template — or an
+        ``{arg}`` template with no arg to bind — gets the honest ``"True"``
+        sentinel, which the evidence gate reports as unverified (invariant
+        II), never as deterministic evidence. No second hand-written map.
+        """
+        template = str(getattr(skill_obj, "verify_template", "") or "").strip()
+        if not template:
+            verify = "True"
+        elif "{arg}" in template:
+            verify = template.replace("{arg}", arg) if arg else "True"
+        else:
+            verify = template
         try:
             from vector_os_nano.vcli.cognitive.verify_strengthen import (
                 strengthen_target_verify,

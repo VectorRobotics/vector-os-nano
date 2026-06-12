@@ -87,14 +87,18 @@ def _strategy_name(skill_name: str) -> str:
 
 
 def _verify_hint(schema: dict[str, Any]) -> str:
-    """Return a skill's declared success predicate, or the safe ``True`` literal.
+    """Return a skill's declared success predicate, or an UNVERIFIED marker.
 
     Single-sourced from the skill's ``verify_hint`` (surfaced by
-    ``Skill.to_schemas``); a skill that declares none gets the always-safe
-    truthy literal so the planner always has a concrete suggestion.
+    ``Skill.to_schemas``). Invariant III: a skill that declares none is shown
+    as unverified — the planner must never be handed the ``True`` sentinel as
+    a "suggested" predicate (that is how motion commands became structurally
+    unverified).
     """
     hint = str(schema.get("verify_hint", "") or "").strip()
-    return hint or "True"
+    if hint and hint != "True":
+        return hint
+    return "(unverified — this skill declares no symbolic post-condition)"
 
 
 def _format_params_block(schema: dict[str, Any]) -> str:
