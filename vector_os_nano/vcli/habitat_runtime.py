@@ -51,6 +51,21 @@ def resolve_habitat_viewer(requested: str | None = None) -> str:
     return "chase"
 
 
+def resolve_habitat_viewer_size(requested: int | None = None) -> int:
+    """Viewer window size in px: ``VECTOR_HABITAT_VIEWER_SIZE`` env > caller
+    request > default 800 (owner finding 2026-06-12 round 2 — the 512 window
+    was too small). The server clamps to [256, 1600]."""
+    env = os.environ.get("VECTOR_HABITAT_VIEWER_SIZE", "")
+    try:
+        if env and int(env) > 0:
+            return int(env)
+    except ValueError:
+        pass
+    if requested and requested > 0:
+        return int(requested)
+    return 800
+
+
 def resolve_robot_glb() -> str:
     """The composed rigid robot-body asset (N3), or '' when not built.
 
@@ -128,6 +143,7 @@ def boot_habitat_agent(
     base = HabitatBase(
         scene=scene, gui=show_gui, dataset_config=dataset_config, navmesh=navmesh,
         robot_glb=robot_glb, viewer_mode=viewer_mode,
+        viewer_size=resolve_habitat_viewer_size(),
     )
     base.connect()
     agent = Agent(base=base)
@@ -147,7 +163,73 @@ def boot_habitat_agent(
     for s in (WalkSkill(), TurnSkill(), StopSkill(), NavigateToPointSkill()):
         registry.register(s)
     agent._skill_registry = registry
+
+    # Owner finding 2026-06-12 round 2: the habitat agent has no SceneGraph,
+    # so without this the planner cannot know any room exists ('走到门口'
+    # decomposed to a paramless navigate). The scenario's authored rooms
+    # become world-model landmarks: listed WITH coordinates in the planner's
+    # 'Objects (live)' context line and resolvable via navigate_to(label=...).
+    seed_room_landmarks(getattr(agent, "_world_model", None), world.scenario)
     return agent
+
+
+# Display/grounding aliases for the authored room names — the planner reads
+# these in the objects line and copies the EXACT label into navigate params.
+_ROOM_ALIASES: dict[str, str] = {
+    "entryway": "门口/玄关",
+    "kitchen": "厨房",
+    "living_room": "客厅",
+    "dining": "餐厅",
+    "tv_corner": "电视角",
+    "bedroom": "卧室",
+    "bathroom": "浴室",
+}
+
+
+def markers_from_world_model(world_model: Any) -> "list[dict]":
+    """The viewer-overlay marker set: every non-room world-model object.
+
+    Room landmarks are navigation vocabulary, not detections — drawing five
+    permanent room labels would bury the live SysNav objects."""
+    out: list[dict] = []
+    for o in world_model.get_objects():
+        if (getattr(o, "properties", None) or {}).get("type") == "room":
+            continue
+        out.append({"label": o.label, "x": o.x, "y": o.y, "z": o.z})
+    return out
+
+
+def seed_room_landmarks(world_model: Any, scenario: Any) -> int:
+    """Seed ``scenario.rooms`` into ``world_model`` as type=room landmarks.
+
+    Each room rect ``(x0, y0, x1, y1)`` lands at its center with a stable
+    ``room_<name>`` id (idempotent — re-seeding overwrites, never duplicates;
+    sysnav's ``sysnav_<id>`` ids can never clash). Returns the count seeded.
+    """
+    rooms = dict(getattr(scenario, "rooms", None) or {})
+    if world_model is None or not rooms:
+        return 0
+    from vector_os_nano.core.world_model import ObjectState
+
+    for name, rect in rooms.items():
+        x0, y0, x1, y1 = (float(v) for v in rect)
+        props = {"type": "room"}
+        alias = _ROOM_ALIASES.get(name)
+        if alias:
+            props["alias"] = alias
+        world_model.add_object(
+            ObjectState(
+                object_id=f"room_{name}",
+                label=str(name),
+                x=(x0 + x1) / 2.0,
+                y=(y0 + y1) / 2.0,
+                z=0.0,
+                confidence=1.0,
+                state="unknown",
+                properties=props,
+            )
+        )
+    return len(rooms)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +261,26 @@ def wire_sysnav_feed(agent: Any, on_status: Callable[[str], None] | None = None)
     from vector_os_nano.integrations.sysnav_bridge.live_bridge import LiveSysnavBridge
     from vector_os_nano.playground.habitat.sysnav_bridge import HabitatSysnavBridge
 
-    consumer = LiveSysnavBridge(world_model=agent._world_model)
+    # Detections made VISIBLE (owner finding 2026-06-12 round 2): every node
+    # batch pushes the current non-room object set to the viewer overlay,
+    # debounced so a chatty mapper cannot flood the stream channel.
+    _last_push = [0.0]
+
+    def _push_markers() -> None:
+        import time as _time
+
+        now = _time.monotonic()
+        if now - _last_push[0] < 0.5:
+            return
+        _last_push[0] = now
+        base = getattr(agent, "_base", None)
+        if base is None or not callable(getattr(base, "set_markers", None)):
+            return
+        base.set_markers(markers_from_world_model(agent._world_model))
+
+    consumer = LiveSysnavBridge(
+        world_model=agent._world_model, on_batch=_push_markers
+    )
     if not consumer.start():
         # start() returning False means tare_planner.msg (or rclpy) is missing
         # — a no-op consumer would silently eat every detection. Fail loud.

@@ -226,9 +226,10 @@ class TestN3RobotBody:
 
         class _FakeBase:
             def __init__(self, scene, gui=False, dataset_config="", navmesh="",
-                         robot_glb="", viewer_mode=""):
+                         robot_glb="", viewer_mode="", viewer_size=0):
                 self.robot_glb = robot_glb
                 self.viewer_mode = viewer_mode
+                self.viewer_size = viewer_size
 
             def connect(self) -> None:
                 pass

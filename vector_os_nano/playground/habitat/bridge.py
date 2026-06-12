@@ -92,6 +92,7 @@ class HabitatBridge:
         navmesh: str = "",
         robot_glb: str = "",
         viewer_mode: str = "",
+        viewer_size: int = 0,
     ) -> None:
         self._scene = scene
         self._boot_timeout = boot_timeout
@@ -100,6 +101,7 @@ class HabitatBridge:
         self._navmesh = navmesh
         self._robot_glb = robot_glb
         self._viewer_mode = viewer_mode
+        self._viewer_size = int(viewer_size)
         self._proc: subprocess.Popen | None = None
         self._sock: socket.socket | None = None
         self._rfile: Any = None
@@ -149,6 +151,8 @@ class HabitatBridge:
             argv += ["--robot-glb", self._robot_glb]
         if self._viewer_mode:
             argv += ["--viewer-mode", self._viewer_mode]
+        if self._viewer_size > 0:
+            argv += ["--viewer-size", str(self._viewer_size)]
         return argv
 
     def _read_port_handshake(self) -> int:

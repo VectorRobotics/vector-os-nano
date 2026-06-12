@@ -148,3 +148,24 @@ Routine bugs do NOT belong here; git history covers those.
   the embodiment theoretically supports — and replans must never degrade
   params the previous plan had already bound. Test failure paths with the
   world in its EMPTIEST state, not just the happy fixture.
+
+## Case 8 — "robot didn't walk": real motion, invisible in one blink (2026-06-12)
+
+- **Symptom:** owner's `往前走` reported PASS in 0.1 s but the robot looked
+  stationary — everything pointed at the motion pipeline (params, skill,
+  base) being broken.
+- **Why hidden:** the motion WAS real: params were correct and odom moved a
+  full metre — every kernel-side check (verify, position delta, harness
+  asserts) passed, because they all measure STATE, not its time course. The
+  server's `walk` op integrated all kinematic steps back-to-back with no
+  wall-time pacing, and the chase camera is agent-mounted, so a 1 m teleport
+  moves the camera WITH the robot — between two frames almost nothing in the
+  image changes.
+- **Root cause:** `duration` was treated as an integration variable, not a
+  wall-clock contract; nothing in the acceptance ever asserted elapsed time.
+- **Fix:** `walk` paces each step to `duration` wall time; oracle
+  `navigate_to` paces at `speed` m/s and emits viewer frames per step. Live
+  check now asserts WALL TIME (1 m ≈ 3.3 s), not just displacement.
+- **Lesson:** for any embodied action, verify the TRAJECTORY's time course,
+  not just the end state — and remember that a tracking camera hides exactly
+  the motion it tracks.

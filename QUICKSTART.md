@@ -43,20 +43,24 @@ break it), ReplicaCAD download (~300 MB, CC-BY-4.0), and the G1 body GLB
 
 A third-person window opens with the G1 standing in the apartment
 (`VECTOR_HABITAT_VIEWER=first` switches to the robot's eye view;
+`VECTOR_HABITAT_VIEWER_SIZE=1200` for a bigger window, default 800;
 `VECTOR_HABITAT_GUI=0` for headless). Or start bare `vector-cli` and just
 say **启动habitat模拟**.
 
 Try:
 
 ```
+走到厨房
+走到门口
 走到坐标 (-5.3, -3.4)
-Go to position (-2.6, 0.5)
 向前走0.5米然后右转90度
 机器人状态
 ```
 
-Navigation runs on the navmesh oracle out of the box — exact, instant
-paths. Every goal is verified by measured geodesic distance.
+The house's named rooms (kitchen/entryway/living_room/dining/tv_corner)
+are built-in navigation targets — no perception needed. Navigation runs
+on the navmesh oracle out of the box, animated at real speed in the
+window; every goal is verified by measured geodesic distance.
 
 ## 3. Optional: the REAL sensor navigation stack
 
@@ -86,8 +90,9 @@ obtain it yourself) — no terminal sourcing needed, any plain shell works:
 走到sofa那里
 ```
 
-Detected objects (sofa, chair, desk, …) flow into the live world model;
-object goals park at a ~1.5 m standoff and verify by euclidean distance.
+Detected objects (sofa, chair, desk, …) flow into the live world model
+AND appear as green labels in the viewer window as they are found; object
+goals park at a ~1.5 m standoff and verify by euclidean distance.
 
 ## Troubleshooting
 

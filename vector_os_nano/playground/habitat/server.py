@@ -133,6 +133,7 @@ class HabitatServer:
         agent_height: float = 1.5,
         robot_glb: str = "",
         viewer_mode: str = "first",
+        viewer_size: int = 800,
     ) -> None:
         cfg = habitat_sim.SimulatorConfiguration()
         cfg.scene_id = scene
@@ -164,13 +165,15 @@ class HabitatServer:
         agent_cfg.sensor_specifications = [rgb, pano_rgb, pano_depth]
         if gui or robot_glb:
             # Dedicated viewer camera (gui runs AND headless body checks).
-            # 512x512 native beats upscaling 256. N3: 'chase' mode mounts it
-            # behind/above the agent looking down — the third-person view
-            # that shows the robot body; 'first' keeps the eye view.
+            # Native render at the window size beats upscaling. N3: 'chase'
+            # mode mounts it behind/above the agent looking down — the
+            # third-person view that shows the robot body; 'first' keeps the
+            # eye view. Size is owner-tunable (--viewer-size).
+            viewer_size = max(256, min(int(viewer_size), 1600))
             viewer_rgb = habitat_sim.CameraSensorSpec()
             viewer_rgb.uuid = "viewer_rgb"
             viewer_rgb.sensor_type = habitat_sim.SensorType.COLOR
-            viewer_rgb.resolution = [512, 512]
+            viewer_rgb.resolution = [viewer_size, viewer_size]
             if self._viewer_mode == "chase":
                 viewer_rgb.position = [0.0, 1.7, 1.3]
                 viewer_rgb.orientation = [-0.45, 0.0, 0.0]
@@ -219,6 +222,7 @@ class HabitatServer:
         # broken asset never blocks the world.
         self._body = None
         self._body_y_off = 0.0
+        self._markers: list[dict] = []
         if robot_glb:
             try:
                 import os as _os
@@ -272,6 +276,60 @@ class HabitatServer:
 
         self._body.translation = mn.Vector3(0.0, -100.0, 0.0)
 
+    def set_markers(self, markers: list) -> int:
+        """World-frame labelled markers overlaid on the viewer camera frames
+        (owner finding 2026-06-12 round 2: SysNav detections were invisible —
+        no scene-graph render surface). Replaces the whole set each call;
+        bounded and sanitized (labels are drawn into pixels — cap length,
+        strip newlines)."""
+        clean: list[dict] = []
+        for m in list(markers)[:32]:
+            try:
+                label = " ".join(str(m.get("label", "")).split())[:24]
+                pos = _world_to_hab(
+                    [float(m["x"]), float(m["y"]), float(m.get("z", 0.0))]
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            clean.append({"label": label, "pos": pos})
+        self._markers = clean
+        return len(clean)
+
+    def _overlay_markers(self, rgb):
+        """Project + draw the marker set into a viewer frame (best-effort:
+        no cv2 / no markers / odd transforms never break a render)."""
+        markers = getattr(self, "_markers", None)
+        if not markers:
+            return rgb
+        try:
+            import cv2
+            import magnum as mn
+
+            node = self.sim._sensors["viewer_rgb"]._sensor_object.object
+            inv = node.absolute_transformation().inverted()
+            h, w = int(rgb.shape[0]), int(rgb.shape[1])
+            f = (w / 2.0) / math.tan(math.radians(90.0) / 2.0)
+            frame = np.ascontiguousarray(rgb[..., :3])
+            for m in markers:
+                p = inv.transform_point(mn.Vector3(*[float(v) for v in m["pos"]]))
+                z = -float(p.z)
+                if z < 0.3:
+                    continue  # behind / on top of the camera
+                u = int(w / 2.0 + f * float(p.x) / z)
+                v = int(h / 2.0 - f * float(p.y) / z)
+                if not (0 <= u < w and 0 <= v < h):
+                    continue
+                cv2.circle(frame, (u, v), 6, (40, 220, 90), 2)
+                if m["label"]:
+                    cv2.putText(
+                        frame, m["label"], (u + 8, v - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (40, 220, 90), 1,
+                        cv2.LINE_AA,
+                    )
+            return frame
+        except Exception:  # noqa: BLE001 — overlay must never kill a frame
+            return rgb
+
     def _render_viewer_rgb(self):
         """Draw the viewer camera only (never the heavy equirect pair),
         body placed or hidden per viewer mode. Returns the RGB array."""
@@ -281,7 +339,7 @@ class HabitatServer:
             self._hide_body()  # eye camera sits inside the head
         sensor = self.sim._sensors["viewer_rgb"]
         sensor.draw_observation()
-        return sensor.get_observation()
+        return self._overlay_markers(sensor.get_observation())
 
     def viewer_frame(self, body: bool = True) -> dict:
         """Viewer-camera frame as base64 PNG (headless N3 acceptance + owner
@@ -427,12 +485,17 @@ class HabitatServer:
 
     # -- motion ---------------------------------------------------------
     def walk(self, vx: float, vyaw: float, duration: float, dt: float = 0.1) -> dict:
+        """Timed velocity walk, paced in WALL TIME (owner finding 2026-06-12
+        round 2: the unpaced loop finished a 1 m walk in one blink — motion
+        was real but invisible). ``duration`` is the honest Tier A contract:
+        the op takes that long and the viewer animates through it."""
         self._acquire_lease()
         try:
             pos, yaw, _, _ = self._read_pose()
             steps = max(1, int(round(duration / dt)))
             step_dt = duration / steps
             for _ in range(steps):
+                t0 = time.monotonic()
                 yaw += vyaw * step_dt
                 # forward in habitat frame for current yaw
                 fwd = np.array(
@@ -449,16 +512,21 @@ class HabitatServer:
                 if self._viewer is not None:
                     self._sync_agent()
                     self.emit_frame()
+                time.sleep(max(0.0, step_dt - (time.monotonic() - t0)))
             self._write_pose(pos, yaw)
         finally:
             self._release_lease()
         return self.get_state()
 
     # -- navigation -------------------------------------------------------
-    def navigate_to(self, x: float, y: float, tol: float = 0.2) -> dict:
+    def navigate_to(
+        self, x: float, y: float, tol: float = 0.2, speed: float = 1.0
+    ) -> dict:
         """Follow the navmesh shortest path to world (x, y). Deterministic,
         bounded: per-waypoint, face the waypoint (kinematic yaw set) and
         advance via try_step; break when progress stalls (stuck/unreachable).
+        Paced in wall time at ``speed`` m/s so the viewer animates the drive
+        (``speed <= 0`` keeps the legacy instant advance for harnesses).
         """
         start, yaw, _, _ = self._read_pose()
         goal_world = [float(x), float(y), _hab_to_world(start)[2]]
@@ -491,7 +559,8 @@ class HabitatServer:
                     new_pos = np.array(
                         self.sim.pathfinder.try_step(pos, target), dtype=np.float32
                     )
-                    if float(np.linalg.norm(new_pos - pos)) < 1e-4:
+                    moved = float(np.linalg.norm(new_pos - pos))
+                    if moved < 1e-4:
                         stall += 1
                         if stall >= 3:
                             break  # wall-stuck: stop honestly, verify will judge
@@ -502,6 +571,8 @@ class HabitatServer:
                     if self._viewer is not None:
                         self._sync_agent()
                         self.emit_frame()
+                    if speed > 0.0 and moved > 0.0:
+                        time.sleep(moved / speed)
             self._write_pose(pos, yaw)
         finally:
             self._release_lease()
@@ -615,9 +686,14 @@ class HabitatServer:
             return {
                 "ok": True,
                 **self.navigate_to(
-                    float(req["x"]), float(req["y"]), float(req.get("tol", 0.2))
+                    float(req["x"]),
+                    float(req["y"]),
+                    float(req.get("tol", 0.2)),
+                    float(req.get("speed", 1.0)),
                 ),
             }
+        if op == "set_markers":
+            return {"ok": True, "count": self.set_markers(req.get("markers") or [])}
         if op == "render":
             return {"ok": True, **self.render()}
         if op == "viewer_frame":
@@ -638,7 +714,11 @@ class HabitatServer:
 # Ops a STREAM channel may run: pure pose/cmd state, never the simulator —
 # so a handler thread per extra connection is safe and never queues behind
 # a render on the main channel.
-_STREAM_OPS = frozenset({"ping", "get_state", "set_velocity"})
+# set_markers qualifies: it only swaps a python list (read by op-thread
+# renders), never touches the simulator — and marker pushes arrive from the
+# REPL's ROS callback thread, which must never queue behind a paced walk or
+# a pano render on the main channel.
+_STREAM_OPS = frozenset({"ping", "get_state", "set_velocity", "set_markers"})
 
 
 def _serve_stream(conn: socket.socket, server: "HabitatServer") -> None:
@@ -696,6 +776,8 @@ def main() -> int:
     ap.add_argument("--viewer-mode", default="first",
                     choices=("first", "chase"),
                     help="viewer camera: first-person eye or third-person chase")
+    ap.add_argument("--viewer-size", type=int, default=800,
+                    help="viewer camera/window size in pixels (square)")
     args = ap.parse_args()
 
     server = HabitatServer(
@@ -706,6 +788,7 @@ def main() -> int:
         agent_radius=args.agent_radius,
         agent_height=args.agent_height,
         robot_glb=args.robot_glb,
+        viewer_size=args.viewer_size,
         viewer_mode=args.viewer_mode,
     )
 

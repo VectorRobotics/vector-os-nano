@@ -325,10 +325,14 @@ relative to `vector_os_nano/`.
 - `habitat/` — the photoreal third-world backend (ADR-009, M2–M5): `server.py` (STANDALONE
   py3.9 script run by the pinned conda interpreter — navmesh kinematics via `try_step`,
   shortest-path `navigate_to`, egocentric RGB + equirect color/depth pano, geodesic/semantic
-  oracle ops, JSON-per-line socket with a PORT handshake; `--gui` opens a live first-person
-  OpenCV viewer window — the conda habitat build is HEADLESS, so the window displays the
-  offscreen EGL frames, per-step during walk/navigate, HighGUI confined to one viewer
-  thread); `bridge.py` (thread-safe client, `VECTOR_RUN_ID`-tagged subprocess, fail-loud,
+  oracle ops, JSON-per-line socket with a PORT handshake; `walk`/`navigate_to` are PACED in
+  wall time (`duration` is a wall-clock contract; navigate at `speed` m/s, `speed<=0` =
+  legacy instant) so the viewer animates real motion; `--gui` opens a live viewer window
+  (`--viewer-size`, default 800) — the conda habitat build is HEADLESS, so the window
+  displays the offscreen EGL frames, per-step during walk/navigate, HighGUI confined to one
+  viewer thread; `set_markers` (STREAM-op class: swaps a list, never touches the sim)
+  overlays labelled world-frame markers projected into the viewer camera);
+  `bridge.py` (thread-safe client, `VECTOR_RUN_ID`-tagged subprocess, fail-loud,
   forwards `--gui`); `base.py` (`HabitatBase(scene, gui)` — the full
   `BaseProtocol` + narrow provider specs, kinematic, vy honestly unsupported); `scenes.py`
   (`VECTOR_HABITAT_DATA` ref resolution); `sysnav_bridge.py` (the SysNav input triplet:
@@ -343,11 +347,25 @@ relative to `vector_os_nano/`.
 - `vcli/habitat_runtime.py` — the CLI-layer habitat runtime, SINGLE-SOURCED for both entry
   paths (`--scenario apartment` at launch AND `start_simulation(sim_type="habitat")` mid-session,
   the NL path "启动habitat模拟"): `boot_habitat_agent` (kinematic base + mobile-only skill
-  registry), `wire_sysnav_feed` (in-process pano/cloud/odom feed + `/object_nodes_list`
-  consumer, fail-loud — a no-op consumer is never accepted), `launch_sysnav_nodes` /
+  registry + `seed_room_landmarks` — the scenario's authored rooms become `type=room`
+  world-model landmarks with zh aliases, so the planner context carries actionable room
+  coordinates and `navigate_to(label="kitchen")` resolves with NO perception running),
+  `wire_sysnav_feed` (in-process pano/cloud/odom feed + `/object_nodes_list`
+  consumer, fail-loud — a no-op consumer is never accepted; detections additionally flow to
+  the viewer overlay via the consumer's `on_batch` hook → `markers_from_world_model` →
+  `HabitatBase.set_markers`), `launch_sysnav_nodes` /
   `shutdown_sysnav` (the heavy perception pair as a watchable process group). Imports the
   habitat world lazily inside functions only — the same user-requested lazy-domain pattern as
   the CLI scenario resolution; the engine/kernel still never imports a world.
+
+- `vcli/ros_bootstrap.py` — NL start without terminal rituals: when the ROS / SysNav
+  overlays exist on disk but the process env lacks them (`AMENT_PREFIX_PATH` substring
+  check), `cli.main()` sources them in a bash child (`env -0` capture) and re-execs itself
+  ONCE (`LD_LIBRARY_PATH` is fixed at process birth — in-process injection can never make
+  rclpy importable). `VECTOR_ROS_BOOTSTRAPPED` is the loop guard (and carries the overlay
+  list for the startup banner); `VECTOR_NO_ROS_BOOTSTRAP=1` opts out (the repo conftest sets
+  it — pytest must never be replaced by execve). No-ROS boxes, sourced shells, and compose
+  failures are silent no-ops; the SysNav tools keep their fail-loud paths as the backstop.
 
 **Tools, routing, prompt, session, permissions**
 - `vcli/providers.py` — protocol-based provider resolution (W3.3): narrow `runtime_checkable`

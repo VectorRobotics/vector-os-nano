@@ -53,12 +53,18 @@ class LiveSysnavBridge:
         topic: str = "/object_nodes_list",
         queue_size: int = 50,
         on_disconnect_after_s: float = 5.0,
+        on_batch: "Any | None" = None,
     ) -> None:
         self._world_model = world_model
         self._node_name = str(node_name)
         self._topic = str(topic)
         self._queue_size = int(queue_size)
         self._on_disconnect_after_s = float(on_disconnect_after_s)
+        # Optional post-batch hook (additive, rule 6): called once after a
+        # non-empty node batch lands in the world model — e.g. pushing the
+        # fresh object set to a display surface. Exceptions are swallowed;
+        # display must never break ingestion.
+        self._on_batch = on_batch
 
         self._active = False
         self._backend: str = "uninitialised"
@@ -212,6 +218,11 @@ class LiveSysnavBridge:
                     "[sysnav_bridge] dropping malformed ObjectNode "
                     "(total dropped=%d): %s", self._dropped_count, exc,
                 )
+        if nodes and self._on_batch is not None:
+            try:
+                self._on_batch()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[sysnav_bridge] on_batch hook failed: %s", exc)
 
     @staticmethod
     def _canonical_id(node: Any) -> str:

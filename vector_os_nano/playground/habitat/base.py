@@ -42,10 +42,11 @@ class HabitatBase:
         navmesh: str = "",
         robot_glb: str = "",
         viewer_mode: str = "",
+        viewer_size: int = 0,
     ) -> None:
         self._bridge = HabitatBridge(
             scene, gui=gui, dataset_config=dataset_config, navmesh=navmesh,
-            robot_glb=robot_glb, viewer_mode=viewer_mode,
+            robot_glb=robot_glb, viewer_mode=viewer_mode, viewer_size=viewer_size,
         )
         self._connected = False
         self._warned_vy = False
@@ -111,6 +112,17 @@ class HabitatBase:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("HabitatBase.set_velocity failed: %s", exc)
+
+    def set_markers(self, markers: "list[dict]") -> None:
+        """Labelled world-frame markers overlaid on the viewer window
+        (SysNav detections made visible). Replaces the whole set; rides the
+        STREAM channel so a ROS callback thread never queues behind a paced
+        walk or a pano render. Best-effort — display must never raise."""
+        self._require_connected()
+        try:
+            self._bridge.stream_request({"op": "set_markers", "markers": markers})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("HabitatBase.set_markers failed: %s", exc)
 
     # -- state ------------------------------------------------------------
     def get_position(self) -> list[float]:

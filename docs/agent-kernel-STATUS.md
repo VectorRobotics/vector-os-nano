@@ -223,6 +223,43 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
+-2. ~~OWNER RE-TEST FINDINGS 2026-06-12 ROUND 2~~ — **ALL FIXED + LIVE-VERIFIED
+   2026-06-12 (~/sandbox/live_test_round2.py, all PASS; owner re-test
+   pending).** Owner re-ran the NL flow (this time the ros_bootstrap worked:
+   sysnav GPU pair started fine per /tmp/vector_sysnav.log) and found:
+   (a) **"往前走" reported PASS in 0.1s but nothing visibly moved.** The
+   motion was REAL (fast-path params were correct, the robot advanced 1 m) —
+   but the server's `walk` op integrated all steps with NO wall-time pacing:
+   a 1 m walk finished in one blink, and the chase camera moves WITH the
+   robot, so nothing appeared to change (tricky-bugs Case 8). `walk` now
+   paces each step to `duration` wall time and the oracle `navigate_to`
+   paces at `speed` m/s (default 1.0; `speed<=0` keeps the instant legacy
+   for harnesses) — both emit viewer frames per step, so the window ANIMATES
+   the drive. Live: 1 m walk = 3.34 s wall, cross-house navigate 2.7 s.
+   (b) **"走到门口" → paramless navigate (requires a label OR x/y).** Root
+   cause: the habitat agent has NO SceneGraph, so the planner context listed
+   ZERO rooms — 'entryway' was unknowable. The scenario's authored rooms are
+   now seeded into the world model as `type=room` landmarks at boot
+   (`habitat_runtime.seed_room_landmarks`, ids `room_<name>`, zh aliases
+   门口/厨房/客厅/餐厅/电视角 in properties): they appear in the planner's
+   'Objects (live)' line WITH coordinates and resolve through
+   `navigate_to(label=...)` with the semantic standoff. 走到门口/厨房 now
+   works with or without SysNav.
+   (c) **SysNav had no visible render surface.** New `set_markers` op
+   (STREAM-channel class — swaps a list, never touches the sim): world-frame
+   labelled markers projected into the viewer camera and drawn (cv2
+   circle+label) on every viewer frame. Wired end-to-end:
+   `LiveSysnavBridge(on_batch=...)` (additive hook) → debounced
+   `markers_from_world_model` push (rooms excluded) →
+   `HabitatBase.set_markers` over the stream channel. Detections now appear
+   as green labels in the live window as they land.
+   (d) **Viewer window too small.** Viewer camera/window size is now
+   `--viewer-size` (server, clamp [256,1600]) ← `VECTOR_HABITAT_VIEWER_SIZE`
+   env ← default 800 (was 512), rendered natively at that size.
+   Also observed: a transient deepseek `Connection error.` on the first NL
+   turn (backend retried; network-side, not reproducible deterministically).
+   Suite 1382 green (+17 tests: tests/vcli/test_room_landmarks.py).
+
 -1. ~~OWNER LIVE-TEST FINDINGS 2026-06-12~~ — **ALL THREE FIXED + LIVE-VERIFIED
    2026-06-12 (owner re-test pending).**
    (a) **G1 tiny/misplaced in chase view — FIXED.** Not scale, not FOV:
