@@ -1929,12 +1929,20 @@ def main(argv: list[str] | None = None) -> None:
                         n_steps = len(trace.steps)
                         n_ok = sum(1 for s in trace.steps if s.success)
                         dur = trace.total_duration_sec
-                        # Evidence gate: a successful run only counts as *verified*
-                        # when its steps are backed by deterministic predicates
-                        # (dev world). Robot worlds bypass the gate.
+                        # Evidence gate (invariant II): a successful run only
+                        # counts as *verified* when its steps are backed by
+                        # deterministic predicates — in EVERY world; only the
+                        # world's bounded exemption set is excused.
                         try:
                             from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
-                            _evidence = evidence_passed(trace, is_robot=bool(world.is_robot()))
+                            from vector_os_nano.vcli.engine import _world_exempt_strategies
+                            # Read the LIVE world — the closure-captured one
+                            # goes stale after an NL sim start swaps worlds.
+                            _w = app_state.get("world") or world
+                            _evidence = evidence_passed(
+                                trace,
+                                exempt_strategies=_world_exempt_strategies(_w),
+                            )
                         except Exception:  # noqa: BLE001
                             _evidence = True
                         if trace.success and _evidence:

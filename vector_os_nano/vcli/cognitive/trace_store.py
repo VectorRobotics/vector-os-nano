@@ -212,16 +212,20 @@ def replay(trace: ExecutionTrace, verifier: Any) -> bool:
     return checked > 0
 
 
-def evidence_passed(trace: ExecutionTrace, is_robot: bool = False) -> bool:
+def evidence_passed(
+    trace: ExecutionTrace,
+    is_robot: bool = False,
+    exempt_strategies: "frozenset[str]" = frozenset(),
+) -> bool:
     """True when the trace's success is backed by deterministic evidence.
 
     Dev world (strict): every executed step must map to a sub-goal whose verify
     is a real predicate (not ``""`` / ``"True"``), whose ``verify_result`` is
     True, and whose pass was NOT a VLM visual override (a visual override is not
     deterministic evidence and cannot be replayed — this keeps ``evidence_passed``
-    and ``replay`` in agreement). Robot world: always True — do not regress async
-    motor skills that use ``verify="True"`` because no symbolic post-condition
-    exists.
+    and ``replay`` in agreement). Strategies in *exempt_strategies* (world-
+    declared: no symbolic post-condition exists, e.g. async explore) are exempt
+    from the real-predicate requirement only — never from verify_result/override.
 
     Stage 5 (S5.2): a step whose sub-goal is explicitly ``answer_only`` is a
     pure-conversation step that carries no robot evidence BY DESIGN. It is exempt
@@ -240,8 +244,13 @@ def evidence_passed(trace: ExecutionTrace, is_robot: bool = False) -> bool:
     counted as verified. A trace with no non-answer step still requires at least
     one answer_only step to have passed (an empty trace fails).
     """
-    if is_robot:
-        return True
+    # Invariant II (design review 2026-06-12 #4): the WORLD-level bypass is
+    # gone — ``is_robot`` is accepted for signature compatibility but no
+    # longer bypasses anything. Exemption is PER-STEP via *exempt_strategies*
+    # (a world-declared, bounded set of strategies with no symbolic
+    # post-condition — mechanism modeled on the answer_only exemption). An
+    # exempt step still requires verify_result=True and no visual override:
+    # the exemption never launders a failed or VLM-graded step.
     sg_by_name = {sg.name: sg for sg in trace.goal_tree.sub_goals}
     checked = [s for s in trace.steps if s.sub_goal_name in sg_by_name]
     if not checked:
@@ -249,6 +258,7 @@ def evidence_passed(trace: ExecutionTrace, is_robot: bool = False) -> bool:
     return all(
         (
             _is_answer_only(sg_by_name[s.sub_goal_name])
+            or _strategy_exempt(s, sg_by_name[s.sub_goal_name], exempt_strategies)
             or (sg_by_name[s.sub_goal_name].verify or "").strip() not in _NO_EVIDENCE
         )
         and s.verify_result
@@ -257,7 +267,31 @@ def evidence_passed(trace: ExecutionTrace, is_robot: bool = False) -> bool:
     )
 
 
-def step_evidence_ok(step: StepRecord, sub_goal: SubGoal, is_robot: bool = False) -> bool:
+def _strategy_exempt(
+    step: StepRecord, sub_goal: SubGoal, exempt: "frozenset[str]"
+) -> bool:
+    """True when the step's RESOLVED strategy is world-exempt (invariant II).
+
+    Matched on both the StepRecord's resolved name and the sub-goal's planned
+    strategy (with/without the ``_skill`` suffix) so neither naming form
+    escapes or fakes the set.
+    """
+    if not exempt:
+        return False
+    names = {
+        (step.strategy or "").removesuffix("_skill"),
+        (sub_goal.strategy or "").removesuffix("_skill"),
+    }
+    names.discard("")
+    return bool(names) and names <= exempt
+
+
+def step_evidence_ok(
+    step: StepRecord,
+    sub_goal: SubGoal,
+    is_robot: bool = False,
+    exempt_strategies: "frozenset[str]" = frozenset(),
+) -> bool:
     """True when a SINGLE step's pass is backed by deterministic evidence.
 
     The per-step analogue of ``evidence_passed`` (it mirrors that gate's
@@ -267,16 +301,20 @@ def step_evidence_ok(step: StepRecord, sub_goal: SubGoal, is_robot: bool = False
     True, and the pass must NOT be a VLM visual override (not replayable, so not
     deterministic evidence).
 
-    Robot world (``is_robot=True``): always True — robot async motor skills
-    legitimately use ``verify="True"``, so robot LEARNING is NOT starved by this
-    gate (the caller AND-composes with ``step.success``, so a FAILED robot motor
-    step is still not rewarded). Only dev/playground worlds with real predicates
-    tighten the learning signal.
+    Strategies in *exempt_strategies* keep their learning signal without a real
+    predicate (async motor skills with no symbolic post-condition); everything
+    else requires deterministic evidence in EVERY world (invariant II — the
+    caller AND-composes with ``step.success``, so a FAILED step is never
+    rewarded either way).
     """
-    if is_robot:
-        return True
+    # Invariant II: no world-level bypass (``is_robot`` kept for signature
+    # compatibility only); per-step exemption mirrors evidence_passed exactly.
     return bool(
-        (_is_answer_only(sub_goal) or (sub_goal.verify or "").strip() not in _NO_EVIDENCE)
+        (
+            _is_answer_only(sub_goal)
+            or _strategy_exempt(step, sub_goal, exempt_strategies)
+            or (sub_goal.verify or "").strip() not in _NO_EVIDENCE
+        )
         and step.verify_result
         and not getattr(step, "visual_override", False)
     )

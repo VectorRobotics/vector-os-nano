@@ -82,6 +82,7 @@ class GoalExecutor:
         capability_registry: Any = None,
         blackboard: Any = None,
         is_robot: bool = False,
+        evidence_exempt: "frozenset[str]" = frozenset(),
     ) -> None:
         """Initialise the executor.
 
@@ -132,6 +133,10 @@ class GoalExecutor:
         self._capability_registry = capability_registry
         self._blackboard = blackboard
         self._is_robot = bool(is_robot)
+        # Invariant II: world-declared per-step evidence exemptions — the old
+        # world-level is_robot bypass is gone from the gate; this bounded set
+        # is what keeps legitimately-postcondition-free skills learnable.
+        self._evidence_exempt = frozenset(evidence_exempt)
 
     # ------------------------------------------------------------------
     # Strategy-stats reward gate (W1.1) — single chokepoint
@@ -149,7 +154,10 @@ class GoalExecutor:
             self._stats.record(
                 strategy_name=step.strategy,
                 sub_goal_name=step.sub_goal_name,
-                success=step.success and step_evidence_ok(step, sub_goal, self._is_robot),
+                success=step.success and step_evidence_ok(
+                    step, sub_goal, self._is_robot,
+                    exempt_strategies=self._evidence_exempt,
+                ),
                 duration_sec=step.duration_sec,
             )
         except Exception as exc:  # noqa: BLE001

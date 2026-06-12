@@ -80,6 +80,21 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _world_exempt_strategies(world: "Any | None") -> "frozenset[str]":
+    """World-declared per-step evidence exemptions (invariant II), fail-safe.
+
+    A world without the method (or one that raises) declares NOTHING exempt —
+    the gate can only get stricter on the failure path, never looser (rule 5).
+    """
+    getter = getattr(world, "evidence_exempt_strategies", None)
+    if not callable(getter):
+        return frozenset()
+    try:
+        return frozenset(str(n) for n in getter())
+    except Exception:  # noqa: BLE001
+        return frozenset()
+
+
 # ---------------------------------------------------------------------------
 # Message parameter extraction (keyword-based, no LLM)
 # ---------------------------------------------------------------------------
@@ -595,6 +610,7 @@ class VectorEngine:
                 tool_dispatcher=tool_dispatcher,
                 capability_registry=capability_registry,
                 is_robot=bool(world.is_robot()) if world is not None else False,
+                evidence_exempt=_world_exempt_strategies(world),
             )
         except ImportError as exc:
             logger.warning("VGG: GoalExecutor not available: %s", exc)
@@ -1892,18 +1908,26 @@ class VectorEngine:
             verified=verified,
         )
 
+    @staticmethod
+    def _world_evidence_exemptions(world: Any) -> "frozenset[str]":
+        """The world-declared per-step evidence exemptions (invariant II)."""
+        return _world_exempt_strategies(world)
+
     def _evidence_ok(self, trace: "ExecutionTrace") -> bool:
         """Run the evidence gate for *trace* under the active world (fail-safe).
 
-        Mirrors the CLI's gate call: a robot world bypasses (async motor skills use
-        ``verify="True"``); the dev world is strict. Any failure reading the gate
-        is treated as "not verified" so the moat never silently passes.
+        Mirrors the CLI's gate call. Invariant II: no world-level bypass — the
+        world may declare a bounded per-step exemption set
+        (``evidence_exempt_strategies``); everything else needs deterministic
+        evidence. Any failure reading the gate is treated as "not verified" so
+        the moat never silently passes.
         """
         try:
             from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
             world = getattr(self, "_world", None)
-            is_robot = bool(world.is_robot()) if world is not None else False
-            return bool(evidence_passed(trace, is_robot=is_robot))
+            return bool(evidence_passed(
+                trace, exempt_strategies=_world_exempt_strategies(world)
+            ))
         except Exception as exc:  # noqa: BLE001
             logger.debug("unified: evidence gate read failed: %s", exc)
             return False

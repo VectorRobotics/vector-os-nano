@@ -154,9 +154,15 @@ def test_evidence_rejects_empty_verify() -> None:
     assert evidence_passed(_trace(verify=""), is_robot=False) is False
 
 
-def test_evidence_robot_world_bypasses_gate() -> None:
-    # Robot async motor skills legitimately use verify="True" — must not regress.
-    assert evidence_passed(_trace(verify="True"), is_robot=True) is True
+def test_evidence_no_world_level_bypass() -> None:
+    # Invariant II (design review 2026-06-12 #4): is_robot no longer bypasses
+    # the gate — a sentinel verify is not evidence in ANY world. Async motor
+    # skills are excused per-step via the world-declared exemption set.
+    assert evidence_passed(_trace(verify="True"), is_robot=True) is False
+    assert evidence_passed(
+        _trace(verify="True"),
+        exempt_strategies=frozenset({_trace(verify="True").steps[0].strategy}),
+    ) is True
 
 
 def test_evidence_requires_verify_result_true() -> None:
@@ -306,12 +312,16 @@ def test_w1_1_real_predicate_has_evidence_dev() -> None:
     assert step_evidence_ok(step, sg, False) is True
 
 
-def test_w1_1_robot_world_bypasses_evidence_gate() -> None:
-    # Robot async motor skills legitimately use verify="True" — gate is bypassed.
+def test_w1_1_no_world_level_bypass_only_exempt_strategies() -> None:
+    # Invariant II: is_robot no longer bypasses; the world's bounded
+    # per-step exemption set is the only excuse for a sentinel verify.
     passing, sg = _step_and_goal(verify="True", success=True, verify_result=True)
-    assert step_evidence_ok(passing, sg, True) is True
+    assert step_evidence_ok(passing, sg, True) is False
+    exempt = frozenset({passing.strategy.removesuffix("_skill")})
+    assert step_evidence_ok(passing, sg, exempt_strategies=exempt) is True
+    # Exemption never launders a failed verify (gate, not reward).
     failed, sg_f = _step_and_goal(verify="True", success=False, verify_result=False)
-    assert step_evidence_ok(failed, sg_f, True) is True  # still bypassed (gate, not reward)
+    assert step_evidence_ok(failed, sg_f, True, exempt_strategies=exempt) is False
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +342,7 @@ class _CapturingStats:
         self.recorded.append(success)
 
 
-def _executor(*, is_robot: bool, stats):
+def _executor(*, is_robot: bool, stats, evidence_exempt=frozenset()):
     from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
 
     return GoalExecutor(
@@ -340,6 +350,7 @@ def _executor(*, is_robot: bool, stats):
         verifier=None,
         stats=stats,
         is_robot=is_robot,
+        evidence_exempt=evidence_exempt,
     )
 
 
@@ -371,18 +382,25 @@ def test_w1_1_record_gate_rewards_real_evidence_dev() -> None:
     assert stats.recorded == [True]
 
 
-def test_w1_1_record_gate_robot_collapses_to_step_success() -> None:
-    # Robot world: the recorded success is EXACTLY step.success (learning unchanged).
-    # A passing sentinel motor step records True...
+def test_w1_1_record_gate_exempt_strategy_keeps_learning_signal() -> None:
+    # Invariant II: learning on a sentinel motor step survives only through
+    # the world-declared exemption set — not a world-level bypass.
     stats = _CapturingStats()
     passing, sg = _step_and_goal(verify="True", success=True, verify_result=True)
-    _executor(is_robot=True, stats=stats)._record_strategy_stats(passing, sg)
+    exempt = frozenset({passing.strategy.removesuffix("_skill")})
+    _executor(is_robot=True, stats=stats,
+              evidence_exempt=exempt)._record_strategy_stats(passing, sg)
     assert stats.recorded == [True]
-    # ...and a FAILED motor step records False (AND step.success is load-bearing).
+    # A NON-exempt sentinel step records False now (the moat tightened)...
     stats2 = _CapturingStats()
-    failed, sg_f = _step_and_goal(verify="True", success=False, verify_result=False)
-    _executor(is_robot=True, stats=stats2)._record_strategy_stats(failed, sg_f)
+    _executor(is_robot=True, stats=stats2)._record_strategy_stats(passing, sg)
     assert stats2.recorded == [False]
+    # ...and a FAILED step records False regardless (AND step.success holds).
+    stats3 = _CapturingStats()
+    failed, sg_f = _step_and_goal(verify="True", success=False, verify_result=False)
+    _executor(is_robot=True, stats=stats3,
+              evidence_exempt=exempt)._record_strategy_stats(failed, sg_f)
+    assert stats3.recorded == [False]
 
 
 def test_w1_1_record_gate_noops_without_stats() -> None:

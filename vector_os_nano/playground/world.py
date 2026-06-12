@@ -87,6 +87,13 @@ class PlaygroundWorld:
         # Both arm and base scenarios drive (simulated) robot hardware.
         return True
 
+    def evidence_exempt_strategies(self) -> "frozenset[str]":
+        # Invariant II: the playground has a FULL sim oracle — no strategy is
+        # exempt from deterministic evidence here. (The old world-level
+        # is_robot bypass turned the moat off exactly where live testing
+        # happens; design review 2026-06-12 #4.)
+        return frozenset()
+
     def persona_blocks(self) -> tuple[str, str]:
         # ADR-006 thing #4: the world owns its persona. Habitat scenarios get
         # the habitat persona (the world is ALREADY running — the MuJoCo

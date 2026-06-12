@@ -231,8 +231,17 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    rule 6) records the baseline on all post-exec records; step views render
    "(already satisfied pre-exec)" — 'became true' and 'was already true' are
    no longer the same True. Trivial-sentinel set single-sourced from
-   trace_store. Next: invariant II (per-step evidence-gate exemptions),
-   invariant III (verify single source). Original review summary: Owner's third live-test
+   trace_store. Invariant II SHIPPED (round 2): the world-level
+   `if is_robot: return True` evidence-gate bypass is GONE
+   (trace_store.evidence_passed/step_evidence_ok) — worlds declare a bounded
+   per-step exemption set (`evidence_exempt_strategies`, mechanism modeled on
+   answer_only; exempt steps still need verify_result=True + no visual
+   override). PlaygroundWorld declares the EMPTY set (full sim oracle);
+   RobotWorld keeps a TRANSITIONAL motor set (shrinks as invariant III adds
+   real hints; pick/place never exempt). Engine/executor/CLI wired; the CLI
+   gate closure now reads the LIVE world from app_state (the captured one
+   went stale after NL sim start — drift instance). Next: invariant III
+   (verify single source — delete _VERIFY_MAP, verify_hint everywhere). Original review summary: Owner's third live-test
    round hit the false-PASS family again ('走到厨房' = zero-motion verified
    PASS: spawn is 1.53m from the kitchen CENTER, label tol 1.5/verify 1.6 —
    live-pinned, success=True/0.00s/0.00m/outside the room rect). A 6-dimension
