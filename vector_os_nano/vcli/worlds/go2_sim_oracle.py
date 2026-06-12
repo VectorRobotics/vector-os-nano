@@ -154,14 +154,28 @@ def make_visited(agent: Any, rooms: dict[str, tuple[float, float, float, float]]
         base = _get_base(agent)
         if base is None:
             return False
-        box = room_boxes.get(str(room))
-        if box is None:
-            return False
         pos = _base_position(base)
         if pos is None:
             return False
-        x_min, y_min, x_max, y_max = box
-        return x_min <= pos[0] <= x_max and y_min <= pos[1] <= y_max
+        box = room_boxes.get(str(room))
+        if box is not None:
+            x_min, y_min, x_max, y_max = box
+            return x_min <= pos[0] <= x_max and y_min <= pos[1] <= y_max
+        # Non-room label (R9, owner GUI-test regression): planners naturally
+        # write visited('sofa') — fall back to world-model OBJECT proximity
+        # (euclidean standoff, same 1.6 m the at_position guidance uses).
+        # Unknown labels still fail safe to False.
+        wm = getattr(agent, "_world_model", None)
+        if wm is not None:
+            try:
+                matches = wm.get_objects_by_label(str(room))
+            except Exception:  # noqa: BLE001
+                matches = []
+            if matches:
+                best = max(matches, key=lambda o: o.confidence)
+                dx, dy = pos[0] - float(best.x), pos[1] - float(best.y)
+                return (dx * dx + dy * dy) ** 0.5 <= 1.6
+        return False
 
     return visited
 

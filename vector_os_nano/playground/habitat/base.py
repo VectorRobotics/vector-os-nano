@@ -113,6 +113,19 @@ class HabitatBase:
         except Exception as exc:  # noqa: BLE001
             logger.warning("HabitatBase.set_velocity failed: %s", exc)
 
+    def get_camera_frame(self):
+        """Egocentric RGB frame as an (H, W, 3) uint8 array — the camera
+        surface visual verification expects (R9/DQ-6: the habitat agent gets
+        the same VLM verify capability as go2)."""
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        png = self.render_rgb_png()
+        return np.asarray(Image.open(io.BytesIO(png)).convert("RGB"),
+                          dtype=np.uint8)
+
     def set_markers(self, markers: "list[dict]") -> None:
         """Labelled world-frame markers overlaid on the viewer window
         (SysNav detections made visible). Replaces the whole set; rides the

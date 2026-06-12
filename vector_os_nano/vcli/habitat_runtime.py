@@ -170,6 +170,21 @@ def boot_habitat_agent(
     # become world-model landmarks: listed WITH coordinates in the planner's
     # 'Objects (live)' context line and resolvable via navigate_to(label=...).
     seed_room_landmarks(getattr(agent, "_world_model", None), world.scenario)
+
+    # DQ-6: the habitat agent gets the Qwen3-VL backbone (OpenRouter) for
+    # visual verification — fail-soft: no key / import error leaves _vlm
+    # unset and the visual verifier simply skips (never blocks boot).
+    if getattr(agent, "_vlm", None) is None:
+        try:
+            import os as _os
+
+            if _os.environ.get("OPENROUTER_API_KEY"):
+                from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
+
+                agent._vlm = Go2VLMPerception()
+                _emit(on_status, "VLM: Qwen3-VL via OpenRouter (visual verify)")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("VLM wiring skipped: %s", exc)
     return agent
 
 
