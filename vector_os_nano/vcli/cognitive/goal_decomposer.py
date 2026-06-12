@@ -831,6 +831,15 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
         strategy_params = raw.get("strategy_params", {})
         if not isinstance(strategy_params, dict):
             strategy_params = {}
+        # Null-stripping at the parse seam (campaign #4 batch 2): some LLMs
+        # (deepseek-chat) emit EVERY schema key with null/"" — a poisoned key
+        # defeats every downstream "is it missing?" check (setdefault, `in`,
+        # required-param validation). A null value IS a missing param; drop it
+        # here so the whole pipeline sees honest missing-ness.
+        strategy_params = {
+            k: v for k, v in strategy_params.items()
+            if v is not None and v != ""
+        }
         fail_action = str(raw.get("fail_action", ""))
 
         # Named-target strengthening (backlog #2b): a step whose params bind a

@@ -71,7 +71,17 @@ def backfill_target_params(
     if not str(strategy).startswith("navigate_to"):
         return strategy_params
     params = strategy_params if isinstance(strategy_params, dict) else {}
-    if params.get("label") or ("x" in params and "y" in params):
+
+    # A null/"" value is MISSING, not bound (R6 root-cause, campaign #4):
+    # deepseek-chat emits every schema key with null — ``setdefault`` kept
+    # the poisoned key and ``"x" in params`` graded null coords as bound, so
+    # the backfill 'fired' yet returned useless params two layers from the
+    # symptom ('navigate_to requires a label OR numeric x and y').
+    def _has(key: str) -> bool:
+        v = params.get(key)
+        return v is not None and v != ""
+
+    if _has("label") or (_has("x") and _has("y")):
         return params
     m = re.search(
         r"(?:geodesic_dist|at_position)\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
@@ -79,14 +89,13 @@ def backfill_target_params(
     )
     if m:
         out = dict(params)
-        out.setdefault("x", float(m.group(1)))
-        out.setdefault("y", float(m.group(2)))
+        out["x"], out["y"] = float(m.group(1)), float(m.group(2))
         return out
     # Label-style repair (R8, owner GUI-test regression): the plan put the
     # target ONLY in a visited('<label>') verify — same stated-intent family.
     lm = re.search(r"visited\(\s*['\"]([^'\"]+)['\"]\s*\)", verify or "")
     if lm:
         out = dict(params)
-        out.setdefault("label", lm.group(1))
+        out["label"] = lm.group(1)
         return out
     return params

@@ -208,3 +208,24 @@ Routine bugs do NOT belong here; git history covers those.
   thread-confinement contracts FIRST — the crash from violating one lands
   later, in another component, wearing that component's error message. And
   never let a failure gate flatten distinct causes into one string.
+
+## Case 11 — a backfill that "didn't fire" had fired and returned poison (2026-06-12)
+
+- **Symptom:** GUI: `走到厨房` fails with "navigate_to requires a label OR
+  numeric x and y" although the plan's verify says `visited('kitchen')` and a
+  deterministic backfill exists precisely to copy that label into params.
+  Every reading says "the backfill didn't run on this path".
+- **Why hidden:** it RAN — and returned the params unchanged-but-poisoned.
+  deepseek-chat emits every schema key with null (`{"label": null}`), and the
+  repair used `setdefault`, which keeps an existing key whatever its value;
+  the coord guard used `"x" in params`, which grades null coords as bound.
+  Reproducing the parse path with `{}` (the "obvious" empty case) PASSES —
+  only the null-valued shape fails, and nothing logs the difference.
+- **Fix:** null/"" values are stripped at the decomposer parse seam (a null
+  value IS a missing param; the whole pipeline now sees honest missing-ness),
+  and the backfill's own checks treat null/"" as missing.
+- **Lesson:** "key present" and "value bound" are different predicates —
+  `setdefault`/`in` encode the first and silently lie about the second. When
+  an LLM fills a schema, normalize null-shaped output at the FIRST seam, and
+  when a repro with the obvious input passes, reproduce with the model's
+  ACTUAL output shape before concluding "didn't fire".

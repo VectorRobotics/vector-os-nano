@@ -190,3 +190,70 @@ class TestBackfillLabelFromVisited:
         )
 
         assert backfill_target_params("walk_skill", {}, "visited('sofa')") == {}
+
+
+class TestBackfillNullValuedKeys:
+    """R6 root-cause (campaign #4 batch 2): deepseek-chat emits schema keys
+    with null/"" values; ``setdefault`` keeps the poisoned key and ``"x" in
+    params`` treats null coords as bound — the backfill 'fired' but returned
+    useless params, surfacing two layers later as 'navigate_to requires a
+    label OR numeric x and y' (the R5 GUI kitchen failure)."""
+
+    def _bf(self, params, verify):
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            backfill_target_params,
+        )
+        return backfill_target_params("navigate_to_skill", params, verify)
+
+    def test_empty_string_label_is_missing(self):
+        assert self._bf({"label": ""}, "visited('kitchen')")["label"] == "kitchen"
+
+    def test_null_label_is_missing(self):
+        assert self._bf({"label": None}, "visited('kitchen')")["label"] == "kitchen"
+
+    def test_null_coords_are_missing(self):
+        out = self._bf({"x": None, "y": None}, "geodesic_dist(2.0, -1.5) < 0.8")
+        assert out["x"] == 2.0 and out["y"] == -1.5
+
+    def test_null_label_with_coord_verify(self):
+        out = self._bf({"label": None}, "at_position(1.0, 2.0, 0.5)")
+        assert out["x"] == 1.0 and out["y"] == 2.0
+
+    def test_real_label_still_never_overwritten(self):
+        assert self._bf({"label": "sofa"}, "visited('kitchen')")["label"] == "sofa"
+
+
+class TestParseSeamNullStripping:
+    """Null-valued params are stripped at the decomposer parse seam, so the
+    visited()/coords backfill (and every later missing-param check) fires."""
+
+    def _parse(self, params, verify="visited('kitchen')"):
+        import json
+        from vector_os_nano.vcli.cognitive.goal_decomposer import GoalDecomposer
+
+        d = GoalDecomposer.__new__(GoalDecomposer)
+        d.KNOWN_STRATEGIES = frozenset({"navigate_to_skill"})
+        d.VERIFY_FUNCTIONS = (
+            GoalDecomposer.VERIFY_FUNCTIONS | {"visited", "geodesic_dist"}
+        )
+        raw = json.dumps({"goal": "t", "sub_goals": [{
+            "name": "nav", "description": "d", "strategy": "navigate_to_skill",
+            "strategy_params": params, "verify": verify, "timeout_sec": 60,
+        }]})
+        return d._parse_and_validate("t", raw).sub_goals[0]
+
+    def test_null_label_stripped_and_backfilled(self):
+        sg = self._parse({"label": None})
+        assert sg.strategy_params == {"label": "kitchen"}
+
+    def test_empty_string_stripped(self):
+        sg = self._parse({"label": ""})
+        assert sg.strategy_params == {"label": "kitchen"}
+
+    def test_real_values_survive(self):
+        sg = self._parse({"label": "sofa", "speed": 0.5})
+        assert sg.strategy_params == {"label": "sofa", "speed": 0.5}
+
+    def test_zero_and_false_are_real_values(self):
+        sg = self._parse({"x": 0.0, "y": 0.0})
+        assert sg.strategy_params["x"] == 0.0 and sg.strategy_params["y"] == 0.0
