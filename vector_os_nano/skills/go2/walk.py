@@ -54,6 +54,8 @@ class WalkSkill:
     # R7: REAL evidence predicate — verifies measured displacement, not the
     # command echo (step_output is the step's own result_data).
     verify_template: str = "step_output('moved_m') > 0.05"
+    # Batch 3 #14: explicit motor declaration (no keyword sniffing).
+    is_motor: bool = True
     parameters: dict = {
         "direction": {
             "type": "string",
@@ -112,6 +114,19 @@ class WalkSkill:
             )
 
         vx_sign, vy_sign = _DIRECTION_MAP.get(direction, (1.0, 0.0))
+        if vy_sign != 0.0 and not getattr(
+            context.base, "supports_holonomic", True
+        ):
+            # Batch 3 #7: a non-holonomic base silently drops vy — fail FAST
+            # with the capability named, before commanding a guaranteed no-op.
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"base does not support lateral motion ('{direction}') — "
+                    "turn then walk forward instead"
+                ),
+                result_data={"diagnosis": "lateral_unsupported"},
+            )
 
         # Apply speed and clamp
         if vy_sign != 0.0:

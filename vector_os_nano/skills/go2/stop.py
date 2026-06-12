@@ -24,6 +24,10 @@ class StopSkill:
     """Emergency stop -- immediately halt all movement."""
 
     name: str = "stop"
+    # Batch 3 #14: motor, but E-STOP CLASS — confirmation prompts must never
+    # gate a stop (safety: E-stop independent of interaction flow).
+    is_motor: bool = True
+    confirm_exempt: bool = True
     description: str = "Emergency stop -- immediately halt all movement."
     parameters: dict = {}
     preconditions: list[str] = []

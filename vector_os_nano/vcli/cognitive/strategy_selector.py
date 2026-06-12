@@ -12,6 +12,7 @@ Priority order:
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -198,8 +199,15 @@ class StrategySelector:
 
             elif any(kw in combined for kw in ("turn", "rotate", "转")):
                 if self._primitive_routable():
-                    angle = sub_goal.strategy_params.get("angle", 1.57)
-                    result = StrategyResult("primitive", "turn", {"angle_rad": angle})
+                    # Batch 3 #12: 'angle' is taught in DEGREES — CONVERT at
+                    # the seam, never rename deg into an _rad field.
+                    if "angle_rad" in sub_goal.strategy_params:
+                        rad = float(sub_goal.strategy_params["angle_rad"])
+                    else:
+                        rad = math.radians(
+                            float(sub_goal.strategy_params.get("angle", 90.0))
+                        )
+                    result = StrategyResult("primitive", "turn", {"angle_rad": rad})
 
         # Priority 3: Skill registry alias match (all worlds)
         if result is None and self._skill_registry is not None:
@@ -389,12 +397,17 @@ class StrategySelector:
         # would call _require_base() and raise ('No hardware connected' ghosts).
         if strategy in _PRIMITIVE_NAMES:
             if self._primitive_routable():
-                # Normalize LLM-generated param names to primitive signatures
+                # Normalize LLM-generated param names to primitive
+                # signatures. Batch 3 #12: 'angle' is taught in DEGREES —
+                # converted here, never renamed into an _rad field unchanged
+                # (a -90° command used to become 90 RADIANS).
                 normalized = dict(params) if params else {}
                 if strategy == "walk_forward" and "distance" in normalized:
                     normalized["distance_m"] = normalized.pop("distance")
                 if strategy == "turn" and "angle" in normalized:
-                    normalized["angle_rad"] = normalized.pop("angle")
+                    normalized["angle_rad"] = math.radians(
+                        float(normalized.pop("angle"))
+                    )
                 return StrategyResult("primitive", strategy, normalized)
             valid = self._registered_skill_names()
             if valid is not None and strategy not in valid:

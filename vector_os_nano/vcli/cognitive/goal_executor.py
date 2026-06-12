@@ -1232,9 +1232,27 @@ class GoalExecutor:
 
         try:
             sig = inspect.signature(fn)
+            has_var_kw = any(
+                p.kind is inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
             accepted = set(sig.parameters.keys())
-            filtered = {k: v for k, v in params.items() if k in accepted}
-            retval = fn(**filtered)
+            unknown = (
+                []
+                if has_var_kw  # **kwargs accepts anything by contract
+                else sorted(k for k in params.keys() if k not in accepted)
+            )
+            if unknown:
+                # Batch 3 #12: silently dropping params hid plan/contract
+                # drift (a typo'd or mis-named param became a default-value
+                # action that still PASSed). Loud, with the real signature.
+                return (
+                    False,
+                    f"primitive '{name}' got unknown param(s) {unknown}; "
+                    f"accepted: {sorted(accepted)}",
+                    {},
+                )
+            retval = fn(**params)
             if isinstance(retval, bool):
                 return retval, "", {}
             return True, "", self._coerce_output(retval)

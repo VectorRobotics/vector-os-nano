@@ -223,6 +223,22 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
+-4. **CAMPAIGN #3 BATCH 3 SHIPPED (round 10) — cross-layer contract single
+   source.** Degrees are CONVERTED at the selector seam (both the keyword
+   ladder and explicit-strategy normalization — a -90° turn used to become
+   90 RADIANS, design review #12); unknown primitive params fail loud with
+   the real signature (silent dropping hid plan drift; **kwargs primitives
+   keep accepting anything by contract); skill_wrapper passes enum/default
+   through to the LLM schema (#13); motor-ness is an explicit Skill
+   declaration (`is_motor`, authoritative over keyword sniffing, #14) and
+   E-STOP-class skills (`confirm_exempt`) are NEVER gated behind a
+   confirmation prompt; WalkSkill checks `supports_holonomic` BEFORE
+   commanding (habitat lateral = fail-fast lateral_unsupported, #7).
+   Earlier today: batches 1+2+2.5 (kernel invariants, rooms-as-regions +
+   three-value motion contract, Qwen VL 72B backbone) — see entries below.
+   Remaining: batch 4 (harness/bridge robustness) + R12 REVIEW.
+
+
 -3. **DESIGN REVIEW 2026-06-12 — refactor plan APPROVED-BY-DIRECTIVE, campaign #3
    loop EXECUTING (docs/design-review-2026-06-12-plan.md; decisions DQ-5 all
    per recommendation; loop state ~/.vector-nano-loop/).** Batch 1 invariant I

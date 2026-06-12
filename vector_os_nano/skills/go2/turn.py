@@ -52,6 +52,7 @@ class TurnSkill:
     typical_duration_sec: float = 10.0
     # R7: REAL evidence predicate — measured rotation, not the command echo.
     verify_template: str = "abs(step_output('turned_rad')) > 0.1"
+    is_motor: bool = True
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"is_moving": False}
