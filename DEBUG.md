@@ -28,3 +28,20 @@ params。一次实验同时裁 H-O/H-P/H-Q。
 
 ## CONCLUDE
 (待 R10)
+
+## CONCLUDE (R10)
+- 全部 R9 假设 (H-O/P/Q/R) 证伪: live 原始 JSON 完美 ({"label": "kitchen"},
+  verify visited('kitchen')) — decompose/backfill/param pass 从未坏过。
+- 真相链 (raw 日志 + --verbose 重放):
+  1. 首次尝试真实错误 = "no object matching 'kitchen'; world model EMPTY —
+     start sysnav": **apartment 预设 rooms 设计上为空** (catalog 注释明示,
+     语义房间等 HM3D/DQ-1) → seed_room_landmarks 种了 0 个房间。行为诚实正确;
+     campaign #3 的厨房 GUI 战果在带房间的场景上。
+  2. **真内核 bug**: Layer-1 重试清空 strategy → selector Priority-3 alias
+     match 用 `{}` 重路由 → label 丢失 → 后续尝试降级为 "requires a label"。
+  3. **误导面**: 步视图只显示末次错误 → 真因被埋, 误导了 R5/R6/R9 三轮诊断。
+- 修复: (a) alias match 继承 sub_goal.strategy_params (重路由绝不剥绑定);
+  (b) 末错≠首错时 error 附加 "[attempt 1: ...]" + result_data.attempt_errors;
+  (c) smoke 脚本 --scenario, 默认 house (有语义房间)。
+- 回归测试: tests/unit/vcli/test_retry_fidelity.py (4)。
+- file:line: strategy_selector.py:213 (alias match), vgg_harness.py 重试循环。

@@ -532,6 +532,10 @@ Loop example — "do <something> to every detected object, one by one":
                 _LOG.warning("GoalDecomposer: backend call failed: %s", exc)
                 return self._fallback_goal_tree(task)
 
+            # Raw response at DEBUG — the only way to diagnose param/verify
+            # shape mismatches between what the LLM emitted and the final
+            # tree (R10: a live failure was undiagnosable without this).
+            _LOG.debug("GoalDecomposer raw response: %s", raw_text)
             json_str = self._extract_json(raw_text)
             if json_str is not None:
                 try:

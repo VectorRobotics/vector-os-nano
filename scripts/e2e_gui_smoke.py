@@ -150,7 +150,7 @@ def preflight(session: str) -> "str | None":
     return None
 
 
-def boot_cli(session: str, log_path: Path) -> None:
+def boot_cli(session: str, log_path: Path, scenario: str) -> None:
     env_assigns = (
         "DEEPSEEK_API_KEY=\"$VECTOR_SMOKE_KEY\" "
         "DEEPSEEK_BASE_URL=https://openrouter.ai/api/v1 "
@@ -158,7 +158,7 @@ def boot_cli(session: str, log_path: Path) -> None:
     )
     inner = (
         f"cd {REPO} && {env_assigns}.venv/bin/python -m "
-        f"vector_os_nano.vcli.cli --scenario apartment 2>&1 | tee {log_path}"
+        f"vector_os_nano.vcli.cli --scenario {scenario} 2>&1 | tee {log_path}"
     )
     # the key reaches the inner shell via the environment, never argv
     subprocess.run(
@@ -182,7 +182,7 @@ def wait_for(predicate, timeout: float, interval: float = 2.0) -> bool:
 # Runner
 # ---------------------------------------------------------------------------
 
-def run(session: str, keep: bool) -> int:
+def run(session: str, keep: bool, scenario: str) -> int:
     err = preflight(session)
     if err:
         print(f"PREFLIGHT FAIL: {err}")
@@ -194,7 +194,7 @@ def run(session: str, keep: bool) -> int:
     results: "list[dict]" = []
     rc = 0
 
-    boot_cli(session, log_path)
+    boot_cli(session, log_path, scenario)
     try:
         if not wait_for(lambda: "vector>" in _pane(session), 120):
             print("FAIL: CLI prompt never appeared")
@@ -250,10 +250,14 @@ def run(session: str, keep: bool) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--session", default="vnano-smoke")
+    ap.add_argument("--scenario", default="house",
+                    help="house (ReplicaCAD, has semantic rooms — kitchen "
+                         "steps resolve) | apartment (no rooms by design: "
+                         "kitchen honestly fails until sysnav runs)")
     ap.add_argument("--keep", action="store_true",
                     help="leave the tmux session running on exit")
     args = ap.parse_args()
-    return run(args.session, args.keep)
+    return run(args.session, args.keep, args.scenario)
 
 
 if __name__ == "__main__":

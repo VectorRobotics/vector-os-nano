@@ -675,6 +675,7 @@ class VGGHarness:
         alternatives.
         """
         tried_strategies: set[str] = set()
+        attempt_errors: list[str] = []  # R10: the FIRST error is the diagnosis
 
         for attempt in range(max_retries + 1):
             # Select strategy (first attempt uses sub_goal.strategy, later uses selector)
@@ -717,13 +718,27 @@ class VGGHarness:
                 return step
 
             tried_strategies.add(step.strategy)
+            attempt_errors.append(step.error)
             if attempt < max_retries:
                 logger.info(
                     "VGGHarness: step %s attempt %d/%d failed (%s) — retrying",
                     sub_goal.name, attempt + 1, max_retries + 1, step.error,
                 )
 
-        return step  # return last failed attempt
+        # R10 (live finding): retries can DEGRADE the error (a re-routed
+        # attempt failing on a different, shallower cause buried the real
+        # "world model is EMPTY" diagnosis). Surface the first attempt's
+        # error alongside the last when they differ; the full history rides
+        # in result_data for the replan/observation surface.
+        if len(attempt_errors) > 1 and attempt_errors[0] != step.error:
+            import dataclasses
+            step = dataclasses.replace(
+                step,
+                error=f"{step.error} [attempt 1: {attempt_errors[0]}]",
+                result_data={**step.result_data,
+                             "attempt_errors": list(attempt_errors)},
+            )
+        return step  # last failed attempt (+ first-error context)
 
     def _retry_strategy(self, sub_goal: SubGoal) -> str:
         """Choose the strategy string for a retry attempt.

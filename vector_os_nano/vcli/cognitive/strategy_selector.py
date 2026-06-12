@@ -211,9 +211,16 @@ class StrategySelector:
 
         # Priority 3: Skill registry alias match (all worlds)
         if result is None and self._skill_registry is not None:
+            # R10 live finding: this route carries the sub_goal's EXPLICIT
+            # params — a Layer-1 retry cleared the strategy, the alias match
+            # re-routed to the same skill with {} and a diagnosable failure
+            # degraded into bad_params. Re-routing never strips bindings.
             match = self._skill_registry.match(sub_goal.description)
             if match is not None:
-                result = StrategyResult("skill", match.skill_name, {})
+                result = StrategyResult(
+                    "skill", match.skill_name,
+                    dict(sub_goal.strategy_params or {}),
+                )
 
         # Priority 4: Fallback
         if result is None:
