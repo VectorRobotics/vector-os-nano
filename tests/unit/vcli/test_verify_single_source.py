@@ -150,6 +150,7 @@ class TestRobotWorldExemptionShrunk:
         assert "navigate" not in exempt
         assert "look" not in exempt
         assert "describe_scene" not in exempt
-        # Motion skills keep the transitional exemption until batch 2 lands
-        # the moved/duration result contract.
-        assert "walk" in exempt and "explore" in exempt
+        # walk/turn graduated in batch 2 R7 (measured motion evidence);
+        # async skills stay until they grow real post-conditions.
+        assert "walk" not in exempt
+        assert "explore" in exempt

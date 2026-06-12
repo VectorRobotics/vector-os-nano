@@ -34,9 +34,10 @@ class RobotWorld:
         # navigate/look/describe_scene graduated in invariant III (they
         # declare real verify templates now); motion skills remain until the
         # batch-2 moved/duration result contract gives them real predicates.
+        # walk/turn graduated in batch 2 R7 (measured moved_m/turned_rad
+        # evidence + real verify templates).
         return frozenset({
-            "explore", "patrol", "walk", "turn", "stand", "sit", "stop",
-            "where_am_i",
+            "explore", "patrol", "stand", "sit", "stop", "where_am_i",
         })
 
     def persona_blocks(self) -> tuple[str, str]:
