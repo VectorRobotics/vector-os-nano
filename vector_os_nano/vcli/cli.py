@@ -26,10 +26,8 @@ import re
 
 from rich.console import Console
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
-from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
@@ -52,7 +50,7 @@ from vector_os_nano.vcli.session import (
 from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.prompt import build_system_prompt
 from vector_os_nano.vcli.turn_status import TurnStatus
-from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_all_tools, discover_categorized_tools
+from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_categorized_tools
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -119,7 +117,7 @@ class VectorCompleter(Completer):
         text = document.text_before_cursor
 
         # Only complete slash commands and exit keywords
-        if not text.startswith("/") and not text.strip().lower() in ("q", "qu", "qui", "qui", "ex", "exi"):
+        if not text.startswith("/") and text.strip().lower() not in ("q", "qu", "qui", "qui", "ex", "exi"):
             return
 
         word = document.get_word_before_cursor(WORD=True)
@@ -403,7 +401,6 @@ def print_banner(
 
     When a playground ``scenario`` is active its name is shown in the info line.
     """
-    import shutil
     term_w = shutil.get_terminal_size().columns
     logo_lines = _load_logo_lines()
     max_logo_w = max((len(l) for l in logo_lines), default=0) if logo_lines else 0
@@ -435,12 +432,12 @@ def print_banner(
         if base is not None:
             info_parts.append(f"Base: {getattr(base, 'name', type(base).__name__)}")
     console.print(f"[dim]  {' | '.join(info_parts)}[/]")
-    console.print(f"[dim]  Type / for commands, quit to exit[/]")
+    console.print("[dim]  Type / for commands, quit to exit[/]")
     console.print()
 
 
 def ask_permission(tool_name: str, params: dict[str, Any]) -> str:
-    console.print(f"\n[yellow bold]Permission required:[/yellow bold]")
+    console.print("\n[yellow bold]Permission required:[/yellow bold]")
     console.print(f"  Tool: [{TEAL}]{tool_name}[/]")
     params_str = json.dumps(params, indent=2, ensure_ascii=False)
     if len(params_str) > 200:
@@ -599,7 +596,7 @@ def _init_agent(args: argparse.Namespace) -> Any:
         from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2  # type: ignore[import]
         import os
 
-        console.print(f"[dim]  Starting Go2 MuJoCo simulation...[/dim]")
+        console.print("[dim]  Starting Go2 MuJoCo simulation...[/dim]")
         base = MuJoCoGo2(gui=True, room=True, backend="auto")
         base.connect()
         base.stand()
@@ -628,7 +625,7 @@ def _init_agent(args: argparse.Namespace) -> Any:
             try:
                 from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
                 agent._vlm = Go2VLMPerception(config={"api_key": api_key})
-                console.print(f"[dim]  VLM: GPT-4o via OpenRouter[/dim]")
+                console.print("[dim]  VLM: GPT-4o via OpenRouter[/dim]")
             except Exception:
                 agent._vlm = None
 
@@ -647,13 +644,13 @@ def _init_agent(args: argparse.Namespace) -> Any:
                 f"({_sg_stats['rooms']} rooms, {_sg_stats['objects']} objects)[/dim]"
             )
         else:
-            console.print(f"[dim]  Memory: scene graph (rooms -> viewpoints -> objects)[/dim]")
+            console.print("[dim]  Memory: scene graph (rooms -> viewpoints -> objects)[/dim]")
         agent._spatial_memory = _sg
 
         # ROS2 bridge + nav stack (background)
         try:
             _launch_ros2_stack(base)
-            console.print(f"[dim]  ROS2: bridge + nav stack launched[/dim]")
+            console.print("[dim]  ROS2: bridge + nav stack launched[/dim]")
         except Exception as exc:
             console.print(f"[dim]  ROS2: not available ({exc})[/dim]")
 
@@ -805,7 +802,7 @@ def _handle_slash_command(
         from vector_os_nano.vcli.config import load_config, save_config
         provider_choice = args_rest[0] if args_rest else None
         if provider_choice not in ("claude", "anthropic", "openrouter", None):
-            console.print(f"[yellow]  Usage: /login claude | /login anthropic | /login openrouter[/]")
+            console.print("[yellow]  Usage: /login claude | /login anthropic | /login openrouter[/]")
             return True
 
         if provider_choice is None:
@@ -826,8 +823,8 @@ def _handle_slash_command(
             console.print("[dim]  Opening browser for authentication...[/dim]\n")
             creds = login_oauth()
             if creds:
-                console.print(f"[green]  Authenticated.[/] Token saved to ~/.vector/oauth_credentials.json")
-                console.print(f"[dim]  Restart vector-cli to use your subscription.[/dim]\n")
+                console.print("[green]  Authenticated.[/] Token saved to ~/.vector/oauth_credentials.json")
+                console.print("[dim]  Restart vector-cli to use your subscription.[/dim]\n")
             else:
                 console.print("[red]  Authentication failed or timed out.[/]")
                 console.print("[dim]  Make sure you have an active Claude subscription.[/dim]\n")
@@ -840,7 +837,7 @@ def _handle_slash_command(
                 config["anthropic_api_key"] = key.strip()
                 config["provider"] = "anthropic"
                 save_config(config)
-                console.print(f"[green]  Saved.[/] Restart vector-cli to apply.")
+                console.print("[green]  Saved.[/] Restart vector-cli to apply.")
             else:
                 console.print("[dim]  Cancelled.[/dim]")
 
@@ -853,7 +850,7 @@ def _handle_slash_command(
                 config["provider"] = "openrouter"
                 config["base_url"] = "https://openrouter.ai/api/v1"
                 save_config(config)
-                console.print(f"[green]  Saved.[/] Restart vector-cli to apply.")
+                console.print("[green]  Saved.[/] Restart vector-cli to apply.")
             else:
                 console.print("[dim]  Cancelled.[/dim]")
 
@@ -987,7 +984,7 @@ def _handle_slash_command(
     elif cmd == "clear":
         if session is not None:
             session._entries.clear()
-            console.print(f"[dim]  Conversation cleared.[/dim]")
+            console.print("[dim]  Conversation cleared.[/dim]")
         else:
             console.print("[dim]No session.[/dim]")
 
@@ -1026,9 +1023,9 @@ def _handle_slash_command(
             pass
 
         if cleared:
-            console.print(f"[dim]  Scene graph cleared. All rooms/objects forgotten.[/dim]")
+            console.print("[dim]  Scene graph cleared. All rooms/objects forgotten.[/dim]")
         else:
-            console.print(f"[dim]  No scene graph file found.[/dim]")
+            console.print("[dim]  No scene graph file found.[/dim]")
 
     elif cmd == "reset":
         import os as _os
@@ -1036,7 +1033,7 @@ def _handle_slash_command(
         try:
             with open("/tmp/vector_reset_pose", "w") as _f:
                 _f.write("1")
-            console.print(f"[dim]  Reset signal sent. Robot will stand up at current position.[/dim]")
+            console.print("[dim]  Reset signal sent. Robot will stand up at current position.[/dim]")
         except OSError as _exc:
             console.print(f"[yellow]  Failed to send reset: {_exc}[/]")
 
@@ -1044,7 +1041,7 @@ def _handle_slash_command(
         if not args_rest:
             current = app_state.get("model", "unknown") if app_state else "unknown"
             console.print(f"  [{TEAL}]{current}[/]")
-            console.print(f"[dim]  /model <name> to switch. Tab for suggestions.[/dim]")
+            console.print("[dim]  /model <name> to switch. Tab for suggestions.[/dim]")
         else:
             new_model = args_rest[0]
             if app_state is None:
@@ -1593,7 +1590,7 @@ def main(argv: list[str] | None = None) -> None:
             persist_dir=(Path.home() / ".vector") if not world.is_robot() else None,
         )
         if engine._vgg_enabled:
-            console.print(f"[dim]  VGG cognitive layer: enabled[/dim]")
+            console.print("[dim]  VGG cognitive layer: enabled[/dim]")
     except Exception:
         pass
 
@@ -1622,7 +1619,7 @@ def main(argv: list[str] | None = None) -> None:
     def _get_toolbar() -> HTML:
         agent_now = app_state.get("agent")
         current_model = app_state.get("model", "?")
-        parts: list[str] = [f"<b>V</b>"]
+        parts: list[str] = ["<b>V</b>"]
         arm_now = getattr(agent_now, "_arm", None) if agent_now else None
         base_now = getattr(agent_now, "_base", None) if agent_now else None
         if arm_now is not None:
@@ -1697,7 +1694,7 @@ def main(argv: list[str] | None = None) -> None:
 
             # ---- Engine turn ----
             if engine is None:
-                console.print(f"[yellow]No API key. Use /login to authenticate first.[/]")
+                console.print("[yellow]No API key. Use /login to authenticate first.[/]")
                 continue
 
             try:
@@ -2074,12 +2071,12 @@ def main(argv: list[str] | None = None) -> None:
                 if "429" in err_str or "rate_limit" in err_str:
                     current_model = app_state.get("model", "?")
                     console.print(f"[yellow]  Rate limited on {current_model}.[/]")
-                    console.print(f"[dim]  Try: /model claude-haiku-4-5 (lower rate limit)[/dim]")
+                    console.print("[dim]  Try: /model claude-haiku-4-5 (lower rate limit)[/dim]")
                 elif "401" in err_str or "authentication" in err_str.lower():
-                    console.print(f"[yellow]  Authentication failed. Use /login to reconfigure.[/]")
+                    console.print("[yellow]  Authentication failed. Use /login to reconfigure.[/]")
                 elif "404" in err_str or "not_found" in err_str:
                     console.print(f"[yellow]  Model not found: {app_state.get('model', '?')}[/]")
-                    console.print(f"[dim]  Try: /model claude-haiku-4-5[/dim]")
+                    console.print("[dim]  Try: /model claude-haiku-4-5[/dim]")
                 else:
                     console.print(f"[red]Error:[/] {exc}")
                 if args.verbose:

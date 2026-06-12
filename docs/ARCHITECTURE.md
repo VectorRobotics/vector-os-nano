@@ -284,20 +284,35 @@ relative to `vector_os_nano/`.
   Single chokepoint: `GoalExecutor._record_strategy_stats` (all record sites route through it).
 - `blackboard.py` — per-run observation store; resolves `${step.output.path}` bindings.
 - `vocab_from_registry.py` — `build_decompose_vocab`: single-sources the decompose
-  vocabulary from the skill registry.
+  vocabulary from the skill registry. INVARIANT III (campaign #3): verify has ONE origin —
+  the skill's own `verify_hint`/`verify_template` (the engine fast path renders the
+  template; `to_schemas` tags missing hints `unverified: True` instead of coercing the
+  'True' sentinel; base primitives are taught only when `primitives_ready()` — the
+  executable truth, never `has_base` alone). Cross-layer contracts (batch 3): units are
+  CONVERTED at the selector seam (deg→rad), unknown primitive params fail loud,
+  enum/default pass through to the LLM schema, `is_motor`/`confirm_exempt` are explicit
+  Skill declarations (E-stop never gated behind a confirmation prompt), and motion skills
+  MEASURE (`moved_m`/`turned_rad`/`duration_s` + navigation's three-value contract
+  `{reached, already_there, moved_m, elapsed_s}` with one geodesic arrival check).
 - `capabilities/` — the capability seam (`Capability` protocol + `CapabilityRegistry` +
   `LLMChatCapability`); the bridge to a heterogeneous model zoo.
 - `trace_store.py` — save / load / replay of verified runs; the evidence gate and
   verify-as-eval signal. `evidence_passed` (per-trace) + `step_evidence_ok` (per-step analogue,
   W1.1) are the deterministic gate the LEARNING tier (bandit reward + template compilation) is
-  measured against — never raw `step.success`.
+  measured against — never raw `step.success`. INVARIANT II (campaign #3): there is NO
+  world-level bypass — worlds declare a bounded per-step exemption set
+  (`evidence_exempt_strategies`; PlaygroundWorld = empty, RobotWorld = a shrinking
+  transitional async set); an exempt step still needs `verify_result=True` and no visual
+  override.
 - `template_library.py` — compiled reusable plan templates; backs the no-LLM fast path.
 - `experience_compiler.py` — turns successful verified traces into templates (no
   fine-tuning). Compilation is EVIDENCE-GATED (W1.1): `engine._maybe_compile_experience`
   requires `trace.success AND _evidence_ok(trace)`, so only evidence-backed traces compile.
 - `types.py` — frozen plan structures (`GoalTree`, `SubGoal`, `StepRecord`, `ForEachSpec`);
   `SubGoal.foreach` carries a control-flow loop the executor expands at runtime. A failed
-  `StepRecord` carries a deterministic typed `failure_class` (W2.4: timeout/verify_fail/ik_fail/
+  `StepRecord` carries `pre_satisfied` (INVARIANT I, campaign #3: every non-trivial predicate
+  is evaluated BEFORE dispatch — 'was already true' and 'became true' are different Trues;
+  surfaces as "(already satisfied pre-exec)") and a deterministic typed `failure_class` (W2.4: timeout/verify_fail/ik_fail/
   tool_error/exec_error) threaded into the replan context so the re-decompose adapts by class.
 - `observation.py` — the verified-loop observation surface: a pure JSON-safe export view over the
   frozen types (`step_view` / `run_snapshot`) + plain-text renderers; what a front-end renders.

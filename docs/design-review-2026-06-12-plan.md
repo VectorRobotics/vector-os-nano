@@ -137,4 +137,6 @@
 (3 critical / 17 high / 4 medium / 2 low), 去重合并为 18 项。种子缺陷
 ('走到厨房' 零运动 PASS) 已实测钉死: success=True / wall=0.00s / moved=0.00m /
 最终位置不在厨房矩形内 (~/sandbox/live_repro_kitchen_noop.py)。
-状态: 待 CEO 决策 (第四节 5 个决策点); 批准后批次一以 /sdd init 立项。*
+状态: 批次一/二/2.5/三已交付 (campaign #3, R1-R11, 2026-06-12);
+批次四移交下一战役 (见 docs/agent-kernel-STATUS.md OPEN -1)。决策点 1-5 按推荐执行
+(DQ-5), DQ-6 Qwen-VL 由 owner 现场追加并已交付。*

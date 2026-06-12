@@ -223,174 +223,48 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
--4. **CAMPAIGN #3 BATCH 3 SHIPPED (round 10) — cross-layer contract single
-   source.** Degrees are CONVERTED at the selector seam (both the keyword
-   ladder and explicit-strategy normalization — a -90° turn used to become
-   90 RADIANS, design review #12); unknown primitive params fail loud with
-   the real signature (silent dropping hid plan drift; **kwargs primitives
-   keep accepting anything by contract); skill_wrapper passes enum/default
-   through to the LLM schema (#13); motor-ness is an explicit Skill
-   declaration (`is_motor`, authoritative over keyword sniffing, #14) and
-   E-STOP-class skills (`confirm_exempt`) are NEVER gated behind a
-   confirmation prompt; WalkSkill checks `supports_holonomic` BEFORE
-   commanding (habitat lateral = fail-fast lateral_unsupported, #7).
-   Earlier today: batches 1+2+2.5 (kernel invariants, rooms-as-regions +
-   three-value motion contract, Qwen VL 72B backbone) — see entries below.
-   Remaining: batch 4 (harness/bridge robustness) + R12 REVIEW.
+-1. **CAMPAIGN #3 (重构 — 杜绝 false-PASS 家族) — batches 1/2/2.5/3 SHIPPED,
+   batch 4 HANDED OVER (owner paused the loop 2026-06-12 for cleanup +
+   direction review).** Spec: docs/design-review-2026-06-12-plan.md (26
+   adversarially-confirmed findings). Shipped over rounds R1-R11 (11 green
+   pushed commits, suite 1325→1458):
+   - **Batch 1 — kernel invariants**: (I) pre-execution verify baseline
+     (`StepRecord.pre_satisfied`, "(already satisfied pre-exec)" honesty);
+     (II) evidence gate per-step exemptions, world-level `is_robot` bypass
+     DELETED (PlaygroundWorld exempts nothing); (III) verify single source
+     (`_VERIFY_MAP` deleted, skill `verify_template` is the only origin,
+     `unverified: True` tags instead of silent 'True').
+   - **Batch 2 — seed root-fix**: rooms are REGIONS (rect-aware tol +
+     `visited()` w/ object-proximity fallback); three-value navigation
+     contract `{reached, already_there, moved_m, elapsed_s}` at all three
+     layers (lease-first, strict tol, geodesic arrival check kills
+     through-wall PASS); walk/turn MEASURE motion (`moved_m`/`turned_rad`,
+     moved_short fail-loud); loud unresolved-foreach (#10); navigate label
+     backfill from `visited('<label>')`.
+   - **Batch 2.5 — DQ-6**: Qwen VL 72B vision backbone via OpenRouter
+     (qwen2.5-vl-72b-instruct; VECTOR_VLM_MODEL_OPENROUTER overrides);
+     habitat agent wired for visual verify (get_camera_frame + _vlm).
+   - **Batch 3 — contract single source**: deg→rad converted at the selector
+     seam; unknown primitive params fail loud; enum/default reach the LLM
+     schema; explicit `is_motor`/`confirm_exempt` (E-stop never gated);
+     `supports_holonomic` checked BEFORE commanding; direction enum
+     validation + zh aliases.
+   - **GUI acceptance mode (owner directive)**: real vector-cli in tmux +
+     window screenshots, now the standard. Verified on screen: full-height
+     G1, kitchen drive, paced walk, SysNav green labels (16 objects),
+     real-LLM turns binding REAL predicates (visited/step_output).
+   - **HANDED OVER (batch 4, unstarted)**: #11 harness dependency-skip +
+     unified failure semantics, #15 bridge request ids + timeout tiers +
+     forced reconnect, #16 paced-op op-thread starvation, #17 post-hoc
+     timeout re-verify + completed-step injection, #18 replan inheritance
+     by (strategy, sub_goal), #19 done, #20 server req={} init.
+   - **Direction notes for the next campaign**: LLM output robustness
+     (deepseek-chat binds params/verify worse than v4-flash — consider a
+     param-completeness validator pass); N6 Tier B gait (owner saw the
+     rigid-body glide); E2E GUI smoke as a repeatable script.
+   Known env reds: 3 deepseek .env + level71 (now SEGFAULTS the suite on
+   this desktop — canonical command carries --deselect).
 
-
--3. **DESIGN REVIEW 2026-06-12 — refactor plan APPROVED-BY-DIRECTIVE, campaign #3
-   loop EXECUTING (docs/design-review-2026-06-12-plan.md; decisions DQ-5 all
-   per recommendation; loop state ~/.vector-nano-loop/).** Batch 1 invariant I
-   SHIPPED (round 1): GoalExecutor evaluates every NON-TRIVIAL predicate
-   BEFORE dispatching the strategy; `StepRecord.pre_satisfied` (additive,
-   rule 6) records the baseline on all post-exec records; step views render
-   "(already satisfied pre-exec)" — 'became true' and 'was already true' are
-   no longer the same True. Trivial-sentinel set single-sourced from
-   trace_store. Invariant II SHIPPED (round 2): the world-level
-   `if is_robot: return True` evidence-gate bypass is GONE
-   (trace_store.evidence_passed/step_evidence_ok) — worlds declare a bounded
-   per-step exemption set (`evidence_exempt_strategies`, mechanism modeled on
-   answer_only; exempt steps still need verify_result=True + no visual
-   override). PlaygroundWorld declares the EMPTY set (full sim oracle);
-   RobotWorld keeps a TRANSITIONAL motor set (shrinks as invariant III adds
-   real hints; pick/place never exempt). Engine/executor/CLI wired; the CLI
-   gate closure now reads the LIVE world from app_state (the captured one
-   went stale after NL sim start — drift instance). Invariant III SHIPPED (round 3) — BATCH 1 COMPLETE +
-   LIVE-VERIFIED (~/sandbox/live_test_batch1.py: seed scenario renders
-   '[PASS] ... (already satisfied pre-exec)'; sentinel walk completes but is
-   NOT verified): the engine's second hand-written verify vocabulary is GONE
-   — the fast path reads the SKILL's own `verify_template` ({arg}
-   substitution; no template / unbindable arg → honest sentinel that the
-   gate reports unverified); `to_schemas` never coerces a missing hint to
-   'True' (tags `unverified: True`); the vocab shows '(unverified — no
-   symbolic post-condition declared)' instead of suggesting the sentinel;
-   navigate/look/describe_scene declare real templates and left RobotWorld's
-   transitional exemption set. Batch 2 part 1 SHIPPED (round 5): (a) #10 — an
-   UNRESOLVED foreach producer path is now a LOUD replannable failure
-   (failure_class=exec_error carrying the producer's actually-available
-   keys) instead of a silent zero-iteration PASS; resolved-but-empty stays
-   an honest zero. (b) Rooms are REGIONS: landmarks carry their rect;
-   navigate's room branch sizes tol from the rect half-dims (drive ends
-   INSIDE; never the 1.5 object standoff that caused the '走到厨房' no-op),
-   result_data carries goal_kind, verify_hint teaches visited('<room>').
-   Batch 2 part 2 SHIPPED (round 6) — SEED ROOT-FIXED,
-   LIVE-VERIFIED (~/sandbox/live_test_r6_kitchen.py ALL PASS: '走到厨房'
-   drives 0.6m INTO the kitchen rect with motion evidence; repeat request
-   honestly returns already_there/0.0m): all three navigation layers return
-   the three-value motion-evidence contract {reached, already_there,
-   moved_m, elapsed_s} — server.navigate_to (lease-first #19, strict
-   reached gd<=max(tol,0.4) replacing the tol*2.0 inflation, fixed 0.2
-   intermediate-waypoint threshold so a wide tol no longer cuts corners,
-   already_there short-circuit), sysnav_bridge.navigate_to (already_there
-   + ONE geodesic arrival check killing through-wall euclidean false PASS
-   #8 — fail-open with geodesic_unchecked when the base lacks the oracle),
-   NavigateToPointSkill passes the evidence through result_data. NOTE
-   suite: level71 lifecycle test now SEGFAULTS the whole run on this
-   desktop (GL, pre-existing-red worsened) — canonical command gains
-   --deselect (CLAUDE.md already documents it as environmental). Next
-   (round 7): walk/turn motion-evidence result contract + real verify
-   templates + batch-2 live regression acceptance (already-in-room /
-   through-wall / wall-stuck). Original review summary: Owner's third live-test
-   round hit the false-PASS family again ('走到厨房' = zero-motion verified
-   PASS: spawn is 1.53m from the kitchen CENTER, label tol 1.5/verify 1.6 —
-   live-pinned, success=True/0.00s/0.00m/outside the room rect). A 6-dimension
-   workflow review (35 agents, adversarially verified) confirmed the root
-   pattern: verify only ever measures END-STATE after execution (no pre-state
-   baseline anywhere), the evidence gate is hard-off for ALL playground worlds
-   (is_robot=True bypass), and verify has two hand-written sources defaulting
-   to the 'True' sentinel — so motion commands are structurally unverified on
-   the fast path. Plan: 4 TDD batches (~1.5-2 weeks): (1) kernel invariants —
-   pre-satisfied baseline + per-step evidence-gate exemptions + single-source
-   verify; (2) rooms-as-REGIONS + motion-evidence result contracts (root-fixes
-   the seed); (3) cross-layer param/unit/enum single-source (deg→rad, vy,
-   MOTOR_KEYWORDS→is_motor); (4) harness/bridge robustness (request ids,
-   timeout tiers, dependency-skip). 5 CEO decision points in the plan §4.
-   DO NOT point-fix items covered by the batches without reading the plan.
-
-
--2. ~~OWNER RE-TEST FINDINGS 2026-06-12 ROUND 2~~ — **ALL FIXED + LIVE-VERIFIED
-   2026-06-12 (~/sandbox/live_test_round2.py, all PASS; owner re-test
-   pending).** Owner re-ran the NL flow (this time the ros_bootstrap worked:
-   sysnav GPU pair started fine per /tmp/vector_sysnav.log) and found:
-   (a) **"往前走" reported PASS in 0.1s but nothing visibly moved.** The
-   motion was REAL (fast-path params were correct, the robot advanced 1 m) —
-   but the server's `walk` op integrated all steps with NO wall-time pacing:
-   a 1 m walk finished in one blink, and the chase camera moves WITH the
-   robot, so nothing appeared to change (tricky-bugs Case 8). `walk` now
-   paces each step to `duration` wall time and the oracle `navigate_to`
-   paces at `speed` m/s (default 1.0; `speed<=0` keeps the instant legacy
-   for harnesses) — both emit viewer frames per step, so the window ANIMATES
-   the drive. Live: 1 m walk = 3.34 s wall, cross-house navigate 2.7 s.
-   (b) **"走到门口" → paramless navigate (requires a label OR x/y).** Root
-   cause: the habitat agent has NO SceneGraph, so the planner context listed
-   ZERO rooms — 'entryway' was unknowable. The scenario's authored rooms are
-   now seeded into the world model as `type=room` landmarks at boot
-   (`habitat_runtime.seed_room_landmarks`, ids `room_<name>`, zh aliases
-   门口/厨房/客厅/餐厅/电视角 in properties): they appear in the planner's
-   'Objects (live)' line WITH coordinates and resolve through
-   `navigate_to(label=...)` with the semantic standoff. 走到门口/厨房 now
-   works with or without SysNav.
-   (c) **SysNav had no visible render surface.** New `set_markers` op
-   (STREAM-channel class — swaps a list, never touches the sim): world-frame
-   labelled markers projected into the viewer camera and drawn (cv2
-   circle+label) on every viewer frame. Wired end-to-end:
-   `LiveSysnavBridge(on_batch=...)` (additive hook) → debounced
-   `markers_from_world_model` push (rooms excluded) →
-   `HabitatBase.set_markers` over the stream channel. Detections now appear
-   as green labels in the live window as they land.
-   (d) **Viewer window too small.** Viewer camera/window size is now
-   `--viewer-size` (server, clamp [256,1600]) ← `VECTOR_HABITAT_VIEWER_SIZE`
-   env ← default 800 (was 512), rendered natively at that size.
-   Also observed: a transient deepseek `Connection error.` on the first NL
-   turn (backend retried; network-side, not reproducible deterministically).
-   Suite 1382 green (+17 tests: tests/vcli/test_room_landmarks.py).
-
--1. ~~OWNER LIVE-TEST FINDINGS 2026-06-12~~ — **ALL THREE FIXED + LIVE-VERIFIED
-   2026-06-12 (owner re-test pending).**
-   (a) **G1 tiny/misplaced in chase view — FIXED.** Not scale, not FOV:
-   habitat re-centers a render asset to its bounding-box CENTER, so gluing
-   `translation.y` to the navmesh floor sank the 1.32 m body 0.66 m into the
-   floor (only the torso showed). `server.py` now measures the local bb once
-   at body creation (`_body_y_off = -bb.min.y`) and lifts `_place_body`.
-   Verified headless in the real house scene: world feet y == floor y, head
-   == floor + 1.322, full-height robot next to the same bar table from the
-   owner's screenshot (tricky-bugs Case 6; harness
-   ~/sandbox/habitat-spike/spike_body_fix_verify.py).
-   (b) **"启动sysnav" from an unsourced shell — FIXED.** `LD_LIBRARY_PATH`
-   is read at process birth, so in-process path injection can never import
-   rclpy. New `vcli/ros_bootstrap.py`: when the ROS/SysNav overlays exist on
-   disk but `AMENT_PREFIX_PATH` lacks them, `cli.main()` sources them in a
-   bash child, captures `env -0`, and re-execs itself ONCE
-   (`VECTOR_ROS_BOOTSTRAPPED` loop guard carries the overlay list for a dim
-   startup banner; `VECTOR_NO_ROS_BOOTSTRAP=1` opt-out, set by conftest so
-   pytest is never replaced by execve). No-ROS boxes, sourced shells, and
-   compose failures are silent no-ops. Live-verified from `env -i`: re-exec
-   banner + rclpy AND tare_planner.msg importable. Also fixes the GPU node
-   pair (its launcher relied on an inherited sourced shell). The owner's
-   leftover 01:29 REPL confirmed the diagnosis: its env had ROS sourced but
-   NOT SysNav.
-   (c) **NL walk/navigate failures — FIXED (three kernel defects, found by
-   replaying the owner's SAVED 19:42 session transcript
-   ~/.vector/sessions/fd95f71f*.jsonl).** `走到sofa` on an empty world model
-   exposed: (c1) a REPLAN could emit the same strategy with EMPTY params —
-   the owner's opaque "requires a label OR numeric x and y";
-   `VGGHarness._inherit_replan_params` now carries prior param bindings into
-   any replanned same-strategy step (suffix-form-normalized, non-empty new
-   params always win); (c2) the derived vocab taught base primitives
-   (walk_forward/turn/scan_360) on `has_base` alone while NOTHING in
-   production calls `init_primitives` — replans chased a 'No hardware
-   connected' scan_360 ghost; vocab (`teach_base_primitives`) +
-   StrategySelector routes + engine preflight now gate on the EXECUTABLE
-   truth (`primitives_ready()`); registry-less legacy selectors stay
-   byte-identical (tricky-bugs Case 7); (c3) object-not-found on an EMPTY
-   world model now tells the user the real fix ("start sysnav perception
-   first") instead of burning replans. `往前走一点` had actually SUCCEEDED
-   in the owner's transcript (walk_goal: ok) — it only LOOKED broken because
-   of (a)'s half-sunk robot. Live re-verified on the real house world + LLM:
-   走到sofa → honest guidance-carrying failure, no ghosts, label preserved
-   across replans; 往前走一点 → walk_skill, moved 1.00 m. The deepseek
-   "Error: Connection error." was transient (not reproduced).
 0. ~~OWNER LIVE-TEST FINDING #0 (status/persona surface blind to the habitat world)~~ —
    **FIXED 2026-06-11 + NL sim startup shipped, live-verified.** (a) Persona is now
    backend-selected by `PlaygroundWorld.persona_blocks()`: habitat scenarios get

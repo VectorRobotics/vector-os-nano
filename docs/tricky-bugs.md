@@ -169,3 +169,20 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** for any embodied action, verify the TRAJECTORY's time course,
   not just the end state — and remember that a tracking camera hides exactly
   the motion it tracks.
+
+## Case 9 — "verification failed" that was really a silent enum coercion (2026-06-12)
+
+- **Symptom:** GUI test `往左走一米` failed with "verification failed" after a
+  full 3.3 s walk — pointing at the verify predicate or the navigation stack.
+- **Why hidden:** the walk SUCCEEDED (motion evidence and all). The planner
+  had emitted a direction value outside the enum ('左'); `_DIRECTION_MAP.get(
+  direction, (1.0, 0.0))` silently coerced it to FORWARD, so the robot walked
+  a metre the wrong way and only the position predicate caught it — two
+  layers from the cause. The schema had also stripped enum/default, so the
+  LLM never saw the legal value set it was violating.
+- **Fix:** skills validate enum values and fail loud with the legal set
+  (bad_params); zh aliases resolve natively; skill_wrapper passes
+  enum/default through to the LLM schema.
+- **Lesson:** `dict.get(key, default)` on an LLM-supplied enum is a silent
+  contract rewrite — validate at the boundary and let the schema TEACH the
+  legal set, or the failure surfaces two layers away dressed as something else.
