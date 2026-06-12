@@ -195,6 +195,11 @@ class NavigateToPointSkill:
             "remaining_geodesic_m": remaining,
             "position": out.get("pos"),
             "transport": out.get("transport", "sim_oracle"),
+            # Motion evidence (three-value contract, R6): 'drove there' and
+            # 'never moved' are different shapes for verify/replan/user.
+            "already_there": bool(out.get("already_there", False)),
+            "moved_m": float(out.get("moved_m", 0.0) or 0.0),
+            "elapsed_s": float(out.get("elapsed_s", 0.0) or 0.0),
             "diagnosis": "ok" if reached else str(out.get("reason", "nav_stuck")),
         }
         return SkillResult(

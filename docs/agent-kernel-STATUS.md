@@ -258,10 +258,24 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    navigate's room branch sizes tol from the rect half-dims (drive ends
    INSIDE; never the 1.5 object standoff that caused the '走到厨房' no-op),
    result_data carries goal_kind, verify_hint teaches visited('<room>').
-   Next (round 6): server navigate_to three-value contract
-   {reached, already_there, moved_m, elapsed_s} + strict tol + sysnav_bridge
-   geodesic arrival check; round 7: walk/turn motion-evidence result
-   contract + real verify templates + live regression acceptance. Original review summary: Owner's third live-test
+   Batch 2 part 2 SHIPPED (round 6) — SEED ROOT-FIXED,
+   LIVE-VERIFIED (~/sandbox/live_test_r6_kitchen.py ALL PASS: '走到厨房'
+   drives 0.6m INTO the kitchen rect with motion evidence; repeat request
+   honestly returns already_there/0.0m): all three navigation layers return
+   the three-value motion-evidence contract {reached, already_there,
+   moved_m, elapsed_s} — server.navigate_to (lease-first #19, strict
+   reached gd<=max(tol,0.4) replacing the tol*2.0 inflation, fixed 0.2
+   intermediate-waypoint threshold so a wide tol no longer cuts corners,
+   already_there short-circuit), sysnav_bridge.navigate_to (already_there
+   + ONE geodesic arrival check killing through-wall euclidean false PASS
+   #8 — fail-open with geodesic_unchecked when the base lacks the oracle),
+   NavigateToPointSkill passes the evidence through result_data. NOTE
+   suite: level71 lifecycle test now SEGFAULTS the whole run on this
+   desktop (GL, pre-existing-red worsened) — canonical command gains
+   --deselect (CLAUDE.md already documents it as environmental). Next
+   (round 7): walk/turn motion-evidence result contract + real verify
+   templates + batch-2 live regression acceptance (already-in-room /
+   through-wall / wall-stuck). Original review summary: Owner's third live-test
    round hit the false-PASS family again ('走到厨房' = zero-motion verified
    PASS: spawn is 1.53m from the kitchen CENTER, label tol 1.5/verify 1.6 —
    live-pinned, success=True/0.00s/0.00m/outside the room rect). A 6-dimension

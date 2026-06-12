@@ -332,34 +332,72 @@ class HabitatSysnavBridge:
         import time as _time
 
         tol = max(float(tol), 0.5)
-        deadline = _time.monotonic() + timeout_s
-        grace_until = _time.monotonic() + 5.0
+        t0 = _time.monotonic()
+        start = self._base.get_position()
+        moved = 0.0
+        prev = start
+
+        def _out(reached: bool, pos, d: float, **extra) -> dict:
+            # Three-value contract (batch 2 R6, design review #9): every
+            # outcome carries MOTION EVIDENCE — "drove there" and "never
+            # moved" are no longer the same shape.
+            return {
+                "reached": reached, "remaining": d, "pos": pos,
+                "transport": "nav_stack",
+                "already_there": bool(extra.pop("already_there", False)),
+                "moved_m": round(moved, 3),
+                "elapsed_s": round(_time.monotonic() - t0, 3),
+                **extra,
+            }
+
+        d0 = _math.hypot(start[0] - x, start[1] - y)
+        if d0 <= tol:
+            # Honest distinct outcome — the goal predicate held BEFORE any
+            # motion; never a silent zero-motion 'reached'.
+            return _out(True, start, d0, already_there=True)
+
+        deadline = t0 + timeout_s
+        grace_until = t0 + 5.0
         best = float("inf")
-        best_at = _time.monotonic()
-        pos = self._base.get_position()
+        best_at = t0
+        pos = start
         while _time.monotonic() < deadline:
             self.send_waypoint(x, y)
             _time.sleep(poll_s)
             pos = self._base.get_position()
+            moved += _math.hypot(pos[0] - prev[0], pos[1] - prev[1])
+            prev = pos
             d = _math.hypot(pos[0] - x, pos[1] - y)
             if d <= tol:
-                return {
-                    "reached": True, "remaining": d, "pos": pos,
-                    "transport": "nav_stack",
-                }
+                return self._confirm_arrival(_out, pos, d, x, y, tol)
             if d < best - 0.1:
                 best, best_at = d, _time.monotonic()
             elif (_time.monotonic() > grace_until
                   and _time.monotonic() - best_at > stall_s):
-                return {
-                    "reached": False, "remaining": d, "pos": pos,
-                    "transport": "nav_stack", "reason": "stall",
-                }
+                return _out(False, pos, d, reason="stall")
         d = _math.hypot(pos[0] - x, pos[1] - y)
-        return {
-            "reached": False, "remaining": d, "pos": pos,
-            "transport": "nav_stack", "reason": "timeout",
-        }
+        return _out(False, pos, d, reason="timeout")
+
+    def _confirm_arrival(self, out, pos, d: float, x: float, y: float, tol: float) -> dict:
+        """ONE geodesic check on euclidean arrival (design review #8): a wall
+        between robot and goal makes euclid small but geodesic long — that
+        coincidence must never count as reached. The progress loop itself
+        stays oracle-free; this is the verify-side oracle, used once. A base
+        without the capability fails OPEN with an explicit unchecked marker
+        (the predicate-level verify still judges the step).
+        """
+        gd_fn = getattr(self._base, "geodesic_distance", None)
+        if not callable(gd_fn):
+            return out(True, pos, d, geodesic_unchecked=True)
+        try:
+            gd = float(gd_fn([pos[0], pos[1], pos[2] if len(pos) > 2 else 0.0],
+                             [x, y, pos[2] if len(pos) > 2 else 0.0]))
+        except Exception:  # noqa: BLE001
+            return out(True, pos, d, geodesic_unchecked=True)
+        if gd <= max(2.0 * tol, tol + 0.5):
+            return out(True, pos, d, remaining_geodesic=round(gd, 3))
+        return out(False, pos, d, reason="geodesic_mismatch",
+                   remaining_geodesic=round(gd, 3))
 
     def publish_state_once(self) -> None:
         """Fast odom tick (N1/N2) — one stream-channel roundtrip, with twist

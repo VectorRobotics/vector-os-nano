@@ -192,3 +192,86 @@ class TestFeedNavigate:
             assert feed.nav_stack_active() is False
         finally:
             feed.destroy()
+
+
+@pytest.mark.skipif(not _rclpy_available(), reason="rclpy not importable")
+class TestThreeValueContract:
+    """Batch 2 R6 (design review #2/#8/#9): navigation returns MOTION EVIDENCE
+    — {reached, already_there, moved_m, elapsed_s} — and arrival is confirmed
+    by ONE geodesic check (verify-side oracle) so a through-wall euclidean
+    coincidence can never PASS."""
+
+    def _feed(self, base):
+        from vector_os_nano.playground.habitat.sysnav_bridge import (
+            HabitatSysnavBridge,
+        )
+
+        return HabitatSysnavBridge(base, hz=0.01, state_hz=0.0)
+
+    def test_already_there_short_circuits(self) -> None:
+        from types import SimpleNamespace
+
+        base = SimpleNamespace(get_position=lambda: [2.0, 1.0, 0.0])
+        feed = self._feed(base)
+        try:
+            out = feed.navigate_to(2.0, 1.0, tol=0.5, timeout_s=5.0)
+            assert out["reached"] is True
+            assert out["already_there"] is True
+            assert out["moved_m"] == 0.0
+            assert "elapsed_s" in out
+        finally:
+            feed.destroy()
+
+    def test_through_wall_euclid_rejected_by_geodesic(self) -> None:
+        from types import SimpleNamespace
+
+        pos = [0.0, 0.0, 0.0]
+        base = SimpleNamespace(
+            get_position=lambda: list(pos),
+            geodesic_distance=lambda a, b: 9.9,  # wall between — long way round
+        )
+        feed = self._feed(base)
+        try:
+            import threading
+            import time as _t
+
+            def _move():
+                _t.sleep(0.3)
+                pos[0], pos[1] = 2.0, 1.0  # euclid-converged (other side of wall)
+
+            threading.Thread(target=_move, daemon=True).start()
+            out = feed.navigate_to(2.0, 1.0, timeout_s=3.0, poll_s=0.2)
+            assert out["reached"] is False
+            assert out["reason"] == "geodesic_mismatch"
+        finally:
+            feed.destroy()
+
+    def test_motion_evidence_in_every_outcome(self) -> None:
+        from types import SimpleNamespace
+
+        base = SimpleNamespace(get_position=lambda: [0.0, 0.0, 0.0])
+        feed = self._feed(base)
+        try:
+            out = feed.navigate_to(5.0, 5.0, timeout_s=2.0, stall_s=0.3,
+                                   poll_s=0.1)
+            assert out["reached"] is False
+            assert out["moved_m"] == 0.0
+            assert out["elapsed_s"] >= 0.0
+            assert out["already_there"] is False
+        finally:
+            feed.destroy()
+
+    def test_skill_passes_motion_evidence_through(self) -> None:
+        from types import SimpleNamespace
+
+        class _Base:
+            def navigate_to(self, x, y, tol=0.2):
+                return {"reached": True, "pos": [x, y, 0.0], "remaining": 0.1,
+                        "already_there": True, "moved_m": 0.0,
+                        "elapsed_s": 0.01}
+
+        ctx = SimpleNamespace(base=_Base(), world_model=None, agent=None)
+        res = NavigateToPointSkill().execute({"x": 1.0, "y": 2.0}, ctx)
+        assert res.success
+        assert res.result_data["already_there"] is True
+        assert res.result_data["moved_m"] == 0.0

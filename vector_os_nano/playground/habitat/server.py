@@ -528,27 +528,52 @@ class HabitatServer:
         Paced in wall time at ``speed`` m/s so the viewer animates the drive
         (``speed <= 0`` keeps the legacy instant advance for harnesses).
         """
-        start, yaw, _, _ = self._read_pose()
-        goal_world = [float(x), float(y), _hab_to_world(start)[2]]
-        goal = self.sim.pathfinder.snap_point(_world_to_hab(goal_world))
-
-        path = habitat_sim.ShortestPath()
-        path.requested_start = start
-        path.requested_end = np.array(goal, dtype=np.float32)
-        if not self.sim.pathfinder.find_path(path) or not list(path.points):
-            return {"reached": False, "reason": "no_path", **self.get_state()}
-
+        t0 = time.monotonic()
+        # Lease FIRST (R6, design review #19): reading the pose before owning
+        # motion lets a concurrent cmd_vel stream move the robot under us —
+        # the plan would start from a stale pose.
         self._acquire_lease()
         try:
+            start, yaw, _, _ = self._read_pose()
+            goal_world = [float(x), float(y), _hab_to_world(start)[2]]
+            goal = self.sim.pathfinder.snap_point(_world_to_hab(goal_world))
+
+            gd0 = self.geodesic_distance(
+                _hab_to_world(start), [float(x), float(y), _hab_to_world(start)[2]]
+            )
+            if gd0 <= tol:
+                # Honest distinct outcome — never a zero-motion 'reached'.
+                return {
+                    "reached": True, "already_there": True, "moved_m": 0.0,
+                    "elapsed_s": round(time.monotonic() - t0, 3),
+                    "remaining": gd0, **self.get_state(),
+                }
+
+            path = habitat_sim.ShortestPath()
+            path.requested_start = start
+            path.requested_end = np.array(goal, dtype=np.float32)
+            if not self.sim.pathfinder.find_path(path) or not list(path.points):
+                return {
+                    "reached": False, "reason": "no_path", "already_there": False,
+                    "moved_m": 0.0, "elapsed_s": round(time.monotonic() - t0, 3),
+                    **self.get_state(),
+                }
+
             pos = start
+            moved = 0.0
             step_len = 0.15
-            for wp in list(path.points)[1:]:
+            # Intermediate waypoints use a FIXED small threshold; only the
+            # FINAL waypoint honours the caller's tol (a 1.5 m tol used to
+            # let the follower cut every corner of the path).
+            waypoints = list(path.points)[1:]
+            for wp_i, wp in enumerate(waypoints):
                 wp = np.array(wp, dtype=np.float32)
+                wp_tol = tol if wp_i == len(waypoints) - 1 else min(tol, 0.2)
                 stall = 0
                 for _ in range(400):  # hard bound per waypoint
                     delta = wp - pos
                     planar = math.hypot(float(delta[0]), float(delta[2]))
-                    if planar <= tol:
+                    if planar <= wp_tol:
                         break
                     # face the waypoint (habitat: forward = -Z rotated by yaw)
                     yaw = math.atan2(-float(delta[0]), -float(delta[2]))
@@ -559,26 +584,33 @@ class HabitatServer:
                     new_pos = np.array(
                         self.sim.pathfinder.try_step(pos, target), dtype=np.float32
                     )
-                    moved = float(np.linalg.norm(new_pos - pos))
-                    if moved < 1e-4:
+                    step_moved = float(np.linalg.norm(new_pos - pos))
+                    if step_moved < 1e-4:
                         stall += 1
                         if stall >= 3:
                             break  # wall-stuck: stop honestly, verify will judge
                     else:
                         stall = 0
+                    moved += step_moved
                     pos = new_pos
                     self._write_pose(pos, yaw)
                     if self._viewer is not None:
                         self._sync_agent()
                         self.emit_frame()
-                    if speed > 0.0 and moved > 0.0:
-                        time.sleep(moved / speed)
+                    if speed > 0.0 and step_moved > 0.0:
+                        time.sleep(step_moved / speed)
             self._write_pose(pos, yaw)
         finally:
             self._release_lease()
         out = self.get_state()
         gd = self.geodesic_distance(out["pos"], [float(x), float(y), out["pos"][2]])
-        out["reached"] = bool(gd <= max(tol * 2.0, 0.4))
+        # Strict arrival (R6, design review #2): the caller's tol, floored
+        # only by the kinematic step quantum — the old tol*2.0 inflation let
+        # a 1.5 m tol grade 3 m away as 'reached'.
+        out["reached"] = bool(gd <= max(tol, 0.4))
+        out["already_there"] = False
+        out["moved_m"] = round(moved, 3)
+        out["elapsed_s"] = round(time.monotonic() - t0, 3)
         out["remaining"] = gd
         return out
 
