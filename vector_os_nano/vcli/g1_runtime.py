@@ -81,5 +81,19 @@ def boot_g1_agent(
         registry.register(s)
     agent._skill_registry = registry
 
-    _emit(on_status, "G1 base connected — walk/turn/stop/navigate_to ready")
+    if room:
+        # Register the room's GT-known targets into the world model (campaign #8
+        # R3/R5): they are PLACED objects with known coordinates, so the planner
+        # treats '去蓝色目标' as navigate-to-a-known-object (NOT detect-then-go —
+        # that perception path is the DQ-10-gated photoreal half, R6+/owner).
+        # NavigateToPointSkill resolves the label here OR via base.list_targets.
+        from vector_os_nano.core.world_model import ObjectState
+        for name, (tx, ty) in base.list_targets().items():
+            agent._world_model.add_object(ObjectState(
+                object_id=name, label=name, x=float(tx), y=float(ty),
+                confidence=1.0, state="placed",
+                properties={"source": "g1_room_ground_truth"}))
+
+    _emit(on_status, "G1 base connected — walk/turn/stop/navigate_to ready"
+          + (f" — {len(base.list_targets())} known targets" if room else ""))
     return agent

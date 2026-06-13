@@ -277,6 +277,18 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      → g1_room.target_position → obstacle-aware navigate). Photoreal RGB
      recognition stays gated by DQ-10; explore must be real lidar-map driven
      (no hardcoded waypoints).
+   - **R5 SHIPPED (go-to-labeled-target + occupancy foundation):** (1)
+     hardware/sim/occupancy.py — a pure-numpy ray-march OccupancyGrid (lidar
+     hits → OCCUPIED, ray cells → FREE, sticky obstacles) with coverage() +
+     frontiers() + nearest_frontier_world() (the mapping foundation R6's
+     explorer consumes). (2) NavigateToPointSkill now resolves a `label`
+     against `base.list_targets()` (g1_room GT targets) when the world model
+     has no semantic match — '去蓝色目标'/'go to blue' drives to the labeled
+     target with obstacle-aware nav, WITHOUT photoreal recognition (the
+     DQ-10-gated half stays deferred); zh/en color aliases. Semantic-perception
+     path unchanged when present. The 'go to the target object's point' half of
+     req #5. NEXT R6: wire occupancy + frontier autonomous explore into the G1
+     loop (the 'autonomously explore' half).
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

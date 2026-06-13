@@ -24,6 +24,42 @@ from vector_os_nano.core.types import SkillResult
 logger = logging.getLogger(__name__)
 
 
+def _resolve_base_target(base: object, label: str
+                         ) -> "tuple[float, float] | None":
+    """Resolve a label against the base's GROUND-TRUTH targets, if it exposes
+    ``list_targets() -> {name: (x, y)}`` (g1_room). Matches the exact name,
+    ``target_<label>``, or a color/word suffix (so 'blue' finds 'target_blue').
+    Returns (x, y) or None. This is the substrate-agnostic go-to-target path —
+    NOT photoreal recognition (that stays gated by DQ-10)."""
+    fn = getattr(base, "list_targets", None)
+    if not callable(fn):
+        return None
+    try:
+        targets = fn() or {}
+    except Exception:  # noqa: BLE001 — a flaky base never breaks navigation
+        return None
+    key = label.strip().lower()
+    # zh/en color aliases so '去蓝色目标'/'blue'/'blue_target' all resolve. The
+    # planner emits varied label shapes (a bare color, a zh phrase, or a
+    # compound 'blue_target'); tokenise both sides and match on the DISTINCTIVE
+    # token (the color), ignoring the generic 'target'/'目标' filler.
+    _ALIASES = {"红": "red", "蓝": "blue", "绿": "green"}
+    _FILLER = {"target", "目标", "the", "go", "to", "去", "color", ""}
+    key_tokens: set = set()
+    for zh, en in _ALIASES.items():       # zh color words appear as substrings
+        if zh in key:
+            key_tokens.add(en)
+    for t in key.replace(" ", "_").split("_"):   # en/compound tokens
+        if t and t not in _FILLER:
+            key_tokens.add(t)
+    for name, xy in targets.items():
+        n = str(name).lower()
+        name_tokens = {t for t in n.split("_") if t not in _FILLER}
+        if key == n or (key_tokens and key_tokens & name_tokens):
+            return (float(xy[0]), float(xy[1]))
+    return None
+
+
 @skill(
     aliases=["navigate to", "go to", "走到", "导航到", "去坐标"],
     direct=False,
@@ -37,8 +73,12 @@ class NavigateToPointSkill:
         "shortest navigable path. Use for any 'go to position / 走到坐标' "
         "instruction with explicit coordinates."
     )
-    # Kinematic in sim, but a long path still takes wall time over the bridge.
-    typical_duration_sec: float = 20.0
+    # A real obstacle-routed walk takes wall time: the G1 biped gait at ~0.4
+    # m/s with pivots covers a ~5 m room route in ~120 s (campaign #8 R3/R5
+    # measured). This is the timeout FLOOR (max'd with the planner's estimate)
+    # — it only PREVENTS a premature cut, never forces slowness, so the faster
+    # go2/habitat navigations are unaffected. The old 20 s cut G1 mid-route.
+    typical_duration_sec: float = 130.0
     # The deterministic VLN success criterion. Bind the SAME x, y here and in
     # strategy_params (the planner copies the literal coordinates).
     # STANDOFF (N4): an object-label goal verifies < 1.5 — a real robot stops
@@ -116,54 +156,57 @@ class NavigateToPointSkill:
         if label:
             wm = getattr(context, "world_model", None)
             matches = wm.get_objects_by_label(label) if wm is not None else []
-            if not matches:
-                known = sorted({o.label for o in wm.get_objects()}) if wm else []
-                # An EMPTY world model means semantic perception has not run at
-                # all — replanning cannot help; tell the user the actual fix
-                # (owner finding (c): '走到sofa' burned replans on this).
-                if not known:
-                    hint = (
-                        " — the world model is EMPTY: semantic perception is "
-                        "not running. Start it first (say '启动sysnav' / "
-                        "'start sysnav'), wait for detections, then retry."
-                    )
+            if matches:
+                best = max(matches, key=lambda o: o.confidence)
+                x, y = float(best.x), float(best.y)
+                params = dict(params)
+                props = getattr(best, "properties", None) or {}
+                rect = props.get("rect") if props.get("type") == "room" else None
+                if rect is not None:
+                    # ROOM goal (batch 2 #3): a room is a REGION — drive INTO
+                    # the rect, never park at the 1.5 m object standoff (which
+                    # can exceed the start distance and degrade to a no-op; the
+                    # '走到厨房' seed). Tolerance from the rect's half-dims keeps
+                    # the arrival point inside; visited('<label>') is honest.
+                    try:
+                        x0, y0, x1, y1 = (float(v) for v in rect)
+                        half_min = min(abs(x1 - x0), abs(y1 - y0)) / 2.0
+                        params["tol"] = max(0.3, min(half_min * 0.8, 1.5))
+                    except (TypeError, ValueError):
+                        params["tol"] = max(float(params.get("tol", 0.0) or 0.0), 1.5)
+                    goal_kind = "room"
                 else:
-                    hint = ""
-                return SkillResult(
-                    success=False,
-                    error_message=(
-                        f"no object matching {label!r} in the live world model; "
-                        f"known objects: {known or '<none>'}{hint}"
-                    ),
-                    result_data={"diagnosis": "object_not_found", "label": label},
-                )
-            best = max(matches, key=lambda o: o.confidence)
-            x, y = float(best.x), float(best.y)
-            params = dict(params)
-            props = getattr(best, "properties", None) or {}
-            rect = props.get("rect") if props.get("type") == "room" else None
-            if rect is not None:
-                # ROOM goal (batch 2 #3): a room is a REGION — drive INTO the
-                # rect, never park at the 1.5 m object standoff (which can
-                # exceed the start distance and degrade to a no-op; the
-                # '走到厨房' seed). Tolerance from the rect's half-dims keeps
-                # the arrival point inside; visited('<label>') is the honest
-                # predicate (see verify_hint).
-                try:
-                    x0, y0, x1, y1 = (float(v) for v in rect)
-                    half_min = min(abs(x1 - x0), abs(y1 - y0)) / 2.0
-                    params["tol"] = max(0.3, min(half_min * 0.8, 1.5))
-                except (TypeError, ValueError):
+                    # OBJECT goal — semantic standoff: "go to the sofa" means
+                    # NEAR it; the follower halts at the furniture clearance.
                     params["tol"] = max(float(params.get("tol", 0.0) or 0.0), 1.5)
-                goal_kind = "room"
+                    goal_kind = "object"
             else:
-                # OBJECT goal — semantic standoff: "go to the sofa" means NEAR
-                # it. The nav stack plans up to the furniture clearance
-                # boundary and the follower halts at the path END — a tight
-                # tolerance on the object's OWN coordinates can never be met
-                # (N4 live finding).
-                params["tol"] = max(float(params.get("tol", 0.0) or 0.0), 1.5)
-                goal_kind = "object"
+                # No semantic match. Substrate-agnostic fallback (campaign #8
+                # R5): a base may expose GROUND-TRUTH labeled targets
+                # (g1_room.list_targets) — the 'go to the target object's point'
+                # half of req #5 WITHOUT photoreal recognition (DQ-10-gated).
+                gt_target = _resolve_base_target(base, label)
+                if gt_target is not None:
+                    x, y = gt_target
+                    params = dict(params)
+                    params["tol"] = max(float(params.get("tol", 0.0) or 0.0), 0.35)
+                    goal_kind = "object"
+                else:
+                    known = sorted({o.label for o in wm.get_objects()}) if wm else []
+                    # An EMPTY world model means semantic perception never ran —
+                    # replanning cannot help; name the actual fix.
+                    hint = ("" if known else
+                            " — the world model is EMPTY: semantic perception "
+                            "is not running. Start it first (say '启动sysnav' / "
+                            "'start sysnav'), wait for detections, then retry.")
+                    return SkillResult(
+                        success=False,
+                        error_message=(
+                            f"no object matching {label!r} in the live world "
+                            f"model; known objects: {known or '<none>'}{hint}"),
+                        result_data={"diagnosis": "object_not_found",
+                                     "label": label},
+                    )
         else:
             try:
                 x, y = float(params["x"]), float(params["y"])
