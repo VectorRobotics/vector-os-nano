@@ -268,6 +268,15 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      the centre obstacle (geodesic 4.52m vs straight 3.70m). Flat g1_flat
      behaviour unchanged (no obstacles → euclidean geodesic, direct drive).
      **Deferred to post-DQ-10: photoreal-RGB VLN object recognition (req #5).**
+   - **R4 REVIEW (no code):** AUDIT confirmed all 3 commits real, modules +
+     scenarios present, suite green, journal truthful, no spinning, docs
+     bounded (7 canonical + 3 root). Req status: #1 gait ✓, #2 collision ✓,
+     #3 avoidance ✓, #4 lidar ✓ (RGB/depth deferred), #6 vcli ✓; #5 explore→
+     go-to-target is NEXT. **R5 = substrate-agnostic req-#5 loop**: lidar
+     occupancy grid → frontier autonomous explore → GoToTargetSkill (NL label
+     → g1_room.target_position → obstacle-aware navigate). Photoreal RGB
+     recognition stays gated by DQ-10; explore must be real lidar-map driven
+     (no hardcoded waypoints).
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
