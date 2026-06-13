@@ -223,6 +223,28 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
+-5. **CAMPAIGN #8 — NEXT (owner-set 2026-06-13): high-fidelity sim with REAL
+   physics, controlled entirely via vector-cli.** Full goal + the
+   architecture decision in **docs/realsim-plan.md** (READ IT FIRST next
+   session). One-line: G1/Go2 must run real VLN/nav-stack/SysNav/control in a
+   high-fidelity sim with REAL local-motion gait (not the habitat glide),
+   real physics + collision (no pass-through), obstacle avoidance, real
+   sensors, autonomous explore→go-to-object — ALL driven from vector-cli (the
+   only acceptance surface). The owner saw: G1 in habitat still glides/
+   passes through (habitat is navmesh-KINEMATIC by design — real physics
+   needs a different substrate). R1 = a PROBE + judge-panel workflow to pick
+   the substrate (MuJoCo-as-world / habitat-3-Bullet / Isaac / co-sim) → DQ
+   to the owner BEFORE building. Campaigns #5-#7 (real MuJoCo gait + the
+   visibility-graph planner) are the reusable foundation.
+
+-4. **CAMPAIGN #7 — batch 1 SHIPPED, batches 2-3 FOLD INTO campaign #8
+   (2026-06-13).** Visibility-graph obstacle planner (hardware/sim/
+   g1_vgraph.py, pure geometry, 12 offline tests; commit 1186255) + a
+   legible demo (scripts/demo_g1_obstacle_plan.py). Batch 2/3
+   (navigate_to_avoiding + obstacle scene + GUI) were superseded by the
+   campaign #8 substrate decision — obstacle collision IS what changes, so
+   they re-form on the chosen physics substrate.
+
 -3. **CAMPAIGN #6 COMPLETE (2026-06-13, owner directive "做 G1 navigate";
    R1-R3, 3 green pushed commits, suite 1548→1558)**: G1 closed-loop
    waypoint navigation.
