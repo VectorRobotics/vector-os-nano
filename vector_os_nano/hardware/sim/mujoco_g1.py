@@ -53,6 +53,26 @@ _NUM_OBS = 47
 _GAIT_PERIOD = 0.8
 _DEADMAN_S = 0.6                       # cmd_vel keep-alive (go2/habitat lesson)
 
+# --- navigate_to closed-loop constants (campaign #6) ------------------------
+# Tuned from a sandbox characterization spike of THIS policy's command->motion
+# map (workflow wqknh9p8u finding #1: the policy tracks a SCALED joystick cmd,
+# not a rad/s — gains must come from measurement, not theory). Measured:
+# vyaw cmd 0.6 -> ~0.29 rad/s achieved; vx=0 turn-in-place is STABLE (does NOT
+# stagger — the review's fear was wrong for this policy); base z ~0.77 standing.
+_NAV_TOL_FLOOR = 0.30        # gait COM oscillation floor — tol can't beat this
+_NAV_VYAW_MAX = 0.6          # cmd ceiling (~0.29 rad/s achieved)
+_NAV_K_YAW = 2.0             # proportional heading gain (saturates ~0.3 rad err)
+_NAV_FACE_TOL = 0.35         # rad: pivot-in-place until aligned within this
+_NAV_YAW_DEADBAND = 0.12     # rad: stop steering when aligned (anti-hunt)
+_NAV_SPEED = 0.5             # default forward cmd
+_NAV_CAPTURE_R = 0.5         # m: inside, freeze steering + drive straight
+_NAV_FALL_Z = 0.4            # m: base height below this = fallen
+_NAV_TICK_S = 0.05           # 20 Hz: 12x deadman margin
+_NAV_SETTLE_S = 1.0          # hold stance + re-sample before deciding arrival
+_NAV_TIMEOUT_S = 60.0
+_NAV_STALL_WINDOW_S = 6.0    # forward-walk no-progress window
+_NAV_STALL_MIN_M = 0.10      # min net progress within the window
+
 
 def g1_assets_ready() -> bool:
     """True when scripts/setup_g1_gait.sh has installed the assets."""
@@ -291,6 +311,128 @@ class G1MuJoCoBase:
             time.sleep(0.1)
         self.stop()
         return True
+
+    def navigate_to(self, x: float, y: float, tol: float = 0.2,
+                    speed: float = _NAV_SPEED) -> dict:
+        """Closed-loop face->walk->arrive drive to world (x, y) on the flat
+        scene. The sim-oracle ``base.navigate_to`` NavigateToPointSkill calls;
+        returns the three-value contract {reached, already_there, moved_m,
+        elapsed_s, remaining, pos, reason, transport}.
+
+        Runs ENTIRELY on the caller thread — only the public primitives
+        (set_velocity / get_position / get_heading / stop), NEVER mjData (the
+        50 Hz control thread owns it; reads go through the pose snapshot).
+        Constants are measured (see _NAV_* and the campaign #6 spike); the
+        adversarial review's gait traps are handled explicitly: a tol FLOOR at
+        the gait's COM-oscillation amplitude, a heading dead-band (anti-hunt),
+        a capture mode near the goal (freeze steering, drive straight — no
+        pivot-orbit), a SETTLE phase before deciding arrival (the biped coasts
+        past the break), fall detection, a mode-gated stall detector, and a NaN
+        guard. ``moved_m`` is real path length; ``net_m`` the start->end
+        displacement (an orbit inflates the former, not the latter).
+        """
+        import math
+
+        self._require_connected()
+        if not all(math.isfinite(v) for v in (x, y, tol, speed)):
+            return {"reached": False, "already_there": False, "moved_m": 0.0,
+                    "elapsed_s": 0.0, "remaining": float("inf"),
+                    "reason": "bad_params_nan", "transport": "sim_oracle"}
+        tx, ty = float(x), float(y)
+        eff_tol = max(float(tol), _NAV_TOL_FLOOR)   # gait floor, reported below
+        speed = max(0.1, float(speed))
+
+        sx, sy, sz = self.get_position()
+        start_dist = math.hypot(tx - sx, ty - sy)
+        if start_dist <= eff_tol:
+            # already there — never command the gait (no spurious steps)
+            return {"reached": True, "already_there": True, "moved_m": 0.0,
+                    "net_m": 0.0, "elapsed_s": 0.0, "remaining": start_dist,
+                    "pos": [sx, sy, sz], "effective_tol": eff_tol,
+                    "reason": "already_within_tol", "transport": "sim_oracle"}
+
+        t0 = time.monotonic()
+        px, py = sx, sy
+        moved = 0.0
+        best_dist = start_dist
+        best_t = t0
+        reason = "timeout"
+
+        def _wrap(a: float) -> float:
+            return math.atan2(math.sin(a), math.cos(a))
+
+        try:
+            while time.monotonic() - t0 < _NAV_TIMEOUT_S:
+                cx, cy, cz = self.get_position()
+                yaw = self.get_heading()
+                moved += math.hypot(cx - px, cy - py)
+                px, py = cx, cy
+                dist = math.hypot(tx - cx, ty - cy)
+
+                if cz < _NAV_FALL_Z:           # fallen — stop trying
+                    reason = "fell"
+                    break
+                if dist <= eff_tol:
+                    reason = "arrived"
+                    break
+
+                err = _wrap(math.atan2(ty - cy, tx - cx) - yaw)
+                if dist < _NAV_CAPTURE_R:
+                    # capture: stop steering (yaw error near goal is noise),
+                    # creep straight at the last heading — no pivot-orbit.
+                    vx, vyaw = max(0.15, 0.4 * speed), 0.0
+                elif abs(err) > _NAV_FACE_TOL:
+                    # face-first: pivot in place (measured stable for this
+                    # policy), don't walk wide of a badly-aimed target.
+                    vx = 0.0
+                    vyaw = max(-_NAV_VYAW_MAX, min(_NAV_VYAW_MAX,
+                                                   _NAV_K_YAW * err))
+                else:
+                    vx = speed
+                    vyaw = (0.0 if abs(err) < _NAV_YAW_DEADBAND
+                            else max(-_NAV_VYAW_MAX, min(_NAV_VYAW_MAX,
+                                                         _NAV_K_YAW * err)))
+                self.set_velocity(vx, 0.0, vyaw)
+
+                # stall: only judged while actually walking forward (a long
+                # legitimate pivot is not a stall). Net progress toward goal.
+                if vx > 0.0:
+                    if dist < best_dist - _NAV_STALL_MIN_M:
+                        best_dist, best_t = dist, time.monotonic()
+                    elif time.monotonic() - best_t > _NAV_STALL_WINDOW_S:
+                        reason = "stalled_no_progress"
+                        break
+                else:
+                    best_t = time.monotonic()   # pause stall clock while pivoting
+                time.sleep(_NAV_TICK_S)
+        finally:
+            self.stop()
+
+        # Settle: hold commanded stance ~1 gait period and re-sample the
+        # AUTHORITATIVE arrival pose — the biped coasts past the in-flight
+        # break sample (review high-finding). moved_m accrues across settle.
+        settle_end = time.monotonic() + _NAV_SETTLE_S
+        while time.monotonic() < settle_end:
+            self.set_velocity(0.0, 0.0, 0.0)   # re-arm deadman at zero
+            cx, cy, _cz = self.get_position()
+            moved += math.hypot(cx - px, cy - py)
+            px, py = cx, cy
+            time.sleep(_NAV_TICK_S)
+
+        fx, fy, fz = self.get_position()
+        remaining = math.hypot(tx - fx, ty - fy)
+        reached = bool(remaining <= eff_tol and fz >= _NAV_FALL_Z)
+        if reached:
+            reason = "ok"
+        return {
+            "reached": reached, "already_there": False,
+            "moved_m": round(moved, 3),
+            "net_m": round(math.hypot(fx - sx, fy - sy), 3),
+            "elapsed_s": round(time.monotonic() - t0, 3),
+            "remaining": round(remaining, 3),
+            "pos": [fx, fy, fz], "effective_tol": eff_tol,
+            "reason": reason, "transport": "sim_oracle",
+        }
 
     def stop(self) -> None:
         self._require_connected()
