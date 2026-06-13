@@ -77,6 +77,7 @@ class G1MuJoCoBase:
     """
 
     supports_holonomic = True
+    supports_lidar = False           # BaseProtocol conformance (no lidar)
 
     def __init__(self, asset_dir: "Path | str | None" = None) -> None:
         self._asset_dir = Path(asset_dir) if asset_dir else _ASSET_DIR
@@ -93,6 +94,15 @@ class G1MuJoCoBase:
         self._model = None
         self._data = None
         self._policy = None
+        # Thread-safe pose SNAPSHOT (campaign #5 R3, workflow-confirmed
+        # critical): mj_step writes the 37-float qpos in ONE native C call the
+        # GIL does NOT interrupt, so a reader touching self._data.qpos mid-step
+        # gets a torn vector that never existed in any physics state. The
+        # control thread publishes a consistent (qpos[:7], qvel[:6]) copy under
+        # _snap_lock once per policy batch; readers consume ONLY the snapshot,
+        # never self._data. Lower contention than locking the whole mj_step.
+        self._snap_lock = threading.Lock()
+        self._snap = None  # (qpos7: np.ndarray, qvel6: np.ndarray)
 
     # -- lifecycle ---------------------------------------------------------
     def connect(self) -> None:
@@ -104,6 +114,9 @@ class G1MuJoCoBase:
         self._data = mujoco.MjData(self._model)
         self._model.opt.timestep = _SIM_DT
         self._policy = torch.jit.load(str(self._asset_dir / "motion.pt"))
+        # Publish the initial pose so readers before the first policy batch
+        # still get a real snapshot (not None).
+        self._snap = (self._data.qpos[:7].copy(), self._data.qvel[:6].copy())
         self._running = True
         self._thread = threading.Thread(
             target=self._control_loop, daemon=True, name="g1-gait-control")
@@ -116,6 +129,8 @@ class G1MuJoCoBase:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+        with self._snap_lock:
+            self._snap = None     # post-disconnect readers raise, not crash
         self._model = self._data = self._policy = None
 
     close = disconnect
@@ -169,6 +184,9 @@ class G1MuJoCoBase:
                     torch.from_numpy(obs).unsqueeze(0)
                 ).numpy().squeeze()
             target = action * _ACTION_SCALE + _DEFAULT_ANGLES
+            # Publish a consistent pose snapshot for cross-thread readers.
+            with self._snap_lock:
+                self._snap = (d.qpos[:7].copy(), d.qvel[:6].copy())
             # pace to 1x wall time: coarse sleep, then spin the last ~3 ms —
             # time.sleep() overshoots multiple ms on a desktop kernel and at
             # 50 batches/s that alone dragged the sim to ~0.67x wall.
@@ -182,15 +200,27 @@ class G1MuJoCoBase:
                 while time.monotonic() < next_tick:
                     pass
 
+    def _snapshot(self):
+        """A consistent (qpos7, qvel6) copy, or raise if disconnected.
+
+        Collapses the connected-check and the read into ONE locked region so
+        a concurrent disconnect() can't null the snapshot between guard and
+        use (TOCTOU, workflow-confirmed). Readers NEVER touch self._data.
+        """
+        with self._snap_lock:
+            snap = self._snap
+        if snap is None:
+            raise RuntimeError("G1MuJoCoBase not connected (call connect())")
+        return snap
+
     # -- BaseProtocol -------------------------------------------------------
     def set_velocity(self, vx: float, vy: float = 0.0,
-                     vyaw: float = 0.0) -> dict:
+                     vyaw: float = 0.0) -> None:
         """Non-blocking streaming command; 0.6 s deadman keep-alive."""
         self._require_connected()
         with self._lock:
             self._cmd[:] = (float(vx), float(vy), float(vyaw))
             self._cmd_stamp = time.monotonic()
-        return {"ok": True}
 
     def walk(self, vx: float, vy: float = 0.0, vyaw: float = 0.0,
              duration: float = 1.0) -> bool:
@@ -207,30 +237,31 @@ class G1MuJoCoBase:
         self.stop()
         return True
 
-    def stop(self) -> dict:
+    def stop(self) -> None:
         self._require_connected()
         with self._lock:
             self._cmd[:] = 0.0
             self._cmd_stamp = time.monotonic()
-        return {"ok": True}
 
     def get_position(self) -> "list[float]":
-        self._require_connected()
-        return [float(self._data.qpos[0]), float(self._data.qpos[1]),
-                float(self._data.qpos[2])]
+        q, _ = self._snapshot()
+        return [float(q[0]), float(q[1]), float(q[2])]
 
     def get_heading(self) -> float:
-        self._require_connected()
-        qw, qx, qy, qz = self._data.qpos[3:7]
+        q, _ = self._snapshot()
+        qw, qx, qy, qz = q[3], q[4], q[5], q[6]
         return math.atan2(2.0 * (qw * qz + qx * qy),
                           1.0 - 2.0 * (qy * qy + qz * qz))
 
+    def get_velocity(self) -> "list[float]":
+        """Body linear velocity [vx, vy, vz] from physics state."""
+        _, v = self._snapshot()
+        return [float(v[0]), float(v[1]), float(v[2])]
+
     def get_odometry(self):
-        self._require_connected()
         from vector_os_nano.core.types import Odometry
 
-        q = self._data.qpos
-        v = self._data.qvel
+        q, v = self._snapshot()
         return Odometry(
             timestamp=time.time(),
             x=float(q[0]), y=float(q[1]), z=float(q[2]),

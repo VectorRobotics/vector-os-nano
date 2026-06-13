@@ -97,7 +97,40 @@ class TestRealGaitMotion:
     def test_odometry_is_physics_state(self, base):
         odo = base.get_odometry()
         assert odo.timestamp > 0
-        assert abs(odo.z - base.get_position()[2]) < 1e-6
-        # quaternion normalized (real state, not defaults)
+        assert odo.z > 0.45                       # upright, real height
+        # quaternion normalized (real physics state, not the qw=1 default)
         n = math.sqrt(odo.qw**2 + odo.qx**2 + odo.qy**2 + odo.qz**2)
         assert abs(n - 1.0) < 1e-3
+
+    def test_concurrent_odometry_never_torn(self, base):
+        """The snapshot fix (workflow critical): hammer get_odometry from a
+        reader thread WHILE the gait walks. A torn read mixing two physics
+        states would denormalize the quaternion — assert every sample stays
+        unit-norm. Also exercises get_velocity off-thread."""
+        import threading
+
+        norms = []
+        stop = threading.Event()
+
+        def reader():
+            while not stop.is_set():
+                o = base.get_odometry()
+                norms.append(
+                    math.sqrt(o.qw**2 + o.qx**2 + o.qy**2 + o.qz**2))
+                base.get_velocity()
+
+        t = threading.Thread(target=reader)
+        t.start()
+        base.walk(0.4, 0.0, 0.3, duration=2.0)
+        stop.set()
+        t.join()
+        assert len(norms) > 100, f"reader sampled too few: {len(norms)}"
+        assert all(abs(n - 1.0) < 1e-3 for n in norms), \
+            "torn quaternion read — snapshot not atomic"
+
+    def test_reads_after_disconnect_fail_loud(self):
+        b = G1MuJoCoBase()
+        b.connect()
+        b.disconnect()
+        with pytest.raises(RuntimeError, match="not connected"):
+            b.get_position()

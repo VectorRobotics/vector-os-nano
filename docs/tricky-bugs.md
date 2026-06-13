@@ -229,3 +229,25 @@ Routine bugs do NOT belong here; git history covers those.
   an LLM fills a schema, normalize null-shaped output at the FIRST seam, and
   when a repro with the obvious input passes, reproduce with the model's
   ACTUAL output shape before concluding "didn't fire".
+
+## Case 12 — torn cross-thread read of MuJoCo state under the GIL (2026-06-12)
+
+- **Symptom:** none yet — caught by an adversarial workflow review of brand-new
+  threading code before it shipped a bug. G1MuJoCoBase runs mj_step in a
+  background control thread; get_position/get_odometry read self._data.qpos
+  from the main thread with no lock.
+- **Why hidden:** the GIL gives a FALSE sense of safety. `mujoco.mj_step` is a
+  single native C call that writes the whole 37-float qpos array; the GIL does
+  NOT interrupt it, but it also does NOT make a Python-side `self._data.qpos[0]`
+  read atomic with respect to the C writes — a reader can observe qpos[0] from
+  step N+1 and qpos[1] from step N (a pose that never physically existed). A
+  denormalized quaternion is the tell.
+- **Fix:** the control thread publishes a consistent (qpos[:7], qvel[:6]) COPY
+  under a short lock once per policy batch; readers consume only that snapshot,
+  never self._data. Lower contention than locking the whole mj_step, and it
+  also closes a TOCTOU between the connected-check and the read (one locked
+  region). Regression: a reader thread hammering get_odometry during a walk
+  asserts every quaternion stays unit-norm.
+- **Lesson:** "the GIL protects me" is wrong for C-extension state. Any object a
+  C call mutates in bulk (numpy-backed sim state, ctypes buffers) needs explicit
+  synchronization or a snapshot hand-off — the GIL only serializes BYTECODE.
