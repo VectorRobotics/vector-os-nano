@@ -82,3 +82,32 @@ class TestRealDrive:
         assert out["reached"] is True, f"did not arrive: {out}"
         fx, fy, _ = out["pos"]
         assert math.hypot(tx - fx, ty - fy) <= out["effective_tol"]
+
+
+class TestNavigateViewer:
+    def test_frames_advance_toward_goal(self, base):
+        """GUI evidence: chase frames captured DURING a navigate show the
+        robot CLOSING distance to the goal (monotonic-ish) and the frames
+        differ (real stepping, not a frozen glide)."""
+        import threading
+        import time as _t
+
+        sx, sy, _ = base.get_position()
+        tx, ty = sx + 2.0, sy + 1.0
+        box = {}
+        t = threading.Thread(
+            target=lambda: box.update(r=base.navigate_to(tx, ty, tol=0.3)),
+            daemon=True)
+        t.start()
+        frames, dists = [], []
+        for _i in range(4):
+            _t.sleep(1.2)
+            frames.append(base.viewer_frame_png())
+            p = base.get_position()
+            dists.append(math.hypot(tx - p[0], ty - p[1]))
+        t.join()
+        assert box["r"]["reached"] is True
+        # distance to goal shrank overall (closed the gap)
+        assert dists[-1] < dists[0] - 0.5, f"did not approach goal: {dists}"
+        # frames differ (stepping, not frozen)
+        assert frames[0] != frames[-1]

@@ -81,6 +81,40 @@ def main() -> int:
                 rc = 1
             base.stop()
             time.sleep(0.8)   # settle before the next phase
+
+        # Navigate phase (campaign #6): closed-loop drive to a diagonal goal,
+        # capturing frames while it walks there. Verdict on the three-value
+        # contract (reached + real net displacement), not command echo.
+        sx, sy, _ = base.get_position()
+        tx, ty = sx + 2.5, sy + 1.2
+        nav_box = {}
+        nav_t = threading.Thread(
+            target=lambda: nav_box.update(r=base.navigate_to(tx, ty, tol=0.3)),
+            daemon=True)
+        nav_t.start()
+        nav_shots = []
+        for i in range(5):
+            time.sleep(1.3)
+            png = base.viewer_frame_png()
+            fn = art / f"navigate_{i}.png"
+            fn.write_bytes(png)
+            nav_shots.append({"frame": fn.name, "pos": base.get_position()[:2],
+                              "valid_png": png[:8] == b"\x89PNG\r\n\x1a\n"})
+        nav_t.join()
+        r = nav_box.get("r", {})
+        nav_ok = bool(r.get("reached")) and r.get("net_m", 0) > 1.0 and all(
+            s["valid_png"] for s in nav_shots)
+        results.append({"phase": "navigate_to_goal",
+                        "reached": bool(r.get("reached")),
+                        "remaining_m": round(r.get("remaining", -1), 2),
+                        "net_m": round(r.get("net_m", 0), 2),
+                        "verdict": "ok" if nav_ok else "fail",
+                        "frames": [s["frame"] for s in nav_shots]})
+        print(f"[navigate_to_goal] reached={r.get('reached')} "
+              f"remaining={r.get('remaining', -1):.2f}m net={r.get('net_m', 0):.2f}m "
+              f"-> {'OK' if nav_ok else 'FAIL'}")
+        if not nav_ok:
+            rc = 1
     finally:
         base.disconnect()    # instance hygiene
 

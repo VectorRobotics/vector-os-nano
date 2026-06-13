@@ -223,6 +223,33 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
+-3. **CAMPAIGN #6 COMPLETE (2026-06-13, owner directive "做 G1 navigate";
+   R1-R3, 3 green pushed commits, suite 1548→1558)**: G1 closed-loop
+   waypoint navigation.
+   - Batch 1 (R1): G1MuJoCoBase.navigate_to(x,y,tol,speed) — caller-thread
+     face→walk→arrive controller driving the real policy; three-value
+     contract from real get_position deltas. Gains MEASURED (a sandbox
+     spike: vyaw 0.6→~0.29 rad/s, vx=0 turn stable). All 24 adversarial-
+     workflow gait traps handled: tol floor (effective_tol), heading
+     dead-band, capture mode near goal (no pivot-orbit), settle phase
+     (authoritative arrival pose after the biped coasts), fall detection,
+     mode-gated stall, NaN guard. moved_m (path) + net_m (displacement).
+   - Batch 2 (R2): NavigateToPointSkill wired into boot_g1_agent
+     (base-generic, zero skill change). Closed the flat-scene verify break
+     the workflow scout flagged: geodesic_dist fail-safes to inf without a
+     navmesh oracle → coordinate goals could never verify. Honest fix
+     (not a loosening): G1MuJoCoBase.geodesic_distance returns euclidean —
+     geodesic IS the straight line on an obstacle-free scene; the base
+     reports its world's true geodesic (rule 5 intact).
+   - Batch 3 (R3): on-demand chase-cam frames during a navigate +
+     scripts/g1_gait_smoke.py navigate phase. GUI-verified: G1 walks a
+     2.5m diagonal to the goal, distance monotonically 2.88→…→reached
+     (remaining 0.23 < tol 0.3, net 2.55m, clean trajectory moved≈net no
+     orbit), frames show stepping. Smoke 3/3 OK.
+   - 11 navigate tests (contract/real-drive/turn-then-walk/tol-floor/NaN/
+     wiring/verify-binds/viewer-approach). AWAITING OWNER: DQ-4 (merge to
+     master — campaigns #2-#6 all on feat/playground-vln, still waiting).
+
 -2. **CAMPAIGN #5 COMPLETE (2026-06-13, owner directive "G1 用网上现成
    步态"; R1-R6, 4 green pushed commits, suite 1530→1548)**: real G1
    humanoid gait via the unitree_rl_gym pretrained policy (BSD-3; DQ-9
