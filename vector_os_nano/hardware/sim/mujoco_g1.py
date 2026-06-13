@@ -103,6 +103,17 @@ class G1MuJoCoBase:
         # never self._data. Lower contention than locking the whole mj_step.
         self._snap_lock = threading.Lock()
         self._snap = None  # (qpos7: np.ndarray, qvel6: np.ndarray)
+        # On-demand viewer-frame render (campaign #5 batch 3). ALL mujoco
+        # access — including the Renderer's GL context + update_scene reading
+        # mjData — stays on the control thread (Case 12 thread discipline; a
+        # cross-thread render would tear the pose or crash the GL context).
+        # The caller requests a frame via an Event and the control loop renders
+        # it between policy batches. One render in flight (serialized).
+        self._render_lock = threading.Lock()
+        self._render_req = threading.Event()
+        self._render_done = threading.Event()
+        self._render_png: "bytes | None" = None
+        self._renderer = None  # lazily created on the control thread
 
     # -- lifecycle ---------------------------------------------------------
     def connect(self) -> None:
@@ -138,6 +149,41 @@ class G1MuJoCoBase:
     def _require_connected(self) -> None:
         if self._data is None or not self._running:
             raise RuntimeError("G1MuJoCoBase not connected (call connect())")
+
+    # -- on-demand viewer frame (control-thread render) --------------------
+    def _render_tracking_frame(self, m, d, h: int = 480, w: int = 640) -> bytes:
+        """Render a chase-camera frame of the robot to PNG (control thread)."""
+        import mujoco
+
+        if self._renderer is None:
+            self._renderer = mujoco.Renderer(m, height=h, width=w)
+        cam = mujoco.MjvCamera()
+        cam.lookat[:] = d.qpos[:3]
+        cam.distance, cam.elevation, cam.azimuth = 3.0, -15.0, 135.0
+        self._renderer.update_scene(d, camera=cam)
+        rgb = self._renderer.render()
+        import io
+
+        import PIL.Image
+        buf = io.BytesIO()
+        PIL.Image.fromarray(rgb).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def viewer_frame_png(self, timeout: float = 5.0) -> bytes:
+        """A chase-camera PNG of the current pose (acceptance/owner artifact).
+
+        Rendered ON the control thread (mujoco thread discipline); the caller
+        blocks until it lands. Serialized — one render in flight."""
+        self._require_connected()
+        with self._render_lock:
+            self._render_done.clear()
+            self._render_req.set()
+            if not self._render_done.wait(timeout=timeout):
+                raise RuntimeError("g1 viewer frame render timed out")
+            png = self._render_png
+        if not png:
+            raise RuntimeError("g1 viewer frame render produced no image")
+        return png
 
     # -- control loop (sim thread owns ALL mujoco/torch state) -------------
     def _control_loop(self) -> None:
@@ -187,6 +233,15 @@ class G1MuJoCoBase:
             # Publish a consistent pose snapshot for cross-thread readers.
             with self._snap_lock:
                 self._snap = (d.qpos[:7].copy(), d.qvel[:6].copy())
+            # On-demand viewer frame: render on THIS thread (owns mjData + GL).
+            if self._render_req.is_set():
+                try:
+                    self._render_png = self._render_tracking_frame(m, d)
+                except Exception as exc:  # noqa: BLE001 — never break the gait
+                    logger.warning("g1 render failed: %s", exc)
+                    self._render_png = None
+                self._render_req.clear()
+                self._render_done.set()
             # pace to 1x wall time: coarse sleep, then spin the last ~3 ms —
             # time.sleep() overshoots multiple ms on a desktop kernel and at
             # 50 batches/s that alone dragged the sim to ~0.67x wall.

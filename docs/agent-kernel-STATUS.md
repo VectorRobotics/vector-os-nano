@@ -223,23 +223,34 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
--2. **CAMPAIGN #5 IN PROGRESS (2026-06-12, owner directive "G1 用网上现成
-   步态"; ~/.vector-nano-loop/campaign.md)**: real G1 humanoid gait via the
-   unitree_rl_gym pretrained policy (BSD-3; DQ-9 APPROVED — zero new pip
-   deps, policy 144 KB TorchScript + MJCF fetched by
+-2. **CAMPAIGN #5 COMPLETE (2026-06-13, owner directive "G1 用网上现成
+   步态"; R1-R6, 4 green pushed commits, suite 1530→1548)**: real G1
+   humanoid gait via the unitree_rl_gym pretrained policy (BSD-3; DQ-9
+   APPROVED — zero new pip deps, policy 144 KB + MJCF fetched by
    scripts/setup_g1_gait.sh into gitignored assets/g1_gait/, never
-   vendored). R1 PROBE: sandbox spike PASS (walks 4.6 m/10 s, turns,
-   stands, never falls, 3.5x RT; obs recipe 47 = 3ω+3g+3cmd+12q+12dq+
-   12act+2phase @ 50 Hz reverse-engineered). R2: **G1MuJoCoBase shipped**
-   (hardware/sim/mujoco_g1.py) — policy control thread (batch-paced to
-   wall time: per-step sleep ran 0.5x, batched 50/s + spin residue;
-   desktop still ~0.63x under governor — exact-1x is a batch-3 GUI item),
-   BaseProtocol set_velocity (0.6 s deadman) / walk / stop / real-physics
-   odometry, supports_holonomic=True (real lateral stepping — the habitat
-   base honestly refuses vy; two worlds, two truths). 7 acceptance tests
-   on REAL physics (displacement/lateral/stop/deadman/pacing/odometry),
-   skipif-gated on assets. NEXT: playground scenario registration (R3) →
-   GUI closing (batch 3).
+   vendored).
+   - Batch 1 PROBE (R1): sandbox spike PASS; obs recipe 47 reverse-
+     engineered; DQ-9 approved.
+   - Batch 2 BUILD (R2-R3): G1MuJoCoBase (hardware/sim/mujoco_g1.py) —
+     50 Hz policy control thread, BaseProtocol set_velocity (0.6 s
+     deadman)/walk/stop/real-physics odometry, supports_holonomic=True
+     (real lateral stepping; the habitat base refuses vy — two worlds,
+     two truths). An adversarial workflow (19 agents) found+fixed 2
+     CRITICALs in this code BEFORE they bit: cross-thread torn MjData
+     reads (snapshot hand-off; tricky-bugs Case 12) and a navigate
+     AttributeError on a walk-only base. Pacing batched to wall time.
+   - Batch 3 wiring + GUI (R5-R6): catalog g1_flat scenario, "g1" in
+     PlaygroundWorld._BASE_EMBODIMENTS, vcli/g1_runtime.boot_g1_agent
+     (base-only registry), cli dispatch. WalkSkill needs ZERO change —
+     drives the base + measures real moved_m. On-demand chase-camera
+     render on the control thread (Case-12-safe); GUI-verified: chase
+     frames during a walk show G1 STEPPING and advancing 1.1 m (not the
+     rigid glide the owner flagged). scripts/g1_gait_smoke.py: 2/2 OK
+     (forward 1.10 m, turn-walk 0.53 m, upright, valid frames).
+   - 13 G1 tests (real-physics displacement/lateral/stop/deadman/pacing/
+     odometry/torn-read/viewer), skipif-gated on assets. AWAITING OWNER:
+     DQ-4 (merge to master — still waiting). Open polish: exact-1x pacing
+     (desktop ~0.63x under governor); G1 navigate (flat scene, no navmesh).
 
 -1. **CAMPAIGN #3 (重构 — 杜绝 false-PASS 家族) — batches 1/2/2.5/3 SHIPPED,
    batch 4 HANDED OVER (owner paused the loop 2026-06-12 for cleanup +

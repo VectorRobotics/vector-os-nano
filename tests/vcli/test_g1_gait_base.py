@@ -134,3 +134,24 @@ class TestRealGaitMotion:
         b.disconnect()
         with pytest.raises(RuntimeError, match="not connected"):
             b.get_position()
+
+    def test_viewer_frame_is_valid_png(self, base):
+        png = base.viewer_frame_png()
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"   # valid PNG signature
+        assert len(png) > 1000                    # a real rendered frame
+
+    def test_viewer_frames_differ_while_walking(self, base):
+        """The GUI acceptance evidence: chase-cam frames captured DURING a
+        walk must differ (the robot visibly steps/advances, not a frozen
+        glide). Rendered on the control thread — no torn pose."""
+        import threading
+
+        t = threading.Thread(
+            target=lambda: base.walk(0.5, 0.0, 0.0, duration=3.0), daemon=True)
+        t.start()
+        time.sleep(0.6)
+        f1 = base.viewer_frame_png()
+        time.sleep(1.2)
+        f2 = base.viewer_frame_png()
+        t.join()
+        assert f1 != f2, "viewer frames identical during a walk — not moving"
