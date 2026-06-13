@@ -61,11 +61,16 @@ def boot_g1_agent(
     from vector_os_nano.skills.go2.stop import StopSkill
     from vector_os_nano.skills.go2.turn import TurnSkill
     from vector_os_nano.skills.go2.walk import WalkSkill
+    from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
 
+    # NavigateToPointSkill is base-generic (campaign #6): it drives
+    # base.navigate_to(x, y, tol) and reads the three-value contract —
+    # G1MuJoCoBase implements both navigate_to and geodesic_distance
+    # (euclidean on the flat scene), so the skill works UNCHANGED.
     registry = SkillRegistry()
-    for s in (WalkSkill(), TurnSkill(), StopSkill()):
+    for s in (WalkSkill(), TurnSkill(), StopSkill(), NavigateToPointSkill()):
         registry.register(s)
     agent._skill_registry = registry
 
-    _emit(on_status, "G1 base connected — walk/turn/stop ready")
+    _emit(on_status, "G1 base connected — walk/turn/stop/navigate_to ready")
     return agent

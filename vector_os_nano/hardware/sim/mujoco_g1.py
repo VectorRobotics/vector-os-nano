@@ -455,6 +455,20 @@ class G1MuJoCoBase:
         _, v = self._snapshot()
         return [float(v[0]), float(v[1]), float(v[2])]
 
+    def geodesic_distance(self, a: "list[float]", b: "list[float]") -> float:
+        """Planar distance between world points a and b.
+
+        On the FLAT, obstacle-free g1_flat scene the geodesic distance is
+        EXACTLY the straight-line distance (no obstacles to route around), so
+        this returns the euclidean planar distance — the honest geodesic for
+        THIS world, not a loosening (a future G1 scene with obstacles would
+        need a real navmesh oracle). Declaring it lets the kernel's
+        ``geodesic_dist(x, y)`` verify predicate bind for coordinate goals,
+        which would otherwise fail-safe to inf (no oracle) and never pass.
+        """
+        import math
+        return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+
     def get_odometry(self):
         from vector_os_nano.core.types import Odometry
 
