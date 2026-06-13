@@ -165,6 +165,21 @@ G1_FLAT = Scenario(
     task_hint="Walk and turn with the G1 humanoid (real policy-driven gait).",
 )
 
+# Campaign #8 R3: the G1 in a closed room with REAL collision walls + obstacle
+# boxes + labeled targets. Same embodiment="g1" (booted by g1_runtime, which
+# switches G1MuJoCoBase into room mode on this id); the scene is built
+# programmatically (g1_room.build_room_model) so scene_xml stays the base
+# asset. object_names = the labeled targets the nav loop can drive to.
+G1_ROOM = Scenario(
+    id="g1_room",
+    embodiment="g1",
+    scene_xml=_G1_SCENE_XML,
+    object_names=("target_red", "target_blue", "target_green"),
+    task_hint=(
+        "Navigate the G1 humanoid around obstacles to a labeled target in a "
+        "closed room (real collision, real gait, obstacle avoidance)."),
+)
+
 # id -> Scenario. Additive: new preset scenes append here.
 SCENARIOS: dict[str, Scenario] = {
     TABLETOP.id: TABLETOP,
@@ -173,6 +188,7 @@ SCENARIOS: dict[str, Scenario] = {
     APARTMENT.id: APARTMENT,
     HOUSE.id: HOUSE,
     G1_FLAT.id: G1_FLAT,
+    G1_ROOM.id: G1_ROOM,
 }
 
 

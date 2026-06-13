@@ -73,6 +73,12 @@ _NAV_TICK_S = 0.05           # 20 Hz: 12x deadman margin
 _NAV_SETTLE_S = 1.0          # hold stance + re-sample before deciding arrival
 _NAV_TIMEOUT_S = 60.0
 _NAV_STALL_WINDOW_S = 6.0    # forward-walk no-progress window
+# Obstacle routing (campaign #8 R3, room mode). Inflate obstacles by the G1
+# body radius + clearance so the planned path keeps the torso off the geometry;
+# intermediate waypoints only need to be rounded loosely (the final goal uses
+# the real tol). Body half-width ~0.2 m + margin.
+_NAV_INFLATION = 0.40
+_NAV_WAYPOINT_TOL = 0.45
 _NAV_STALL_MIN_M = 0.10      # min net progress within the window
 
 
@@ -105,6 +111,7 @@ class G1MuJoCoBase:
         self,
         asset_dir: "Path | str | None" = None,
         gui: bool = False,
+        room: bool = False,
     ) -> None:
         self._asset_dir = Path(asset_dir) if asset_dir else _ASSET_DIR
         if not (self._asset_dir / "motion.pt").exists():
@@ -168,6 +175,21 @@ class G1MuJoCoBase:
         self._counter = 0
         self._mujoco = None
         self._torch = None
+        # Room mode (campaign #8 R3): a closed MJCF room with walls + obstacle
+        # boxes (REAL collision) + labeled targets, instead of the flat scene.
+        # Brings real obstacle avoidance + a virtual lidar into the G1 world,
+        # all substrate-agnostic (MuJoCo physics is reused under DQ-10 A or D).
+        self._room: bool = room
+        # Routing polygons enumerated from the compiled model at connect()
+        # (g1_vgraph.obstacles_from_model) — the single source of truth for both
+        # the path navigate_to walks AND the geodesic verify reads (rule 5).
+        self._obstacles: list = []
+        # Virtual Livox-360 lidar (campaign #8 R3). Stepped ONLY on the control
+        # thread (Case 12/13 — it holds a mjData ref); the latest scan is
+        # published under a lock and cross-thread readers consume the snapshot.
+        self._lidar = None
+        self._lidar_snap_lock = threading.Lock()
+        self._lidar_snap = None     # latest LidarSample, or None
 
     # -- lifecycle ---------------------------------------------------------
     def connect(self) -> None:
@@ -176,14 +198,36 @@ class G1MuJoCoBase:
 
         self._mujoco = mujoco
         self._torch = torch
-        self._model = mujoco.MjModel.from_xml_path(
-            str(self._asset_dir / "scene.xml"))
+        if self._room:
+            # Room scene built programmatically (walls + obstacles + targets)
+            # from the flat gait scene — keeps asset paths intact (R1 spike).
+            from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+            self._model = g1_room.build_room_model(self._asset_dir)
+        else:
+            self._model = mujoco.MjModel.from_xml_path(
+                str(self._asset_dir / "scene.xml"))
         self._data = mujoco.MjData(self._model)
         self._model.opt.timestep = _SIM_DT
         self._policy = torch.jit.load(str(self._asset_dir / "motion.pt"))
         # Publish the initial pose so readers before the first policy batch
         # still get a real snapshot (not None).
         self._snap = (self._data.qpos[:7].copy(), self._data.qvel[:6].copy())
+        if self._room:
+            # Enumerate routing geometry + spin up the lidar once the model is
+            # compiled. mj_forward populates geom_xpos for the obstacle scan.
+            mujoco.mj_forward(self._model, self._data)
+            from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+            from vector_os_nano.hardware.sim.sensors.lidar360 import (  # noqa: PLC0415,E501
+                MuJoCoLivox360,
+            )
+            self._obstacles = g1_room.obstacles_from_model(
+                self._model, self._data)
+            try:
+                self._lidar = MuJoCoLivox360(
+                    self._model, self._data, body_name="pelvis")
+            except Exception as exc:  # noqa: BLE001 — lidar is non-fatal
+                logger.warning("G1 lidar init failed: %s", exc)
+                self._lidar = None
         # Live viewer window (campaign #8 R0): open it on the caller thread.
         # Skip under mjpython (macOS main-thread-only GLFW); launch failure
         # (no display / GL) degrades to headless without breaking the boot.
@@ -246,6 +290,9 @@ class G1MuJoCoBase:
             self._viewer = None
         with self._snap_lock:
             self._snap = None     # post-disconnect readers raise, not crash
+        with self._lidar_snap_lock:
+            self._lidar_snap = None
+        self._lidar = None
         self._model = self._data = self._policy = None
 
     close = disconnect
@@ -336,6 +383,16 @@ class G1MuJoCoBase:
         # Publish a consistent pose snapshot for cross-thread readers.
         with self._snap_lock:
             self._snap = (d.qpos[:7].copy(), d.qvel[:6].copy())
+        # Virtual lidar: step ON THIS thread (owns mjData — Case 12/13), rate
+        # self-gated by the sensor (due()), and publish the scan as a snapshot
+        # so cross-thread readers never touch mjData. Non-fatal on error.
+        if self._lidar is not None and self._lidar.due():
+            try:
+                scan = self._lidar.step()
+                with self._lidar_snap_lock:
+                    self._lidar_snap = scan
+            except Exception as exc:  # noqa: BLE001 — never break the gait
+                logger.warning("g1 lidar step failed: %s", exc)
         # Live viewer window: sync on THIS thread (owns mjData — Case 12), at
         # most _VIEWER_FPS/sec (wall-clock gated). Chase the base so the owner
         # always sees the walking robot. If the owner closed the window, drop
@@ -426,6 +483,22 @@ class G1MuJoCoBase:
             raise RuntimeError("G1MuJoCoBase not connected (call connect())")
         return snap
 
+    def get_lidar_scan(self):
+        """Latest virtual-lidar :class:`LidarSample` (room mode), or None.
+
+        Reads the snapshot the control thread publishes — never touches mjData
+        (Case 12/13). None when no lidar is attached (flat scene) or before the
+        first scan."""
+        with self._lidar_snap_lock:
+            return self._lidar_snap
+
+    def list_targets(self) -> "dict[str, tuple[float, float]]":
+        """Labeled target objects in the room ({name: (x, y)}), empty if flat."""
+        if not self._room:
+            return {}
+        from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+        return {t.name: (t.cx, t.cy) for t in g1_room.TARGETS}
+
     # -- BaseProtocol -------------------------------------------------------
     def set_velocity(self, vx: float, vy: float = 0.0,
                      vyaw: float = 0.0) -> None:
@@ -452,10 +525,70 @@ class G1MuJoCoBase:
 
     def navigate_to(self, x: float, y: float, tol: float = 0.2,
                     speed: float = _NAV_SPEED) -> dict:
-        """Closed-loop face->walk->arrive drive to world (x, y) on the flat
-        scene. The sim-oracle ``base.navigate_to`` NavigateToPointSkill calls;
-        returns the three-value contract {reached, already_there, moved_m,
-        elapsed_s, remaining, pos, reason, transport}.
+        """Drive to world (x, y), routing AROUND obstacles when in room mode.
+
+        Flat scene (no obstacles): delegates straight to the single-point
+        controller — campaign #6 behaviour unchanged. Room mode: plans an
+        obstacle-avoiding waypoint chain (g1_vgraph.plan_path over the geometry
+        enumerated at connect) and drives each leg with the same controller;
+        intermediate legs use a loose tol, the final leg the real tol. The
+        three-value contract is preserved (moved_m accrues across legs; net_m
+        is the start->end displacement; geodesic = the planned path length).
+        An honest 'unreachable' (goal inside an inflated obstacle / boxed in)
+        returns reached=False reason=unreachable — never a phantom straight
+        line (rule 5)."""
+        import math
+        self._require_connected()
+        if not self._obstacles:
+            return self._navigate_point(x, y, tol, speed)
+        if not all(math.isfinite(v) for v in (x, y, tol, speed)):
+            return {"reached": False, "already_there": False, "moved_m": 0.0,
+                    "elapsed_s": 0.0, "remaining": float("inf"),
+                    "reason": "bad_params_nan", "transport": "sim_oracle"}
+        from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
+        sx, sy, _sz = self.get_position()
+        waypoints, _length = g1_vgraph.plan_path(
+            (sx, sy), (float(x), float(y)), self._obstacles, _NAV_INFLATION)
+        if waypoints is None:
+            return {"reached": False, "already_there": False, "moved_m": 0.0,
+                    "elapsed_s": 0.0, "remaining": float("inf"),
+                    "reason": "unreachable", "transport": "sim_oracle"}
+        # Drive each leg; waypoints[0] is the start, so skip it. Intermediate
+        # waypoints use a loose tol (just round the corner), the goal the real.
+        t0 = time.monotonic()
+        total_moved = 0.0
+        legs = waypoints[1:]
+        last = None
+        for i, (wx, wy) in enumerate(legs):
+            is_final = (i == len(legs) - 1)
+            leg_tol = tol if is_final else _NAV_WAYPOINT_TOL
+            last = self._navigate_point(wx, wy, leg_tol, speed)
+            total_moved += float(last.get("moved_m", 0.0))
+            if last.get("reason") in ("fell", "stalled_no_progress"):
+                break
+        fx, fy, fz = self.get_position()
+        remaining = math.hypot(float(x) - fx, float(y) - fy)
+        eff_tol = max(float(tol), _NAV_TOL_FLOOR)
+        reached = bool(remaining <= eff_tol and fz >= _NAV_FALL_Z)
+        return {
+            "reached": reached, "already_there": False,
+            "moved_m": round(total_moved, 3),
+            "net_m": round(math.hypot(fx - sx, fy - sy), 3),
+            "elapsed_s": round(time.monotonic() - t0, 3),
+            "remaining": round(remaining, 3),
+            "pos": [fx, fy, fz], "effective_tol": eff_tol,
+            "waypoints": [[round(p[0], 2), round(p[1], 2)] for p in waypoints],
+            "reason": "ok" if reached else (last or {}).get("reason", "timeout"),
+            "transport": "sim_oracle",
+        }
+
+    def _navigate_point(self, x: float, y: float, tol: float = 0.2,
+                        speed: float = _NAV_SPEED) -> dict:
+        """Closed-loop face->walk->arrive drive to a SINGLE world (x, y).
+        The campaign #6 controller; navigate_to chains it over planned
+        waypoints in room mode. Returns the three-value contract
+        {reached, already_there, moved_m, elapsed_s, remaining, pos, reason,
+        transport}.
 
         Runs ENTIRELY on the caller thread — only the public primitives
         (set_velocity / get_position / get_heading / stop), NEVER mjData (the
@@ -599,12 +732,18 @@ class G1MuJoCoBase:
         On the FLAT, obstacle-free g1_flat scene the geodesic distance is
         EXACTLY the straight-line distance (no obstacles to route around), so
         this returns the euclidean planar distance — the honest geodesic for
-        THIS world, not a loosening (a future G1 scene with obstacles would
-        need a real navmesh oracle). Declaring it lets the kernel's
-        ``geodesic_dist(x, y)`` verify predicate bind for coordinate goals,
-        which would otherwise fail-safe to inf (no oracle) and never pass.
+        THIS world, not a loosening. In ROOM mode it returns the visibility-
+        graph PATH LENGTH around the real obstacles (inf when unreachable) —
+        the SAME planner navigate_to walks, so execution and verify never
+        diverge (rule 5). Declaring it lets the kernel's ``geodesic_dist(x, y)``
+        verify predicate bind for coordinate goals.
         """
         import math
+        if getattr(self, "_obstacles", None):
+            from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
+            return g1_vgraph.path_length(
+                (float(a[0]), float(a[1])), (float(b[0]), float(b[1])),
+                self._obstacles, _NAV_INFLATION)
         return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
 
     def get_odometry(self):

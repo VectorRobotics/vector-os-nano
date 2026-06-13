@@ -253,6 +253,21 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      gap (req #5) — mitigate with GT-label scaffolding, upgrade perception (or
      co-sim) later. AWAITING OWNER (DQ-10); build nothing on the substrate
      until picked.
+   - **R3 SHIPPED (substrate-AGNOSTIC big build, not gated by DQ-10 — physics/
+     collision/lidar are MuJoCo under both top candidates A & D):** the
+     `g1_room` scenario — a closed MJCF room (walls + 3 obstacle boxes + 3
+     labeled targets, REAL collision) built via MjSpec from the flat scene
+     (hardware/sim/g1_room.py). `G1MuJoCoBase(room=True)`: enumerates routing
+     polygons from the compiled model (g1_room.obstacles_from_model — keeps
+     g1_vgraph pure), wires the in-repo MuJoCoLivox360 lidar stepped on the
+     control thread (Case 12/13, get_lidar_scan snapshot), and `navigate_to`
+     now ROUTES AROUND obstacles via g1_vgraph waypoints (geodesic =
+     visibility-graph path length, the same planner execution walks — rule 5).
+     `vector-cli --scenario g1_room` boots it. Headless check: 7 obstacles
+     enumerated, lidar 5760 pts, navigate to target_red reached routing around
+     the centre obstacle (geodesic 4.52m vs straight 3.70m). Flat g1_flat
+     behaviour unchanged (no obstacles → euclidean geodesic, direct drive).
+     **Deferred to post-DQ-10: photoreal-RGB VLN object recognition (req #5).**
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

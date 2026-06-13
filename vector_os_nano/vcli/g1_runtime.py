@@ -52,8 +52,14 @@ def boot_g1_agent(
             "(downloads the pretrained policy + MJCF into assets/g1_gait/; "
             "heavy assets are never vendored into git)")
 
-    _emit(on_status, "booting G1 humanoid (unitree_rl_gym policy gait)")
-    base = G1MuJoCoBase(gui=gui)
+    # Room mode (campaign #8 R3): the g1_room scenario builds a closed room
+    # with real-collision walls/obstacles + a virtual lidar; g1_flat stays the
+    # flat gait scene. Detected from the resolved world's scenario id.
+    scenario = getattr(world, "scenario", None)
+    room = getattr(scenario, "id", "") == "g1_room"
+    _emit(on_status, "booting G1 humanoid (unitree_rl_gym policy gait)"
+          + (" — room (walls/obstacles/lidar)" if room else ""))
+    base = G1MuJoCoBase(gui=gui, room=room)
     base.connect()
     agent = Agent(base=base)
 
