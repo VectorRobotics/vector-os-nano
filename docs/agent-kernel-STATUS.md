@@ -241,7 +241,18 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      passive viewer's render thread STARVING the background control thread to
      ~0.4x. Fix = PUMP mode: with a window open the control loop runs on the
      CALLER thread (no daemon), holding 1.0x (GUI walk 1.28m == headless). See
-     tricky-bugs Case 13.** Render rate-capped to 30 FPS. NEXT: R1 substrate.
+     tricky-bugs Case 13.** Render rate-capped to 30 FPS.
+   - **R1 PROBE done → DQ-10 PENDING owner.** Substrate judge-panel (workflow
+     wdimxq6pn, 5 sonnet agents) ranks **A. MuJoCo-as-world 22 ≫ D co-sim 10 /
+     B habitat-Bullet 9 / C Isaac 9**. Recommend A: real gait+collision+vcli
+     satisfied in-process, ZERO new deps, reuses all #5-#7; sensors ALREADY in
+     repo (sensors/lidar360.py MuJoCoLivox360, sensors/pano360.py MuJoCoPano360
+     — just unwired). Spike (~/sandbox/g1-substrate-spike/) proves real
+     collision (G1 blocked at box, 345N, no pass-through) + RGB/depth frames,
+     zero deps. The ONE risk: MuJoCo non-photoreal → VLN object-recog domain
+     gap (req #5) — mitigate with GT-label scaffolding, upgrade perception (or
+     co-sim) later. AWAITING OWNER (DQ-10); build nothing on the substrate
+     until picked.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
