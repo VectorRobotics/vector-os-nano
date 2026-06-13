@@ -146,6 +146,25 @@ HOUSE = Scenario(
     scene_dataset_config="replica_cad/replicaCAD.scene_dataset_config.json",
 )
 
+# Campaign #5: the G1 humanoid REAL-gait scene. embodiment="g1" selects the
+# base predicate family (a base, no arm); sim_backend stays the default
+# "mujoco" — booted IN-PROCESS by g1_runtime.boot_g1_agent on the pretrained
+# unitree_rl_gym policy. scene_xml points at the downloaded asset
+# (scripts/setup_g1_gait.sh fetches it into assets/g1_gait/, gitignored);
+# rooms is empty (flat scene) — at_position/facing carry the verify story,
+# geodesic_dist fails safe to inf (no navmesh), same as the MuJoCo go2.
+_G1_SCENE_XML = str(
+    Path(__file__).resolve().parent.parent.parent
+    / "assets" / "g1_gait" / "scene.xml"
+)
+
+G1_FLAT = Scenario(
+    id="g1_flat",
+    embodiment="g1",
+    scene_xml=_G1_SCENE_XML,
+    task_hint="Walk and turn with the G1 humanoid (real policy-driven gait).",
+)
+
 # id -> Scenario. Additive: new preset scenes append here.
 SCENARIOS: dict[str, Scenario] = {
     TABLETOP.id: TABLETOP,
@@ -153,6 +172,7 @@ SCENARIOS: dict[str, Scenario] = {
     GO2_ROOM.id: GO2_ROOM,
     APARTMENT.id: APARTMENT,
     HOUSE.id: HOUSE,
+    G1_FLAT.id: G1_FLAT,
 }
 
 

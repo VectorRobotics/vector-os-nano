@@ -571,6 +571,27 @@ def _maybe_init_habitat_agent(args: argparse.Namespace, world: Any) -> Any:
         return None
 
 
+def _maybe_init_g1_agent(args: argparse.Namespace, world: Any) -> Any:
+    """Boot the in-process G1 policy-gait base for the g1_flat scenario.
+
+    Campaign #5 — dispatches on the resolved world's embodiment ("g1") with
+    the default MuJoCo backend; sibling of _maybe_init_habitat_agent. Lazy
+    domain import; failure is loud, the REPL still starts.
+    """
+    scenario = getattr(world, "scenario", None)
+    if scenario is None or getattr(scenario, "embodiment", "") != "g1":
+        return None
+    from vector_os_nano.vcli import g1_runtime
+
+    try:
+        return g1_runtime.boot_g1_agent(
+            world, on_status=lambda line: console.print(f"[dim]  {line}[/dim]")
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]g1 scenario boot failed: {exc}[/red]")
+        return None
+
+
 def _init_agent(args: argparse.Namespace) -> Any:
     if not (args.sim or args.sim_go2):
         return None
@@ -1397,6 +1418,8 @@ def main(argv: list[str] | None = None) -> None:
     # scenario resolution above; failure is loud, the REPL still starts.
     if agent is None:
         agent = _maybe_init_habitat_agent(args, world)
+    if agent is None:
+        agent = _maybe_init_g1_agent(args, world)   # campaign #5: g1_flat
 
     # Tools (categorized registry for scalable tool management)
     registry: CategorizedToolRegistry = CategorizedToolRegistry()

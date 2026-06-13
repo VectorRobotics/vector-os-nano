@@ -68,7 +68,7 @@ class PlaygroundWorld:
 
     # Embodiments that carry a mobile base. "go2" is the MuJoCo quadruped;
     # "mobile" is a backend-agnostic kinematic base (habitat third world, M2).
-    _BASE_EMBODIMENTS = ("go2", "mobile")
+    _BASE_EMBODIMENTS = ("go2", "mobile", "g1")
 
     def has_base(self) -> bool:
         """True for a mobile-base scenario, False for an arm scenario.
