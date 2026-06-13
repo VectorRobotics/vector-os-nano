@@ -223,19 +223,31 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
 
 ## OPEN — prioritized backlog
 
--5. **CAMPAIGN #8 — NEXT (owner-set 2026-06-13): high-fidelity sim with REAL
-   physics, controlled entirely via vector-cli.** Full goal + the
+-5. **CAMPAIGN #8 — IN PROGRESS (owner-set 2026-06-13): high-fidelity sim with
+   REAL physics, controlled entirely via vector-cli.** Full goal + the
    architecture decision in **docs/realsim-plan.md** (READ IT FIRST next
    session). One-line: G1/Go2 must run real VLN/nav-stack/SysNav/control in a
    high-fidelity sim with REAL local-motion gait (not the habitat glide),
    real physics + collision (no pass-through), obstacle avoidance, real
    sensors, autonomous explore→go-to-object — ALL driven from vector-cli (the
-   only acceptance surface). The owner saw: G1 in habitat still glides/
-   passes through (habitat is navmesh-KINEMATIC by design — real physics
-   needs a different substrate). R1 = a PROBE + judge-panel workflow to pick
-   the substrate (MuJoCo-as-world / habitat-3-Bullet / Isaac / co-sim) → DQ
-   to the owner BEFORE building. Campaigns #5-#7 (real MuJoCo gait + the
-   visibility-graph planner) are the reusable foundation.
+   only acceptance surface).
+   - **R0 SHIPPED (2026-06-13): the existing G1 MuJoCo work is now CLI-testable
+     with a LIVE window.** `vector-cli --scenario g1_flat` opens a real MuJoCo
+     viewer; NL `往前走`/`走到坐标` drives the real policy gait and the owner
+     WATCHES it walk (acceptance: tmux CLI + screenshots, `往前走两米` → walk_skill
+     [PASS]). `G1MuJoCoBase(gui=...)` + `boot_g1_agent(gui=...)` +
+     `cli._maybe_init_g1_agent` (gui=not --headless). **Owner reported "卡":
+     root-caused (NOT sim fidelity — physics is 26x real-time headless) to the
+     passive viewer's render thread STARVING the background control thread to
+     ~0.4x. Fix = PUMP mode: with a window open the control loop runs on the
+     CALLER thread (no daemon), holding 1.0x (GUI walk 1.28m == headless). See
+     tricky-bugs Case 13.** Render rate-capped to 30 FPS. NEXT: R1 substrate.
+   - The owner saw earlier: G1 in habitat still glides/passes through (habitat
+     is navmesh-KINEMATIC by design — real physics needs a different
+     substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
+     (MuJoCo-as-world / habitat-3-Bullet / Isaac / co-sim) → DQ to the owner
+     BEFORE building. Campaigns #5-#7 (real MuJoCo gait + the visibility-graph
+     planner) are the reusable foundation.
 
 -4. **CAMPAIGN #7 — batch 1 SHIPPED, batches 2-3 FOLD INTO campaign #8
    (2026-06-13).** Visibility-graph obstacle planner (hardware/sim/

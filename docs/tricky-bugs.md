@@ -251,3 +251,32 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** "the GIL protects me" is wrong for C-extension state. Any object a
   C call mutates in bulk (numpy-backed sim state, ctypes buffers) needs explicit
   synchronization or a snapshot hand-off — the GIL only serializes BYTECODE.
+
+## Case 13 — passive viewer's render thread starves the background control thread (2026-06-13)
+
+- **Symptom:** owner opened the live G1 window via `vector-cli --scenario
+  g1_flat`, said "渲染很卡" (very choppy) and hypothesized "仿真度太高" (sim
+  fidelity too high). The gait also under-walked (`往前走` moved 0.30m of 1.0m
+  → walk_skill FAIL).
+- **Why hidden:** the symptom pointed straight at PHYSICS fidelity, the natural
+  culprit for a heavy sim. But a headless bench proved the opposite: physics
+  runs at **26x real-time** (step batch 0.76ms) — fidelity is nowhere near the
+  bottleneck. Throttling `viewer.sync()` (5-8ms each) didn't help either: even
+  at ~1 sync/sec the loop capped at 0.4x. The real cause: `mujoco.viewer.
+  launch_passive` spawns an INTERNAL render thread; when the gait control loop
+  runs on a *background daemon* thread (same scheduler priority), the render
+  thread starves it to ~0.4x. The discriminator: the SAME loop on the MAIN
+  thread holds 1.0x. Daemon-without-viewer = 1.0x; daemon-WITH-viewer = 0.4x.
+- **Fix:** PUMP mode. With a window open, run NO daemon — the caller thread
+  (REPL/skill) drives `_step_batch()` via `_advance()` during walk/turn/
+  navigate, so the gait steps on the viewer-friendly main thread at 1.0x (GUI
+  walk 1.28m == headless 1.28m). Headless keeps the proven daemon path
+  unchanged (all gait tests use gui=False). Mirrors viewer_mode.py's
+  MAIN_THREAD_PUMP concept (which existed only for macOS/mjpython before).
+- **Lesson:** when a perf symptom names the obvious heavy component ("sim too
+  detailed"), bench that component in isolation FIRST. Here physics was 26x
+  headroom and the real thief was thread scheduling against an opaque library
+  render thread — invisible until you measure daemon-thread vs main-thread with
+  the viewer attached. Also: a high system load (a runaway SysNav node eating
+  24 cores) was simultaneously inflating the lag — always check `loadavg`
+  before trusting a perf measurement.

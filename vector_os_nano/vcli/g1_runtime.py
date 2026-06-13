@@ -34,11 +34,14 @@ def _emit(on_status: "Callable[[str], None] | None", line: str) -> None:
 def boot_g1_agent(
     world: Any,
     on_status: "Callable[[str], None] | None" = None,
+    gui: bool = False,
 ) -> Any:
     """Boot the policy-driven G1 base for ``world`` and return a ready Agent.
 
-    Raises on any failure — callers decide how loud to surface it (the CLI
-    keeps the REPL alive on a caught exception).
+    ``gui`` opens a live MuJoCo viewer window (campaign #8 R0) so the owner can
+    WATCH the gait while driving it from vector-cli — the CLI passes
+    ``gui=not args.headless``. Raises on any failure — callers decide how loud
+    to surface it (the CLI keeps the REPL alive on a caught exception).
     """
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.hardware.sim.mujoco_g1 import G1MuJoCoBase, g1_assets_ready
@@ -50,7 +53,7 @@ def boot_g1_agent(
             "heavy assets are never vendored into git)")
 
     _emit(on_status, "booting G1 humanoid (unitree_rl_gym policy gait)")
-    base = G1MuJoCoBase()
+    base = G1MuJoCoBase(gui=gui)
     base.connect()
     agent = Agent(base=base)
 

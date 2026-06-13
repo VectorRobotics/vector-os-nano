@@ -52,6 +52,8 @@ _NUM_ACTIONS = 12
 _NUM_OBS = 47
 _GAIT_PERIOD = 0.8
 _DEADMAN_S = 0.6                       # cmd_vel keep-alive (go2/habitat lesson)
+_VIEWER_FPS = 30                       # live-window render cap (decoupled from
+                                       # 500 Hz physics — see _last_sync)
 
 # --- navigate_to closed-loop constants (campaign #6) ------------------------
 # Tuned from a sandbox characterization spike of THIS policy's command->motion
@@ -99,7 +101,11 @@ class G1MuJoCoBase:
     supports_holonomic = True
     supports_lidar = False           # BaseProtocol conformance (no lidar)
 
-    def __init__(self, asset_dir: "Path | str | None" = None) -> None:
+    def __init__(
+        self,
+        asset_dir: "Path | str | None" = None,
+        gui: bool = False,
+    ) -> None:
         self._asset_dir = Path(asset_dir) if asset_dir else _ASSET_DIR
         if not (self._asset_dir / "motion.pt").exists():
             raise FileNotFoundError(
@@ -134,12 +140,42 @@ class G1MuJoCoBase:
         self._render_done = threading.Event()
         self._render_png: "bytes | None" = None
         self._renderer = None  # lazily created on the control thread
+        # Live passive viewer window (campaign #8 R0). The owner controls the
+        # G1 entirely through vector-cli and must SEE the gait, not just an
+        # offscreen PNG. The window is launched in connect() and synced by the
+        # control thread that already owns mjData — same Case 12 discipline as
+        # the offscreen render (a cross-thread viewer.sync() would tear the
+        # pose / crash GL). Only safe in Linux/Windows background-daemon mode;
+        # under mjpython (macOS) GLFW is main-thread-only, so we degrade to
+        # headless there (the gait still runs; the owner is on Linux).
+        self._gui: bool = gui
+        self._viewer = None
+        # When a live window is open the control loop runs in PUMP mode on the
+        # caller thread, NOT a daemon (a passive viewer's render thread starves
+        # a background control thread to ~0.4x real time — the owner's "卡";
+        # caller-thread pumping holds 1.0x). Resolved in connect().
+        self._pump_mode: bool = False
+        # Viewer render is rate-capped to _VIEWER_FPS (wall-clock gated) so the
+        # ~5-8 ms sync cost never dominates the 20 ms physics batch — smooth
+        # window without touching the 500 Hz fidelity the policy needs.
+        self._sync_interval: float = 1.0 / _VIEWER_FPS
+        self._last_sync: float = 0.0
+        # Per-batch control state (instance-scoped so _step_batch can be driven
+        # by EITHER the daemon thread or the caller-thread pump).
+        self._action = np.zeros(_NUM_ACTIONS, dtype=np.float32)
+        self._target = _DEFAULT_ANGLES.copy()
+        self._obs = np.zeros(_NUM_OBS, dtype=np.float32)
+        self._counter = 0
+        self._mujoco = None
+        self._torch = None
 
     # -- lifecycle ---------------------------------------------------------
     def connect(self) -> None:
         import mujoco
         import torch
 
+        self._mujoco = mujoco
+        self._torch = torch
         self._model = mujoco.MjModel.from_xml_path(
             str(self._asset_dir / "scene.xml"))
         self._data = mujoco.MjData(self._model)
@@ -148,18 +184,66 @@ class G1MuJoCoBase:
         # Publish the initial pose so readers before the first policy batch
         # still get a real snapshot (not None).
         self._snap = (self._data.qpos[:7].copy(), self._data.qvel[:6].copy())
+        # Live viewer window (campaign #8 R0): open it on the caller thread.
+        # Skip under mjpython (macOS main-thread-only GLFW); launch failure
+        # (no display / GL) degrades to headless without breaking the boot.
+        if self._gui:
+            self._launch_viewer(mujoco)
         self._running = True
-        self._thread = threading.Thread(
-            target=self._control_loop, daemon=True, name="g1-gait-control")
-        self._thread.start()
-        # let the policy settle into stance before the first command
-        time.sleep(0.3)
+        # Mode resolution: a live window → PUMP (caller thread drives the loop
+        # via _advance, no daemon, so the gait runs 1x against the viewer's
+        # render thread). No window → DAEMON (the proven headless path).
+        self._pump_mode = self._viewer is not None
+        if self._pump_mode:
+            self._target = _DEFAULT_ANGLES.copy()   # fresh stance reference
+            self._advance(0.3)                       # settle into stance (pump)
+        else:
+            self._thread = threading.Thread(
+                target=self._control_loop, daemon=True, name="g1-gait-control")
+            self._thread.start()
+            time.sleep(0.3)   # let the daemon settle the policy into stance
+
+    def _launch_viewer(self, mujoco) -> None:
+        """Open a passive viewer window (caller thread), Linux/Windows only.
+
+        Skipped under mjpython (macOS main-thread-only GLFW); any launch
+        failure (no display, GL unavailable) degrades to headless with a
+        warning so the boot never breaks. The control thread drives sync().
+        """
+        from vector_os_nano.hardware.sim.viewer_mode import running_under_mjpython
+
+        if running_under_mjpython():
+            logger.warning(
+                "G1MuJoCoBase: gui requested but running under mjpython — "
+                "the gait control thread owns mjData and a main-thread-only "
+                "viewer cannot sync from it; staying headless.")
+            return
+        try:
+            import mujoco.viewer  # noqa: PLC0415
+            self._viewer = mujoco.viewer.launch_passive(
+                self._model, self._data,
+                show_left_ui=False, show_right_ui=False)
+            cam = self._viewer.cam
+            cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+            cam.distance = 3.5
+            cam.elevation = -20
+            cam.azimuth = 120
+            cam.lookat[:] = self._data.qpos[:3]
+        except Exception as exc:  # noqa: BLE001 — never break the boot
+            logger.warning("G1MuJoCoBase viewer failed to launch: %s", exc)
+            self._viewer = None
 
     def disconnect(self) -> None:
         self._running = False
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+        if self._viewer is not None:
+            try:
+                self._viewer.close()
+            except Exception:  # noqa: BLE001 — best-effort window teardown
+                pass
+            self._viewer = None
         with self._snap_lock:
             self._snap = None     # post-disconnect readers raise, not crash
         self._model = self._data = self._policy = None
@@ -205,63 +289,90 @@ class G1MuJoCoBase:
             raise RuntimeError("g1 viewer frame render produced no image")
         return png
 
-    # -- control loop (sim thread owns ALL mujoco/torch state) -------------
-    def _control_loop(self) -> None:
-        import mujoco
-        import torch
-
+    # -- control loop (one thread owns ALL mujoco/torch state) -------------
+    # The control loop runs in ONE of two modes (resolved in connect()):
+    #   • DAEMON  (headless / no window): a background thread runs _control_loop
+    #     — the proven campaign #5-#7 path, byte-identical, all tests use it.
+    #   • PUMP    (live window open): NO daemon. The caller thread (the REPL /
+    #     skill) drives _step_batch() via _advance() during walk/turn/navigate.
+    #     Measured necessity: a passive viewer spawns an internal render thread
+    #     that STARVES a background control thread to ~0.4x real time (the
+    #     owner's "卡"); the SAME loop on the caller thread holds 1.0x. Both
+    #     modes call the identical _step_batch — only WHO drives it differs.
+    def _step_batch(self) -> None:
+        """Advance one policy batch (10 physics steps), update obs/policy/
+        snapshot, and sync the live viewer. Owns mjData — Case 12 discipline:
+        only the single thread driving this (daemon OR caller) touches it."""
+        mujoco, torch = self._mujoco, self._torch
         m, d = self._model, self._data
-        action = np.zeros(_NUM_ACTIONS, dtype=np.float32)
-        target = _DEFAULT_ANGLES.copy()
-        obs = np.zeros(_NUM_OBS, dtype=np.float32)
-        counter = 0
-        # Pace in POLICY-PERIOD batches (10 physics steps = 20 ms), one sleep
-        # per batch against an absolute deadline. Per-step sleeping ran the
-        # sim at ~0.5x real time: time.sleep()'s ~1-2 ms granularity error,
-        # paid 500x/s, dwarfed the 2 ms step budget. 50 sleeps/s amortizes
-        # it; the absolute next_tick self-corrects residual drift (the sim
-        # is ~3.5x RT capable, so it always catches back up).
+        with self._lock:
+            cmd = self._cmd.copy()
+            stale = (time.monotonic() - self._cmd_stamp) > _DEADMAN_S
+        if stale:
+            cmd[:] = 0.0               # deadman: dead client never marches
+        target = self._target
+        for _ in range(_DECIMATION):
+            tau = ((target - d.qpos[7:]) * _KPS - d.qvel[6:] * _KDS)
+            d.ctrl[:] = tau
+            mujoco.mj_step(m, d)
+            self._counter += 1
+        obs = self._obs
+        obs[:3] = d.qvel[3:6] * _ANG_VEL_SCALE
+        obs[3:6] = _gravity_orientation(d.qpos[3:7])
+        obs[6:9] = cmd * _CMD_SCALE
+        obs[9:9 + _NUM_ACTIONS] = (
+            (d.qpos[7:] - _DEFAULT_ANGLES) * _DOF_POS_SCALE)
+        obs[9 + _NUM_ACTIONS:9 + 2 * _NUM_ACTIONS] = (
+            d.qvel[6:] * _DOF_VEL_SCALE)
+        obs[9 + 2 * _NUM_ACTIONS:9 + 3 * _NUM_ACTIONS] = self._action
+        phase = (self._counter * _SIM_DT) % _GAIT_PERIOD / _GAIT_PERIOD
+        obs[9 + 3 * _NUM_ACTIONS] = math.sin(2 * math.pi * phase)
+        obs[9 + 3 * _NUM_ACTIONS + 1] = math.cos(2 * math.pi * phase)
+        with torch.no_grad():
+            self._action = self._policy(
+                torch.from_numpy(obs).unsqueeze(0)
+            ).numpy().squeeze()
+        self._target = self._action * _ACTION_SCALE + _DEFAULT_ANGLES
+        # Publish a consistent pose snapshot for cross-thread readers.
+        with self._snap_lock:
+            self._snap = (d.qpos[:7].copy(), d.qvel[:6].copy())
+        # Live viewer window: sync on THIS thread (owns mjData — Case 12), at
+        # most _VIEWER_FPS/sec (wall-clock gated). Chase the base so the owner
+        # always sees the walking robot. If the owner closed the window, drop
+        # the handle and keep stepping (a closed window must never stall gait).
+        if self._viewer is not None:
+            now_s = time.monotonic()
+            if now_s - self._last_sync >= self._sync_interval:
+                try:
+                    if self._viewer.is_running():
+                        self._viewer.cam.lookat[:] = d.qpos[:3]
+                        self._viewer.sync()
+                        self._last_sync = now_s
+                    else:
+                        self._viewer = None
+                except Exception as exc:  # noqa: BLE001 — never break gait
+                    logger.warning("g1 viewer sync failed: %s", exc)
+                    self._viewer = None
+        # On-demand viewer frame: render on THIS thread (owns mjData + GL).
+        if self._render_req.is_set():
+            try:
+                self._render_png = self._render_tracking_frame(m, d)
+            except Exception as exc:  # noqa: BLE001 — never break the gait
+                logger.warning("g1 render failed: %s", exc)
+                self._render_png = None
+            self._render_req.clear()
+            self._render_done.set()
+
+    def _control_loop(self) -> None:
+        # DAEMON mode only. Pace in POLICY-PERIOD batches (10 physics steps =
+        # 20 ms), one sleep per batch against an absolute deadline. Per-step
+        # sleeping ran the sim at ~0.5x real time: time.sleep()'s ~1-2 ms
+        # granularity error, paid 500x/s, dwarfed the 2 ms step budget. 50
+        # sleeps/s amortizes it; the absolute next_tick self-corrects drift.
         batch_dt = _SIM_DT * _DECIMATION
         next_tick = time.monotonic()
         while self._running:
-            with self._lock:
-                cmd = self._cmd.copy()
-                stale = (time.monotonic() - self._cmd_stamp) > _DEADMAN_S
-            if stale:
-                cmd[:] = 0.0           # deadman: dead client never marches
-            for _ in range(_DECIMATION):
-                tau = ((target - d.qpos[7:]) * _KPS - d.qvel[6:] * _KDS)
-                d.ctrl[:] = tau
-                mujoco.mj_step(m, d)
-                counter += 1
-            obs[:3] = d.qvel[3:6] * _ANG_VEL_SCALE
-            obs[3:6] = _gravity_orientation(d.qpos[3:7])
-            obs[6:9] = cmd * _CMD_SCALE
-            obs[9:9 + _NUM_ACTIONS] = (
-                (d.qpos[7:] - _DEFAULT_ANGLES) * _DOF_POS_SCALE)
-            obs[9 + _NUM_ACTIONS:9 + 2 * _NUM_ACTIONS] = (
-                d.qvel[6:] * _DOF_VEL_SCALE)
-            obs[9 + 2 * _NUM_ACTIONS:9 + 3 * _NUM_ACTIONS] = action
-            phase = (counter * _SIM_DT) % _GAIT_PERIOD / _GAIT_PERIOD
-            obs[9 + 3 * _NUM_ACTIONS] = math.sin(2 * math.pi * phase)
-            obs[9 + 3 * _NUM_ACTIONS + 1] = math.cos(2 * math.pi * phase)
-            with torch.no_grad():
-                action = self._policy(
-                    torch.from_numpy(obs).unsqueeze(0)
-                ).numpy().squeeze()
-            target = action * _ACTION_SCALE + _DEFAULT_ANGLES
-            # Publish a consistent pose snapshot for cross-thread readers.
-            with self._snap_lock:
-                self._snap = (d.qpos[:7].copy(), d.qvel[:6].copy())
-            # On-demand viewer frame: render on THIS thread (owns mjData + GL).
-            if self._render_req.is_set():
-                try:
-                    self._render_png = self._render_tracking_frame(m, d)
-                except Exception as exc:  # noqa: BLE001 — never break the gait
-                    logger.warning("g1 render failed: %s", exc)
-                    self._render_png = None
-                self._render_req.clear()
-                self._render_done.set()
+            self._step_batch()
             # pace to 1x wall time: coarse sleep, then spin the last ~3 ms —
             # time.sleep() overshoots multiple ms on a desktop kernel and at
             # 50 batches/s that alone dragged the sim to ~0.67x wall.
@@ -273,6 +384,33 @@ class G1MuJoCoBase:
                 next_tick = time.monotonic()  # fell far behind — resync
             else:
                 while time.monotonic() < next_tick:
+                    pass
+
+    def _advance(self, seconds: float) -> None:
+        """Let ``seconds`` of wall-time pass with physics advancing.
+
+        DAEMON mode: the background thread is already stepping, so just sleep.
+        PUMP mode: there is no daemon — drive _step_batch() on THIS (the
+        caller's) thread at 1x wall time for the duration, so the gait both
+        animates and renders on the viewer-friendly main thread.
+        """
+        seconds = max(0.0, float(seconds))
+        if not self._pump_mode:
+            time.sleep(seconds)
+            return
+        batch_dt = _SIM_DT * _DECIMATION
+        deadline = time.monotonic() + seconds
+        next_tick = time.monotonic()
+        while self._running and time.monotonic() < deadline:
+            self._step_batch()
+            next_tick += batch_dt
+            remaining = next_tick - time.monotonic()
+            if remaining > 0.004:
+                time.sleep(min(remaining - 0.003, deadline - time.monotonic()))
+            if remaining < -0.2:
+                next_tick = time.monotonic()
+            else:
+                while time.monotonic() < next_tick < deadline + batch_dt:
                     pass
 
     def _snapshot(self):
@@ -308,7 +446,7 @@ class G1MuJoCoBase:
         deadline = time.monotonic() + max(0.0, float(duration))
         while time.monotonic() < deadline:
             self.set_velocity(vx, vy, vyaw)   # re-arm the deadman
-            time.sleep(0.1)
+            self._advance(0.1)                # daemon: sleep; pump: step gait
         self.stop()
         return True
 
@@ -404,7 +542,7 @@ class G1MuJoCoBase:
                         break
                 else:
                     best_t = time.monotonic()   # pause stall clock while pivoting
-                time.sleep(_NAV_TICK_S)
+                self._advance(_NAV_TICK_S)
         finally:
             self.stop()
 
@@ -417,7 +555,7 @@ class G1MuJoCoBase:
             cx, cy, _cz = self.get_position()
             moved += math.hypot(cx - px, cy - py)
             px, py = cx, cy
-            time.sleep(_NAV_TICK_S)
+            self._advance(_NAV_TICK_S)
 
         fx, fy, fz = self.get_position()
         remaining = math.hypot(tx - fx, ty - fy)

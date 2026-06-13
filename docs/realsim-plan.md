@@ -55,19 +55,17 @@ geodesic ≠ euclidean, obstacle clearance is a real constraint — rule 5).
 
 ## Batch shape (the loop will self-author each round; this is the frame)
 
-- **R0 — MAKE THE EXISTING G1 WORK CLI-TESTABLE (do FIRST, not gated).** The
-  owner cannot currently test campaigns #5-#7 in the CLI: `boot_g1_agent`
-  boots a HEADLESS G1 (no live window — only offscreen `viewer_frame_png`),
-  and the NL→G1 control loop was never run through the real `vector-cli`
-  interactively. Deliver: a LIVE MuJoCo viewer window for the g1_flat world
-  wired into the CLI path (copy the `MuJoCoGo2(gui=True)` /
-  `mujoco.viewer.launch_passive` pattern in cli.py `_wants_window` /
-  `_maybe_init_g1_agent`; the viewer must sync from mjData on the control
-  thread — Case 12 discipline, same as the offscreen render), so the owner
-  can run `vector-cli --scenario g1_flat`, type `往前走` / `走到坐标 x=.. y=..`,
-  and WATCH the G1 walk. Acceptance = the owner does exactly that. This is
-  independent of the substrate decision (any substrate still needs CLI +
-  window) and unblocks owner testing immediately.
+- **R0 — MAKE THE EXISTING G1 WORK CLI-TESTABLE — ✅ DONE (2026-06-13).**
+  `vector-cli --scenario g1_flat` now opens a LIVE MuJoCo viewer; NL `往前走` /
+  `走到坐标` drives the real policy gait and the owner WATCHES it walk
+  (acceptance done: tmux CLI + screenshots, `往前走两米` → walk_skill [PASS]).
+  `G1MuJoCoBase(gui=...)` + `boot_g1_agent(gui=...)` + `cli._maybe_init_g1_agent`
+  (gui = not --headless). Owner reported "卡" → root-caused to passive-viewer
+  render-thread STARVING the background control thread (NOT sim fidelity:
+  physics is 26x real-time headless). Fix = PUMP mode (control loop runs on the
+  caller thread when a window is open → 1.0x; GUI walk 1.28m == headless);
+  render capped at 30 FPS. Headless daemon path unchanged. See tricky-bugs
+  Case 13.
 - **R1 PROBE (CEO gate)**: workflow judge-panel over substrates A/B/C/D →
   DQ executive summary to the owner. Build nothing irreversible until the
   owner picks. Spike the top candidate in `~/sandbox/` (real gait + collision

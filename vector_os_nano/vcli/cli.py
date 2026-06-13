@@ -583,9 +583,16 @@ def _maybe_init_g1_agent(args: argparse.Namespace, world: Any) -> Any:
         return None
     from vector_os_nano.vcli import g1_runtime
 
+    # campaign #8 R0: open a live viewer window unless --headless. The owner
+    # drives the G1 from vector-cli and must SEE the gait, so the default is a
+    # window (mirrors the go2 default; --headless suppresses it, e.g. on a
+    # display-less box).
+    gui = not getattr(args, "headless", False)
     try:
         return g1_runtime.boot_g1_agent(
-            world, on_status=lambda line: console.print(f"[dim]  {line}[/dim]")
+            world,
+            on_status=lambda line: console.print(f"[dim]  {line}[/dim]"),
+            gui=gui,
         )
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]g1 scenario boot failed: {exc}[/red]")
