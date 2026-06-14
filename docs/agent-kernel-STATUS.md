@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R15 — ray-to-plane locate (locate_on_plane) + single-object render: grasp localization meters->0.13m in-sim; grasp at reach edge / VLM noise remains. R16 = closer standoff + multi-detect median).).
+- Last updated: 2026-06-14 (campaign #10 R16 — median-detection added; FK shows top-down arm reaches ~below itself, object@x=11 (table centre) is BEYOND reach from the table-edge-blocked dog = scene-geometry limit (localization solved). R17 = place graspable object in reach).).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star

@@ -101,18 +101,32 @@ class RecognizePickSkill:
         self._pick = pick or PickTopDownSkill()
 
     def _detect_with_retry(self, rgb, query: str) -> list:
-        """detect_targets with bounded retries on a transient empty/error result."""
-        for i in range(self._DETECT_TRIES):
+        """Collect up to 3 successful detections (riding out transient 429/garble)
+        and return ONE det at the MEDIAN bbox centre — the remote VLM's centroid
+        jitters a few % between calls, and a median rejects the occasional far-off
+        bbox that would push the grasp target out of reach (R15)."""
+        good: list = []
+        tries = 0
+        while len(good) < 3 and tries < self._DETECT_TRIES + 2:
+            tries += 1
             try:
                 dets = self._detector.detect_targets(rgb, query)
             except Exception as exc:  # noqa: BLE001 — flaky remote VLM
-                logger.debug("detect_targets raised (try %d): %s", i, exc)
+                logger.debug("detect_targets raised (try %d): %s", tries, exc)
                 dets = []
             if dets:
-                return dets
-            if i < self._DETECT_TRIES - 1:
-                time.sleep(self._DETECT_BACKOFF_S * (i + 1))
-        return []
+                good.append(max(dets, key=lambda d: d.get("area_frac", 0.0)))
+            elif tries < self._DETECT_TRIES + 2:
+                time.sleep(self._DETECT_BACKOFF_S)
+        if not good:
+            return []
+        mx = float(np.median([d["x_norm"] for d in good]))
+        my = float(np.median([d["y_norm"] for d in good]))
+        out = dict(max(good, key=lambda d: d.get("area_frac", 0.0)))
+        out["x_norm"], out["y_norm"] = mx, my
+        logger.info("[RECOGNIZE-PICK] median bbox over %d detections: "
+                    "x_norm=%.3f y_norm=%.3f", len(good), mx, my)
+        return [out]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         base = context.base
