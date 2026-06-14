@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R7 — photoreal PICK-scene rendering (table + live graspable primitives); go2 pick e2e → VLM grounds "red can" 0.9).
+- Last updated: 2026-06-14 (campaign #10 R8 — ORIENT: closed-grasp integration gap found (CLI pick uses Go2ROS2Proxy subprocess, not the in-process MuJoCoGo2 wired for photoreal); R9 plan set).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
