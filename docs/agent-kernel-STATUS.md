@@ -309,7 +309,19 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      owner's req #5 ('autonomously explore, then go to the target's point') is
      demonstrated as ONE CLI command, all real-physics/sensor-driven. The only
      remaining piece is photoreal RGB object RECOGNITION (find an UNKNOWN-label
-     target by vision) — gated by DQ-10. NEXT: R8 forced REVIEW.
+     target by vision) — gated by DQ-10.
+   - **R8 REVIEW → campaign #8 at a NATURAL PAUSE POINT (loop paused).** AUDIT
+     clean (all commits real, modules/scenario/skill registered, suite green,
+     no spinning, docs bounded). The owner's 6 requirements are ALL
+     structurally GREEN (gait/collision/avoidance/lidar+occupancy/explore→go-to
+     /vcli-only), with req #5 demonstrated as ONE CLI command (R7). The only
+     substantive remaining work — photoreal RGB object RECOGNITION — is
+     hard-gated by **DQ-10** (MuJoCo-as-world keeps basic rendering; co-sim/
+     photoreal enables real VLM recognition). Continuing would be low-value
+     hardening or faking gated work, so the loop PAUSED with a phase-completion
+     summary to the owner. **Resume by deciding DQ-10 (unblocks recognition) or
+     /loop again for hardening (explore robustness / multi-room / nav-stack
+     costmap).** DQ-4 (merge to master) also still PENDING.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
