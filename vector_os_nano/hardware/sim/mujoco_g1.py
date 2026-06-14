@@ -525,35 +525,16 @@ class G1MuJoCoBase:
         was injected). Fails loud if photoreal was requested with no Blender."""
         if self._photoreal_renderer is not None:
             return self._photoreal_renderer
-        from vector_os_nano.hardware.sim.g1_room import HEAD_CAM, furnished_targets
-        from vector_os_nano.playground.photoreal.bridge import (  # noqa: PLC0415
-            BlenderBridge, blender_available)
-        from vector_os_nano.playground.photoreal.renderer import PhotorealRenderer
-        from vector_os_nano.playground.photoreal.scene import build_room_scene_spec
+        from vector_os_nano.hardware.sim.g1_room import HEAD_CAM  # noqa: PLC0415
+        from vector_os_nano.playground.photoreal.cosim import furnished_room_renderer
 
-        # Map the furnished-room targets to photoreal CC0 assets present in the
-        # asset dir (heavy assets are never vendored to git — VECTOR_PHOTOREAL_ASSETS
-        # points at a local CC0 library). Unmapped targets are skipped (scene.py).
-        asset_dir = Path(os.environ.get(
-            "VECTOR_PHOTOREAL_ASSETS",
-            str(Path.home() / "sandbox" / "c10-substrate-spike")))
-        asset_map = {}
-        chair = asset_dir / "armchair" / "ArmChair_01_4k.gltf"
-        if chair.exists():
-            asset_map["target_chair"] = {"path": str(chair), "scale": 1.0}
-        scene_spec = build_room_scene_spec(furnished_targets(), asset_map)
-
-        bridge = self._photoreal_bridge
-        if bridge is None:
-            if not blender_available():
-                raise RuntimeError(
-                    "photoreal requested but no Blender — set VECTOR_BLENDER "
-                    "(co-sim render server, campaign #10)")
-            bridge = BlenderBridge()
-            bridge.start()
-            self._photoreal_bridge = bridge
-        self._photoreal_renderer = PhotorealRenderer(
-            bridge, scene_spec, cam_name=HEAD_CAM, width=640, height=480, samples=48)
+        # Shared furnished-room co-sim factory (rule 7 — same wiring the Go2 base
+        # uses; only the head camera differs). Reuses an injected bridge in tests.
+        renderer, bridge = furnished_room_renderer(
+            cam_name=HEAD_CAM, bridge=self._photoreal_bridge,
+            width=640, height=480, samples=48)
+        self._photoreal_bridge = bridge
+        self._photoreal_renderer = renderer
         return self._photoreal_renderer
 
     def _photoreal_swap(self, obs: dict) -> dict:

@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R5 — vector-cli photoreal ACCEPTANCE PASSED: recognise→navigate verify visited('chair'); builds #1–#3 CLI-accepted).
+- Last updated: 2026-06-14 (campaign #10 R6 — photoreal co-sim generalized to Go2/Piper via a shared factory; go2 e2e → VLM chair 0.9; enables photoreal-driven pick).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -113,6 +113,19 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   **builds #1–#3 DONE + CLI-accepted.** Remaining: scene-quality polish (per-asset yaw so the chair faces
   the camera, walls, sofa/plant CC0 assets to disambiguate) — optional; and **build #4 = Piper
   manipulation** (reuse #17/#19 MuJoCoPiper + PickTopDownSkill driven by photoreal perception).
+- **BUILD R6 DONE — photoreal co-sim generalized to the Go2/Piper embodiment** (commit pending). Extracted
+  the furnished-room co-sim wiring into a shared factory `playground/photoreal/cosim.py`
+  (`furnished_room_renderer` + `furnished_room_asset_map`) so G1 and Go2 share ONE asset-mapping +
+  bridge-lifecycle (rule 7, world-agnostic); refactored g1's `_ensure_photoreal_renderer` onto it (g1
+  tests still green). `MuJoCoGo2` gained the same env-gated `photoreal` flag: `get_camera_frame` returns a
+  Blender render from the resolved head cam's (`d435_rgb`/`RECOG_CAM`) LIVE pose; lazy bridge closed on
+  disconnect; `go2_runtime` enables it on `VECTOR_G1_PHOTOREAL`/`VECTOR_GO2_PHOTOREAL`. 28 playground tests
+  green + suite 1676 passed, no go2 regression. E2E through the real go2 base (headless furnished+photoreal):
+  `get_camera_frame` → Blender 640×480 → real Qwen-VL **chair 0.9** (`r6_go2_photoreal.png`). This is the
+  structural enabler for **build #4**: the Go2 carries BOTH the head camera and the Piper arm, so the pick
+  skills' perception (autodetect/recognise) now grounds on photoreal frames. NEXT (R7): the photoreal-driven
+  PICK acceptance — `vector-cli` go2_piper "recognise object on photoreal frame → grasp → verify grasped"
+  (reuses #17/#19 pick skills on the photoreal-populated perception; no GT peek, rule 5).
 - **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
   for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
   geometry are reused on the new substrate).

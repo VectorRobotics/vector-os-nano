@@ -47,8 +47,15 @@ def boot_go2_agent(
     # ROS bridge's continuous path-follower, not the skill's discrete
     # walk()+drive_for; the sinusoidal trot moves reliably from a bare walk()
     # call (measured: 1.06 m in 3×1.5 s), which is what the VLM seek loop issues.
-    _emit(on_status, "booting Go2 quadruped (sinusoidal trot) — furnished room (furniture/VLM)")
-    base = MuJoCoGo2(gui=gui, room=True, furnished=True, backend="sinusoidal")
+    # Photoreal co-sim (campaign #10 R6): env-gated — RGB from Blender Cycles/OptiX
+    # so the VLM grounds a photoreal frame (Go2 VLN + photoreal-driven Piper pick).
+    import os
+    photoreal = os.environ.get("VECTOR_G1_PHOTOREAL", "") not in ("", "0") or \
+        os.environ.get("VECTOR_GO2_PHOTOREAL", "") not in ("", "0")
+    _emit(on_status, "booting Go2 quadruped (sinusoidal trot) — furnished room (furniture/VLM)"
+          + (" [PHOTOREAL co-sim: Blender/OptiX]" if photoreal else ""))
+    base = MuJoCoGo2(gui=gui, room=True, furnished=True, backend="sinusoidal",
+                     photoreal=photoreal)
     base.connect()
     base.stand()
     agent = Agent(base=base)

@@ -405,9 +405,19 @@ class MuJoCoGo2:
     def __init__(
         self, gui: bool = False, room: bool = True, backend: str = "auto",
         viewer_track: bool = True, furnished: bool = False,
+        photoreal: bool = False, photoreal_bridge: "Any | None" = None,
     ) -> None:
         self._gui: bool = gui
         self._room: bool = room
+        # Photoreal co-sim (campaign #10 R6): when on, get_camera_frame returns a
+        # Blender Cycles/OptiX render from the SAME head-cam pose instead of
+        # MuJoCo's basic render — the real VLM (and thus photoreal-driven Piper
+        # picking + Go2 VLN) grounds a photoreal frame. Default OFF → byte-
+        # identical. Shares the furnished-room co-sim factory with the G1 base
+        # (rule 7). Bridge is a socket subprocess (safe off the control thread).
+        self._photoreal: bool = photoreal
+        self._photoreal_bridge = photoreal_bridge
+        self._photoreal_renderer = None
         # Furnished VLM room (campaign #9 R2, track C): the SAME shared furnished
         # room g1 uses (g1_room.build_furnished_room_model) on the go2 flat scene
         # — collidable chair/sofa/plant targets for VLM recognition. Proves the
@@ -653,6 +663,14 @@ class MuJoCoGo2:
         self._last_odom = None
         self._last_scan = None
         self._connected = False
+        # Photoreal co-sim: terminate the Blender subprocess (idempotent).
+        if self._photoreal_bridge is not None:
+            try:
+                self._photoreal_bridge.close()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
+            self._photoreal_bridge = None
+        self._photoreal_renderer = None
 
     def _require_connection(self) -> None:
         if not self._connected:
@@ -1155,12 +1173,35 @@ class MuJoCoGo2:
             if mj.mj_name2id(self._mj.model, mj.mjtObj.mjOBJ_CAMERA, RECOG_CAM) >= 0:
                 cam_name = RECOG_CAM
         cam_id = self._mj.model.cam(cam_name).id
+        if self._photoreal:
+            return self._photoreal_frame(cam_id, cam_name)
         if getattr(self, "_cam_opt", None) is not None:
             self._cam_renderer.update_scene(
                 self._mj.data, camera=cam_id, scene_option=self._cam_opt)
         else:
             self._cam_renderer.update_scene(self._mj.data, camera=cam_id)
         return self._cam_renderer.render().copy()
+
+    def _ensure_photoreal_renderer(self, cam_name: str):
+        if self._photoreal_renderer is None:
+            from vector_os_nano.playground.photoreal.cosim import (  # noqa: PLC0415
+                furnished_room_renderer)
+            renderer, bridge = furnished_room_renderer(
+                cam_name=cam_name, bridge=self._photoreal_bridge,
+                width=640, height=480, samples=48)
+            self._photoreal_bridge = bridge
+            self._photoreal_renderer = renderer
+        return self._photoreal_renderer
+
+    def _photoreal_frame(self, cam_id: int, cam_name: str) -> "np.ndarray":
+        """Photoreal RGB from the head cam's LIVE pose (hybrid co-sim — rgb from
+        Blender, the rest of the pipeline unchanged). Off the control thread is
+        fine: the Blender render is a socket subprocess, no GL in our process."""
+        renderer = self._ensure_photoreal_renderer(cam_name)
+        cam_pos = self._mj.data.cam_xpos[cam_id]
+        cam_mat = self._mj.data.cam_xmat[cam_id]
+        fovy = float(self._mj.model.cam_fovy[cam_id])
+        return renderer.render_from_pose(cam_pos, cam_mat, fovy)
 
     def get_depth_frame(
         self, width: int = 640, height: int = 480,
