@@ -599,6 +599,30 @@ def _maybe_init_g1_agent(args: argparse.Namespace, world: Any) -> Any:
         return None
 
 
+def _maybe_init_go2_agent(args: argparse.Namespace, world: Any) -> Any:
+    """Boot the Go2 quadruped for the furnished VLM-room scenario (campaign #9
+    R2, track C). Dispatches on embodiment "go2" + the furnished id, so the
+    apartment go2_room (full ROS/nav stack via --sim-go2) is untouched. Lazy
+    import; failure is loud, the REPL still starts."""
+    scenario = getattr(world, "scenario", None)
+    if scenario is None or getattr(scenario, "embodiment", "") != "go2":
+        return None
+    if getattr(scenario, "id", "") != "go2_room_vlm":
+        return None
+    from vector_os_nano.vcli import go2_runtime
+
+    gui = not getattr(args, "headless", False)
+    try:
+        return go2_runtime.boot_go2_agent(
+            world,
+            on_status=lambda line: console.print(f"[dim]  {line}[/dim]"),
+            gui=gui,
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]go2 scenario boot failed: {exc}[/red]")
+        return None
+
+
 def _init_agent(args: argparse.Namespace) -> Any:
     if not (args.sim or args.sim_go2):
         return None
@@ -1427,6 +1451,8 @@ def main(argv: list[str] | None = None) -> None:
         agent = _maybe_init_habitat_agent(args, world)
     if agent is None:
         agent = _maybe_init_g1_agent(args, world)   # campaign #5: g1_flat
+    if agent is None:
+        agent = _maybe_init_go2_agent(args, world)  # campaign #9 R2: go2_room_vlm
 
     # Tools (categorized registry for scalable tool management)
     registry: CategorizedToolRegistry = CategorizedToolRegistry()

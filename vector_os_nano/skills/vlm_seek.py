@@ -94,11 +94,14 @@ class VlmSeekSkill:
             return max(dets, key=lambda d: d["area_frac"]) if dets else None
 
         try:
-            # 3.0 s deadman > the ~2 s Qwen-VL call → the gait keeps walking
-            # across each perception so progress-stall arrival only fires when
-            # the robot is physically blocked at the target (not mid-stride).
+            # step_duration covers the ~2 s VLM call: G1's async-deadman gait
+            # needs 3.0 s to keep walking ACROSS the call (else it stutters and
+            # progress-stall fires short — Case 16); Go2's walk() is BLOCKING so
+            # a short step (its seek_step_duration hint) is correct. arrive_area
+            # high → arrival is the physical collision-blocked progress-stall.
+            step = float(getattr(base, "seek_step_duration", 3.0))
             seen, reason, pos = _seek_loop(
-                base, perceive, max_iters, step_duration=3.0, arrive_area=0.55)
+                base, perceive, max_iters, step_duration=step, arrive_area=0.55)
         except Exception as exc:  # noqa: BLE001 — camera/render failure
             return SkillResult(
                 success=False, error_message=f"camera frame failed: {exc}",

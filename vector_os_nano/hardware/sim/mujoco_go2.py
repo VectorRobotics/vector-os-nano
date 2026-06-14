@@ -404,10 +404,16 @@ class MuJoCoGo2:
 
     def __init__(
         self, gui: bool = False, room: bool = True, backend: str = "auto",
-        viewer_track: bool = True,
+        viewer_track: bool = True, furnished: bool = False,
     ) -> None:
         self._gui: bool = gui
         self._room: bool = room
+        # Furnished VLM room (campaign #9 R2, track C): the SAME shared furnished
+        # room g1 uses (g1_room.build_furnished_room_model) on the go2 flat scene
+        # — collidable chair/sofa/plant targets for VLM recognition. Proves the
+        # world-agnostic invariant (one room builder, two embodiments). Implies
+        # room semantics (spawn at origin facing the targets, not the apartment).
+        self._furnished: bool = furnished
         self._backend_pref: str = backend
         self._viewer_track: bool = viewer_track
         self._mj: _Go2Model | None = None
@@ -482,7 +488,31 @@ class MuJoCoGo2:
         """Load MuJoCo model and optionally open viewer."""
         mj = _get_mujoco()
 
-        if self._room:
+        if self._furnished:
+            # Furnished VLM room: the shared world-agnostic builder on the go2
+            # flat scene (walls + obstacles + collidable furniture targets). Go2
+            # ships its own d435_rgb camera, so no pelvis head-cam is added.
+            from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+            base_scene = _build_flat_scene_xml()
+            # Mount a forward wide recognition camera on the base (Go2's stock
+            # d435 is too low/narrow/down to frame furniture at range).
+            model = g1_room.build_furnished_room_model(
+                base_scene, recog_cam_body="base_link",
+                recog_cam_pos=(0.28, 0.0, 0.06))
+            data = mj.MjData(model)
+            self._mj = _Go2Model(model, data)
+            self._scene_xml_path = str(base_scene)
+            # Spawn at the origin facing +x, toward the targets at x≈3.6 (same
+            # layout as the g1 furnished room — world-agnostic parity).
+            data.qpos[0] = 0.0
+            data.qpos[1] = 0.0
+            data.qpos[2] = 0.35
+            data.qpos[7:19] = _STAND_JOINTS
+            if model.nq >= 27:
+                data.qpos[19:27] = _PIPER_STOW_QPOS
+            if model.nu >= 19:
+                data.ctrl[12:19] = _PIPER_STOW_CTRL
+        elif self._room:
             scene_path = _build_room_scene_xml()
             model = mj.MjModel.from_xml_path(str(scene_path))
             data = mj.MjData(model)
@@ -532,7 +562,13 @@ class MuJoCoGo2:
                 )
                 if self._viewer is not None:
                     self._viewer.cam.type = mj.mjtCamera.mjCAMERA_FREE
-                    if self._room:
+                    if self._furnished:
+                        # Frame the spawn + the targets ahead (x≈3.6).
+                        self._viewer.cam.lookat[:] = [1.8, 0.0, 0.3]
+                        self._viewer.cam.distance = 6.0
+                        self._viewer.cam.elevation = -25
+                        self._viewer.cam.azimuth = 180
+                    elif self._room:
                         self._viewer.cam.lookat[:] = [10.0, 3.0, 0.3]
                         self._viewer.cam.distance = 5.5
                         self._viewer.cam.elevation = -20
@@ -1022,6 +1058,21 @@ class MuJoCoGo2:
         self._require_connection()
         return list(self._mj.data.qpos[0:3].astype(float))
 
+    # Seek step (campaign #9 R2): Go2's walk() is BLOCKING (drives the full
+    # duration then stops), so — unlike G1's async deadman — there is no
+    # mid-call stutter to bridge; a short step suffices and keeps the approach
+    # well-sampled. VlmSeekSkill reads this hint (G1 leaves the 3.0 s default).
+    seek_step_duration: float = 1.2
+
+    def list_targets(self) -> "dict[str, tuple[float, float]]":
+        """Labeled furniture targets in the furnished room ({name: (x, y)}),
+        empty otherwise. The deterministic at_position verify anchor — the same
+        world-agnostic furniture coordinates the g1 furnished room exposes."""
+        if not self._furnished:
+            return {}
+        from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+        return g1_room.furnished_targets()
+
     def get_velocity(self) -> list[float]:
         """Return base linear velocity [vx, vy, vz] in world frame."""
         self._require_connection()
@@ -1082,9 +1133,28 @@ class MuJoCoGo2:
             self._cam_renderer = mj.Renderer(self._mj.model, height, width)
             self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
             self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_REFLECTION] = True
+            # Furnished VLM room: the shared room builder tags walls/furniture
+            # with ENV_GEOM_GROUP=3, which the DEFAULT render option hides — the
+            # VLM would see an empty floor (the g1 R9 / Case-from-R9 bug). Enable
+            # all geom groups so the furniture renders. Scoped to furnished so
+            # the apartment go2 view is byte-identical.
+            if self._furnished:
+                self._cam_opt = mj.MjvOption()
+                self._cam_opt.geomgroup[:] = 1
 
-        cam_id = self._mj.model.cam("d435_rgb").id
-        self._cam_renderer.update_scene(self._mj.data, camera=cam_id)
+        # Furnished VLM room uses the forward wide recognition camera; otherwise
+        # the stock d435_rgb (apartment / depth pipeline unchanged).
+        cam_name = "d435_rgb"
+        if self._furnished:
+            from vector_os_nano.hardware.sim.g1_room import RECOG_CAM  # noqa: PLC0415,E501
+            if mj.mj_name2id(self._mj.model, mj.mjtObj.mjOBJ_CAMERA, RECOG_CAM) >= 0:
+                cam_name = RECOG_CAM
+        cam_id = self._mj.model.cam(cam_name).id
+        if getattr(self, "_cam_opt", None) is not None:
+            self._cam_renderer.update_scene(
+                self._mj.data, camera=cam_id, scene_option=self._cam_opt)
+        else:
+            self._cam_renderer.update_scene(self._mj.data, camera=cam_id)
         return self._cam_renderer.render().copy()
 
     def get_depth_frame(

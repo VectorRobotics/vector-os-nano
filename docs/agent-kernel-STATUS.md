@@ -11,7 +11,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
   a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
   (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
-- Last updated: 2026-06-14 (campaign #9 R1 — real VLM semantic recognition, track A).
+- Last updated: 2026-06-14 (campaign #9 R2 — world-agnostic furnished room + Go2 VLM recognition, track C foundation).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## Current state (2026-06-11)
@@ -412,6 +412,33 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      Suite 1627 passed (3 known deepseek .env reds tolerated). NEXT: R2 — richer
      multi-object VLM scenes, or track C (Go2 into the room), or track B (multi-room
      + nav-stack). Every track independently shippable.
+
+   - **CAMPAIGN #9 R2 SHIPPED — track C foundation: world-agnostic furnished room +
+     Go2 VLM recognition (Go2 autonomous ARRIVAL deferred to R3).** The furnished-
+     room builder is now embodiment-agnostic: `g1_room._add_box_statics` /
+     `_add_furniture` / `_add_pelvis_head_cam` extracted, and
+     `build_furnished_room_model(base_scene, recog_cam_body=...)` furnishes ANY
+     flat scene with the SAME collidable chair/sofa/plant targets (g1 rooms stay
+     byte-identical; one builder, two embodiments — rule #2/#7 in code).
+     `MuJoCoGo2(furnished=True)` builds from go2 `scene_flat` via that builder,
+     spawns at origin facing the targets, exposes `list_targets`, and gets a
+     forward wide recognition camera (`RECOG_CAM` on base_link — Go2's stock d435
+     is too low/narrow/down to frame furniture) that `get_camera_frame` uses in
+     furnished mode with ALL geom groups enabled (group-3 furniture was hidden —
+     the R9 bug again). `go2_room_vlm` scenario + `go2_runtime.boot_go2_agent`
+     (light boot: sim + WalkSkill/TurnSkill/StopSkill + the SAME VlmSeekSkill, no
+     ROS/nav stack) + cli `_maybe_init_go2_agent` dispatch. `vlm_seek` reads a
+     per-embodiment `seek_step_duration` (g1 3.0 s async deadman; go2 1.2 s
+     blocking walk). **VERIFIED:** Go2 RECOGNISES the furniture via the same
+     VlmSeekSkill (real Qwen-VL, seen=True headless); vector-cli --scenario
+     go2_room_vlm boots the furnished room (screenshot /tmp/c9r2_go2_gui_boot.png).
+     Suite 1631 passed. **NOT done (→ R3):** reliable Go2 autonomous arrival — the
+     sinusoidal-gait yaw-drift + ~2 s VLM latency make open-loop visual servoing
+     diverge (it acquires then wanders); needs closed-loop heading control (use
+     go2 yaw feedback for turns) or the track-B nav-stack. g1 arrival UNCHANGED
+     (R1 stall logic restored after an R2 experiment regressed it — see tricky
+     Case 19). NEXT R3: crack Go2 arrival (heading-closed-loop) / track A multi-
+     object / track B nav-stack.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

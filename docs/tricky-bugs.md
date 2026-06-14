@@ -371,3 +371,36 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** when a learned detector replaces a hand-crafted one, its FAILURE
   SHAPES differ — design the control loop for "noisy + intermittent + loosely
   bounded", not for the clean signal the geometry detector gave you.
+
+## Case 19 — a Go2-acquisition fix (forward-only stall gate) silently regressed g1 arrival (2026-06-14)
+- **Symptom:** tuning the shared `vision_seek._seek_loop` to make Go2 acquire a
+  far target (pre-acquisition forward-bias) + not false-arrive mid-turn (count
+  progress-stall ONLY on forward ticks) fixed nothing for Go2 AND broke g1: g1
+  vlm_seek went from arriving 0.50 m (R1) to stopping 1.83 m short.
+- **Cause:** g1 arrives by ORBITING the target at close range (turn-dominated
+  near the chair) and the all-tick progress-stall caught that as "arrived". The
+  forward-only gate required 8 consecutive FORWARD ticks with no progress, which
+  an orbiting robot rarely produces → g1 never stalled → never arrived.
+- **Fix:** reverted both experiments; restored R1 all-tick stall + sweep-scan. g1
+  back to 0.58 m PASS. Go2 arrival left to R3 (it needs closed-loop heading
+  control for the gait yaw-drift, not a stall-gate tweak — a different problem).
+- **Lesson:** before tuning a SHARED control loop for a new embodiment, pin the
+  old embodiment's success with a regression run FIRST — a change that helps the
+  new case can quietly break the proven one (their arrival signatures differ:
+  g1 orbits, go2 yaw-drifts). Embodiment-specific control belongs behind an
+  embodiment-specific hint, not baked into the shared path.
+
+## Case 20 — Go2's furnished-room camera saw only floor: env geoms hidden + cam too low (2026-06-14)
+- **Symptom:** the VLM returned nothing for Go2 in the furnished room; the d435
+  frame was bare floor + a sky band, no furniture.
+- **Two compounding causes:** (1) the shared room tags walls/furniture with
+  ENV_GEOM_GROUP=3, which Go2's `get_camera_frame` (default render option) HID —
+  the same group-visibility trap as g1 R9; (2) Go2's stock d435 is at ~0.2 m,
+  42° FOV, pitched 5° DOWN — it frames the floor, not furniture at range.
+- **Fix:** (1) enable all geom groups in the furnished-mode renderer (scoped to
+  furnished so the apartment view is byte-identical); (2) mount a forward, ~level
+  (pitched up 8°), 75° recognition camera on base_link in the furnished build,
+  used by get_camera_frame in furnished mode. Go2 then grounds the chair.
+- **Lesson:** porting a perception capability to a new robot inherits BOTH the
+  old render-group gotcha AND the new robot's sensor geometry — a dog's-eye
+  sensor designed for ground/obstacles is not a furniture-recognition view.
