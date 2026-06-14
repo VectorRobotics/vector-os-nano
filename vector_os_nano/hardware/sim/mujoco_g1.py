@@ -147,6 +147,16 @@ class G1MuJoCoBase:
         self._render_done = threading.Event()
         self._render_png: "bytes | None" = None
         self._renderer = None  # lazily created on the control thread
+        # On-demand FORWARD-camera RGB frame (campaign #8 R9 — visual object
+        # recognition). Same control-thread discipline as the chase-cam render
+        # (mujoco.Renderer owns a GL context — Case 12, never the caller
+        # thread). The caller requests via _cam_req; the control loop renders a
+        # first-person forward view and publishes the (H,W,3) rgb array.
+        self._cam_lock = threading.Lock()
+        self._cam_req = threading.Event()
+        self._cam_done = threading.Event()
+        self._cam_rgb = None
+        self._cam_renderer = None
         # Live passive viewer window (campaign #8 R0). The owner controls the
         # G1 entirely through vector-cli and must SEE the gait, not just an
         # offscreen PNG. The window is launched in connect() and synced by the
@@ -310,6 +320,7 @@ class G1MuJoCoBase:
             self._lidar_snap = None
         self._lidar = None
         self._occ = None
+        self._cam_renderer = self._cam_rgb = None
         self._model = self._data = self._policy = None
 
     close = disconnect
@@ -352,6 +363,41 @@ class G1MuJoCoBase:
         if not png:
             raise RuntimeError("g1 viewer frame render produced no image")
         return png
+
+    def _render_camera_frame(self, m, d, h: int = 240, w: int = 320):
+        """Render the pelvis-mounted FIRST-PERSON forward camera as an
+        (h, w, 3) uint8 RGB array (control thread). Uses the named fixed camera
+        g1_room adds to the pelvis (rotates with the robot) — what the G1
+        'sees' for object recognition."""
+        import mujoco
+        if self._cam_renderer is None:
+            self._cam_renderer = mujoco.Renderer(m, height=h, width=w)
+            # The env geoms (walls/obstacles/targets) are in group
+            # ENV_GEOM_GROUP for the lidar mask; the offscreen Renderer hides
+            # non-default groups by default, so enable ALL groups or the camera
+            # sees an empty floor.
+            self._cam_opt = mujoco.MjvOption()
+            self._cam_opt.geomgroup[:] = 1
+        from vector_os_nano.hardware.sim.g1_room import HEAD_CAM  # noqa: PLC0415
+        self._cam_renderer.update_scene(
+            d, camera=HEAD_CAM, scene_option=self._cam_opt)
+        return self._cam_renderer.render().copy()
+
+    def get_camera_frame(self, timeout: float = 5.0):
+        """A first-person forward RGB frame (H,W,3 uint8) for recognition.
+
+        Rendered ON the control thread (Case 12 — mujoco.Renderer owns GL);
+        the caller blocks until it lands. Serialized."""
+        self._require_connected()
+        with self._cam_lock:
+            self._cam_done.clear()
+            self._cam_req.set()
+            if not self._cam_done.wait(timeout=timeout):
+                raise RuntimeError("g1 camera frame render timed out")
+            rgb = self._cam_rgb
+        if rgb is None:
+            raise RuntimeError("g1 camera frame render produced no image")
+        return rgb
 
     # -- control loop (one thread owns ALL mujoco/torch state) -------------
     # The control loop runs in ONE of two modes (resolved in connect()):
@@ -436,6 +482,15 @@ class G1MuJoCoBase:
                 self._render_png = None
             self._render_req.clear()
             self._render_done.set()
+        # On-demand forward-camera RGB (R9): render on THIS thread (owns GL).
+        if self._cam_req.is_set():
+            try:
+                self._cam_rgb = self._render_camera_frame(m, d)
+            except Exception as exc:  # noqa: BLE001 — never break the gait
+                logger.warning("g1 camera render failed: %s", exc)
+                self._cam_rgb = None
+            self._cam_req.clear()
+            self._cam_done.set()
 
     def _control_loop(self) -> None:
         # DAEMON mode only. Pace in POLICY-PERIOD batches (10 physics steps =

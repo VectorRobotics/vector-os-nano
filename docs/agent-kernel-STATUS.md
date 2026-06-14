@@ -322,6 +322,22 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      summary to the owner. **Resume by deciding DQ-10 (unblocks recognition) or
      /loop again for hardening (explore robustness / multi-room / nav-stack
      costmap).** DQ-4 (merge to master) also still PENDING.
+   - **DQ-10 APPROVED (A = MuJoCo-as-world) by owner 2026-06-13** → visual
+     recognition unblocked, loop resumed.
+   - **R9 SHIPPED (visual object recognition — first piece):** a pelvis-mounted
+     first-person forward camera wired into G1 (g1_room adds a fixed HEAD_CAM;
+     rendered on the control thread via the on-demand mechanism — Case 12, off
+     the gait hot path; get_camera_frame() returns RGB). perception/
+     color_targets.py: detect_targets(rgb) finds red/blue/green boxes by colour
+     segmentation (pure numpy, deterministic, no new deps — robust on MuJoCo's
+     basic render for saturated colours). Two real-frame gotchas fixed: env
+     geoms are in geom-group ENV_GEOM_GROUP (lidar mask) which the offscreen
+     Renderer hid → enable all groups in the camera MjvOption; MjSpec cameras
+     take a quat (xyaxes silently no-ops). Verified headless: G1 sees the red
+     object centre-frame and detect_targets returns it (screenshot
+     g1_R9_firstperson_detect.png). Suite 1599 passed. NEXT R10: full vision
+     closed loop ('找到并走到红色物体' → explore+recognise → estimate seen
+     target's world pose → go to it; optional VLM). R12 forced REVIEW.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

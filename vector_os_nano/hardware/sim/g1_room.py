@@ -39,6 +39,8 @@ _WALL_CX = 1.0            # room centred a little ahead of the spawn
 # G1's own body. Group is render/ray metadata — collision (contype) is
 # unaffected, so physics/blocking still work.
 ENV_GEOM_GROUP = 3
+# Name of the first-person forward camera mounted on the pelvis (R9 vision).
+HEAD_CAM = "g1_head_cam"
 
 
 @dataclass(frozen=True)
@@ -157,4 +159,23 @@ def build_room_model(asset_dir: "Path | str") -> Any:
             rgba=list(obj.rgba),
             group=ENV_GEOM_GROUP,   # lidar masks to this group → ignores robot
         )
+    # First-person forward camera mounted on the pelvis (campaign #8 R9 — visual
+    # recognition). mode=fixed so it rotates with the robot; xyaxes orient it to
+    # look along the body +x (forward): cam right = body -y, up = body +z, so
+    # cam -z (view dir) = +x. Mounted (not free-cam) avoids orbit-azimuth guesswork.
+    import numpy as np
+    pelvis = spec.body("pelvis")
+    cam = pelvis.add_camera()
+    cam.name = HEAD_CAM
+    cam.pos = [0.18, 0.0, 0.45]      # in front of + above the pelvis
+    cam.fovy = 60.0
+    # Orient to look along body +x (forward), up = body +z. The camera frame
+    # axes in body coords: x_c=-y, y_c=+z, z_c=-x (so view dir -z_c = +x).
+    # MjSpec takes a quat (xyaxes silently no-ops), so convert that matrix.
+    R = np.array([[0.0, 0.0, -1.0],
+                  [-1.0, 0.0, 0.0],
+                  [0.0, 1.0, 0.0]], dtype=np.float64)
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, R.flatten())
+    cam.quat = q.tolist()
     return spec.compile()
