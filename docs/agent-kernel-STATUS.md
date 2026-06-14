@@ -4,8 +4,8 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 [ARCHITECTURE.md](ARCHITECTURE.md); hidden-bug lessons are [tricky-bugs.md](tricky-bugs.md);
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
-- Branch: `feat/playground-vln` (campaigns #2–#9 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #9 wound down; campaign #10 = high-fidelity perception sim — owner pivot).
+- Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
+- Last updated: 2026-06-14 (campaign #10 R1 PROBE done — substrate recommendation queued as DQ-11).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -27,12 +27,20 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   existing go2 + NAVSTACK already covers nav" — so MuJoCo-VLM-render is NOT the differentiator.
 - The real need is a **high-fidelity perception substrate** (photoreal/co-sim/other) good enough
   for real recognition + VLN + manipulation. **This re-opens the DQ-10 substrate decision = CEO
-  gate** (see decision-queue): candidates incl. co-sim (MuJoCo physics + habitat/photoreal render),
-  a physics-capable habitat re-pin, Genesis, or another high-fidelity option. Spike in `~/sandbox/`
-  before any repo dependency.
-- **First #10 task:** once the substrate is chosen, prune the superseded MuJoCo-VLM-render
-  perception code from #9 (kept for now — tested + interconnected; pruning before the substrate is
-  picked would risk deleting what #10 reuses).
+  gate (DQ-11).** Spike in `~/sandbox/` before any repo dependency.
+- **R1 PROBE done** (workflow `waxcsgpd6`, 5-agent panel; ADR-010): top three are a paper tie
+  (Genesis 54 / SAPIEN 53 / co-sim 53 of 60), so the deciders are **reuse + risk**, not score.
+  **Recommended primary = co-sim** (keep MuJoCo physics unchanged → reuses all of #5–#9; bolt on a
+  Blender/OptiX photoreal renderer = the *only* candidate with confirmed RTX 5080/Blackwell support;
+  clean license). **SAPIEN/ManiSkill3 = strong fallback** (best paper scores + cleanest in-process
+  seam, but rtx=2 Blackwell unknown + discards MuJoCo reuse). Genesis = track-don't-bet (closed-source
+  1-month Nyx wheel). habitat re-pin REJECTED (suction-grasp is architectural; can't get photoreal +
+  manipulable in one scene). Isaac REJECTED (owner-excluded + live Blackwell TiledCamera hang).
+  co-sim's one real unknown = render latency → **R2 = sandbox spike** (Blender frame → Qwen-VL
+  grounding vs #9 baseline + latency measure). **Awaiting CEO pick of substrate (DQ-11).**
+- **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
+  for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
+  geometry are reused on the new substrate).
 
 **Campaign #9 outcome (MuJoCo furnished-room VLN, feat/playground-vln) — sound engineering, capped by
 the perception substrate:**
