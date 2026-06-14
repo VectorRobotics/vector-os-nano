@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 DQ-11 RESOLVED — self-built lightweight co-sim, MuJoCo physics + Blender/OptiX photoreal; BUILD unlocked).
+- Last updated: 2026-06-14 (campaign #10 BUILD R1 — co-sim wire seam: camera transform + BlenderBridge + Cycles/OptiX server; OptiX e2e + VLM chair 0.95).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -63,6 +63,19 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   scene: PolyHaven CC0 PBR furniture + photoreal room (or 3DGS scan), VLM-grounding step-change vs #9.
   (3) G1/Go2 photoreal VLN (reuse recognise→navigate on photoreal frames). (4) manipulation: Piper
   grasp driven by photoreal perception. vector-cli only + screenshots; real VLM always called (rule 5).
+- **BUILD R1 DONE** (`vector_os_nano/playground/photoreal/`): the co-sim wire plumbing, repo zero-dep.
+  `camera.py` = pure MuJoCo→Blender camera transform (identity-of-columns; both engines share Z-up
+  world + camera -Z-forward/+Y-up — TDD pins the axes so a refactor can't slip in drift). `bridge.py` =
+  `BlenderBridge` client (clones the #9 subprocess+socket pattern; `blender_bin()`/`blender_available()`
+  via `VECTOR_BLENDER`; PNG over base64). `server.py` = Blender-side Cycles/OptiX render server (GPL,
+  subprocess-isolated — repo venv never imports `bpy`). 12 tests green (pure pose + fake-server protocol
+  + Blender-gated e2e). End-to-end proven on the box: pose → bridge → **OPTIX RTX 5080** render (640×480
+  @64 = 1085 ms) of a photoreal CC0 armchair → real Qwen-VL grounds **chair 0.95 + correctly rejects
+  sofa** — same fidelity as R3, now through the production seam. Evidence: `~/sandbox/c10-substrate-spike/
+  r1_e2e_armchair.png`. NOT yet done (R2): the `PhotorealRenderer` adapter that reads a live MuJoCo
+  `(model,data)` (cam pose + body→asset scene spec) behind `get_camera_observation()`, + the photoreal
+  multi-asset room. (Note: live qwen-VL hit a transient upstream 429 mid-round — called for real, failed
+  loud, succeeded on retry; never faked.)
 - **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
   for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
   geometry are reused on the new substrate).
