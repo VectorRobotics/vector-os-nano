@@ -321,7 +321,7 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      hardening or faking gated work, so the loop PAUSED with a phase-completion
      summary to the owner. **Resume by deciding DQ-10 (unblocks recognition) or
      /loop again for hardening (explore robustness / multi-room / nav-stack
-     costmap).** DQ-4 (merge to master) also still PENDING.
+     costmap).** DQ-4 (merge to master) MERGED 2026-06-14.
    - **DQ-10 APPROVED (A = MuJoCo-as-world) by owner 2026-06-13** → visual
      recognition unblocked, loop resumed.
    - **R9 SHIPPED (visual object recognition — first piece):** a pelvis-mounted
@@ -374,8 +374,9 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      ⑤ autonomous explore → recognition-based go-to-object ⑥ vector-cli-only —
      plus the grand one-command VLN (explore+recognise+approach, R11). Nothing
      substantive remains that isn't owner-gated, so the loop PAUSED with a
-     completion report. **Only open item: DQ-4 (merge feat/playground-vln →
-     master) — owner's call.** Resume with /loop for optional hardening (VLM
+     completion report. **DQ-4 MERGED (owner-approved 2026-06-14): feat/playground-vln (88
+     commits, campaigns #2-#8) --no-ff merged → master (origin/master
+     3e82996). Ongoing dev continues on feat/playground-vln.** Resume with /loop for optional hardening (VLM
      recognition / multi-target / multi-room / nav-stack costmap).
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
