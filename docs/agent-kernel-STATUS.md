@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R12 — photoreal-MESH lever VALIDATED in-sim (bleach_bottle CC0 grounds 'bottle' reliably, vs garbled cylinder) + wired into pick scene; live grasp now gated on close-range FRAMING (walk drifts dog off-axis). R13 = controlled approach -> real grasp.).
+- Last updated: 2026-06-14 (campaign #10 R13 — real-sim grasp debugged: standoff framing SOLVED + mj_forward thread-race FIXED + VLM-429 retry added + close-range detect works; ROOT CAUSE found = photoreal bottle MESH != physics cylinder -> depth-at-bbox misaligned -> wrong 3D -> IK unreachable. R14 = match render+physics shape (texture the cylinder).).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star

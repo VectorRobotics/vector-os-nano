@@ -92,6 +92,7 @@ def test_recognize_pick_locates_then_delegates_target_xyz():
 
 def test_recognize_pick_fails_when_not_recognised():
     skill = RecognizePickSkill(detector=_FakeDetector([]), pick=_FakePick())
+    skill._DETECT_BACKOFF_S = 0.0       # don't sleep through the retries in tests
     res = skill.execute({"label": "red can"}, _Ctx(_FakeBase()))
     assert not res.success
     assert res.result_data.get("diagnosis") in {"not_found", "not_located"}

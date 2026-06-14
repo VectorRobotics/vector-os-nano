@@ -13,6 +13,7 @@ grasp; adds no new grasp mechanics.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import numpy as np
@@ -85,10 +86,30 @@ class RecognizePickSkill:
     effects: dict = {}
     failure_modes: list = ["no_base", "no_camera", "not_found", "not_located"]
 
+    # The remote VLM is intermittently rate-limited / flaky (transient 429 or a
+    # garbled response → empty). A few re-queries ride out the transient before
+    # honestly reporting not-found (the object hasn't moved).
+    _DETECT_TRIES: int = 4
+    _DETECT_BACKOFF_S: float = 2.0
+
     def __init__(self, detector: "VlmTargetDetector | None" = None,
                  pick: "PickTopDownSkill | None" = None) -> None:
         self._detector = detector or VlmTargetDetector()
         self._pick = pick or PickTopDownSkill()
+
+    def _detect_with_retry(self, rgb, query: str) -> list:
+        """detect_targets with bounded retries on a transient empty/error result."""
+        for i in range(self._DETECT_TRIES):
+            try:
+                dets = self._detector.detect_targets(rgb, query)
+            except Exception as exc:  # noqa: BLE001 — flaky remote VLM
+                logger.debug("detect_targets raised (try %d): %s", i, exc)
+                dets = []
+            if dets:
+                return dets
+            if i < self._DETECT_TRIES - 1:
+                time.sleep(self._DETECT_BACKOFF_S * (i + 1))
+        return []
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         base = context.base
@@ -106,7 +127,7 @@ class RecognizePickSkill:
                 error_message="base has no camera+depth observation for perception",
                 result_data={"diagnosis": "no_camera"})
 
-        dets = self._detector.detect_targets(obs["rgb"], query)
+        dets = self._detect_with_retry(obs["rgb"], query)
         det = max(dets, key=lambda d: d.get("area_frac", 0.0)) if dets else None
         if det is None:
             return SkillResult(
