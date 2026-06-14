@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 BUILD R3 — photoreal wired into g1 get_camera_observation, env-gated; real g1 base e2e → VLM chair 0.9).
+- Last updated: 2026-06-14 (campaign #10 R5 — vector-cli photoreal ACCEPTANCE PASSED: recognise→navigate verify visited('chair'); builds #1–#3 CLI-accepted).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -100,10 +100,19 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   through the REAL g1 base** (booted room+furnished+photoreal headless): `get_camera_observation` returns
   `{rgb(640×480 Blender), rgb_mujoco, depth, cam_pos, cam_mat, fovy}` and the real Qwen-VL grounds **chair
   0.9** on the photoreal frame. Evidence `~/sandbox/c10-substrate-spike/r3_g1_photoreal_obs.png` (+ the
-  MuJoCo frame side-by-side). PENDING (R5, after the R4 review): the vector-cli REPL acceptance — a live
-  `recognise→navigate` run on photoreal frames + screenshot; scene-quality tuning (per-asset yaw so the
-  chair faces the camera, walls, more CC0 assets for sofa/plant disambiguation). The seam + base
-  integration are proven; what remains is the owner-facing CLI run and scene polish.
+  MuJoCo frame side-by-side).
+- **BUILD R5 — vector-cli photoreal ACCEPTANCE PASSED** (owner-requested): live REPL,
+  `vector-cli --scenario g1_room_vlm` + `VECTOR_G1_PHOTOREAL=1` (boot banner shows "[PHOTOREAL co-sim:
+  Blender/OptiX]"). NL command `找到椅子并走过去` → VGG planner → `recognize_navigate` →
+  **[PASS] verify `visited('chair')`, 1/1 verified (21.1s)** — the real VLM grounded the chair on the
+  offscreen photoreal Blender frame, depth-at-bbox located it, `navigate_to` drove there, and the
+  DETERMINISTIC verify confirmed arrival at the chair's GT coords (rule 5, no teleport). Live viewer
+  screenshot shows the G1 standing AT the chair: `~/sandbox/c10-substrate-spike/r5_vcli_viewer.png`. The
+  hybrid co-sim is confirmed in the real CLI: physics+viewer=MuJoCo, perception=photoreal Blender. Clean
+  teardown (Blender subprocess closed on quit; exit segfault is the known tolerated GL-teardown 139).
+  **builds #1–#3 DONE + CLI-accepted.** Remaining: scene-quality polish (per-asset yaw so the chair faces
+  the camera, walls, sofa/plant CC0 assets to disambiguate) — optional; and **build #4 = Piper
+  manipulation** (reuse #17/#19 MuJoCoPiper + PickTopDownSkill driven by photoreal perception).
 - **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
   for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
   geometry are reused on the new substrate).
