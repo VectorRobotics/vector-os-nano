@@ -1,6 +1,6 @@
 # ADR-010: High-Fidelity Perception Substrate — Campaign #10 (G1 real VLN + manipulation)
 
-- Status: **Proposed — PROBE recommendation, awaiting CEO approval + R2 sandbox spike (new external dependency, DQ-11 gate)**
+- Status: **Proposed — R2 sandbox spike done (co-sim GPU/latency de-risked); awaiting CEO pick of substrate (DQ-11 gate)**
 - Date: 2026-06-14
 - Related: ADR-009 (habitat third-world, superseded for this goal), DQ-10 (MuJoCo-as-world,
   approved for campaign #8/#9 physics), DQ-11 (this decision), [ARCHITECTURE.md](../ARCHITECTURE.md)
@@ -112,3 +112,38 @@ Async double-buffering hides render latency (vision 2–10 Hz, physics+force ful
    moving-foreground weak spot).
 6. (time-boxed contrast) if co-sim latency fails: SAPIEN/Genesis Blackwell import + one rt frame +
    Qwen-VL grounding, to pick the alternative.
+
+## R2 spike results (2026-06-14, `~/sandbox/c10-substrate-spike/`, repo zero-dep)
+
+Ran the co-sim spike with Blender 4.5.10 LTS (portable, not in venv/git). Evidence: real
+openrouter Qwen-VL calls (~$0.011 total); `baseline_mujoco_room.png`, `blender_room_s{8,32,128}.png`.
+
+- **Killer risk RESOLVED — co-sim runs on RTX 5080 Blackwell.** Blender Cycles+OptiX backend =
+  `OPTIX: NVIDIA GeForce RTX 5080 Laptop GPU`. Latency @640×480: first frame 2347 ms (OptiX kernel
+  warmup), then **826 ms @ 32 samples (~1.2 Hz), 979 ms @ 128**. A persistent render process avoids
+  re-warmup → loop-viable for vision-at-low-rate VLN (the MuBlE pattern). The one thing that could
+  have killed co-sim does not.
+- **Honest correction:** an initial "MuJoCo grounds 0/3" reading was a *camera-framing artifact*
+  (free-cam azimuth was reversed — MuJoCo `azimuth=0` faces the furniture, not 180; the lens was on
+  the grey wall). Properly framed + coloured, the #9-style MuJoCo flat render @160px grounds **chair
+  0.95, plant 0.70–0.85, misses sofa (read as "room divider") = 2/3**. #9's "works but flaky" was
+  correct; the ceiling is *flakiness*, not zero.
+- **Apples-to-apples (same VLM, 160px, same low-poly assets, same camera):** Blender grounds **chair
+  0.90, sofa 0.95 (fixes the one MuJoCo missed!), plant flaky (→"lamp")**. Both ≈2/3, failing on
+  *different* objects → **a wash on toy assets.** A resolution sweep (160 vs 512 px) swung randomly
+  and 512 was sometimes *worse* → grounding is **stochastic/flaky on low-poly assets, not resolution-
+  bound.**
+- **Decision-relevant insight (refines the whole campaign):** on low-poly game assets the *renderer
+  swap alone is a modest gain, not a categorical leap.* The real levers are **(a) photoreal ASSETS**
+  (3DGS room scans / real PBR furniture, not toy meshes) and **(b) a more robust perception pipeline**
+  (resolution, consistency voting, de-flaking) — not the render engine per se. This **strengthens
+  co-sim**: since swapping the engine alone is only a modest win, paying the full migration cost to
+  *discard MuJoCo physics reuse* (SAPIEN/Genesis) buys the same asset-bound ceiling. co-sim keeps all
+  #5–#9 physics and adds photoreal assets incrementally behind one seam.
+- Manipulation physics needs no re-spike (co-sim physics is unchanged MuJoCo — real contact already
+  proven in #5–#9/DQ-10); the MuJoCo-state→render socket bridge is the validated #9 scaffold.
+
+**Net:** co-sim is feasible and de-risked on its only hard unknown. The remaining open question is
+*asset fidelity*, which R3 (post-approval) should validate with one genuinely photoreal asset before
+committing to a build. SAPIEN/ManiSkill3 remains the alternative if the owner values its richer
+out-of-box scene/manipulation-benchmark ecosystem over MuJoCo reuse.

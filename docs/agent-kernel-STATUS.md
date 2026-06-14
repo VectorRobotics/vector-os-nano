@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R1 PROBE done — substrate recommendation queued as DQ-11).
+- Last updated: 2026-06-14 (campaign #10 R1+R2 done — co-sim recommended + GPU/latency de-risked; DQ-11 awaits CEO pick).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -36,8 +36,16 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   seam, but rtx=2 Blackwell unknown + discards MuJoCo reuse). Genesis = track-don't-bet (closed-source
   1-month Nyx wheel). habitat re-pin REJECTED (suction-grasp is architectural; can't get photoreal +
   manipulable in one scene). Isaac REJECTED (owner-excluded + live Blackwell TiledCamera hang).
-  co-sim's one real unknown = render latency → **R2 = sandbox spike** (Blender frame → Qwen-VL
-  grounding vs #9 baseline + latency measure). **Awaiting CEO pick of substrate (DQ-11).**
+  co-sim's one real unknown = render latency.
+- **R2 PROBE-spike done** (`~/sandbox/c10-substrate-spike/`, repo zero-dep): **co-sim's killer risk
+  RESOLVED** — Blender Cycles+OptiX runs natively on the RTX 5080 Blackwell (`OPTIX: RTX 5080`), ~826 ms
+  @32 samples (~1.2 Hz, persistent process avoids warmup) = loop-viable. Honest finding: on low-poly
+  Kenney assets a renderer swap is only a *modest* grounding gain (Blender 2/3, MuJoCo 2/3, failing on
+  *different* objects; grounding is stochastic/flaky, not resolution-bound). **The real lever is
+  photoreal ASSETS + perception-pipeline robustness, not the engine** — which *strengthens* co-sim
+  (keep all #5–#9 physics reuse; add photoreal assets incrementally; greenfield migration buys the
+  same asset-bound ceiling). **Awaiting CEO pick of substrate (DQ-11); R3 (post-approval) validates one
+  genuinely photoreal asset before any build.**
 - **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
   for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
   geometry are reused on the new substrate).
