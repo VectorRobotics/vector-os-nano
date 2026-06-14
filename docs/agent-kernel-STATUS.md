@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R1–R3 PROBE done — co-sim validated end-to-end on RTX 5080; DQ-11 decision-ready, awaits CEO pick).
+- Last updated: 2026-06-14 (campaign #10 DQ-11 RESOLVED — self-built lightweight co-sim, MuJoCo physics + Blender/OptiX photoreal; BUILD unlocked).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -50,9 +50,19 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   "not a sofa"** through the same 160px pipeline that gave flaky 2/3 on toy meshes. **co-sim now
   validated end-to-end on the RTX 5080** (OptiX + ~1.2 Hz + confident photoreal grounding + full
   physics reuse + free CC0 assets) → recommendation firms to a confident **co-sim** (SAPIEN alt if its
-  richer out-of-box ecosystem outweighs MuJoCo reuse). **Natural pause point: DQ-11 decision-ready,
-  remaining work owner-gated (pick substrate → build photoreal scenes + pose-sync bridge + prune #9
-  render code).**
+  richer out-of-box ecosystem outweighs MuJoCo reuse). **DQ-11 RESOLVED (owner 2026-06-14,
+  option "borrow don't depend"): self-built lightweight co-sim — MuJoCo physics (reuse #5–#9) +
+  Blender Cycles/OptiX photoreal render behind a `PhotorealRenderer` world adapter (kernel untouched,
+  rule 2), MuJoCo-state→frame over the #9 subprocess+socket scaffold. Fits our 24.04 / RTX 5080 /
+  non-ROS vector-cli stack. Covers BOTH G1/Go2 photoreal VLN AND manipulation (Piper, #17/#19) — what
+  the evaluated MATRiX (zsibot, MuJoCo+UE5) doesn't (quadruped-only, no public image, 22.04/Humble-only).
+  MATRiX/UE5 = architecture validation, not a dependency; UE5-plugin = optional real-time upgrade only
+  if Blender latency blocks. Heavy external deps remain CEO-gated.**
+- **BUILD sequence (campaign.md):** (1) `PhotorealRenderer` seam: MuJoCo state → Blender subprocess →
+  RGB frame, pose-aligned, behind `get_camera_observation()`, one frame end-to-end (TDD). (2) photoreal
+  scene: PolyHaven CC0 PBR furniture + photoreal room (or 3DGS scan), VLM-grounding step-change vs #9.
+  (3) G1/Go2 photoreal VLN (reuse recognise→navigate on photoreal frames). (4) manipulation: Piper
+  grasp driven by photoreal perception. vector-cli only + screenshots; real VLM always called (rule 5).
 - **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
   for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
   geometry are reused on the new substrate).
