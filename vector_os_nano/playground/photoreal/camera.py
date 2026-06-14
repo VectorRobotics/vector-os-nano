@@ -37,6 +37,27 @@ class BlenderCameraPose:
         return [float(v) for v in np.asarray(self.matrix_world, np.float64).reshape(-1)]
 
 
+def look_at_camera_matrix(pos, target, up=(0.0, 0.0, 1.0)):
+    """A MuJoCo-convention camera (``cam_pos``, ``cam_mat`` flat-9) looking at a
+    world ``target`` with world ``up``.
+
+    The PRODUCTION path takes ``cam_mat`` straight from MuJoCo ``cam_xmat`` — this
+    helper is for building demo/test camera poses (and placing scene cameras). The
+    returned ``cam_mat`` columns are right / up / -forward (camera looks down -Z),
+    matching what MuJoCo reports, so it feeds straight into
+    ``mujoco_camera_to_blender``.
+    """
+    pos = np.asarray(pos, dtype=np.float64).reshape(3)
+    fwd = np.asarray(target, dtype=np.float64).reshape(3) - pos
+    fwd /= np.linalg.norm(fwd)
+    up = np.asarray(up, dtype=np.float64).reshape(3)
+    right = np.cross(fwd, up)
+    right /= np.linalg.norm(right)
+    up_c = np.cross(right, fwd)
+    cam_mat = np.column_stack([right, up_c, -fwd])   # cols: right, up, -forward
+    return pos, cam_mat.reshape(-1)
+
+
 def mujoco_camera_to_blender(cam_pos, cam_mat, fovy_deg: float) -> BlenderCameraPose:
     """Convert a MuJoCo camera (``cam_xpos``/``cam_xmat``/``cam_fovy``) to Blender.
 

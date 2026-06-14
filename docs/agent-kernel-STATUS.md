@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 BUILD R1 — co-sim wire seam: camera transform + BlenderBridge + Cycles/OptiX server; OptiX e2e + VLM chair 0.95).
+- Last updated: 2026-06-14 (campaign #10 BUILD R2 — PhotorealRenderer adapter reads live MuJoCo cam pose → photoreal frame; e2e room render → VLM chair 0.95).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -76,6 +76,20 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   `(model,data)` (cam pose + body→asset scene spec) behind `get_camera_observation()`, + the photoreal
   multi-asset room. (Note: live qwen-VL hit a transient upstream 429 mid-round — called for real, failed
   loud, succeeded on retry; never faked.)
+- **BUILD R2 DONE** (commit pending): the `PhotorealRenderer` world adapter + scene builder. `scene.py` =
+  pure `build_room_scene_spec(placements, asset_map, ...)` → Blender scene dict that SUBSTITUTES photoreal
+  CC0 assets for the toy meshes at the room's visible centres (unmapped labels skipped — partial libraries
+  are valid). `camera.py` gains `look_at_camera_matrix` (build demo/test poses in MuJoCo convention).
+  `renderer.py` = `PhotorealRenderer.observe(model, data)` reads the LIVE `g1_head_cam` pose
+  (`cam_xpos`/`cam_xmat`/`cam_fovy`) and renders the photoreal frame from EXACTLY that pose → returns the
+  `{rgb, cam_pos, cam_mat, fovy}` dict shape recognise→navigate already consumes. 18 playground tests green
+  (pure scene + look-at + fake-bridge renderer asserting matrix_world == MuJoCo pose, no drift end-to-end;
+  uses a tiny hand-built MJCF, no Blender/network). E2E on the box: a real MuJoCo first-person `g1_head_cam`
+  pose → adapter → OPTIX 640×480@64 (~1.08 s) of the photoreal armchair room → real Qwen-VL **chair 0.95**.
+  Evidence `~/sandbox/c10-substrate-spike/r2_room_photoreal.png`. Honest: the single-seat armchair also
+  grounds as **sofa 0.9** (genuine VLM ambiguity on one upholstered seat — a distinct sofa asset
+  disambiguates; asset-library expansion is later). NOT yet wired into `mujoco_g1.get_camera_observation`
+  (changes behaviour → GUI acceptance) — that + a vector-cli photoreal scenario + screenshot is R3.
 - **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
   for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
   geometry are reused on the new substrate).
