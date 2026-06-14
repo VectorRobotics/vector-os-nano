@@ -450,6 +450,14 @@ parallel but meet at milestones.
   derives the decompose vocabulary from the skill registry (killing the GO2 split-brain);
   base primitives are gated on `has_base`; the StrategySelector is world-scoped; validation
   is fail-loud and feeds `GoalTree.validation_notes` back into re-plan.
+- **Playground photoreal co-sim (campaign #10, ADR-010).** `vector_os_nano/playground/photoreal/`
+  is a self-built lightweight co-sim: MuJoCo physics (unchanged) + a Blender Cycles/OptiX photoreal
+  renderer behind a `PhotorealRenderer` world adapter, joined per-frame. The repo venv never imports
+  `bpy` — `server.py` runs under a standalone Blender subprocess over a socket (the #9 bridge pattern;
+  GPL stays isolated). Env-gated (`VECTOR_G1_PHOTOREAL`/`VECTOR_GO2_PHOTOREAL`) so default behaviour is
+  byte-identical. It feeds the real VLM a photoreal frame: g1+go2 photoreal VLN is vector-cli-accepted.
+  A `RecognizePickSkill` (VLM→ray-to-plane locate→top-down grasp) is built; the closed grasp is deferred
+  to an eye-in-hand wrist camera (DQ-12 — forward-camera geometry, not perception, is the limit).
 
 **Remaining:**
 

@@ -1,6 +1,11 @@
 # ADR-010: High-Fidelity Perception Substrate — Campaign #10 (G1 real VLN + manipulation)
 
-- Status: **Proposed — R2 sandbox spike done (co-sim GPU/latency de-risked); awaiting CEO pick of substrate (DQ-11 gate)**
+- Status: **ACCEPTED + SHIPPED (DQ-11, 2026-06-14, option "borrow MATRiX's co-sim arch, don't depend"):
+  self-built lightweight co-sim = MuJoCo physics (reuse #5–#9) + Blender Cycles/OptiX photoreal render
+  behind a `PhotorealRenderer` world adapter (`vector_os_nano/playground/photoreal/`). Campaign #10
+  shipped it — photoreal VLN vector-cli-accepted (g1+go2, R5); full perception→grasp pipeline +
+  ray-to-plane localization. Closed grasp deferred to an eye-in-hand wrist-camera follow-up (DQ-12):
+  the forward d435's camera/arm geometry coupling, not perception, blocks the final grasp.**
 - Date: 2026-06-14
 - Related: ADR-009 (habitat third-world, superseded for this goal), DQ-10 (MuJoCo-as-world,
   approved for campaign #8/#9 physics), DQ-11 (this decision), [ARCHITECTURE.md](../ARCHITECTURE.md)
