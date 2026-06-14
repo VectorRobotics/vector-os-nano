@@ -105,7 +105,89 @@ class _FakeGo2:
         return [self._x, 0.0, 0.35]
 
 
+class _HeadingGo2:
+    """Go2 stand-in WITH closed-loop heading control: simulates gait yaw-drift so
+    the test exercises the P-controller. Target is dead-ahead at world heading 0;
+    the camera bearing x_norm is derived from the (drifting) heading. Forward only
+    advances x when roughly aligned; blocked at x≈3.0 → progress-stall arrival."""
+
+    seek_heading_hold = True
+    seek_step_duration = 1.2
+
+    def __init__(self, start_heading=0.6, drift=0.10):
+        self._h = float(start_heading)
+        self._drift = float(drift)
+        self._x = 0.0
+        self.vyaws = []              # every commanded vyaw (turn + forward trim)
+        self.heading_calls = 0
+
+    def get_heading(self):
+        self.heading_calls += 1
+        return self._h
+
+    def get_camera_frame(self, width=640, height=480):
+        return "frame"
+
+    def detect_targets_bearing(self):
+        # x_norm = h / half_fov (face left of a dead-ahead target → it appears right)
+        import math as _m
+        return max(-1.0, min(1.0, self._h / 0.80))
+
+    def walk(self, vx, vy, vyaw, duration=2.0):
+        self.vyaws.append(float(vyaw))
+        # apply commanded yaw + persistent gait drift
+        self._h += vyaw * duration + self._drift
+        # forward advances while roughly aligned (walk-while-correcting band)
+        if vx > 0 and abs(self._h) < 0.4 and self._x < 3.0:
+            self._x = min(3.0, self._x + vx * duration)
+        return True
+
+    def stop(self):
+        pass
+
+    def get_position(self):
+        return [self._x, 0.0, 0.30]
+
+
 class TestVlmSeekOnGo2:
+    def test_closed_loop_heading_converges_under_drift(self):
+        from vector_os_nano.skills.vlm_seek import VlmSeekSkill
+        from types import SimpleNamespace as NS
+
+        base = _HeadingGo2(start_heading=0.5, drift=0.15)
+
+        class _Det:
+            def detect_targets(self, frame, query, min_area_frac=0.0025):  # noqa: ARG002
+                return [{"label": "chair", "x_norm": base.detect_targets_bearing(),
+                         "area_frac": 0.03}]
+
+        res = VlmSeekSkill(detector=_Det()).execute(
+            {"label": "chair", "max_iters": 60}, NS(base=base, world_model=None, agent=None))
+        assert res.success is True and res.result_data["reason"] == "arrived"
+        # converged FORWARD (not wandered backward): ended near the blocked target
+        assert base.get_position()[0] >= 2.9
+        assert base.heading_calls > 0                 # closed loop really ran
+        # commands are P-computed (within cap, and NOT the open-loop constant
+        # 0.5) and converge toward zero as heading error shrinks
+        assert base.vyaws and max(abs(v) for v in base.vyaws) <= 0.8 + 1e-9
+        assert abs(base.vyaws[-1]) < abs(base.vyaws[0])   # shrank (P convergence)
+        assert not all(abs(abs(v) - 0.5) < 1e-9 for v in base.vyaws)  # not open-loop
+
+    def test_base_without_hint_never_calls_heading(self):
+        # path-isolation guard: a base lacking seek_heading_hold uses the open-loop
+        # shared path and must NEVER touch get_heading (Case 19 — g1 also has it).
+        from vector_os_nano.skills.vlm_seek import VlmSeekSkill
+        from types import SimpleNamespace as NS
+
+        class _NoHintBase(_HeadingGo2):
+            seek_heading_hold = False
+
+        base = _NoHintBase()
+        det = _FakeDetector([{"label": "chair", "x_norm": 0.0, "area_frac": 0.03}])
+        VlmSeekSkill(detector=det).execute(
+            {"label": "chair", "max_iters": 15}, NS(base=base, world_model=None, agent=None))
+        assert base.heading_calls == 0
+
     def test_same_skill_drives_go2_to_arrival(self):
         from vector_os_nano.skills.vlm_seek import VlmSeekSkill
         det = _FakeDetector([{"label": "chair", "x_norm": 0.0, "area_frac": 0.03}])

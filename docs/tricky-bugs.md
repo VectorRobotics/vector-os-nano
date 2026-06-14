@@ -404,3 +404,22 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** porting a perception capability to a new robot inherits BOTH the
   old render-group gotcha AND the new robot's sensor geometry — a dog's-eye
   sensor designed for ground/obstacles is not a furniture-recognition view.
+
+## Case 21 — VLM visual-servoing arrival is inherently flaky (both embodiments) (2026-06-14)
+- **Symptom:** the SAME vlm_seek code reaches the chair on one run (g1 0.58 m PASS)
+  and stalls 2+ m short on the next (g1 2.38 m, go2 1.3-2.3 m) — no code change
+  between runs. Looked like a regression each time; it was run-to-run VARIANCE.
+- **Cause:** closing a control loop on a ~2 s, noisy, intermittent VLM bearing
+  while the gait drifts/sways is fundamentally under-sampled — the robot acts on
+  stale/jittery bearings, curves, and the progress-stall (the only arrival signal
+  when the box is too small/clipped to area-arrive) fires wherever forward motion
+  happens to lull. A closed-loop heading P-controller (Go2) fixed the egregious
+  backward-WANDER (it now approaches forward) but not the flaky last-metres.
+- **Fix (direction, R3):** do NOT visually-servo the last metres. VLM RECOGNISES
+  the object → estimate/return its location → drive there with a RELIABLE
+  controller (navigate_to / nav-stack waypoint, which uses odometry + a planner,
+  not pixel bearings). Recognition is the perception win; arrival is a navigation
+  problem with a proven solution already in the repo (the apartment go2 nav stack).
+- **Lesson:** a slow, noisy sensor can be a great DETECTOR and a terrible
+  CONTROLLER. Use the VLM to decide WHAT/WHERE, use odometry+planner to decide
+  HOW to get there. Don't put a 0.5 Hz noisy signal in a tight servo loop.

@@ -432,13 +432,28 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      blocking walk). **VERIFIED:** Go2 RECOGNISES the furniture via the same
      VlmSeekSkill (real Qwen-VL, seen=True headless); vector-cli --scenario
      go2_room_vlm boots the furnished room (screenshot /tmp/c9r2_go2_gui_boot.png).
-     Suite 1631 passed. **NOT done (→ R3):** reliable Go2 autonomous arrival — the
-     sinusoidal-gait yaw-drift + ~2 s VLM latency make open-loop visual servoing
-     diverge (it acquires then wanders); needs closed-loop heading control (use
-     go2 yaw feedback for turns) or the track-B nav-stack. g1 arrival UNCHANGED
-     (R1 stall logic restored after an R2 experiment regressed it — see tricky
-     Case 19). NEXT R3: crack Go2 arrival (heading-closed-loop) / track A multi-
-     object / track B nav-stack.
+     Suite 1631 passed.
+     **R2 follow-up (workflow-designed closed-loop heading control):** a design
+     workflow (6 agents) chose an embodiment-scoped closed-loop heading P-controller
+     for Go2: latch the target's ABSOLUTE world heading at detection
+     (theta_goal = get_heading() − 0.80·x_norm), then each tick steer
+     vyaw = clip(1.8·err, ±0.8) off the cheap get_heading() between slow VLM calls;
+     turn if |err|>0.35 else walk-forward-with-trim; forward bursts capped 0.6 s.
+     Gated behind a Go2-only `seek_heading_hold` attr (g1 ALSO has get_heading, so
+     the gate is the ATTR — Case 19); progress-stall sampling is also embodiment-
+     scoped (g1 all-tick orbit-arrival; Go2 forward-tick-only). g1 path byte-
+     identical (unit-tested). This FIXED Go2's backward-wander (now approaches
+     forward, ~1.3–2.3 m) but **did NOT achieve reliable arrival**.
+     **KEY FINDING (tricky Case 21):** VLM visual-servoing arrival is INHERENTLY
+     FLAKY for BOTH embodiments — slow (~2 s) + noisy + intermittent VLM detection
+     × gait drift means run-to-run the robot sometimes arrives (g1 0.58 m) and
+     sometimes stalls 2+ m short (same code, no change). R1's clean PASS was a real
+     but non-robust sample. **→ R3 PIVOT: arrival should be VLM-RECOGNISE → drive to
+     the recognised location via a reliable controller (navigate_to / track-B
+     nav-stack waypoint), NOT pure visual servoing.** The recognition + the world-
+     agnostic room are solid; the SERVOING is the wrong tool for the last metres.
+     NEXT R3: recognise→navigate arrival (combines B+C, reliable) / track A multi-
+     object / track B multi-room nav-stack.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

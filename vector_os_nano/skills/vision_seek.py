@@ -42,6 +42,23 @@ _TURN_STEP = 0.5         # deadman re-arm for a turn/scan tick (short — a smal
                          # forward uses the loop's longer step_duration)
 _COAST_MISSES = 4        # keep heading toward the last seen bearing for this
                          # many consecutive missed frames before search-scanning
+# Closed-loop heading control (campaign #9 R2/R3, Go2 only — gated by the base's
+# `seek_heading_hold` attr). A blocking sinusoidal trot yaw-drifts ~40-60°/2s
+# with no feedback, so open-loop fixed-duration turns over/under-shoot and the
+# robot wanders. Fix: latch the target's ABSOLUTE world heading at detection,
+# then P-correct on base.get_heading() every tick (cheap, runs between the slow
+# VLM calls). g1 has no `seek_heading_hold` → keeps the open-loop path verbatim.
+_CAM_HALF_FOV = 0.80     # rad — half the recog cam's 75° FOV (g1_room RECOG_CAM);
+                         # maps x_norm∈[-1,1] to a bearing offset
+_TURN_ONLY_RAD = 0.35    # |heading error| above this = pure turn (too off to walk);
+                         # at/below it, walk forward WHILE carrying the yaw trim so
+                         # the robot makes progress and curves in (a pure-P turn has
+                         # steady-state error under persistent gait drift — walking
+                         # while correcting nets forward progress where halting stalls)
+_K_YAW = 1.8             # P gain (rad/s per rad of heading error)
+_VYAW_CAP = 0.8          # max corrective yaw — never exceed the gait's authority
+_FWD_BURST_S = 0.6       # heading-hold forward burst cap → re-sample heading
+                         # ~3× faster than the gait drift accrues
 _ALIASES = {"红": "red", "蓝": "blue", "绿": "green"}
 
 
@@ -104,6 +121,14 @@ def _seek_loop(base, perceive, max_iters: int, step_duration: float = 0.4,
     scan_steps = 0         # consecutive scan (target-not-seen) ticks
     last_bearing = None    # last seen x_norm — bridges intermittent detection
     miss_streak = 0        # consecutive frames with no detection
+    # Closed-loop heading control is enabled ONLY for a base that opts in via
+    # `seek_heading_hold` (Go2). The gate is the ATTR, NOT get_heading() — g1
+    # ALSO exposes get_heading(), so keying on the method would regress g1's
+    # open-loop orbit-arrival (tricky Case 19). theta_goal is the latched
+    # absolute world heading toward the target.
+    _hold = (bool(getattr(base, "seek_heading_hold", False))
+             and callable(getattr(base, "get_heading", None)))
+    theta_goal = None
     for _ in range(max_iters):
         frame = base.get_camera_frame()
         det = perceive(frame)
@@ -111,9 +136,31 @@ def _seek_loop(base, perceive, max_iters: int, step_duration: float = 0.4,
             seen = True
             miss_streak = 0
             last_bearing = float(det["x_norm"])
-            action, vx, vyaw = _seek_action(det, arrive_area)
+            if _hold:
+                # Latch the target's ABSOLUTE world heading: x_norm>0 = target on
+                # the right = lower yaw (yaw+ = left). Robust to the ~2 s VLM
+                # latency — feedback runs off the latched goal + cheap heading.
+                theta_goal = base.get_heading() - float(det["x_norm"]) * _CAM_HALF_FOV
         else:
             miss_streak += 1
+
+        if _hold and theta_goal is not None and (
+                det is None or det["area_frac"] < arrive_area):
+            # P-controller on measured base yaw: command shrinks as the error
+            # shrinks (no overshoot/spin-past), corrected every tick between the
+            # slow perceives. Turn until aligned, then walk forward carrying a
+            # small live yaw trim so gait drift during the forward burst is
+            # continuously corrected.
+            err = math.atan2(math.sin(theta_goal - base.get_heading()),
+                             math.cos(theta_goal - base.get_heading()))
+            vyaw = max(-_VYAW_CAP, min(_VYAW_CAP, _K_YAW * err))
+            if abs(err) > _TURN_ONLY_RAD:
+                action, vx = "turn", 0.0
+            else:
+                action, vx = "forward", _FWD_VX   # walk forward + live yaw trim
+        elif det is not None:
+            action, vx, vyaw = _seek_action(det, arrive_area)
+        else:
             # COAST (campaign #9 R1): a slow VLM detects the target only
             # intermittently — gait sway / motion blur drops frames even while
             # the target is dead ahead. Instead of immediately spinning away
@@ -147,7 +194,14 @@ def _seek_loop(base, perceive, max_iters: int, step_duration: float = 0.4,
         # (translated _MIN_APPROACH_M from start — so scanning in place far away
         # can NEVER falsely arrive) AND then stops making net progress, it has
         # walked up to the object → arrived.
-        if _has_pos and seen:
+        # Sampling is EMBODIMENT-SCOPED (Case 19): g1 (open-loop, _hold=False)
+        # samples EVERY tick — it arrives by ORBITING the target, so turn ticks
+        # near it MUST count (the R1 0.58 m arrival). A heading-hold base (Go2,
+        # _hold=True) yaw-drifts and turns far from the target during approach,
+        # so it samples ONLY forward ticks — else the non-translating turn/scan
+        # ticks fill the window and fire a FALSE arrival metres short.
+        _stall_sample = (not _hold) or (action == "forward")
+        if _has_pos and seen and _stall_sample:
             p = base.get_position()
             window.append((float(p[0]), float(p[1])))
             approached = math.hypot(p[0] - start_pos[0],
@@ -165,6 +219,8 @@ def _seek_loop(base, perceive, max_iters: int, step_duration: float = 0.4,
         # flings the target off-screen (the campaign #9 R1 over-rotate bug); a
         # short turn makes an incremental correction and re-perceives.
         dur = step_duration if action == "forward" else min(step_duration, _TURN_STEP)
+        if _hold and action == "forward":
+            dur = min(dur, _FWD_BURST_S)   # short bursts → re-sample heading often
         base.walk(vx, 0.0, vyaw, duration=dur)
     try:
         base.stop()
