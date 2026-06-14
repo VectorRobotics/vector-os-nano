@@ -124,6 +124,8 @@ class RecognizePickSkill:
         my = float(np.median([d["y_norm"] for d in good]))
         out = dict(max(good, key=lambda d: d.get("area_frac", 0.0)))
         out["x_norm"], out["y_norm"] = mx, my
+        if all("y_norm_bottom" in d for d in good):
+            out["y_norm_bottom"] = float(np.median([d["y_norm_bottom"] for d in good]))
         logger.info("[RECOGNIZE-PICK] median bbox over %d detections: "
                     "x_norm=%.3f y_norm=%.3f", len(good), mx, my)
         return [out]
@@ -159,8 +161,12 @@ class RecognizePickSkill:
         support_z = params.get("support_z")
         if support_z is not None:
             h, w = obs["rgb"].shape[:2]
+            # Use the bbox BOTTOM edge (object's contact with the support surface)
+            # — its ray hits the plane on the footprint with no overshoot, unlike
+            # the centre which sits above the plane (R17 overshoot -> R18 fix).
+            y_foot = float(det.get("y_norm_bottom", det["y_norm"]))
             located = locate_on_plane(
-                float(det["x_norm"]), float(det["y_norm"]),
+                float(det["x_norm"]), y_foot,
                 obs["cam_pos"], obs["cam_mat"], float(obs["fovy"]),
                 float(support_z), aspect=(w / h if h else 4.0 / 3.0))
         else:

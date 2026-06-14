@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R17 — reach addressed (object reachable x=10.85) but locate still overshoots ~0.3m at close range (~0.13m cam-to-obj) = close-range ray-to-plane/bbox-centroid sensitivity, NOT fovy(42 confirmed)/reach. Grasp gated on locate calibration. Core photoreal VLN CLI-accepted R5 stands). R17 = place graspable object in reach).).
+- Last updated: 2026-06-14 (campaign #10 R18 — bbox-bottom locate added but grasp still gated: ROOT = camera-arm geometry coupling (in-reach object is ~0.13m from forward d435 -> bbox clipped at frame edge, ~0.2m locate overshoot). Needs eye-in-hand wrist cam, not tuning. Core photoreal VLN CLI-accepted R5 stands; recommend banking milestone). R17 = place graspable object in reach).).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star

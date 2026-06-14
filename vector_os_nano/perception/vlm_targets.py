@@ -175,6 +175,10 @@ class VlmTargetDetector:
                 "label": label,
                 "x_norm": cx * 2.0 - 1.0,
                 "y_norm": cy * 2.0 - 1.0,
+                # bbox LOWER edge (y1, image y is down): the object's contact line
+                # with its support surface. Ray-to-plane through this lands on the
+                # footprint with no overshoot, unlike the centre (campaign #10 R18).
+                "y_norm_bottom": y1 * 2.0 - 1.0,
                 "area_frac": area,
             })
         out.sort(key=lambda d: d["area_frac"], reverse=True)
