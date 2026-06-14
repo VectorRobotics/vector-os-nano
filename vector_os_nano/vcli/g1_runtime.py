@@ -62,11 +62,17 @@ def boot_g1_agent(
     # real furniture meshes for VLM semantic recognition (campaign #9 R1).
     furnished = scenario_id == "g1_room_vlm"
     room = scenario_id in ("g1_room", "g1_room_vlm")
+    # Photoreal co-sim (campaign #10): env-gated on the furnished room — RGB comes
+    # from Blender Cycles/OptiX (photoreal CC0 assets) instead of MuJoCo's basic
+    # render, so the real VLM grounds a photoreal frame. Default off (opt-in).
+    import os
+    photoreal = furnished and os.environ.get("VECTOR_G1_PHOTOREAL", "") not in ("", "0")
     _emit(on_status, "booting G1 humanoid (unitree_rl_gym policy gait)"
           + (" — furnished room (furniture/VLM)" if furnished
-             else " — room (walls/obstacles/lidar)" if room else ""))
+             else " — room (walls/obstacles/lidar)" if room else "")
+          + (" [PHOTOREAL co-sim: Blender/OptiX]" if photoreal else ""))
     base = G1MuJoCoBase(gui=gui, room=room, furnished=furnished,
-                        prefer_daemon=prefer_daemon)
+                        prefer_daemon=prefer_daemon, photoreal=photoreal)
     base.connect()
     agent = Agent(base=base)
 

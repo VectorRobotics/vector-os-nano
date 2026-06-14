@@ -140,3 +140,16 @@ def test_observe_forwards_scene_and_render_params(mj_room):
     call = bridge.calls[0]
     assert call["scene"] is scene
     assert call["width"] == 320 and call["height"] == 240 and call["samples"] == 16
+
+
+def test_render_from_pose_explicit_no_mujoco():
+    """The hybrid integration renders from an EXPLICIT MuJoCo cam pose (the same
+    pose the depth was rendered at) — no model/data needed, callable off-thread."""
+    bridge = _FakeBridge(h=24, w=32)
+    r = PhotorealRenderer(bridge, {"floor": {}}, width=32, height=24, samples=8)
+    cam_mat = np.array([0, -1, 0, 1, 0, 0, 0, 0, 1.0])
+    rgb = r.render_from_pose([1.5, -0.5, 0.85], cam_mat, 45.0)
+    assert rgb.shape == (24, 32, 3)
+    sent = bridge.calls[0]["pose"]
+    expected = mujoco_camera_to_blender([1.5, -0.5, 0.85], cam_mat, 45.0)
+    np.testing.assert_allclose(sent.flat16(), expected.flat16(), atol=1e-12)

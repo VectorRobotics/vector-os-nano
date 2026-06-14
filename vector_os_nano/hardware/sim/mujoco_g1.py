@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -115,6 +117,8 @@ class G1MuJoCoBase:
         room: bool = False,
         furnished: bool = False,
         prefer_daemon: bool = False,
+        photoreal: bool = False,
+        photoreal_bridge: "Any | None" = None,
     ) -> None:
         # prefer_daemon (campaign #9 R7): when a viewer is open, normally PUMP
         # mode drives the gait on the caller thread (1.0x). But when the base is
@@ -220,6 +224,16 @@ class G1MuJoCoBase:
         self._lidar_snap_lock = threading.Lock()
         self._lidar_snap = None     # latest LidarSample, or None
         self._occ = None            # OccupancyGrid (room mode), filled by observe()
+        # Photoreal co-sim (campaign #10): when on, get_camera_observation's RGB
+        # is rendered by Blender Cycles/OptiX from the SAME camera pose MuJoCo
+        # rendered the depth at (hybrid — rgb=Blender, depth/pose=MuJoCo, one
+        # camera frame). Default OFF → the furnished-room behaviour is byte-
+        # identical (rule 2/9). The Blender bridge is a subprocess over a socket
+        # (no GL in our process → safe off the control thread). A bridge may be
+        # injected for tests; otherwise it is spawned lazily on first camera obs.
+        self._photoreal: bool = photoreal
+        self._photoreal_bridge = photoreal_bridge   # injected (tests) or lazy
+        self._photoreal_renderer = None
 
     # -- lifecycle ---------------------------------------------------------
     def connect(self) -> None:
@@ -374,6 +388,14 @@ class G1MuJoCoBase:
         self._cam_renderer = self._cam_depth_renderer = None
         self._cam_rgb = self._cam_opt = None
         self._model = self._data = self._policy = None
+        # Photoreal co-sim: terminate the Blender subprocess (idempotent).
+        if self._photoreal_bridge is not None:
+            try:
+                self._photoreal_bridge.close()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
+            self._photoreal_bridge = None
+        self._photoreal_renderer = None
 
     close = disconnect
 
@@ -485,7 +507,8 @@ class G1MuJoCoBase:
             raise RuntimeError(
                 "no forward camera — needs room mode (--scenario g1_room)")
         if self._pump_mode:
-            return self._render_camera_obs(self._model, self._data)
+            obs = self._render_camera_obs(self._model, self._data)
+            return self._photoreal_swap(obs)
         with self._cam_lock:
             self._cam_done.clear()
             self._cam_req.set()
@@ -494,7 +517,56 @@ class G1MuJoCoBase:
             obs = self._cam_rgb
         if obs is None:
             raise RuntimeError("g1 camera obs render produced no image")
-        return obs
+        return self._photoreal_swap(obs)
+
+    # -- photoreal co-sim (campaign #10) -----------------------------------
+    def _ensure_photoreal_renderer(self):
+        """Lazily build the PhotorealRenderer (spawns the Blender bridge unless one
+        was injected). Fails loud if photoreal was requested with no Blender."""
+        if self._photoreal_renderer is not None:
+            return self._photoreal_renderer
+        from vector_os_nano.hardware.sim.g1_room import HEAD_CAM, furnished_targets
+        from vector_os_nano.playground.photoreal.bridge import (  # noqa: PLC0415
+            BlenderBridge, blender_available)
+        from vector_os_nano.playground.photoreal.renderer import PhotorealRenderer
+        from vector_os_nano.playground.photoreal.scene import build_room_scene_spec
+
+        # Map the furnished-room targets to photoreal CC0 assets present in the
+        # asset dir (heavy assets are never vendored to git — VECTOR_PHOTOREAL_ASSETS
+        # points at a local CC0 library). Unmapped targets are skipped (scene.py).
+        asset_dir = Path(os.environ.get(
+            "VECTOR_PHOTOREAL_ASSETS",
+            str(Path.home() / "sandbox" / "c10-substrate-spike")))
+        asset_map = {}
+        chair = asset_dir / "armchair" / "ArmChair_01_4k.gltf"
+        if chair.exists():
+            asset_map["target_chair"] = {"path": str(chair), "scale": 1.0}
+        scene_spec = build_room_scene_spec(furnished_targets(), asset_map)
+
+        bridge = self._photoreal_bridge
+        if bridge is None:
+            if not blender_available():
+                raise RuntimeError(
+                    "photoreal requested but no Blender — set VECTOR_BLENDER "
+                    "(co-sim render server, campaign #10)")
+            bridge = BlenderBridge()
+            bridge.start()
+            self._photoreal_bridge = bridge
+        self._photoreal_renderer = PhotorealRenderer(
+            bridge, scene_spec, cam_name=HEAD_CAM, width=640, height=480, samples=48)
+        return self._photoreal_renderer
+
+    def _photoreal_swap(self, obs: dict) -> dict:
+        """Replace the MuJoCo RGB with a photoreal Blender frame from the SAME
+        pose (no-op when photoreal is off — keeps existing behaviour identical)."""
+        if not self._photoreal:
+            return obs
+        renderer = self._ensure_photoreal_renderer()
+        rgb = renderer.render_from_pose(obs["cam_pos"], obs["cam_mat"], obs["fovy"])
+        out = dict(obs)
+        out["rgb_mujoco"] = obs["rgb"]   # keep the physics render for debugging
+        out["rgb"] = rgb
+        return out
 
     # -- control loop (one thread owns ALL mujoco/torch state) -------------
     # The control loop runs in ONE of two modes (resolved in connect()):

@@ -44,6 +44,19 @@ class PhotorealRenderer:
         self._height = height
         self._samples = samples
 
+    def render_from_pose(self, cam_pos, cam_mat, fovy_deg: float) -> np.ndarray:
+        """Photoreal RGB from an EXPLICIT MuJoCo camera pose.
+
+        The hybrid co-sim integration calls this with the pose MuJoCo already
+        rendered the depth at, so the photoreal RGB and the MuJoCo depth share
+        one camera frame. No ``bpy``/GL in our process → safe off the control
+        thread (unlike MuJoCo's Renderer).
+        """
+        pose = mujoco_camera_to_blender(cam_pos, cam_mat, fovy_deg)
+        return self._bridge.render(
+            pose, self._scene,
+            width=self._width, height=self._height, samples=self._samples)
+
     def observe(self, model: Any, data: Any) -> dict:
         """``{rgb, cam_pos, cam_mat, fovy}`` from the live MuJoCo camera pose."""
         import mujoco  # noqa: PLC0415 — adapter only; pure tests don't import it
@@ -54,8 +67,5 @@ class PhotorealRenderer:
         cam_pos = np.asarray(data.cam_xpos[cam_id], dtype=np.float64).copy()
         cam_mat = np.asarray(data.cam_xmat[cam_id], dtype=np.float64).copy()
         fovy = float(model.cam_fovy[cam_id])
-        pose = mujoco_camera_to_blender(cam_pos, cam_mat, fovy)
-        rgb = self._bridge.render(
-            pose, self._scene,
-            width=self._width, height=self._height, samples=self._samples)
+        rgb = self.render_from_pose(cam_pos, cam_mat, fovy)
         return {"rgb": rgb, "cam_pos": cam_pos, "cam_mat": cam_mat, "fovy": fovy}
