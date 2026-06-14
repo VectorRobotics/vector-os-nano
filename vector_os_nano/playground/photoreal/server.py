@@ -125,6 +125,21 @@ def build_scene(spec):
                 o.scale = (scale, scale, scale)
                 o.location = (pos[0], pos[1], pos[2] - zmin)
 
+    # Primitive graspable objects (pick scene's colored cylinders/boxes).
+    for o in spec.get("objects", []):
+        otype = o.get("type", "cylinder")
+        pos = o.get("pos", [0.0, 0.0, 0.0])
+        size = o.get("size", [0.03, 0.04])
+        if otype == "cylinder":
+            bpy.ops.mesh.primitive_cylinder_add(
+                radius=size[0], depth=size[1] * 2.0, location=pos)
+        elif otype == "box":
+            bpy.ops.mesh.primitive_cube_add(location=pos)
+            bpy.context.object.scale = (size[0], size[1], size[2])
+        else:
+            raise ValueError(f"unsupported primitive: {otype}")
+        _principled_color(bpy.context.object, o.get("color", [0.7, 0.7, 0.7]))
+
     sun = spec.get("sun", {"pos": [1.0, 1.0, 4.0], "energy": 3.0})
     bpy.ops.object.light_add(type="SUN", location=sun.get("pos", [1, 1, 4]))
     bpy.context.object.data.energy = sun.get("energy", 3.0)

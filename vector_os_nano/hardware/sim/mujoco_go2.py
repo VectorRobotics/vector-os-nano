@@ -1184,14 +1184,71 @@ class MuJoCoGo2:
 
     def _ensure_photoreal_renderer(self, cam_name: str):
         if self._photoreal_renderer is None:
-            from vector_os_nano.playground.photoreal.cosim import (  # noqa: PLC0415
-                furnished_room_renderer)
-            renderer, bridge = furnished_room_renderer(
-                cam_name=cam_name, bridge=self._photoreal_bridge,
-                width=640, height=480, samples=48)
+            if self._furnished:
+                from vector_os_nano.playground.photoreal.cosim import (  # noqa: PLC0415,E501
+                    furnished_room_renderer)
+                renderer, bridge = furnished_room_renderer(
+                    cam_name=cam_name, bridge=self._photoreal_bridge,
+                    width=640, height=480, samples=48)
+            else:
+                # Manipulation scene: render the table + the live graspable
+                # objects as photoreal primitives (campaign #10 R7).
+                from vector_os_nano.playground.photoreal.cosim import (  # noqa: PLC0415,E501
+                    build_pick_scene_spec, scene_renderer)
+                spec = build_pick_scene_spec(
+                    self._pick_objects(), table=self._pick_table())
+                renderer, bridge = scene_renderer(
+                    spec, cam_name=cam_name, bridge=self._photoreal_bridge,
+                    width=640, height=480, samples=48)
             self._photoreal_bridge = bridge
             self._photoreal_renderer = renderer
         return self._photoreal_renderer
+
+    def _body_first_geom(self, bid: int):
+        mj = _get_mujoco()
+        for gid in range(self._mj.model.ngeom):
+            if int(self._mj.model.geom_bodyid[gid]) == bid:
+                return gid, mj
+        return None, mj
+
+    def _pick_objects(self) -> list:
+        """Enumerate graspable ``pickable_*`` bodies as photoreal primitives at
+        their LIVE world poses (type/size/colour read from the model — no
+        hardcoding). The VLM still must FIND them in the image (rule 5)."""
+        mj = _get_mujoco()
+        m, d = self._mj.model, self._mj.data
+        objs = []
+        for bid in range(m.nbody):
+            name = mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, bid)
+            if not name or not name.startswith("pickable_"):
+                continue
+            gid, _ = self._body_first_geom(bid)
+            if gid is None:
+                continue
+            gtype = int(m.geom_type[gid])
+            is_cyl = gtype == int(mj.mjtGeom.mjGEOM_CYLINDER)
+            size = [float(v) for v in m.geom_size[gid]]
+            objs.append({
+                "type": "cylinder" if is_cyl else "box",
+                "pos": [float(v) for v in d.xpos[bid]],
+                "size": size[:2] if is_cyl else size[:3],
+                "color": [float(v) for v in m.geom_rgba[gid][:3]],
+            })
+        return objs
+
+    def _pick_table(self) -> "dict | None":
+        mj = _get_mujoco()
+        m, d = self._mj.model, self._mj.data
+        bid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_BODY, "pick_table")
+        if bid < 0:
+            return None
+        gid, _ = self._body_first_geom(bid)
+        if gid is None:
+            return None
+        # the table geom sits at body pos + its local geom offset (z lift)
+        gpos = [float(v) for v in d.geom_xpos[gid]]
+        return {"pos": gpos, "scale": [float(v) for v in m.geom_size[gid]],
+                "color": [0.55, 0.40, 0.25]}
 
     def _photoreal_frame(self, cam_id: int, cam_name: str) -> "np.ndarray":
         """Photoreal RGB from the head cam's LIVE pose (hybrid co-sim — rgb from

@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R6 — photoreal co-sim generalized to Go2/Piper via a shared factory; go2 e2e → VLM chair 0.9; enables photoreal-driven pick).
+- Last updated: 2026-06-14 (campaign #10 R7 — photoreal PICK-scene rendering (table + live graspable primitives); go2 pick e2e → VLM grounds "red can" 0.9).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -123,9 +123,22 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   green + suite 1676 passed, no go2 regression. E2E through the real go2 base (headless furnished+photoreal):
   `get_camera_frame` → Blender 640×480 → real Qwen-VL **chair 0.9** (`r6_go2_photoreal.png`). This is the
   structural enabler for **build #4**: the Go2 carries BOTH the head camera and the Piper arm, so the pick
-  skills' perception (autodetect/recognise) now grounds on photoreal frames. NEXT (R7): the photoreal-driven
-  PICK acceptance — `vector-cli` go2_piper "recognise object on photoreal frame → grasp → verify grasped"
-  (reuses #17/#19 pick skills on the photoreal-populated perception; no GT peek, rule 5).
+  skills' perception (autodetect/recognise) now grounds on photoreal frames.
+- **BUILD R7 DONE — photoreal PICK-scene rendering** (commit pending). The pick scene is the apartment
+  (table at x=11 + 3 graspable `pickable_*` cylinders: blue/green bottle, red can), a different world from
+  the furnished VLM room. Added: `scene.py` `objects` primitive passthrough; `server.py` renders
+  cylinder/box primitives (Blender, coloured — no mesh asset); `cosim.py` `build_pick_scene_spec` +
+  generic `scene_renderer`; `MuJoCoGo2._ensure_photoreal_renderer` now branches (furnished→room,
+  else→pick scene built from LIVE `pickable_*` body poses + colours/sizes read from the model, no
+  hardcoding) via new `_pick_objects`/`_pick_table`. 29 playground tests green + suite 1676 passed (the
+  3 deepseek reds + 1 habitat ticketed-drive TIMING flake that PASSES in isolation and is outside the
+  changed files — not an R7 regression). E2E through the real go2 pick base (headless, photoreal):
+  `_pick_objects` correctly reads the 3 live cylinders, `get_camera_frame` renders them photoreal, and
+  the real Qwen-VL grounds **"red can" 0.9** (`r7_go2pick_photoreal.png`). Honest: generic "can"/"bottle"
+  → `[]` — the simple primitives ground by COLOUR (the R2 toy-primitive flakiness); photoreal can/bottle
+  MESH assets would harden it. This proves the photoreal PERCEPTION substrate for manipulation. NEXT (R8):
+  close the loop — `vector-cli` go2_piper "认出红色的罐子→抓起来" with the grasp target PERCEPTION-derived
+  (recognise→pick, not registered GT) + verify grasped + screenshot; optional photoreal object meshes.
 - **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
   for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
   geometry are reused on the new substrate).

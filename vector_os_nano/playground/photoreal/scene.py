@@ -26,6 +26,7 @@ def build_room_scene_spec(
     sun: dict | None = None,
     sky: dict | None = None,
     floor_z: float = 0.0,
+    objects: list | None = None,
 ) -> dict:
     """Map ``{label: (cx, cy)}`` + ``{label: {path, scale, ...}}`` to a scene spec.
 
@@ -47,6 +48,9 @@ def build_room_scene_spec(
         "floor": floor if floor is not None else dict(_DEFAULT_FLOOR),
         "walls": walls if walls is not None else [],
         "assets": assets,
+        # Primitive graspable objects (the pick scene's colored cylinders/boxes),
+        # rendered photoreal by the Blender server — no mesh asset needed.
+        "objects": list(objects) if objects else [],
         "sun": sun if sun is not None else dict(_DEFAULT_SUN),
         "sky": sky if sky is not None else dict(_DEFAULT_SKY),
     }

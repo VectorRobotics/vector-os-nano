@@ -51,6 +51,17 @@ def test_scene_builder_empty_asset_map_yields_no_assets():
     assert spec["assets"] == []
 
 
+def test_scene_builder_passes_through_primitive_objects():
+    """Graspable objects (the pick scene's colored cylinders) ride through as
+    primitives so the Blender server renders them photoreal (no mesh asset)."""
+    objs = [{"type": "cylinder", "pos": [11.0, 3.15, 0.25],
+             "size": [0.033, 0.04], "color": [0.85, 0.25, 0.20]}]
+    spec = build_room_scene_spec({}, {}, objects=objs)
+    assert spec["objects"] == objs
+    # default (no objects kwarg) yields an empty list, not a missing key
+    assert build_room_scene_spec({}, {})["objects"] == []
+
+
 # -- look-at helper --------------------------------------------------------
 
 def test_look_at_matrix_points_forward_at_target():
