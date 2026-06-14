@@ -292,6 +292,9 @@ class IntentRouter:
             # greedily matches "close" / "关闭").
             "仿真", "sim ", " sim", "simulation",
             "go2sim", "go2 sim", "armsim", "arm sim",
+            # G1 humanoid sim lifecycle/queries → start_simulation / answer
+            # (not a motor skill); "g1" in this robot CLI always means the sim.
+            "g1sim", "g1 sim", "启动g1", "start g1", "g1仿真", "g1 仿真",
             # Habitat world + SysNav perception lifecycle — start_simulation /
             # sysnav_perception tools, not motor skills / VGG decompose.
             "habitat", "sysnav", "语义感知",

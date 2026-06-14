@@ -11,7 +11,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
   a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
   (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
-- Last updated: 2026-06-14 (campaign #9 R5 — depth-at-bbox reliable recognise→navigate, g1 headless 3/3).
+- Last updated: 2026-06-14 (campaign #9 R6 — owner-driven: viewer shows furniture, verify binds, g1 launchable in vector-cli).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## Current state (2026-06-11)
@@ -493,6 +493,37 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      chair coords) → verify fail despite the deterministically-validated skill.
      R6: pin the verify-coord binding for recognize_navigate (vlm_seek bound it
      in R1 — LLM variance), confirm GUI arrival, then go2 navigate_to parity.
+
+   - **CAMPAIGN #9 R6 SHIPPED — owner-driven integration (3 fixes).** Owner caught
+     two real gaps watching the GUI:
+     (1) **Viewer showed an empty scene.** All room geometry (walls/obstacles/
+     colour-targets/furniture) is geom-group ENV_GEOM_GROUP=3 (lidar mask), which
+     the live passive viewer HIDES by default — so the window rendered only the
+     robot + floor. Fix: enable ALL geom groups on the live viewer (g1
+     `_launch_viewer`; go2 furnished viewer) + pull the cam back to frame the room.
+     VERIFIED via `--scenario g1_room_vlm`: the window now shows walls + obstacles
+     + the chair/sofa/plant (/tmp/c9r6_viewer_after.png).
+     (2) **g1 was not discoverable/launchable in vector-cli** ('有哪些仿真' listed
+     arm/go2/habitat, not g1; g1 only started via a `--scenario` flag). Fix:
+     `start_simulation` gains `sim_type='g1'` (+ `_start_g1` mirroring
+     `_start_habitat`, scenario default `g1_room_vlm`); prompt.py + intent-router
+     bypass document/route g1. VERIFIED: '启动g1' → the LLM offers the scenarios →
+     `start_simulation(sim_type='g1')` boots + registers recognize_navigate
+     ('sim start g1 ok'); headless `_start_g1` returns a G1MuJoCoBase with the full
+     skill set.
+     (3) **recognize_navigate verify now binds**: verify_hint switched to
+     `visited('<label>')` (the predicate resolves the object's coords from the
+     world model — planner passes only the label, no x/y to leave unbound; R5's
+     GUI fail). Furniture world-model labels are combined "en zh" so
+     visited('chair') OR visited('椅子') both match. GUI confirmed the verify is now
+     bound (`verify visited('chair')`). Suite 1648 green.
+     **NEWLY-SURFACED GAP (R7):** a g1 booted via the in-REPL `start_simulation`
+     tool (vs `--scenario` at startup) opens a pump-mode viewer the main REPL loop
+     never pumps → gait frozen + viewer not synced (empty/static). The
+     `--scenario` startup path works (GUI furniture + headless 3/3 arrivals). R7:
+     wire the main loop to pump a tool-booted pump-mode base (or boot it daemon),
+     then confirm the full in-REPL '启动g1 → 认出椅子走过去 → arrival' GUI flow; then
+     go2 navigate_to parity.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

@@ -80,18 +80,22 @@ class SimStartTool:
         "properties": {
             "sim_type": {
                 "type": "string",
-                "enum": ["arm", "go2", "habitat"],
+                "enum": ["arm", "go2", "g1", "habitat"],
                 "description": (
-                    "Which simulation to start: 'arm' (SO-101), 'go2' "
-                    "(Unitree Go2), or 'habitat' (photoreal scanned world)"
+                    "Which simulation to start: 'arm' (SO-101 6-DOF arm), 'go2' "
+                    "(Unitree Go2 quadruped), 'g1' (Unitree G1 humanoid — real "
+                    "policy gait in a furnished room; recognises furniture by VLM "
+                    "and walks to it), or 'habitat' (photoreal scanned world)"
                 ),
             },
             "scenario": {
                 "type": "string",
                 "default": "house",
                 "description": (
-                    "ONLY for sim_type='habitat': the playground scenario id "
-                    "to load (default 'house', the multi-room world)"
+                    "For sim_type='habitat': the playground scenario id (default "
+                    "'house'). For sim_type='g1': 'g1_room_vlm' (default — "
+                    "furnished room with VLM furniture recognition), 'g1_room' "
+                    "(colour-target room), or 'g1_flat' (open gait scene)."
                 ),
             },
             "gui": {
@@ -145,7 +149,7 @@ class SimStartTool:
             current_base = getattr(current_agent, "_base", None)
             if sim_type == "arm" and current_arm is not None:
                 return ToolResult(content=f"Arm sim already running: {type(current_arm).__name__}")
-            if sim_type in ("go2", "habitat") and current_base is not None:
+            if sim_type in ("go2", "g1", "habitat") and current_base is not None:
                 base_name = getattr(current_base, "name", type(current_base).__name__)
                 return ToolResult(
                     content=(
@@ -156,12 +160,18 @@ class SimStartTool:
 
         # The habitat world carries its own playground world (verify
         # predicates + persona); thread it through to the prompt/VGG rebuild.
+        # A playground world (habitat OR g1) carries its own verify predicates +
+        # persona; thread it through to the prompt/VGG rebuild like --scenario.
         habitat_world: Any = None
 
         try:
             if sim_type == "habitat":
                 agent, habitat_world = self._start_habitat(
                     params.get("scenario", "house"), gui=gui
+                )
+            elif sim_type == "g1":
+                agent, habitat_world = self._start_g1(
+                    params.get("scenario", "g1_room_vlm"), gui=gui
                 )
             elif backend == "isaac":
                 if sim_type == "go2":
@@ -316,6 +326,30 @@ class SimStartTool:
                 habitat_runtime.wire_sysnav_feed(agent)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("SysNav wiring skipped: %s", exc)
+        return agent, world
+
+    @staticmethod
+    def _start_g1(scenario_id: str, gui: bool = True) -> tuple[Any, Any]:
+        """Boot the G1 humanoid world for ``scenario_id``; return (agent, world).
+
+        Mirrors the ``--scenario g1_*`` launch path so g1 is startable in-REPL
+        ('启动g1' / 'start g1') the same way as arm/go2/habitat. The resolved
+        playground world IS the active world (its verify predicates + persona).
+        Fails loud: an unknown id raises (resolve_world_named); a non-g1 id
+        raises ValueError — never a silent fallback.
+        """
+        import vector_os_nano.playground  # noqa: F401  (register scenarios)
+        from vector_os_nano.vcli import g1_runtime
+        from vector_os_nano.vcli.worlds import resolve_world_named
+
+        world = resolve_world_named(scenario_id)
+        embodiment = getattr(getattr(world, "scenario", None), "embodiment", "")
+        if embodiment != "g1":
+            raise ValueError(
+                f"scenario '{scenario_id}' is not a g1 scenario "
+                f"(embodiment={embodiment!r}); use start_simulation with the "
+                f"matching sim_type instead")
+        agent = g1_runtime.boot_g1_agent(world, gui=gui)
         return agent, world
 
     @staticmethod

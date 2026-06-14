@@ -309,12 +309,19 @@ class G1MuJoCoBase:
             self._viewer = mujoco.viewer.launch_passive(
                 self._model, self._data,
                 show_left_ui=False, show_right_ui=False)
+            # Show ALL geom groups: the room geometry (walls / obstacles / colour
+            # targets / furniture) is tagged ENV_GEOM_GROUP=3 for the lidar mask,
+            # which the viewer HIDES by default — so the owner would see only the
+            # robot on an empty floor (owner-caught 2026-06-14). The robot's own
+            # first-person camera already enables all groups; the live window must
+            # too, or the GUI acceptance view is misleading.
+            self._viewer.opt.geomgroup[:] = 1
             cam = self._viewer.cam
             cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-            cam.distance = 3.5
-            cam.elevation = -20
-            cam.azimuth = 120
-            cam.lookat[:] = self._data.qpos[:3]
+            cam.distance = 5.5            # pulled back to frame the room + targets
+            cam.elevation = -25
+            cam.azimuth = 130
+            cam.lookat[:] = [1.6, 0.0, 0.4]   # room centre, not just the robot
         except Exception as exc:  # noqa: BLE001 — never break the boot
             logger.warning("G1MuJoCoBase viewer failed to launch: %s", exc)
             self._viewer = None

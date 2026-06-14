@@ -118,7 +118,12 @@ def boot_g1_agent(
         labels = {}
         if furnished:
             from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
-            labels = {f.name: f.label for f in g1_room.FURNITURE}
+            # Combined "en zh" label so visited('chair') OR visited('椅子') both
+            # match (get_objects_by_label is case-insensitive substring) — the
+            # planner may emit either tongue; the verify must bind regardless (R6).
+            _zh = {"chair": "椅子", "sofa": "沙发", "potted plant": "盆栽"}
+            labels = {f.name: f"{f.label} {_zh.get(f.label, '')}".strip()
+                      for f in g1_room.FURNITURE}
         for name, (tx, ty) in base.list_targets().items():
             agent._world_model.add_object(ObjectState(
                 object_id=name, label=labels.get(name, name),

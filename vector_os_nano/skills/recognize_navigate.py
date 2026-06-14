@@ -79,9 +79,13 @@ class RecognizeNavigateSkill:
     )
     typical_duration_sec: float = 200.0
     verify_hint: str = (
-        "at_position(x, y, 1.6) with the named object's coordinates — the "
-        "ground-truth judge that the robot reached the object the VLM "
-        "recognised and the lidar located (recognition + sensing are the means)"
+        "visited('<label>') with the recognised object's class name (e.g. "
+        "visited('chair')) — pass ONLY the label string, NOT coordinates. The "
+        "predicate resolves the object's coordinates from the world model itself "
+        "and is true when the robot is within 1.6 m of it. This is the ground-"
+        "truth judge that the robot reached the object the VLM recognised — the "
+        "planner must NOT leave x/y unbound (use visited(label), not "
+        "at_position(x, y), so there is no coordinate to bind)."
     )
     parameters: dict = {
         "label": {"type": "string", "required": True,

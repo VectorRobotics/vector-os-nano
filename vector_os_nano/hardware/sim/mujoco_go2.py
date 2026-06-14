@@ -561,6 +561,11 @@ class MuJoCoGo2:
                     show_right_ui=False,
                 )
                 if self._viewer is not None:
+                    # Show ALL geom groups so the furnished room's group-3
+                    # walls/furniture render in the window (else the owner sees
+                    # an empty floor — owner-caught 2026-06-14).
+                    if self._furnished:
+                        self._viewer.opt.geomgroup[:] = 1
                     self._viewer.cam.type = mj.mjtCamera.mjCAMERA_FREE
                     if self._furnished:
                         # Frame the spawn + the targets ahead (x≈3.6).
