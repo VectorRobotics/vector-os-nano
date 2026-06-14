@@ -366,6 +366,17 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      VLN loop as one vector-cli command, on real physics.** Suite 1608 passed.
      NEXT R12: forced REVIEW + campaign-completion report; only DQ-4 (merge to
      master) remains, owner's call.
+   - **R12 REVIEW → CAMPAIGN #8 COMPLETE, loop PAUSED.** AUDIT clean (all 12
+     rounds' commits real, modules/skills registered, suite 1608 green, no
+     spinning, docs bounded). Every owner requirement is GREEN and GUI-verified
+     via vector-cli on real MuJoCo physics: ① real gait ② real collision (no
+     pass-through) ③ obstacle avoidance ④ real sensors (lidar+occupancy+camera)
+     ⑤ autonomous explore → recognition-based go-to-object ⑥ vector-cli-only —
+     plus the grand one-command VLN (explore+recognise+approach, R11). Nothing
+     substantive remains that isn't owner-gated, so the loop PAUSED with a
+     completion report. **Only open item: DQ-4 (merge feat/playground-vln →
+     master) — owner's call.** Resume with /loop for optional hardening (VLM
+     recognition / multi-target / multi-room / nav-stack costmap).
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

@@ -1,9 +1,15 @@
 # Real-Sim Plan — high-fidelity sim with REAL physics, controlled entirely via vector-cli
 
-Status: **NEXT (campaign #8), owner-set 2026-06-13.** This is the current
-phase plan (Tier 4). The completed G1 gait/navigate/obstacle-planner work
-(campaigns #5/#6/#7) is the foundation; this phase makes it run in a
-high-fidelity sim with real physics, not the habitat kinematic glide.
+Status: **COMPLETE (campaign #8, 2026-06-13).** All six owner requirements
+delivered + GUI-verified via vector-cli on real MuJoCo physics (DQ-10=A:
+MuJoCo-as-world). Substrate = MuJoCo; G1 runs real gait + collision + obstacle
+avoidance + lidar/occupancy/camera sensors + autonomous explore +
+recognition-based go-to-object, including a one-command VLN
+(探索房间找到红色物体并走过去). Rounds R0-R11 (see docs/agent-kernel-STATUS.md
+campaign #8 block + git log). Only DQ-4 (merge feat/playground-vln → master)
+remains, owner's call. Optional future hardening: VLM recognition, multi-target
+/ multi-room, occupancy→nav-stack costmap. The text below is the original
+phase plan, kept for the substrate-decision record.
 
 ## The owner's goal (verbatim intent, 2026-06-13)
 
