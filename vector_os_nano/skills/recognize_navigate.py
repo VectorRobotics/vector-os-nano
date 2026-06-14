@@ -28,7 +28,10 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.perception.target_locate import locate_from_bearing
+from vector_os_nano.perception.target_locate import (
+    locate_from_bearing,
+    locate_from_depth,
+)
 from vector_os_nano.perception.vlm_targets import VlmTargetDetector
 
 logger = logging.getLogger(__name__)
@@ -45,8 +48,15 @@ _MISS_BEFORE_SWEEP = 10  # the VLM detects a far/small target only intermittentl
 _ARRIVE_TOL = 0.8        # navigate_to standoff to a located object surface (the
                          # collidable object halts the base at a body radius; a
                          # tight tol would falsely report not-reached)
+_STANDOFF_M = 0.7        # navigate to a point this far IN FRONT of the located
+                         # surface — the surface itself can be in the planner's
+                         # inflated wall/object zone (no path → inf); a standoff
+                         # in front is reachable and leaves the robot at the object
 _MAX_BLIND_ADVANCES = 4  # cap forward advances taken WITHOUT a lidar lock so a
                          # never-detected run cannot blind-walk past the target
+_LOCATE_AGREE_M = 1.2    # two located estimates within this confirm the target —
+                         # a single bad VLM bbox gives an outlier estimate that
+                         # will NOT repeat, so require agreement before navigating
 
 
 @skill(
@@ -59,11 +69,13 @@ class RecognizeNavigateSkill:
 
     name: str = "recognize_navigate"
     description: str = (
-        "Reliably find a SEMANTIC object (chair/sofa/potted plant/...) and walk "
-        "to it: recognise it with a real vision-language model, locate it with "
-        "the lidar, then drive there with the reliable navigate_to controller. "
-        "Prefer this over vlm_seek for getting all the way to a furniture object "
-        "— recognition gates the goal, navigation makes arrival robust."
+        "COMPLETE one-step 'find a furniture object and go to it': this single "
+        "skill RECOGNISES the object with a real vision-language model AND "
+        "navigates all the way to it (depth-located + reliable navigate_to). "
+        "Use this ALONE for any 'find/recognise the chair/sofa/plant and walk/go "
+        "to it / 认出X走过去' request — do NOT add a separate recognition or "
+        "vlm_seek step before it (it already recognises internally). Preferred "
+        "over vlm_seek for actually ARRIVING at a furniture object."
     )
     typical_duration_sec: float = 200.0
     verify_hint: str = (
@@ -107,13 +119,25 @@ class RecognizeNavigateSkill:
         max_iters = int(params.get("max_iters", 16) or 16)
         _heading = getattr(base, "get_heading", None)
 
+        # Prefer an atomic observation (rgb + depth + cam pose) so the target can
+        # be located by DEPTH-AT-BBOX (semantic — the object's own pixels, skips
+        # an intervening obstacle, Case 22). Bases without depth fall back to the
+        # lidar bearing+range (which can mis-pick an obstacle).
+        _has_obs = callable(getattr(base, "get_camera_observation", None))
+        located_by = None
         seen = False
         located = None
+        prev_located = None     # last estimate, awaiting a consistent confirm
         miss_streak = 0
         blind_advances = 0      # forward advances taken without a lidar lock
         for _ in range(max_iters):
             try:
-                frame = base.get_camera_frame()
+                if _has_obs:
+                    obs = base.get_camera_observation()
+                    frame = obs["rgb"]
+                else:
+                    obs = None
+                    frame = base.get_camera_frame()
             except Exception as exc:  # noqa: BLE001
                 return SkillResult(success=False, error_message=f"camera failed: {exc}",
                                    result_data={"diagnosis": "no_camera"})
@@ -140,14 +164,39 @@ class RecognizeNavigateSkill:
             miss_streak = 0
             seen = True
             x_norm = float(det["x_norm"])
+            y_norm = float(det.get("y_norm", 0.0))
             pos = base.get_position()
             heading = float(_heading()) if callable(_heading) else 0.0
-            scan = base.get_lidar_scan() if callable(
-                getattr(base, "get_lidar_scan", None)) else None
-            pts = getattr(scan, "points", None) if scan is not None else None
-            located = locate_from_bearing((pos[0], pos[1]), heading, x_norm, pts)
+            # 1) DEPTH-AT-BBOX (preferred, semantic): depth at the recognised
+            #    pixel = the object's distance, skipping intervening obstacles.
+            located = None
+            if obs is not None and obs.get("depth") is not None:
+                located = locate_from_depth(
+                    x_norm, y_norm, obs["depth"], obs["cam_pos"],
+                    obs["cam_mat"], obs["fovy"])
+                if located is not None:
+                    located_by = "depth"
+            # 2) FALLBACK: lidar range at the recognised bearing (Case 22 risk —
+            #    may pick an obstacle; only used when no depth is available).
+            if located is None:
+                scan = base.get_lidar_scan() if callable(
+                    getattr(base, "get_lidar_scan", None)) else None
+                pts = getattr(scan, "points", None) if scan is not None else None
+                located = locate_from_bearing((pos[0], pos[1]), heading, x_norm, pts)
+                if located is not None:
+                    located_by = "lidar"
             if located is not None:
-                break                       # lidar locked on → go navigate
+                # Confirm with a second AGREEING estimate — a single bad VLM bbox
+                # yields an outlier that will not repeat, so don't navigate to it.
+                if prev_located is not None and math.hypot(
+                        located[0] - prev_located[0],
+                        located[1] - prev_located[1]) <= _LOCATE_AGREE_M:
+                    located = ((located[0] + prev_located[0]) / 2.0,
+                               (located[1] + prev_located[1]) / 2.0)
+                    break                   # confirmed → go navigate
+                prev_located = located      # first/outlier estimate — re-confirm
+                located = None
+                continue
             # recognised but beyond lidar range: face the bearing and advance a
             # short burst to close in, then re-recognise + re-range.
             if abs(x_norm) > _ALIGN_TOL:
@@ -168,12 +217,21 @@ class RecognizeNavigateSkill:
                 result_data={"diagnosis": "not_found" if not seen else "not_located",
                              "seen": seen, "query": query})
 
-        # Reliable arrival: hand the sensed location to navigate_to. The located
-        # point is the object's FRONT SURFACE (a lidar hit), and the object is
-        # collidable — the base halts at a body-radius standoff, so a tight tol
-        # would report not-reached though the robot is AT the object. Use an
-        # object STANDOFF tol (matches the at_position(.,1.6) verify intent).
-        out = base.navigate_to(float(located[0]), float(located[1]), _ARRIVE_TOL)
+        # Reliable arrival: navigate to a STANDOFF point just IN FRONT of the
+        # located surface, not the surface itself. The located point sits on the
+        # object (often near the back wall behind it); navigating onto it can be
+        # unreachable (the planner inflates the wall/object → no path → inf). A
+        # point _STANDOFF_M back toward the robot is reachable and leaves the
+        # robot at the object (within the at_position(.,1.6) verify intent).
+        rp = base.get_position()
+        dx, dy = float(located[0]) - rp[0], float(located[1]) - rp[1]
+        dlen = math.hypot(dx, dy)
+        if dlen > _STANDOFF_M:
+            gx = float(located[0]) - _STANDOFF_M * dx / dlen
+            gy = float(located[1]) - _STANDOFF_M * dy / dlen
+        else:
+            gx, gy = rp[0], rp[1]           # already within standoff of the object
+        out = base.navigate_to(gx, gy, _ARRIVE_TOL)
         reached = bool(out.get("reached", False))
         remaining = float(out.get("remaining", float("inf")))
         pos = list(base.get_position()) if callable(getattr(base, "get_position", None)) else None
@@ -182,6 +240,7 @@ class RecognizeNavigateSkill:
             error_message="" if reached else (
                 f"navigation stopped {remaining:.2f}m short of the located {query}"),
             result_data={"query": query, "seen": True, "located": list(located),
+                         "located_by": located_by,
                          "reached": reached, "remaining_m": remaining,
                          "position": pos, "transport": "recognize_navigate",
                          "diagnosis": "ok" if reached else "nav_stuck"},

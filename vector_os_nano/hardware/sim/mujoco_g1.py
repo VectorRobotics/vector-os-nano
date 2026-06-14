@@ -157,8 +157,9 @@ class G1MuJoCoBase:
         self._cam_lock = threading.Lock()
         self._cam_req = threading.Event()
         self._cam_done = threading.Event()
-        self._cam_rgb = None
+        self._cam_rgb = None     # holds the latest camera OBSERVATION dict (R5)
         self._cam_renderer = None
+        self._cam_depth_renderer = None   # depth (R5 depth-at-bbox); lazily built
         self._cam_opt = None     # MjvOption (all geom groups) — lazily built
         # Live passive viewer window (campaign #8 R0). The owner controls the
         # G1 entirely through vector-cli and must SEE the gait, not just an
@@ -336,7 +337,7 @@ class G1MuJoCoBase:
         # Release the offscreen GL renderers (chase-cam + first-person camera)
         # — leaking the EGL context across reconnect/multi-instance runs is the
         # historical crash class (tricky-bugs Case 12 discipline).
-        for _r in (self._renderer, self._cam_renderer):
+        for _r in (self._renderer, self._cam_renderer, self._cam_depth_renderer):
             if _r is not None:
                 try:
                     _r.close()
@@ -349,7 +350,8 @@ class G1MuJoCoBase:
             self._lidar_snap = None
         self._lidar = None
         self._occ = None
-        self._cam_renderer = self._cam_rgb = self._cam_opt = None
+        self._cam_renderer = self._cam_depth_renderer = None
+        self._cam_rgb = self._cam_opt = None
         self._model = self._data = self._policy = None
 
     close = disconnect
@@ -397,11 +399,14 @@ class G1MuJoCoBase:
             raise RuntimeError("g1 viewer frame render produced no image")
         return png
 
-    def _render_camera_frame(self, m, d, h: int = 240, w: int = 320):
-        """Render the pelvis-mounted FIRST-PERSON forward camera as an
-        (h, w, 3) uint8 RGB array (control thread). Uses the named fixed camera
-        g1_room adds to the pelvis (rotates with the robot) — what the G1
-        'sees' for object recognition."""
+    def _render_camera_obs(self, m, d, h: int = 240, w: int = 320):
+        """Render the pelvis FIRST-PERSON camera (control thread) and capture an
+        atomic observation: ``{rgb (h,w,3 uint8), depth (h,w float32 m), cam_pos
+        (3,), cam_mat (9,), fovy}``. RGB + depth + camera pose come from ONE
+        scene update so they are mutually consistent (the robot does not move
+        between them) — the recognise→navigate pivot (R5) back-projects the depth
+        at the recognised bbox to a world point. Depth needs its own Renderer
+        (MuJoCo renders either colour OR depth per renderer)."""
         import mujoco
         if self._cam_renderer is None:
             self._cam_renderer = mujoco.Renderer(m, height=h, width=w)
@@ -411,10 +416,26 @@ class G1MuJoCoBase:
             # sees an empty floor.
             self._cam_opt = mujoco.MjvOption()
             self._cam_opt.geomgroup[:] = 1
+        if self._cam_depth_renderer is None:
+            self._cam_depth_renderer = mujoco.Renderer(m, height=h, width=w)
+            self._cam_depth_renderer.enable_depth_rendering()
         from vector_os_nano.hardware.sim.g1_room import HEAD_CAM  # noqa: PLC0415
-        self._cam_renderer.update_scene(
-            d, camera=HEAD_CAM, scene_option=self._cam_opt)
-        return self._cam_renderer.render().copy()
+        cam_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, HEAD_CAM)
+        self._cam_renderer.update_scene(d, camera=HEAD_CAM, scene_option=self._cam_opt)
+        rgb = self._cam_renderer.render().copy()
+        self._cam_depth_renderer.update_scene(d, camera=HEAD_CAM, scene_option=self._cam_opt)
+        depth = self._cam_depth_renderer.render().copy()
+        return {
+            "rgb": rgb,
+            "depth": depth,
+            "cam_pos": np.array(d.cam_xpos[cam_id], dtype=np.float64).copy(),
+            "cam_mat": np.array(d.cam_xmat[cam_id], dtype=np.float64).copy(),
+            "fovy": float(m.cam_fovy[cam_id]),
+        }
+
+    def _render_camera_frame(self, m, d, h: int = 240, w: int = 320):
+        """RGB-only convenience (back-compat): the ``rgb`` of the full obs."""
+        return self._render_camera_obs(m, d, h, w)["rgb"]
 
     def get_camera_frame(self, timeout: float = 5.0):
         """A first-person forward RGB frame (H,W,3 uint8) for recognition.
@@ -431,17 +452,28 @@ class G1MuJoCoBase:
             raise RuntimeError(
                 "no forward camera — get_camera_frame needs room mode "
                 "(--scenario g1_room)")
+        return self.get_camera_observation(timeout=timeout)["rgb"]
+
+    def get_camera_observation(self, timeout: float = 5.0) -> dict:
+        """Atomic first-person observation ``{rgb, depth, cam_pos, cam_mat,
+        fovy}`` (R5). Same control-thread render discipline as get_camera_frame
+        (pump → direct; daemon → _cam_req hand-off). The recognise→navigate skill
+        back-projects the depth at the recognised bbox to a world point."""
+        self._require_connected()
+        if not self._room:
+            raise RuntimeError(
+                "no forward camera — needs room mode (--scenario g1_room)")
         if self._pump_mode:
-            return self._render_camera_frame(self._model, self._data)
+            return self._render_camera_obs(self._model, self._data)
         with self._cam_lock:
             self._cam_done.clear()
             self._cam_req.set()
             if not self._cam_done.wait(timeout=timeout):
-                raise RuntimeError("g1 camera frame render timed out")
-            rgb = self._cam_rgb
-        if rgb is None:
-            raise RuntimeError("g1 camera frame render produced no image")
-        return rgb
+                raise RuntimeError("g1 camera obs render timed out")
+            obs = self._cam_rgb
+        if obs is None:
+            raise RuntimeError("g1 camera obs render produced no image")
+        return obs
 
     # -- control loop (one thread owns ALL mujoco/torch state) -------------
     # The control loop runs in ONE of two modes (resolved in connect()):
@@ -526,10 +558,11 @@ class G1MuJoCoBase:
                 self._render_png = None
             self._render_req.clear()
             self._render_done.set()
-        # On-demand forward-camera RGB (R9): render on THIS thread (owns GL).
+        # On-demand forward-camera OBSERVATION (R9 rgb + R5 depth/pose): render
+        # on THIS thread (owns GL). _cam_rgb holds the full obs dict.
         if self._cam_req.is_set():
             try:
-                self._cam_rgb = self._render_camera_frame(m, d)
+                self._cam_rgb = self._render_camera_obs(m, d)
             except Exception as exc:  # noqa: BLE001 — never break the gait
                 logger.warning("g1 camera render failed: %s", exc)
                 self._cam_rgb = None

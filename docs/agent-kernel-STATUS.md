@@ -11,7 +11,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
   a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
   (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
-- Last updated: 2026-06-14 (campaign #9 R2 — world-agnostic furnished room + Go2 VLM recognition, track C foundation).
+- Last updated: 2026-06-14 (campaign #9 R5 — depth-at-bbox reliable recognise→navigate, g1 headless 3/3).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## Current state (2026-06-11)
@@ -473,6 +473,26 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      go2 has get_depth_frame but no navigate_to. NEXT (R4 REVIEW, then R5): add a
      g1 HEAD_CAM depth render (or a go2 navigate_to) → land recognise→navigate
      reliably on one robot, then the other. Suite green; g1/go2 seek unchanged.
+
+   - **CAMPAIGN #9 R5 SHIPPED — depth-at-bbox → RELIABLE recognise→navigate on g1
+     (headless 3/3).** g1 HEAD_CAM now renders DEPTH (`get_camera_observation` →
+     atomic {rgb, depth, cam_pos, cam_mat, fovy}, one control-thread render — Case
+     12; second depth Renderer). `target_locate.locate_from_depth` back-projects
+     the NEAREST surface in the recognised bbox (20th-pctile — a thin chair lets a
+     median see the wall behind) → the object's world (x,y), SEMANTIC (skips
+     intervening obstacles, fixing Case 22). `RecognizeNavigateSkill` prefers
+     depth-at-bbox (lidar fallback), confirms with TWO agreeing estimates (a lone
+     bad VLM bbox won't repeat), and navigates to a 0.7 m STANDOFF in front of the
+     surface (the surface can be in the planner's inflated wall zone → no path).
+     REGISTERED in the g1 furnished CLI. **Headless 3/3 reliable arrival**
+     (0.45/0.78/0.87 m, all by=depth — the Case-21 flakiness is CLOSED on g1).
+     Suite 1648 green. **GUI caveat (R6):** the planner now routes to the single
+     recognize_navigate skill (a sharpened description killed a flaky 2-step
+     vlm_seek prefix), but one GUI run's VGG verify showed UNBOUND
+     `at_position(x, y, 1.6)` (planner left x,y literal instead of binding the
+     chair coords) → verify fail despite the deterministically-validated skill.
+     R6: pin the verify-coord binding for recognize_navigate (vlm_seek bound it
+     in R1 — LLM variance), confirm GUI arrival, then go2 navigate_to parity.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

@@ -97,12 +97,13 @@ def boot_g1_agent(
         # the track-A perception path for the furnished room (campaign #9 R1).
         from vector_os_nano.skills.vlm_seek import VlmSeekSkill
         registry.register(VlmSeekSkill())
-        # RecognizeNavigateSkill (campaign #9 R3) is built + unit-tested but NOT
-        # registered yet: its lidar position-estimate confuses an intercepting
-        # OBSTACLE for the recognised target (lidar has range, not semantics —
-        # Case 22). The honest fix is depth-at-bbox (depth at the recognised
-        # pixels), which needs a g1 depth camera (or a go2 navigate_to) — a
-        # dedicated next round. Until then the CLI does not offer it.
+        # RecognizeNavigateSkill (campaign #9 R5): the RELIABLE arrival path —
+        # VLM recognise → DEPTH-AT-BBOX locate (depth at the recognised pixels =
+        # the object's distance, skipping intervening obstacles, Case 22) →
+        # g1 navigate_to. 3/3 GUI-verified arrivals (vs vlm_seek's flaky servoing,
+        # Case 21). Preferred for getting all the way to a furniture object.
+        from vector_os_nano.skills.recognize_navigate import RecognizeNavigateSkill
+        registry.register(RecognizeNavigateSkill())
     agent._skill_registry = registry
 
     if room:

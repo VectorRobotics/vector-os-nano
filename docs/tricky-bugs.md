@@ -445,3 +445,20 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** fusing a semantic detector with a geometric ranger needs the range
   sampled AT the detection (same pixels/bbox), not "nearest thing in that
   direction" — otherwise the geometry layer silently re-targets to clutter.
+
+## Case 23 — depth-at-bbox median sees the wall BEHIND a thin object (2026-06-14)
+- **Context:** R5 recognise→navigate locates the object by depth at the recognised
+  bbox (the semantic fix for Case 22). First cut used the bbox-window MEDIAN depth.
+- **Symptom:** the located point landed PAST the chair (~4.0-4.5 m vs chair 3.6 m),
+  sometimes at the front wall — and a wall-adjacent goal is unreachable to the
+  planner (inflation → no path → navigate_to returns remaining=inf).
+- **Cause:** a thin object (chair legs/back) only partly fills its bbox; the gaps
+  see THROUGH to the wall behind, so the window median is biased toward the far
+  surface.
+- **Fixes:** (1) use the NEAREST surface (20th-percentile depth) in the window —
+  the object's own front face, not the background; (2) navigate to a STANDOFF
+  point 0.7 m IN FRONT of the located surface, never onto it (the surface can sit
+  in the planner's inflated wall/object zone). 3/3 reliable headless arrival after.
+- **Lesson:** when fusing a 2-D detection box with a depth map, the box spans
+  object AND background — take the NEAR depth, and treat the result as a surface
+  to stand off from, not a waypoint to occupy.

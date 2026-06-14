@@ -80,9 +80,10 @@ class TestRecognizeNavigate:
             {"label": "chair"}, _ctx(base))
         assert res.success is True
         assert res.result_data["transport"] == "recognize_navigate"
-        # navigate_to was handed the SENSED location (≈ the lidar hit), not GT
+        # navigate_to was handed a STANDOFF point 0.7m in front of the SENSED
+        # location (lidar hit 2.0 → goal 1.3), not GT and not the surface itself.
         assert base.nav_goal is not None
-        assert abs(base.nav_goal[0] - 2.0) < 1e-3 and abs(base.nav_goal[1]) < 1e-3
+        assert abs(base.nav_goal[0] - 1.3) < 0.05 and abs(base.nav_goal[1]) < 1e-3
         assert det.queries[0] == "chair"        # VLM really queried
 
     def test_never_recognised_fails_honestly(self):
@@ -112,3 +113,33 @@ class TestRecognizeNavigate:
             {"label": "chair"}, _ctx(base))
         assert res.success is False
         assert res.result_data["diagnosis"] == "no_navigate"
+
+
+class TestDepthPath:
+    """When the base exposes get_camera_observation (depth+pose), the skill must
+    locate by DEPTH-AT-BBOX (semantic), not lidar — skipping intervening obstacles."""
+
+    def test_prefers_depth_over_lidar(self):
+        import math
+        # cam looking +x, up +z (cam -z = +x)
+        cam_mat = np.array([[0.0, 0.0, -1.0],
+                            [-1.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0]], dtype=np.float64)
+        depth = np.full((240, 320), 40.0, dtype=np.float32)
+        depth[110:130, 150:170] = 3.0       # chair surface at centre, 3 m ahead
+
+        class _ObsBase(_FakeBase):
+            def get_camera_observation(self, timeout=5.0):
+                return {"rgb": "frame", "depth": depth,
+                        "cam_pos": np.array([0.0, 0.0, 1.0]),
+                        "cam_mat": cam_mat.flatten(), "fovy": 70.0}
+
+        # lidar has a CLOSER obstacle hit straight ahead (would mislead lidar path)
+        base = _ObsBase([[1.5, 0.0, 0.3, 1.0]])
+        det = _Det([[{"label": "chair", "x_norm": 0.0, "area_frac": 0.03, "y_norm": 0.0}]])
+        res = RecognizeNavigateSkill(detector=det).execute({"label": "chair"}, _ctx(base))
+        assert res.success is True
+        assert res.result_data["located_by"] == "depth"
+        # navigated to a standoff in front of the DEPTH point (3,0 → 2.3,0), NOT
+        # the closer lidar obstacle (1.5,0) — proves depth was preferred.
+        assert abs(base.nav_goal[0] - 2.3) < 0.2 and abs(base.nav_goal[1]) < 0.2

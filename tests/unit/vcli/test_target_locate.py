@@ -16,7 +16,10 @@ import math
 
 import numpy as np
 
-from vector_os_nano.perception.target_locate import locate_from_bearing
+from vector_os_nano.perception.target_locate import (
+    locate_from_bearing,
+    locate_from_depth,
+)
 
 
 def _pts(rows):
@@ -64,3 +67,51 @@ class TestLocate:
         xy = locate_from_bearing((1.0, 1.0), math.pi / 2, 0.0, pts)
         assert xy is not None
         assert abs(xy[0] - 1.0) < 1e-3 and abs(xy[1] - 3.0) < 1e-3
+
+
+# --- depth-at-bbox (R5): back-project the depth at the recognised pixel ---
+# Camera looking along world +x, up = +z (cam -z = +x): cam_mat columns are the
+# camera axes in world = x_right=(0,-1,0), y_up=(0,0,1), z=(-1,0,0).
+_CAM_MAT_FWD_X = np.array([[0.0, 0.0, -1.0],
+                           [-1.0, 0.0, 0.0],
+                           [0.0, 1.0, 0.0]], dtype=np.float64)
+
+
+def _depth(H=240, W=320, fill=40.0):
+    return np.full((H, W), fill, dtype=np.float32)
+
+
+class TestLocateFromDepth:
+    def test_centre_pixel_projects_forward(self):
+        # chair dead-ahead: bbox centre (x_norm=0,y_norm=0) at depth 3.0, cam at
+        # (0,0,1) looking +x → world (3, 0, 1); navigate uses (x, y)=(3,0).
+        d = _depth()
+        d[110:130, 150:170] = 3.0       # a patch at the centre
+        xy = locate_from_depth(0.0, 0.0, d, (0.0, 0.0, 1.0),
+                               _CAM_MAT_FWD_X.flatten(), 70.0)
+        assert xy is not None
+        assert abs(xy[0] - 3.0) < 0.15 and abs(xy[1] - 0.0) < 0.15
+
+    def test_right_of_centre_projects_to_negative_y(self):
+        # a target on the image RIGHT (x_norm>0) is at world -y when facing +x.
+        d = _depth()
+        d[110:130, 230:250] = 3.0
+        xy = locate_from_depth(0.6, 0.0, d, (0.0, 0.0, 1.0),
+                               _CAM_MAT_FWD_X.flatten(), 70.0)
+        assert xy is not None and xy[1] < 0
+
+    def test_respects_cam_position(self):
+        d = _depth()
+        d[110:130, 150:170] = 2.0
+        xy = locate_from_depth(0.0, 0.0, d, (1.0, 5.0, 1.0),
+                               _CAM_MAT_FWD_X.flatten(), 70.0)
+        assert abs(xy[0] - 3.0) < 0.15 and abs(xy[1] - 5.0) < 0.15
+
+    def test_none_on_farclip_or_invalid_depth(self):
+        d = _depth(fill=40.0)           # all far-clip → no valid surface
+        assert locate_from_depth(0.0, 0.0, d, (0.0, 0.0, 1.0),
+                                 _CAM_MAT_FWD_X.flatten(), 70.0,
+                                 max_depth=20.0) is None
+        z = np.zeros((240, 320), dtype=np.float32)   # all zero (no return)
+        assert locate_from_depth(0.0, 0.0, z, (0.0, 0.0, 1.0),
+                                 _CAM_MAT_FWD_X.flatten(), 70.0) is None

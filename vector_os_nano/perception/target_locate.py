@@ -69,3 +69,56 @@ def locate_from_bearing(
             best_rng = rng
             best_xy = (float(p[0]), float(p[1]))
     return best_xy
+
+
+def locate_from_depth(
+    x_norm: float,
+    y_norm: float,
+    depth: "np.ndarray",
+    cam_pos,
+    cam_mat,
+    fovy_deg: float,
+    win: int = 6,
+    max_depth: float = 30.0,
+) -> "tuple[float, float] | None":
+    """World (x, y) of the RECOGNISED object by back-projecting the depth at its
+    bbox centre — the semantically-correct estimate (depth at the object's OWN
+    pixels, so an intervening obstacle is NOT mistaken for the target, unlike
+    nearest-lidar; tricky Case 22). Depth is the MuJoCo renderer's per-pixel
+    distance (metres); the recognition camera is OpenGL-convention (looks along
+    its -z, +x right, +y up). ``cam_pos`` (3,) and ``cam_mat`` (9 row-major or
+    3x3) are the camera world pose captured WITH the frame.
+
+    ``x_norm, y_norm`` are the bbox centre in [-1, 1] (>0 = right / down). A
+    small ``win``×``win`` window median rejects single bad pixels; far-clip /
+    zero / >max_depth samples are dropped. None if no valid depth at the bbox."""
+    if depth is None:
+        return None
+    dimg = np.asarray(depth, dtype=np.float64)
+    if dimg.ndim != 2:
+        return None
+    H, W = dimg.shape
+    px = int(round((float(x_norm) + 1.0) * 0.5 * (W - 1)))
+    py = int(round((float(y_norm) + 1.0) * 0.5 * (H - 1)))
+    px = max(0, min(W - 1, px))
+    py = max(0, min(H - 1, py))
+    x0, x1 = max(0, px - win), min(W, px + win + 1)
+    y0, y1 = max(0, py - win), min(H, py + win + 1)
+    patch = dimg[y0:y1, x0:x1].ravel()
+    valid = patch[(patch > 0.1) & (patch < max_depth)]
+    if valid.size == 0:
+        return None
+    # NEAREST surface in the bbox window, not the median: a thin object (chair
+    # legs/back) lets the bbox see THROUGH to the wall behind, biasing a median
+    # too far (and to an unreachable point past the target — R5). A low
+    # percentile is the object's own FRONT FACE, robust to a few near specks.
+    z = float(np.percentile(valid, 20))
+
+    # OpenGL pinhole back-projection. fovy is the VERTICAL field of view.
+    f = (H / 2.0) / math.tan(math.radians(fovy_deg) / 2.0)
+    xc = (px - W / 2.0) / f
+    yc = -(py - H / 2.0) / f          # image y is down → camera y is up
+    p_cam = np.array([xc * z, yc * z, -z], dtype=np.float64)   # looks along -z
+    rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
+    p_world = np.asarray(cam_pos, dtype=np.float64) + rot @ p_cam
+    return (float(p_world[0]), float(p_world[1]))
