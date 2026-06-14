@@ -41,20 +41,34 @@ def furnished_room_asset_map(asset_dir: "Path | None" = None) -> dict:
     return asset_map
 
 
-def build_pick_scene_spec(objects: list, *, table: "dict | None" = None) -> dict:
-    """Scene spec for the manipulation scene: a table + colored graspable
-    primitives (cylinders/boxes) at their LIVE world poses. ``objects`` is a list
-    of ``{type, pos, size, color}`` dicts (read from the sim by the base). The
-    object positions render the scene AS IT IS — the VLM still has to find the
-    object in the image; the grasp target is perception-derived, not GT (rule 5).
+def pick_object_mesh(asset_dir: "Path | None" = None) -> "dict | None":
+    """A photoreal CC0 mesh for a graspable object, if present on disk.
+
+    R11 found bare colored cylinders are unreliably VLM-detectable (garbled
+    output); R2/R3's lever is photoreal MESH assets. The bleach bottle (PolyHaven
+    CC0) grounds reliably as a 'bottle'. Returns ``{path, scale}`` or None.
     """
+    asset_dir = asset_dir or photoreal_asset_dir()
+    bottle = asset_dir / "bleach_bottle" / "bleach_bottle_1k.gltf"
+    if bottle.exists():
+        return {"path": str(bottle), "scale": 0.30, "label": "bottle"}
+    return None
+
+
+def build_pick_scene_spec(objects: list, *, table: "dict | None" = None,
+                          extra_assets: "list | None" = None) -> dict:
+    """Scene spec for the manipulation scene: a table + graspable items. Items may
+    be colored primitives (``objects``, from the sim's live poses) and/or photoreal
+    CC0 meshes (``extra_assets``, raw asset dicts resting on the table). The grasp
+    target is perception-derived from the rendered scene, never GT (rule 5)."""
     floor = {"size": 30, "color": [0.72, 0.70, 0.66]}
     walls = []
     if table is not None:
         walls = [{"pos": table.get("pos", [0, 0, 0.1]),
                   "scale": table.get("scale", [0.20, 0.25, 0.10]),
                   "color": table.get("color", [0.55, 0.40, 0.25])}]
-    return build_room_scene_spec({}, {}, floor=floor, walls=walls, objects=objects)
+    return build_room_scene_spec({}, {}, floor=floor, walls=walls,
+                                 objects=objects, extra_assets=extra_assets)
 
 
 def scene_renderer(

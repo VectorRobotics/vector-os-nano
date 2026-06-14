@@ -27,6 +27,7 @@ def build_room_scene_spec(
     sky: dict | None = None,
     floor_z: float = 0.0,
     objects: list | None = None,
+    extra_assets: list | None = None,
 ) -> dict:
     """Map ``{label: (cx, cy)}`` + ``{label: {path, scale, ...}}`` to a scene spec.
 
@@ -44,6 +45,10 @@ def build_room_scene_spec(
             "pos": [float(cx), float(cy), float(floor_z)],
             "ground": amap.get("ground", True),
         })
+    # Raw asset dicts with explicit 3D pos (the pick scene's graspable mesh sits
+    # on the TABLE, not the room floor — placements/floor_z can't express that).
+    for a in (extra_assets or []):
+        assets.append(dict(a))
     return {
         "floor": floor if floor is not None else dict(_DEFAULT_FLOOR),
         "walls": walls if walls is not None else [],

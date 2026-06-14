@@ -42,6 +42,27 @@ def test_factory_builds_renderer_with_injected_bridge_and_cam(tmp_path, monkeypa
     assert rgb.shape == (240, 320, 3)
 
 
+def test_build_pick_scene_spec_carries_objects_table_and_mesh():
+    objs = [{"type": "cylinder", "pos": [11, 3, 0.25], "size": [0.03, 0.04],
+             "color": [0.2, 0.4, 0.85]}]
+    mesh = [{"path": "/a/bottle.gltf", "scale": 0.3, "pos": [11, 3.15, 0.21],
+             "ground": True}]
+    spec = cosim.build_pick_scene_spec(
+        objs, table={"pos": [11, 3, 0.1]}, extra_assets=mesh)
+    assert spec["objects"] == objs
+    assert spec["assets"] == mesh                  # photoreal mesh on the table
+    assert spec["walls"] and spec["walls"][0]["pos"] == [11, 3, 0.1]
+
+
+def test_pick_object_mesh_present_when_bottle_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("VECTOR_PHOTOREAL_ASSETS", str(tmp_path))
+    assert cosim.pick_object_mesh() is None         # absent
+    d = tmp_path / "bleach_bottle"; d.mkdir()
+    (d / "bleach_bottle_1k.gltf").write_text("x")
+    m = cosim.pick_object_mesh()
+    assert m and m["path"].endswith("bleach_bottle_1k.gltf") and m["label"] == "bottle"
+
+
 def test_factory_without_blender_fails_loud(tmp_path, monkeypatch):
     monkeypatch.setenv("VECTOR_PHOTOREAL_ASSETS", str(tmp_path))
     monkeypatch.setenv("VECTOR_BLENDER", "/nonexistent/blender")

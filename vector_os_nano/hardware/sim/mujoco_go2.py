@@ -1194,9 +1194,26 @@ class MuJoCoGo2:
                 # Manipulation scene: render the table + the live graspable
                 # objects as photoreal primitives (campaign #10 R7).
                 from vector_os_nano.playground.photoreal.cosim import (  # noqa: PLC0415,E501
-                    build_pick_scene_spec, scene_renderer)
+                    build_pick_scene_spec, pick_object_mesh, scene_renderer)
+                objs = self._pick_objects()
+                # R12: substitute a photoreal CC0 mesh (reliably VLM-detectable)
+                # for ONE bare cylinder (R11: primitives garble the VLM). The mesh
+                # rests on the table at that object's (x,y); the remaining objects
+                # render as primitives for context. Grasp target stays perception-
+                # derived from the rendered mesh (rule 5).
+                mesh = pick_object_mesh()
+                extra_assets = None
+                if mesh and objs:
+                    tgt = objs[0]
+                    hz = tgt["size"][1] if len(tgt["size"]) >= 2 else 0.04
+                    base_z = float(tgt["pos"][2]) - float(hz)
+                    extra_assets = [{
+                        "path": mesh["path"], "scale": mesh["scale"],
+                        "pos": [float(tgt["pos"][0]), float(tgt["pos"][1]), base_z],
+                        "ground": True}]
+                    objs = objs[1:]   # the substituted one is now the mesh
                 spec = build_pick_scene_spec(
-                    self._pick_objects(), table=self._pick_table())
+                    objs, table=self._pick_table(), extra_assets=extra_assets)
                 renderer, bridge = scene_renderer(
                     spec, cam_name=cam_name, bridge=self._photoreal_bridge,
                     width=640, height=480, samples=48)
