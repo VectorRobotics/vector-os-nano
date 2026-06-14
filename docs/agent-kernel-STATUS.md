@@ -11,7 +11,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
   a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
   (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
-- Last updated: 2026-06-11.
+- Last updated: 2026-06-13.
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## Current state (2026-06-11)
@@ -659,7 +659,7 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
    #2b target-aware verify the wrong-object path cannot false-pass). STILL OPEN: the VLM
    `MuJoCoPerception`/`DetectSkill` real-perception path on no-oracle hardware.
    **Phase C.3/C.4** stays blocked behind that
-   ([agent-kernel-phase-c-plan.md](agent-kernel-phase-c-plan.md)).
+   (phase-c plan superseded — see git history / campaign #8 in this doc).
 4. **Owner-gated window checks (cannot verify headless):** R2-1 `--sim-go2` macOS in-process
    window (opens, no segfault, walk animates; frozen-when-idle is expected v1) · R2-4 single ^C
    aborts to prompt under mjpython, second ^C exits.
@@ -692,9 +692,7 @@ behaviors are owner-window checks — never claim them verified headless.
 
 - Rules + read order: [../CLAUDE.md](../CLAUDE.md)
 - Design: [ARCHITECTURE.md](ARCHITECTURE.md) · Hidden bugs: [tricky-bugs.md](tricky-bugs.md)
-- Plans: [agent-kernel-phase-e-plan.md](agent-kernel-phase-e-plan.md) (CURRENT, Wave 2) ·
-  [agent-kernel-phase-d-plan.md](agent-kernel-phase-d-plan.md) (Stage 3 remainder open) ·
-  [agent-kernel-phase-c-plan.md](agent-kernel-phase-c-plan.md) (C.3/C.4 decisions open)
+- Plans: none active (campaign #8 COMPLETE; realsim-plan.md deleted per doc-governance, see git history). Open item: DQ-4 (merge feat/playground-vln → master).
 - ADRs: [ADR-006](architecture-decisions/ADR-006-agent-kernel-world-plugin.md) ·
   [ADR-007](architecture-decisions/ADR-007-closed-loop-controller.md) ·
   [ADR-008](architecture-decisions/ADR-008-playground-parallel-track.md)

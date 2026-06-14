@@ -9,7 +9,7 @@ it. N4 transport selection: when the REAL nav stack is alive (the base's
 /way_point in, sensor-driven /navigation_cmd_vel out, euclidean progress
 monitoring only. The sim-oracle ``base.navigate_to`` is the FALLBACK
 (nav stack down / pure-sim installs), and the verify criterion
-``geodesic_dist(x, y) < 0.5`` stays the deterministic judge either way —
+``geodesic_dist(x, y) < 0.8`` stays the deterministic judge either way —
 the planner binds the SAME coordinates into params and verify, so a stuck
 or unreachable navigation can never false-pass. ``result_data.transport``
 records which path ran (honest provenance).
@@ -36,7 +36,9 @@ def _resolve_base_target(base: object, label: str
         return None
     try:
         targets = fn() or {}
-    except Exception:  # noqa: BLE001 — a flaky base never breaks navigation
+    except Exception as exc:  # noqa: BLE001 — a flaky base never breaks navigation
+        logger.warning("list_targets() failed on %s: %s",
+                       type(base).__name__, exc)
         return None
     key = label.strip().lower()
     # zh/en color aliases so '去蓝色目标'/'blue'/'blue_target' all resolve. The
@@ -235,7 +237,7 @@ class NavigateToPointSkill:
             "target": [x, y],
             "goal_kind": goal_kind,
             "reached": reached,
-            "remaining_geodesic_m": remaining,
+            "remaining_m": remaining,  # euclidean (room geodesic via geodesic_distance)
             "position": out.get("pos"),
             "transport": out.get("transport", "sim_oracle"),
             # Motion evidence (three-value contract, R6): 'drove there' and

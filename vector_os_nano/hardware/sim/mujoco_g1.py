@@ -80,6 +80,7 @@ _NAV_STALL_WINDOW_S = 6.0    # forward-walk no-progress window
 _NAV_INFLATION = 0.40
 _NAV_WAYPOINT_TOL = 0.45
 _NAV_STALL_MIN_M = 0.10      # min net progress within the window
+_OCC_RESOLUTION = 0.25       # m/cell — occupancy grid resolution (room mode)
 
 
 def g1_assets_ready() -> bool:
@@ -157,6 +158,7 @@ class G1MuJoCoBase:
         self._cam_done = threading.Event()
         self._cam_rgb = None
         self._cam_renderer = None
+        self._cam_opt = None     # MjvOption (all geom groups) — lazily built
         # Live passive viewer window (campaign #8 R0). The owner controls the
         # G1 entirely through vector-cli and must SEE the gait, not just an
         # offscreen PNG. The window is launched in connect() and synced by the
@@ -227,7 +229,6 @@ class G1MuJoCoBase:
             # Enumerate routing geometry + spin up the lidar once the model is
             # compiled. mj_forward populates geom_xpos for the obstacle scan.
             mujoco.mj_forward(self._model, self._data)
-            from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
             from vector_os_nano.hardware.sim.sensors.lidar360 import (  # noqa: PLC0415,E501
                 MuJoCoLivox360,
             )
@@ -253,7 +254,7 @@ class G1MuJoCoBase:
             # control thread) — ray-marching 5760 rays at 10 Hz would starve the
             # gait (the R0/Case-13 lesson), so mapping stays off the hot path.
             from vector_os_nano.hardware.sim.occupancy import OccupancyGrid  # noqa: PLC0415,E501
-            self._occ = OccupancyGrid(*g1_room.room_bounds(), resolution=0.25)
+            self._occ = OccupancyGrid(*g1_room.room_bounds(), resolution=_OCC_RESOLUTION)
         # Live viewer window (campaign #8 R0): open it on the caller thread.
         # Skip under mjpython (macOS main-thread-only GLFW); launch failure
         # (no display / GL) degrades to headless without breaking the boot.
@@ -305,6 +306,10 @@ class G1MuJoCoBase:
 
     def disconnect(self) -> None:
         self._running = False
+        # Wake any in-flight render/camera waiter so it sees the disconnect and
+        # raises promptly instead of blocking the full timeout (review R-final).
+        self._render_done.set()
+        self._cam_done.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
@@ -314,13 +319,23 @@ class G1MuJoCoBase:
             except Exception:  # noqa: BLE001 — best-effort window teardown
                 pass
             self._viewer = None
+        # Release the offscreen GL renderers (chase-cam + first-person camera)
+        # — leaking the EGL context across reconnect/multi-instance runs is the
+        # historical crash class (tricky-bugs Case 12 discipline).
+        for _r in (self._renderer, self._cam_renderer):
+            if _r is not None:
+                try:
+                    _r.close()
+                except Exception:  # noqa: BLE001 — best-effort teardown
+                    pass
+        self._renderer = None
         with self._snap_lock:
             self._snap = None     # post-disconnect readers raise, not crash
         with self._lidar_snap_lock:
             self._lidar_snap = None
         self._lidar = None
         self._occ = None
-        self._cam_renderer = self._cam_rgb = None
+        self._cam_renderer = self._cam_rgb = self._cam_opt = None
         self._model = self._data = self._policy = None
 
     close = disconnect
@@ -352,8 +367,12 @@ class G1MuJoCoBase:
         """A chase-camera PNG of the current pose (acceptance/owner artifact).
 
         Rendered ON the control thread (mujoco thread discipline); the caller
-        blocks until it lands. Serialized — one render in flight."""
+        blocks until it lands. Serialized — one render in flight. In PUMP mode
+        the caller thread IS the control thread, so render directly — the
+        _render_req hand-off would deadlock (same as get_camera_frame)."""
         self._require_connected()
+        if self._pump_mode:
+            return self._render_tracking_frame(self._model, self._data)
         with self._render_lock:
             self._render_done.clear()
             self._render_req.set()
@@ -391,8 +410,13 @@ class G1MuJoCoBase:
         control thread (it drives _step_batch), so the _cam_req hand-off would
         DEADLOCK (the caller would block waiting for a batch it must itself
         pump) — render directly instead. In DAEMON mode the daemon serves the
-        request."""
+        request. Requires room mode (the forward camera is mounted by
+        g1_room) — fails loud on the flat scene rather than rendering blank."""
         self._require_connected()
+        if not self._room:
+            raise RuntimeError(
+                "no forward camera — get_camera_frame needs room mode "
+                "(--scenario g1_room)")
         if self._pump_mode:
             return self._render_camera_frame(self._model, self._data)
         with self._cam_lock:
@@ -514,7 +538,7 @@ class G1MuJoCoBase:
             next_tick += batch_dt
             remaining = next_tick - time.monotonic()
             if remaining > 0.004:
-                time.sleep(remaining - 0.003)
+                time.sleep(max(0.0, remaining - 0.003))
             if remaining < -0.2:
                 next_tick = time.monotonic()  # fell far behind — resync
             else:
@@ -637,7 +661,6 @@ class G1MuJoCoBase:
         An honest 'unreachable' (goal inside an inflated obstacle / boxed in)
         returns reached=False reason=unreachable — never a phantom straight
         line (rule 5)."""
-        import math
         self._require_connected()
         if not self._obstacles:
             return self._navigate_point(x, y, tol, speed)
@@ -702,7 +725,6 @@ class G1MuJoCoBase:
         guard. ``moved_m`` is real path length; ``net_m`` the start->end
         displacement (an orbit inflates the former, not the latter).
         """
-        import math
 
         self._require_connected()
         if not all(math.isfinite(v) for v in (x, y, tol, speed)):
@@ -838,7 +860,6 @@ class G1MuJoCoBase:
         diverge (rule 5). Declaring it lets the kernel's ``geodesic_dist(x, y)``
         verify predicate bind for coordinate goals.
         """
-        import math
         if getattr(self, "_obstacles", None):
             from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
             return g1_vgraph.path_length(

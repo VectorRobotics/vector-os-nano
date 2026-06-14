@@ -297,3 +297,28 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** any `time.sleep` fed by a `deadline - now()` difference must be
   clamped ≥ 0; the deadline can pass between the guard and the call. A latent
   pump-only bug needs a long pump-mode action to surface — short ones mask it.
+
+## Case 15 — vision-seek target acquisition from spawn is FOV-fragile (2026-06-13)
+
+- **Symptom:** standalone `找到并走到红色物体` (VisionSeekSkill from the spawn
+  pose) intermittently reports seen=False — the robot scans for the full
+  budget without ever recognising the target — while the SAME skill succeeds
+  (a) headless and (b) inside ExploreAndSeekSkill (explore-then-seek).
+- **Why hidden:** the pelvis camera is pitched down ~12° so floor-level targets
+  stay in frame DURING approach; but a far target straight ahead at spawn sits
+  at/above the FOV's upper edge. If it isn't detected on the first frames, the
+  acquisition strategy is turn-in-place scan, which sweeps azimuth but never
+  changes pitch/range — so a far target outside the vertical FOV is never
+  brought in. The explore-then-seek capstone works because explore first
+  repositions the robot to where the target is in view. A diagnostic confirms
+  the camera + detector themselves are fine (red detected after a 0.5 m
+  forward step), so this is an ACQUISITION-strategy gap, not a render/GL bug.
+- **Partial fix applied:** scan now steps forward every _SCAN_ADVANCE_EVERY
+  ticks (sweep + advance) — helps but heading drifts during the turn-scan so
+  acquisition of a specific far target is still unreliable.
+- **Follow-up (not done):** a proper acquisition strategy — sweep at a fixed
+  heading grid, or a short forward creep between full sweeps, or widen the FOV
+  / reduce the down-pitch. The robust path today is explore-then-seek.
+- **Lesson:** a perceive-act loop's ARRIVAL was tuned hard, but ACQUISITION
+  (first detection) was assumed — re-test the cold-start (target not initially
+  in view), not just the mid-approach.

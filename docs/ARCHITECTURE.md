@@ -467,9 +467,8 @@ Prior phases (A–C) established the foundation: kernel/world decoupling (Phase 
 differentiation tier wired and made real (Phase B — tool-backed execution, code-as-policy
 sandbox, verify-as-eval, persistent stats, experience compilation), and the capability
 seam plus cross-capability routing (Phase C.1/C.2). Phase C.3/C.4 are open and sequenced
-after the closed-loop stages; see
-[agent-kernel-phase-c-plan.md](agent-kernel-phase-c-plan.md) and
-[agent-kernel-phase-d-plan.md](agent-kernel-phase-d-plan.md).
+after the closed-loop stages (those phase plans were superseded and deleted per
+doc-governance — recover from git history if needed).
 
 ---
 

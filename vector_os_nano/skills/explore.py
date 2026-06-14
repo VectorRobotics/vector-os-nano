@@ -104,15 +104,20 @@ class ExploreSkill:
             fx, fy = float(frontier[0]), float(frontier[1])
             out = base.navigate_to(fx, fy, _FRONTIER_TOL)
             visited.append([round(fx, 2), round(fy, 2)])
-            if out.get("reason") in ("fell", "unreachable"):
-                # skip an unreachable frontier; the map already marked it, so
-                # nearest_frontier_world returns a different one next loop.
+            if out.get("reason") in ("fell", "unreachable", "stalled_no_progress"):
+                # skip a blocked/unreachable frontier; the map already marked it
+                # so nearest_frontier_world returns a different one next loop
+                # (don't retry the same blocked frontier and burn the stall window).
                 continue
         coverage = base.observe()
         grew = coverage > start_coverage + 1e-6
+        # Honest success (rule 5): the map MUST have grown, OR the coverage
+        # target was met. 'fully_explored' with no growth is NOT a success — the
+        # planner must not get an affirmative it did not earn.
         return SkillResult(
-            success=bool(grew or reason in ("coverage_reached", "fully_explored")),
-            error_message=("" if grew else "exploration did not grow the map"),
+            success=bool(grew or reason == "coverage_reached"),
+            error_message=("" if (grew or reason == "coverage_reached")
+                           else "exploration did not grow the map"),
             result_data={
                 "coverage": round(coverage, 3),
                 "start_coverage": round(start_coverage, 3),

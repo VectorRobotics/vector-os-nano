@@ -31,6 +31,12 @@ _ALIGN_TOL = 0.18      # |x_norm| within this = centred enough to walk
 _ARRIVE_AREA = 0.04
 _TURN_VYAW = 0.5       # rad-ish command for aligning / scanning
 _FWD_VX = 0.45
+_STALL_WINDOW_STEPS = 8    # progress-stall arrival: window of recent positions
+_STALL_PROGRESS_M = 0.6    # net travel below this over the window = arrived (near-target orbit)
+_MIN_APPROACH_M = 0.6    # robot must translate this far from start before
+                         # a progress-stall can count as arrival (vs scan-in-place)
+_SCAN_ADVANCE_EVERY = 5   # every Nth scan tick, step forward (not turn) so a
+                         # far target enters the down-pitched FOV
 _ALIASES = {"红": "red", "蓝": "blue", "绿": "green"}
 
 
@@ -110,7 +116,9 @@ class VisionSeekSkill:
         seen = False
         reason = "not_found"
         _has_pos = callable(getattr(base, "get_position", None))
+        start_pos = base.get_position() if _has_pos else [0.0, 0.0, 0.0]
         window: list = []      # recent positions, for progress-stall arrival
+        scan_steps = 0         # consecutive scan (target-not-seen) ticks
         for _ in range(max_iters):
             try:
                 frame = base.get_camera_frame()
@@ -126,27 +134,41 @@ class VisionSeekSkill:
             if action == "arrived":     # blob filled the frame (close)
                 reason = "arrived"
                 break
+            # Scan that sweeps AND advances: a far target straight ahead can sit
+            # outside the down-pitched camera's vertical FOV — turning in place
+            # never brings it in. Every _SCAN_ADVANCE_EVERY scan ticks, step
+            # forward instead of turning so far/low targets enter the view.
+            if action == "scan":
+                scan_steps += 1
+                if scan_steps % _SCAN_ADVANCE_EVERY == 0:
+                    action, vx, vyaw = "forward", _FWD_VX, 0.0
+            else:
+                scan_steps = 0
             # Progress-stall arrival: a small low target clips at the frame edge
-            # up close, so pixel area never crosses the threshold and detection
-            # flickers. The honest signal is PHYSICAL: once the robot has
-            # recognised the target and then stops making net progress (it has
-            # walked up to it and is circling/blocked), it has arrived.
+            # up close, so pixel area never crosses the threshold. Honest signal
+            # is PHYSICAL: once the robot has seen the target AND APPROACHED it
+            # (translated _MIN_APPROACH_M from where it started — so a robot
+            # merely SCANNING in place far from the target can NEVER falsely
+            # arrive, review fix) AND then stops making net progress, it has
+            # walked up to the object → arrived.
             if _has_pos and seen:
                 p = base.get_position()
                 window.append((float(p[0]), float(p[1])))
-                if len(window) > 8:
+                approached = math.hypot(p[0] - start_pos[0],
+                                        p[1] - start_pos[1]) > _MIN_APPROACH_M
+                if approached and len(window) > _STALL_WINDOW_STEPS:
                     window.pop(0)
                     net = math.hypot(window[-1][0] - window[0][0],
                                      window[-1][1] - window[0][1])
-                    if net < 0.45:      # no net progress over 8 steps → reached
+                    if net < _STALL_PROGRESS_M:   # no net progress → reached
                         reason = "arrived"
                         break
             # one short perceive-act step (re-arms deadman each loop)
             base.walk(vx, 0.0, vyaw, duration=0.4)
         try:
             base.stop()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("vision_seek teardown stop() failed: %s", exc)
         pos = list(base.get_position()) if callable(getattr(base, "get_position", None)) else None
         ok = reason == "arrived"
         return SkillResult(
