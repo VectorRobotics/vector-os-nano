@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R13 — real-sim grasp debugged: standoff framing SOLVED + mj_forward thread-race FIXED + VLM-429 retry added + close-range detect works; ROOT CAUSE found = photoreal bottle MESH != physics cylinder -> depth-at-bbox misaligned -> wrong 3D -> IK unreachable. R14 = match render+physics shape (texture the cylinder).).
+- Last updated: 2026-06-14 (campaign #10 R14 — textured-cylinder render (VLM-detectable 'container' 0.08, shape matches physics) but grasp locate STILL wrong: deeper root = Blender RGB vs MuJoCo DEPTH are DIFFERENT scenes -> depth-at-bbox samples floor. R15 = render DEPTH in Blender too (same-scene rgb+depth -> aligned locate).).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star

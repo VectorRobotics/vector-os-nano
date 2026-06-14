@@ -55,6 +55,18 @@ def pick_object_mesh(asset_dir: "Path | None" = None) -> "dict | None":
     return None
 
 
+def pick_object_texture(asset_dir: "Path | None" = None) -> "str | None":
+    """A product-label image texture for the graspable primitives, if present.
+
+    R14: texturing the physics cylinder (keeping its SHAPE) makes it VLM-detectable
+    AND keeps the rendered object aligned with the MuJoCo depth (unlike a
+    substituted bottle MESH, R13). Reuses the bleach-bottle diffuse map as a label.
+    """
+    asset_dir = asset_dir or photoreal_asset_dir()
+    tex = asset_dir / "bleach_bottle" / "textures" / "bleach_bottle_01_diff_1k.jpg"
+    return str(tex) if tex.exists() else None
+
+
 def build_pick_scene_spec(objects: list, *, table: "dict | None" = None,
                           extra_assets: "list | None" = None) -> dict:
     """Scene spec for the manipulation scene: a table + graspable items. Items may

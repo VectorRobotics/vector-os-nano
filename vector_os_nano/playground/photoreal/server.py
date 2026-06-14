@@ -82,6 +82,28 @@ def _principled_color(obj, rgb):
     obj.data.materials.append(m)
 
 
+def _textured_material(obj, image_path):
+    """Wrap an image texture onto a primitive (a product label on a cylinder).
+
+    Keeps the primitive's SHAPE (so the rendered object matches the physics
+    object exactly — campaign #10 R14: depth-at-bbox stays aligned) while giving
+    the VLM a recognisable textured surface (a bare colour primitive garbles it)."""
+    m = bpy.data.materials.new("tex")
+    m.use_nodes = True
+    nt = m.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    try:
+        tex.image = bpy.data.images.load(image_path, check_existing=True)
+    except Exception as e:  # noqa: BLE001
+        _log(f"texture load failed ({image_path}): {e}")
+        bsdf.inputs[0].default_value = (0.8, 0.2, 0.15, 1.0)
+        obj.data.materials.append(m)
+        return
+    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    obj.data.materials.append(m)
+
+
 def build_scene(spec):
     """Build floor + assets + lighting from a JSON spec. Idempotent (clears first)."""
     _clear()
@@ -138,7 +160,10 @@ def build_scene(spec):
             bpy.context.object.scale = (size[0], size[1], size[2])
         else:
             raise ValueError(f"unsupported primitive: {otype}")
-        _principled_color(bpy.context.object, o.get("color", [0.7, 0.7, 0.7]))
+        if o.get("texture"):
+            _textured_material(bpy.context.object, o["texture"])
+        else:
+            _principled_color(bpy.context.object, o.get("color", [0.7, 0.7, 0.7]))
 
     sun = spec.get("sun", {"pos": [1.0, 1.0, 4.0], "energy": 3.0})
     bpy.ops.object.light_add(type="SUN", location=sun.get("pos", [1, 1, 4]))
