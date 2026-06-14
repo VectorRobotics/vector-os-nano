@@ -22,6 +22,7 @@ so building this does not pre-commit the gated photoreal decision.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,49 @@ TARGETS: tuple = (
 )
 
 
+@dataclass(frozen=True)
+class FurnitureTarget:
+    """A named real-mesh furniture target (campaign #9 R1, track A).
+
+    Unlike the colour boxes, these are recognisable household objects (Kenney
+    CC0 meshes) so a REAL VLM (Qwen-VL) can ground a SEMANTIC class — 'chair',
+    'sofa', 'potted plant' — not just a colour. ``label`` is the natural class
+    name the VLM/seek query uses; ``mesh_file`` is relative to the furniture
+    asset dir; ``cx, cy`` is the desired VISIBLE centre (the body is shifted so
+    the mesh sits centred there and on the floor — meshes have off-origin pivots).
+    """
+    name: str          # MuJoCo body name (target_<label>)
+    label: str         # semantic class for VLM query / world model
+    mesh_file: str     # OBJ under the furniture asset dir
+    scale: float
+    cx: float
+    cy: float
+
+
+# Furniture asset dir (Kenney CC0 OBJ meshes), shared with the go2 room scene.
+_FURNITURE_DIR = (Path(__file__).parent / "mjcf" / "go2" / "assets"
+                  / "furniture")
+# The Y-up OBJ → Z-up MuJoCo correction: a +90° rotation about world X. As a
+# quat (w, x, y, z). (the go2 scene applies the same via euler="1.5708 0 0".)
+_YUP_TO_ZUP_QUAT = (math.cos(math.pi / 4), math.sin(math.pi / 4), 0.0, 0.0)
+
+# 3 semantic furniture targets, laid out like the colour room (back of the room,
+# spread in y) so the same explore→recognise→go loop applies. Distinct, easily
+# named classes maximise a real VLM's recognition odds on MuJoCo's render.
+FURNITURE: tuple = (
+    FurnitureTarget("target_chair", "chair", "chair.obj", 2.1, 3.6, 0.0),
+    FurnitureTarget("target_sofa", "sofa", "loungeSofa_carpet.obj", 2.2, 3.6, 2.0),
+    FurnitureTarget("target_plant", "potted plant",
+                    "pottedPlant_plant.obj", 1.8, 3.6, -2.0),
+)
+
+
+def furnished_targets() -> "dict[str, tuple[float, float]]":
+    """{body_name: (cx, cy)} for the furnished room's semantic targets — the
+    visible-centre coordinates the nav loop drives to (world-model GT)."""
+    return {f.name: (f.cx, f.cy) for f in FURNITURE}
+
+
 def room_bounds() -> "tuple[float, float, float, float]":
     """Interior (x_min, y_min, x_max, y_max) of the room — the occupancy
     grid's extent for exploration coverage."""
@@ -83,10 +127,14 @@ def room_bounds() -> "tuple[float, float, float, float]":
 
 
 def target_position(label: str) -> "tuple[float, float] | None":
-    """World (x, y) of a labeled target, or None if unknown."""
+    """World (x, y) of a labeled target (colour box OR furniture), or None."""
     for t in TARGETS:
         if t.name == label or t.name == f"target_{label}":
             return (t.cx, t.cy)
+    key = (label or "").strip().lower()
+    for f in FURNITURE:
+        if key in (f.name, f"target_{key}", f.label):
+            return (f.cx, f.cy)
     return None
 
 
@@ -147,14 +195,65 @@ def obstacles_from_model(
     return polys
 
 
-def build_room_model(asset_dir: "Path | str") -> Any:
+def _furniture_placement(mujoco: Any, asset_dir: Path
+                         ) -> "dict[str, tuple[float, float, float]]":
+    """Measure each furniture mesh's body-frame footprint (a throwaway compile)
+    so the caller can centre it on (cx, cy) and rest it on the floor.
+
+    Meshes have off-origin pivots: at body pos (0,0,0) the rotated mesh's
+    bounding-box centre is some (ox, oy) and its lowest vertex is at oz. Returns
+    {name: (ox, oy, oz)}; the real body pos is then (cx-ox, cy-oy, -oz)."""
+    import numpy as np
+
+    spec = mujoco.MjSpec.from_file(str(asset_dir / "scene.xml"))
+    for f in FURNITURE:
+        mesh = spec.add_mesh()
+        mesh.name = f"m_{f.name}"
+        mesh.file = str(_FURNITURE_DIR / f.mesh_file)
+        mesh.scale = [f.scale, f.scale, f.scale]
+        body = spec.worldbody.add_body(name=f.name, pos=[0.0, 0.0, 0.0])
+        g = body.add_geom()
+        g.name = f"{f.name}_geom"
+        g.type = mujoco.mjtGeom.mjGEOM_MESH
+        g.meshname = f"m_{f.name}"
+        g.quat = list(_YUP_TO_ZUP_QUAT)
+    model = spec.compile()
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)     # populate geom_xpos/geom_xmat (incl. the
+                                       # mesh-recentre geom_pos compensation)
+    out: dict = {}
+    for f in FURNITURE:
+        gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, f"{f.name}_geom")
+        mid = int(model.geom_dataid[gid])
+        adr = int(model.mesh_vertadr[mid])
+        n = int(model.mesh_vertnum[mid])
+        verts = np.array(model.mesh_vert[adr:adr + n]).reshape(-1, 3)
+        rmat = np.array(data.geom_xmat[gid]).reshape(3, 3)
+        world = verts @ rmat.T + np.array(data.geom_xpos[gid])  # body at origin
+        ox = float((world[:, 0].min() + world[:, 0].max()) / 2.0)
+        oy = float((world[:, 1].min() + world[:, 1].max()) / 2.0)
+        oz = float(world[:, 2].min())
+        out[f.name] = (ox, oy, oz)
+    return out
+
+
+def build_room_model(asset_dir: "Path | str", furnished: bool = False) -> Any:
     """Compile a G1 room MjModel from the flat gait scene + walls/obstacles/
-    targets. Returns a ``mujoco.MjModel`` (asset paths stay intact)."""
+    targets. Returns a ``mujoco.MjModel`` (asset paths stay intact).
+
+    ``furnished`` (campaign #9 R1, track A): swap the 3 saturated colour boxes
+    for 3 real Kenney furniture meshes (chair / sofa / potted plant) so a REAL
+    VLM can ground a semantic class instead of a colour. Walls + the 3 grey
+    collision obstacles are unchanged either way; the colour-box room (default)
+    is byte-for-byte the campaign #8 scene."""
     import mujoco
+    import numpy as np
 
     asset_dir = Path(asset_dir)
     spec = mujoco.MjSpec.from_file(str(asset_dir / "scene.xml"))
-    for obj in (*_wall_specs(), *OBSTACLES, *TARGETS):
+    statics = (*_wall_specs(), *OBSTACLES) if furnished else (
+        *_wall_specs(), *OBSTACLES, *TARGETS)
+    for obj in statics:
         body = spec.worldbody.add_body(name=obj.name, pos=[obj.cx, obj.cy, obj.hz])
         body.add_geom(
             name=f"{obj.name}_geom",
@@ -163,6 +262,22 @@ def build_room_model(asset_dir: "Path | str") -> Any:
             rgba=list(obj.rgba),
             group=ENV_GEOM_GROUP,   # lidar masks to this group → ignores robot
         )
+    if furnished:
+        place = _furniture_placement(mujoco, asset_dir)
+        for f in FURNITURE:
+            ox, oy, oz = place[f.name]
+            body = spec.worldbody.add_body(
+                name=f.name, pos=[f.cx - ox, f.cy - oy, -oz])
+            mesh = spec.add_mesh()
+            mesh.name = f"m_{f.name}"
+            mesh.file = str(_FURNITURE_DIR / f.mesh_file)
+            mesh.scale = [f.scale, f.scale, f.scale]
+            g = body.add_geom()
+            g.name = f"{f.name}_geom"
+            g.type = mujoco.mjtGeom.mjGEOM_MESH
+            g.meshname = f"m_{f.name}"
+            g.quat = list(_YUP_TO_ZUP_QUAT)
+            g.group = ENV_GEOM_GROUP   # lidar/render env group (same as targets)
     # First-person forward camera mounted on the pelvis (campaign #8 R9 — visual
     # recognition). mode=fixed so it rotates with the robot; xyaxes orient it to
     # look along the body +x (forward): cam right = body -y, up = body +z, so

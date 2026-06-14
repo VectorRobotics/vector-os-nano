@@ -56,10 +56,15 @@ def boot_g1_agent(
     # with real-collision walls/obstacles + a virtual lidar; g1_flat stays the
     # flat gait scene. Detected from the resolved world's scenario id.
     scenario = getattr(world, "scenario", None)
-    room = getattr(scenario, "id", "") == "g1_room"
+    scenario_id = getattr(scenario, "id", "")
+    # g1_room = colour-box room (campaign #8); g1_room_vlm = furnished room with
+    # real furniture meshes for VLM semantic recognition (campaign #9 R1).
+    furnished = scenario_id == "g1_room_vlm"
+    room = scenario_id in ("g1_room", "g1_room_vlm")
     _emit(on_status, "booting G1 humanoid (unitree_rl_gym policy gait)"
-          + (" — room (walls/obstacles/lidar)" if room else ""))
-    base = G1MuJoCoBase(gui=gui, room=room)
+          + (" — furnished room (furniture/VLM)" if furnished
+             else " — room (walls/obstacles/lidar)" if room else ""))
+    base = G1MuJoCoBase(gui=gui, room=room, furnished=furnished)
     base.connect()
     agent = Agent(base=base)
 
@@ -87,18 +92,30 @@ def boot_g1_agent(
         registry.register(ExploreSkill())
         registry.register(VisionSeekSkill())
         registry.register(ExploreAndSeekSkill())
+    if furnished:
+        # VlmSeekSkill grounds a SEMANTIC class with a real VLM (Qwen-VL) —
+        # the track-A perception path for the furnished room (campaign #9 R1).
+        from vector_os_nano.skills.vlm_seek import VlmSeekSkill
+        registry.register(VlmSeekSkill())
     agent._skill_registry = registry
 
     if room:
-        # Register the room's GT-known targets into the world model (campaign #8
-        # R3/R5): they are PLACED objects with known coordinates, so the planner
-        # treats '去蓝色目标' as navigate-to-a-known-object (NOT detect-then-go —
-        # that perception path is the DQ-10-gated photoreal half, R6+/owner).
-        # NavigateToPointSkill resolves the label here OR via base.list_targets.
+        # Register the room's GT-known targets into the world model. They are the
+        # deterministic VERIFY anchor (at_position(x, y, tol) with the object's
+        # real coordinates) — the honest judge that the robot ACTUALLY reached
+        # the thing it recognised. The MEANS is recognition (vision_seek colour
+        # / vlm_seek semantic), never a GT teleport — rule 5. For the furnished
+        # room the label is the semantic class ('chair'), so verify can bind to
+        # the object the VLM grounded.
         from vector_os_nano.core.world_model import ObjectState
+        labels = {}
+        if furnished:
+            from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+            labels = {f.name: f.label for f in g1_room.FURNITURE}
         for name, (tx, ty) in base.list_targets().items():
             agent._world_model.add_object(ObjectState(
-                object_id=name, label=name, x=float(tx), y=float(ty),
+                object_id=name, label=labels.get(name, name),
+                x=float(tx), y=float(ty),
                 confidence=1.0, state="placed",
                 properties={"source": "g1_room_ground_truth"}))
 

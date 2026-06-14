@@ -113,6 +113,7 @@ class G1MuJoCoBase:
         asset_dir: "Path | str | None" = None,
         gui: bool = False,
         room: bool = False,
+        furnished: bool = False,
     ) -> None:
         self._asset_dir = Path(asset_dir) if asset_dir else _ASSET_DIR
         if not (self._asset_dir / "motion.pt").exists():
@@ -192,6 +193,11 @@ class G1MuJoCoBase:
         # Brings real obstacle avoidance + a virtual lidar into the G1 world,
         # all substrate-agnostic (MuJoCo physics is reused under DQ-10 A or D).
         self._room: bool = room
+        # Furnished room (campaign #9 R1, track A): real Kenney furniture meshes
+        # (chair/sofa/potted plant) as semantic targets instead of colour boxes,
+        # so a real VLM can recognise an object CLASS. Walls + obstacles + lidar
+        # + camera are identical; only the target geometry differs.
+        self._furnished: bool = furnished
         # Routing polygons enumerated from the compiled model at connect()
         # (g1_vgraph.obstacles_from_model) — the single source of truth for both
         # the path navigate_to walks AND the geodesic verify reads (rule 5).
@@ -215,7 +221,8 @@ class G1MuJoCoBase:
             # Room scene built programmatically (walls + obstacles + targets)
             # from the flat gait scene — keeps asset paths intact (R1 spike).
             from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
-            self._model = g1_room.build_room_model(self._asset_dir)
+            self._model = g1_room.build_room_model(
+                self._asset_dir, furnished=self._furnished)
         else:
             self._model = mujoco.MjModel.from_xml_path(
                 str(self._asset_dir / "scene.xml"))
@@ -602,6 +609,8 @@ class G1MuJoCoBase:
         if not self._room:
             return {}
         from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+        if self._furnished:
+            return g1_room.furnished_targets()
         return {t.name: (t.cx, t.cy) for t in g1_room.TARGETS}
 
     def observe(self) -> float:

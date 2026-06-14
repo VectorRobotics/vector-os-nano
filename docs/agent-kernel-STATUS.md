@@ -11,7 +11,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
   a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
   (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
-- Last updated: 2026-06-13.
+- Last updated: 2026-06-14 (campaign #9 R1 — real VLM semantic recognition, track A).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## Current state (2026-06-11)
@@ -378,6 +378,40 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      commits, campaigns #2-#8) --no-ff merged → master (origin/master
      3e82996). Ongoing dev continues on feat/playground-vln.** Resume with /loop for optional hardening (VLM
      recognition / multi-target / multi-room / nav-stack costmap).
+
+   - **CAMPAIGN #9 R1 SHIPPED — track A: real VLM semantic recognition + furnished
+     scene.** owner direction (2026-06-14): tracks 1+3+4 (A real Qwen-VL semantic
+     recognition / B multi-room+nav-stack / C Go2 parity); NOT sim-to-real. R1 = A.
+     New `g1_room_vlm` scenario: the room's 3 colour boxes are swapped for REAL
+     Kenney furniture meshes (chair / sofa / potted plant) so a real VLM can ground
+     an OBJECT CLASS, not a colour. `g1_room.build_room_model(furnished=True)`
+     places the meshes via MjSpec (Y-up→Z-up quat; a throwaway-compile measure pass
+     centres each mesh on its planned (x,y) and rests it on the floor — meshes have
+     off-origin pivots); walls + obstacles + lidar + camera unchanged; the colour
+     room is byte-for-byte the #8 scene. `perception/vlm_targets.VlmTargetDetector`
+     wraps Qwen-VL (openrouter, via Go2VLMPerception._call_vlm; injectable for
+     tests) with a grounding prompt → adapts the bbox to the SAME
+     `{label,x_norm,y_norm,area_frac}` contract color_targets emits. `skills/
+     vlm_seek.VlmSeekSkill` reuses the shared `vision_seek._seek_loop` (extracted)
+     with the VLM detector. Honest (rule 5): the VLM is REALLY called; no GT
+     fallback; at_position(obj,1.6) is the deterministic judge. Three control fixes
+     the live VLM exposed (all in tricky-bugs): the ~2 s VLM latency vs the 0.4 s
+     walk deadman made the gait stutter and the progress-stall fire metres short
+     (→ per-action deadman: forward 3.0 s, turn/scan 0.5 s); a long turn at the
+     forward duration over-rotated and flung the target off-screen (→ short turn
+     step); intermittent detection + a noisy/oversized VLM bbox area caused both
+     a false area-arrival (→ VLM arrive_area raised to 0.55, lean on collision-
+     blocked progress-stall) and lost targets (→ last-bearing COAST across missed
+     frames before search-scanning). `vlm_go2._parse_json_response` hardened with a
+     balanced-brace extractor (unclosed ```json fences / trailing Qwen garbage).
+     **GUI ACCEPTANCE PASSED:** vector-cli --scenario g1_room_vlm, natural-language
+     「去找椅子，用相机识别走过去」 → routed to vlm_seek_skill → real Qwen-VL recognised
+     the chair → walked to it → `VGG [PASS] find_and_navigate_to_chair | via
+     vlm_seek | verify at_position(3.6,0.0,1.6)` (headless repro: arrived 0.50 m
+     from the chair; first-person frames /tmp/c9r1_*.png show the recognised chair).
+     Suite 1627 passed (3 known deepseek .env reds tolerated). NEXT: R2 — richer
+     multi-object VLM scenes, or track C (Go2 into the room), or track B (multi-room
+     + nav-stack). Every track independently shippable.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

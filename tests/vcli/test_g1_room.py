@@ -106,3 +106,67 @@ class TestObstacleAwarePlanning:
         straight = math.hypot(goal[0] - start[0], goal[1] - start[1])
         assert path is not None                # reachable around it
         assert length > straight + 0.05        # a real detour, not the straight line
+
+
+class TestFurnishedRoom:
+    """Campaign #9 R1 (track A) — the furnished variant swaps the colour boxes
+    for real Kenney furniture meshes so a real VLM can ground a semantic class.
+    The default colour-box room is unchanged (asserted above)."""
+
+    @pytest.fixture(scope="class")
+    def furnished(self):
+        import mujoco
+        from vector_os_nano.hardware.sim.mujoco_g1 import _ASSET_DIR
+        m = g1_room.build_room_model(_ASSET_DIR, furnished=True)
+        d = mujoco.MjData(m)
+        mujoco.mj_forward(m, d)
+        return m, d
+
+    def test_furniture_bodies_present_no_colour_boxes(self, furnished):
+        import mujoco
+        m, _ = furnished
+        names = {mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, i)
+                 for i in range(m.nbody)}
+        assert {"target_chair", "target_sofa", "target_plant"} <= names
+        # walls + obstacles kept; colour boxes gone
+        assert {"wall_back", "obstacle_center"} <= names
+        assert "target_red" not in names
+
+    def test_furniture_centred_and_on_floor(self, furnished):
+        import mujoco
+        import numpy as np
+        m, d = furnished
+        for f in g1_room.FURNITURE:
+            gid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, f"{f.name}_geom")
+            mid = int(m.geom_dataid[gid])
+            adr, n = int(m.mesh_vertadr[mid]), int(m.mesh_vertnum[mid])
+            R = np.array(d.geom_xmat[gid]).reshape(3, 3)
+            v = np.array(m.mesh_vert[adr:adr + n]).reshape(-1, 3) @ R.T \
+                + np.array(d.geom_xpos[gid])
+            cx = (v[:, 0].min() + v[:, 0].max()) / 2.0
+            cy = (v[:, 1].min() + v[:, 1].max()) / 2.0
+            assert abs(cx - f.cx) < 0.05 and abs(cy - f.cy) < 0.05
+            assert abs(float(v[:, 2].min())) < 0.02     # rests on the floor
+
+    def test_furnished_targets_and_position_lookup(self):
+        t = g1_room.furnished_targets()
+        assert t == {"target_chair": (3.6, 0.0),
+                     "target_sofa": (3.6, 2.0),
+                     "target_plant": (3.6, -2.0)}
+        assert g1_room.target_position("chair") == (3.6, 0.0)
+        assert g1_room.target_position("potted plant") == (3.6, -2.0)
+
+    def test_colour_room_unaffected_by_furnished_flag(self):
+        import mujoco
+        from vector_os_nano.hardware.sim.mujoco_g1 import _ASSET_DIR
+        m = g1_room.build_room_model(_ASSET_DIR)      # default = colour boxes
+        names = {mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, i)
+                 for i in range(m.nbody)}
+        assert {"target_red", "target_blue", "target_green"} <= names
+        assert "target_chair" not in names
+
+    def test_g1_room_vlm_scenario_registered(self):
+        from vector_os_nano.playground.catalog import get_scenario
+        sc = get_scenario("g1_room_vlm")
+        assert sc.embodiment == "g1"
+        assert "target_chair" in sc.object_names

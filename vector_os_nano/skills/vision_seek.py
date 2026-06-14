@@ -37,16 +37,28 @@ _MIN_APPROACH_M = 0.6    # robot must translate this far from start before
                          # a progress-stall can count as arrival (vs scan-in-place)
 _SCAN_ADVANCE_EVERY = 5   # every Nth scan tick, step forward (not turn) so a
                          # far target enters the down-pitched FOV
+_TURN_STEP = 0.5         # deadman re-arm for a turn/scan tick (short — a small
+                         # incremental bearing correction, then re-perceive;
+                         # forward uses the loop's longer step_duration)
+_COAST_MISSES = 4        # keep heading toward the last seen bearing for this
+                         # many consecutive missed frames before search-scanning
 _ALIASES = {"红": "red", "蓝": "blue", "绿": "green"}
 
 
-def _seek_action(det: "dict | None") -> "tuple[str, float, float]":
+def _seek_action(det: "dict | None",
+                 arrive_area: float = _ARRIVE_AREA) -> "tuple[str, float, float]":
     """Pure decision: given the target detection (or None), return
     (action, vx, vyaw). vyaw>0 = turn left, vyaw<0 = turn right (G1 convention).
-    x_norm>0 = target on the robot's right → turn right (vyaw<0)."""
+    x_norm>0 = target on the robot's right → turn right (vyaw<0).
+
+    ``arrive_area`` is the frame-fill fraction that counts as 'arrived'. The
+    colour detector's blob area is a clean range proxy (default 0.04). A VLM
+    bounding box is NOT — it is noisy and occasionally oversized at range (a
+    0.046 box at 3.6 m, campaign #9 R1), so the VLM path raises this bar near 1
+    and leans on the physical progress-stall (collision-blocked) for arrival."""
     if det is None:
         return ("scan", 0.0, _TURN_VYAW)          # sweep left to find it
-    if det["area_frac"] >= _ARRIVE_AREA:
+    if det["area_frac"] >= arrive_area:
         return ("arrived", 0.0, 0.0)
     x = float(det["x_norm"])
     if abs(x) > _ALIGN_TOL:
@@ -63,6 +75,103 @@ def _resolve_color(label: str) -> str:
         if c in key:
             return c
     return key
+
+
+def _seek_loop(base, perceive, max_iters: int, step_duration: float = 0.4,
+               arrive_area: float = _ARRIVE_AREA
+               ) -> "tuple[bool, str, list | None]":
+    """Shared perceive→decide→act loop (campaign #9 R1 — detector-agnostic).
+
+    ``perceive(frame) -> det | None`` is the ONLY pluggable part: the colour
+    detector filters detect_targets by colour; the VLM detector grounds a
+    semantic class. The state machine (scan-with-advance / turn / forward /
+    progress-stall arrival) is identical for both — recognition is the means,
+    arrival is the truth (rule 5: a never-seen target FAILS, no GT fallback).
+
+    ``step_duration`` is the walk deadman re-arm per perceive-act tick. It MUST
+    exceed the perceive latency or the gait stutters: a ~2 s VLM call with a
+    0.4 s deadman leaves the robot stopped ~1.6 s of every tick, so 8 ticks
+    cover <0.6 m of genuine forward walking and the progress-stall fires a FALSE
+    arrival metres short (the campaign #9 R1 bug). Instant detectors (colour)
+    keep 0.4 s; the VLM detector passes ~3 s so motion stays continuous across
+    the call and the robot only stalls when physically blocked at the target.
+    Returns (seen, reason, final_position)."""
+    seen = False
+    reason = "not_found"
+    _has_pos = callable(getattr(base, "get_position", None))
+    start_pos = base.get_position() if _has_pos else [0.0, 0.0, 0.0]
+    window: list = []      # recent positions, for progress-stall arrival
+    scan_steps = 0         # consecutive scan (target-not-seen) ticks
+    last_bearing = None    # last seen x_norm — bridges intermittent detection
+    miss_streak = 0        # consecutive frames with no detection
+    for _ in range(max_iters):
+        frame = base.get_camera_frame()
+        det = perceive(frame)
+        if det is not None:
+            seen = True
+            miss_streak = 0
+            last_bearing = float(det["x_norm"])
+            action, vx, vyaw = _seek_action(det, arrive_area)
+        else:
+            miss_streak += 1
+            # COAST (campaign #9 R1): a slow VLM detects the target only
+            # intermittently — gait sway / motion blur drops frames even while
+            # the target is dead ahead. Instead of immediately spinning away
+            # (which loses a target that is really still in front), keep heading
+            # toward the LAST seen bearing for a few missed frames; only fall
+            # back to a search-scan once the target is genuinely lost.
+            if seen and last_bearing is not None and miss_streak <= _COAST_MISSES:
+                if abs(last_bearing) > _ALIGN_TOL:
+                    action = "turn"
+                    vx, vyaw = 0.0, (-_TURN_VYAW if last_bearing > 0 else _TURN_VYAW)
+                else:
+                    action, vx, vyaw = "forward", _FWD_VX, 0.0
+            else:
+                action, vx, vyaw = _seek_action(None)   # ("scan", 0, +vyaw)
+        if action == "arrived":     # blob filled the frame (close)
+            reason = "arrived"
+            break
+        # Scan that sweeps AND advances: a far target straight ahead can sit
+        # outside the down-pitched camera's vertical FOV — turning in place
+        # never brings it in. Every _SCAN_ADVANCE_EVERY scan ticks, step
+        # forward instead of turning so far/low targets enter the view.
+        if action == "scan":
+            scan_steps += 1
+            if scan_steps % _SCAN_ADVANCE_EVERY == 0:
+                action, vx, vyaw = "forward", _FWD_VX, 0.0
+        else:
+            scan_steps = 0
+        # Progress-stall arrival: a small/low target clips at the frame edge up
+        # close, so pixel/box area never crosses the threshold. Honest signal is
+        # PHYSICAL: once the robot has SEEN the target AND APPROACHED it
+        # (translated _MIN_APPROACH_M from start — so scanning in place far away
+        # can NEVER falsely arrive) AND then stops making net progress, it has
+        # walked up to the object → arrived.
+        if _has_pos and seen:
+            p = base.get_position()
+            window.append((float(p[0]), float(p[1])))
+            approached = math.hypot(p[0] - start_pos[0],
+                                    p[1] - start_pos[1]) > _MIN_APPROACH_M
+            if approached and len(window) > _STALL_WINDOW_STEPS:
+                window.pop(0)
+                net = math.hypot(window[-1][0] - window[0][0],
+                                 window[-1][1] - window[0][1])
+                if net < _STALL_PROGRESS_M:   # no net progress → reached
+                    reason = "arrived"
+                    break
+        # Per-action deadman: only FORWARD wants the long re-arm (keep walking
+        # across the perceive latency). TURN/SCAN must stay SHORT — a long turn
+        # at _TURN_VYAW overshoots a small bearing error by tens of degrees and
+        # flings the target off-screen (the campaign #9 R1 over-rotate bug); a
+        # short turn makes an incremental correction and re-perceives.
+        dur = step_duration if action == "forward" else min(step_duration, _TURN_STEP)
+        base.walk(vx, 0.0, vyaw, duration=dur)
+    try:
+        base.stop()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("seek teardown stop() failed: %s", exc)
+    pos = list(base.get_position()) if _has_pos else None
+    return seen, reason, pos
 
 
 @skill(
@@ -113,63 +222,16 @@ class VisionSeekSkill:
         color = _resolve_color(str(params.get("label", "")))
         max_iters = int(params.get("max_iters", 70) or 70)
 
-        seen = False
-        reason = "not_found"
-        _has_pos = callable(getattr(base, "get_position", None))
-        start_pos = base.get_position() if _has_pos else [0.0, 0.0, 0.0]
-        window: list = []      # recent positions, for progress-stall arrival
-        scan_steps = 0         # consecutive scan (target-not-seen) ticks
-        for _ in range(max_iters):
-            try:
-                frame = base.get_camera_frame()
-            except Exception as exc:  # noqa: BLE001
-                return SkillResult(
-                    success=False, error_message=f"camera frame failed: {exc}",
-                    result_data={"diagnosis": "no_camera"})
+        def perceive(frame):
             dets = [d for d in detect_targets(frame) if d["label"] == color]
-            det = max(dets, key=lambda d: d["area_frac"]) if dets else None
-            if det is not None:
-                seen = True
-            action, vx, vyaw = _seek_action(det)
-            if action == "arrived":     # blob filled the frame (close)
-                reason = "arrived"
-                break
-            # Scan that sweeps AND advances: a far target straight ahead can sit
-            # outside the down-pitched camera's vertical FOV — turning in place
-            # never brings it in. Every _SCAN_ADVANCE_EVERY scan ticks, step
-            # forward instead of turning so far/low targets enter the view.
-            if action == "scan":
-                scan_steps += 1
-                if scan_steps % _SCAN_ADVANCE_EVERY == 0:
-                    action, vx, vyaw = "forward", _FWD_VX, 0.0
-            else:
-                scan_steps = 0
-            # Progress-stall arrival: a small low target clips at the frame edge
-            # up close, so pixel area never crosses the threshold. Honest signal
-            # is PHYSICAL: once the robot has seen the target AND APPROACHED it
-            # (translated _MIN_APPROACH_M from where it started — so a robot
-            # merely SCANNING in place far from the target can NEVER falsely
-            # arrive, review fix) AND then stops making net progress, it has
-            # walked up to the object → arrived.
-            if _has_pos and seen:
-                p = base.get_position()
-                window.append((float(p[0]), float(p[1])))
-                approached = math.hypot(p[0] - start_pos[0],
-                                        p[1] - start_pos[1]) > _MIN_APPROACH_M
-                if approached and len(window) > _STALL_WINDOW_STEPS:
-                    window.pop(0)
-                    net = math.hypot(window[-1][0] - window[0][0],
-                                     window[-1][1] - window[0][1])
-                    if net < _STALL_PROGRESS_M:   # no net progress → reached
-                        reason = "arrived"
-                        break
-            # one short perceive-act step (re-arms deadman each loop)
-            base.walk(vx, 0.0, vyaw, duration=0.4)
+            return max(dets, key=lambda d: d["area_frac"]) if dets else None
+
         try:
-            base.stop()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("vision_seek teardown stop() failed: %s", exc)
-        pos = list(base.get_position()) if callable(getattr(base, "get_position", None)) else None
+            seen, reason, pos = _seek_loop(base, perceive, max_iters)
+        except Exception as exc:  # noqa: BLE001 — camera/render failure
+            return SkillResult(
+                success=False, error_message=f"camera frame failed: {exc}",
+                result_data={"diagnosis": "no_camera"})
         ok = reason == "arrived"
         return SkillResult(
             success=ok,

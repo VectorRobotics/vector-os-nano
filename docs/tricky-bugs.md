@@ -325,3 +325,49 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** a perceive-act loop's ARRIVAL was tuned hard, but ACQUISITION
   (first detection) was assumed — re-test the cold-start (target not initially
   in view), not just the mid-approach.
+
+## Case 16 — slow perception stutters the gait → progress-stall fires metres short (2026-06-14)
+- **Symptom:** VLM-seek "arrived" 9 s in, robot at 0.18 m, chair at 3.6 m. Verify
+  (at_position 1.6) correctly FAILED. Looked like a bad arrival heuristic.
+- **Cause:** the seek loop re-armed the walk deadman for 0.4 s (fine for the
+  instant colour detector), but a real Qwen-VL call takes ~2 s. So the robot
+  walked 0.4 s then STOOD STILL ~1.6 s every tick waiting for the VLM; over the
+  8-tick progress-stall window it covered <0.6 m of genuine forward walking →
+  "no net progress" → false arrival far from target.
+- **Fix:** per-action deadman — FORWARD re-arms for step_duration (3.0 s for VLM,
+  > the call latency, so motion stays continuous across the perceive); TURN/SCAN
+  stay short (0.5 s). Colour seek unchanged (0.4 s, instant detector).
+- **Lesson:** an actuation cadence tuned to an INSTANT sensor silently breaks when
+  the sensor becomes SLOW — the deadman must outlast the perceive latency or the
+  "stalled" signal measures the sensor's latency, not the robot's progress.
+
+## Case 17 — a turn sized for forward over-rotates and flings the target off-screen (2026-06-14)
+- **Symptom:** after Case 16's fix, VLM-seek detected the chair once (x_norm -0.2)
+  then never again — robot spun in place and wandered off.
+- **Cause:** the same long step_duration (3.0 s) was applied to TURN. A 3 s turn at
+  0.5 rad/s = ~86° rotation to correct a ~10° bearing error — massive overshoot →
+  target leaves the FOV → "not seen" → scan keeps turning the same way → lost.
+- **Fix:** decouple — only forward uses the long duration; turn/scan use a short
+  _TURN_STEP (0.5 s ≈ 14°), an incremental correction, then re-perceive.
+- **Lesson:** one "step size" for both translate and rotate is wrong when their
+  natural scales differ; a correction step must be sized to the error it corrects.
+
+## Case 18 — a noisy VLM bbox is not a range proxy (false arrival) nor reliable per-frame (lost) (2026-06-14)
+- **Symptom (a):** VLM-seek "arrived" at spawn — a 0.046 bbox at 3.6 m exceeded the
+  colour detector's 0.04 arrive-area. **Symptom (b):** detection dropped on ~half
+  the frames even with the chair dead-ahead (gait sway / motion blur), so the robot
+  kept losing it and spinning to re-search.
+- **Cause:** a VLM grounding box is noisy in BOTH size (occasionally oversized at
+  range) and presence (intermittent), unlike the clean colour blob the loop was
+  built around.
+- **Fix (a):** raise the VLM arrive_area to 0.55 (target must nearly fill the frame)
+  and lean on the PHYSICAL progress-stall (collision-blocked at the object) for
+  arrival. **Fix (b):** a last-bearing COAST — keep heading toward the last seen
+  bearing for up to _COAST_MISSES (4) missed frames before falling back to a
+  search-scan, so an intermittently-detected target dead-ahead is not abandoned.
+- **Related:** Qwen sometimes wraps the JSON in an unclosed ```json fence or appends
+  trailing garbage (`{...}']`); _parse_json_response now extracts the first balanced
+  {...} object as a last resort so those frames still yield a detection.
+- **Lesson:** when a learned detector replaces a hand-crafted one, its FAILURE
+  SHAPES differ — design the control loop for "noisy + intermittent + loosely
+  bounded", not for the clean signal the geometry detector gave you.

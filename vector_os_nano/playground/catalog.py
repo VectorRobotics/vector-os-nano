@@ -180,6 +180,21 @@ G1_ROOM = Scenario(
         "closed room (real collision, real gait, obstacle avoidance)."),
 )
 
+# Campaign #9 R1 (track A): same closed room, but the targets are REAL Kenney
+# furniture meshes (chair / sofa / potted plant) so a real VLM (Qwen-VL) can
+# ground a SEMANTIC object class instead of a colour. g1_runtime boots this id
+# in furnished room mode and registers VlmSeekSkill.
+G1_ROOM_VLM = Scenario(
+    id="g1_room_vlm",
+    embodiment="g1",
+    scene_xml=_G1_SCENE_XML,
+    object_names=("target_chair", "target_sofa", "target_plant"),
+    task_hint=(
+        "Find a household object (chair / sofa / potted plant) by VLM "
+        "recognition and walk to it in a furnished room (real gait, real "
+        "collision, real vision-language perception)."),
+)
+
 # id -> Scenario. Additive: new preset scenes append here.
 SCENARIOS: dict[str, Scenario] = {
     TABLETOP.id: TABLETOP,
@@ -189,6 +204,7 @@ SCENARIOS: dict[str, Scenario] = {
     HOUSE.id: HOUSE,
     G1_FLAT.id: G1_FLAT,
     G1_ROOM.id: G1_ROOM,
+    G1_ROOM_VLM.id: G1_ROOM_VLM,
 }
 
 
