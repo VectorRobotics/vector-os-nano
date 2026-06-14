@@ -353,7 +353,19 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      [PASS] at_position(3.7,0,1.6) in 9.5s (screenshot g1_R10_vision_seek.png);
      headless servoed to 0.62m of target_red. **req #5 is now FULLY closed on
      real physics + real sensors + real recognition, all from vector-cli.**
-     Suite 1605 passed. R12 forced REVIEW.
+     Suite 1605 passed.
+   - **R11 SHIPPED — grand VLN capstone:** ExploreAndSeekSkill
+     (skills/explore_seek.py) composes ExploreSkill + VisionSeekSkill
+     deterministically so '探索房间找到红色物体并走过去' runs as ONE step (the
+     LLM's 3-way split dropped the colour param). GUI: that command →
+     explore_and_seek [PASS] at_position(3.7,0,1.6) in 47.6s (screenshot
+     g1_R11_grand_vln.png) — the G1 explored the room, recognised the red
+     object by camera, and walked to it. **The owner's entire campaign #8 goal
+     is achieved: real gait + collision + obstacle avoidance + lidar/camera
+     sensors + autonomous explore + recognition-based go-to-object, the full
+     VLN loop as one vector-cli command, on real physics.** Suite 1608 passed.
+     NEXT R12: forced REVIEW + campaign-completion report; only DQ-4 (merge to
+     master) remains, owner's call.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate

@@ -82,9 +82,11 @@ def boot_g1_agent(
     if room:
         # ExploreSkill + VisionSeekSkill need the room's grid/lidar/camera.
         from vector_os_nano.skills.explore import ExploreSkill
+        from vector_os_nano.skills.explore_seek import ExploreAndSeekSkill
         from vector_os_nano.skills.vision_seek import VisionSeekSkill
         registry.register(ExploreSkill())
         registry.register(VisionSeekSkill())
+        registry.register(ExploreAndSeekSkill())
     agent._skill_registry = registry
 
     if room:
