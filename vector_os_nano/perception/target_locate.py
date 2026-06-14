@@ -122,3 +122,41 @@ def locate_from_depth(
     rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
     p_world = np.asarray(cam_pos, dtype=np.float64) + rot @ p_cam
     return (float(p_world[0]), float(p_world[1]))
+
+
+def locate_xyz_from_depth(
+    x_norm: float,
+    y_norm: float,
+    depth: "np.ndarray",
+    cam_pos,
+    cam_mat,
+    fovy_deg: float,
+    win: int = 6,
+    max_depth: float = 30.0,
+) -> "tuple[float, float, float] | None":
+    """Like ``locate_from_depth`` but returns the full world ``(x, y, z)`` — the
+    3D grasp target for the recognised object (campaign #10 R10). Same OpenGL
+    back-projection of the bbox-centre depth; z is the object's own surface
+    height, never read from ground truth (rule 5)."""
+    if depth is None:
+        return None
+    dimg = np.asarray(depth, dtype=np.float64)
+    if dimg.ndim != 2:
+        return None
+    H, W = dimg.shape
+    px = max(0, min(W - 1, int(round((float(x_norm) + 1.0) * 0.5 * (W - 1)))))
+    py = max(0, min(H - 1, int(round((float(y_norm) + 1.0) * 0.5 * (H - 1)))))
+    x0, x1 = max(0, px - win), min(W, px + win + 1)
+    y0, y1 = max(0, py - win), min(H, py + win + 1)
+    patch = dimg[y0:y1, x0:x1].ravel()
+    valid = patch[(patch > 0.1) & (patch < max_depth)]
+    if valid.size == 0:
+        return None
+    z = float(np.percentile(valid, 20))    # nearest surface (object front face)
+    f = (H / 2.0) / math.tan(math.radians(fovy_deg) / 2.0)
+    xc = (px - W / 2.0) / f
+    yc = -(py - H / 2.0) / f
+    p_cam = np.array([xc * z, yc * z, -z], dtype=np.float64)
+    rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
+    p_world = np.asarray(cam_pos, dtype=np.float64) + rot @ p_cam
+    return (float(p_world[0]), float(p_world[1]), float(p_world[2]))

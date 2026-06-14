@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R9 — ORIENT: closed-grasp RECIPE locked (both pick paths are GT by design; need VLM-on-photoreal->depth->3D -> pick_top_down(target_xyz) = new RecognizePickSkill). Core delivered: photoreal VLN CLI-accepted R5.).
+- Last updated: 2026-06-14 (campaign #10 R10 — RecognizePickSkill BUILT+unit-green (honest photoreal perception->3D->pick, rule5); real-perception test: VLM recognises can, locate needs close-range approach; R11 = register + approach-then-pick accept).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
