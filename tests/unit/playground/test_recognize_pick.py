@@ -102,3 +102,22 @@ def test_recognize_pick_no_base():
     skill = RecognizePickSkill(detector=_FakeDetector([]), pick=_FakePick())
     res = skill.execute({"label": "x"}, _Ctx(None))
     assert not res.success and res.result_data.get("diagnosis") == "no_base"
+
+
+# -- locate_on_plane: ray-to-support-plane (top-down pick localization) --------
+
+def test_locate_on_plane_centre_ray_hits_plane_below_camera():
+    from vector_os_nano.perception.target_locate import locate_on_plane
+    # camera at (1,2,1) identity (looks down world -Z). Centre pixel ray = straight
+    # down -Z -> hits plane z=0.25 directly below the camera at (1,2,0.25).
+    xyz = locate_on_plane(0.0, 0.0, [1.0, 2.0, 1.0], np.eye(3).reshape(-1), 60.0, 0.25)
+    assert xyz is not None
+    np.testing.assert_allclose(xyz, [1.0, 2.0, 0.25], atol=1e-9)
+
+
+def test_locate_on_plane_none_when_ray_parallel_or_away():
+    from vector_os_nano.perception.target_locate import locate_on_plane
+    # camera looking UP (-Z of cam points +Z world) can't hit a plane below it
+    # forward = -col2; make col2 = -Z world so forward = +Z (up) -> no down hit
+    cam_mat = np.array([1,0,0, 0,1,0, 0,0,-1.0])   # forward = +Z (up)
+    assert locate_on_plane(0.0, 0.0, [0,0,1.0], cam_mat, 60.0, 0.25) is None

@@ -20,7 +20,10 @@ import numpy as np
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.perception.target_locate import locate_xyz_from_depth
+from vector_os_nano.perception.target_locate import (
+    locate_on_plane,
+    locate_xyz_from_depth,
+)
 from vector_os_nano.perception.vlm_targets import VlmTargetDetector
 from vector_os_nano.skills.pick_top_down import PickTopDownSkill
 
@@ -135,9 +138,21 @@ class RecognizePickSkill:
                 error_message=f"VLM did not recognise {query!r} on the camera frame",
                 result_data={"diagnosis": "not_found"})
 
-        located = locate_xyz_from_depth(
-            float(det["x_norm"]), float(det["y_norm"]), obs["depth"],
-            obs["cam_pos"], obs["cam_mat"], float(obs["fovy"]))
+        # Top-down pick off a known support surface: ray-to-plane localizes the
+        # object's (x,y) without a depth frame (sidesteps the RGB/depth scene
+        # mismatch, R15). support_z = the grasp height on that surface (a scene
+        # constant — the table the robot picks from, NOT the object's GT pose).
+        support_z = params.get("support_z")
+        if support_z is not None:
+            h, w = obs["rgb"].shape[:2]
+            located = locate_on_plane(
+                float(det["x_norm"]), float(det["y_norm"]),
+                obs["cam_pos"], obs["cam_mat"], float(obs["fovy"]),
+                float(support_z), aspect=(w / h if h else 4.0 / 3.0))
+        else:
+            located = locate_xyz_from_depth(
+                float(det["x_norm"]), float(det["y_norm"]), obs["depth"],
+                obs["cam_pos"], obs["cam_mat"], float(obs["fovy"]))
         if located is None:
             return SkillResult(
                 success=False,

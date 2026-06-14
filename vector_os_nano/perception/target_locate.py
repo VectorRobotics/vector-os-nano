@@ -124,6 +124,42 @@ def locate_from_depth(
     return (float(p_world[0]), float(p_world[1]))
 
 
+def locate_on_plane(
+    x_norm: float,
+    y_norm: float,
+    cam_pos,
+    cam_mat,
+    fovy_deg: float,
+    plane_z: float,
+    aspect: float = 640.0 / 480.0,
+) -> "tuple[float, float, float] | None":
+    """World (x, y, plane_z) where the bbox-centre camera ray meets a horizontal
+    support plane at ``plane_z`` — the top-down-pick localization (campaign #10
+    R15). No depth frame needed: the object's (x,y) is purely perception-derived
+    (VLM bbox + the EXACT camera pose); only the support-surface height is a known
+    scene constant (a table the robot picks from), never the object's GT pose
+    (rule 5). Sidesteps the RGB/depth scene-registration mismatch (R14).
+
+    Camera is OpenGL convention (looks along local -z, +x right, +y up).
+    ``x_norm, y_norm`` are the bbox centre in [-1, 1] (>0 = right / down).
+    Returns None if the ray is parallel to or points away from the plane."""
+    import numpy as np  # local — keep module import-light
+    half = math.tan(math.radians(float(fovy_deg)) / 2.0)
+    xc = float(x_norm) * float(aspect) * half
+    yc = -float(y_norm) * half
+    dir_cam = np.array([xc, yc, -1.0], dtype=np.float64)
+    rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
+    dir_world = rot @ dir_cam
+    pos = np.asarray(cam_pos, dtype=np.float64).reshape(3)
+    if abs(dir_world[2]) < 1e-9:
+        return None
+    t = (float(plane_z) - pos[2]) / dir_world[2]
+    if t <= 0:
+        return None
+    hit = pos + t * dir_world
+    return (float(hit[0]), float(hit[1]), float(plane_z))
+
+
 def locate_xyz_from_depth(
     x_norm: float,
     y_norm: float,

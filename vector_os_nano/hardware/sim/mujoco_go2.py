@@ -1206,6 +1206,12 @@ class MuJoCoGo2:
                 if tex:
                     for o in objs:
                         o["texture"] = tex
+                # R15: render only ONE graspable object (the 3 cylinders sit 15 cm
+                # apart and confuse the VLM — unstable bbox -> bad ray-to-plane
+                # locate). A single object gives a clean, stable detection. The
+                # other physics objects still exist; we just present one to grasp.
+                if len(objs) > 1 and os.environ.get("VECTOR_PICK_SINGLE", "1") != "0":
+                    objs = objs[:1]
                 spec = build_pick_scene_spec(objs, table=self._pick_table())
                 renderer, bridge = scene_renderer(
                     spec, cam_name=cam_name, bridge=self._photoreal_bridge,
