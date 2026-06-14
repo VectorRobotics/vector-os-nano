@@ -423,3 +423,25 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** a slow, noisy sensor can be a great DETECTOR and a terrible
   CONTROLLER. Use the VLM to decide WHAT/WHERE, use odometry+planner to decide
   HOW to get there. Don't put a 0.5 Hz noisy signal in a tight servo loop.
+
+## Case 22 — recognise→navigate via lidar picks an OBSTACLE, not the recognised object (2026-06-14)
+- **Context:** the Case-21 pivot — replace flaky VLM visual-servoing with VLM
+  RECOGNISE (bearing) → LIDAR locate (range at bearing) → reliable navigate_to.
+- **Symptom:** g1 "go to the chair" navigated to (1.9, 0.4) / (2.1, -1.0) — the grey
+  OBSTACLES — not the chair at (3.6, 0).
+- **Cause:** the lidar gives RANGE but no SEMANTICS. "Nearest hit in the recognised
+  bearing" returns whatever surface is closest along that ray — an obstacle
+  between the robot and the chair, not the chair. The VLM knows WHICH object
+  (its bbox is on the chair); the lidar can't associate its return with that.
+- **Also:** acquisition of a far/small target is ~50% per frame (VLM intermittent);
+  holding heading + re-querying helps, but a blind forward-advance fallback can
+  overshoot a never-detected target.
+- **Fix (next round):** DEPTH-AT-BBOX — read the depth at the recognised bbox
+  centre (the chair's own pixels) → distance to the CHAIR (semantic, skips
+  intervening obstacles) → project to world → navigate_to. Needs a depth source
+  co-registered with the recognition camera: g1 needs a depth render on HEAD_CAM
+  (it has none); go2 HAS get_depth_frame but lacks navigate_to. Landing the pivot
+  reliably = give ONE embodiment BOTH (depth-at-bbox + navigate_to).
+- **Lesson:** fusing a semantic detector with a geometric ranger needs the range
+  sampled AT the detection (same pixels/bbox), not "nearest thing in that
+  direction" — otherwise the geometry layer silently re-targets to clutter.

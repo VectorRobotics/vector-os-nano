@@ -249,9 +249,16 @@ class G1MuJoCoBase:
                 # mapped (not just where a wall was struck) — without it a
                 # short-range lidar leaves a blank map and explore cannot
                 # progress. geom_group masks the env so rays ignore the robot.
+                # Colour room: 3 m forces frontier exploration (explore must
+                # MOVE to grow the map). Furnished VLM room (campaign #9 R3): its
+                # purpose is recognise→navigate, which ranges a recognised object
+                # to a world point — give it room-spanning range so the lidar
+                # locates a target the VLM sees (the chair sits at 3.6 m) without
+                # a fragile close-in phase.
+                _lidar_range = 8.0 if self._furnished else 3.0
                 self._lidar = MuJoCoLivox360(
                     self._model, self._data, body_name="pelvis",
-                    max_range=3.0, geom_group=g1_room.ENV_GEOM_GROUP,
+                    max_range=_lidar_range, geom_group=g1_room.ENV_GEOM_GROUP,
                     include_misses=True)
             except Exception as exc:  # noqa: BLE001 — lidar is non-fatal
                 logger.warning("G1 lidar init failed: %s", exc)

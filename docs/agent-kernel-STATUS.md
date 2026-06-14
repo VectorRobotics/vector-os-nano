@@ -454,6 +454,25 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      agnostic room are solid; the SERVOING is the wrong tool for the last metres.
      NEXT R3: recognise→navigate arrival (combines B+C, reliable) / track A multi-
      object / track B multi-room nav-stack.
+
+   - **CAMPAIGN #9 R3 (PARTIAL) — recognise→navigate pipeline built + tested; honest
+     position estimation needs depth-at-bbox (next round).** Built the Case-21 pivot
+     scaffolding: `perception/target_locate.locate_from_bearing` (pure, 6 tests —
+     recognition bearing + lidar range → world xy) + `skills/recognize_navigate.
+     RecognizeNavigateSkill` (4 tests — VLM recognise → locate → reliable
+     navigate_to, NOT visual servoing) + an 8 m furnished-room lidar (vs the
+     colour room's 3 m explore range). **NOT wired into the CLI** — verified
+     headless that it FAILS in the obstacle-furnished room: the lidar
+     "nearest-hit-in-bearing" locates an intervening OBSTACLE, not the chair
+     (lidar has range, not semantics — tricky Case 22); and far-target VLM
+     acquisition is ~50%/frame. When the chair is recognised AND unobstructed the
+     full chain works (one run located the chair 3.39 m and navigated to 0.62 m).
+     **The honest fix = DEPTH-AT-BBOX** (depth at the recognised pixels → the
+     chair's distance, skipping obstacles → navigate_to). Needs ONE embodiment
+     with BOTH depth-at-bbox AND navigate_to: g1 has navigate_to but no depth cam;
+     go2 has get_depth_frame but no navigate_to. NEXT (R4 REVIEW, then R5): add a
+     g1 HEAD_CAM depth render (or a go2 navigate_to) → land recognise→navigate
+     reliably on one robot, then the other. Suite green; g1/go2 seek unchanged.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
