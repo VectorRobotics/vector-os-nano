@@ -22,7 +22,10 @@ import numpy as np
 # target colours pass cleanly; the grey walls / blue-ish floor do not.
 _MIN_LEVEL = 90
 _DOMINANCE = 1.5
-_DEFAULT_MIN_AREA_FRAC = 0.004    # reject specks (< ~0.4% of the frame)
+_DEFAULT_MIN_AREA_FRAC = 0.0025   # reject specks, but register a far target at
+                                  # spawn range (~0.25% of the frame) — Case 15
+                                  # acquisition margin; saturated-colour masks
+                                  # keep the grey floor/walls from triggering
 
 
 def _mask(rgb: np.ndarray, ch: int) -> np.ndarray:

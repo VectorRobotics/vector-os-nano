@@ -172,15 +172,19 @@ def build_room_model(asset_dir: "Path | str") -> Any:
     cam = pelvis.add_camera()
     cam.name = HEAD_CAM
     cam.pos = [0.18, 0.0, 0.45]      # in front of + above the pelvis
-    cam.fovy = 60.0
+    cam.fovy = 70.0                  # widened (was 60) for more vertical reach
     # Orient to look along body +x (forward), up = body +z. The camera frame
     # axes in body coords: x_c=-y, y_c=+z, z_c=-x (so view dir -z_c = +x).
     # MjSpec takes a quat (xyaxes silently no-ops), so convert that matrix.
-    # look along body +x but pitched DOWN ~12° so floor-level targets stay in
-    # frame as the robot approaches (a level cam loses low boxes up close).
-    R = np.array([[0.0, 0.208, -0.978],
+    # Pitched DOWN ~6° (was ~12°): a FAR target at range sits near frame centre
+    # (not bottom-clipped) so its pixel area clears the detector threshold at
+    # spawn — fixes Case 15 acquisition. The wider fovy + this shallower pitch
+    # still keep a low box in frame during the approach, and arrival uses the
+    # progress-stall signal (not close-up detection), so losing the box at the
+    # very end is harmless.
+    R = np.array([[0.0, 0.1045, -0.9945],
                   [-1.0, 0.0, 0.0],
-                  [0.0, 0.978, 0.208]], dtype=np.float64)
+                  [0.0, 0.9945, 0.1045]], dtype=np.float64)
     q = np.zeros(4)
     mujoco.mju_mat2Quat(q, R.flatten())
     cam.quat = q.tolist()

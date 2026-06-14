@@ -298,7 +298,7 @@ Routine bugs do NOT belong here; git history covers those.
   clamped ≥ 0; the deadline can pass between the guard and the call. A latent
   pump-only bug needs a long pump-mode action to surface — short ones mask it.
 
-## Case 15 — vision-seek target acquisition from spawn is FOV-fragile (2026-06-13)
+## Case 15 — vision-seek target acquisition from spawn is FOV-fragile (2026-06-13, FIXED 2026-06-14)
 
 - **Symptom:** standalone `找到并走到红色物体` (VisionSeekSkill from the spawn
   pose) intermittently reports seen=False — the robot scans for the full
@@ -316,9 +316,12 @@ Routine bugs do NOT belong here; git history covers those.
 - **Partial fix applied:** scan now steps forward every _SCAN_ADVANCE_EVERY
   ticks (sweep + advance) — helps but heading drifts during the turn-scan so
   acquisition of a specific far target is still unreliable.
-- **Follow-up (not done):** a proper acquisition strategy — sweep at a fixed
-  heading grid, or a short forward creep between full sweeps, or widen the FOV
-  / reduce the down-pitch. The robust path today is explore-then-seek.
+- **FIX (2026-06-14):** reduced the camera down-pitch ~12°->6° + widened
+  fovy 60->70 so a FAR target at spawn range sits near frame centre (not
+  bottom-clipped) and its pixel area clears the detector; lowered
+  detect_targets min_area_frac 0.004->0.0025 for margin. Arrival still works
+  (progress-stall, not close-up detection). GUI cold-start '找到并走到红色物体'
+  now PASSes at_position(3.7,0,1.6) in 9 s (acquires at spawn, no long scan).
 - **Lesson:** a perceive-act loop's ARRIVAL was tuned hard, but ACQUISITION
   (first detection) was assumed — re-test the cold-start (target not initially
   in view), not just the mid-approach.
