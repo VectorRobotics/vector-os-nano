@@ -300,7 +300,16 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      --scenario g1_room, 探索房间 → explore ran 19.9s [PASS], G1 autonomously
      roamed. Fixed a latent pump-mode negative-sleep bug (tricky-bugs Case 14).
      req #5 STRUCTURE complete (explore + go-to-target); photoreal RGB
-     object-recognition still awaits DQ-10. NEXT: R8 forced REVIEW.
+     object-recognition still awaits DQ-10.
+   - **R7 — req #5 FULL CLOSED LOOP verified end-to-end (ZERO new code):** the
+     VGG planner composes the existing skills into a real VLN flow — '探索房间并
+     走到红色目标' decomposes to [explore_room → navigate_to_red_target] and ran
+     2/2 [PASS] via vector-cli (explore verified by the honest
+     coverage > start_coverage predicate; robot ended at the red target). The
+     owner's req #5 ('autonomously explore, then go to the target's point') is
+     demonstrated as ONE CLI command, all real-physics/sensor-driven. The only
+     remaining piece is photoreal RGB object RECOGNITION (find an UNKNOWN-label
+     target by vision) — gated by DQ-10. NEXT: R8 forced REVIEW.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
