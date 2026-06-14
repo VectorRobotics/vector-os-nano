@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 R1+R2 done — co-sim recommended + GPU/latency de-risked; DQ-11 awaits CEO pick).
+- Last updated: 2026-06-14 (campaign #10 R1–R3 PROBE done — co-sim validated end-to-end on RTX 5080; DQ-11 decision-ready, awaits CEO pick).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star
@@ -44,8 +44,15 @@ recognition / VLN, **not just physics**. Constraints/lessons:
   *different* objects; grounding is stochastic/flaky, not resolution-bound). **The real lever is
   photoreal ASSETS + perception-pipeline robustness, not the engine** — which *strengthens* co-sim
   (keep all #5–#9 physics reuse; add photoreal assets incrementally; greenfield migration buys the
-  same asset-bound ceiling). **Awaiting CEO pick of substrate (DQ-11); R3 (post-approval) validates one
-  genuinely photoreal asset before any build.**
+  same asset-bound ceiling).
+- **R3 PROBE-spike done** — "asset fidelity is the lever" CONFIRMED: a photoreal CC0 armchair
+  (PolyHaven 4K PBR) rendered in Blender OptiX grounds **chair 0.95, precise + correctly disambiguates
+  "not a sofa"** through the same 160px pipeline that gave flaky 2/3 on toy meshes. **co-sim now
+  validated end-to-end on the RTX 5080** (OptiX + ~1.2 Hz + confident photoreal grounding + full
+  physics reuse + free CC0 assets) → recommendation firms to a confident **co-sim** (SAPIEN alt if its
+  richer out-of-box ecosystem outweighs MuJoCo reuse). **Natural pause point: DQ-11 decision-ready,
+  remaining work owner-gated (pick substrate → build photoreal scenes + pose-sync bridge + prune #9
+  render code).**
 - **First post-approval task:** prune the superseded MuJoCo-VLM-render perception code from #9 (kept
   for now — tested + interconnected; the world-agnostic builder / recognise→navigate / target_locate
   geometry are reused on the new substrate).

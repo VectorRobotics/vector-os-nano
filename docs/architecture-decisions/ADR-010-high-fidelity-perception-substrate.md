@@ -144,6 +144,31 @@ openrouter Qwen-VL calls (~$0.011 total); `baseline_mujoco_room.png`, `blender_r
   proven in #5–#9/DQ-10); the MuJoCo-state→render socket bridge is the validated #9 scaffold.
 
 **Net:** co-sim is feasible and de-risked on its only hard unknown. The remaining open question is
-*asset fidelity*, which R3 (post-approval) should validate with one genuinely photoreal asset before
-committing to a build. SAPIEN/ManiSkill3 remains the alternative if the owner values its richer
-out-of-box scene/manipulation-benchmark ecosystem over MuJoCo reuse.
+*asset fidelity* — validated in R3 below.
+
+## R3 spike results (2026-06-14) — "asset fidelity is the lever" CONFIRMED
+
+Pulled one genuinely photoreal CC0 asset (PolyHaven `ArmChair_01`, 4K PBR diffuse/normal/ARM),
+rendered it in Blender Cycles+OptiX (1214 ms @ 64 samples post-warmup), fed it through the SAME #9
+VLM pipeline (160px). Evidence: `photoreal_armchair.png` + real openrouter call.
+
+- **Result:** `chair` → **0.95** ("classic upholstered armchair with wooden legs"); on the `sofa`
+  query the VLM *correctly disambiguates* — "this object is a chair, not a sofa." Confident, precise,
+  fine-grained, with correct label rejection — vs the toy Kenney chair's flaky 0.90 / sofa-confusion /
+  plant→"lamp". **Same 160px pipeline.**
+- **Conclusion:** asset fidelity is the real lever, and the 160px downsize is NOT the bottleneck once
+  the asset is photoreal. The render engine (Blender OptiX) was necessary; photoreal ASSETS are what
+  close the #9 grounding ceiling.
+- **Effect on the decision:** co-sim is now validated *end-to-end on the actual RTX 5080*: OptiX runs,
+  ~1.2 Hz, photoreal-asset grounding is confident, all #5–#9 physics is reused, and **PolyHaven CC0
+  assets are free of SAPIEN's CC-BY-NC commercial caveat.** The recommendation firms from "paper-tie
+  primary" to an **evidence-backed confident recommendation of co-sim.** SAPIEN/ManiSkill3 remains the
+  alternative if the owner values its richer out-of-box scene + manipulation-benchmark ecosystem
+  (assemble-it-yourself is co-sim's cost) over MuJoCo reuse.
+- **Honest caveat:** one asset (armchair on a plain floor) — a strong single point, not a batch. Full
+  VLN still needs assembled photoreal SCENES (multi-asset rooms or 3DGS background scans), the
+  MuJoCo↔Blender pose-sync bridge (the validated #9 scaffold), and a photoreal manipulation foreground
+  — all post-approval build, not this PROBE.
+
+**This is the natural pause point: R1–R3 PROBE complete, DQ-11 decision-ready, all remaining
+substantive work is owner-gated (pick substrate → build).**
