@@ -190,6 +190,7 @@ class G1MuJoCoBase:
         self._lidar = None
         self._lidar_snap_lock = threading.Lock()
         self._lidar_snap = None     # latest LidarSample, or None
+        self._occ = None            # OccupancyGrid (room mode), filled by observe()
 
     # -- lifecycle ---------------------------------------------------------
     def connect(self) -> None:
@@ -223,11 +224,26 @@ class G1MuJoCoBase:
             self._obstacles = g1_room.obstacles_from_model(
                 self._model, self._data)
             try:
+                # max_range 3 m + include_misses: a limited range leaves
+                # UNKNOWN beyond the sensing disc → real frontier exploration
+                # (the robot must MOVE to grow the map). include_misses frees
+                # the full ray span even into open space, so OPEN directions are
+                # mapped (not just where a wall was struck) — without it a
+                # short-range lidar leaves a blank map and explore cannot
+                # progress. geom_group masks the env so rays ignore the robot.
                 self._lidar = MuJoCoLivox360(
-                    self._model, self._data, body_name="pelvis")
+                    self._model, self._data, body_name="pelvis",
+                    max_range=3.0, geom_group=g1_room.ENV_GEOM_GROUP,
+                    include_misses=True)
             except Exception as exc:  # noqa: BLE001 — lidar is non-fatal
                 logger.warning("G1 lidar init failed: %s", exc)
                 self._lidar = None
+            # Occupancy grid for autonomous exploration (campaign #8 R6). It is
+            # filled by observe() on the CALLER thread (snapshot reads, NOT the
+            # control thread) — ray-marching 5760 rays at 10 Hz would starve the
+            # gait (the R0/Case-13 lesson), so mapping stays off the hot path.
+            from vector_os_nano.hardware.sim.occupancy import OccupancyGrid  # noqa: PLC0415,E501
+            self._occ = OccupancyGrid(*g1_room.room_bounds(), resolution=0.25)
         # Live viewer window (campaign #8 R0): open it on the caller thread.
         # Skip under mjpython (macOS main-thread-only GLFW); launch failure
         # (no display / GL) degrades to headless without breaking the boot.
@@ -293,6 +309,7 @@ class G1MuJoCoBase:
         with self._lidar_snap_lock:
             self._lidar_snap = None
         self._lidar = None
+        self._occ = None
         self._model = self._data = self._policy = None
 
     close = disconnect
@@ -463,7 +480,10 @@ class G1MuJoCoBase:
             next_tick += batch_dt
             remaining = next_tick - time.monotonic()
             if remaining > 0.004:
-                time.sleep(min(remaining - 0.003, deadline - time.monotonic()))
+                # clamp >= 0: past the deadline, (deadline - now) goes negative
+                # and time.sleep() would raise 'sleep length must be negative'.
+                time.sleep(max(0.0, min(remaining - 0.003,
+                                        deadline - time.monotonic())))
             if remaining < -0.2:
                 next_tick = time.monotonic()
             else:
@@ -498,6 +518,25 @@ class G1MuJoCoBase:
             return {}
         from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
         return {t.name: (t.cx, t.cy) for t in g1_room.TARGETS}
+
+    def observe(self) -> float:
+        """Integrate the current lidar scan into the occupancy grid and return
+        the new coverage fraction (campaign #8 R6 — autonomous exploration).
+
+        Runs on the CALLER thread: it only consumes the lidar SNAPSHOT and the
+        pose snapshot (never mjData), so it never contends the control thread /
+        the gait (the R0 lesson). No-op (returns 0.0) outside room mode."""
+        if self._occ is None:
+            return 0.0
+        scan = self.get_lidar_scan()
+        if scan is not None and getattr(scan, "num_points", 0) > 0:
+            px, py, _pz = self.get_position()
+            self._occ.update_from_scan((px, py), scan.points)
+        return self._occ.coverage()
+
+    def get_occupancy(self):
+        """The live OccupancyGrid (room mode), or None on the flat scene."""
+        return self._occ
 
     # -- BaseProtocol -------------------------------------------------------
     def set_velocity(self, vx: float, vy: float = 0.0,

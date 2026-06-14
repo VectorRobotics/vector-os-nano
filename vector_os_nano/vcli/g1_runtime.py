@@ -79,6 +79,10 @@ def boot_g1_agent(
     registry = SkillRegistry()
     for s in (WalkSkill(), TurnSkill(), StopSkill(), NavigateToPointSkill()):
         registry.register(s)
+    if room:
+        # ExploreSkill needs the occupancy grid + lidar — room mode only.
+        from vector_os_nano.skills.explore import ExploreSkill
+        registry.register(ExploreSkill())
     agent._skill_registry = registry
 
     if room:

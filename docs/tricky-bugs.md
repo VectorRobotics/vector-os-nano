@@ -280,3 +280,20 @@ Routine bugs do NOT belong here; git history covers those.
   the viewer attached. Also: a high system load (a runaway SysNav node eating
   24 cores) was simultaneously inflating the lag — always check `loadavg`
   before trusting a perf measurement.
+
+## Case 14 — pump-mode _advance can sleep a negative duration (2026-06-13)
+
+- **Symptom:** during a long PUMP-mode action (ExploreSkill driving many
+  navigate legs in the live window), the step crashed with "sleep length must
+  be non-negative". Daemon/headless mode never hit it.
+- **Why hidden:** G1MuJoCoBase._advance(seconds) paces with
+  `time.sleep(min(remaining - 0.003, deadline - time.monotonic()))`. Once the
+  loop runs slightly past `deadline`, `deadline - now` is NEGATIVE; if
+  `remaining > 0.004` still held that tick, the min() picked the negative value
+  → time.sleep(negative) raises. Only the PUMP path (window open) uses this
+  branch — every prior GUI run (R0/R3/R5) was short enough to never straddle
+  the deadline mid-tick, so it lay dormant until explore's many legs hit it.
+- **Fix:** clamp to non-negative — `time.sleep(max(0.0, min(...)))`.
+- **Lesson:** any `time.sleep` fed by a `deadline - now()` difference must be
+  clamped ≥ 0; the deadline can pass between the guard and the call. A latent
+  pump-only bug needs a long pump-mode action to surface — short ones mask it.

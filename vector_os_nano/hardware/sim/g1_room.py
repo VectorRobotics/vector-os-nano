@@ -34,6 +34,11 @@ _ROOM_HALF_Y = 3.0
 _WALL_T = 0.10            # wall half-thickness
 _WALL_H = 0.6            # wall half-height
 _WALL_CX = 1.0            # room centred a little ahead of the spawn
+# Walls/obstacles/targets are tagged with this MuJoCo geom group so the lidar
+# can ray-cast against ONLY the environment (mask this group) and never the
+# G1's own body. Group is render/ray metadata — collision (contype) is
+# unaffected, so physics/blocking still work.
+ENV_GEOM_GROUP = 3
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,13 @@ TARGETS: tuple = (
     RoomObject("target_blue", 3.7, 2.0, 0.12, 0.12, 0.25, (0.1, 0.2, 0.9, 1)),
     RoomObject("target_green", 3.7, -2.0, 0.12, 0.12, 0.25, (0.1, 0.8, 0.2, 1)),
 )
+
+
+def room_bounds() -> "tuple[float, float, float, float]":
+    """Interior (x_min, y_min, x_max, y_max) of the room — the occupancy
+    grid's extent for exploration coverage."""
+    cx, hx, hy = _WALL_CX, _ROOM_HALF_X, _ROOM_HALF_Y
+    return (cx - hx, -hy, cx + hx, hy)
 
 
 def target_position(label: str) -> "tuple[float, float] | None":
@@ -143,5 +155,6 @@ def build_room_model(asset_dir: "Path | str") -> Any:
             type=mujoco.mjtGeom.mjGEOM_BOX,
             size=[obj.hx, obj.hy, obj.hz],
             rgba=list(obj.rgba),
+            group=ENV_GEOM_GROUP,   # lidar masks to this group → ignores robot
         )
     return spec.compile()

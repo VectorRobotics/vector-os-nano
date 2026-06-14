@@ -92,10 +92,14 @@ class OccupancyGrid:
             return
         s = self.world_to_cell(sensor_xy[0], sensor_xy[1])
         pts = np.asarray(points)
+        has_intensity = pts.shape[1] >= 4
         for p in pts:
             h = self.world_to_cell(float(p[0]), float(p[1]))
             self._ray_free(s, h)
-            self._mark(h[0], h[1], OCCUPIED)
+            # A real hit (intensity > 0, or no intensity column = legacy hit)
+            # marks OCCUPIED; a miss endpoint (intensity 0) only frees its ray.
+            if (not has_intensity) or float(p[3]) > 0.0:
+                self._mark(h[0], h[1], OCCUPIED)
 
     # -- queries -----------------------------------------------------------
     def coverage(self) -> float:
@@ -114,13 +118,25 @@ class OccupancyGrid:
                     break
         return out
 
-    def nearest_frontier_world(self, x: float, y: float
+    def nearest_frontier_world(self, x: float, y: float,
+                               min_dist: float = 0.0
                                ) -> "tuple[float, float] | None":
         """World (x, y) of the FREE-frontier cell nearest to (x, y), or None
-        when fully explored (no frontier)."""
+        when none remain. ``min_dist`` skips frontiers within that radius — for
+        exploration, the robot must drive to a frontier FARTHER than its
+        arrival tolerance, else it 'arrives' without moving and never grows the
+        map. Falls back to the global nearest only if all are within min_dist
+        (so a final close frontier is still returned, not a spurious None)."""
         fr = self.frontiers()
         if not fr:
             return None
-        best = min(fr, key=lambda c: (self.cell_to_world(*c)[0] - x) ** 2
-                   + (self.cell_to_world(*c)[1] - y) ** 2)
+        d2 = {c: (self.cell_to_world(*c)[0] - x) ** 2
+              + (self.cell_to_world(*c)[1] - y) ** 2 for c in fr}
+        far = [c for c in fr if d2[c] >= min_dist * min_dist]
+        if not far:
+            # all remaining frontiers are within min_dist (sparse-scan 'swiss
+            # cheese' right around the robot) — nothing worth driving to; the
+            # loop treats this as locally explored and stops.
+            return None
+        best = min(far, key=lambda c: d2[c])
         return self.cell_to_world(*best)

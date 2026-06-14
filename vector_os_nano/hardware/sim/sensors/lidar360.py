@@ -136,6 +136,8 @@ class MuJoCoLivox360:
         max_range: float = 30.0,
         rate_hz: float = 10.0,
         frame_id: str = "map",
+        geom_group: int | None = None,
+        include_misses: bool = False,
     ) -> None:
         import mujoco
 
@@ -162,6 +164,17 @@ class MuJoCoLivox360:
         self._max_range = float(max_range)
         self._rate_hz = float(rate_hz)
         self._frame_id = str(frame_id)
+        self._include_misses = bool(include_misses)
+        # Optional geom-group mask (mjNGROUP=6 bytes): when set, mj_ray tests
+        # ONLY geoms in that group — used to see the ENVIRONMENT while ignoring
+        # the sensor-carrying robot's own body (G1's pelvis lidar would
+        # otherwise hit its torso/legs at ~0 range). None = all groups (go2).
+        if geom_group is None:
+            self._geomgroup = None
+        else:
+            mask = np.zeros(6, dtype=np.uint8)
+            mask[int(geom_group)] = 1
+            self._geomgroup = mask
 
         self._ray_dirs_body = _build_ray_dirs(
             self._h_resolution, self._v_layers, self._v_min, self._v_max,
@@ -225,9 +238,13 @@ class MuJoCoLivox360:
     ) -> np.ndarray:
         """Vectorised mj_ray loop (Python — fast enough at 5760 rays/frame).
 
-        Returns (N, 4) float32 ``[x, y, z, intensity]`` for hits inside
-        ``max_range``. Misses are discarded.
-        """
+        Returns (N, 4) float32 ``[x, y, z, intensity]``. Hits inside
+        ``max_range`` get intensity 1.0. When ``include_misses`` is set, a MISS
+        (no hit within range) emits the ray's max-range endpoint with intensity
+        0.0 — so an occupancy consumer can mark the ray's FREE span even where
+        nothing was struck (without this, open directions leave the map blank
+        and frontier exploration cannot progress). Default off (go2/ROS bridge
+        unchanged: misses are discarded)."""
         n = dirs_world.shape[0]
         geomid_buf = np.zeros(1, dtype=np.int32)
         out = np.empty((n, 4), dtype=np.float32)
@@ -237,15 +254,21 @@ class MuJoCoLivox360:
             direction = np.ascontiguousarray(dirs_world[i], dtype=np.float64)
             dist = self._mujoco.mj_ray(
                 self._model, self._data, origin_buf, direction,
-                None, 1, -1, geomid_buf,
+                self._geomgroup, 1, -1, geomid_buf,
             )
-            if dist < 0.0 or dist > self._max_range:
+            hit_ok = 0.0 <= dist <= self._max_range
+            if hit_ok:
+                end = origin_buf + direction * dist
+                intensity = 1.0
+            elif self._include_misses:
+                end = origin_buf + direction * self._max_range
+                intensity = 0.0       # free-ray endpoint, not an obstacle
+            else:
                 continue
-            hit = origin_buf + direction * dist
-            out[write, 0] = hit[0]
-            out[write, 1] = hit[1]
-            out[write, 2] = hit[2]
-            out[write, 3] = 1.0       # intensity placeholder
+            out[write, 0] = end[0]
+            out[write, 1] = end[1]
+            out[write, 2] = end[2]
+            out[write, 3] = intensity
             write += 1
         return out[:write]
 

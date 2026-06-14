@@ -287,8 +287,20 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      target with obstacle-aware nav, WITHOUT photoreal recognition (the
      DQ-10-gated half stays deferred); zh/en color aliases. Semantic-perception
      path unchanged when present. The 'go to the target object's point' half of
-     req #5. NEXT R6: wire occupancy + frontier autonomous explore into the G1
-     loop (the 'autonomously explore' half).
+     req #5.
+   - **R6 SHIPPED (autonomous frontier exploration — req #5 'explore' half):**
+     occupancy wired into G1 (observe() integrates the lidar on the CALLER
+     thread — snapshot reads, off the gait hot path); ExploreSkill loops
+     nearest-frontier (min-dist filtered) → obstacle-aware navigate → until a
+     coverage target or no frontier (real lidar-map driven, NO hardcoded
+     waypoints). Fixed the lidar self-hit (geom_group mask → rays see the
+     ENVIRONMENT not the G1 body) + added include_misses (free-ray to max range
+     so open space is mapped, not just where a wall was struck). Headless:
+     coverage 0.61→0.94 over 3 autonomously-chosen frontiers. GUI: vector-cli
+     --scenario g1_room, 探索房间 → explore ran 19.9s [PASS], G1 autonomously
+     roamed. Fixed a latent pump-mode negative-sleep bug (tricky-bugs Case 14).
+     req #5 STRUCTURE complete (explore + go-to-target); photoreal RGB
+     object-recognition still awaits DQ-10. NEXT: R8 forced REVIEW.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
