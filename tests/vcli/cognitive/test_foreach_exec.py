@@ -206,7 +206,9 @@ def test_foreach_empty_list_yields_zero_children() -> None:
 
 
 def test_foreach_missing_producer_yields_zero_children() -> None:
-    # No producing step has run with that name/path -> empty (not an error).
+    # Batch 2 #10 (design review): an UNRESOLVED producer is now a LOUD,
+    # replannable failure — the old silent zero-iteration PASS structurally
+    # broke the closed loop (no FailureRecord, replan could never correct).
     executor, _ = _build([{"name": "mug"}])
     loop = SubGoal(
         name="pick_each",
@@ -230,8 +232,10 @@ def test_foreach_missing_producer_yields_zero_children() -> None:
     )
     trace = executor.execute(GoalTree(goal="g", sub_goals=(loop,)))
 
-    assert trace.success is True
-    assert trace.steps == ()  # zero children, no producing step either
+    assert trace.success is False
+    assert len(trace.steps) == 1
+    assert trace.steps[0].failure_class == "exec_error"
+    assert "did not resolve" in trace.steps[0].error
 
 
 # ---------------------------------------------------------------------------

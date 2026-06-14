@@ -73,6 +73,11 @@ class SkillWrapperTool:
 
         Scans both preconditions (list) and effects (dict) for motor keywords.
         """
+        # Batch 3 #14: an explicit declaration beats keyword sniffing — the
+        # Skill protocol's ``is_motor`` is authoritative when present.
+        declared = getattr(skill, "is_motor", None)
+        if declared is not None:
+            return bool(declared)
         preconditions_text = " ".join(str(p) for p in getattr(skill, "preconditions", []))
         effects_text = str(getattr(skill, "effects", {}))
         description_text = str(getattr(skill, "description", ""))
@@ -93,6 +98,13 @@ class SkillWrapperTool:
                 prop["type"] = _TYPE_MAP.get(str(raw_type), "string")
                 if "description" in info:
                     prop["description"] = info["description"]
+                # Batch 3 #13: the LLM must SEE the legal value set and the
+                # default — stripping them invited invalid enum values that
+                # the skills then silently coerced.
+                if "enum" in info:
+                    prop["enum"] = list(info["enum"])
+                if "default" in info:
+                    prop["default"] = info["default"]
                 # A parameter is required when it has no default and is not
                 # explicitly marked required=False.
                 has_default = "default" in info
@@ -224,6 +236,11 @@ class SkillWrapperTool:
         has no real-world consequence. On real hardware the confirmation requirement
         is preserved.
         """
+        # Batch 3 #14: E-STOP-class skills (confirm_exempt=True) are NEVER
+        # gated behind a prompt — a stop waiting for user confirmation
+        # violates the E-stop-independence safety rule.
+        if getattr(self._skill, "confirm_exempt", False):
+            return PermissionResult("allow")
         if self._is_motor and not self._robot_is_simulated():
             return PermissionResult("ask")
         return PermissionResult("allow")

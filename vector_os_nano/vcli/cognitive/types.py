@@ -36,7 +36,11 @@ FailureClass = Literal[
 
 # The closed set, for validation + tests. Excludes "" (the success sentinel).
 FAILURE_CLASSES: frozenset[str] = frozenset(
-    {"timeout", "verify_fail", "ik_fail", "tool_error", "exec_error"}
+    {"timeout", "verify_fail", "ik_fail", "tool_error", "exec_error",
+     # Batch 1 campaign #4 (#11): the step never RAN — a (transitive)
+     # depends_on ancestor failed, so executing it would act from an
+     # unestablished world state (the hardware-dangerous case).
+     "dep_skipped"}
 )
 
 # Diagnosis substrings (lowercased) that indicate an unreachable-target / IK
@@ -191,6 +195,12 @@ class StepRecord:
     # defaulted "" so every existing positional/keyword constructor is
     # byte-unaffected (rule 6).
     failure_class: str = ""
+    # Invariant I (design review 2026-06-12 #1): the NON-TRIVIAL predicate's
+    # value BEFORE the strategy ran. True means the goal state was already
+    # satisfied at dispatch time — 'became true' and 'was already true' are no
+    # longer the same True (the '走到厨房' zero-motion-PASS family). Always
+    # False for trivial/sentinel verifies. Additive + LAST + defaulted (rule 6).
+    pre_satisfied: bool = False
 
 
 @dataclass(frozen=True)

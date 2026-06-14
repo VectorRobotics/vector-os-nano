@@ -403,6 +403,19 @@ Loop example — "do <something> to every detected object, one by one":
             self.VERIFY_FUNCTIONS = frozenset(verify_functions)
         if verify_fn_signatures is not None:
             self._VERIFY_FN_SIGNATURES = dict(verify_fn_signatures)
+        # ``step_output`` is KERNEL-provided (the executor injects it per-step,
+        # bound to that step's own structured output — backlog #3 / Rule 4), so
+        # it is valid in EVERY world regardless of the injected vocab — union it
+        # in unconditionally, like ``answer`` on the strategy side.
+        self.VERIFY_FUNCTIONS = frozenset(self.VERIFY_FUNCTIONS | {"step_output"})
+        self._VERIFY_FN_SIGNATURES = {
+            **self._VERIFY_FN_SIGNATURES,
+            "step_output": (
+                "step_output(path='') -> Any  # THIS step's own structured output; "
+                "e.g. len(step_output('objects')) > 0 verifies what THIS detect "
+                "step itself found (not a separate scene query)"
+            ),
+        }
         if strategy_descriptions is not None:
             self._STRATEGY_DESCRIPTIONS = dict(strategy_descriptions)
         if strategy_params_help is not None:
@@ -448,18 +461,53 @@ Loop example — "do <something> to every detected object, one by one":
             Validated GoalTree. Never raises — falls back to a single-step
             GoalTree on any parsing or communication failure.
         """
-        # Template check — skip LLM when a reusable template matches
+        # Template check — skip LLM when a reusable template matches.
+        # GUARD (rule 3/8, N4 live finding): templates are compiled from PAST
+        # experience, possibly in a DIFFERENT world (a go2-era "先走到X然后Y"
+        # template carries strategy 'navigate' — not a habitat skill), and
+        # instantiate() bypasses the LLM-path strategy validation entirely.
+        # A template whose strategies are not all known in THIS world is
+        # REJECTED (plan fresh via the LLM) — never half-run a stale plan.
         if self._template_library is not None:
             try:
                 match_result = self._template_library.match(task)
                 if match_result is not None:
                     template, params = match_result
-                    return self._template_library.instantiate(template, params)
+                    tree = self._template_library.instantiate(template, params)
+                    if self._tree_strategies_known(tree):
+                        return tree
+                    _LOG.warning(
+                        "GoalDecomposer: matched template carries strategies "
+                        "unknown in this world — rejected; planning fresh"
+                    )
             except Exception as exc:  # noqa: BLE001
                 _LOG.warning("GoalDecomposer: template_library match/instantiate failed: %s", exc)
 
         if self._cached_system_prompt is None:
             self._cached_system_prompt = self._build_system_prompt()
+        return self._decompose_via_llm(task, world_context)
+
+    def _tree_strategies_known(self, tree: Any) -> bool:
+        """True when every strategy in *tree* is valid in THIS world's vocab.
+
+        The template-instantiation guard: checks top-level sub_goals and any
+        foreach body steps; '' (selector keyword routing) and 'answer' (kernel
+        dispatch) are always valid.
+        """
+        try:
+            for sg in getattr(tree, "sub_goals", ()) or ():
+                names = [getattr(sg, "strategy", "")]
+                foreach = getattr(sg, "foreach", None)
+                for body in getattr(foreach, "body", ()) or ():
+                    names.append(getattr(body, "strategy", ""))
+                for s in names:
+                    if s and s != "answer" and s not in self.KNOWN_STRATEGIES:
+                        return False
+        except Exception:  # noqa: BLE001 — malformed tree: reject, plan fresh
+            return False
+        return True
+
+    def _decompose_via_llm(self, task: str, world_context: str) -> "GoalTree":
         system = self._cached_system_prompt
         messages = self._build_messages(task, world_context)
 
@@ -484,6 +532,10 @@ Loop example — "do <something> to every detected object, one by one":
                 _LOG.warning("GoalDecomposer: backend call failed: %s", exc)
                 return self._fallback_goal_tree(task)
 
+            # Raw response at DEBUG — the only way to diagnose param/verify
+            # shape mismatches between what the LLM emitted and the final
+            # tree (R10: a live failure was undiagnosable without this).
+            _LOG.debug("GoalDecomposer raw response: %s", raw_text)
             json_str = self._extract_json(raw_text)
             if json_str is not None:
                 try:
@@ -496,7 +548,13 @@ Loop example — "do <something> to every detected object, one by one":
                         exc,
                     )
                 else:
-                    return self._build_goal_tree(task, data)
+                    tree = self._build_goal_tree(task, data)
+                    # Batch 2 (campaign #4): deterministic param-completeness
+                    # check + ONE bounded re-ask. What stays broken after it
+                    # fails loud at the skill's bad_params gate (no silent
+                    # defaults). Template-path trees skip this: they were
+                    # compiled from verified runs.
+                    return self._param_completeness_pass(task, tree)
             else:
                 _LOG.warning(
                     "GoalDecomposer: no JSON found in response (attempt %d/%d)",
@@ -514,6 +572,61 @@ Loop example — "do <something> to every detected object, one by one":
             attempts,
         )
         return self._fallback_goal_tree(task)
+
+    def _param_completeness_pass(self, task: str, tree: "GoalTree") -> "GoalTree":
+        """Check params against the registry schema; re-ask the LLM ONCE.
+
+        Deterministic detection (param_check — rule 3 single source), bounded
+        repair: the correction prompt names each broken step's missing
+        required params / illegal enum values WITH the legal sets, and may
+        only rebind the named steps' params (never the tree structure).
+        Fail-soft everywhere: no registry → identity; garbage correction →
+        original tree (the skill's bad_params gate stays the judge).
+        """
+        if self._skill_registry is None:
+            return tree
+        try:
+            from vector_os_nano.vcli.cognitive.param_check import (
+                collect_param_issues,
+                merge_corrections,
+                render_issue_block,
+            )
+
+            issues = collect_param_issues(tree, self._skill_registry)
+            if not issues:
+                return tree
+            _LOG.warning(
+                "GoalDecomposer: %d step(s) with incomplete/illegal params "
+                "(%s) — one bounded re-ask",
+                len(issues), ", ".join(i["step"] for i in issues),
+            )
+            response = self._backend.call(
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Task: {task}\n\n{render_issue_block(issues)}"
+                    ),
+                }],
+                tools=[],
+                system=self._cached_system_prompt,
+                max_tokens=1024,
+            )
+            json_str = self._extract_json(response.text)
+            if json_str is None:
+                return tree
+            corrections = json.loads(json_str)
+            fixed = merge_corrections(tree, issues, corrections)
+            still = collect_param_issues(fixed, self._skill_registry)
+            if still:
+                _LOG.warning(
+                    "GoalDecomposer: params still broken after the re-ask "
+                    "(%s) — leaving for the bad_params gate",
+                    ", ".join(i["step"] for i in still),
+                )
+            return fixed
+        except Exception as exc:  # noqa: BLE001 — never break decompose
+            _LOG.warning("GoalDecomposer: param pass failed: %s", exc)
+            return tree
 
     def _retry_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Append a terse JSON-only nudge to the user turn for a bounded re-ask.
@@ -783,7 +896,25 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
         strategy_params = raw.get("strategy_params", {})
         if not isinstance(strategy_params, dict):
             strategy_params = {}
+        # Null-stripping at the parse seam (campaign #4 batch 2): some LLMs
+        # (deepseek-chat) emit EVERY schema key with null/"" — a poisoned key
+        # defeats every downstream "is it missing?" check (setdefault, `in`,
+        # required-param validation). A null value IS a missing param; drop it
+        # here so the whole pipeline sees honest missing-ness.
+        strategy_params = {
+            k: v for k, v in strategy_params.items()
+            if v is not None and v != ""
+        }
         fail_action = str(raw.get("fail_action", ""))
+
+        # Named-target strengthening (backlog #2b): a step whose params bind a
+        # named target must verify against THAT target, not "holding anything".
+        # Runs BEFORE _validate_verify so the rewritten expression still passes
+        # the AST allowlist like any LLM-authored one. Stricter-only.
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            strengthen_target_verify,
+        )
+        verify = strengthen_target_verify(verify, strategy_params)
 
         # Validate verify expression
         verify = self._validate_verify(verify)
@@ -845,6 +976,28 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
         # harness re-decomposes through this same validator.
         cleared_strategy = ""
         if strategy and strategy != "answer" and strategy not in self.KNOWN_STRATEGIES:
+            # Name affinity (M5 finding): LLMs occasionally shorten a strategy
+            # ("navigate_to" -> "navigate"). Resolve DETERMINISTICALLY when the
+            # name has an unambiguous prefix relation with exactly ONE known
+            # strategy (>=3 chars — no absurd one-letter matches); anything
+            # ambiguous still falls through to the loud clearing below.
+            if len(strategy) >= 3:
+                cands = sorted(
+                    k for k in self.KNOWN_STRATEGIES
+                    if k.startswith(strategy) or strategy.startswith(k)
+                )
+                if len(cands) == 1:
+                    _LOG.info(
+                        "GoalDecomposer: strategy %r resolved to %r "
+                        "(unambiguous prefix affinity)", strategy, cands[0],
+                    )
+                    if notes is not None:
+                        notes.append(
+                            f"strategy {strategy!r} resolved to {cands[0]!r} "
+                            f"(unambiguous prefix affinity)"
+                        )
+                    strategy = cands[0]
+        if strategy and strategy != "answer" and strategy not in self.KNOWN_STRATEGIES:
             _LOG.warning(
                 "GoalDecomposer: unknown strategy %r in sub_goal %r — clearing "
                 "(will fail loud at execution)",
@@ -858,6 +1011,14 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
                 )
             cleared_strategy = strategy
             strategy = ""
+
+        # Navigate contract repair (N4): params and verify must carry the SAME
+        # coordinates; when the planner bound them only into the verify, copy
+        # them into the missing params (deterministic, never overwrites).
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            backfill_target_params,
+        )
+        strategy_params = backfill_target_params(strategy, strategy_params, verify)
 
         # Validate depends_on
         raw_deps = raw.get("depends_on", [])

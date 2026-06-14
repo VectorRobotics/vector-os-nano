@@ -12,9 +12,10 @@ Priority order:
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from vector_os_nano.vcli.cognitive.types import SubGoal
 
@@ -78,6 +79,7 @@ class StrategySelector:
         stats: Any = None,
         capability_names: "frozenset[str] | set[str] | None" = None,
         has_base: bool = True,
+        primitives_executable: "Callable[[], bool] | None" = None,
     ) -> None:
         self._skill_registry = skill_registry
         self._stats = stats
@@ -93,6 +95,13 @@ class StrategySelector:
         # resolution and the skill-registry alias match only. Defaults True so
         # go2/robot behaviour stays byte-identical.
         self._has_base = bool(has_base)
+        # Owner finding (c) 2026-06-12: routing to a base PRIMITIVE additionally
+        # requires the primitive layer to be EXECUTABLE (init_primitives wired
+        # a base) — has_base alone routed habitat replans to 'No hardware
+        # connected' ghosts (scan_360). Consulted lazily at route time; only
+        # enforced when a registry is injected (derived-vocab worlds), so
+        # registry-less legacy selectors stay byte-identical.
+        self._primitives_executable = primitives_executable
 
     # ------------------------------------------------------------------
     # Public API
@@ -173,23 +182,45 @@ class StrategySelector:
                 result = StrategyResult("skill", "sit", {})
 
             # Stop (primitive before walk to avoid 'stop' being caught by nothing)
+            # Primitive branches require the layer to be EXECUTABLE; otherwise
+            # result stays None and the registry alias match resolves the same
+            # wording against this world's real skills (stop/walk/turn).
             elif _word_match(("stop",), combined):
-                result = StrategyResult("primitive", "stop", {})
+                if self._primitive_routable():
+                    result = StrategyResult("primitive", "stop", {})
 
             # Movement primitives
             elif _word_match(("walk", "forward"), combined) or "前进" in combined:
-                dist = sub_goal.strategy_params.get("distance", 1.0)
-                result = StrategyResult("primitive", "walk_forward", {"distance_m": dist})
+                if self._primitive_routable():
+                    dist = sub_goal.strategy_params.get("distance", 1.0)
+                    result = StrategyResult(
+                        "primitive", "walk_forward", {"distance_m": dist}
+                    )
 
             elif any(kw in combined for kw in ("turn", "rotate", "转")):
-                angle = sub_goal.strategy_params.get("angle", 1.57)
-                result = StrategyResult("primitive", "turn", {"angle_rad": angle})
+                if self._primitive_routable():
+                    # Batch 3 #12: 'angle' is taught in DEGREES — CONVERT at
+                    # the seam, never rename deg into an _rad field.
+                    if "angle_rad" in sub_goal.strategy_params:
+                        rad = float(sub_goal.strategy_params["angle_rad"])
+                    else:
+                        rad = math.radians(
+                            float(sub_goal.strategy_params.get("angle", 90.0))
+                        )
+                    result = StrategyResult("primitive", "turn", {"angle_rad": rad})
 
         # Priority 3: Skill registry alias match (all worlds)
         if result is None and self._skill_registry is not None:
+            # R10 live finding: this route carries the sub_goal's EXPLICIT
+            # params — a Layer-1 retry cleared the strategy, the alias match
+            # re-routed to the same skill with {} and a diagnosable failure
+            # degraded into bad_params. Re-routing never strips bindings.
             match = self._skill_registry.match(sub_goal.description)
             if match is not None:
-                result = StrategyResult("skill", match.skill_name, {})
+                result = StrategyResult(
+                    "skill", match.skill_name,
+                    dict(sub_goal.strategy_params or {}),
+                )
 
         # Priority 4: Fallback
         if result is None:
@@ -232,7 +263,19 @@ class StrategySelector:
             and top.success_rate > _STATS_MIN_SUCCESS_RATE
             and top.strategy_name != result.name
         ):
-            return self._resolve_explicit(top.strategy_name, sub_goal.strategy_params)
+            cand = self._resolve_explicit(top.strategy_name, sub_goal.strategy_params)
+            # GUARD (N4 live finding): stats persist across worlds/lives — a
+            # go2-era 'navigate' ranking must never override a VALID route in
+            # a world where that skill does not exist. A candidate resolving
+            # invalid, or to a skill this registry does not have, keeps the
+            # rule-based result (never promote a phantom).
+            if cand.executor_type == "invalid":
+                return result
+            if cand.executor_type == "skill":
+                valid = self._registered_skill_names()
+                if valid is not None and cand.name not in valid:
+                    return result
+            return cand
 
         return result
 
@@ -240,17 +283,48 @@ class StrategySelector:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _route(self, name: str, params: dict) -> StrategyResult:
+    def _primitive_routable(self) -> bool:
+        """True when a base-primitive route may be emitted.
+
+        Registry-less selectors (legacy go2) keep the by-convention behaviour.
+        With a registry injected, the route requires the primitive layer to be
+        executable: the injected checker, or the live ``primitives_ready``
+        truth when none was injected.
+        """
+        if not self._has_base:
+            return False
+        if self._registered_skill_names() is None:
+            return True  # legacy path — byte-identical
+        if self._primitives_executable is not None:
+            try:
+                return bool(self._primitives_executable())
+            except Exception:  # noqa: BLE001 — a broken checker never routes
+                return False
+        try:
+            from vector_os_nano.vcli.primitives import primitives_ready
+
+            return primitives_ready()
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _route(self, name: str, params: dict) -> "StrategyResult | None":
         """Route a keyword-matched perception/planning step (Phase C.2).
 
         If a routable capability named *name* is registered, dispatch to it (and
         let measured stats later promote a better-performing alternative for the
         same sub-goal pattern); otherwise fall back to the classical skill of the
-        same name. Inert until a world registers such a capability, so dev/robot
-        routing is unchanged today.
+        same name — PROVIDED this world's registry actually has it. The go2-era
+        keyword ladder must never route to a phantom in another world (N4 live
+        finding: 'go/到' routed habitat steps to the unregistered 'navigate';
+        M5's 'Skill not found: look' was the same hole). Returning None lets
+        select() fall through to the registry ALIAS match, which resolves the
+        same wording against the real skill set.
         """
         if name in self._capability_names:
             return StrategyResult("capability", name, params)
+        valid = self._registered_skill_names()
+        if valid is not None and name not in valid:
+            return None  # unknown in THIS world — fall through to alias match
         return StrategyResult("skill", name, params)
 
     def _registered_skill_names(self) -> "frozenset[str] | None":
@@ -314,7 +388,9 @@ class StrategySelector:
                 valid is not None
                 and skill_name not in valid
                 and strategy not in self._capability_names
-                and not (self._has_base and skill_name in _PRIMITIVE_NAMES)
+                and not (
+                    skill_name in _PRIMITIVE_NAMES and self._primitive_routable()
+                )
             ):
                 return StrategyResult(
                     "invalid",
@@ -323,16 +399,32 @@ class StrategySelector:
                 )
             return StrategyResult("skill", skill_name, params)
 
-        # Base locomotion primitives are only routable on a world with a base;
-        # on a baseless world they would call _require_base() and raise.
-        if self._has_base and strategy in _PRIMITIVE_NAMES:
-            # Normalize LLM-generated param names to match primitive signatures
-            normalized = dict(params) if params else {}
-            if strategy == "walk_forward" and "distance" in normalized:
-                normalized["distance_m"] = normalized.pop("distance")
-            if strategy == "turn" and "angle" in normalized:
-                normalized["angle_rad"] = normalized.pop("angle")
-            return StrategyResult("primitive", strategy, normalized)
+        # Base locomotion primitives are only routable on a world with a base
+        # AND an executable primitive layer; on a baseless/unwired world they
+        # would call _require_base() and raise ('No hardware connected' ghosts).
+        if strategy in _PRIMITIVE_NAMES:
+            if self._primitive_routable():
+                # Normalize LLM-generated param names to primitive
+                # signatures. Batch 3 #12: 'angle' is taught in DEGREES —
+                # converted here, never renamed into an _rad field unchanged
+                # (a -90° command used to become 90 RADIANS).
+                normalized = dict(params) if params else {}
+                if strategy == "walk_forward" and "distance" in normalized:
+                    normalized["distance_m"] = normalized.pop("distance")
+                if strategy == "turn" and "angle" in normalized:
+                    normalized["angle_rad"] = math.radians(
+                        float(normalized.pop("angle"))
+                    )
+                return StrategyResult("primitive", strategy, normalized)
+            valid = self._registered_skill_names()
+            if valid is not None and strategy not in valid:
+                # Not executable as a primitive and not a skill in THIS world
+                # — fail loud with the valid set (rule 8), never a ghost.
+                return StrategyResult(
+                    "invalid",
+                    strategy,
+                    {"strategy": strategy, "valid_strategies": sorted(valid)},
+                )
 
         # Treat as a skill with the strategy name as-is
         return StrategyResult("skill", strategy, params)

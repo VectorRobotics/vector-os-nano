@@ -129,7 +129,7 @@ def test_harness_runs_answer_plan_end_to_end() -> None:
     harness = VGGHarness(
         decomposer=_decomposer_returning(tree),
         executor=executor,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
     )
     trace = harness.run("tell me a joke", "world", goal_tree=tree)
 

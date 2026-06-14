@@ -29,6 +29,10 @@ _DIRECTION_MAP: dict[str, tuple[float, float]] = {
     "backward": (-1.0,  0.0),
     "left":     ( 0.0,  1.0),
     "right":    ( 0.0, -1.0),
+    # zh aliases — planners naturally emit them (#13 GUI-test finding)
+    "前": (1.0, 0.0), "前进": (1.0, 0.0),
+    "后": (-1.0, 0.0), "后退": (-1.0, 0.0),
+    "左": (0.0, 1.0), "右": (0.0, -1.0),
 }
 
 _DEFAULT_DIRECTION: str = "forward"
@@ -51,6 +55,11 @@ class WalkSkill:
     # ROS2/network overhead + stabilisation ≈ 10–15s; 30s gives headroom for longer
     # distances. GoalExecutor floors the step timeout at this value (R2-2).
     typical_duration_sec: float = 30.0
+    # R7: REAL evidence predicate — verifies measured displacement, not the
+    # command echo (step_output is the step's own result_data).
+    verify_template: str = "step_output('moved_m') > 0.05"
+    # Batch 3 #14: explicit motor declaration (no keyword sniffing).
+    is_motor: bool = True
     parameters: dict = {
         "direction": {
             "type": "string",
@@ -99,8 +108,41 @@ class WalkSkill:
         direction: str = params.get("direction", _DEFAULT_DIRECTION)
         distance: float = float(params.get("distance", _DEFAULT_DISTANCE))
         speed: float = float(params.get("speed", _DEFAULT_SPEED))
+        if distance <= 0.0:
+            # R7 (design review #6): a zero/negative distance silently
+            # produced a 0-duration no-op PASS.
+            return SkillResult(
+                success=False,
+                error_message=f"walk distance must be > 0 (got {distance})",
+                result_data={"diagnosis": "bad_params"},
+            )
 
-        vx_sign, vy_sign = _DIRECTION_MAP.get(direction, (1.0, 0.0))
+        if direction not in _DIRECTION_MAP:
+            # #13: an unknown enum value must never silently become forward
+            # (the GUI test watched '左'-as-unknown burn 3.3s walking the
+            # wrong way before this guard).
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"unknown walk direction {direction!r}; legal: "
+                    f"{sorted(set(_DIRECTION_MAP) - {'前', '前进', '后', '后退', '左', '右'})}"
+                ),
+                result_data={"diagnosis": "bad_params"},
+            )
+        vx_sign, vy_sign = _DIRECTION_MAP[direction]
+        if vy_sign != 0.0 and not getattr(
+            context.base, "supports_holonomic", True
+        ):
+            # Batch 3 #7: a non-holonomic base silently drops vy — fail FAST
+            # with the capability named, before commanding a guaranteed no-op.
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"base does not support lateral motion ('{direction}') — "
+                    "turn then walk forward instead"
+                ),
+                result_data={"diagnosis": "lateral_unsupported"},
+            )
 
         # Apply speed and clamp
         if vy_sign != 0.0:
@@ -121,7 +163,21 @@ class WalkSkill:
             direction, vx, vy, 0.0, duration,
         )
 
+        def _pos():
+            if hasattr(context.base, "get_position"):
+                try:
+                    return list(context.base.get_position())
+                except Exception:  # noqa: BLE001
+                    return None
+            return None
+
+        import math as _math
+        import time as _time
+
+        start = _pos()
+        t0 = _time.monotonic()
         ok = context.base.walk(vx, vy, 0.0, duration)
+        elapsed = _time.monotonic() - t0
 
         if not ok:
             return SkillResult(
@@ -130,18 +186,32 @@ class WalkSkill:
                 diagnosis_code="walk_failed",
             )
 
-        position = None
-        if hasattr(context.base, "get_position"):
-            try:
-                position = context.base.get_position()
-            except Exception:
-                pass
-
-        return SkillResult(
-            success=True,
-            result_data={
-                "direction": direction,
-                "distance": distance,
-                "position": list(position) if position is not None else None,
-            },
-        )
+        position = _pos()
+        # Motion evidence (R7, design review #6): MEASURE, never echo the
+        # command. moved_m=None when the base has no odometry (fail-open,
+        # explicitly unmeasured — never fabricated).
+        moved = None
+        if start is not None and position is not None:
+            moved = round(_math.hypot(position[0] - start[0],
+                                      position[1] - start[1]), 3)
+        result_data = {
+            "direction": direction,
+            "requested_m": distance,
+            "moved_m": moved,
+            "start": start,
+            "position": position,
+            "duration_s": round(elapsed, 3),
+        }
+        if moved is not None and moved < 0.3 * distance:
+            # Commanded a metre, moved (almost) nothing: wall-blocked, or the
+            # base silently dropped the axis (habitat vy, #7). Loud, typed.
+            result_data["diagnosis"] = "moved_short"
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"walk moved {moved:.2f}m of the requested "
+                    f"{distance:.2f}m — blocked or unsupported direction"
+                ),
+                result_data=result_data,
+            )
+        return SkillResult(success=True, result_data=result_data)

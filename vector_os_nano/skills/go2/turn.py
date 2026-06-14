@@ -50,6 +50,9 @@ class TurnSkill:
     # headroom for larger angles and ROS2 overhead. GoalExecutor floors the step
     # timeout at this value (R2-2).
     typical_duration_sec: float = 10.0
+    # R7: REAL evidence predicate — measured rotation, not the command echo.
+    verify_template: str = "abs(step_output('turned_rad')) > 0.1"
+    is_motor: bool = True
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"is_moving": False}
@@ -76,10 +79,25 @@ class TurnSkill:
 
         direction: str = params.get("direction", _DEFAULT_DIRECTION)
         angle_deg: float = float(params.get("angle", _DEFAULT_ANGLE))
+        if angle_deg == 0.0:
+            return SkillResult(
+                success=False,
+                error_message="turn angle must be non-zero",
+                result_data={"diagnosis": "bad_params"},
+            )
         angle_rad: float = math.radians(abs(angle_deg))
 
+        if direction not in ("left", "right", "左", "右"):
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"unknown turn direction {direction!r}; legal: "
+                    "['left', 'right']"
+                ),
+                result_data={"diagnosis": "bad_params"},
+            )
         # Left = positive yaw (counter-clockwise), right = negative yaw (clockwise)
-        sign: float = 1.0 if direction == "left" else -1.0
+        sign: float = 1.0 if direction in ("left", "左") else -1.0
         vyaw: float = sign * _VYAW_SPEED
         duration: float = angle_rad / _VYAW_SPEED
 
@@ -88,7 +106,20 @@ class TurnSkill:
             direction, angle_deg, vyaw, duration,
         )
 
+        def _heading():
+            if hasattr(context.base, "get_heading"):
+                try:
+                    return float(context.base.get_heading())
+                except Exception:  # noqa: BLE001
+                    return None
+            return None
+
+        import time as _time
+
+        h0 = _heading()
+        t0 = _time.monotonic()
         ok = context.base.walk(0.0, 0.0, vyaw, duration)
+        elapsed = _time.monotonic() - t0
 
         if not ok:
             return SkillResult(
@@ -97,11 +128,27 @@ class TurnSkill:
                 diagnosis_code="turn_failed",
             )
 
-        return SkillResult(
-            success=True,
-            result_data={
-                "direction": direction,
-                "angle_deg": angle_deg,
-                "angle_rad": round(angle_rad, 4),
-            },
-        )
+        h1 = _heading()
+        turned = None
+        if h0 is not None and h1 is not None:
+            # wrap-aware smallest signed delta
+            turned = math.atan2(math.sin(h1 - h0), math.cos(h1 - h0))
+            turned = round(turned, 4)
+        result_data = {
+            "direction": direction,
+            "angle_deg": angle_deg,
+            "requested_rad": round(angle_rad, 4),
+            "turned_rad": turned,
+            "duration_s": round(elapsed, 3),
+        }
+        if turned is not None and abs(turned) < 0.3 * angle_rad:
+            result_data["diagnosis"] = "turned_short"
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"turn rotated {abs(turned):.2f}rad of the requested "
+                    f"{angle_rad:.2f}rad"
+                ),
+                result_data=result_data,
+            )
+        return SkillResult(success=True, result_data=result_data)

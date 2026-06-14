@@ -612,3 +612,93 @@ class TestThreadSafety:
 
         assert errors == [], f"Thread safety errors: {errors}"
         assert len(mem._objects) == 100  # 5 workers * 20 objects
+
+
+# ---------------------------------------------------------------------------
+# 11. W2.3 — live re-query (kill sync-once-stale)
+# ---------------------------------------------------------------------------
+
+
+class TestLiveRequery:
+    """W2.3: the read methods re-query the live SceneGraph at call time;
+    the exp-decay cache is the fallback when the live store has nothing;
+    a TTL caps re-query rate; no scene-graph ref => legacy behavior."""
+
+    def _synced_mem(
+        self, rooms_objects: dict[str, list[dict]], ttl: float = 0.0
+    ) -> tuple[ObjectMemory, MagicMock, dict]:
+        sg = _make_mock_scene_graph(rooms_objects)
+
+        def find_by_cat(category: str):
+            cat = category.lower().strip()
+            out = []
+            for room_id in rooms_objects:
+                for node in sg.find_objects_in_room(room_id):
+                    if cat in node.category.lower():
+                        out.append(node)
+            return out
+
+        sg.find_objects_by_category.side_effect = find_by_cat
+        mem = ObjectMemory(decay_lambda=0.001, live_refresh_ttl=ttl)
+        mem.sync_from_scene_graph(sg)
+        return mem, sg, rooms_objects
+
+    def test_find_object_sees_scene_graph_change(self):
+        mem, sg, store = self._synced_mem(
+            {"kitchen": [{"object_id": "o1", "category": "cup", "x": 1.0, "y": 2.0}]}
+        )
+        store["kitchen"].append(
+            {"object_id": "o2", "category": "bottle", "x": 3.0, "y": 4.0}
+        )
+        cats = {r["category"] for r in mem.find_object("bottle")}
+        assert "bottle" in cats  # visible WITHOUT an explicit re-sync
+
+    def test_objects_in_room_sees_moved_object(self):
+        mem, sg, store = self._synced_mem(
+            {"kitchen": [{"object_id": "o1", "category": "cup", "x": 1.0, "y": 2.0}]}
+        )
+        store["kitchen"][0]["x"] = 9.0  # object moved in the live graph
+        objs = mem.objects_in_room("kitchen")
+        assert objs and objs[0]["x"] == 9.0
+
+    def test_last_seen_sees_scene_graph_change(self):
+        mem, sg, store = self._synced_mem(
+            {"kitchen": [{"object_id": "o1", "category": "cup", "x": 1.0, "y": 2.0}]}
+        )
+        store["kitchen"].append(
+            {"object_id": "o9", "category": "laptop", "x": 7.0, "y": 8.0}
+        )
+        result = mem.last_seen("laptop")
+        assert result is not None and result["room"] == "kitchen"
+
+    def test_empty_live_store_falls_back_to_decay_cache(self):
+        mem, sg, store = self._synced_mem(
+            {"kitchen": [{"object_id": "o1", "category": "cup", "x": 1.0, "y": 2.0}]}
+        )
+        store["kitchen"].clear()  # object vanished from the live graph
+        res = mem.find_object("cup")
+        assert len(res) == 1  # stale entry still served, decaying gracefully
+
+    def test_ttl_caps_requery_rate(self):
+        mem, sg, store = self._synced_mem(
+            {"kitchen": [{"object_id": "o1", "category": "cup", "x": 1.0, "y": 2.0}]},
+            ttl=60.0,
+        )
+        mem.objects_in_room("kitchen")
+        count_after_first = sg.find_objects_in_room.call_count
+        mem.objects_in_room("kitchen")
+        assert sg.find_objects_in_room.call_count == count_after_first
+
+    def test_no_ref_is_legacy_behavior(self):
+        mem = ObjectMemory(decay_lambda=0.001)
+        mem.update("o1", "cup", "kitchen", 1.0, 2.0)
+        res = mem.find_object("cup")
+        assert len(res) == 1  # pure cache path, no scene graph, no error
+
+    def test_live_query_failure_falls_back_to_cache(self):
+        mem, sg, store = self._synced_mem(
+            {"kitchen": [{"object_id": "o1", "category": "cup", "x": 1.0, "y": 2.0}]}
+        )
+        sg.find_objects_by_category.side_effect = RuntimeError("scene graph down")
+        res = mem.find_object("cup")
+        assert len(res) == 1  # exception swallowed, decay cache served

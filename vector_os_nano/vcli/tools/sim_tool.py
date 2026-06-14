@@ -57,7 +57,11 @@ def locate_mjpython(executable: str | None = None) -> str | None:
 
 @tool(
     name="start_simulation",
-    description="Start a robot simulation (arm or go2 quadruped) with isaac, mujoco, or gazebo backend. No restart needed.",
+    description=(
+        "Start a robot simulation: 'arm' (SO-101), 'go2' (quadruped), or "
+        "'habitat' (photoreal scanned world, e.g. '启动habitat模拟' / "
+        "'start habitat'). No restart needed."
+    ),
     read_only=False,
     permission="ask",
 )
@@ -65,6 +69,10 @@ class SimStartTool:
     """Start a simulation and register its skills into the tool registry.
 
     Backends: mujoco (default), gazebo (Gz Sim Harmonic), isaac (Docker, archived).
+    sim_type='habitat' boots the kinematic photoreal world for a playground
+    scenario (default 'house' — the flagship multi-room ReplicaCAD
+    world; 'apartment' is the smaller bare-scan preset) via the shared
+    habitat runtime.
     """
 
     input_schema: dict[str, Any] = {
@@ -72,15 +80,27 @@ class SimStartTool:
         "properties": {
             "sim_type": {
                 "type": "string",
-                "enum": ["arm", "go2"],
-                "description": "Which simulation to start: 'arm' (SO-101) or 'go2' (Unitree Go2)",
+                "enum": ["arm", "go2", "habitat"],
+                "description": (
+                    "Which simulation to start: 'arm' (SO-101), 'go2' "
+                    "(Unitree Go2), or 'habitat' (photoreal scanned world)"
+                ),
+            },
+            "scenario": {
+                "type": "string",
+                "default": "house",
+                "description": (
+                    "ONLY for sim_type='habitat': the playground scenario id "
+                    "to load (default 'house', the multi-room world)"
+                ),
             },
             "gui": {
                 "type": "boolean",
                 "description": (
-                    "Open the viewer window (default: true). When the user says "
-                    "'headless' / '无窗口' / 'no window', pass gui=false to run "
-                    "without a display. A window is the default; gui=false suppresses it."
+                    "Open the viewer window (default: true). Applies to 'arm' "
+                    "(MuJoCo viewer) and 'habitat' (live first-person window). "
+                    "When the user says 'headless' / '无窗口' / 'no window', "
+                    "pass gui=false to run without a display."
                 ),
                 "default": True,
             },
@@ -125,11 +145,25 @@ class SimStartTool:
             current_base = getattr(current_agent, "_base", None)
             if sim_type == "arm" and current_arm is not None:
                 return ToolResult(content=f"Arm sim already running: {type(current_arm).__name__}")
-            if sim_type == "go2" and current_base is not None:
-                return ToolResult(content=f"Go2 sim already running: {type(current_base).__name__}")
+            if sim_type in ("go2", "habitat") and current_base is not None:
+                base_name = getattr(current_base, "name", type(current_base).__name__)
+                return ToolResult(
+                    content=(
+                        f"A base is already connected: {base_name}. The sim is "
+                        "already running — stop_simulation first to switch."
+                    )
+                )
+
+        # The habitat world carries its own playground world (verify
+        # predicates + persona); thread it through to the prompt/VGG rebuild.
+        habitat_world: Any = None
 
         try:
-            if backend == "isaac":
+            if sim_type == "habitat":
+                agent, habitat_world = self._start_habitat(
+                    params.get("scenario", "house"), gui=gui
+                )
+            elif backend == "isaac":
                 if sim_type == "go2":
                     agent = self._start_isaac_go2()
                 elif sim_type == "arm":
@@ -172,6 +206,11 @@ class SimStartTool:
         app["agent"] = agent
         app["scene_graph"] = getattr(agent, "_spatial_memory", None)
         app["skill_registry"] = getattr(agent, "_skill_registry", None)
+        if habitat_world is not None:
+            # The habitat scenario IS the active world (verify predicates +
+            # persona) — mirror the --scenario launch path.
+            app["world"] = habitat_world
+            app["scenario"] = getattr(habitat_world, "name", None)
 
         # Register skill tools under the 'robot' category (matches the --sim path)
         registry = app.get("registry")
@@ -179,11 +218,13 @@ class SimStartTool:
             from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
             for skill_tool in wrap_skills(agent):
                 registry.register(skill_tool, category="robot")
-            # The bare dev-world startup disabled robot/diag; re-enable now that a
-            # robot is connected so skill + diag/status tools become visible.
+            # The bare dev-world startup disabled robot/diag/system; re-enable
+            # now that a robot is connected so skill + diag tools AND the
+            # status surface (robot_status lives in 'system') become visible.
             if hasattr(registry, "enable_category"):
                 registry.enable_category("robot")
                 registry.enable_category("diag")
+                registry.enable_category("system")
 
         # Rebuild the system prompt as a LIVE DynamicSystemPrompt with an arm-aware
         # robot context, so subsequent turns correctly see the connected hardware
@@ -194,15 +235,18 @@ class SimStartTool:
             from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
             from vector_os_nano.vcli.robot_context import RobotContextProvider
             from vector_os_nano.vcli.worlds import resolve_world
+            world = habitat_world if habitat_world is not None else resolve_world(agent)
             provider = RobotContextProvider(
                 base=getattr(agent, "_base", None),
                 scene_graph=getattr(agent, "_spatial_memory", None),
                 arm=getattr(agent, "_arm", None),
+                world=world,
+                world_model=getattr(agent, "_world_model", None),
             )
             app["robot_ctx_provider"] = provider
             static_blocks = build_system_prompt(
                 agent=agent, cwd=context.cwd, robot_context=provider,
-                world=resolve_world(agent),
+                world=world,
             )
             engine._system_prompt = DynamicSystemPrompt(static_blocks, provider)
             # Reinit VGG with new agent so verifier has live robot state
@@ -211,7 +255,7 @@ class SimStartTool:
                     agent=agent,
                     skill_registry=getattr(agent, "_skill_registry", None),
                     on_vgg_step=app.get("vgg_step_callback"),
-                    world=resolve_world(agent),
+                    world=world,
                 )
             except Exception as _exc:
                 logger.warning("init_vgg after sim start failed: %s", _exc)
@@ -225,9 +269,54 @@ class SimStartTool:
 
         hw_name = type(getattr(agent, "_arm", None) or getattr(agent, "_base", None)).__name__
         skill_count = len(agent._skill_registry.list_skills()) if hasattr(agent, "_skill_registry") else 0
+        if habitat_world is not None:
+            scen = habitat_world.scenario
+            return ToolResult(
+                content=(
+                    f"Started habitat simulation: scenario '{scen.id}' "
+                    f"(scene {scen.scene_ref}), base "
+                    f"{getattr(agent._base, 'name', hw_name)}, {skill_count} "
+                    "skills registered. The world is live — semantic objects "
+                    "appear after SysNav perception starts "
+                    "(sysnav_perception tool)."
+                )
+            )
         return ToolResult(
             content=f"Started {sim_type} simulation: {hw_name}, {skill_count} skills registered.{sg_info}"
         )
+
+    @staticmethod
+    def _start_habitat(scenario_id: str, gui: bool = True) -> tuple[Any, Any]:
+        """Boot the habitat world for ``scenario_id``; return (agent, world).
+
+        Fails loud: unknown id raises KeyError listing the valid set
+        (resolve_world_named), a non-habitat id raises ValueError — never a
+        silent fallback to another backend.
+        """
+        import os
+
+        import vector_os_nano.playground  # noqa: F401  (side-effect: register scenarios)
+        from vector_os_nano.vcli import habitat_runtime
+        from vector_os_nano.vcli.worlds import resolve_world_named
+
+        world = resolve_world_named(scenario_id)
+        backend = getattr(getattr(world, "scenario", None), "sim_backend", "mujoco")
+        if backend != "habitat":
+            raise ValueError(
+                f"scenario '{scenario_id}' is not a habitat scenario "
+                f"(sim_backend={backend!r}); use start_simulation(sim_type="
+                f"{'go2' if backend == 'mujoco' else backend!r}) for it"
+            )
+        agent = habitat_runtime.boot_habitat_agent(world, gui=gui)
+        # Symmetry with the --scenario launch path: the env flag opts into
+        # wiring the SysNav feed at boot. Best-effort here — the dedicated
+        # sysnav_perception tool is the loud path.
+        if os.environ.get("VECTOR_HABITAT_SYSNAV") == "1":
+            try:
+                habitat_runtime.wire_sysnav_feed(agent)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("SysNav wiring skipped: %s", exc)
+        return agent, world
 
     @staticmethod
     def _shutdown_agent(agent: Any) -> str:
@@ -240,6 +329,15 @@ class SimStartTool:
         parts: list[str] = []
         base = getattr(agent, "_base", None)
         arm = getattr(agent, "_arm", None)
+
+        # SysNav pipeline (habitat world): perception nodes subprocess,
+        # consumer, feed — torn down before the base so nothing publishes
+        # into a closing bridge.
+        try:
+            from vector_os_nano.vcli import habitat_runtime
+            parts.extend(habitat_runtime.shutdown_sysnav(agent))
+        except Exception as exc:  # noqa: BLE001
+            parts.append(f"sysnav teardown failed: {exc}")
 
         # Go2: kill launched subprocess group (nav stack + bridge + MuJoCo)
         if base is not None:
@@ -782,11 +880,21 @@ class SimStopTool:
         app["agent"] = None
         app["scene_graph"] = None
         app["skill_registry"] = None
+        # A robot/habitat world without its sim is over — revert to dev so the
+        # persona/predicates match the (empty) hardware state.
+        if app.get("world") is not None:
+            try:
+                from vector_os_nano.vcli.worlds import resolve_world
+                app["world"] = resolve_world(None)
+                app["scenario"] = None
+            except Exception:  # noqa: BLE001
+                pass
 
-        # Revert dev-world tool visibility (robot/diag hidden again)
+        # Revert dev-world tool visibility (robot/diag/system hidden again)
         if registry is not None and hasattr(registry, "disable_category"):
             registry.disable_category("robot")
             registry.disable_category("diag")
+            registry.disable_category("system")
 
         # Rebuild a live (empty) DynamicSystemPrompt so state cleanly reverts to dev
         engine = app.get("engine")

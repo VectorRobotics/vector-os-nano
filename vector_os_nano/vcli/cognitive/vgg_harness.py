@@ -15,9 +15,13 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
+from vector_os_nano.vcli.cognitive.goal_executor import (
+    blocking_dependency,
+    skipped_step_record,
+)
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     GoalTree,
@@ -30,9 +34,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class HarnessConfig:
-    """Configuration for VGG retry behavior."""
+    """Configuration for VGG retry behavior.
+
+    Layer 2 (mid-tree re-decompose) intentionally does NOT exist: Layer-1
+    strategy retry + Layer-3 whole-tree replan cover it, and rewriting a
+    half-executed tree is high-complexity/low-yield (design review 2026-06-12
+    §5). The dead ``max_redecompose`` knob that promised it was deleted —
+    do not reintroduce.
+    """
     max_step_retries: int = 2       # per-step strategy retries (Layer 1)
-    max_redecompose: int = 1        # re-decompose attempts on step failure (Layer 2)
     max_pipeline_retries: int = 1   # full re-plan attempts (Layer 3)
     # Stage 4 (S4-4) — observation-driven mid-tree replan. The maximum number of
     # times the harness may re-decompose a SUCCEEDING run because a step's
@@ -129,6 +139,7 @@ class VGGHarness:
         failures: list[FailureRecord] = []
         best_trace: ExecutionTrace | None = None
         tree: GoalTree | None = None
+        last_trace: ExecutionTrace | None = None  # #17: completed-step source
         obs_replans_used = 0  # S4-4: bounded observation-driven re-decomposes
 
         # Data binding (Stage 1b): one fresh Blackboard scoped to this run. The
@@ -156,15 +167,22 @@ class VGGHarness:
                 # repeating the hallucination. ``tree`` still holds the previous
                 # attempt's GoalTree here (None on the very first attempt).
                 prior_notes = tuple(getattr(tree, "validation_notes", ()) or ())
+                prev_tree = tree
                 tree = self._decompose_with_context(
-                    task, fresh_context, failures, prior_notes
+                    task, fresh_context, failures, prior_notes,
+                    completed=self._completed_step_lines(last_trace),
                 )
                 if tree is None:
                     logger.warning("VGGHarness: decomposition failed on attempt %d", pipeline_attempt)
                     break
+                # Owner finding (c): a replanned step reusing a strategy must
+                # never DEGRADE to empty params (the '走到sofa' replan lost
+                # {"label": "sofa"} and produced an opaque bad_params error).
+                tree = self._inherit_replan_params(tree, prev_tree)
 
             # --- Execute with step-level retry ---
             trace = self._execute_with_retry(tree, failures)
+            last_trace = trace
 
             # Track best result
             if best_trace is None or trace.success:
@@ -190,7 +208,7 @@ class VGGHarness:
                     )
                     if new_tree is None:
                         return trace  # re-decompose failed — keep the verified run
-                    tree = new_tree
+                    tree = self._inherit_replan_params(new_tree, tree)
                     trace = self._execute_with_retry(tree, failures)
                     if trace.success:
                         best_trace = trace
@@ -282,6 +300,59 @@ class VGGHarness:
             return None
         return reason if reason else None
 
+    @staticmethod
+    def _inherit_replan_params(
+        new_tree: "GoalTree", prev_tree: "GoalTree | None"
+    ) -> "GoalTree":
+        """Carry prior param bindings into a replanned tree (owner finding (c)).
+
+        #18 (campaign #4) — TARGET-AWARE matching: a sub-goal in *new_tree*
+        with EMPTY ``strategy_params`` inherits by ``(strategy, sub_goal
+        name)`` first; the strategy-level fallback applies ONLY when the
+        prior tree bound that strategy in exactly ONE step (nothing to guess
+        over). Two prior navigates with different targets + a replanned step
+        matching neither name stays EMPTY — it fails bad_params and the
+        replan hears it, instead of the old 'latest wins' silently sending
+        BOTH navigates to the same target. Non-empty new params always win —
+        the LLM may deliberately re-bind. Deterministic, kernel-side;
+        identity when nothing applies.
+        """
+        if prev_tree is None:
+            return new_tree
+
+        def _norm(strategy: str) -> str:
+            # 'navigate_to' and 'navigate_to_skill' are the same route — the
+            # LLM uses both forms across replans.
+            return strategy[:-6] if strategy.endswith("_skill") else strategy
+
+        by_key: dict[tuple[str, str], dict] = {}
+        strategy_bindings: dict[str, list[dict]] = {}
+        for sg in prev_tree.sub_goals:
+            if sg.strategy and sg.strategy_params:
+                s = _norm(sg.strategy)
+                by_key[(s, sg.name)] = sg.strategy_params
+                strategy_bindings.setdefault(s, []).append(sg.strategy_params)
+        if not strategy_bindings:
+            return new_tree
+
+        import dataclasses
+
+        changed = False
+        merged = []
+        for sg in new_tree.sub_goals:
+            if not sg.strategy_params:
+                s = _norm(sg.strategy)
+                params = by_key.get((s, sg.name))
+                if params is None and len(strategy_bindings.get(s, ())) == 1:
+                    params = strategy_bindings[s][0]  # unambiguous fallback
+                if params is not None:
+                    sg = dataclasses.replace(sg, strategy_params=dict(params))
+                    changed = True
+            merged.append(sg)
+        if not changed:
+            return new_tree
+        return dataclasses.replace(new_tree, sub_goals=tuple(merged))
+
     def _obs_replan_decompose(
         self,
         task: str,
@@ -322,12 +393,30 @@ class VGGHarness:
         )
         return self._decompose_with_context(task, fresh_context, failures, prior_notes)
 
+    def _completed_step_lines(
+        self, trace: ExecutionTrace | None
+    ) -> tuple[str, ...]:
+        """One line per VERIFIED step of the previous attempt (#17).
+
+        The re-decompose used to see only failures, so it re-planned (and the
+        robot REPLAYED) motions that had already succeeded. Skipped /
+        visual-override steps don't count — only deterministic passes.
+        """
+        if trace is None:
+            return ()
+        return tuple(
+            f"{s.sub_goal_name} (strategy: {s.strategy or '?'}, verified)"
+            for s in trace.steps
+            if s.success and s.verify_result and not s.visual_override
+        )
+
     def _decompose_with_context(
         self,
         task: str,
         world_context: str,
         failures: list[FailureRecord],
         prior_validation_notes: tuple[str, ...] = (),
+        completed: tuple[str, ...] = (),
     ) -> GoalTree | None:
         """Decompose with failure history + prior validator feedback in context.
 
@@ -337,6 +426,14 @@ class VGGHarness:
         invalid so it stops hallucinating them.
         """
         enriched_context = world_context
+        if completed:
+            done_block = "\n".join(f"  - {line}" for line in completed)
+            enriched_context += (
+                "\n\nAlready COMPLETED and verified in the previous attempt "
+                "(do NOT plan these again — their outputs are still available "
+                "via ${step.path} bindings; plan only the remainder):\n"
+                f"{done_block}"
+            )
         if failures:
             failure_summary = "\n".join(
                 self._format_failure_line(f) for f in failures[-5:]  # last 5 failures
@@ -470,6 +567,7 @@ class VGGHarness:
         trace_start = time.monotonic()
         steps: list[StepRecord] = []
         overall_success = True
+        failed_names: set[str] = set()
 
         ordered = self._executor._topological_sort(tree)
 
@@ -482,6 +580,29 @@ class VGGHarness:
                     break
             except ImportError:
                 pass
+
+            # #11 — dependency-failure skip (the contract the old comment here
+            # PROMISED without implementing). Shared helper with
+            # GoalExecutor.execute: one tree, one failure semantics.
+            blocked_by = blocking_dependency(sub_goal, failed_names)
+            if blocked_by:
+                skip = skipped_step_record(sub_goal, blocked_by)
+                steps.append(skip)
+                failed_names.add(sub_goal.name)  # poison transitively
+                overall_success = False
+                if self._on_step:
+                    try:
+                        self._on_step(skip)
+                    except Exception:
+                        pass
+                failures.append(FailureRecord(
+                    sub_goal_name=skip.sub_goal_name,
+                    strategy_tried=skip.strategy,
+                    error=skip.error,
+                    step_index=i,
+                    failure_class="dep_skipped",
+                ))
+                continue
 
             # Stage 4 (S4-2): a foreach node expands at runtime into N children.
             # Delegate the whole expansion to the executor (it reads the producing
@@ -505,6 +626,7 @@ class VGGHarness:
                             failure_class=getattr(child, "failure_class", ""),
                         ))
                         overall_success = False
+                        failed_names.add(sub_goal.name)  # poison dependents
                 continue
 
             step = self._execute_step_with_retry(sub_goal, i, cfg.max_step_retries)
@@ -529,8 +651,9 @@ class VGGHarness:
                     failure_class=getattr(step, "failure_class", ""),
                 ))
                 overall_success = False
-                # Don't break — try remaining steps that don't depend on this one
-                # (steps with depends_on referencing the failed step will skip)
+                failed_names.add(sub_goal.name)
+                # Don't break — independent steps still run; steps whose
+                # depends_on references this one get a skipped record above.
 
         total_duration = time.monotonic() - trace_start
         return ExecutionTrace(
@@ -552,6 +675,7 @@ class VGGHarness:
         alternatives.
         """
         tried_strategies: set[str] = set()
+        attempt_errors: list[str] = []  # R10: the FIRST error is the diagnosis
 
         for attempt in range(max_retries + 1):
             # Select strategy (first attempt uses sub_goal.strategy, later uses selector)
@@ -594,13 +718,27 @@ class VGGHarness:
                 return step
 
             tried_strategies.add(step.strategy)
+            attempt_errors.append(step.error)
             if attempt < max_retries:
                 logger.info(
                     "VGGHarness: step %s attempt %d/%d failed (%s) — retrying",
                     sub_goal.name, attempt + 1, max_retries + 1, step.error,
                 )
 
-        return step  # return last failed attempt
+        # R10 (live finding): retries can DEGRADE the error (a re-routed
+        # attempt failing on a different, shallower cause buried the real
+        # "world model is EMPTY" diagnosis). Surface the first attempt's
+        # error alongside the last when they differ; the full history rides
+        # in result_data for the replan/observation surface.
+        if len(attempt_errors) > 1 and attempt_errors[0] != step.error:
+            import dataclasses
+            step = dataclasses.replace(
+                step,
+                error=f"{step.error} [attempt 1: {attempt_errors[0]}]",
+                result_data={**step.result_data,
+                             "attempt_errors": list(attempt_errors)},
+            )
+        return step  # last failed attempt (+ first-error context)
 
     def _retry_strategy(self, sub_goal: SubGoal) -> str:
         """Choose the strategy string for a retry attempt.

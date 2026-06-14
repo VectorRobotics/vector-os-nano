@@ -26,10 +26,8 @@ import re
 
 from rich.console import Console
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
-from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
@@ -52,7 +50,7 @@ from vector_os_nano.vcli.session import (
 from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.prompt import build_system_prompt
 from vector_os_nano.vcli.turn_status import TurnStatus
-from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_all_tools, discover_categorized_tools
+from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_categorized_tools
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -119,7 +117,7 @@ class VectorCompleter(Completer):
         text = document.text_before_cursor
 
         # Only complete slash commands and exit keywords
-        if not text.startswith("/") and not text.strip().lower() in ("q", "qu", "qui", "qui", "ex", "exi"):
+        if not text.startswith("/") and text.strip().lower() not in ("q", "qu", "qui", "qui", "ex", "exi"):
             return
 
         word = document.get_word_before_cursor(WORD=True)
@@ -296,7 +294,50 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-permission", action="store_true", help="Allow all tools without prompts")
     parser.add_argument("--verbose", action="store_true", help="Debug logging")
     parser.add_argument("--system-prompt", default=None, help="Path to custom system prompt file")
+    # W2.1 — background-run operations (early-exit; the REPL never starts).
+    parser.add_argument("--status", action="store_true",
+                        help="List registered background runs and exit")
+    parser.add_argument("--stop", default=None, metavar="RUN_ID",
+                        help="Stop a background run (SIGTERM, then SIGKILL) and exit")
+    parser.add_argument("--log", default=None, metavar="RUN_ID",
+                        help="Print the tail of a background run's log and exit")
     return parser.parse_args(argv)
+
+
+def _run_ops_dispatch(args: argparse.Namespace) -> bool:
+    """Handle the W2.1 run-operations flags. Returns True when one ran
+    (the caller exits without starting the REPL)."""
+    if not (args.status or args.stop or args.log):
+        return False
+    from vector_os_nano.vcli.daemon import stop_run, tail_log
+    from vector_os_nano.vcli.run_registry import RunRegistry
+
+    registry = RunRegistry()
+    if args.status:
+        runs = registry.list_runs()
+        if not runs:
+            console.print("[dim]no background runs[/dim]")
+        for r in runs:
+            import datetime as _dt
+            started = _dt.datetime.fromtimestamp(r.started_at).strftime("%H:%M:%S")
+            console.print(
+                f"  {r.run_id}  pid={r.pid}  world={r.world or '-'}"
+                f"{('/' + r.scenario) if r.scenario else ''}  since {started}"
+            )
+    elif args.stop:
+        ok = stop_run(registry, args.stop)
+        console.print(
+            f"[green]stopped {args.stop}[/green]" if ok
+            else f"[red]unknown run {args.stop!r}[/red] — try --status"
+        )
+    elif args.log:
+        entry = registry.get(args.log)
+        if entry is None:
+            console.print(f"[red]unknown run {args.log!r}[/red] — try --status")
+        else:
+            from pathlib import Path as _P
+            console.print(tail_log(str(_P(entry.log_dir) / f"{entry.run_id}.log")) or "[dim](empty)[/dim]")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +401,6 @@ def print_banner(
 
     When a playground ``scenario`` is active its name is shown in the info line.
     """
-    import shutil
     term_w = shutil.get_terminal_size().columns
     logo_lines = _load_logo_lines()
     max_logo_w = max((len(l) for l in logo_lines), default=0) if logo_lines else 0
@@ -392,12 +432,12 @@ def print_banner(
         if base is not None:
             info_parts.append(f"Base: {getattr(base, 'name', type(base).__name__)}")
     console.print(f"[dim]  {' | '.join(info_parts)}[/]")
-    console.print(f"[dim]  Type / for commands, quit to exit[/]")
+    console.print("[dim]  Type / for commands, quit to exit[/]")
     console.print()
 
 
 def ask_permission(tool_name: str, params: dict[str, Any]) -> str:
-    console.print(f"\n[yellow bold]Permission required:[/yellow bold]")
+    console.print("\n[yellow bold]Permission required:[/yellow bold]")
     console.print(f"  Tool: [{TEAL}]{tool_name}[/]")
     params_str = json.dumps(params, indent=2, ensure_ascii=False)
     if len(params_str) > 200:
@@ -492,6 +532,73 @@ def enter_scenario(scenario_id: str, app_state: dict[str, Any]) -> Any:
     return world
 
 
+def _maybe_init_habitat_agent(args: argparse.Namespace, world: Any) -> Any:
+    """Boot the habitat kinematic base for a habitat-backend scenario (M2).
+
+    Dispatches on the resolved world's ``scenario.sim_backend`` — data the M1
+    seam carries — so the kernel never imports a simulator from config. Lazy
+    domain imports mirror the playground scenario resolution path. Returns an
+    ``Agent`` with the connected base, or None (loudly) on any failure so the
+    REPL still starts with fail-safe predicates.
+    """
+    scenario = getattr(world, "scenario", None)
+    if scenario is None or getattr(scenario, "sim_backend", "mujoco") != "habitat":
+        return None
+    from vector_os_nano.vcli import habitat_runtime
+
+    try:
+        agent = habitat_runtime.boot_habitat_agent(
+            world, on_status=lambda line: console.print(f"[dim]  {line}[/dim]")
+        )
+
+        # M4/M5 — semantic perception into the REPL agent (opt-in):
+        # VECTOR_HABITAT_SYSNAV=1 starts the in-process pano/cloud/odom feed
+        # (same base, thread-safe bridge) and the /object_nodes_list consumer
+        # into THIS agent's world model. The SysNav nodes themselves run
+        # outside the REPL (scripts/launch_sysnav_nodes.sh, or the
+        # sysnav_perception tool mid-session) — heavy GPU procs.
+        if os.environ.get("VECTOR_HABITAT_SYSNAV") == "1":
+            try:
+                habitat_runtime.wire_sysnav_feed(
+                    agent,
+                    on_status=lambda line: console.print(f"[dim]  {line}[/dim]"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[yellow]SysNav wiring skipped: {exc}[/yellow]")
+        return agent
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]habitat scenario boot failed: {exc}[/red]")
+        return None
+
+
+def _maybe_init_g1_agent(args: argparse.Namespace, world: Any) -> Any:
+    """Boot the in-process G1 policy-gait base for the g1_flat scenario.
+
+    Campaign #5 — dispatches on the resolved world's embodiment ("g1") with
+    the default MuJoCo backend; sibling of _maybe_init_habitat_agent. Lazy
+    domain import; failure is loud, the REPL still starts.
+    """
+    scenario = getattr(world, "scenario", None)
+    if scenario is None or getattr(scenario, "embodiment", "") != "g1":
+        return None
+    from vector_os_nano.vcli import g1_runtime
+
+    # campaign #8 R0: open a live viewer window unless --headless. The owner
+    # drives the G1 from vector-cli and must SEE the gait, so the default is a
+    # window (mirrors the go2 default; --headless suppresses it, e.g. on a
+    # display-less box).
+    gui = not getattr(args, "headless", False)
+    try:
+        return g1_runtime.boot_g1_agent(
+            world,
+            on_status=lambda line: console.print(f"[dim]  {line}[/dim]"),
+            gui=gui,
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]g1 scenario boot failed: {exc}[/red]")
+        return None
+
+
 def _init_agent(args: argparse.Namespace) -> Any:
     if not (args.sim or args.sim_go2):
         return None
@@ -517,7 +624,7 @@ def _init_agent(args: argparse.Namespace) -> Any:
         from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2  # type: ignore[import]
         import os
 
-        console.print(f"[dim]  Starting Go2 MuJoCo simulation...[/dim]")
+        console.print("[dim]  Starting Go2 MuJoCo simulation...[/dim]")
         base = MuJoCoGo2(gui=True, room=True, backend="auto")
         base.connect()
         base.stand()
@@ -546,7 +653,7 @@ def _init_agent(args: argparse.Namespace) -> Any:
             try:
                 from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
                 agent._vlm = Go2VLMPerception(config={"api_key": api_key})
-                console.print(f"[dim]  VLM: GPT-4o via OpenRouter[/dim]")
+                console.print("[dim]  VLM: GPT-4o via OpenRouter[/dim]")
             except Exception:
                 agent._vlm = None
 
@@ -565,13 +672,13 @@ def _init_agent(args: argparse.Namespace) -> Any:
                 f"({_sg_stats['rooms']} rooms, {_sg_stats['objects']} objects)[/dim]"
             )
         else:
-            console.print(f"[dim]  Memory: scene graph (rooms -> viewpoints -> objects)[/dim]")
+            console.print("[dim]  Memory: scene graph (rooms -> viewpoints -> objects)[/dim]")
         agent._spatial_memory = _sg
 
         # ROS2 bridge + nav stack (background)
         try:
             _launch_ros2_stack(base)
-            console.print(f"[dim]  ROS2: bridge + nav stack launched[/dim]")
+            console.print("[dim]  ROS2: bridge + nav stack launched[/dim]")
         except Exception as exc:
             console.print(f"[dim]  ROS2: not available ({exc})[/dim]")
 
@@ -723,7 +830,7 @@ def _handle_slash_command(
         from vector_os_nano.vcli.config import load_config, save_config
         provider_choice = args_rest[0] if args_rest else None
         if provider_choice not in ("claude", "anthropic", "openrouter", None):
-            console.print(f"[yellow]  Usage: /login claude | /login anthropic | /login openrouter[/]")
+            console.print("[yellow]  Usage: /login claude | /login anthropic | /login openrouter[/]")
             return True
 
         if provider_choice is None:
@@ -744,8 +851,8 @@ def _handle_slash_command(
             console.print("[dim]  Opening browser for authentication...[/dim]\n")
             creds = login_oauth()
             if creds:
-                console.print(f"[green]  Authenticated.[/] Token saved to ~/.vector/oauth_credentials.json")
-                console.print(f"[dim]  Restart vector-cli to use your subscription.[/dim]\n")
+                console.print("[green]  Authenticated.[/] Token saved to ~/.vector/oauth_credentials.json")
+                console.print("[dim]  Restart vector-cli to use your subscription.[/dim]\n")
             else:
                 console.print("[red]  Authentication failed or timed out.[/]")
                 console.print("[dim]  Make sure you have an active Claude subscription.[/dim]\n")
@@ -758,7 +865,7 @@ def _handle_slash_command(
                 config["anthropic_api_key"] = key.strip()
                 config["provider"] = "anthropic"
                 save_config(config)
-                console.print(f"[green]  Saved.[/] Restart vector-cli to apply.")
+                console.print("[green]  Saved.[/] Restart vector-cli to apply.")
             else:
                 console.print("[dim]  Cancelled.[/dim]")
 
@@ -771,7 +878,7 @@ def _handle_slash_command(
                 config["provider"] = "openrouter"
                 config["base_url"] = "https://openrouter.ai/api/v1"
                 save_config(config)
-                console.print(f"[green]  Saved.[/] Restart vector-cli to apply.")
+                console.print("[green]  Saved.[/] Restart vector-cli to apply.")
             else:
                 console.print("[dim]  Cancelled.[/dim]")
 
@@ -905,7 +1012,7 @@ def _handle_slash_command(
     elif cmd == "clear":
         if session is not None:
             session._entries.clear()
-            console.print(f"[dim]  Conversation cleared.[/dim]")
+            console.print("[dim]  Conversation cleared.[/dim]")
         else:
             console.print("[dim]No session.[/dim]")
 
@@ -944,9 +1051,9 @@ def _handle_slash_command(
             pass
 
         if cleared:
-            console.print(f"[dim]  Scene graph cleared. All rooms/objects forgotten.[/dim]")
+            console.print("[dim]  Scene graph cleared. All rooms/objects forgotten.[/dim]")
         else:
-            console.print(f"[dim]  No scene graph file found.[/dim]")
+            console.print("[dim]  No scene graph file found.[/dim]")
 
     elif cmd == "reset":
         import os as _os
@@ -954,7 +1061,7 @@ def _handle_slash_command(
         try:
             with open("/tmp/vector_reset_pose", "w") as _f:
                 _f.write("1")
-            console.print(f"[dim]  Reset signal sent. Robot will stand up at current position.[/dim]")
+            console.print("[dim]  Reset signal sent. Robot will stand up at current position.[/dim]")
         except OSError as _exc:
             console.print(f"[yellow]  Failed to send reset: {_exc}[/]")
 
@@ -962,7 +1069,7 @@ def _handle_slash_command(
         if not args_rest:
             current = app_state.get("model", "unknown") if app_state else "unknown"
             console.print(f"  [{TEAL}]{current}[/]")
-            console.print(f"[dim]  /model <name> to switch. Tab for suggestions.[/dim]")
+            console.print("[dim]  /model <name> to switch. Tab for suggestions.[/dim]")
         else:
             new_model = args_rest[0]
             if app_state is None:
@@ -1261,6 +1368,28 @@ def _ensure_sigint_under_mjpython() -> None:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
+    # W2.1 run ops are cheap early exits — before any re-exec/credential/agent init.
+    if _run_ops_dispatch(args):
+        return
+
+    # Owner finding (b): an unsourced shell must still NL-start sysnav. Re-exec
+    # once with the ROS/SysNav overlays sourced when they exist on disk
+    # (LD_LIBRARY_PATH can only be set at process birth). No-op everywhere else.
+    from vector_os_nano.vcli.ros_bootstrap import maybe_reexec_with_ros
+    maybe_reexec_with_ros()
+    if os.environ.get("VECTOR_ROS_BOOTSTRAPPED"):
+        console.print(
+            "[dim]ROS env auto-sourced: "
+            f"{os.environ['VECTOR_ROS_BOOTSTRAPPED'].replace(':', ' + ')}[/dim]"
+        )
+
+    # W2.2: tag this session so every descendant (sim subprocess, nav stack,
+    # explore threads' children) inherits VECTOR_RUN_ID — the watchdog can then
+    # sweep strays by tag after an abnormal exit. setdefault keeps an outer tag
+    # (e.g. a daemonized parent) authoritative.
+    import uuid as _uuid
+    os.environ.setdefault("VECTOR_RUN_ID", f"cli-{_uuid.uuid4().hex[:8]}")
+
     # --- macOS mjpython re-exec guard (must be before any credential/agent init) ---
     _maybe_reexec_under_mjpython(args)
 
@@ -1291,6 +1420,13 @@ def main(argv: list[str] | None = None) -> None:
     # BEFORE the verifier namespace is built, so the merge picks up its predicates.
     agent = _init_agent(args)
     world = _resolve_active_world(args, agent)
+    # M2 (ADR-009): a habitat-backend scenario boots its own kinematic base
+    # when no sim agent was requested — same lazy domain wiring as the
+    # scenario resolution above; failure is loud, the REPL still starts.
+    if agent is None:
+        agent = _maybe_init_habitat_agent(args, world)
+    if agent is None:
+        agent = _maybe_init_g1_agent(args, world)   # campaign #5: g1_flat
 
     # Tools (categorized registry for scalable tool management)
     registry: CategorizedToolRegistry = CategorizedToolRegistry()
@@ -1340,7 +1476,10 @@ def main(argv: list[str] | None = None) -> None:
         base = getattr(agent, "_base", None) if agent else None
         sg = getattr(agent, "_spatial_memory", None) if agent else None
         arm = getattr(agent, "_arm", None) if agent else None
-        robot_ctx_provider = RobotContextProvider(base=base, scene_graph=sg, arm=arm)
+        wm = getattr(agent, "_world_model", None) if agent else None
+        robot_ctx_provider = RobotContextProvider(
+            base=base, scene_graph=sg, arm=arm, world=world, world_model=wm
+        )
     except ImportError:
         pass
     system_prompt = build_system_prompt(
@@ -1481,7 +1620,7 @@ def main(argv: list[str] | None = None) -> None:
             persist_dir=(Path.home() / ".vector") if not world.is_robot() else None,
         )
         if engine._vgg_enabled:
-            console.print(f"[dim]  VGG cognitive layer: enabled[/dim]")
+            console.print("[dim]  VGG cognitive layer: enabled[/dim]")
     except Exception:
         pass
 
@@ -1510,7 +1649,7 @@ def main(argv: list[str] | None = None) -> None:
     def _get_toolbar() -> HTML:
         agent_now = app_state.get("agent")
         current_model = app_state.get("model", "?")
-        parts: list[str] = [f"<b>V</b>"]
+        parts: list[str] = ["<b>V</b>"]
         arm_now = getattr(agent_now, "_arm", None) if agent_now else None
         base_now = getattr(agent_now, "_base", None) if agent_now else None
         if arm_now is not None:
@@ -1585,7 +1724,7 @@ def main(argv: list[str] | None = None) -> None:
 
             # ---- Engine turn ----
             if engine is None:
-                console.print(f"[yellow]No API key. Use /login to authenticate first.[/]")
+                console.print("[yellow]No API key. Use /login to authenticate first.[/]")
                 continue
 
             try:
@@ -1817,12 +1956,20 @@ def main(argv: list[str] | None = None) -> None:
                         n_steps = len(trace.steps)
                         n_ok = sum(1 for s in trace.steps if s.success)
                         dur = trace.total_duration_sec
-                        # Evidence gate: a successful run only counts as *verified*
-                        # when its steps are backed by deterministic predicates
-                        # (dev world). Robot worlds bypass the gate.
+                        # Evidence gate (invariant II): a successful run only
+                        # counts as *verified* when its steps are backed by
+                        # deterministic predicates — in EVERY world; only the
+                        # world's bounded exemption set is excused.
                         try:
                             from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
-                            _evidence = evidence_passed(trace, is_robot=bool(world.is_robot()))
+                            from vector_os_nano.vcli.engine import _world_exempt_strategies
+                            # Read the LIVE world — the closure-captured one
+                            # goes stale after an NL sim start swaps worlds.
+                            _w = app_state.get("world") or world
+                            _evidence = evidence_passed(
+                                trace,
+                                exempt_strategies=_world_exempt_strategies(_w),
+                            )
                         except Exception:  # noqa: BLE001
                             _evidence = True
                         if trace.success and _evidence:
@@ -1954,12 +2101,12 @@ def main(argv: list[str] | None = None) -> None:
                 if "429" in err_str or "rate_limit" in err_str:
                     current_model = app_state.get("model", "?")
                     console.print(f"[yellow]  Rate limited on {current_model}.[/]")
-                    console.print(f"[dim]  Try: /model claude-haiku-4-5 (lower rate limit)[/dim]")
+                    console.print("[dim]  Try: /model claude-haiku-4-5 (lower rate limit)[/dim]")
                 elif "401" in err_str or "authentication" in err_str.lower():
-                    console.print(f"[yellow]  Authentication failed. Use /login to reconfigure.[/]")
+                    console.print("[yellow]  Authentication failed. Use /login to reconfigure.[/]")
                 elif "404" in err_str or "not_found" in err_str:
                     console.print(f"[yellow]  Model not found: {app_state.get('model', '?')}[/]")
-                    console.print(f"[dim]  Try: /model claude-haiku-4-5[/dim]")
+                    console.print("[dim]  Try: /model claude-haiku-4-5[/dim]")
                 else:
                     console.print(f"[red]Error:[/] {exc}")
                 if args.verbose:

@@ -135,7 +135,7 @@ class TestStepLevelRetry:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=1, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=1, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -159,7 +159,7 @@ class TestStepLevelRetry:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=2, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=2, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -183,7 +183,7 @@ class TestStepLevelRetry:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -217,7 +217,7 @@ class TestStepLevelRetry:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=1, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=1, max_pipeline_retries=0),
         )
         harness.run("test task", "world ctx")
 
@@ -259,7 +259,7 @@ class TestTreeContinuesAfterStepFailure:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -290,7 +290,7 @@ class TestTreeContinuesAfterStepFailure:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -330,7 +330,7 @@ class TestTreeContinuesAfterStepFailure:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -367,7 +367,7 @@ class TestPipelineRetry:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -390,7 +390,7 @@ class TestPipelineRetry:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -426,7 +426,7 @@ class TestPipelineRetry:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
         )
         harness.run("test task", "base_world_context")
 
@@ -469,7 +469,7 @@ class TestPipelineRetry:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
         )
         harness.run("test task", "base ctx")
 
@@ -505,7 +505,7 @@ class TestHarnessIntegration:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=1, max_redecompose=1, max_pipeline_retries=1),
+            config=HarnessConfig(max_step_retries=1, max_pipeline_retries=1),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -534,7 +534,7 @@ class TestHarnessIntegration:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -557,7 +557,7 @@ class TestHarnessIntegration:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
             on_step=fired.append,
         )
         harness.run("test task", "world ctx")
@@ -588,7 +588,7 @@ class TestHarnessIntegration:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
             on_replan=replan_msgs.append,
         )
         harness.run("test task", "world ctx")
@@ -616,7 +616,7 @@ class TestHarnessIntegration:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
             on_step=bad_callback,
         )
         trace = harness.run("test task", "world ctx")
@@ -648,7 +648,7 @@ class TestHarnessEdgeCases:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx", goal_tree=tree)
 
@@ -667,7 +667,7 @@ class TestHarnessEdgeCases:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -685,7 +685,7 @@ class TestHarnessEdgeCases:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("test task", "world ctx")
 
@@ -695,7 +695,8 @@ class TestHarnessEdgeCases:
         """Default HarnessConfig has reasonable positive values."""
         cfg = HarnessConfig()
         assert cfg.max_step_retries >= 1
-        assert cfg.max_redecompose >= 0
+        # max_redecompose deleted (campaign #4 batch 1, #11): dead Layer-2 knob
+        assert not hasattr(cfg, "max_redecompose")
         assert cfg.max_pipeline_retries >= 1
 
     def test_harness_config_frozen(self) -> None:
@@ -718,7 +719,7 @@ class TestHarnessEdgeCases:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         trace = harness.run("nothing to do", "world ctx")
 
@@ -744,7 +745,7 @@ class TestHarnessEdgeCases:
         harness = VGGHarness(
             decomposer=decomposer,
             executor=executor,
-            config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+            config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
         )
         harness.run("test task", "world ctx")
 

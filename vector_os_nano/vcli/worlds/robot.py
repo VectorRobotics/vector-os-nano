@@ -24,6 +24,22 @@ class RobotWorld:
     def is_robot(self) -> bool:
         return True
 
+    def evidence_exempt_strategies(self) -> "frozenset[str]":
+        # TRANSITIONAL (invariant II, design review #4): the real-hardware
+        # world's async/locomotion skills carry no symbolic post-condition
+        # yet, so they stay exempt — manipulation (pick/place) must always
+        # carry real predicates. Invariant III shrinks this set as skills
+        # gain real verify hints; the set is BOUNDED and reviewed, never
+        # derived from runtime state.
+        # navigate/look/describe_scene graduated in invariant III (they
+        # declare real verify templates now); motion skills remain until the
+        # batch-2 moved/duration result contract gives them real predicates.
+        # walk/turn graduated in batch 2 R7 (measured moved_m/turned_rad
+        # evidence + real verify templates).
+        return frozenset({
+            "explore", "patrol", "stand", "sit", "stop", "where_am_i",
+        })
+
     def persona_blocks(self) -> tuple[str, str]:
         return ROBOT_ROLE_PROMPT, ROBOT_TOOL_INSTRUCTIONS
 

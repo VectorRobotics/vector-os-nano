@@ -128,10 +128,26 @@ class RobotStatusTool:
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         agent = context.agent
+        if agent is None and context.app_state is not None:
+            # start_simulation swaps app_state["agent"] mid-turn while
+            # ToolContext.agent was captured at turn start — see the fresh one.
+            agent = context.app_state.get("agent")
         if agent is None:
             return ToolResult(content="No agent available", is_error=True)
 
         lines: list[str] = []
+
+        # World/scenario — a habitat scenario means the simulator is already
+        # live; without this line the hardware-only output ("Arm: not
+        # connected, ...") reads like a dead system.
+        app = context.app_state or {}
+        world = app.get("world")
+        scenario = getattr(world, "scenario", None)
+        if scenario is not None and getattr(scenario, "sim_backend", "mujoco") == "habitat":
+            lines.append(
+                f"World: {scenario.id} (habitat backend, scene "
+                f"{scenario.scene_ref}) — running"
+            )
 
         # Arm
         arm = getattr(agent, "_arm", None)
@@ -181,5 +197,25 @@ class RobotStatusTool:
         # Perception
         perception = getattr(agent, "_perception", None)
         lines.append(f"Perception: {'active' if perception is not None else 'not available'}")
+
+        # Live semantic objects + SysNav pipeline (habitat world)
+        wm = getattr(agent, "_world_model", None)
+        if scenario is not None and getattr(scenario, "sim_backend", "mujoco") == "habitat":
+            if wm is not None:
+                try:
+                    lines.append(f"Live objects: {len(wm.get_objects())}")
+                except Exception:  # noqa: BLE001 — status line, never raise
+                    pass
+            feed = getattr(agent, "_sysnav_feed", None)
+            lines.append(
+                "SysNav feed: up" if feed is not None else "SysNav feed: not wired"
+            )
+            proc = getattr(agent, "_sysnav_proc", None)
+            if proc is not None and proc.poll() is None:
+                lines.append(f"SysNav nodes: running (pid {proc.pid})")
+            elif proc is not None:
+                lines.append(f"SysNav nodes: exited (code {proc.poll()})")
+            else:
+                lines.append("SysNav nodes: not started")
 
         return ToolResult(content="\n".join(lines))

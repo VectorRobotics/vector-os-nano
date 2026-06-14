@@ -1,0 +1,562 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
+"""HabitatSysnavBridge — feed SysNav from the photoreal world (M4, Part A).
+
+Publishes the THREE input topics the SysNav sibling workspace consumes
+(archived contract, `git show 2f83690:docs/archive/sysnav_integration.md`):
+
+- ``/camera/image``      sensor_msgs/Image — equirect RGB pano (Theta-Z1 role)
+- ``/registered_scan``   sensor_msgs/PointCloud2 — WORLD-frame cloud,
+                         unprojected from the SAME pose-synced equirect depth
+- ``/state_estimation``  nav_msgs/Odometry — exact ground-truth pose
+
+N1 makes this ALSO the locomotion boundary: a second timer publishes
+``/state_estimation`` at nav-stack rate (50 Hz default, with twist) off the
+bridge's STREAM channel — never queued behind the pano render — and a
+``/cmd_vel`` (geometry_msgs/Twist) subscription streams velocity commands
+into the base. The 2 Hz pano tick keeps publishing the pose-synced triplet
+(M4 contract unchanged).
+
+N2 completes the CMU nav-stack contract: ``/state_estimation`` carries the
+SENSOR pose (base + eye height — the cloud's true capture origin; CMU
+convention is sensor-frame odometry, and the Go2 track did the same with
+its mast offset) + TF ``map→sensor`` per fast tick + ``/speed`` keep-alive
+(NO ``/joy`` — pathFollower's joystickHandler would zero autonomy speed,
+the Go2 lesson) + a ``/navigation_cmd_vel`` (TwistStamped, pathFollower's
+output) subscription, and an optional ceiling filter on the published
+cloud (``scan_ceiling_m`` above the BASE z) so terrain analysis never eats
+the roof. Static TF sensor→base_link comes from local_planner.launch.py —
+never duplicated here.
+
+The v2.4 MuJoCo sensors stalled on semantically EMPTY renders; this bridge
+finally delivers the wiring on real visuals. rclpy imports are lazy (module
+imports clean without ROS2); the unprojection is a PURE function tested
+without rclpy. PointCloud2 byte layout reuses the tested
+``hardware/sim/sensors/lidar360.LidarSample`` serialiser.
+"""
+from __future__ import annotations
+
+import logging
+import math
+from typing import Any
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+_EYE_HEIGHT_M = 1.2  # pano sensors mount (mirrors server.py specs)
+
+# SysNav camera contract (cloud_image_fusion CAMERA_PARA): a 1920x640 equirect
+# with 120° vertical FOV — i.e. a full 960-row equirect cropped 30° (160 rows)
+# top and bottom. The server renders 960x1920; we publish rows [160:800].
+_SYSNAV_IMG_WIDTH = 1920
+_SYSNAV_IMG_HEIGHT = 640
+_SYSNAV_CROP_TOP = 160
+
+
+def crop_to_sysnav_image(rgb: np.ndarray) -> np.ndarray:
+    """Crop a full equirect pano to the SysNav 1920x640 ±60° contract."""
+    h, w = rgb.shape[0], rgb.shape[1]
+    if (h, w) == (_SYSNAV_IMG_HEIGHT, _SYSNAV_IMG_WIDTH):
+        return rgb
+    if w != _SYSNAV_IMG_WIDTH or h < _SYSNAV_CROP_TOP + _SYSNAV_IMG_HEIGHT:
+        raise ValueError(
+            f"pano {h}x{w} cannot satisfy the SysNav "
+            f"{_SYSNAV_IMG_HEIGHT}x{_SYSNAV_IMG_WIDTH} contract"
+        )
+    return rgb[_SYSNAV_CROP_TOP:_SYSNAV_CROP_TOP + _SYSNAV_IMG_HEIGHT]
+
+
+def unproject_equirect_depth(
+    depth: np.ndarray,
+    pos_world: "tuple[float, float, float] | list[float]",
+    heading: float,
+    *,
+    eye_height: float = _EYE_HEIGHT_M,
+    stride: int = 4,
+    max_depth: float = 20.0,
+) -> np.ndarray:
+    """Equirect depth pano -> (N, 3) float32 WORLD-frame points. Pure math.
+
+    Conventions (pinned by tests): pixel column W/2 looks along the agent
+    heading; lon grows to the agent's RIGHT (lon=+pi/2 is heading - 90°);
+    row H/2 is the horizon; the sensor sits ``eye_height`` above the agent's
+    world z. Invalid/far returns are dropped.
+    """
+    h, w = depth.shape
+    d = depth[::stride, ::stride].astype(np.float32)
+    rows = np.arange(0, h, stride, dtype=np.float32)
+    cols = np.arange(0, w, stride, dtype=np.float32)
+    lat = (0.5 - rows / float(h)) * math.pi          # +pi/2 (up) .. -pi/2
+    lon = (cols / float(w) - 0.5) * 2.0 * math.pi    # -pi .. +pi, 0 = ahead
+    lon_g, lat_g = np.meshgrid(lon, lat)
+    cos_lat = np.cos(lat_g)
+
+    # habitat's EquirectangularSensor depth is the CUBEMAP-FACE z-depth
+    # (perpendicular to whichever cube face the ray samples), NOT the
+    # euclidean ray distance — spike-verified on the empty stage: every
+    # downward angle returned the constant camera-to-floor height instead
+    # of height/sin(elevation) (tricky-bugs Case 5; the warp made flat
+    # floors ripple ±14 cm and the nav stack saw obstacles everywhere).
+    # euclidean = face_depth / |û·n̂|, where |û·n̂| is the largest axis
+    # component of the unit ray in the sensor frame (sign-agnostic).
+    face_cos = np.maximum(
+        np.abs(np.sin(lat_g)),
+        np.maximum(
+            np.abs(cos_lat * np.cos(lon_g)), np.abs(cos_lat * np.sin(lon_g))
+        ),
+    )
+    d = d / face_cos
+
+    # Bearing in the WORLD frame: heading at lon=0, turning RIGHT as lon grows.
+    bearing = heading - lon_g
+    dirs = np.stack(
+        [
+            cos_lat * np.cos(bearing),   # world x
+            cos_lat * np.sin(bearing),   # world y
+            np.sin(lat_g),               # world z (up)
+        ],
+        axis=-1,
+    )
+    valid = np.isfinite(d) & (d > 0.05) & (d < max_depth)
+    pts = dirs[valid] * d[valid][..., None]
+    origin = np.array(
+        [pos_world[0], pos_world[1], pos_world[2] + eye_height], dtype=np.float32
+    )
+    return (pts + origin).astype(np.float32)
+
+
+def filter_ceiling(
+    points: np.ndarray, base_z: float, ceiling_m: "float | None"
+) -> np.ndarray:
+    """Drop points above ``base_z + ceiling_m`` (pure; None = no filter).
+
+    The full-sphere unprojection includes the roof; terrain analysis and the
+    local planner must never treat it as an obstacle band (the Go2 track's
+    ceiling_filter_height lesson)."""
+    if ceiling_m is None or len(points) == 0:
+        return points
+    return points[points[:, 2] <= float(base_z) + float(ceiling_m)]
+
+
+def make_pointcloud2_parts(points_xyz: np.ndarray) -> "tuple[bytes, list, int]":
+    """(data_bytes, field_layout, point_step) via the tested LidarSample path.
+
+    LidarSample carries (N, 4) ``[x, y, z, intensity]`` — pad a unit
+    intensity channel onto the unprojected xyz cloud.
+    """
+    from vector_os_nano.hardware.sim.sensors.lidar360 import LidarSample
+
+    xyzi = np.concatenate(
+        [
+            points_xyz.astype(np.float32),
+            np.ones((len(points_xyz), 1), dtype=np.float32),
+        ],
+        axis=1,
+    )
+    sample = LidarSample(stamp_seconds=0.0, frame_id="map", points=xyzi)
+    return sample.pointcloud2_data_bytes(), sample.field_layout, sample.point_step
+
+
+class HabitatSysnavBridge:
+    """rclpy node publishing the SysNav input triplet from a HabitatBase.
+
+    Lazy ROS2: constructing requires rclpy; importing this module does not.
+    """
+
+    def __init__(
+        self,
+        base: Any,
+        hz: float = 2.0,
+        *,
+        state_hz: float = 50.0,
+        cmd_vel_topic: str = "/cmd_vel",
+        scan_ceiling_m: "float | None" = None,
+        nav_speed: float = 0.8,
+        node_name: str = "habitat_sysnav_bridge",
+    ) -> None:
+        import rclpy  # noqa: PLC0415 — lazy by design
+        from geometry_msgs.msg import Twist, TwistStamped
+        from nav_msgs.msg import Odometry
+        from rclpy.node import Node
+        from sensor_msgs.msg import Image, PointCloud2, PointField
+        from std_msgs.msg import Float32
+        from tf2_ros import TransformBroadcaster
+
+        self._base = base
+        self._scan_ceiling = scan_ceiling_m
+        self._nav_speed = float(nav_speed)
+        self._Image = Image
+        self._PointCloud2 = PointCloud2
+        self._PointField = PointField
+        self._Odometry = Odometry
+
+        if not rclpy.ok():
+            rclpy.init()
+        self.node: "Node" = rclpy.create_node(node_name)
+        self._pub_image = self.node.create_publisher(Image, "/camera/image", 5)
+        self._pub_cloud = self.node.create_publisher(PointCloud2, "/registered_scan", 5)
+        self._pub_odom = self.node.create_publisher(Odometry, "/state_estimation", 10)
+        self._timer = self.node.create_timer(1.0 / hz, self.publish_once)
+        # N1: fast odom off the stream channel + streaming velocity input,
+        # on a SEPARATE node. Live-measured: rclpy's MultiThreadedExecutor
+        # caps a 50 Hz timer at ~29 Hz (with or without pano load) while a
+        # SingleThreadedExecutor hits 50.0 — so the fast path gets its own
+        # node and spin_in_background() gives each node a dedicated
+        # single-threaded executor.
+        self.fast_node: "Node" = rclpy.create_node(node_name + "_fast")
+        self._pub_odom_fast = self.fast_node.create_publisher(
+            Odometry, "/state_estimation", 10
+        )
+        self._tf_broadcaster = TransformBroadcaster(self.fast_node)
+        self._state_timer = None
+        if state_hz and state_hz > 0:
+            self._state_timer = self.fast_node.create_timer(
+                1.0 / state_hz, self.publish_state_once
+            )
+        self._sub_cmd = None
+        self._sub_cmd_stamped = None
+        if cmd_vel_topic:
+            self._sub_cmd = self.fast_node.create_subscription(
+                Twist, cmd_vel_topic, self._on_cmd_vel, 10
+            )
+            # pathFollower's output (N2): same handler, stamped envelope.
+            self._sub_cmd_stamped = self.fast_node.create_subscription(
+                TwistStamped, "/navigation_cmd_vel",
+                lambda m: self._on_cmd_vel(m.twist), 10,
+            )
+        # pathFollower keep-alive: /speed scales autonomy velocity. NO /joy —
+        # its joystickHandler zeros joySpeed when axes[4]==0 (the Go2 lesson).
+        self._pub_speed = self.fast_node.create_publisher(Float32, "/speed", 5)
+        self._Float32 = Float32
+        self._speed_timer = self.fast_node.create_timer(0.5, self._publish_speed)
+        # N4: waypoint goals INTO the nav stack (the FAR/TARE interface).
+        from geometry_msgs.msg import PointStamped
+
+        self._PointStamped = PointStamped
+        self._pub_way = self.fast_node.create_publisher(PointStamped, "/way_point", 5)
+        self._executors: list = []
+        logger.info(
+            "HabitatSysnavBridge up (pano %.1f Hz, state %.1f Hz, cmd %s)",
+            hz, state_hz or 0.0, cmd_vel_topic or "<off>",
+        )
+
+    def spin_in_background(self) -> None:
+        """Spin both nodes, each on its OWN single-threaded executor thread
+        (the only configuration measured to sustain the 50 Hz fast path —
+        see the class docstring note on MultiThreadedExecutor). Idempotent."""
+        import threading
+
+        from rclpy.executors import SingleThreadedExecutor
+
+        if self._executors:
+            return
+        for node in (self.node, self.fast_node):
+            ex = SingleThreadedExecutor()
+            ex.add_node(node)
+            threading.Thread(
+                target=ex.spin, daemon=True, name=f"sysnav-{node.get_name()}"
+            ).start()
+            self._executors.append(ex)
+
+    # one tick — also directly callable from tests (no timer needed)
+    def publish_once(self) -> None:
+        try:
+            pano = self._base.get_pano()
+        except Exception as exc:  # noqa: BLE001 — keep ticking, log loud
+            logger.warning("sysnav bridge: pano fetch failed: %s", exc)
+            return
+        now = self.node.get_clock().now().to_msg()
+        try:
+            img = crop_to_sysnav_image(pano["rgb"])
+        except ValueError as exc:
+            logger.warning("sysnav bridge: %s — publishing uncropped", exc)
+            img = pano["rgb"]
+        try:
+            self._pub_image.publish(self._image_msg(img, now))
+            # The cloud keeps the FULL sphere (richer for voxel clustering)
+            # unless a ceiling filter is set (nav profile); the fusion
+            # projects it onto the cropped image with its own model.
+            pts = unproject_equirect_depth(
+                pano["depth"], pano["pos"], pano["heading"]
+            )
+            pts = filter_ceiling(pts, pano["pos"][2], self._scan_ceiling)
+            self._pub_cloud.publish(self._cloud_msg(pts, now))
+            self._pub_odom.publish(self._odom_msg(pano["pos"], pano["heading"], now))
+        except Exception as exc:  # noqa: BLE001 — mid-destroy ticks must not raise
+            logger.debug("sysnav bridge: publish skipped: %s", exc)
+
+    def _publish_speed(self) -> None:
+        msg = self._Float32()
+        msg.data = self._nav_speed
+        self._pub_speed.publish(msg)
+
+    # -- nav-stack navigation (N4) ---------------------------------------
+    def nav_stack_active(self) -> bool:
+        """True when a pathFollower is alive (someone publishes
+        /navigation_cmd_vel) — the discriminator the navigate skill uses to
+        pick sensor navigation over the sim oracle."""
+        try:
+            return self.fast_node.count_publishers("/navigation_cmd_vel") > 0
+        except Exception:  # noqa: BLE001
+            return False
+
+    def send_waypoint(self, x: float, y: float) -> None:
+        wp = self._PointStamped()
+        wp.header.stamp = self.fast_node.get_clock().now().to_msg()
+        wp.header.frame_id = "map"
+        wp.point.x, wp.point.y = float(x), float(y)
+        self._pub_way.publish(wp)
+
+    def navigate_to(
+        self,
+        x: float,
+        y: float,
+        tol: float = 0.5,
+        *,
+        timeout_s: float = 90.0,
+        stall_s: float = 12.0,
+        poll_s: float = 0.5,
+    ) -> dict:
+        """SENSOR navigation: publish /way_point and watch progress.
+
+        The whole loop is oracle-free — progress is EUCLIDEAN distance from
+        live odometry (the navmesh oracle stays verify-only). Honest
+        outcomes: pathFollower halts at the END of the planned path
+        (stopDisThre 0.4), so ``tol`` is floored at 0.5; no euclidean
+        progress for ``stall_s`` (grace 5 s) returns reached=False with
+        reason 'stall' (blocked/unreachable goals stop honestly).
+        """
+        import math as _math
+        import time as _time
+
+        tol = max(float(tol), 0.5)
+        t0 = _time.monotonic()
+        start = self._base.get_position()
+        moved = 0.0
+        prev = start
+
+        def _out(reached: bool, pos, d: float, **extra) -> dict:
+            # Three-value contract (batch 2 R6, design review #9): every
+            # outcome carries MOTION EVIDENCE — "drove there" and "never
+            # moved" are no longer the same shape.
+            return {
+                "reached": reached, "remaining": d, "pos": pos,
+                "transport": "nav_stack",
+                "already_there": bool(extra.pop("already_there", False)),
+                "moved_m": round(moved, 3),
+                "elapsed_s": round(_time.monotonic() - t0, 3),
+                **extra,
+            }
+
+        d0 = _math.hypot(start[0] - x, start[1] - y)
+        if d0 <= tol:
+            # Honest distinct outcome — the goal predicate held BEFORE any
+            # motion; never a silent zero-motion 'reached'.
+            return _out(True, start, d0, already_there=True)
+
+        deadline = t0 + timeout_s
+        grace_until = t0 + 5.0
+        best = float("inf")
+        best_at = t0
+        pos = start
+        while _time.monotonic() < deadline:
+            self.send_waypoint(x, y)
+            _time.sleep(poll_s)
+            pos = self._base.get_position()
+            moved += _math.hypot(pos[0] - prev[0], pos[1] - prev[1])
+            prev = pos
+            d = _math.hypot(pos[0] - x, pos[1] - y)
+            if d <= tol:
+                return self._confirm_arrival(_out, pos, d, x, y, tol)
+            if d < best - 0.1:
+                best, best_at = d, _time.monotonic()
+            elif (_time.monotonic() > grace_until
+                  and _time.monotonic() - best_at > stall_s):
+                return _out(False, pos, d, reason="stall")
+        d = _math.hypot(pos[0] - x, pos[1] - y)
+        return _out(False, pos, d, reason="timeout")
+
+    def _confirm_arrival(self, out, pos, d: float, x: float, y: float, tol: float) -> dict:
+        """ONE geodesic check on euclidean arrival (design review #8): a wall
+        between robot and goal makes euclid small but geodesic long — that
+        coincidence must never count as reached. The progress loop itself
+        stays oracle-free; this is the verify-side oracle, used once. A base
+        without the capability fails OPEN with an explicit unchecked marker
+        (the predicate-level verify still judges the step).
+        """
+        gd_fn = getattr(self._base, "geodesic_distance", None)
+        if not callable(gd_fn):
+            return out(True, pos, d, geodesic_unchecked=True)
+        try:
+            gd = float(gd_fn([pos[0], pos[1], pos[2] if len(pos) > 2 else 0.0],
+                             [x, y, pos[2] if len(pos) > 2 else 0.0]))
+        except Exception:  # noqa: BLE001
+            return out(True, pos, d, geodesic_unchecked=True)
+        if gd <= max(2.0 * tol, tol + 0.5):
+            return out(True, pos, d, remaining_geodesic=round(gd, 3))
+        return out(False, pos, d, reason="geodesic_mismatch",
+                   remaining_geodesic=round(gd, 3))
+
+    def publish_state_once(self) -> None:
+        """Fast odom tick (N1/N2) — one stream-channel roundtrip, with twist
+        and the TF map→sensor the nav stack expects."""
+        try:
+            st = self._base.get_state()
+        except Exception as exc:  # noqa: BLE001 — keep ticking, log loud
+            logger.warning("sysnav bridge: state fetch failed: %s", exc)
+            return
+        try:
+            now = self.fast_node.get_clock().now().to_msg()
+            msg = self._odom_msg(st["pos"], st["heading"], now, vel=st.get("vel"))
+            self._pub_odom_fast.publish(msg)
+            self._tf_broadcaster.sendTransform(self._tf_msg(msg))
+        except Exception as exc:  # noqa: BLE001 — mid-destroy ticks must not raise
+            logger.debug("sysnav bridge: state publish skipped: %s", exc)
+
+    def _tf_msg(self, odom: Any) -> Any:
+        from geometry_msgs.msg import TransformStamped  # cached by import system
+
+        t = TransformStamped()
+        t.header.stamp = odom.header.stamp
+        t.header.frame_id = "map"
+        t.child_frame_id = "sensor"
+        t.transform.translation.x = odom.pose.pose.position.x
+        t.transform.translation.y = odom.pose.pose.position.y
+        t.transform.translation.z = odom.pose.pose.position.z
+        t.transform.rotation.z = odom.pose.pose.orientation.z
+        t.transform.rotation.w = odom.pose.pose.orientation.w
+        return t
+
+    def _on_cmd_vel(self, msg: Any) -> None:
+        """Stream a /cmd_vel Twist into the base (non-blocking, deadman'd
+        server-side — a dead publisher stops the robot, never a runaway)."""
+        try:
+            self._base.set_velocity(
+                float(msg.linear.x), float(msg.linear.y), float(msg.angular.z)
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("sysnav bridge: cmd_vel apply failed: %s", exc)
+
+    # -- message builders ---------------------------------------------------
+    def _image_msg(self, rgb: np.ndarray, stamp: Any) -> Any:
+        msg = self._Image()
+        msg.header.stamp = stamp
+        msg.header.frame_id = "camera"
+        msg.height, msg.width = int(rgb.shape[0]), int(rgb.shape[1])
+        msg.encoding = "rgb8"
+        msg.is_bigendian = 0
+        msg.step = msg.width * 3
+        msg.data = rgb.tobytes()
+        return msg
+
+    def _cloud_msg(self, points: np.ndarray, stamp: Any) -> Any:
+        data, layout, point_step = make_pointcloud2_parts(points)
+        msg = self._PointCloud2()
+        msg.header.stamp = stamp
+        msg.header.frame_id = "map"
+        msg.height = 1
+        msg.width = len(points)
+        msg.fields = [
+            self._PointField(
+                name=name, offset=off, datatype=self._PointField.FLOAT32, count=1
+            )
+            for name, off, _ in layout
+        ]
+        msg.is_bigendian = False
+        msg.point_step = point_step
+        msg.row_step = point_step * len(points)
+        msg.data = data
+        msg.is_dense = True
+        return msg
+
+    def _odom_msg(
+        self,
+        pos: "list[float]",
+        heading: float,
+        stamp: Any,
+        vel: "list[float] | None" = None,
+    ) -> Any:
+        msg = self._Odometry()
+        msg.header.stamp = stamp
+        msg.header.frame_id = "map"
+        msg.child_frame_id = "sensor"
+        msg.pose.pose.position.x = float(pos[0])
+        msg.pose.pose.position.y = float(pos[1])
+        # SENSOR pose (CMU convention): odometry reports the capture origin,
+        # not the base — the cloud is unprojected from base + eye height.
+        msg.pose.pose.position.z = float(pos[2]) + _EYE_HEIGHT_M
+        msg.pose.pose.orientation.z = math.sin(heading / 2.0)
+        msg.pose.pose.orientation.w = math.cos(heading / 2.0)
+        if vel:
+            msg.twist.twist.linear.x = float(vel[0])
+            msg.twist.twist.angular.z = float(vel[2])
+        return msg
+
+    def destroy(self) -> None:
+        for ex in self._executors:
+            try:
+                ex.shutdown(timeout_sec=2.0)
+            except Exception:  # noqa: BLE001
+                pass
+        self._executors = []
+        for node in (self.node, self.fast_node):
+            try:
+                node.destroy_node()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def main(argv: "list[str] | None" = None) -> int:
+    """Run the habitat→SysNav feed standalone:
+
+        python -m vector_os_nano.playground.habitat.sysnav_bridge \\
+            --scene <path|scenario-ref> [--hz 2] [--wander]
+
+    Boots the habitat conda subprocess, publishes the SysNav input triplet,
+    and (with --wander) keeps navigating to random navmesh points so the
+    semantic mapper sees varied viewpoints. Ctrl-C to stop; the watchdog
+    sweeps strays by VECTOR_RUN_ID on abnormal exit.
+    """
+    import argparse
+    import random
+    import time
+
+    import rclpy
+
+    from vector_os_nano.playground.habitat.base import HabitatBase
+    from vector_os_nano.playground.habitat.scenes import resolve_scene_ref
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--scene", required=True)
+    ap.add_argument("--hz", type=float, default=2.0)
+    ap.add_argument("--wander", action="store_true",
+                    help="keep navigating to random navmesh points")
+    args = ap.parse_args(argv)
+
+    base = HabitatBase(scene=resolve_scene_ref(args.scene))
+    base.connect()
+    bridge = HabitatSysnavBridge(base, hz=args.hz)
+    bridge.spin_in_background()  # dedicated per-node executors (50 Hz fast path)
+    logger.info("habitat sysnav feed up — Ctrl-C to stop")
+    next_wander = time.time() + 5.0
+    try:
+        while rclpy.ok():
+            time.sleep(0.1)
+            if args.wander and time.time() >= next_wander:
+                here = base.get_position()
+                dx, dy = random.uniform(-4, 4), random.uniform(-4, 4)
+                tgt = base.snap_point([here[0] + dx, here[1] + dy, here[2]])
+                base.navigate_to(tgt[0], tgt[1])
+                next_wander = time.time() + 5.0
+    except KeyboardInterrupt:
+        pass
+    finally:
+        bridge.destroy()
+        base.disconnect()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

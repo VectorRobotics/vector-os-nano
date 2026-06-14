@@ -213,7 +213,12 @@ These are the contracts the kernel guarantees. Anything that violates them is a 
   hard timeout. The sandbox is **only ever stricter** than plain Python — never `eval` or
   `exec`, never an import escape. Verification is machine-checkable, not an LLM judge
   (an escalation ladder to a visual/VLM check exists for cases predicates cannot express;
-  LLM judging is the last resort, not the default).
+  LLM judging is the last resort, not the default). A verify can additionally consume the
+  CURRENT step's own structured output through the kernel-injected `step_output(path)`
+  function (a per-evaluation namespace overlay; the executor binds it to that step's
+  `exec_output`) — so e.g. a detect step verifies what IT observed, alias-aware, instead
+  of re-querying a separate oracle that false-passes when the requested target is absent.
+  The overlay never persists and the sandbox is not loosened.
 
 - **Closed-loop observation flow.** Each step's output is written to the per-run
   Blackboard. Downstream parameters bind to upstream outputs via `${step.output.path}`
@@ -279,26 +284,69 @@ relative to `vector_os_nano/`.
   Single chokepoint: `GoalExecutor._record_strategy_stats` (all record sites route through it).
 - `blackboard.py` — per-run observation store; resolves `${step.output.path}` bindings.
 - `vocab_from_registry.py` — `build_decompose_vocab`: single-sources the decompose
-  vocabulary from the skill registry.
+  vocabulary from the skill registry. INVARIANT III (campaign #3): verify has ONE origin —
+  the skill's own `verify_hint`/`verify_template` (the engine fast path renders the
+  template; `to_schemas` tags missing hints `unverified: True` instead of coercing the
+  'True' sentinel; base primitives are taught only when `primitives_ready()` — the
+  executable truth, never `has_base` alone). Cross-layer contracts (batch 3): units are
+  CONVERTED at the selector seam (deg→rad), unknown primitive params fail loud,
+  enum/default pass through to the LLM schema, `is_motor`/`confirm_exempt` are explicit
+  Skill declarations (E-stop never gated behind a confirmation prompt), and motion skills
+  MEASURE (`moved_m`/`turned_rad`/`duration_s` + navigation's three-value contract
+  `{reached, already_there, moved_m, elapsed_s}` with one geodesic arrival check).
 - `capabilities/` — the capability seam (`Capability` protocol + `CapabilityRegistry` +
   `LLMChatCapability`); the bridge to a heterogeneous model zoo.
 - `trace_store.py` — save / load / replay of verified runs; the evidence gate and
   verify-as-eval signal. `evidence_passed` (per-trace) + `step_evidence_ok` (per-step analogue,
   W1.1) are the deterministic gate the LEARNING tier (bandit reward + template compilation) is
-  measured against — never raw `step.success`.
+  measured against — never raw `step.success`. INVARIANT II (campaign #3): there is NO
+  world-level bypass — worlds declare a bounded per-step exemption set
+  (`evidence_exempt_strategies`; PlaygroundWorld = empty, RobotWorld = a shrinking
+  transitional async set); an exempt step still needs `verify_result=True` and no visual
+  override.
 - `template_library.py` — compiled reusable plan templates; backs the no-LLM fast path.
 - `experience_compiler.py` — turns successful verified traces into templates (no
   fine-tuning). Compilation is EVIDENCE-GATED (W1.1): `engine._maybe_compile_experience`
   requires `trace.success AND _evidence_ok(trace)`, so only evidence-backed traces compile.
 - `types.py` — frozen plan structures (`GoalTree`, `SubGoal`, `StepRecord`, `ForEachSpec`);
   `SubGoal.foreach` carries a control-flow loop the executor expands at runtime. A failed
-  `StepRecord` carries a deterministic typed `failure_class` (W2.4: timeout/verify_fail/ik_fail/
-  tool_error/exec_error) threaded into the replan context so the re-decompose adapts by class.
+  `StepRecord` carries `pre_satisfied` (INVARIANT I, campaign #3: every non-trivial predicate
+  is evaluated BEFORE dispatch — 'was already true' and 'became true' are different Trues;
+  surfaces as "(already satisfied pre-exec)") and a deterministic typed `failure_class` (W2.4: timeout/verify_fail/ik_fail/
+  tool_error/exec_error/dep_skipped) threaded into the replan context so the re-decompose adapts by class.
+  UNIFIED FAILURE SEMANTICS (campaign #4, #11): a failed step poisons its (transitive)
+  `depends_on` dependents — they get a skipped `StepRecord` (`failure_class="dep_skipped"`,
+  never executed: acting from an unestablished world state is the hardware-dangerous case)
+  while INDEPENDENT steps still run. One contract for BOTH paths (`GoalExecutor.execute`
+  no longer aborts the whole tree; `VGGHarness` no longer blindly continues into
+  dependents) via the shared `blocking_dependency`/`skipped_step_record` helpers.
+  Layer-2 mid-tree re-decompose intentionally does NOT exist (design review §5) — the
+  dead `max_redecompose` knob was deleted; Layer-1 step retry + Layer-3 whole-tree
+  replan are the only retry tiers.
+  POST-HOC TIMEOUT HONESTY (campaign #4, #17): a step that blew its time budget but
+  EXECUTED still runs its verify — verified means an honest PASS carrying
+  `result_data.timing_warning` (its output is captured, bindings survive); unverified
+  stays `failure_class="timeout"`. The Layer-3 re-decompose context names the previous
+  attempt's verified steps so the replan plans only the remainder instead of replaying
+  succeeded motions.
+  PARAM HONESTY (campaign #4, batch 2): a null/"" param value IS a missing param —
+  stripped at the decomposer parse seam so every downstream missing-check sees honest
+  missing-ness (some LLMs emit every schema key as null; tricky-bugs Case 11). After
+  parse, `param_check` compares each step's params against the skill's OWN declared
+  schema (rule 3 — registry single source: required flags + enum sets) and the
+  decomposer re-asks the LLM EXACTLY ONCE with the per-step missing/illegal lists and
+  legal sets (corrections may rebind only the named steps' params, never the tree
+  structure). What stays broken fails loud at the skill's bad_params gate — no silent
+  defaults, no LLM grading in the check itself.
 - `observation.py` — the verified-loop observation surface: a pure JSON-safe export view over the
   frozen types (`step_view` / `run_snapshot`) + plain-text renderers; what a front-end renders.
 
 **Worlds** (`vcli/worlds/`)
 - `base.py` — the `World` protocol (the four-thing contract).
+- `blueprint.py` — frozen `WorldBlueprint` value object (W3.1): `blueprint_of(world)` derives a
+  declarative, diffable snapshot of any world's seam contributions; `BlueprintWorld` adapts it
+  back into a full `World` the engine consumes unchanged — parity with the imperative seam is
+  structural, and the imperative path stays authoritative.
 - `dev.py` — the robot-free dev/code world (default; build/test means).
 - `robot.py` — robot embodiments (Go2 with a base; SO-101 / Piper arm without one).
 - `registry.py` — `WorldRegistry`: world/scenario resolution (agent-driven `resolve_world` +
@@ -306,15 +354,63 @@ relative to `vector_os_nano/`.
 
 **Playground track** (`playground/` — a separate, parallel-developed world track; ADR-008)
 - `world.py` / `scenario.py` / `catalog.py` — embodiment-aware `PlaygroundWorld` + frozen `Scenario`
-  + the preset catalog (arm: `tabletop`, `tabletop_tray`; quadruped: `go2_room`); registers into the
-  kernel `WorldRegistry` via a lazy hook.
+  + the preset catalog (arm: `tabletop`, `tabletop_tray`; quadruped: `go2_room`; habitat:
+  `apartment`); registers into the kernel `WorldRegistry` via a lazy hook. `Scenario` is
+  sim-backend-aware (additive `sim_backend`/`scene_ref` fields, default `"mujoco"`/`""`): an MJCF
+  scenario loads `scene_xml`, a non-MJCF backend (e.g. habitat, ADR-009) dispatches on
+  `scene_ref` — the kernel never imports a simulator from this data. The world's persona
+  (ADR-006 thing #4) is backend-selected: habitat scenarios get the habitat persona (the world
+  is ALREADY running — no launch guidance), MJCF scenarios keep the robot persona.
+- `habitat/` — the photoreal third-world backend (ADR-009, M2–M5): `server.py` (STANDALONE
+  py3.9 script run by the pinned conda interpreter — navmesh kinematics via `try_step`,
+  shortest-path `navigate_to`, egocentric RGB + equirect color/depth pano, geodesic/semantic
+  oracle ops, JSON-per-line socket with a PORT handshake; `walk`/`navigate_to` are PACED in
+  wall time (`duration` is a wall-clock contract; navigate at `speed` m/s, `speed<=0` =
+  legacy instant) so the viewer animates real motion; `--gui` opens a live viewer window
+  (`--viewer-size`, default 800) — the conda habitat build is HEADLESS, so the window
+  displays the offscreen EGL frames, per-step during walk/navigate, HighGUI confined to one
+  viewer thread; `set_markers` (STREAM-op class: swaps a list, never touches the sim)
+  overlays labelled world-frame markers projected into the viewer camera);
+  `bridge.py` (thread-safe client, `VECTOR_RUN_ID`-tagged subprocess, fail-loud,
+  forwards `--gui`); `base.py` (`HabitatBase(scene, gui)` — the full
+  `BaseProtocol` + narrow provider specs, kinematic, vy honestly unsupported); `scenes.py`
+  (`VECTOR_HABITAT_DATA` ref resolution); `sysnav_bridge.py` (the SysNav input triplet:
+  equirect image cropped to the 1920x640 contract, world-frame cloud from pure equirect-depth
+  unprojection, GT odom; plus the standalone `--wander` feed runner).
 - `verify/` — sim-oracle verify predicates contributed across the seam. The ARM predicates
   (`holding_object`/`arm_at_home`/`placed_count`/`detect_objects`/`describe_scene`) are SINGLE-SOURCED
   in the kernel at `vcli/worlds/arm_sim_oracle.py` (so `RobotWorld` can reuse them without the kernel
   importing the playground); `playground/verify/arm_predicates.py` + `scene_predicates.py` are thin
   re-export shims. The Go2 base predicates (`at_position`/`facing`/`visited`) still live here.
 
+- `vcli/habitat_runtime.py` — the CLI-layer habitat runtime, SINGLE-SOURCED for both entry
+  paths (`--scenario apartment` at launch AND `start_simulation(sim_type="habitat")` mid-session,
+  the NL path "启动habitat模拟"): `boot_habitat_agent` (kinematic base + mobile-only skill
+  registry + `seed_room_landmarks` — the scenario's authored rooms become `type=room`
+  world-model landmarks with zh aliases, so the planner context carries actionable room
+  coordinates and `navigate_to(label="kitchen")` resolves with NO perception running),
+  `wire_sysnav_feed` (in-process pano/cloud/odom feed + `/object_nodes_list`
+  consumer, fail-loud — a no-op consumer is never accepted; detections additionally flow to
+  the viewer overlay via the consumer's `on_batch` hook → `markers_from_world_model` →
+  `HabitatBase.set_markers`), `launch_sysnav_nodes` /
+  `shutdown_sysnav` (the heavy perception pair as a watchable process group). Imports the
+  habitat world lazily inside functions only — the same user-requested lazy-domain pattern as
+  the CLI scenario resolution; the engine/kernel still never imports a world.
+
+- `vcli/ros_bootstrap.py` — NL start without terminal rituals: when the ROS / SysNav
+  overlays exist on disk but the process env lacks them (`AMENT_PREFIX_PATH` substring
+  check), `cli.main()` sources them in a bash child (`env -0` capture) and re-execs itself
+  ONCE (`LD_LIBRARY_PATH` is fixed at process birth — in-process injection can never make
+  rclpy importable). `VECTOR_ROS_BOOTSTRAPPED` is the loop guard (and carries the overlay
+  list for the startup banner); `VECTOR_NO_ROS_BOOTSTRAP=1` opts out (the repo conftest sets
+  it — pytest must never be replaced by execve). No-ROS boxes, sourced shells, and compose
+  failures are silent no-ops; the SysNav tools keep their fail-loud paths as the backstop.
+
 **Tools, routing, prompt, session, permissions**
+- `vcli/providers.py` — protocol-based provider resolution (W3.3): narrow `runtime_checkable`
+  specs (`BaseStateProvider`/`BaseMotionProvider`) + fail-loud `resolve_provider`/`ensure_provider`
+  ("no base provider met spec X: missing [...]") replacing getattr-by-string on agent internals;
+  `_base` seam migrated first, the rest incremental.
 - `vcli/tools/` — general tools (file/bash/glob/grep/web) + world-contributed tool wrappers.
 - `vcli/intent_router.py` — category-filtered routing that trims the tool/context surface.
 - `vcli/dynamic_prompt.py` — the composable system prompt rebuilt as world state changes.
@@ -371,9 +467,8 @@ Prior phases (A–C) established the foundation: kernel/world decoupling (Phase 
 differentiation tier wired and made real (Phase B — tool-backed execution, code-as-policy
 sandbox, verify-as-eval, persistent stats, experience compilation), and the capability
 seam plus cross-capability routing (Phase C.1/C.2). Phase C.3/C.4 are open and sequenced
-after the closed-loop stages; see
-[agent-kernel-phase-c-plan.md](agent-kernel-phase-c-plan.md) and
-[agent-kernel-phase-d-plan.md](agent-kernel-phase-d-plan.md).
+after the closed-loop stages (those phase plans were superseded and deleted per
+doc-governance — recover from git history if needed).
 
 ---
 

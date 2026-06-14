@@ -77,6 +77,7 @@ def step_view(step: StepRecord) -> dict[str, Any]:
         "error": step.error,
         "fallback_used": bool(getattr(step, "fallback_used", False)),
         "visual_override": bool(getattr(step, "visual_override", False)),
+        "pre_satisfied": bool(getattr(step, "pre_satisfied", False)),
         "result_data": _json_safe(getattr(step, "result_data", {}) or {}),
     }
 
@@ -164,6 +165,9 @@ def render_step_view(view: dict[str, Any], verify: str | None = None) -> str:
         parts.append("(fallback)")
     if view.get("visual_override"):
         parts.append("(visual override)")
+    if view.get("pre_satisfied"):
+        # Invariant I honesty: the predicate held BEFORE the action ran.
+        parts.append("(already satisfied pre-exec)")
     err = view.get("error")
     if not passed and err:
         parts.append(f"-- {err}")

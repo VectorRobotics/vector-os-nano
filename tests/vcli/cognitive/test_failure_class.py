@@ -180,10 +180,12 @@ def test_success_step_has_empty_failure_class() -> None:
 
 
 def test_timeout_failure_class() -> None:
+    # Campaign #4 #17: a timed-out step that VERIFIES is an honest PASS with a
+    # timing warning — the timeout CLASS is for blown budget + verify miss.
     reg = _Registry({"slow_skill": _SlowSkill()})
     executor = GoalExecutor(
         strategy_selector=_Selector(_StrategyResult("skill", "slow_skill")),
-        verifier=_Verifier(True),
+        verifier=_Verifier(False),
         skill_registry=reg,
     )
     # timeout_sec=0.01 << 0.2s sleep, no typical_duration_sec floor -> timeout.
@@ -300,7 +302,7 @@ def test_failure_class_threads_into_failure_record_and_context() -> None:
         decomposer=decomposer,
         executor=executor,
         selector=selector,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
     )
     tree = _plan(strategy="pick_skill")
     harness.run("pick the mug", "world", goal_tree=tree)
@@ -369,7 +371,7 @@ def test_failure_record_in_harness_carries_class_end_to_end() -> None:
         decomposer=object(),
         executor=executor,
         selector=selector,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
     )
     failures: list[FailureRecord] = []
     harness._execute_with_retry(_plan(strategy="pick_skill"), failures)

@@ -154,14 +154,28 @@ def make_visited(agent: Any, rooms: dict[str, tuple[float, float, float, float]]
         base = _get_base(agent)
         if base is None:
             return False
-        box = room_boxes.get(str(room))
-        if box is None:
-            return False
         pos = _base_position(base)
         if pos is None:
             return False
-        x_min, y_min, x_max, y_max = box
-        return x_min <= pos[0] <= x_max and y_min <= pos[1] <= y_max
+        box = room_boxes.get(str(room))
+        if box is not None:
+            x_min, y_min, x_max, y_max = box
+            return x_min <= pos[0] <= x_max and y_min <= pos[1] <= y_max
+        # Non-room label (R9, owner GUI-test regression): planners naturally
+        # write visited('sofa') — fall back to world-model OBJECT proximity
+        # (euclidean standoff, same 1.6 m the at_position guidance uses).
+        # Unknown labels still fail safe to False.
+        wm = getattr(agent, "_world_model", None)
+        if wm is not None:
+            try:
+                matches = wm.get_objects_by_label(str(room))
+            except Exception:  # noqa: BLE001
+                matches = []
+            if matches:
+                best = max(matches, key=lambda o: o.confidence)
+                dx, dy = pos[0] - float(best.x), pos[1] - float(best.y)
+                return (dx * dx + dy * dy) ** 0.5 <= 1.6
+        return False
 
     return visited
 
@@ -220,3 +234,36 @@ def make_rooms_producer(
         return {"rooms": out, "count": len(out)}
 
     return rooms_producer
+
+
+def make_geodesic_dist(agent: Any) -> Callable[..., float]:
+    """Build ``geodesic_dist(x, y)`` bound to *agent* (M2, habitat oracle).
+
+    Returns the NAVMESH geodesic distance (metres) from the base's current
+    position to the target ``(x, y)`` when the connected base exposes a
+    ``geodesic_distance`` oracle (HabitatBase does); a verify expression like
+    ``geodesic_dist(3.0, 1.0) < 0.5`` is the standard VLN success criterion.
+    Fails safe to ``float('inf')`` — no base, no oracle support, bad args, or
+    an unreachable target all read as "infinitely far", so a < threshold
+    check is honestly False and nothing raises into the sandbox.
+    """
+
+    def geodesic_dist(x: Any, y: Any) -> float:
+        base = _get_base(agent)
+        if base is None or not callable(getattr(base, "geodesic_distance", None)):
+            return float("inf")
+        pos = _base_position(base)
+        if pos is None:
+            return float("inf")
+        try:
+            tx, ty = float(x), float(y)
+            d = float(base.geodesic_distance(list(pos), [tx, ty, pos[2]]))
+        except (TypeError, ValueError):
+            return float("inf")
+        except Exception:  # noqa: BLE001 — oracle hiccup reads as unreachable
+            return float("inf")
+        if not math.isfinite(d):
+            return float("inf")
+        return d
+
+    return geodesic_dist

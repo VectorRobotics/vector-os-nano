@@ -396,11 +396,12 @@ def test_good_arm_plan_decomposes_and_runs_verified_done() -> None:
         assert sg.strategy.endswith("_skill")
         assert sg.strategy[: -len("_skill")] in _ARM_SKILL_NAMES
         assert sg.strategy not in _BASE_PRIMITIVES
-    # Each sub_goal carries a playground verify predicate.
+    # Each sub_goal carries a playground verify predicate. The grasp step's
+    # bare holding_object() is strengthened to its bound target (backlog #2b).
     assert [sg.verify for sg in tree.sub_goals] == [
         "arm_at_home()",
         "len(detect_objects('mug')) > 0",
-        "holding_object()",
+        "holding_object('mug')",
         "placed_count((0.0, 0.0, 0.5, 0.5)) >= 1",
     ]
 

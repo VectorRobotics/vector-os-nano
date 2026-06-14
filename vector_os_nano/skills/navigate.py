@@ -344,6 +344,8 @@ class NavigateSkill:
     """
 
     name: str = "navigate"
+    # Invariant III: fast-path verify single source ({arg} = resolved room).
+    verify_template: str = "nearest_room() == '{arg}'"
     description: str = (
         "Navigate the robot to a named room. "
         "Use this when the user says 'go to X' or '去X'. "
@@ -672,7 +674,20 @@ class NavigateSkill:
 
             # Use go_to_waypoint (simple /way_point) to avoid recursive
             # navigate_to → FAR probe → door-chain → navigate_to cascade.
-            _go_fn = getattr(base, "go_to_waypoint", None) or base.navigate_to
+            # Both lookups are GUARDED: a base with neither (e.g. G1MuJoCoBase,
+            # which walks but has no waypoint service) must fail loud here, not
+            # raise AttributeError on an unguarded ``base.navigate_to``.
+            _go_fn = (getattr(base, "go_to_waypoint", None)
+                      or getattr(base, "navigate_to", None))
+            if _go_fn is None:
+                return SkillResult(
+                    success=False,
+                    error_message=(
+                        f"base {type(base).__name__} has no waypoint navigation "
+                        f"(go_to_waypoint/navigate_to) — cannot dead-reckon to "
+                        f"{label}"),
+                    diagnosis_code="navigation_unsupported",
+                )
             ok = _go_fn(
                 float(wx), float(wy),
                 timeout=per_wp,

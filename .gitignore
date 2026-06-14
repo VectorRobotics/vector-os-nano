@@ -57,3 +57,5 @@ docs/pick_top_down_spec.md
 # agent loop / session working state (not repo content)
 scratch/
 .hermes/
+artifacts/
+assets/

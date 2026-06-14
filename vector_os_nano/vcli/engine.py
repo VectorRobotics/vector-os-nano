@@ -63,15 +63,36 @@ except ImportError:
         "When a step acts on a SPECIFIC object/target named in the task, copy "
         "that target into the chosen strategy's object/object_label/query/target "
         "parameter — never leave a known target blank. "
+        "When the world context carries an 'Objects (live):' list, RESOLVE the "
+        "user's reference (any language, attributes like color/size included) to "
+        "the EXACT listed name whose name/attributes match, and bind THAT name — "
+        "the scene knows objects by those names, not by the user's wording. If "
+        "nothing listed matches, bind the user's wording as-is; the step will "
+        "fail loudly and you can re-bind on replan from the fresh list. "
+        "For an instruction that targets a NAMED object's location, bind the object's LABEL into params when the strategy supports it (the skill resolves live coordinates and fails loudly if the object is unknown) — NEVER invent x/y for an object. "
         "Use each strategy's 'suggested verify' predicate EXACTLY as written for "
         "that step's verify expression: put the target ONLY in strategy_params, "
         "never as an argument inside the verify expression. The verifier checks "
-        "deterministic ground-truth state, not your target string — so e.g. a "
-        "detect step verifies with len(detect_objects()) > 0, NOT "
-        "detect_objects('<your target>')."
+        "deterministic ground-truth state (or the step's own recorded output via "
+        "step_output()), not your target string."
     )
 
 logger = logging.getLogger(__name__)
+
+
+def _world_exempt_strategies(world: "Any | None") -> "frozenset[str]":
+    """World-declared per-step evidence exemptions (invariant II), fail-safe.
+
+    A world without the method (or one that raises) declares NOTHING exempt —
+    the gate can only get stricter on the failure path, never looser (rule 5).
+    """
+    getter = getattr(world, "evidence_exempt_strategies", None)
+    if not callable(getter):
+        return frozenset()
+    try:
+        return frozenset(str(n) for n in getter())
+    except Exception:  # noqa: BLE001
+        return frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +610,7 @@ class VectorEngine:
                 tool_dispatcher=tool_dispatcher,
                 capability_registry=capability_registry,
                 is_robot=bool(world.is_robot()) if world is not None else False,
+                evidence_exempt=_world_exempt_strategies(world),
             )
         except ImportError as exc:
             logger.warning("VGG: GoalExecutor not available: %s", exc)
@@ -625,7 +647,6 @@ class VectorEngine:
                 selector=selector,
                 config=HarnessConfig(
                     max_step_retries=2,
-                    max_redecompose=1,
                     max_pipeline_retries=1,
                 ),
                 on_step=self._on_vgg_step,
@@ -662,6 +683,8 @@ class VectorEngine:
             build_decompose_vocab,
         )
 
+        from vector_os_nano.vcli.primitives import primitives_ready
+
         schemas = skill_registry.to_schemas()
         verify_signatures = self._verify_signatures_from_namespace(agent)
         vocab = build_decompose_vocab(
@@ -669,6 +692,9 @@ class VectorEngine:
             verify_signatures,
             has_base=has_base,
             planner_intro=self._NEUTRAL_PLANNER_INTRO,
+            # Executable truth: never teach base primitives a world can't run
+            # (owner finding (c) — scan_360 ghost in the habitat replan).
+            teach_base_primitives=primitives_ready(),
         )
         return vocab.as_kwargs()
 
@@ -720,12 +746,15 @@ class VectorEngine:
             build_decompose_vocab,
         )
 
+        from vector_os_nano.vcli.primitives import primitives_ready
+
         verify_signatures = self._verify_signatures_from_namespace(agent)
         vocab = build_decompose_vocab(
             [],
             verify_signatures,
             has_base=has_base,
             planner_intro=self._NEUTRAL_PLANNER_INTRO,
+            teach_base_primitives=primitives_ready(),
         )
         return vocab.as_kwargs()
 
@@ -807,8 +836,12 @@ class VectorEngine:
                 # Registered capability — always routable.
                 if name in capability_names:
                     continue
-                # Base primitive — valid only when the agent has a base.
-                if has_base and name in _PRIMITIVE_NAMES:
+                # Base primitive — valid only when the selector would actually
+                # route it (has_base AND an executable primitive layer; mirrors
+                # StrategySelector._primitive_routable, owner finding (c)).
+                if name in _PRIMITIVE_NAMES and getattr(
+                    selector, "_primitive_routable", lambda: has_base
+                )():
                     continue
                 # Strategies ending in "_skill" are the only ones the selector can
                 # reject at runtime with executor_type="invalid".
@@ -817,7 +850,10 @@ class VectorEngine:
                     # Also valid if the bare name itself is a registered skill or a
                     # base primitive (the selector accepts both forms).
                     if bare not in registered_names and not (
-                        has_base and bare in _PRIMITIVE_NAMES
+                        bare in _PRIMITIVE_NAMES
+                        and getattr(
+                            selector, "_primitive_routable", lambda: has_base
+                        )()
                     ):
                         bad_strategies.append(name)
                 # Non-_skill strategies not in any of the above categories are
@@ -1133,6 +1169,13 @@ class VectorEngine:
         if getattr(_skill_for_steps, "__skill_auto_steps__", None):
             return None
 
+        # NavigateToPointSkill (N4): the fast path can neither bind numeric
+        # x/y nor resolve a semantic label, and its verify must carry the SAME
+        # coordinates as the params (the anti-false-pass contract) — always
+        # the LLM planner's job.
+        if skill_name == "navigate_to":
+            return None
+
         # Resolve room alias to canonical ID (e.g. "客房" → "guest_bedroom")
         # so verify expressions and params use the same IDs as SceneGraph.
         resolved_room = ""
@@ -1141,13 +1184,15 @@ class VectorEngine:
             if not resolved_room:
                 return None  # unknown room — let LLM handle
 
-        # Build verify expression using resolved canonical ID
+        # Build verify expression using resolved canonical ID — single-sourced
+        # from the SKILL's own verify_template (invariant III; the old
+        # hand-written second vocabulary in this method drifted and is gone).
+        skill_obj = skill_registry.get(skill_name) if skill_registry else None
         verify_arg = resolved_room if resolved_room else extracted
-        verify = self._verify_for_skill(skill_name, verify_arg)
+        verify = self._verify_for_skill(skill_name, verify_arg, skill_obj)
 
         # Build strategy params — extract from user message text
         params: dict = {}
-        skill_obj = skill_registry.get(skill_name) if skill_registry else None
         skill_params = getattr(skill_obj, "parameters", {}) if skill_obj else {}
 
         # Generic extraction: match param names to user message content
@@ -1185,23 +1230,32 @@ class VectorEngine:
         return GoalTree(goal=user_message, sub_goals=(sub_goal,))
 
     @staticmethod
-    def _verify_for_skill(skill_name: str, arg: str) -> str:
-        """Generate a verify expression for a known skill."""
-        _VERIFY_MAP: dict[str, str] = {
-            "navigate": "nearest_room() == '{arg}'" if arg else "True",
-            "explore": "True",  # async skill — launched = success, progress via events
-            "patrol": "True",   # async skill — launched = success
-            "look": "len(describe_scene()) > 0",
-            "describe_scene": "len(describe_scene()) > 0",
-            "where_am_i": "True",
-            "stand": "True",
-            "sit": "True",
-            "stop": "True",
-            "walk": "True",
-            "turn": "True",
-        }
-        template = _VERIFY_MAP.get(skill_name, "True")
-        return template.replace("{arg}", arg) if "{arg}" in template else template
+    def _verify_for_skill(skill_name: str, arg: str, skill_obj: Any = None) -> str:
+        """Verify expression for a fast-path skill step — single source.
+
+        Invariant III (design review #5, rule 3): the SKILL's own
+        ``verify_template`` is the only origin (``{arg}`` substituted with the
+        extracted/resolved target). A skill without a template — or an
+        ``{arg}`` template with no arg to bind — gets the honest ``"True"``
+        sentinel, which the evidence gate reports as unverified (invariant
+        II), never as deterministic evidence. No second hand-written map.
+        """
+        template = str(getattr(skill_obj, "verify_template", "") or "").strip()
+        if not template:
+            verify = "True"
+        elif "{arg}" in template:
+            verify = template.replace("{arg}", arg) if arg else "True"
+        else:
+            verify = template
+        try:
+            from vector_os_nano.vcli.cognitive.verify_strengthen import (
+                strengthen_target_verify,
+            )
+            return strengthen_target_verify(
+                verify, {"object_label": arg} if arg else {}
+            )
+        except ImportError:  # cognitive layer absent — engine degrades gracefully
+            return verify
 
     def _resolve_room_alias(self, room_input: str) -> str:
         """Resolve a room name/alias to canonical SceneGraph ID.
@@ -1386,7 +1440,13 @@ class VectorEngine:
             self._world_context_cache = result
             self._world_context_ts = now
             return result
-        base = getattr(agent, "_base", None)
+        # W3.3: resolve the base by PROTOCOL (narrow read-only spec), not by
+        # private attribute name. Context building is a fail-safe surface, so
+        # a missing/non-conforming base resolves to None rather than raising.
+        from vector_os_nano.vcli.providers import BaseStateProvider, resolve_provider
+        base = resolve_provider(
+            agent, BaseStateProvider, what="base", required=False
+        )
         sg = getattr(agent, "_spatial_memory", None)
         if base:
             try:
@@ -1413,10 +1473,68 @@ class VectorEngine:
                     parts.append(f"Known rooms: {', '.join(rooms)}")
             except Exception:
                 pass
+        # Stage 3 (referring-expression grounding): surface the LIVE object set
+        # so the decomposer can resolve a reference ("the red cup" / "红色杯子")
+        # to an EXACT scene name at plan/replan time. Deterministic plumbing
+        # only — the LLM is the language component; the kernel just reports
+        # names (+ attribute hints) from the world model, falling back to the
+        # sim oracle's ground-truth body names. Capped to bound the prompt.
+        objects_line = self._live_objects_line(agent)
+        if objects_line:
+            parts.append(objects_line)
         result = "\n".join(parts) if parts else ""
         self._world_context_cache = result
         self._world_context_ts = now
         return result
+
+    _LIVE_OBJECTS_CAP = 20
+
+    @staticmethod
+    def _live_objects_line(agent: Any) -> str:
+        """Return 'Objects (live): ...' from the freshest available source.
+
+        Priority: world-model objects (label + property hints — what detect
+        populated) > sim-oracle body names (ground truth when no detect ran).
+        Fail-safe '' on any error; never raises into context building.
+        """
+        entries: list[str] = []
+        try:
+            wm = getattr(agent, "_world_model", None)
+            if wm is not None:
+                # Collapse to the highest-confidence instance per label and
+                # carry its COORDINATES — a referring expression is only
+                # resolvable into an actionable binding (navigate_to(x, y) +
+                # geodesic verify) when the planner can read real positions.
+                best: dict[str, Any] = {}
+                for obj in wm.get_objects():
+                    label = obj.label or obj.object_id
+                    cur = best.get(label)
+                    if cur is None or obj.confidence > cur.confidence:
+                        best[label] = obj
+                for label in sorted(best):
+                    obj = best[label]
+                    parts_o = [f"x={obj.x:.2f}", f"y={obj.y:.2f}"]
+                    props = getattr(obj, "properties", None) or {}
+                    parts_o += [
+                        f"{k}={v}" for k, v in sorted(props.items())
+                        if isinstance(v, (str, int, float))
+                    ]
+                    entries.append(f"{label}({','.join(parts_o)})")
+        except Exception:  # noqa: BLE001
+            entries = []
+        if not entries:
+            try:
+                arm = getattr(agent, "_arm", None) or getattr(agent, "arm", None)
+                if arm is not None and hasattr(arm, "get_object_positions"):
+                    entries = sorted(arm.get_object_positions().keys())
+            except Exception:  # noqa: BLE001
+                entries = []
+        if not entries:
+            return ""
+        cap = VectorEngine._LIVE_OBJECTS_CAP
+        shown, extra = entries[:cap], len(entries) - cap
+        suffix = f" (+{extra} more)" if extra > 0 else ""
+        return "Objects (live): " + ", ".join(shown) + suffix
 
     def _emergency_stop(
         self,
@@ -1619,7 +1737,7 @@ class VectorEngine:
         )
 
     # ------------------------------------------------------------------
-    # Stage 5 (S5.3) — unified closed-loop controller (DARK-LAUNCHED)
+    # Stage 5 — unified closed-loop controller (LIVE since S5.4)
     # ------------------------------------------------------------------
 
     def run_turn_unified(
@@ -1634,12 +1752,12 @@ class VectorEngine:
         app_state: dict[str, Any] | None = None,
         on_reasoning: Callable[[str], None] | None = None,
     ) -> UnifiedTurnResult:
-        """Run ONE user turn through the unified closed loop (Stage 5, S5.3).
+        """Run ONE user turn through the unified closed loop (Stage 5).
 
-        DARK-LAUNCHED — nothing in ``cli.py`` / ``mcp/server.py`` calls this yet;
-        it is exercised by tests (and is reachable behind an opt-in only). The two
-        legacy paths (``run_turn`` and ``vgg_decompose``/``vgg_execute``) are left
-        intact and unmodified.
+        LIVE since the S5.4 cut-over: BOTH frontends (``cli.py`` and
+        ``mcp/tools.py``) call this by DEFAULT for every turn — chat included.
+        ``VECTOR_LEGACY_TURN=1`` restores the pre-cut-over open ``run_turn``
+        ReAct fork for one release as the fallback.
 
         North star (rule 1): every interaction is a CLOSED loop. This method ALWAYS
         produces a :class:`GoalTree` and runs the SAME harness loop (topo-execute
@@ -1787,18 +1905,26 @@ class VectorEngine:
             verified=verified,
         )
 
+    @staticmethod
+    def _world_evidence_exemptions(world: Any) -> "frozenset[str]":
+        """The world-declared per-step evidence exemptions (invariant II)."""
+        return _world_exempt_strategies(world)
+
     def _evidence_ok(self, trace: "ExecutionTrace") -> bool:
         """Run the evidence gate for *trace* under the active world (fail-safe).
 
-        Mirrors the CLI's gate call: a robot world bypasses (async motor skills use
-        ``verify="True"``); the dev world is strict. Any failure reading the gate
-        is treated as "not verified" so the moat never silently passes.
+        Mirrors the CLI's gate call. Invariant II: no world-level bypass — the
+        world may declare a bounded per-step exemption set
+        (``evidence_exempt_strategies``); everything else needs deterministic
+        evidence. Any failure reading the gate is treated as "not verified" so
+        the moat never silently passes.
         """
         try:
             from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
             world = getattr(self, "_world", None)
-            is_robot = bool(world.is_robot()) if world is not None else False
-            return bool(evidence_passed(trace, is_robot=is_robot))
+            return bool(evidence_passed(
+                trace, exempt_strategies=_world_exempt_strategies(world)
+            ))
         except Exception as exc:  # noqa: BLE001
             logger.debug("unified: evidence gate read failed: %s", exc)
             return False

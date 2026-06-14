@@ -93,7 +93,7 @@ def _arm_harness() -> tuple[VGGHarness, StrategySelector]:
         decomposer=object(),
         executor=executor,
         selector=selector,
-        config=HarnessConfig(max_step_retries=2, max_redecompose=0, max_pipeline_retries=0),
+        config=HarnessConfig(max_step_retries=2, max_pipeline_retries=0),
     )
     return harness, selector
 

@@ -174,13 +174,19 @@ class TestTimeoutFloor:
         assert "timeout" not in step.error.lower()
 
     def test_no_floor_keeps_timeout_semantics(self) -> None:
-        """Without typical_duration_sec, the old timeout semantics are unchanged:
-        0.3s > 0.1s plan_timeout → the step IS timed-out.
+        """Without typical_duration_sec, a blown budget still classifies as
+        timeout — for a step whose verify does NOT pass (campaign #4 #17:
+        a timed-out step that VERIFIES is now an honest PASS with a timing
+        warning, so this test pins the unverified branch).
 
-        Proves the floor is opt-in and the default path is byte-identical.
+        Proves the floor is opt-in and the default path is unchanged.
         """
         registry = _FakeRegistry({"slow_plain": _SlowSkillNoFloor()})
-        executor = _make_executor("slow_plain", registry)
+        executor = GoalExecutor(
+            strategy_selector=_FakeSelector("slow_plain"),
+            verifier=_AlwaysFalseVerifier(),
+            skill_registry=registry,
+        )
         plan = _make_plan(timeout_sec=0.1, skill_name="slow_plain")
 
         trace = executor.execute(plan)

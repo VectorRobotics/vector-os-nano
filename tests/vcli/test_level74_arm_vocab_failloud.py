@@ -314,7 +314,7 @@ def test_replan_feedback_threaded_through_run() -> None:
     harness = VGGHarness(
         decomposer=_Decomposer(),
         executor=executor,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
     )
     harness.run("task", "world")
 

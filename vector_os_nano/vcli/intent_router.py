@@ -45,6 +45,7 @@ _RULES: list[tuple[frozenset[str], tuple[str, ...]]] = [
     # LLM can pass gui=false.
     (frozenset({
         "仿真", "sim", "simulation", "reset", "重置", "启动", "模拟",
+        "habitat", "sysnav",
         "headless", "无窗口", "不要窗口", "no window",
     }), ("sim", "system", "robot")),
 ]
@@ -291,6 +292,9 @@ class IntentRouter:
             # greedily matches "close" / "关闭").
             "仿真", "sim ", " sim", "simulation",
             "go2sim", "go2 sim", "armsim", "arm sim",
+            # Habitat world + SysNav perception lifecycle — start_simulation /
+            # sysnav_perception tools, not motor skills / VGG decompose.
+            "habitat", "sysnav", "语义感知",
             # Headless modifier — pass gui=false to start_simulation; not a VGG task.
             "headless", "无窗口", "不要窗口", "no window",
         )

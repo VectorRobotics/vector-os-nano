@@ -20,12 +20,16 @@ _ctx: PrimitiveContext | None = None
 
 
 def _require_base() -> object:
-    """Return _ctx.base or raise RuntimeError if unavailable."""
-    if _ctx is None or _ctx.base is None:
-        raise RuntimeError(
-            "No hardware connected. Call init_primitives() with a valid base."
-        )
-    return _ctx.base
+    """Return _ctx.base after a fail-loud PROTOCOL check (W3.3).
+
+    Raises ProviderError (a RuntimeError subclass — existing handlers keep
+    working) naming the spec and what is missing, instead of letting an
+    AttributeError surface mid-skill on a baseless/partial provider.
+    """
+    from vector_os_nano.vcli.providers import BaseMotionProvider, ensure_provider
+
+    base = _ctx.base if _ctx is not None else None
+    return ensure_provider(base, BaseMotionProvider, what="base")
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,9 @@ Execution flow per sub_goal:
 3. Check elapsed time against timeout_sec
 4. Verify success condition via GoalVerifier
 5. On failure: attempt fail_action fallback, then re-verify
-6. Record StepRecord; abort remaining goals on failure
+6. Record StepRecord; a failure poisons its (transitive) dependents with a
+   skipped record (failure_class="dep_skipped") while independent goals
+   still run — the same contract the harness applies (#11, campaign #4)
 """
 from __future__ import annotations
 
@@ -20,6 +22,9 @@ from collections import deque
 from typing import Any, Callable
 
 from vector_os_nano.vcli.cognitive.trace_store import step_evidence_ok
+from vector_os_nano.vcli.cognitive.trace_store import (
+    _NO_EVIDENCE as _NO_EVIDENCE_VERIFIES,
+)
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     ForEachSpec,
@@ -30,6 +35,70 @@ from vector_os_nano.vcli.cognitive.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def blocking_dependency(sub_goal: SubGoal, failed_names: set[str]) -> str:
+    """Name of the first failed/skipped step this sub_goal depends on, or "".
+
+    Transitivity needs no graph walk: a skipped step's own name is added to
+    ``failed_names`` by the caller, so a chain a→b→c poisons c through b.
+    Single source for BOTH execution paths (GoalExecutor.execute and
+    VGGHarness._execute_with_retry) — one tree, one failure semantics (#11).
+    """
+    for dep in sub_goal.depends_on:
+        if dep in failed_names:
+            return dep
+    return ""
+
+
+def skipped_step_record(sub_goal: SubGoal, blocked_by: str) -> StepRecord:
+    """A StepRecord for a step that never ran: its dependency failed.
+
+    Executing it anyway would act from an unestablished world state (pick
+    after a failed navigate — the hardware-dangerous case). failure_class
+    "dep_skipped" is a first-class member of FAILURE_CLASSES so the replan
+    LLM can branch on it.
+    """
+    return StepRecord(
+        sub_goal_name=sub_goal.name,
+        strategy=sub_goal.strategy,
+        success=False,
+        verify_result=False,
+        duration_sec=0.0,
+        error=f"skipped: dependency '{blocked_by}' failed upstream",
+        fallback_used=False,
+        failure_class="dep_skipped",
+    )
+
+
+def _make_step_output(exec_output: Any) -> Callable[..., Any]:
+    """Build the per-evaluation ``step_output(path='')`` verify function.
+
+    Bound to the CURRENT step's own structured output (backlog #3, Rule 4):
+    a verify expression can consume what THIS step observed — e.g. detect's
+    alias-aware ``objects`` list — instead of re-querying a separate oracle
+    that false-passes when the requested target is absent.
+
+    Pure dict/list traversal on dotted *path* segments (mirrors the
+    Blackboard's resolution style); any miss returns ``None`` (fail-safe —
+    never raises into the sandbox). ``path=''`` returns the whole output.
+    """
+
+    def step_output(path: str = "") -> Any:
+        if not path:
+            return exec_output
+        cur: Any = exec_output
+        for part in str(path).split("."):
+            if isinstance(cur, dict):
+                cur = cur.get(part)
+            elif isinstance(cur, list) and part.lstrip("-").isdigit():
+                idx = int(part)
+                cur = cur[idx] if -len(cur) <= idx < len(cur) else None
+            else:
+                return None
+        return cur
+
+    return step_output
 
 
 class GoalExecutor:
@@ -49,6 +118,7 @@ class GoalExecutor:
         capability_registry: Any = None,
         blackboard: Any = None,
         is_robot: bool = False,
+        evidence_exempt: "frozenset[str]" = frozenset(),
     ) -> None:
         """Initialise the executor.
 
@@ -99,6 +169,10 @@ class GoalExecutor:
         self._capability_registry = capability_registry
         self._blackboard = blackboard
         self._is_robot = bool(is_robot)
+        # Invariant II: world-declared per-step evidence exemptions — the old
+        # world-level is_robot bypass is gone from the gate; this bounded set
+        # is what keeps legitimately-postcondition-free skills learnable.
+        self._evidence_exempt = frozenset(evidence_exempt)
 
     # ------------------------------------------------------------------
     # Strategy-stats reward gate (W1.1) — single chokepoint
@@ -116,7 +190,10 @@ class GoalExecutor:
             self._stats.record(
                 strategy_name=step.strategy,
                 sub_goal_name=step.sub_goal_name,
-                success=step.success and step_evidence_ok(step, sub_goal, self._is_robot),
+                success=step.success and step_evidence_ok(
+                    step, sub_goal, self._is_robot,
+                    exempt_strategies=self._evidence_exempt,
+                ),
                 duration_sec=step.duration_sec,
             )
         except Exception as exc:  # noqa: BLE001
@@ -159,7 +236,9 @@ class GoalExecutor:
            c. Verify success condition
            d. On failure: try fail_action, re-verify
            e. Record StepRecord; fire on_step callback
-        3. Abort on first failure; return ExecutionTrace.
+        3. A failed step poisons its (transitive) dependents: they get a
+           skipped StepRecord (failure_class="dep_skipped") and never run;
+           independent steps still execute. Same contract as the harness.
 
         Args:
             goal_tree: The GoalTree to execute.
@@ -172,6 +251,7 @@ class GoalExecutor:
         ordered = self._topological_sort(goal_tree)
         steps: list[StepRecord] = []
         overall_success = True
+        failed_names: set[str] = set()
 
         for sub_goal in ordered:
             # --- Abort check ---
@@ -198,6 +278,21 @@ class GoalExecutor:
             except ImportError:
                 pass
 
+            # #11 — dependency-failure skip (shared contract with the harness).
+            blocked_by = blocking_dependency(sub_goal, failed_names)
+            if blocked_by:
+                skip = skipped_step_record(sub_goal, blocked_by)
+                steps.append(skip)
+                failed_names.add(sub_goal.name)  # poison transitively
+                overall_success = False
+                if on_step is not None:
+                    try:
+                        on_step(skip)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "GoalExecutor: on_step callback raised: %s", exc)
+                continue
+
             # Stage 4 (S4-2): a foreach node is not a leaf step — it expands at
             # runtime into N concrete children (the body instantiated once per
             # item of the producing step's list). Execute the expansion in order;
@@ -207,7 +302,7 @@ class GoalExecutor:
                 steps.extend(expanded)
                 if any(not s.success for s in expanded):
                     overall_success = False
-                    break  # abort remaining
+                    failed_names.add(sub_goal.name)
                 continue
 
             step = self._execute_sub_goal(sub_goal)
@@ -224,7 +319,7 @@ class GoalExecutor:
 
             if not step.success:
                 overall_success = False
-                break  # abort remaining
+                failed_names.add(sub_goal.name)
 
         # Auto-save stats after full execution
         if self._stats is not None:
@@ -347,6 +442,12 @@ class GoalExecutor:
         # is frozen, so build a resolved copy rather than mutating in place.
         result = self._resolve_params(result)
 
+        # Invariant I (design review 2026-06-12 #1) — pre-execution baseline:
+        # evaluate a NON-TRIVIAL predicate BEFORE the strategy runs, so an
+        # initial-state PASS is visible instead of indistinguishable from
+        # earned success. Best-effort and fail-safe (errors -> False).
+        pre_satisfied = self._pre_satisfied(sub_goal.verify)
+
         # Execute strategy — captures the step's structured output (Stage 1a).
         exec_success, exec_error, exec_output = self._execute_strategy(result)
         elapsed = time.monotonic() - step_start
@@ -357,26 +458,36 @@ class GoalExecutor:
         # because the LLM emitted a small timeout_sec (e.g. 15s). The floor is
         # opt-in — a skill without typical_duration_sec is unaffected.
         effective_timeout = self._effective_timeout(sub_goal.timeout_sec, strategy_name)
+        timeout_msg = ""
         if elapsed > effective_timeout:
-            error_msg = (
+            timeout_msg = (
                 f"timeout after {elapsed:.3f}s "
                 f"(limit {effective_timeout:.1f}s"
                 + (f"; plan said {sub_goal.timeout_sec:.1f}s"
                    if effective_timeout != sub_goal.timeout_sec else "")
                 + ")"
             )
-            logger.warning("GoalExecutor: %s — %s", sub_goal.name, error_msg)
-            return StepRecord(
-                sub_goal_name=sub_goal.name,
-                strategy=strategy_name,
-                success=False,
-                verify_result=False,
-                duration_sec=elapsed,
-                error=error_msg,
-                fallback_used=False,
-                result_data={"output": exec_output, "verify_value": None},
-                failure_class="timeout",  # W2.4: post-hoc step-timeout path
-            )
+            logger.warning("GoalExecutor: %s — %s", sub_goal.name, timeout_msg)
+            # #17 (campaign #4): a slow-but-COMPLETED action still runs its
+            # verify below — verified means an honest PASS with a timing
+            # warning, not a replayed motion. Only an execution that also
+            # FAILED short-circuits here — and it carries the UNDERLYING exec
+            # error (R11: a bare 'timeout' masked the real moved_short/wall
+            # diagnosis and misled the replan AND the human).
+            if not exec_success:
+                return StepRecord(
+                    sub_goal_name=sub_goal.name,
+                    strategy=strategy_name,
+                    success=False,
+                    verify_result=False,
+                    duration_sec=elapsed,
+                    error=(f"{timeout_msg}; exec: {exec_error}"
+                           if exec_error else timeout_msg),
+                    fallback_used=False,
+                    result_data={"output": exec_output, "verify_value": None},
+                    failure_class="timeout",  # W2.4: post-hoc step-timeout path
+                    pre_satisfied=pre_satisfied,
+                )
 
         # If execution itself failed (skill not found, unknown type, etc.),
         # mark the step failed immediately — no point verifying.
@@ -404,14 +515,21 @@ class GoalExecutor:
                 fallback_used=False,
                 result_data={"output": exec_output, "verify_value": None},
                 failure_class=failure_class,
+                pre_satisfied=pre_satisfied,
             )
 
-        # Verify — yields (bool, raw value) from the same sandbox.
-        verify_result, verify_value = self._verify_and_value(sub_goal.verify)
+        # Verify — yields (bool, raw value) from the same sandbox. The step's
+        # own structured output is injected as step_output() (backlog #3).
+        verify_result, verify_value = self._verify_and_value(
+            sub_goal.verify, exec_output
+        )
 
         if verify_result:
             # Success path
             result_data = {"output": exec_output, "verify_value": verify_value}
+            if timeout_msg:
+                # #17 — verified despite the budget: pass, but say so.
+                result_data["timing_warning"] = timeout_msg
             self._capture(sub_goal.name, result_data)
             return StepRecord(
                 sub_goal_name=sub_goal.name,
@@ -422,6 +540,7 @@ class GoalExecutor:
                 error="",
                 fallback_used=False,
                 result_data=result_data,
+                pre_satisfied=pre_satisfied,
             )
 
         # --- Phase 3: Visual verification fallback ---
@@ -457,6 +576,7 @@ class GoalExecutor:
                             fallback_used=False,
                             visual_override=True,  # not deterministic evidence
                             result_data=vo_result_data,
+                            pre_satisfied=pre_satisfied,
                         )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("GoalExecutor: visual verification failed: %s", exc)
@@ -476,8 +596,10 @@ class GoalExecutor:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("GoalExecutor: fallback strategy raised: %s", exc)
 
-            # Re-verify after fallback
-            verify_result_after, verify_value_after = self._verify_and_value(sub_goal.verify)
+            # Re-verify after fallback — against the freshest output in hand.
+            verify_result_after, verify_value_after = self._verify_and_value(
+                sub_goal.verify, fallback_output or exec_output
+            )
             # Prefer the fallback's output; fall back to the primary attempt's.
             fb_result_data = {
                 "output": fallback_output or exec_output,
@@ -485,18 +607,25 @@ class GoalExecutor:
             }
             if verify_result_after:
                 self._capture(sub_goal.name, fb_result_data)
+            if verify_result_after and timeout_msg:
+                fb_result_data["timing_warning"] = timeout_msg
             return StepRecord(
                 sub_goal_name=sub_goal.name,
                 strategy=strategy_name,
                 success=verify_result_after,
                 verify_result=verify_result_after,
                 duration_sec=time.monotonic() - step_start,
-                error="" if verify_result_after else "failed after fallback",
+                error="" if verify_result_after else (
+                    f"{timeout_msg}; failed after fallback" if timeout_msg
+                    else "failed after fallback"),
                 fallback_used=True,
                 result_data=fb_result_data,
                 # W2.4: executed without error but verify is still False after the
-                # fallback -> a verify-miss. "" on the success branch.
-                failure_class="" if verify_result_after else "verify_fail",
+                # fallback -> a verify-miss. "" on the success branch; a step that
+                # ALSO blew its budget classifies as timeout (#17).
+                failure_class="" if verify_result_after else (
+                    "timeout" if timeout_msg else "verify_fail"),
+                pre_satisfied=pre_satisfied,
             )
 
         # No fallback, verification failed
@@ -506,10 +635,14 @@ class GoalExecutor:
             success=False,
             verify_result=False,
             duration_sec=time.monotonic() - step_start,
-            error="verification failed",
+            error=(f"{timeout_msg}; verification failed" if timeout_msg
+                   else "verification failed"),
             fallback_used=False,
             result_data={"output": exec_output, "verify_value": verify_value},
-            failure_class="verify_fail",  # W2.4: executed OK but verify was False
+            # W2.4: executed OK but verify was False; a step that ALSO blew
+            # its budget classifies as timeout (#17).
+            failure_class="timeout" if timeout_msg else "verify_fail",
+            pre_satisfied=pre_satisfied,
         )
 
     # ------------------------------------------------------------------
@@ -528,12 +661,15 @@ class GoalExecutor:
         ``<source_step>.<source_path>`` for a producer that stored the list at the
         top level. The first form that resolves to a list wins.
 
-        Returns an empty list when there is no blackboard, the path does not
-        resolve to a list, or resolution raises — an empty (or unresolved)
-        producer yields zero children, never an error.
+        Returns the resolved list, or ``None`` when the path does NOT resolve
+        (no blackboard, missing producer/key, or resolution raised). Batch 2
+        #10 (design review): "resolved to an empty list" (an honest zero —
+        nothing to iterate) and "never resolved" (a plan/producer contract
+        miss the replan must hear about) are DIFFERENT outcomes; the old code
+        collapsed both to zero silent iterations and let the tree PASS.
         """
         if self._blackboard is None:
-            return []
+            return None
         path = spec.source_path.strip(".")
         candidates = (
             f"${{{spec.source_step}.output.{path}}}",
@@ -544,16 +680,31 @@ class GoalExecutor:
                 resolved = self._blackboard.resolve(ref)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("GoalExecutor: foreach resolve raised: %s", exc)
-                return []
+                return None
             if isinstance(resolved, list):
                 return list(resolved)
-        logger.info(
-            "GoalExecutor: foreach source %r.%r did not resolve to a list — "
-            "zero iterations",
+        logger.warning(
+            "GoalExecutor: foreach source %r.%r did not resolve to a list",
             spec.source_step,
             spec.source_path,
         )
-        return []
+        return None
+
+    def _foreach_producer_keys(self, source_step: str) -> "list[str]":
+        """The producer step's actually-available top-level keys (for the
+        loud unresolved-foreach error — fed to the replan so the next plan
+        can bind the REAL path). Best-effort; never raises."""
+        try:
+            data = self._blackboard.get(source_step) if self._blackboard else None
+            if not isinstance(data, dict):
+                return []
+            keys = set(data.keys())
+            out = data.get("output")
+            if isinstance(out, dict):
+                keys |= {f"output.{k}" for k in out.keys()}
+            return sorted(keys)
+        except Exception:  # noqa: BLE001
+            return []
 
     def _execute_foreach(
         self,
@@ -581,6 +732,32 @@ class GoalExecutor:
             return records
 
         items = self._resolve_foreach_items(spec)
+        if items is None:
+            # Unresolved producer path — a loud, replannable failure (#10),
+            # never a silent zero-iteration PASS.
+            keys = self._foreach_producer_keys(spec.source_step)
+            err = (
+                f"foreach source '{spec.source_step}.{spec.source_path}' did "
+                f"not resolve to a list; producer's available keys: "
+                f"{keys or '<none — producer step missing or not captured>'}"
+            )
+            failed = StepRecord(
+                sub_goal_name=sub_goal.name,
+                strategy="foreach",
+                success=False,
+                verify_result=False,
+                duration_sec=0.0,
+                error=err,
+                fallback_used=False,
+                failure_class="exec_error",
+            )
+            records.append(failed)
+            if on_step is not None:
+                try:
+                    on_step(failed)
+                except Exception:  # noqa: BLE001
+                    pass
+            return records
         # The body runs once per item, but template-to-template ``depends_on`` must
         # still order the body (e.g. place_obj depends_on pick_obj). Order the body
         # ONCE by its intra-body deps; list order is the deterministic tie-break, so
@@ -710,18 +887,55 @@ class GoalExecutor:
     # Observation capture (Stage 1a)
     # ------------------------------------------------------------------
 
-    def _verify_and_value(self, expression: str) -> tuple[bool, Any]:
+    def _pre_satisfied(self, verify: str) -> bool:
+        """The predicate's value BEFORE execution (invariant I).
+
+        Trivial sentinels ('', 'True' — trace_store's no-evidence set) are
+        never flagged: pre-eval on them is meaningless noise. Expressions
+        that cannot evaluate without the step's own output (step_output())
+        fail closed to False — the baseline never blocks execution.
+        """
+        expr = (verify or "").strip()
+        if expr in _NO_EVIDENCE_VERIFIES:
+            return False
+        try:
+            ok, _ = self._verify_and_value(expr, None)
+        except Exception:  # noqa: BLE001 — best-effort baseline
+            return False
+        return bool(ok)
+
+    def _verify_and_value(
+        self, expression: str, exec_output: Any = None
+    ) -> tuple[bool, Any]:
         """Return ``(verify_bool, verify_value)`` for *expression*.
 
         Prefers the verifier's :meth:`evaluate` (which surfaces the raw value);
         falls back to :meth:`verify` (value = None) for any verifier — including
         test mocks — that only exposes ``verify``. The boolean result is always
         identical to what ``verify`` alone would have returned.
+
+        ``exec_output`` (backlog #3) is the CURRENT step's own structured
+        output. When given, a kernel ``step_output(path='')`` function is
+        injected per-evaluation so the verify can consume what THIS step
+        observed (Rule 4 — e.g. detect verifying its own alias-aware result)
+        instead of re-querying a separate oracle. Old-signature verifiers
+        (and mocks) keep working: a TypeError falls back to the bare call.
         """
+        extra_ns = (
+            {"step_output": _make_step_output(exec_output)}
+            if exec_output is not None
+            else None
+        )
         evaluate = getattr(self._verifier, "evaluate", None)
         if callable(evaluate):
             try:
-                outcome = evaluate(expression)
+                if extra_ns is not None:
+                    try:
+                        outcome = evaluate(expression, extra_ns=extra_ns)
+                    except TypeError:
+                        outcome = evaluate(expression)
+                else:
+                    outcome = evaluate(expression)
                 if isinstance(outcome, tuple) and len(outcome) == 2:
                     return bool(outcome[0]), outcome[1]
             except Exception as exc:  # noqa: BLE001
@@ -1093,9 +1307,27 @@ class GoalExecutor:
 
         try:
             sig = inspect.signature(fn)
+            has_var_kw = any(
+                p.kind is inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
             accepted = set(sig.parameters.keys())
-            filtered = {k: v for k, v in params.items() if k in accepted}
-            retval = fn(**filtered)
+            unknown = (
+                []
+                if has_var_kw  # **kwargs accepts anything by contract
+                else sorted(k for k in params.keys() if k not in accepted)
+            )
+            if unknown:
+                # Batch 3 #12: silently dropping params hid plan/contract
+                # drift (a typo'd or mis-named param became a default-value
+                # action that still PASSed). Loud, with the real signature.
+                return (
+                    False,
+                    f"primitive '{name}' got unknown param(s) {unknown}; "
+                    f"accepted: {sorted(accepted)}",
+                    {},
+                )
+            retval = fn(**params)
             if isinstance(retval, bool):
                 return retval, "", {}
             return True, "", self._coerce_output(retval)

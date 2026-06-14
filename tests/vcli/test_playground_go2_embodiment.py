@@ -350,13 +350,28 @@ class TestDecomposeVocabRouting:
             {"name": "look", "description": "Look in a direction", "parameters": {}},
         ]
 
-    def test_base_agent_gets_base_primitives_and_go2_skills(self) -> None:
+    def test_base_agent_gets_go2_skills_primitives_track_executable_truth(
+        self, monkeypatch
+    ) -> None:
         eng = _make_engine()
         eng._world = _go2_world()
         reg = _FakeSkillRegistry(self._schemas())
         agent = _base_agent(FakeBase(position=[0.0, 0.0, 0.3], heading=0.0))
 
-        # has_base=True path: base primitives present, go2 skills present.
+        # has_base=True with an UNWIRED primitive layer (production truth —
+        # nothing calls init_primitives): go2 skills taught, primitives NOT
+        # (owner finding (c) 2026-06-12 — never teach ghost routes).
+        kwargs = eng._build_registry_vocab_kwargs(reg, agent, has_base=True)
+        strategies = set(kwargs["strategies"])
+        assert {"explore_skill", "look_skill"} <= strategies
+        assert not ({"walk_forward", "turn", "scan_360"} & strategies)
+
+        # With the primitive layer actually wired, they come back.
+        from vector_os_nano.vcli import primitives as prims
+
+        monkeypatch.setattr(
+            prims, "_ctx", prims.PrimitiveContext(base=object()), raising=True
+        )
         kwargs = eng._build_registry_vocab_kwargs(reg, agent, has_base=True)
         strategies = set(kwargs["strategies"])
         assert {"walk_forward", "turn", "scan_360"} <= strategies

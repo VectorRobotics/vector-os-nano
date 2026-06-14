@@ -41,6 +41,8 @@ class LookSkill:
     """Look around and describe what the robot sees using VLM."""
 
     name: str = "look"
+    # Invariant III: fast-path verify single source.
+    verify_template: str = "len(describe_scene()) > 0"
     description: str = "Look around and describe what the robot sees using VLM."
     parameters: dict = {}
     preconditions: list[str] = []

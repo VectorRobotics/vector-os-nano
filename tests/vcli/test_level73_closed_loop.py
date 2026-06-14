@@ -121,7 +121,7 @@ def test_data_binding() -> None:
     harness = VGGHarness(
         decomposer=_decomposer_returning(tree),
         executor=executor,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
     )
     trace = harness.run("detect then pick", "world", goal_tree=tree)
 
@@ -255,7 +255,7 @@ def test_world_context_refreshed() -> None:
     harness = VGGHarness(
         decomposer=decomposer,
         executor=executor,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=1),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=1),
     )
     harness.run("task", "static-fallback", context_provider=provider)
 
@@ -298,7 +298,7 @@ def test_world_context_static_fallback_when_no_provider() -> None:
     harness = VGGHarness(
         decomposer=decomposer,
         executor=executor,
-        config=HarnessConfig(max_step_retries=0, max_redecompose=0, max_pipeline_retries=0),
+        config=HarnessConfig(max_step_retries=0, max_pipeline_retries=0),
     )
     harness.run("task", "static-context")
 

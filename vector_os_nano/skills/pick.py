@@ -116,6 +116,7 @@ class PickSkill:
     # Success predicate this skill is verified against (single-source for the
     # planner; kernel rules 3 + 5). References the arm verify namespace.
     verify_hint: str = "holding_object()"
+    verify_template: str = "holding_object()"
     parameters: dict = {
         "object_id": {
             "type": "string",

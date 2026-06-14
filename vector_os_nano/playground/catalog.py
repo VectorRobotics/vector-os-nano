@@ -104,11 +104,91 @@ GO2_ROOM = Scenario(
     rooms=_GO2_ROOMS,
 )
 
+# M2 (ADR-009): the first photoreal third-world preset — a license-free
+# habitat test scene behind the conda-subprocess backend. embodiment="mobile"
+# selects the base predicate family (a kinematic navmesh base, not the go2
+# gait sim). rooms is honestly EMPTY: the test scene carries no semantic
+# annotations; real named rooms arrive with HM3D-Semantics (DQ-1) in M3 —
+# at_position/facing/geodesic_dist carry the verify story until then.
+APARTMENT = Scenario(
+    id="apartment",
+    embodiment="mobile",
+    scene_xml="",
+    task_hint="Navigate a photoreal scanned apartment (habitat backend).",
+    sim_backend="habitat",
+    scene_ref="habitat-test-scenes/apartment_1.glb",
+)
+
+# N0 (campaign #2): the first LARGE composed scene — ReplicaCAD apt_1
+# (CC-BY-4.0; ~13m x 7m navigable, 120 placed objects, authored navmesh).
+# Loaded through the dataset config (stage + furniture + lighting), so
+# scene_ref is the scene-instance NAME, not a file. Rooms are hand-labeled
+# world-frame boxes derived from the scene instance's furniture anchors
+# (tv/tvstand at x~-7.7, dining table_01 at (-5.2,-2.5), sofa strip at
+# y~-4, fridge/kitchen_counter at y~2, door2/shoe rack at x~2) and
+# live-verified against the authored navmesh (snap + geodesic harness).
+_HOUSE_ROOMS: dict[str, tuple[float, float, float, float]] = {
+    "tv_corner": (-8.2, -3.7, -6.6, -1.0),
+    "dining": (-6.6, -3.6, -4.1, -1.2),
+    "living_room": (-4.1, -4.7, 0.9, -2.4),
+    "kitchen": (-3.6, 1.0, 0.2, 2.8),
+    "entryway": (1.2, 1.2, 3.2, 2.8),
+}
+
+HOUSE = Scenario(
+    id="house",
+    embodiment="mobile",
+    scene_xml="",
+    task_hint="Navigate a large multi-room ReplicaCAD apartment (habitat backend).",
+    rooms=_HOUSE_ROOMS,
+    sim_backend="habitat",
+    scene_ref="apt_1",
+    scene_dataset_config="replica_cad/replicaCAD.scene_dataset_config.json",
+)
+
+# Campaign #5: the G1 humanoid REAL-gait scene. embodiment="g1" selects the
+# base predicate family (a base, no arm); sim_backend stays the default
+# "mujoco" — booted IN-PROCESS by g1_runtime.boot_g1_agent on the pretrained
+# unitree_rl_gym policy. scene_xml points at the downloaded asset
+# (scripts/setup_g1_gait.sh fetches it into assets/g1_gait/, gitignored);
+# rooms is empty (flat scene) — at_position/facing carry the verify story,
+# geodesic_dist fails safe to inf (no navmesh), same as the MuJoCo go2.
+_G1_SCENE_XML = str(
+    Path(__file__).resolve().parent.parent.parent
+    / "assets" / "g1_gait" / "scene.xml"
+)
+
+G1_FLAT = Scenario(
+    id="g1_flat",
+    embodiment="g1",
+    scene_xml=_G1_SCENE_XML,
+    task_hint="Walk and turn with the G1 humanoid (real policy-driven gait).",
+)
+
+# Campaign #8 R3: the G1 in a closed room with REAL collision walls + obstacle
+# boxes + labeled targets. Same embodiment="g1" (booted by g1_runtime, which
+# switches G1MuJoCoBase into room mode on this id); the scene is built
+# programmatically (g1_room.build_room_model) so scene_xml stays the base
+# asset. object_names = the labeled targets the nav loop can drive to.
+G1_ROOM = Scenario(
+    id="g1_room",
+    embodiment="g1",
+    scene_xml=_G1_SCENE_XML,
+    object_names=("target_red", "target_blue", "target_green"),
+    task_hint=(
+        "Navigate the G1 humanoid around obstacles to a labeled target in a "
+        "closed room (real collision, real gait, obstacle avoidance)."),
+)
+
 # id -> Scenario. Additive: new preset scenes append here.
 SCENARIOS: dict[str, Scenario] = {
     TABLETOP.id: TABLETOP,
     TABLETOP_TRAY.id: TABLETOP_TRAY,
     GO2_ROOM.id: GO2_ROOM,
+    APARTMENT.id: APARTMENT,
+    HOUSE.id: HOUSE,
+    G1_FLAT.id: G1_FLAT,
+    G1_ROOM.id: G1_ROOM,
 }
 
 

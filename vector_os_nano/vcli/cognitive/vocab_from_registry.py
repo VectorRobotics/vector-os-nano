@@ -44,11 +44,18 @@ _TARGET_BINDING_GUIDANCE: str = (
     "When a step acts on a SPECIFIC object/target named in the task, copy that "
     "target into the chosen strategy's object/object_label/query/target "
     "parameter — never leave a known target blank. "
+    "When the world context carries an 'Objects (live):' list, RESOLVE the "
+    "user's reference (any language, attributes like color/size included) to "
+    "the EXACT listed name whose name/attributes match, and bind THAT name — "
+    "the scene knows objects by those names, not by the user's wording. If "
+    "nothing listed matches, bind the user's wording as-is; the step will "
+    "fail loudly and you can re-bind on replan from the fresh list. "
+    "For an instruction that targets a NAMED object's location, bind the object's LABEL into params when the strategy supports it (the skill resolves live coordinates and fails loudly if the object is unknown) — NEVER invent x/y for an object. "
     "Use each strategy's 'suggested verify' predicate EXACTLY as written for that "
     "step's verify expression: put the target ONLY in strategy_params, never as an "
     "argument inside the verify expression. The verifier checks deterministic "
-    "ground-truth state, not your target string — so e.g. a detect step verifies "
-    "with len(detect_objects()) > 0, NOT detect_objects('<your target>')."
+    "ground-truth state (or the step's own recorded output via step_output()), "
+    "not your target string."
 )
 
 _DEFAULT_PLANNER_INTRO: str = (
@@ -80,14 +87,18 @@ def _strategy_name(skill_name: str) -> str:
 
 
 def _verify_hint(schema: dict[str, Any]) -> str:
-    """Return a skill's declared success predicate, or the safe ``True`` literal.
+    """Return a skill's declared success predicate, or an UNVERIFIED marker.
 
     Single-sourced from the skill's ``verify_hint`` (surfaced by
-    ``Skill.to_schemas``); a skill that declares none gets the always-safe
-    truthy literal so the planner always has a concrete suggestion.
+    ``Skill.to_schemas``). Invariant III: a skill that declares none is shown
+    as unverified — the planner must never be handed the ``True`` sentinel as
+    a "suggested" predicate (that is how motion commands became structurally
+    unverified).
     """
     hint = str(schema.get("verify_hint", "") or "").strip()
-    return hint or "True"
+    if hint and hint != "True":
+        return hint
+    return "(unverified — this skill declares no symbolic post-condition)"
 
 
 def _format_params_block(schema: dict[str, Any]) -> str:
@@ -299,6 +310,7 @@ def build_decompose_vocab(
     verify_signatures: dict[str, str],
     has_base: bool,
     planner_intro: str | None = None,
+    teach_base_primitives: bool | None = None,
 ) -> DecomposeVocab:
     """Build a DecomposeVocab from skill schemas and verify signatures.
 
@@ -315,6 +327,12 @@ def build_decompose_vocab(
             entirely (the arm must never be taught base primitives).
         planner_intro: Optional planner-intro override; a neutral robot-task
             default is used when None.
+        teach_base_primitives: Whether the vocab may teach the base primitives
+            at all. ``None`` (default) keeps the historical ``has_base``
+            behaviour; the engine passes the EXECUTABLE truth
+            (``primitives_ready()``) so a world whose primitive layer was
+            never wired stops putting scan_360/walk_forward in the planner's
+            mouth (owner finding (c), 2026-06-12).
 
     Returns:
         A DecomposeVocab whose strategies, descriptions, params-help, examples
@@ -325,7 +343,10 @@ def build_decompose_vocab(
         _strategy_name(str(s.get("name", ""))): str(s.get("description", ""))
         for s in schemas
     }
-    if has_base:
+    _teach = has_base if teach_base_primitives is None else (
+        has_base and teach_base_primitives
+    )
+    if _teach:
         strategy_names |= set(_BASE_PRIMITIVE_DESCRIPTIONS.keys())
         strategy_descriptions.update(_BASE_PRIMITIVE_DESCRIPTIONS)
 

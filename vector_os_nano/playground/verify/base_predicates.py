@@ -22,6 +22,7 @@ from vector_os_nano.vcli.worlds.go2_sim_oracle import (
     _is_box,
     make_at_position,
     make_facing,
+    make_geodesic_dist,
     make_rooms_producer,
     make_visited,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "_is_box",
     "make_at_position",
     "make_facing",
+    "make_geodesic_dist",
     "make_rooms_producer",
     "make_visited",
 ]

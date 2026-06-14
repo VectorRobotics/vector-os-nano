@@ -18,6 +18,16 @@ from typing import Any, Protocol, runtime_checkable
 
 from vector_os_nano.core.types import SkillResult
 
+def _real_hint(s) -> str:
+    """A skill's declared verify hint, '' unless it is a REAL predicate.
+
+    The 'True' sentinel counts as undeclared (invariant III): it must never
+    masquerade as a success predicate in schemas or planner prompts.
+    """
+    hint = str(getattr(s, "verify_hint", "") or "").strip()
+    return "" if hint == "True" else hint
+
+
 logger = logging.getLogger(__name__)
 
 # Sentinel for detecting whether legacy kwargs were explicitly supplied.
@@ -374,11 +384,15 @@ class SkillRegistry:
                 "preconditions": list(s.preconditions),
                 "postconditions": list(s.postconditions),
                 "effects": dict(s.effects),
-                # Per-skill success predicate the planner should prefer for this
-                # step's verify expression (single-source; optional attribute).
-                # Defaults to the always-safe "True" when a skill declares none.
-                "verify_hint": getattr(s, "verify_hint", "") or "True",
+                # Per-skill success predicate the planner should prefer for
+                # this step's verify expression (single-source; optional
+                # attribute). Invariant III (design review #17): NEVER coerced
+                # to the "True" sentinel — a skill with no real predicate is
+                # explicitly tagged unverified below instead.
+                "verify_hint": _real_hint(s),
             }
+            if not _real_hint(s):
+                schema["unverified"] = True
             if aliases:
                 schema["aliases"] = aliases
             if auto:

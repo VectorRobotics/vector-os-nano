@@ -43,7 +43,11 @@ _COST_PER_INPUT_TOKEN: float = 2.50 / 1_000_000   # USD per input token
 _COST_PER_OUTPUT_TOKEN: float = 10.00 / 1_000_000  # USD per output token
 
 _OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-_MODEL: str = "google/gemma-4-31b-it"
+# DQ-6 (owner 2026-06-12): the VLM backbone is a 72B-class Qwen VL via
+# OpenRouter — never a weak-vision text model. Owner sized it "72B 就够了";
+# Qwen3-VL has no 72B dense on OpenRouter, so the 72B slot is
+# qwen2.5-vl-72b-instruct (probed valid). Override: VECTOR_VLM_MODEL_OPENROUTER.
+_MODEL: str = os.environ.get("VECTOR_VLM_MODEL_OPENROUTER", "") or "qwen/qwen2.5-vl-72b-instruct"
 _TIMEOUT_S: float = 30.0
 _MAX_RETRIES: int = 2
 _JPEG_QUALITY: int = 50

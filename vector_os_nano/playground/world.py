@@ -66,25 +66,46 @@ class PlaygroundWorld:
         """The hardware family this scenario targets (e.g. ``"arm"``/``"go2"``)."""
         return self._scenario.embodiment
 
+    # Embodiments that carry a mobile base. "go2" is the MuJoCo quadruped;
+    # "mobile" is a backend-agnostic kinematic base (habitat third world, M2).
+    _BASE_EMBODIMENTS = ("go2", "mobile", "g1")
+
     def has_base(self) -> bool:
-        """True for a mobile-base scenario (Go2), False for an arm scenario.
+        """True for a mobile-base scenario, False for an arm scenario.
 
         Reported from the scenario's embodiment so callers/tests can inspect the
         world's intent. NOTE: the engine still gates the base primitives in the
         decompose vocab from the *connected agent* (``agent._base``), not from
-        the world — keeping the mechanism world-agnostic. A go2 scenario backed
-        by an agent that has a ``_base`` therefore puts walk_forward/turn/
-        scan_360 + the go2 skills in vocab and enables base verify predicates.
+        the world — keeping the mechanism world-agnostic. A mobile scenario
+        backed by an agent that has a ``_base`` therefore puts walk_forward/
+        turn/scan_360 + the base skills in vocab and enables base verify
+        predicates.
         """
-        return self._scenario.embodiment == "go2"
+        return self._scenario.embodiment in self._BASE_EMBODIMENTS
 
     def is_robot(self) -> bool:
         # Both arm and base scenarios drive (simulated) robot hardware.
         return True
 
+    def evidence_exempt_strategies(self) -> "frozenset[str]":
+        # Invariant II: the playground has a FULL sim oracle — no strategy is
+        # exempt from deterministic evidence here. (The old world-level
+        # is_robot bypass turned the moat off exactly where live testing
+        # happens; design review 2026-06-12 #4.)
+        return frozenset()
+
     def persona_blocks(self) -> tuple[str, str]:
-        # Reuse the robot persona for now; a playground-specific persona is a
-        # later increment if the tabletop task needs distinct tool instructions.
+        # ADR-006 thing #4: the world owns its persona. Habitat scenarios get
+        # the habitat persona (the world is ALREADY running — the MuJoCo
+        # launch guidance would send the LLM hunting for launch scripts);
+        # MuJoCo scenarios keep the robot persona unchanged.
+        if getattr(self._scenario, "sim_backend", "mujoco") == "habitat":
+            from vector_os_nano.vcli.prompt import (
+                HABITAT_ROLE_PROMPT,
+                HABITAT_TOOL_INSTRUCTIONS,
+            )
+
+            return HABITAT_ROLE_PROMPT, HABITAT_TOOL_INSTRUCTIONS
         return ROBOT_ROLE_PROMPT, ROBOT_TOOL_INSTRUCTIONS
 
     def register_tools(self, registry: Any, agent: Any) -> None:
@@ -131,11 +152,19 @@ class PlaygroundWorld:
         # The scenario's named rooms become the source of truth for visited(),
         # so a navigation sub-goal verifies "reached <room>" by scene name
         # without hand-passing raw coordinates.
+        from vector_os_nano.playground.verify.base_predicates import (
+            make_geodesic_dist,
+        )
+
         rooms = self._scenario.rooms
         return {
             "at_position": make_at_position(agent),
             "facing": make_facing(agent),
             "visited": make_visited(agent, rooms),
+            # M2: navmesh geodesic distance (the VLN success criterion) — binds
+            # for every base embodiment, fails safe to inf when the connected
+            # base has no geodesic oracle (e.g. the MuJoCo go2).
+            "geodesic_dist": make_geodesic_dist(agent),
         }
 
     # The strategy name a decompose plan emits for the detect PRODUCING step. It

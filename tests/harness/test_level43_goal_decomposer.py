@@ -246,6 +246,165 @@ class TestAC4KnownStrategies:
         result = decomposer.decompose("test", "")
         assert result.sub_goals[0].strategy == ""
 
+    def test_strategy_prefix_affinity_resolves_shortening(self):
+        """M5 finding: 'navigate' (LLM shortening) resolves to 'navigate_to'
+        when the prefix relation is unambiguous — deterministically."""
+        j = json.dumps({
+            "goal": "test",
+            "sub_goals": [
+                {
+                    "name": "step1",
+                    "description": "desc",
+                    "verify": "nearest_room() == 'kitchen'",
+                    "strategy": "navigate",
+                    "timeout_sec": 10,
+                }
+            ],
+        })
+        decomposer = GoalDecomposer(
+            MockBackend(j), strategies=["navigate_to", "walk", "turn", "stop"]
+        )
+        result = decomposer.decompose("test", "")
+        assert result.sub_goals[0].strategy == "navigate_to"
+
+    def test_strategy_affinity_ambiguous_still_cleared(self):
+        """Two prefix candidates -> no guessing: cleared loud as before."""
+        j = json.dumps({
+            "goal": "test",
+            "sub_goals": [
+                {
+                    "name": "step1",
+                    "description": "desc",
+                    "verify": "True",
+                    "strategy": "wal",
+                    "timeout_sec": 10,
+                }
+            ],
+        })
+        decomposer = GoalDecomposer(
+            MockBackend(j), strategies=["walk", "walk_fast", "turn"]
+        )
+        result = decomposer.decompose("test", "")
+        assert result.sub_goals[0].strategy == ""
+
+    def test_strategy_affinity_min_length_guard(self):
+        """One-letter 'fragments' never resolve (>=3 chars required)."""
+        j = json.dumps({
+            "goal": "test",
+            "sub_goals": [
+                {
+                    "name": "step1",
+                    "description": "desc",
+                    "verify": "True",
+                    "strategy": "na",
+                    "timeout_sec": 10,
+                }
+            ],
+        })
+        decomposer = GoalDecomposer(
+            MockBackend(j), strategies=["navigate_to", "walk"]
+        )
+        result = decomposer.decompose("test", "")
+        assert result.sub_goals[0].strategy == ""
+
+    def test_stale_template_rejected_plans_fresh(self):
+        """N4 live finding: a template compiled in ANOTHER world (strategy
+        'navigate' from go2) must be rejected — the LLM path plans fresh with
+        THIS world's vocab — never half-run with a phantom strategy."""
+        from types import SimpleNamespace
+
+        fresh = json.dumps({
+            "goal": "test",
+            "sub_goals": [
+                {
+                    "name": "step1",
+                    "description": "desc",
+                    "verify": "True",
+                    "strategy": "navigate_to_skill",
+                    "timeout_sec": 10,
+                }
+            ],
+        })
+
+        stale_tree = SimpleNamespace(sub_goals=[
+            SimpleNamespace(strategy="navigate", foreach=None)
+        ])
+
+        class _StaleLibrary:
+            def match(self, task):
+                return ("tpl", {})
+
+            def instantiate(self, template, params):
+                return stale_tree
+
+        decomposer = GoalDecomposer(
+            MockBackend(fresh),
+            template_library=_StaleLibrary(),
+            strategies=["navigate_to_skill", "walk_skill"],
+        )
+        result = decomposer.decompose("先走到 (1,2)，然后走到 (3,4)", "")
+        # the stale template was rejected; the LLM tree (valid vocab) came back
+        assert result.sub_goals[0].strategy == "navigate_to_skill"
+
+    def test_valid_template_still_taken(self):
+        from types import SimpleNamespace
+
+        good_tree = SimpleNamespace(sub_goals=[
+            SimpleNamespace(strategy="walk_skill", foreach=None)
+        ])
+
+        class _GoodLibrary:
+            def match(self, task):
+                return ("tpl", {})
+
+            def instantiate(self, template, params):
+                return good_tree
+
+        decomposer = GoalDecomposer(
+            MockBackend("never called"),
+            template_library=_GoodLibrary(),
+            strategies=["navigate_to_skill", "walk_skill"],
+        )
+        assert decomposer.decompose("walk", "") is good_tree
+
+    def test_navigate_params_backfilled_from_verify(self):
+        """N4: coords bound only into the verify are copied into params."""
+        j = json.dumps({
+            "goal": "test",
+            "sub_goals": [
+                {
+                    "name": "go_to_first_point",
+                    "description": "desc",
+                    "verify": "nearest_room() == 'kitchen'",
+                    "strategy": "navigate_to_skill",
+                    "timeout_sec": 10,
+                }
+            ],
+        })
+        # use the strengthen module directly for the coordinate form (the
+        # default verify allowlist here lacks geodesic_dist)
+        from vector_os_nano.vcli.cognitive.verify_strengthen import (
+            backfill_target_params,
+        )
+        out = backfill_target_params(
+            "navigate_to_skill", {}, "geodesic_dist(-4.5, -3.2) < 0.5"
+        )
+        assert out == {"x": -4.5, "y": -3.2}
+        out2 = backfill_target_params(
+            "navigate_to_skill", {"x": 1.0, "y": 2.0},
+            "geodesic_dist(-4.5, -3.2) < 0.5",
+        )
+        assert out2 == {"x": 1.0, "y": 2.0}  # never overwrites
+        out3 = backfill_target_params(
+            "navigate_to_skill", {"label": "sofa"},
+            "at_position(-2.1, -3.8, 1.6)",
+        )
+        assert out3 == {"label": "sofa"}  # label goals untouched
+        out4 = backfill_target_params(
+            "walk_skill", {}, "geodesic_dist(1, 2) < 0.5"
+        )
+        assert out4 == {}  # only navigate_to* strategies
+
     def test_empty_strategy_kept(self):
         """Empty strategy string is always valid."""
         no_strategy_json = json.dumps({
