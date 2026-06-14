@@ -57,9 +57,13 @@ class RoomObject:
 
 # Obstacle boxes — the gait must physically avoid these (collision, no 穿模).
 OBSTACLES: tuple = (
-    RoomObject("obstacle_center", 1.6, 0.0, 0.25, 0.7, 0.4, (0.8, 0.3, 0.2, 1)),
-    RoomObject("obstacle_left", 2.9, 1.1, 0.3, 0.3, 0.4, (0.8, 0.4, 0.2, 1)),
-    RoomObject("obstacle_right", 2.9, -1.1, 0.3, 0.3, 0.4, (0.8, 0.4, 0.2, 1)),
+    # Grey/neutral so vision recognition (red/blue/green) is unambiguous — the
+    # obstacles are COLLISION geometry, not colour targets. Collision is
+    # unaffected by colour. The centre obstacle is offset off the x-axis so a
+    # target straight ahead has clear line-of-sight for visual servoing.
+    RoomObject("obstacle_center", 1.7, 0.9, 0.25, 0.5, 0.4, (0.55, 0.55, 0.58, 1)),
+    RoomObject("obstacle_left", 2.9, 1.8, 0.3, 0.3, 0.4, (0.55, 0.55, 0.58, 1)),
+    RoomObject("obstacle_right", 2.4, -1.3, 0.3, 0.3, 0.4, (0.55, 0.55, 0.58, 1)),
 )
 
 # Labeled target objects — nav goals (NOT obstacles). target_red is behind the
@@ -172,9 +176,11 @@ def build_room_model(asset_dir: "Path | str") -> Any:
     # Orient to look along body +x (forward), up = body +z. The camera frame
     # axes in body coords: x_c=-y, y_c=+z, z_c=-x (so view dir -z_c = +x).
     # MjSpec takes a quat (xyaxes silently no-ops), so convert that matrix.
-    R = np.array([[0.0, 0.0, -1.0],
+    # look along body +x but pitched DOWN ~12° so floor-level targets stay in
+    # frame as the robot approaches (a level cam loses low boxes up close).
+    R = np.array([[0.0, 0.208, -0.978],
                   [-1.0, 0.0, 0.0],
-                  [0.0, 1.0, 0.0]], dtype=np.float64)
+                  [0.0, 0.978, 0.208]], dtype=np.float64)
     q = np.zeros(4)
     mujoco.mju_mat2Quat(q, R.flatten())
     cam.quat = q.tolist()

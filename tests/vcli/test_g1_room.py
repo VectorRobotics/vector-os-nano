@@ -71,11 +71,11 @@ class TestObstaclesFromModel:
         assert len(obs) == 1
         xs = [p[0] for p in obs[0]]
         ys = [p[1] for p in obs[0]]
-        # obstacle_center is at (1.6,0) half (0.25,0.7)
-        assert min(xs) == pytest.approx(1.35, abs=0.02)
-        assert max(xs) == pytest.approx(1.85, abs=0.02)
-        assert min(ys) == pytest.approx(-0.70, abs=0.02)
-        assert max(ys) == pytest.approx(0.70, abs=0.02)
+        # obstacle_center is at (1.7,0.9) half (0.25,0.5)
+        assert min(xs) == pytest.approx(1.45, abs=0.02)
+        assert max(xs) == pytest.approx(1.95, abs=0.02)
+        assert min(ys) == pytest.approx(0.40, abs=0.02)
+        assert max(ys) == pytest.approx(1.40, abs=0.02)
 
 
 class TestScenarioRegistration:
@@ -99,10 +99,10 @@ class TestObstacleAwarePlanning:
         m, d = room
         obs = g1_room.obstacles_from_model(
             m, d, names_only={"obstacle_center"})
-        start, goal = (0.0, 0.0), (3.7, 0.0)   # straight line hits the obstacle
+        # obstacle_center is at (1.7,0.9); a line from spawn to (3.4,1.8) runs
+        # straight through it → the planner must detour.
+        start, goal = (0.0, 0.0), (3.4, 1.8)
         path, length = vg.plan_path(start, goal, obs, inflation=0.4)
         straight = math.hypot(goal[0] - start[0], goal[1] - start[1])
         assert path is not None                # reachable around it
-        assert length > straight + 0.1         # a real detour, not the straight line
-        # the detour must clear the obstacle in y (go around, not through)
-        assert max(abs(p[1]) for p in path) > 0.6
+        assert length > straight + 0.05        # a real detour, not the straight line

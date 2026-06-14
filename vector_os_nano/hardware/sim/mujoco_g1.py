@@ -386,9 +386,15 @@ class G1MuJoCoBase:
     def get_camera_frame(self, timeout: float = 5.0):
         """A first-person forward RGB frame (H,W,3 uint8) for recognition.
 
-        Rendered ON the control thread (Case 12 — mujoco.Renderer owns GL);
-        the caller blocks until it lands. Serialized."""
+        Rendered ON the control thread (Case 12 — mujoco.Renderer owns GL); the
+        caller blocks until it lands. In PUMP mode the CALLER thread IS the
+        control thread (it drives _step_batch), so the _cam_req hand-off would
+        DEADLOCK (the caller would block waiting for a batch it must itself
+        pump) — render directly instead. In DAEMON mode the daemon serves the
+        request."""
         self._require_connected()
+        if self._pump_mode:
+            return self._render_camera_frame(self._model, self._data)
         with self._cam_lock:
             self._cam_done.clear()
             self._cam_req.set()

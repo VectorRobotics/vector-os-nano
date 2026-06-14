@@ -338,6 +338,22 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      g1_R9_firstperson_detect.png). Suite 1599 passed. NEXT R10: full vision
      closed loop ('找到并走到红色物体' → explore+recognise → estimate seen
      target's world pose → go to it; optional VLM). R12 forced REVIEW.
+   - **R10 SHIPPED — req #5 vision closed loop COMPLETE:** VisionSeekSkill
+     (skills/vision_seek.py) finds & approaches a colour target by RECOGNITION
+     (camera), not GT coords: loop get_camera_frame → detect_targets → decide
+     (_seek_action: not-seen→scan, off-centre→turn, centred→forward) →
+     progress-stall arrival (the small low box clips up close so pixel area is
+     unreliable; the honest signal is the robot stops making net progress at
+     the recognised target). Honest (rule 5): never seen → fails, never GT
+     fallback; the at_position(target,1.6) verify is the ground-truth judge.
+     Fixed a pump-mode camera DEADLOCK (get_camera_frame renders directly when
+     the caller thread IS the control thread). Obstacles recoloured grey + one
+     moved off-axis so recognition is unambiguous and a target has clear LOS.
+     GUI: vector-cli --scenario g1_room, '找到并走到红色物体' → vision_seek
+     [PASS] at_position(3.7,0,1.6) in 9.5s (screenshot g1_R10_vision_seek.png);
+     headless servoed to 0.62m of target_red. **req #5 is now FULLY closed on
+     real physics + real sensors + real recognition, all from vector-cli.**
+     Suite 1605 passed. R12 forced REVIEW.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
