@@ -114,7 +114,17 @@ class G1MuJoCoBase:
         gui: bool = False,
         room: bool = False,
         furnished: bool = False,
+        prefer_daemon: bool = False,
     ) -> None:
+        # prefer_daemon (campaign #9 R7): when a viewer is open, normally PUMP
+        # mode drives the gait on the caller thread (1.0x). But when the base is
+        # booted MID-REPL (start_simulation tool, on a worker thread), nothing
+        # pumps it → frozen gait. prefer_daemon forces a DAEMON control thread
+        # that drives the gait AND syncs the viewer itself (thread-agnostic,
+        # ~0.4x under the passive viewer's render thread — Case 13 — but it
+        # walks and renders). The --scenario startup path leaves this False (the
+        # main REPL thread pumps, 1.0x).
+        self._prefer_daemon: bool = prefer_daemon
         self._asset_dir = Path(asset_dir) if asset_dir else _ASSET_DIR
         if not (self._asset_dir / "motion.pt").exists():
             raise FileNotFoundError(
@@ -279,7 +289,11 @@ class G1MuJoCoBase:
         # Mode resolution: a live window → PUMP (caller thread drives the loop
         # via _advance, no daemon, so the gait runs 1x against the viewer's
         # render thread). No window → DAEMON (the proven headless path).
-        self._pump_mode = self._viewer is not None
+        # PUMP only when a viewer is open AND we are NOT forced to daemon. A
+        # mid-REPL (tool) boot sets prefer_daemon so the gait runs on its own
+        # thread (and _step_batch syncs the viewer) regardless of which thread
+        # booted it — the pump-mode caller-thread driver would never run there.
+        self._pump_mode = self._viewer is not None and not self._prefer_daemon
         if self._pump_mode:
             self._target = _DEFAULT_ANGLES.copy()   # fresh stance reference
             self._advance(0.3)                       # settle into stance (pump)

@@ -35,6 +35,7 @@ def boot_g1_agent(
     world: Any,
     on_status: "Callable[[str], None] | None" = None,
     gui: bool = False,
+    prefer_daemon: bool = False,
 ) -> Any:
     """Boot the policy-driven G1 base for ``world`` and return a ready Agent.
 
@@ -64,7 +65,8 @@ def boot_g1_agent(
     _emit(on_status, "booting G1 humanoid (unitree_rl_gym policy gait)"
           + (" — furnished room (furniture/VLM)" if furnished
              else " — room (walls/obstacles/lidar)" if room else ""))
-    base = G1MuJoCoBase(gui=gui, room=room, furnished=furnished)
+    base = G1MuJoCoBase(gui=gui, room=room, furnished=furnished,
+                        prefer_daemon=prefer_daemon)
     base.connect()
     agent = Agent(base=base)
 

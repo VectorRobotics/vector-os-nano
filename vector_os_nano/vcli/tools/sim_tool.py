@@ -349,7 +349,10 @@ class SimStartTool:
                 f"scenario '{scenario_id}' is not a g1 scenario "
                 f"(embodiment={embodiment!r}); use start_simulation with the "
                 f"matching sim_type instead")
-        agent = g1_runtime.boot_g1_agent(world, gui=gui)
+        # prefer_daemon: booted mid-REPL on a tool worker thread, so the gait
+        # must run on its own daemon thread (which also syncs the viewer) — the
+        # pump-mode caller-thread driver would never run here (R7).
+        agent = g1_runtime.boot_g1_agent(world, gui=gui, prefer_daemon=True)
         return agent, world
 
     @staticmethod

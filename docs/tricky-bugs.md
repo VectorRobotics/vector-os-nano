@@ -462,3 +462,21 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** when fusing a 2-D detection box with a depth map, the box spans
   object AND background — take the NEAR depth, and treat the result as a surface
   to stand off from, not a waypoint to occupy.
+
+## Case 24 — a PUMP-mode base booted on a worker thread is never pumped (frozen) (2026-06-14)
+- **Symptom:** g1 launched via `--scenario` walks in the GUI; the SAME g1 launched
+  in-REPL via `start_simulation(sim_type='g1')` boots "ok" but the gait is frozen
+  and the viewer never updates (empty/static), the boot returns in ~1.7s.
+- **Cause:** G1's PUMP mode (chosen when a viewer is open) runs NO control daemon —
+  the gait advances only when the CALLER thread drives `_advance`/`_step_batch`.
+  The `--scenario` path boots g1 on the main REPL thread, which then pumps it; the
+  `start_simulation` tool runs on an engine WORKER thread, so after the tool
+  returns nobody pumps that base → physics never steps → frozen + no viewer sync.
+- **Fix:** `prefer_daemon` — when booted mid-REPL, force DAEMON mode even with a
+  viewer: a dedicated control thread drives the gait and its `_step_batch` syncs
+  the viewer (thread-agnostic; the proven headless-daemon path + viewer sync;
+  ~0.4x under the passive viewer's render thread per Case 13, but it walks +
+  renders). The startup `--scenario` path keeps PUMP (1.0x, main-thread driven).
+- **Lesson:** a "caller-thread-pumped" execution model only works if the caller
+  is a long-lived loop. Code launched by a one-shot tool call on a worker thread
+  needs its OWN driver thread — don't assume someone will keep pumping it.

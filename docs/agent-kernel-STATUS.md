@@ -11,7 +11,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
   M1 DONE (backend-agnostic, ungated): `Scenario` carries additive `sim_backend`/`scene_ref`;
   a non-MJCF world registers/resolves through `WorldRegistry` with the engine surface intact
   (tests/vcli/test_scenario_backend_seam.py). M2 (the habitat world itself) awaits the gate.
-- Last updated: 2026-06-14 (campaign #9 R6 — owner-driven: viewer shows furniture, verify binds, g1 launchable in vector-cli).
+- Last updated: 2026-06-14 (campaign #9 R7 — in-REPL g1 launch now WALKS + renders furniture (daemon+viewer); arrival completion VLM-variance-bound).
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## Current state (2026-06-11)
@@ -524,6 +524,26 @@ macOS path is a means. Generalize across embodiments (arm, go2, future) — neve
      wire the main loop to pump a tool-booted pump-mode base (or boot it daemon),
      then confirm the full in-REPL '启动g1 → 认出椅子走过去 → arrival' GUI flow; then
      go2 navigate_to parity.
+
+   - **CAMPAIGN #9 R7 — in-REPL g1 now WALKS + renders furniture (the R6 gap
+     fixed); full arrival is VLM-variance-bound.** Root cause of R6's frozen tool-
+     launched g1: PUMP mode (viewer open) drives the gait on the CALLER thread and
+     has no continuous pump — the `--scenario` path pumps from the main REPL
+     thread, but the `start_simulation` tool boots on a worker thread, so nothing
+     pumped it (Case 24). Fix: `G1MuJoCoBase(prefer_daemon=True)` (threaded via
+     `boot_g1_agent`; the tool's `_start_g1` sets it) → a DAEMON control thread
+     drives the gait AND its `_step_batch` syncs the viewer (thread-agnostic; the
+     proven headless-daemon path + viewer sync; ~0.4x under the passive viewer's
+     render thread, Case 13, but it WALKS and renders). `--scenario` keeps PUMP
+     (1.0x). **VERIFIED GUI:** bare vector-cli → '启动g1' → furnished room renders
+     (walls/obstacles/chair/sofa/plant) → '认出椅子走过去' → the G1 WALKS into the
+     room (daemon gait + live viewer sync). Suite 1648 green; headless g1 daemon
+     tests + the --scenario pump path unchanged. **Remaining (R8+):** the in-REPL
+     recognize_navigate ARRIVAL completed only intermittently this session — the
+     VLM returned several malformed bboxes (e.g. [0,69,..]) so the
+     two-agreeing-estimate consistency window didn't always close; headless daemon
+     is 3/3. Harden the bbox parse / consistency, optionally probe a depth-vs-
+     viewer GL interaction. NEXT R8 = REVIEW round; then go2 navigate_to parity.
    - The owner saw earlier: G1 in habitat still glides/passes through (habitat
      is navmesh-KINEMATIC by design — real physics needs a different
      substrate). R1 = a PROBE + judge-panel workflow to pick the substrate
