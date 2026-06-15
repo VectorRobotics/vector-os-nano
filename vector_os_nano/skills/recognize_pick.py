@@ -100,6 +100,43 @@ class RecognizePickSkill:
         self._detector = detector or VlmTargetDetector()
         self._pick = pick or PickTopDownSkill()
 
+    def _scan_then_observe(self, base: Any, arm: Any) -> "tuple[dict | None, float | None]":
+        """Drive the arm to the overhead scan pose, then observe with the
+        downward wrist camera (campaign #10 DQ-13). Returns ``(obs, support_z)``
+        — a near-vertical wrist view + the table support height, so
+        ``locate_on_plane`` casts an almost-vertical ray (no R18 overshoot).
+
+        Returns ``(None, None)`` — degrading to the forward-cam path (rule 8,
+        fail loud, never silent) — when the base/arm lack the eye-in-hand
+        capability or the scan pose is IK-unreachable.
+        """
+        if not (callable(getattr(base, "get_scan_pose", None))
+                and callable(getattr(base, "get_grasp_observation", None))
+                and arm is not None
+                and callable(getattr(arm, "ik_top_down", None))
+                and callable(getattr(arm, "move_joints", None))):
+            return None, None
+        scan = base.get_scan_pose()
+        if scan is None:
+            return None, None
+        q = arm.ik_top_down(tuple(scan))
+        if q is None:
+            logger.warning("[RECOGNIZE-PICK] scan pose %s IK-unreachable; "
+                           "falling back to forward camera", scan)
+            return None, None
+        if not arm.move_joints(q, duration=4.0):
+            logger.warning("[RECOGNIZE-PICK] move to scan pose failed; "
+                           "forward-camera fallback")
+            return None, None
+        time.sleep(0.4)  # settle so the LIVE wrist-cam pose IS the scan pose
+        obs = base.get_grasp_observation()
+        support_z = (base.get_support_z()
+                     if callable(getattr(base, "get_support_z", None)) else None)
+        if obs is not None:
+            logger.info("[RECOGNIZE-PICK] eye-in-hand scan at %s, support_z=%s",
+                        tuple(round(v, 3) for v in scan), support_z)
+        return obs, support_z
+
     def _detect_with_retry(self, rgb, query: str) -> list:
         """Collect up to 3 successful detections (riding out transient 429/garble)
         and return ONE det at the MEDIAN bbox centre — the remote VLM's centroid
@@ -139,7 +176,14 @@ class RecognizePickSkill:
         if not query:
             return SkillResult(success=False, error_message="needs a target label",
                                result_data={"diagnosis": "bad_params"})
-        obs = _observe(base)
+        # Prefer the eye-in-hand path: move to the overhead scan pose and observe
+        # with the downward wrist cam (near-vertical ray => no R18 overshoot). Falls
+        # back to the forward camera when unavailable / scan pose unreachable.
+        obs, scan_support_z = self._scan_then_observe(
+            base, getattr(context, "arm", None))
+        if obs is None:
+            obs = _observe(base)
+            scan_support_z = None
         if obs is None:
             return SkillResult(
                 success=False,
@@ -159,6 +203,8 @@ class RecognizePickSkill:
         # mismatch, R15). support_z = the grasp height on that surface (a scene
         # constant — the table the robot picks from, NOT the object's GT pose).
         support_z = params.get("support_z")
+        if support_z is None:
+            support_z = scan_support_z  # table top from the eye-in-hand scan path
         if support_z is not None:
             h, w = obs["rgb"].shape[:2]
             # Use the bbox BOTTOM edge (object's contact with the support surface)

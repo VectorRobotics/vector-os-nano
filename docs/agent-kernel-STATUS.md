@@ -5,7 +5,7 @@ One-page "where are we / what's next". Read this first when resuming; durable de
 full round-by-round history is in `git log` + the loop journal (`~/.vector-nano-loop/`).
 
 - Branch: `feat/playground-vln` (campaigns #2–#10 live here; #2–#8 merged to `master` via DQ-4 @ `3e82996`).
-- Last updated: 2026-06-14 (campaign #10 SHIPPED + BANKED by CEO: self-built photoreal co-sim (MuJoCo+Blender/OptiX), photoreal VLN CLI-accepted (g1+go2), full perception->grasp pipeline + ray-to-plane localization. Closed grasp deferred = eye-in-hand wrist-cam follow-up (DQ).). Needs eye-in-hand wrist cam, not tuning. Core photoreal VLN CLI-accepted R5 stands; recommend banking milestone). R17 = place graspable object in reach).).
+- Last updated: 2026-06-15 (campaign #10 DQ-13 R19 IN PROGRESS, owner re-opened the banked grasp: eye-in-hand wrist camera. Added downward `piper_wrist_rgb`/`piper_wrist_depth` on link6 (optical axis = link6 +z = world -Z at top-down) + overhead SCAN POSE + `get_grasp_observation`/`get_scan_pose`/`get_support_z` on MuJoCoGo2 + `_scan_then_observe` in recognize_pick (near-vertical ray -> no R18 overshoot). REAL-SIM verified: STEP 0 scan pose reachable from grasp standoff (x>=10.6); STEP 1a locate round-trip 0.0cm / worst bbox-centre 2.2cm (vs old forward-cam 20-30cm), all objects in-frame at fovy=58, scan_height=0.25. Tests green (860 + 3 new DQ-13). NEXT (R20): the closed grasp — full photoreal+VLM is_holding()=True headless then vector-cli "认出罐子抓起来" + screenshot.
 - Scope guard: this is **vector-os-nano only** — not the UniLab go2arm-grasp work.
 
 ## North star

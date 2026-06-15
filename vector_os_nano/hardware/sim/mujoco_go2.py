@@ -1332,6 +1332,112 @@ class MuJoCoGo2:
         return rgb, depth
 
     # ------------------------------------------------------------------
+    # Eye-in-hand grasp perception (campaign #10 DQ-13)
+    #
+    # The forward d435 sees an in-reach object at a shallow grazing angle, so a
+    # bbox-ray to the support plane overshoots by ~0.2-0.3 m (R15-R18). The Piper
+    # carries a downward wrist camera (piper_wrist_rgb/_depth on link6, optical
+    # axis = link6 +z = world -Z at a top-down pose). Observing from an overhead
+    # SCAN POSE makes the ray near-vertical -> overshoot collapses. The scan point
+    # and support height come ONLY from the table geometry (a scene constant), never
+    # any pickable_* pose (rule 5). These are additive, optional, duck-typed methods
+    # on the concrete world — kernel/BaseProtocol unchanged (rules 2, 7).
+    # ------------------------------------------------------------------
+
+    _WRIST_RGB_CAM = "piper_wrist_rgb"
+    _WRIST_DEPTH_CAM = "piper_wrist_depth"
+
+    def _has_wrist_cam(self) -> bool:
+        import mujoco as mj  # noqa: PLC0415
+        return mj.mj_name2id(
+            self._mj.model, mj.mjtObj.mjOBJ_CAMERA, self._WRIST_RGB_CAM) >= 0
+
+    def get_support_z(self) -> "float | None":
+        """World z of the pick table's TOP surface — the grasp support plane.
+
+        A SCENE constant (the table the robot picks from), read from the
+        ``pick_table`` geometry, NOT any object's ground-truth pose (rule 5).
+        Returned to the skill as ``support_z`` so ``locate_on_plane`` casts the
+        wrist-cam bbox ray onto the correct height. None if no pick table.
+        """
+        self._require_connection()
+        table = self._pick_table()
+        if table is None:
+            return None
+        return float(table["pos"][2] + table["scale"][2])
+
+    def get_scan_pose(self, scan_height: float = 0.25) -> "tuple | None":
+        """Overhead observation point above the table centre: ``(cx, cy,
+        table_top + scan_height)``. The arm is driven here (top-down) so the
+        downward wrist cam frames the workspace from near-vertical. Derived
+        ONLY from the table geometry — the object's xy is still found purely by
+        the VLM + ``locate_on_plane`` (rule 5). None if no pick table.
+
+        scan_height=0.25 was chosen from a real-sim reachability sweep (DQ-13
+        STEP 0): reachable from the grasp standoff, ~10 deg off vertical (vs the
+        forward cam's ~70 deg), and frames the full +-0.15 m object span at
+        fovy=58.
+        """
+        self._require_connection()
+        table = self._pick_table()
+        if table is None:
+            return None
+        cx, cy = float(table["pos"][0]), float(table["pos"][1])
+        top_z = float(table["pos"][2] + table["scale"][2])
+        return (cx, cy, top_z + float(scan_height))
+
+    def get_grasp_observation(
+        self, width: int = 640, height: int = 480,
+    ) -> "dict | None":
+        """A ``{rgb, depth, cam_pos, cam_mat, fovy}`` observation from the
+        downward wrist camera at its LIVE pose. RGB is photoreal (Blender
+        co-sim via render_from_pose) when ``photoreal`` is on, else MuJoCo;
+        depth is MuJoCo from the pixel-aligned ``piper_wrist_depth`` twin.
+
+        None if the model has no wrist camera (bare-Go2 / no-arm scene) so
+        callers fall back to the forward-cam path. cam_pos/cam_mat are read
+        WITHOUT mj_forward (the pose is kept current by the physics thread —
+        a main-thread mj_forward on live data races it: the R13 segfault).
+        """
+        self._require_connection()
+        import mujoco as mj  # noqa: PLC0415
+        if not self._has_wrist_cam():
+            return None
+        cam_id = self._mj.model.cam(self._WRIST_RGB_CAM).id
+
+        if self._photoreal:
+            rgb = self._photoreal_frame(cam_id, self._WRIST_RGB_CAM)
+        else:
+            if not hasattr(self, "_cam_renderer"):
+                self._cam_renderer = mj.Renderer(self._mj.model, height, width)
+                self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
+            self._cam_renderer.update_scene(self._mj.data, camera=cam_id)
+            rgb = self._cam_renderer.render().copy()
+
+        # Depth twin (MuJoCo) — pixel-aligned. Best-effort: the scan path drives
+        # locate_on_plane (support_z), which needs no depth, but provide it for
+        # the generic _observe contract / depth fallback.
+        depth = None
+        if mj.mj_name2id(self._mj.model, mj.mjtObj.mjOBJ_CAMERA,
+                         self._WRIST_DEPTH_CAM) >= 0:
+            if not hasattr(self, "_grasp_depth_renderer"):
+                self._grasp_depth_renderer = mj.Renderer(self._mj.model, height, width)
+                self._grasp_depth_renderer.enable_depth_rendering()
+            ddid = self._mj.model.cam(self._WRIST_DEPTH_CAM).id
+            self._grasp_depth_renderer.update_scene(self._mj.data, camera=ddid)
+            import numpy as np  # noqa: PLC0415
+            depth = self._grasp_depth_renderer.render().copy().astype(np.float32)
+            depth[(depth < 0.05) | (depth > 5.0)] = 0.0
+
+        return {
+            "rgb": rgb,
+            "depth": depth,
+            "cam_pos": self._mj.data.cam_xpos[cam_id].copy(),
+            "cam_mat": self._mj.data.cam_xmat[cam_id].copy(),
+            "fovy": float(self._mj.model.cam_fovy[cam_id]),
+        }
+
+    # ------------------------------------------------------------------
     # Sensor update helpers
     # ------------------------------------------------------------------
 
