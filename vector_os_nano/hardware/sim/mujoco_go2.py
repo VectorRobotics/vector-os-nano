@@ -1211,7 +1211,16 @@ class MuJoCoGo2:
                 # locate). A single object gives a clean, stable detection. The
                 # other physics objects still exist; we just present one to grasp.
                 if len(objs) > 1 and os.environ.get("VECTOR_PICK_SINGLE", "1") != "0":
-                    objs = objs[:1]
+                    # Optionally present a NAMED object (VECTOR_PICK_SINGLE_LABEL,
+                    # substring of the body name) so the scene matches the query
+                    # (e.g. 'can' -> pickable_can_red). This only chooses what to
+                    # RENDER; the VLM still must find + locate it (rule 5).
+                    want = os.environ.get("VECTOR_PICK_SINGLE_LABEL", "").strip().lower()
+                    if want:
+                        match = [o for o in objs if want in o.get("name", "").lower()]
+                        objs = match[:1] or objs[:1]
+                    else:
+                        objs = objs[:1]
                 spec = build_pick_scene_spec(objs, table=self._pick_table())
                 renderer, bridge = scene_renderer(
                     spec, cam_name=cam_name, bridge=self._photoreal_bridge,
@@ -1245,6 +1254,7 @@ class MuJoCoGo2:
             is_cyl = gtype == int(mj.mjtGeom.mjGEOM_CYLINDER)
             size = [float(v) for v in m.geom_size[gid]]
             objs.append({
+                "name": name,
                 "type": "cylinder" if is_cyl else "box",
                 "pos": [float(v) for v in d.xpos[bid]],
                 "size": size[:2] if is_cyl else size[:3],

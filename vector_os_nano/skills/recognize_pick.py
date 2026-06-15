@@ -94,6 +94,10 @@ class RecognizePickSkill:
     # honestly reporting not-found (the object hasn't moved).
     _DETECT_TRIES: int = 4
     _DETECT_BACKOFF_S: float = 2.0
+    # Overhead scan heights (m above the table top) to try, highest first — a
+    # higher cam frames more of the workspace; the lower ones are the fallback
+    # when the settled base can't reach the high pose (DQ-13 STEP 0 real-sim).
+    _SCAN_HEIGHTS: tuple = (0.25, 0.22, 0.20, 0.18, 0.15, 0.12)
 
     def __init__(self, detector: "VlmTargetDetector | None" = None,
                  pick: "PickTopDownSkill | None" = None) -> None:
@@ -116,13 +120,21 @@ class RecognizePickSkill:
                 and callable(getattr(arm, "ik_top_down", None))
                 and callable(getattr(arm, "move_joints", None))):
             return None, None
-        scan = base.get_scan_pose()
-        if scan is None:
-            return None, None
-        q = arm.ik_top_down(tuple(scan))
+        # The live standing base settles lower/drifts, so the reachable scan
+        # height varies with the standoff. Sweep heights HIGHEST-first (higher =
+        # more framing) and take the first the arm can reach.
+        q = scan = None
+        for h in self._SCAN_HEIGHTS:
+            cand = base.get_scan_pose(scan_height=h)
+            if cand is None:
+                return None, None       # no pick table -> forward cam
+            qh = arm.ik_top_down(tuple(cand))
+            if qh is not None:
+                q, scan = qh, cand
+                break
         if q is None:
-            logger.warning("[RECOGNIZE-PICK] scan pose %s IK-unreachable; "
-                           "falling back to forward camera", scan)
+            logger.warning("[RECOGNIZE-PICK] no reachable scan height %s; "
+                           "falling back to forward camera", self._SCAN_HEIGHTS)
             return None, None
         if not arm.move_joints(q, duration=4.0):
             logger.warning("[RECOGNIZE-PICK] move to scan pose failed; "
