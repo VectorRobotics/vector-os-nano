@@ -486,6 +486,11 @@ class LaserScan:
     range_min: float
     range_max: float
     ranges: tuple[float, ...]
+    # Optional world-frame 3D return cloud (x, y, z, intensity) — populated by
+    # 3D lidars (Livox360) so bearing+range localization (recognize_navigate)
+    # has real points to intersect. Default () keeps every existing 2D-only
+    # LaserScan(...) construction valid (rule 6: new field last, with a default).
+    points: tuple[tuple[float, float, float, float], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -496,6 +501,7 @@ class LaserScan:
             "range_min": self.range_min,
             "range_max": self.range_max,
             "ranges": list(self.ranges),
+            "n_points": len(self.points),
         }
 
     @classmethod

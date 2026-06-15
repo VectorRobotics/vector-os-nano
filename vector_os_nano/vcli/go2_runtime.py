@@ -61,9 +61,12 @@ def boot_go2_agent(
     agent = Agent(base=base)
 
     # Mobile base set + VlmSeekSkill (rule 3 — single-source registry; no arm
-    # skills on a quadruped base). NavigateToPointSkill is intentionally omitted:
-    # Go2 has no navigate_to in furnished mode (track B work), and registering a
-    # skill the base cannot run would put a broken option in the planner's mouth.
+    # skills on a quadruped base). RecognizeNavigateSkill is registered by
+    # CAPABILITY PROBE (campaign #11 M2): Go2 now has navigate_to (+ geodesic +
+    # a lidar return cloud), so the SAME photoreal VLN skill G1 runs becomes
+    # available — but only when the base actually exposes navigate_to, never by
+    # embodiment name (so a future Go2 mode without it gets no broken option).
+    # NavigateToPointSkill stays omitted (recognize_navigate is the M2 target).
     from vector_os_nano.core.skill import SkillRegistry
     from vector_os_nano.skills.go2.stop import StopSkill
     from vector_os_nano.skills.go2.turn import TurnSkill
@@ -73,6 +76,11 @@ def boot_go2_agent(
     registry = SkillRegistry()
     for s in (WalkSkill(), TurnSkill(), StopSkill(), VlmSeekSkill()):
         registry.register(s)
+    vln = False
+    if callable(getattr(base, "navigate_to", None)):
+        from vector_os_nano.skills.recognize_navigate import RecognizeNavigateSkill
+        registry.register(RecognizeNavigateSkill())
+        vln = True
     agent._skill_registry = registry
 
     # GT furniture targets → world model: the deterministic at_position verify
@@ -88,6 +96,7 @@ def boot_go2_agent(
             confidence=1.0, state="placed",
             properties={"source": "go2_room_ground_truth"}))
 
-    _emit(on_status, "Go2 base connected — walk/turn/stop/vlm_seek ready"
+    _emit(on_status, "Go2 base connected — walk/turn/stop/vlm_seek"
+          + ("/recognize_navigate" if vln else "") + " ready"
           f" — {len(base.list_targets())} known targets")
     return agent

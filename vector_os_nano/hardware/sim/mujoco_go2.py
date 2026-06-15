@@ -190,6 +190,31 @@ _MPC_LEG_NAMES: list[str] = ["FL", "FR", "RL", "RR"]
 
 _LIDAR_UPDATE_INTERVAL: int = 200  # physics steps between scans (~5 Hz, 5200 rays/scan)
 
+# --- navigate_to closed-loop constants (campaign #11 M2) --------------------
+# Mirror of g1.py's _NAV_* (the same face->walk->capture->settle controller +
+# g1_vgraph routing), retuned for the Go2 quadruped. SEEDS pending a real-sim
+# tuning pass (record actual stand-z / vyaw / stall before shipping as final).
+# CRITICAL: the Go2 stands at qpos[2]=0.35 (connect()), NOT the G1 pelvis 0.77 —
+# so _GO2_NAV_FALL_Z=0.20, NOT G1's 0.4 (0.4 would make `reached` NEVER true and
+# silently report 'fell' on every successful arrival).
+_GO2_NAV_FALL_Z = 0.20       # m: base height below this = fallen (Go2 stands ~0.35)
+_GO2_NAV_TOL_FLOOR = 0.20    # gait COM oscillation floor — tol can't beat this
+_GO2_NAV_SPEED = 0.5         # default forward cmd (Go2 _VX_MAX ~0.8)
+_GO2_NAV_VYAW_MAX = 1.0      # cmd ceiling (Go2 _VYAW_MAX ~4.0; conservative)
+_GO2_NAV_K_YAW = 2.0         # proportional heading gain
+_GO2_NAV_FACE_TOL = 0.35     # rad: pivot-in-place until aligned within this
+_GO2_NAV_YAW_DEADBAND = 0.12  # rad: stop steering when aligned (anti-hunt)
+_GO2_NAV_CAPTURE_R = 0.5     # m: inside, freeze steering + drive straight
+_GO2_NAV_TICK_S = 0.05       # 20 Hz drive ticks
+_GO2_NAV_SETTLE_S = 0.5      # hold stance + re-sample before deciding arrival
+_GO2_NAV_TIMEOUT_S = 60.0
+_GO2_NAV_STALL_WINDOW_S = 6.0  # forward-walk no-progress window
+_GO2_NAV_STALL_MIN_M = 0.10  # min net progress within the window
+# Go2 is a cylinder ~0.34 m front / 0.19 m side (feedback) — inflate isotropic-
+# conservative by the front radius so the planned path keeps the body clear.
+_GO2_NAV_INFLATION = 0.34
+_GO2_NAV_WAYPOINT_TOL = 0.45
+
 
 # ---------------------------------------------------------------------------
 # Minimal MuJoCo wrapper (replaces convex_mpc.MuJoCo_GO2_Model)
@@ -473,6 +498,10 @@ class MuJoCoGo2:
         # the token (tid match).
         self._skill_ctrl_until: float = 0.0
         self._skill_ctrl_tid: int = 0
+        # Obstacle polygons for navigate_to/geodesic (campaign #11 M2). Filled in
+        # connect() for furnished/room scenes; [] on flat -> navigate_to degrades
+        # to a straight-line drive (and the M1 switch path never AttributeErrors).
+        self._obstacles: list = []
 
     # ------------------------------------------------------------------
     # Capability properties (BaseProtocol)
@@ -560,6 +589,19 @@ class MuJoCoGo2:
         self._mj.model.opt.timestep = _SIM_DT
 
         mj.mj_forward(self._mj.model, self._mj.data)
+
+        # navigate_to / geodesic obstacle polygons (campaign #11 M2). The SAME
+        # world-agnostic builder G1 uses (wall_*/obstacle_* geoms; target_*
+        # furniture is intentionally excluded — the target IS the goal). Flat
+        # scenes leave [] -> navigate_to degrades to a straight-line drive.
+        if self._furnished or self._room:
+            try:
+                from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+                self._obstacles = g1_room.obstacles_from_model(
+                    self._mj.model, self._mj.data)
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning("obstacles_from_model failed (flat fallback): %s", _exc)
+                self._obstacles = []
 
         if self._gui:
             try:
@@ -1581,6 +1623,10 @@ class MuJoCoGo2:
             range_min=0.1,
             range_max=12.0,
             ranges=tuple(mid_ring_ranges),
+            # World-frame return cloud (x,y,z,intensity) so recognize_navigate's
+            # bearing+range locate has real points (campaign #11 M2). points_3d
+            # is already world-frame (pos_lidar + dist*world_direction above).
+            points=tuple(points_3d),
         )
         self._last_pointcloud = points_3d
 
@@ -1700,3 +1746,172 @@ class MuJoCoGo2:
         finally:
             self._skill_ctrl_until = 0.0
             self._skill_ctrl_tid = 0
+
+    def navigate_to(self, x: float, y: float, tol: float = 0.2,
+                    speed: float = _GO2_NAV_SPEED) -> dict:
+        """Drive to world (x, y), routing AROUND obstacles in room mode.
+
+        Quadruped sibling of MuJoCoG1.navigate_to (campaign #11 M2): same
+        g1_vgraph routing + face->walk->capture->settle controller, returning
+        the IDENTICAL three-value dict so NavigateToPointSkill / recognize_navigate
+        consume it unchanged. Flat scene (no obstacles) -> straight-line drive.
+        An honest 'unreachable' (goal boxed in) returns reached=False, never a
+        phantom straight line (rule 5)."""
+        self._require_connection()
+        if not self._obstacles:
+            return self._go2_navigate_point(x, y, tol, speed)
+        if not all(math.isfinite(v) for v in (x, y, tol, speed)):
+            return {"reached": False, "already_there": False, "moved_m": 0.0,
+                    "elapsed_s": 0.0, "remaining": float("inf"),
+                    "reason": "bad_params_nan", "transport": "sim_oracle"}
+        from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
+        sx, sy, _sz = self.get_position()
+        waypoints, _length = g1_vgraph.plan_path(
+            (sx, sy), (float(x), float(y)), self._obstacles, _GO2_NAV_INFLATION)
+        if waypoints is None:
+            return {"reached": False, "already_there": False, "moved_m": 0.0,
+                    "elapsed_s": 0.0, "remaining": float("inf"),
+                    "reason": "unreachable", "transport": "sim_oracle"}
+        t0 = time.monotonic()
+        total_moved = 0.0
+        legs = waypoints[1:]
+        last = None
+        for i, (wx, wy) in enumerate(legs):
+            is_final = (i == len(legs) - 1)
+            leg_tol = tol if is_final else _GO2_NAV_WAYPOINT_TOL
+            last = self._go2_navigate_point(wx, wy, leg_tol, speed)
+            total_moved += float(last.get("moved_m", 0.0))
+            if last.get("reason") in ("fell", "stalled_no_progress"):
+                break
+        fx, fy, fz = self.get_position()
+        remaining = math.hypot(float(x) - fx, float(y) - fy)
+        eff_tol = max(float(tol), _GO2_NAV_TOL_FLOOR)
+        reached = bool(remaining <= eff_tol and fz >= _GO2_NAV_FALL_Z)
+        return {
+            "reached": reached, "already_there": False,
+            "moved_m": round(total_moved, 3),
+            "net_m": round(math.hypot(fx - sx, fy - sy), 3),
+            "elapsed_s": round(time.monotonic() - t0, 3),
+            "remaining": round(remaining, 3),
+            "pos": [fx, fy, fz], "effective_tol": eff_tol,
+            "waypoints": [[round(p[0], 2), round(p[1], 2)] for p in waypoints],
+            "reason": "ok" if reached else (last or {}).get("reason", "timeout"),
+            "transport": "sim_oracle",
+        }
+
+    def _go2_navigate_point(self, x: float, y: float, tol: float = 0.2,
+                            speed: float = _GO2_NAV_SPEED) -> dict:
+        """Closed-loop face->walk->capture->settle drive to a SINGLE world (x,y).
+
+        Mirrors MuJoCoG1._navigate_point with two Go2 adaptations: (a) takes the
+        skill-ctrl token on THIS thread (like walk()) so its set_velocity calls
+        aren't gated/dropped, releasing it + stop() in finally so the bridge is
+        never fenced; (b) advances time with _drive_for (Go2 has no _advance)."""
+        self._require_connection()
+        if not all(math.isfinite(v) for v in (x, y, tol, speed)):
+            return {"reached": False, "already_there": False, "moved_m": 0.0,
+                    "elapsed_s": 0.0, "remaining": float("inf"),
+                    "reason": "bad_params_nan", "transport": "sim_oracle"}
+        tx, ty = float(x), float(y)
+        eff_tol = max(float(tol), _GO2_NAV_TOL_FLOOR)
+        speed = max(0.1, float(speed))
+
+        sx, sy, sz = self.get_position()
+        start_dist = math.hypot(tx - sx, ty - sy)
+        if start_dist <= eff_tol:
+            return {"reached": True, "already_there": True, "moved_m": 0.0,
+                    "net_m": 0.0, "elapsed_s": 0.0, "remaining": start_dist,
+                    "pos": [sx, sy, sz], "effective_tol": eff_tol,
+                    "reason": "already_within_tol", "transport": "sim_oracle"}
+
+        t0 = time.monotonic()
+        px, py = sx, sy
+        moved = 0.0
+        best_dist = start_dist
+        best_t = t0
+        reason = "timeout"
+
+        def _wrap(a: float) -> float:
+            return math.atan2(math.sin(a), math.cos(a))
+
+        # Hold control authority for the whole drive + settle (else set_velocity
+        # from this thread is gated by any bridge path-follower).
+        self._skill_ctrl_tid = threading.get_ident()
+        self._skill_ctrl_until = time.time() + _GO2_NAV_TIMEOUT_S + _GO2_NAV_SETTLE_S + 1.0
+        try:
+            while time.monotonic() - t0 < _GO2_NAV_TIMEOUT_S:
+                cx, cy, cz = self.get_position()
+                yaw = self.get_heading()
+                moved += math.hypot(cx - px, cy - py)
+                px, py = cx, cy
+                dist = math.hypot(tx - cx, ty - cy)
+
+                if cz < _GO2_NAV_FALL_Z:
+                    reason = "fell"
+                    break
+                if dist <= eff_tol:
+                    reason = "arrived"
+                    break
+
+                err = _wrap(math.atan2(ty - cy, tx - cx) - yaw)
+                if dist < _GO2_NAV_CAPTURE_R:
+                    vx, vyaw = max(0.15, 0.4 * speed), 0.0
+                elif abs(err) > _GO2_NAV_FACE_TOL:
+                    vx = 0.0
+                    vyaw = max(-_GO2_NAV_VYAW_MAX,
+                               min(_GO2_NAV_VYAW_MAX, _GO2_NAV_K_YAW * err))
+                else:
+                    vx = speed
+                    vyaw = (0.0 if abs(err) < _GO2_NAV_YAW_DEADBAND
+                            else max(-_GO2_NAV_VYAW_MAX,
+                                     min(_GO2_NAV_VYAW_MAX, _GO2_NAV_K_YAW * err)))
+                self.set_velocity(vx, 0.0, vyaw)
+
+                if vx > 0.0:
+                    if dist < best_dist - _GO2_NAV_STALL_MIN_M:
+                        best_dist, best_t = dist, time.monotonic()
+                    elif time.monotonic() - best_t > _GO2_NAV_STALL_WINDOW_S:
+                        reason = "stalled_no_progress"
+                        break
+                else:
+                    best_t = time.monotonic()
+                self._drive_for(_GO2_NAV_TICK_S)
+
+            # Settle: hold zero stance + re-sample the authoritative arrival pose.
+            settle_end = time.monotonic() + _GO2_NAV_SETTLE_S
+            while time.monotonic() < settle_end:
+                self.set_velocity(0.0, 0.0, 0.0)
+                cx, cy, _cz = self.get_position()
+                moved += math.hypot(cx - px, cy - py)
+                px, py = cx, cy
+                self._drive_for(_GO2_NAV_TICK_S)
+        finally:
+            self.stop()
+            self._skill_ctrl_until = 0.0
+            self._skill_ctrl_tid = 0
+
+        fx, fy, fz = self.get_position()
+        remaining = math.hypot(tx - fx, ty - fy)
+        reached = bool(remaining <= eff_tol and fz >= _GO2_NAV_FALL_Z)
+        if reached:
+            reason = "ok"
+        return {
+            "reached": reached, "already_there": False,
+            "moved_m": round(moved, 3),
+            "net_m": round(math.hypot(fx - sx, fy - sy), 3),
+            "elapsed_s": round(time.monotonic() - t0, 3),
+            "remaining": round(remaining, 3),
+            "pos": [fx, fy, fz], "effective_tol": eff_tol,
+            "reason": reason, "transport": "sim_oracle",
+        }
+
+    def geodesic_distance(self, a: "list[float]", b: "list[float]") -> float:
+        """Planar distance a->b: visibility-graph path length around the room
+        obstacles (the SAME planner navigate_to walks, so execute/verify never
+        diverge — rule 5), or straight-line on a flat scene. inf when boxed in."""
+        if getattr(self, "_obstacles", None):
+            from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
+            return g1_vgraph.path_length(
+                (float(a[0]), float(a[1])), (float(b[0]), float(b[1])),
+                self._obstacles, _GO2_NAV_INFLATION)
+        return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
