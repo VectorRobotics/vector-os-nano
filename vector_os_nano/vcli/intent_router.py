@@ -46,6 +46,7 @@ _RULES: list[tuple[frozenset[str], tuple[str, ...]]] = [
     (frozenset({
         "仿真", "sim", "simulation", "reset", "重置", "启动", "模拟",
         "habitat", "sysnav",
+        "switch", "切换", "换成", "切到", "embodiment", "具身",
         "headless", "无窗口", "不要窗口", "no window",
     }), ("sim", "system", "robot")),
 ]

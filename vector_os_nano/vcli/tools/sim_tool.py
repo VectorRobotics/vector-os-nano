@@ -212,63 +212,9 @@ class SimStartTool:
         except Exception as exc:
             return ToolResult(content=f"Failed to start {sim_type} sim: {exc}", is_error=True)
 
-        # Update app state
-        app["agent"] = agent
-        app["scene_graph"] = getattr(agent, "_spatial_memory", None)
-        app["skill_registry"] = getattr(agent, "_skill_registry", None)
-        if habitat_world is not None:
-            # The habitat scenario IS the active world (verify predicates +
-            # persona) — mirror the --scenario launch path.
-            app["world"] = habitat_world
-            app["scenario"] = getattr(habitat_world, "name", None)
-
-        # Register skill tools under the 'robot' category (matches the --sim path)
-        registry = app.get("registry")
-        if registry is not None:
-            from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
-            for skill_tool in wrap_skills(agent):
-                registry.register(skill_tool, category="robot")
-            # The bare dev-world startup disabled robot/diag/system; re-enable
-            # now that a robot is connected so skill + diag tools AND the
-            # status surface (robot_status lives in 'system') become visible.
-            if hasattr(registry, "enable_category"):
-                registry.enable_category("robot")
-                registry.enable_category("diag")
-                registry.enable_category("system")
-
-        # Rebuild the system prompt as a LIVE DynamicSystemPrompt with an arm-aware
-        # robot context, so subsequent turns correctly see the connected hardware
-        # (a bare list would freeze state and drop the [Robot State] block).
-        engine = app.get("engine")
-        if engine is not None:
-            from vector_os_nano.vcli.prompt import build_system_prompt
-            from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
-            from vector_os_nano.vcli.robot_context import RobotContextProvider
-            from vector_os_nano.vcli.worlds import resolve_world
-            world = habitat_world if habitat_world is not None else resolve_world(agent)
-            provider = RobotContextProvider(
-                base=getattr(agent, "_base", None),
-                scene_graph=getattr(agent, "_spatial_memory", None),
-                arm=getattr(agent, "_arm", None),
-                world=world,
-                world_model=getattr(agent, "_world_model", None),
-            )
-            app["robot_ctx_provider"] = provider
-            static_blocks = build_system_prompt(
-                agent=agent, cwd=context.cwd, robot_context=provider,
-                world=world,
-            )
-            engine._system_prompt = DynamicSystemPrompt(static_blocks, provider)
-            # Reinit VGG with new agent so verifier has live robot state
-            try:
-                engine.init_vgg(
-                    agent=agent,
-                    skill_registry=getattr(agent, "_skill_registry", None),
-                    on_vgg_step=app.get("vgg_step_callback"),
-                    world=world,
-                )
-            except Exception as _exc:
-                logger.warning("init_vgg after sim start failed: %s", _exc)
+        # Single-source rebind (rule 3) — the SAME sequence switch_embodiment
+        # reuses (ADR-011 / campaign #11); start and switch must never drift.
+        self._rebind_agent(app, context, agent, habitat_world)
 
         # Report SceneGraph status
         sg = getattr(agent, "_spatial_memory", None)
@@ -294,6 +240,87 @@ class SimStartTool:
         return ToolResult(
             content=f"Started {sim_type} simulation: {hw_name}, {skill_count} skills registered.{sg_info}"
         )
+
+    @staticmethod
+    def _rebind_agent(app: dict, context: "ToolContext", agent: Any,
+                      world: Any = None) -> None:
+        """Bind ``agent`` as the active embodiment: app state, robot-category
+        skill tools, live system prompt + VGG (ADR-011, campaign #11).
+
+        SINGLE SOURCE (rule 3): both start_simulation and switch_embodiment call
+        this, so they cannot drift. ``world`` is the explicit playground world
+        (habitat / switched scenario) or None to derive from the agent.
+
+        Drops the PREVIOUS embodiment's stale robot-category skill-wrapper tools
+        first (same loop as stop_simulation) so a switch never leaves the planner
+        offering a skill bound to a now-disconnected base.
+        """
+        app["agent"] = agent
+        app["scene_graph"] = getattr(agent, "_spatial_memory", None)
+        app["skill_registry"] = getattr(agent, "_skill_registry", None)
+        if world is not None:
+            # The playground scenario IS the active world (verify predicates +
+            # persona) — mirror the --scenario launch path.
+            app["world"] = world
+            app["scenario"] = getattr(world, "name", None)
+
+        # Register skill tools under the 'robot' category (matches the --sim path)
+        registry = app.get("registry")
+        if registry is not None:
+            # Drop the old embodiment's skill-wrapper tools first (switch path);
+            # a no-op on a fresh start (dev world has no skill wrappers yet).
+            if hasattr(registry, "list_tools") and hasattr(registry, "unregister"):
+                for tool_name in list(registry.list_tools()):
+                    t = registry.get(tool_name)
+                    if t is not None and getattr(t, "_is_skill_wrapper", False):
+                        try:
+                            registry.unregister(tool_name)
+                        except Exception:  # noqa: BLE001
+                            pass
+            from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
+            for skill_tool in wrap_skills(agent):
+                registry.register(skill_tool, category="robot")
+            # The bare dev-world startup disabled robot/diag/system; re-enable
+            # now that a robot is connected so skill + diag tools AND the
+            # status surface (robot_status lives in 'system') become visible.
+            if hasattr(registry, "enable_category"):
+                registry.enable_category("robot")
+                registry.enable_category("diag")
+                registry.enable_category("system")
+
+        # Rebuild the system prompt as a LIVE DynamicSystemPrompt with an arm-aware
+        # robot context, so subsequent turns correctly see the connected hardware
+        # (a bare list would freeze state and drop the [Robot State] block).
+        engine = app.get("engine")
+        if engine is not None:
+            from vector_os_nano.vcli.prompt import build_system_prompt
+            from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
+            from vector_os_nano.vcli.robot_context import RobotContextProvider
+            from vector_os_nano.vcli.worlds import resolve_world
+            world = world if world is not None else resolve_world(agent)
+            provider = RobotContextProvider(
+                base=getattr(agent, "_base", None),
+                scene_graph=getattr(agent, "_spatial_memory", None),
+                arm=getattr(agent, "_arm", None),
+                world=world,
+                world_model=getattr(agent, "_world_model", None),
+            )
+            app["robot_ctx_provider"] = provider
+            static_blocks = build_system_prompt(
+                agent=agent, cwd=context.cwd, robot_context=provider,
+                world=world,
+            )
+            engine._system_prompt = DynamicSystemPrompt(static_blocks, provider)
+            # Reinit VGG with new agent so verifier has live robot state
+            try:
+                engine.init_vgg(
+                    agent=agent,
+                    skill_registry=getattr(agent, "_skill_registry", None),
+                    on_vgg_step=app.get("vgg_step_callback"),
+                    world=world,
+                )
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning("init_vgg after rebind failed: %s", _exc)
 
     @staticmethod
     def _start_habitat(scenario_id: str, gui: bool = True) -> tuple[Any, Any]:
