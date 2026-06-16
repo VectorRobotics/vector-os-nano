@@ -285,9 +285,10 @@ class Go2VLMPerception:
     def _encode_frame(self, frame: np.ndarray) -> str:
         """Encode a numpy RGB frame as a base64 JPEG string.
 
-        Resizes to at most _VLM_IMAGE_MAX_DIM on the longest side to keep
-        the base64 payload small (< 10KB). OpenRouter has issues with large
-        base64 inline images — smaller payloads are reliably fast (~1-2s).
+        Resizes to at most _VLM_IMAGE_MAX_DIM on the longest side (default 512,
+        ~a few-KB to ~20KB base64). Smaller is faster but starves grounding of a
+        distant target — 512 is the campaign #12 balance (160 mis-grounded far
+        objects); OpenRouter handles it reliably (~1-2s).
 
         Args:
             frame: (H, W, 3) uint8 RGB array.

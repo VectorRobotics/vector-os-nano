@@ -204,15 +204,18 @@ def locate_xyz_from_depth(
     fovy_deg: float,
     win: int = 6,
     max_depth: float = 30.0,
-    floor_z: float = _FLOOR_Z,
-    floor_margin: float = _FLOOR_MARGIN,
 ) -> "tuple[float, float, float] | None":
     """Like ``locate_from_depth`` but returns the full world ``(x, y, z)`` — the
     3D grasp target for the recognised object (campaign #10 R10). Same OpenGL
     back-projection of the bbox-centre depth; z is the object's own surface
-    height, never read from ground truth (rule 5). Ground-plane samples are
-    rejected like locate_from_depth (campaign #12 R2) — a no-op when no floor is
-    in the window (the grasp path's window is on the object)."""
+    height, never read from ground truth (rule 5).
+
+    NOTE: this GRASP path deliberately has NO ground-plane rejection (unlike
+    locate_from_depth/locate_from_bearing, campaign #12). A grasp target sits on
+    a support surface and its own world-z can be low/negative depending on the
+    camera frame; filtering near-floor samples would wrongly drop it (it broke
+    recognize_pick — campaign #12 R6 review). The pick path disambiguates the
+    support via locate_on_plane(plane_z) instead."""
     if depth is None:
         return None
     dimg = np.asarray(depth, dtype=np.float64)
@@ -223,24 +226,15 @@ def locate_xyz_from_depth(
     py = max(0, min(H - 1, int(round((float(y_norm) + 1.0) * 0.5 * (H - 1)))))
     x0, x1 = max(0, px - win), min(W, px + win + 1)
     y0, y1 = max(0, py - win), min(H, py + win + 1)
-    win_d = dimg[y0:y1, x0:x1]
+    patch = dimg[y0:y1, x0:x1].ravel()
+    valid = patch[(patch > 0.1) & (patch < max_depth)]
+    if valid.size == 0:
+        return None
+    z = float(np.percentile(valid, 20))    # nearest surface (object front face)
     f = (H / 2.0) / math.tan(math.radians(fovy_deg) / 2.0)
-    rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
-    cpos = np.asarray(cam_pos, dtype=np.float64)
-    gx, gy = np.meshgrid(np.arange(x0, x1), np.arange(y0, y1))
-    mask = (win_d > 0.1) & (win_d < max_depth)
-    if not mask.any():
-        return None
-    dv = win_d[mask].astype(np.float64)
-    xc_v = (gx[mask] - W / 2.0) / f
-    yc_v = -(gy[mask] - H / 2.0) / f
-    wz = cpos[2] + rot[2, 0] * (xc_v * dv) + rot[2, 1] * (yc_v * dv) + rot[2, 2] * (-dv)
-    surv = dv[(wz - floor_z) > floor_margin]
-    if surv.size == 0:
-        return None
-    z = float(np.percentile(surv, 20))     # nearest surviving surface (front face)
     xc = (px - W / 2.0) / f
     yc = -(py - H / 2.0) / f
     p_cam = np.array([xc * z, yc * z, -z], dtype=np.float64)
-    p_world = cpos + rot @ p_cam
+    rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
+    p_world = np.asarray(cam_pos, dtype=np.float64) + rot @ p_cam
     return (float(p_world[0]), float(p_world[1]), float(p_world[2]))
