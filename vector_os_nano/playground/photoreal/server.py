@@ -72,6 +72,14 @@ def setup_gpu():
 def _clear():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete()
+    # object.delete() unlinks the OBJECTS but leaves their datablocks (meshes,
+    # materials, cameras, re-imported gltf) in bpy.data, which Blender never
+    # auto-GCs within a session. build_scene re-creates them every render, so on
+    # a sustained recognize_navigate loop bpy.data grew unbounded and ~the 10th
+    # render stalled past the bridge timeout ("camera failed: timed out", campaign
+    # #12 M1). Purge orphaned datablocks each clear so bpy.data stays flat — the
+    # rendered frame is byte-identical (the scene is fully rebuilt afterwards).
+    bpy.data.orphans_purge(do_local_ids=True, do_recursive=True)
 
 
 def _principled_color(obj, rgb):
@@ -178,27 +186,52 @@ def build_scene(spec):
     bg.inputs[1].default_value = sky.get("strength", 1.2)
 
 
+# Persist the built scene + camera across renders in a server session. Rebuilding
+# every render re-imported the 4K-texture armchair gltf each time; orphans_purge
+# freed the CPU-side datablocks but NOT the GPU VRAM/BVH those textures allocate, so
+# VRAM filled until ~the 9th render stalled past the bridge timeout (campaign #12 M1
+# — the orphan_purge-only fix was DISPROVEN by a 20-render stress: 8 fast then hang).
+# The furnished VLN scene is STATIC across a recognise loop (only the camera moves),
+# so build once and reuse — no per-render re-import, no VRAM growth.
+_SCENE_CACHE = {"spec": None, "cam": None}
+
+
 def render(req):
     scene = bpy.context.scene
-    build_scene(req.get("scene", {}))
+    spec = req.get("scene", {})
+
+    # Rebuild ONLY when the scene spec changes (dynamic pick scenes still rebuild;
+    # the static VLN room builds once). On a cache hit we keep the GPU-resident
+    # assets and only move the camera below.
+    if spec != _SCENE_CACHE["spec"] or _SCENE_CACHE["cam"] is None:
+        build_scene(spec)
+        cam_data = bpy.data.cameras.new("cam")
+        cam_data.sensor_fit = "VERTICAL"
+        cam_data.lens_unit = "FOV"
+        cam = bpy.data.objects.new("cam", cam_data)
+        scene.collection.objects.link(cam)
+        scene.camera = cam
+        _SCENE_CACHE["spec"] = spec
+        _SCENE_CACHE["cam"] = cam
 
     # Camera: matrix_world is camera->world in the MuJoCo==Blender shared
     # convention (Z-up world, camera looks down local -Z). Set it verbatim.
+    cam = _SCENE_CACHE["cam"]
+    cam.data.angle = float(req["fovy_rad"])   # vertical FOV (sensor_fit=VERTICAL)
     mw = req["matrix_world"]
-    cam_data = bpy.data.cameras.new("cam")
-    cam_data.sensor_fit = "VERTICAL"
-    cam_data.lens_unit = "FOV"
-    cam_data.angle = float(req["fovy_rad"])   # vertical FOV (sensor_fit=VERTICAL)
-    cam = bpy.data.objects.new("cam", cam_data)
-    scene.collection.objects.link(cam)
     cam.matrix_world = mathutils.Matrix((mw[0:4], mw[4:8], mw[8:12], mw[12:16]))
-    scene.camera = cam
 
     scene.render.resolution_x = int(req.get("width", 640))
     scene.render.resolution_y = int(req.get("height", 480))
     scene.render.image_settings.file_format = "PNG"
     scene.cycles.samples = int(req.get("samples", 32))
     scene.cycles.use_denoising = True
+    # Reuse the render session/depsgraph across renders instead of re-creating it
+    # every bpy.ops.render.render call. The ~9-10th-render stall was invariant to
+    # scene rebuilding (caching the scene only moved the cliff 9->10), so the
+    # accumulator is the per-render Cycles/OptiX GPU session, not scene data
+    # (campaign #12 M1). persistent_data keeps that resident -> flat VRAM.
+    scene.render.use_persistent_data = True
 
     out = os.path.join(tempfile.gettempdir(), f"photoreal_{os.getpid()}.png")
     scene.render.filepath = out
@@ -212,7 +245,9 @@ def render(req):
     except OSError:
         pass
     _log(f"render {scene.render.resolution_x}x{scene.render.resolution_y} "
-         f"@{scene.cycles.samples} samples {dt:.0f} ms")
+         f"@{scene.cycles.samples} samples {dt:.0f} ms "
+         f"[bpy.data img={len(bpy.data.images)} mesh={len(bpy.data.meshes)} "
+         f"mat={len(bpy.data.materials)} cam={len(bpy.data.cameras)}]")
     return {"ok": True, "png_b64": png_b64,
             "width": scene.render.resolution_x, "height": scene.render.resolution_y}
 

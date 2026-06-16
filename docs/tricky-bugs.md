@@ -562,3 +562,28 @@ Routine bugs do NOT belong here; git history covers those.
   stricter, never looser) re-derive the invariant EXPLICITLY, don't rely on a
   side effect — and probe the pathological predicate shapes (`not f()`,
   `f() == 0`, `f() is None`), not just the happy `len(f()) > 0`.
+
+## Photoreal render server stalls at ~the 10th sustained render (campaign #12 M1)
+- **Symptom:** Go2 photoreal `recognize_navigate` died "camera failed: timed out"
+  (~158 s). The first ~9 Blender renders are fast (~1 s), then the ~10th HANGS past
+  the 120 s bridge op-timeout. A standalone single render is fine — the symptom
+  pointed at the camera/bridge, not the render server.
+- **Two obvious fixes DISPROVEN by a 20-render stress (falsify-first, not bulldozed):**
+  (1) `bpy.data.orphans_purge` in `_clear()` (datablock-growth hypothesis) — STILL hung
+  at render 9. (2) cache the built scene + camera and skip the per-render gltf re-import
+  — STILL hung at render 10 (the cliff barely moved). Skipping the scene rebuild not
+  fixing it PROVED the accumulator is per `bpy.ops.render.render` call, NOT per
+  scene-build / per datablock.
+- **Root cause:** Cycles/OptiX re-creates its render session/depsgraph every
+  `bpy.ops.render.render` and the GPU-side state (VRAM/BVH/denoiser) accumulates until
+  ~the 10th render exhausts it and stalls. `orphans_purge` only frees CPU-side
+  datablocks, so it never touched the real (GPU) leak.
+- **Fix:** `scene.render.use_persistent_data = True` (reuse the render session across
+  calls) → 20 renders flat ~0.55 s, no stall. (Keeping the scene cache too: it cuts
+  per-render cost by avoiding the 4K-gltf re-import.)
+- **Lesson:** a flat-then-CLIFF latency curve at a FIXED render count = resource
+  exhaustion (GPU), not gradual scene-export bloat — and `orphans_purge` is a CPU-side
+  red herring for a GPU leak. When a fix doesn't move the cliff, that's data: it tells
+  you which layer the accumulator ISN'T in. (Caveat: the locate fix collapses the M1
+  recognise loop to ~3 renders so the M1 path no longer REACHES the cliff — but the
+  server bug was real for any long render loop and is now fixed at the source.)

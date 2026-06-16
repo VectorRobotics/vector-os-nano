@@ -1338,6 +1338,76 @@ class MuJoCoGo2:
         fovy = float(self._mj.model.cam_fovy[cam_id])
         return renderer.render_from_pose(cam_pos, cam_mat, fovy)
 
+    def get_camera_observation(
+        self, width: int = 640, height: int = 480,
+    ) -> dict:
+        """Atomic first-person observation ``{rgb (H,W,3 uint8), depth (H,W f32
+        metres), cam_pos (3,), cam_mat (9,), fovy}`` from the forward recognition
+        camera — the SAME contract :meth:`MuJoCoG1.get_camera_observation`
+        returns, so the shared ``recognize_navigate`` skill takes its preferred
+        DEPTH-AT-BBOX locate on Go2 too (campaign #12 M1; rule 3 single-source
+        skill, rule 7 world-agnostic). Without this Go2 fell back to the lidar
+        bearing+range locate, which never resolved a furniture target.
+
+        Depth is rendered from the SAME ``RECOG_CAM`` as the rgb (NOT
+        ``d435_depth``, which sits at a different pose — the R13/R14 rgb/depth
+        mismatch), so a bbox in the rgb back-projects through the matching depth
+        pixel. rgb + depth + pose are captured from ONE frozen physics state under
+        ``_pause_physics`` so they are mutually consistent and the offscreen
+        Renderer never reads mjData mid-mj_step (the R8 off-thread render race;
+        same discipline as :meth:`get_pano`). Furnished room only (the forward
+        recognition camera lives there); fails loud otherwise (rule 8)."""
+        self._require_connection()
+        if not self._furnished:
+            raise RuntimeError(
+                "get_camera_observation needs furnished room mode (the forward "
+                "recognition camera) — the apartment scene has none")
+        mj = _get_mujoco()
+        from vector_os_nano.hardware.sim.g1_room import RECOG_CAM  # noqa: PLC0415,E501
+        cam_name = RECOG_CAM
+        cam_id = self._mj.model.cam(cam_name).id
+        # Shared rgb renderer (same lazy init as get_camera_frame); enable ALL
+        # geom groups so the ENV_GEOM_GROUP=3 furniture renders (else empty floor).
+        if not hasattr(self, "_cam_renderer"):
+            self._cam_renderer = mj.Renderer(self._mj.model, height, width)
+            self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
+            self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_REFLECTION] = True
+            self._cam_opt = mj.MjvOption()
+            self._cam_opt.geomgroup[:] = 1
+        if not hasattr(self, "_obs_depth_renderer"):
+            self._obs_depth_renderer = mj.Renderer(self._mj.model, height, width)
+            self._obs_depth_renderer.enable_depth_rendering()
+        # Freeze the 50Hz physics daemon for an atomic rgb+depth+pose snapshot so
+        # update_scene never races mjData mid-mj_step (R8). Resume in finally.
+        self._pause_physics()
+        try:
+            d, m = self._mj.data, self._mj.model
+            cam_pos = np.array(d.cam_xpos[cam_id], dtype=np.float64).copy()
+            cam_mat = np.array(d.cam_xmat[cam_id], dtype=np.float64).copy()
+            fovy = float(m.cam_fovy[cam_id])
+            self._cam_renderer.update_scene(
+                d, camera=cam_id, scene_option=self._cam_opt)
+            rgb = self._cam_renderer.render().copy()
+            self._obs_depth_renderer.update_scene(
+                d, camera=cam_id, scene_option=self._cam_opt)
+            raw = self._obs_depth_renderer.render().copy()
+        finally:
+            self._resume_physics()
+        depth = raw.astype(np.float32)
+        # WIDE clip to locate_from_depth's max_depth (30 m) — do NOT zero at 10 m
+        # like get_depth_frame; that could blank a valid mid-room target patch.
+        depth[(depth < 0.1) | (depth > 30.0)] = 0.0
+        obs = {"rgb": rgb, "depth": depth, "cam_pos": cam_pos,
+               "cam_mat": cam_mat, "fovy": fovy}
+        # Photoreal: swap rgb for a Blender frame from the EXACT captured pose (the
+        # socket render is off-thread-safe — no GL in our process). depth + pose
+        # stay MuJoCo's, so depth-at-bbox locate is unaffected (hybrid co-sim, R6).
+        if self._photoreal:
+            renderer = self._ensure_photoreal_renderer(cam_name)
+            obs["rgb_mujoco"] = obs["rgb"]
+            obs["rgb"] = renderer.render_from_pose(cam_pos, cam_mat, fovy)
+        return obs
+
     def get_depth_frame(
         self, width: int = 640, height: int = 480,
     ) -> "np.ndarray":
@@ -1616,7 +1686,12 @@ class MuJoCoGo2:
                     px = pos_lidar[0] + dist * direction[0]
                     py = pos_lidar[1] + dist * direction[1]
                     pz = pos_lidar[2] + dist * direction[2]
-                    points_3d.append((float(px), float(py), float(pz), 0.0))
+                    # intensity 1.0 = a REAL hit (this branch only fires on a hit
+                    # within range, non-self). target_locate.locate_from_bearing and
+                    # lidar360 treat intensity>0 as a hit and <=0 as a free-ray miss;
+                    # tagging hits 0.0 made every Go2 point look like a miss, so the
+                    # bearing+range locate never resolved a target (campaign #12 M1).
+                    points_3d.append((float(px), float(py), float(pz), 1.0))
 
                 if elev_deg == 0:
                     # Self-hit → treat as no hit (inf range) for LaserScan too
