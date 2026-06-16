@@ -46,6 +46,27 @@ _DEFAULT_SCENARIO: dict[str, str] = {
 }
 
 
+def _sysnav_switch_notice(had_feed: bool, target: str) -> str:
+    """Actionable restart line when SysNav perception was active on the OLD
+    embodiment (rule 8 — fail loud, never silently drop).
+
+    Empty string on the common locomotion switch (no SysNav was wired), so the
+    switch result is byte-for-byte identical there. When SysNav WAS active, the
+    switch tore it down (``_shutdown_agent`` → ``shutdown_sysnav``) and does NOT
+    re-establish it on the new embodiment — the detection nodes are a separate,
+    heavier pipeline (``sysnav_perception`` start) and re-wiring the feed alone
+    would publish but detect nothing. So say so plainly and name the canonical
+    restart path; never imply any feed/pipeline survived the swap (rule 5)."""
+    if not had_feed:
+        return ""
+    return (
+        f" SysNav perception was active on the previous embodiment and did NOT "
+        f"carry over — it is not running on {target}. Restart detection+mapping "
+        f"with the sysnav_perception tool (action='start') once the SysNav "
+        f"workspace is sourced."
+    )
+
+
 @tool(
     name="switch_embodiment",
     description=(
@@ -158,6 +179,12 @@ class SwitchEmbodimentTool:
                 is_error=True)
 
         # Target is live; now tear down the old one and rebind to the new.
+        # Read SysNav liveness off old_agent BEFORE _shutdown_agent: shutdown_sysnav
+        # nulls _sysnav_feed/_sysnav_proc, so a post-teardown probe always reads
+        # inactive (that would re-introduce the silent drop). OR-detect: feed alone
+        # proves wire_sysnav_feed ran; a live proc proves the detection nodes ran.
+        had_sysnav = (getattr(old_agent, "_sysnav_feed", None) is not None
+                      or getattr(old_agent, "_sysnav_proc", None) is not None)
         try:
             teardown = SimStartTool._shutdown_agent(old_agent)
         except Exception as exc:  # noqa: BLE001
@@ -171,7 +198,8 @@ class SwitchEmbodimentTool:
                        if hasattr(new_agent, "_skill_registry") else 0)
         return ToolResult(
             content=(f"Switched to {target} ({type(base).__name__}), "
-                     f"{skill_count} skills registered. [{teardown}]"))
+                     f"{skill_count} skills registered. [{teardown}]"
+                     + _sysnav_switch_notice(had_sysnav, target)))
 
     def check_permissions(
         self, params: dict[str, Any], context: ToolContext,

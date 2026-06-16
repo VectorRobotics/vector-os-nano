@@ -13,7 +13,10 @@ import types
 import pytest
 
 from vector_os_nano.vcli.tools.sim_tool import SimStartTool
-from vector_os_nano.vcli.tools.switch_tool import SwitchEmbodimentTool
+from vector_os_nano.vcli.tools.switch_tool import (
+    SwitchEmbodimentTool,
+    _sysnav_switch_notice,
+)
 
 
 def _ctx(app):
@@ -100,6 +103,68 @@ def test_happy_path_switch_wiring(monkeypatch):
     res = SwitchEmbodimentTool().execute({"target": "g1"}, _ctx(app))
     assert not res.is_error and "Switched to g1" in res.content
     assert app["agent"] is new
+
+
+# -- SysNav-feed drop notice (rule 8 — switch must not silently lose it) -----
+
+def test_sysnav_switch_notice_warns_restart():
+    s = _sysnav_switch_notice(True, "g1")
+    assert s and "sysnav_perception" in s and "start" in s
+    assert "g1" in s and "did NOT carry over" in s
+
+
+def test_sysnav_switch_notice_silent_when_no_feed():
+    assert _sysnav_switch_notice(False, "go2") == ""
+
+
+def test_switch_warns_when_old_had_sysnav_feed(monkeypatch):
+    old = _agent_with(_MuJoCoGo2)
+    old._sysnav_feed = object()                 # FAKE active feed (no rclpy/ROS)
+    new = _agent_with(_MuJoCoG1)
+    app = {"agent": old, "sim_gui": False}
+    monkeypatch.setattr(SwitchEmbodimentTool, "_boot_target",
+                        staticmethod(lambda t, s, g: (new, object())))
+
+    def _fake_shutdown(a):
+        a._sysnav_feed = None                   # real teardown nulls it; proves
+        return "SysNav feed stopped; SysNav consumer stopped"  # had_feed read BEFORE
+    monkeypatch.setattr(SimStartTool, "_shutdown_agent", staticmethod(_fake_shutdown))
+    monkeypatch.setattr(SimStartTool, "_rebind_agent",
+                        staticmethod(lambda app, ctx, agent, world=None: app.__setitem__("agent", agent)))
+    res = SwitchEmbodimentTool().execute({"target": "g1"}, _ctx(app))
+    assert not res.is_error and "Switched to g1" in res.content
+    assert "sysnav_perception" in res.content and "did NOT carry over" in res.content
+
+
+def test_switch_warns_when_old_had_sysnav_proc(monkeypatch):
+    old = _agent_with(_MuJoCoGo2)
+    old._sysnav_proc = types.SimpleNamespace(poll=lambda: None, pid=4242)  # live nodes
+    new = _agent_with(_MuJoCoG1)
+    app = {"agent": old, "sim_gui": False}
+    monkeypatch.setattr(SwitchEmbodimentTool, "_boot_target",
+                        staticmethod(lambda t, s, g: (new, object())))
+    monkeypatch.setattr(SimStartTool, "_shutdown_agent",
+                        staticmethod(lambda a: "SysNav nodes stopped"))
+    monkeypatch.setattr(SimStartTool, "_rebind_agent",
+                        staticmethod(lambda app, ctx, agent, world=None: app.__setitem__("agent", agent)))
+    res = SwitchEmbodimentTool().execute({"target": "g1"}, _ctx(app))
+    assert "sysnav_perception" in res.content     # OR-detection on the live proc
+
+
+def test_switch_no_notice_when_no_feed(monkeypatch):
+    # the common locomotion switch: no SysNav was wired → no notice (no-op)
+    old = _agent_with(_MuJoCoGo2)
+    new = _agent_with(_MuJoCoG1)
+    app = {"agent": old, "sim_gui": False}
+    monkeypatch.setattr(SwitchEmbodimentTool, "_boot_target",
+                        staticmethod(lambda t, s, g: (new, object())))
+    monkeypatch.setattr(SimStartTool, "_shutdown_agent",
+                        staticmethod(lambda a: "Go2 disconnected"))
+    monkeypatch.setattr(SimStartTool, "_rebind_agent",
+                        staticmethod(lambda app, ctx, agent, world=None: app.__setitem__("agent", agent)))
+    res = SwitchEmbodimentTool().execute({"target": "g1"}, _ctx(app))
+    assert "Switched to g1" in res.content
+    assert "sysnav_perception" not in res.content and "carry over" not in res.content
 
 
 # -- _boot_target embodiment guard + prefer_daemon --------------------------
