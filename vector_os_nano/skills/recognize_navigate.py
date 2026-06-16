@@ -49,9 +49,15 @@ _MISS_BEFORE_SWEEP = 10  # the VLM detects a far/small target only intermittentl
                          # — on a miss, HOLD heading and re-query (the target is
                          # still where it was) MANY times before moving; turning
                          # away on the first miss never re-acquires it (R3)
-_ARRIVE_TOL = 0.8        # navigate_to standoff to a located object surface (the
-                         # collidable object halts the base at a body radius; a
-                         # tight tol would falsely report not-reached)
+_ARRIVE_TOL = 0.4        # navigate_to tol to the standoff in front of the object.
+                         # The robot ends ~_STANDOFF_M + _ARRIVE_TOL from the object,
+                         # so 0.8 left it ~1.5 m away — right at the visited(.,1.6)
+                         # verify edge (campaign #12 R5: 2/5 arrivals, near-misses at
+                         # 1.64/1.72 m). 0.4 drives it to ~1.1 m (margin to the 1.6 m
+                         # ring, which is UNCHANGED — rule 5; same R16 philosophy:
+                         # tighten the controller, never widen verify). Above Go2's
+                         # 0.20 tol_floor; the standoff is >=0.7 m from the collidable
+                         # surface so a 0.4 tol still clears it (no false not-reached).
 _STANDOFF_M = 0.7        # navigate to a point this far IN FRONT of the located
                          # surface — the surface itself can be in the planner's
                          # inflated wall/object zone (no path → inf); a standoff
