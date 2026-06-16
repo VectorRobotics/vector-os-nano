@@ -59,3 +59,7 @@ scratch/
 .hermes/
 artifacts/
 assets/
+
+# Debug Protocol scratch (per-session, never committed)
+DEBUG.md
+.sdd/DEBUG.md
