@@ -458,6 +458,18 @@ parallel but meet at milestones.
   byte-identical. It feeds the real VLM a photoreal frame: g1+go2 photoreal VLN is vector-cli-accepted.
   A `RecognizePickSkill` (VLM→ray-to-plane locate→top-down grasp) is built; the closed grasp is deferred
   to an eye-in-hand wrist camera (DQ-12 — forward-camera geometry, not perception, is the limit).
+- **Embodiment-switch seam + capability matrix (campaign #11, ADR-011).** One vector-cli session
+  can hot-swap the active embodiment (G1 ⇄ Go2) at runtime via `SwitchEmbodimentTool`
+  (`vcli/tools/switch_tool.py`): boot-then-swap, then `SimStartTool._rebind_agent` — the SINGLE-SOURCE
+  rebind that `start_simulation` also uses (app-state + robot-category skill tools + live prompt + VGG;
+  rule 3). Skills register by CAPABILITY PROBE (`callable(base, 'navigate_to')` / `hasattr 'get_pano'`),
+  never by embodiment name, so the planner is never offered a skill the current base can't run. The seam
+  lives entirely in the vcli runtime/tool layer — kernel/BaseProtocol unchanged (rules 2/7). Toward a
+  capability matrix (locomotion / nav stack / VLN / SysNav × G1/Go2): Go2 gained `navigate_to`/
+  `geodesic_distance` reusing the world-agnostic `g1_vgraph` planner (the trot follows the waypoint chain)
+  + a world-frame `LaserScan.points` cloud, so `recognize_navigate` (lidar VLN) registers on Go2 too.
+  KNOWN DEBT (R4 review): the ~180-line nav controller is duplicated G1/Go2 — to extract into a shared
+  world-agnostic `_nav_controller` (R5, gated on the G1 nav regression) so the two cannot drift.
 
 **Remaining:**
 

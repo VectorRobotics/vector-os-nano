@@ -501,6 +501,11 @@ class LaserScan:
             "range_min": self.range_min,
             "range_max": self.range_max,
             "ranges": list(self.ranges),
+            # `points` is a LIVE sensor field (a large world-frame cloud consumed
+            # in-process by recognize_navigate via the scan OBJECT, not its dict).
+            # The dict form is a summary — it carries only the count, intentionally
+            # NOT the cloud (avoids per-scan log/IPC bloat). from_dict therefore
+            # leaves points=() (its default); no consumer round-trips the cloud.
             "n_points": len(self.points),
         }
 
