@@ -49,12 +49,15 @@ _DEFAULT_SCENARIO: dict[str, str] = {
 @tool(
     name="switch_embodiment",
     description=(
-        "Hot-swap the active robot embodiment in this session between 'g1' "
-        "(Unitree G1 humanoid, RL-policy gait) and 'go2' (Unitree Go2 "
-        "quadruped, sinusoidal trot) WITHOUT restarting the CLI. Use when the "
-        "user says 'switch to g1' / 'switch to go2' / '切换到 g1' / '换成 go2'. "
-        "No-op if already on the target. Boots the target first, then tears "
-        "down the old one, so a failed switch never drops to zero robots."
+        "THE canonical, ONLY correct way to change the active robot embodiment "
+        "between 'g1' (Unitree G1 humanoid) and 'go2' (Unitree Go2 quadruped) in "
+        "this running session. ALWAYS call this tool for any 'switch to g1/go2', "
+        "'切换到 g1/go2', '换成 go2', 'change to the dog/humanoid' request. It "
+        "hot-swaps in-process (boots the target, tears down the old) WITHOUT "
+        "restarting the CLI. Do NOT instead run bash, ./scripts/launch_explore.sh, "
+        "ros2 launch/run, or start_simulation to change embodiment — those are "
+        "wrong and will not switch the active robot; this tool is the single "
+        "source. No-op if already on the target."
     ),
     read_only=False,
     permission="ask",
