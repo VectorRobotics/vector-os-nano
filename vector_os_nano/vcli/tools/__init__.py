@@ -38,6 +38,7 @@ def discover_all_tools() -> list:
     from vector_os_nano.vcli.tools.robot import RobotStatusTool, WorldQueryTool
     from vector_os_nano.vcli.tools.search_tools import GlobTool, GrepTool
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
+    from vector_os_nano.vcli.tools.switch_tool import SwitchEmbodimentTool
     # Old MuJoCo-era SysnavSimTool (sysnav_sim_tool.py) stays unregistered —
     # superseded by the habitat runner + SysnavPerceptionTool below.
     from vector_os_nano.vcli.tools.sysnav_tool import SysnavPerceptionTool
@@ -60,6 +61,7 @@ def discover_all_tools() -> list:
         RobotStatusTool(),
         SimStartTool(),
         SimStopTool(),
+        SwitchEmbodimentTool(),
         SysnavPerceptionTool(),
         WebFetchTool(),
         # New Wave 1-2 tools
@@ -85,7 +87,7 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
     # Sim lifecycle: kept enabled even in the dev (no-robot) world so the user can
     # spin up a sim conversationally ("start the arm sim", "启动habitat模拟",
     # "启动sysnav").
-    "sim": ["start_simulation", "stop_simulation", "sysnav_perception"],
+    "sim": ["start_simulation", "stop_simulation", "switch_embodiment", "sysnav_perception"],
     "system": ["robot_status", "skill_reload", "open_foxglove"],
 }
 

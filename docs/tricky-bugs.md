@@ -325,3 +325,158 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** a perceive-act loop's ARRIVAL was tuned hard, but ACQUISITION
   (first detection) was assumed — re-test the cold-start (target not initially
   in view), not just the mid-approach.
+
+## Case 16 — slow perception stutters the gait → progress-stall fires metres short (2026-06-14)
+- **Symptom:** VLM-seek "arrived" 9 s in, robot at 0.18 m, chair at 3.6 m. Verify
+  (at_position 1.6) correctly FAILED. Looked like a bad arrival heuristic.
+- **Cause:** the seek loop re-armed the walk deadman for 0.4 s (fine for the
+  instant colour detector), but a real Qwen-VL call takes ~2 s. So the robot
+  walked 0.4 s then STOOD STILL ~1.6 s every tick waiting for the VLM; over the
+  8-tick progress-stall window it covered <0.6 m of genuine forward walking →
+  "no net progress" → false arrival far from target.
+- **Fix:** per-action deadman — FORWARD re-arms for step_duration (3.0 s for VLM,
+  > the call latency, so motion stays continuous across the perceive); TURN/SCAN
+  stay short (0.5 s). Colour seek unchanged (0.4 s, instant detector).
+- **Lesson:** an actuation cadence tuned to an INSTANT sensor silently breaks when
+  the sensor becomes SLOW — the deadman must outlast the perceive latency or the
+  "stalled" signal measures the sensor's latency, not the robot's progress.
+
+## Case 17 — a turn sized for forward over-rotates and flings the target off-screen (2026-06-14)
+- **Symptom:** after Case 16's fix, VLM-seek detected the chair once (x_norm -0.2)
+  then never again — robot spun in place and wandered off.
+- **Cause:** the same long step_duration (3.0 s) was applied to TURN. A 3 s turn at
+  0.5 rad/s = ~86° rotation to correct a ~10° bearing error — massive overshoot →
+  target leaves the FOV → "not seen" → scan keeps turning the same way → lost.
+- **Fix:** decouple — only forward uses the long duration; turn/scan use a short
+  _TURN_STEP (0.5 s ≈ 14°), an incremental correction, then re-perceive.
+- **Lesson:** one "step size" for both translate and rotate is wrong when their
+  natural scales differ; a correction step must be sized to the error it corrects.
+
+## Case 18 — a noisy VLM bbox is not a range proxy (false arrival) nor reliable per-frame (lost) (2026-06-14)
+- **Symptom (a):** VLM-seek "arrived" at spawn — a 0.046 bbox at 3.6 m exceeded the
+  colour detector's 0.04 arrive-area. **Symptom (b):** detection dropped on ~half
+  the frames even with the chair dead-ahead (gait sway / motion blur), so the robot
+  kept losing it and spinning to re-search.
+- **Cause:** a VLM grounding box is noisy in BOTH size (occasionally oversized at
+  range) and presence (intermittent), unlike the clean colour blob the loop was
+  built around.
+- **Fix (a):** raise the VLM arrive_area to 0.55 (target must nearly fill the frame)
+  and lean on the PHYSICAL progress-stall (collision-blocked at the object) for
+  arrival. **Fix (b):** a last-bearing COAST — keep heading toward the last seen
+  bearing for up to _COAST_MISSES (4) missed frames before falling back to a
+  search-scan, so an intermittently-detected target dead-ahead is not abandoned.
+- **Related:** Qwen sometimes wraps the JSON in an unclosed ```json fence or appends
+  trailing garbage (`{...}']`); _parse_json_response now extracts the first balanced
+  {...} object as a last resort so those frames still yield a detection.
+- **Lesson:** when a learned detector replaces a hand-crafted one, its FAILURE
+  SHAPES differ — design the control loop for "noisy + intermittent + loosely
+  bounded", not for the clean signal the geometry detector gave you.
+
+## Case 19 — a Go2-acquisition fix (forward-only stall gate) silently regressed g1 arrival (2026-06-14)
+- **Symptom:** tuning the shared `vision_seek._seek_loop` to make Go2 acquire a
+  far target (pre-acquisition forward-bias) + not false-arrive mid-turn (count
+  progress-stall ONLY on forward ticks) fixed nothing for Go2 AND broke g1: g1
+  vlm_seek went from arriving 0.50 m (R1) to stopping 1.83 m short.
+- **Cause:** g1 arrives by ORBITING the target at close range (turn-dominated
+  near the chair) and the all-tick progress-stall caught that as "arrived". The
+  forward-only gate required 8 consecutive FORWARD ticks with no progress, which
+  an orbiting robot rarely produces → g1 never stalled → never arrived.
+- **Fix:** reverted both experiments; restored R1 all-tick stall + sweep-scan. g1
+  back to 0.58 m PASS. Go2 arrival left to R3 (it needs closed-loop heading
+  control for the gait yaw-drift, not a stall-gate tweak — a different problem).
+- **Lesson:** before tuning a SHARED control loop for a new embodiment, pin the
+  old embodiment's success with a regression run FIRST — a change that helps the
+  new case can quietly break the proven one (their arrival signatures differ:
+  g1 orbits, go2 yaw-drifts). Embodiment-specific control belongs behind an
+  embodiment-specific hint, not baked into the shared path.
+
+## Case 20 — Go2's furnished-room camera saw only floor: env geoms hidden + cam too low (2026-06-14)
+- **Symptom:** the VLM returned nothing for Go2 in the furnished room; the d435
+  frame was bare floor + a sky band, no furniture.
+- **Two compounding causes:** (1) the shared room tags walls/furniture with
+  ENV_GEOM_GROUP=3, which Go2's `get_camera_frame` (default render option) HID —
+  the same group-visibility trap as g1 R9; (2) Go2's stock d435 is at ~0.2 m,
+  42° FOV, pitched 5° DOWN — it frames the floor, not furniture at range.
+- **Fix:** (1) enable all geom groups in the furnished-mode renderer (scoped to
+  furnished so the apartment view is byte-identical); (2) mount a forward, ~level
+  (pitched up 8°), 75° recognition camera on base_link in the furnished build,
+  used by get_camera_frame in furnished mode. Go2 then grounds the chair.
+- **Lesson:** porting a perception capability to a new robot inherits BOTH the
+  old render-group gotcha AND the new robot's sensor geometry — a dog's-eye
+  sensor designed for ground/obstacles is not a furniture-recognition view.
+
+## Case 21 — VLM visual-servoing arrival is inherently flaky (both embodiments) (2026-06-14)
+- **Symptom:** the SAME vlm_seek code reaches the chair on one run (g1 0.58 m PASS)
+  and stalls 2+ m short on the next (g1 2.38 m, go2 1.3-2.3 m) — no code change
+  between runs. Looked like a regression each time; it was run-to-run VARIANCE.
+- **Cause:** closing a control loop on a ~2 s, noisy, intermittent VLM bearing
+  while the gait drifts/sways is fundamentally under-sampled — the robot acts on
+  stale/jittery bearings, curves, and the progress-stall (the only arrival signal
+  when the box is too small/clipped to area-arrive) fires wherever forward motion
+  happens to lull. A closed-loop heading P-controller (Go2) fixed the egregious
+  backward-WANDER (it now approaches forward) but not the flaky last-metres.
+- **Fix (direction, R3):** do NOT visually-servo the last metres. VLM RECOGNISES
+  the object → estimate/return its location → drive there with a RELIABLE
+  controller (navigate_to / nav-stack waypoint, which uses odometry + a planner,
+  not pixel bearings). Recognition is the perception win; arrival is a navigation
+  problem with a proven solution already in the repo (the apartment go2 nav stack).
+- **Lesson:** a slow, noisy sensor can be a great DETECTOR and a terrible
+  CONTROLLER. Use the VLM to decide WHAT/WHERE, use odometry+planner to decide
+  HOW to get there. Don't put a 0.5 Hz noisy signal in a tight servo loop.
+
+## Case 22 — recognise→navigate via lidar picks an OBSTACLE, not the recognised object (2026-06-14)
+- **Context:** the Case-21 pivot — replace flaky VLM visual-servoing with VLM
+  RECOGNISE (bearing) → LIDAR locate (range at bearing) → reliable navigate_to.
+- **Symptom:** g1 "go to the chair" navigated to (1.9, 0.4) / (2.1, -1.0) — the grey
+  OBSTACLES — not the chair at (3.6, 0).
+- **Cause:** the lidar gives RANGE but no SEMANTICS. "Nearest hit in the recognised
+  bearing" returns whatever surface is closest along that ray — an obstacle
+  between the robot and the chair, not the chair. The VLM knows WHICH object
+  (its bbox is on the chair); the lidar can't associate its return with that.
+- **Also:** acquisition of a far/small target is ~50% per frame (VLM intermittent);
+  holding heading + re-querying helps, but a blind forward-advance fallback can
+  overshoot a never-detected target.
+- **Fix (next round):** DEPTH-AT-BBOX — read the depth at the recognised bbox
+  centre (the chair's own pixels) → distance to the CHAIR (semantic, skips
+  intervening obstacles) → project to world → navigate_to. Needs a depth source
+  co-registered with the recognition camera: g1 needs a depth render on HEAD_CAM
+  (it has none); go2 HAS get_depth_frame but lacks navigate_to. Landing the pivot
+  reliably = give ONE embodiment BOTH (depth-at-bbox + navigate_to).
+- **Lesson:** fusing a semantic detector with a geometric ranger needs the range
+  sampled AT the detection (same pixels/bbox), not "nearest thing in that
+  direction" — otherwise the geometry layer silently re-targets to clutter.
+
+## Case 23 — depth-at-bbox median sees the wall BEHIND a thin object (2026-06-14)
+- **Context:** R5 recognise→navigate locates the object by depth at the recognised
+  bbox (the semantic fix for Case 22). First cut used the bbox-window MEDIAN depth.
+- **Symptom:** the located point landed PAST the chair (~4.0-4.5 m vs chair 3.6 m),
+  sometimes at the front wall — and a wall-adjacent goal is unreachable to the
+  planner (inflation → no path → navigate_to returns remaining=inf).
+- **Cause:** a thin object (chair legs/back) only partly fills its bbox; the gaps
+  see THROUGH to the wall behind, so the window median is biased toward the far
+  surface.
+- **Fixes:** (1) use the NEAREST surface (20th-percentile depth) in the window —
+  the object's own front face, not the background; (2) navigate to a STANDOFF
+  point 0.7 m IN FRONT of the located surface, never onto it (the surface can sit
+  in the planner's inflated wall/object zone). 3/3 reliable headless arrival after.
+- **Lesson:** when fusing a 2-D detection box with a depth map, the box spans
+  object AND background — take the NEAR depth, and treat the result as a surface
+  to stand off from, not a waypoint to occupy.
+
+## Case 24 — a PUMP-mode base booted on a worker thread is never pumped (frozen) (2026-06-14)
+- **Symptom:** g1 launched via `--scenario` walks in the GUI; the SAME g1 launched
+  in-REPL via `start_simulation(sim_type='g1')` boots "ok" but the gait is frozen
+  and the viewer never updates (empty/static), the boot returns in ~1.7s.
+- **Cause:** G1's PUMP mode (chosen when a viewer is open) runs NO control daemon —
+  the gait advances only when the CALLER thread drives `_advance`/`_step_batch`.
+  The `--scenario` path boots g1 on the main REPL thread, which then pumps it; the
+  `start_simulation` tool runs on an engine WORKER thread, so after the tool
+  returns nobody pumps that base → physics never steps → frozen + no viewer sync.
+- **Fix:** `prefer_daemon` — when booted mid-REPL, force DAEMON mode even with a
+  viewer: a dedicated control thread drives the gait and its `_step_batch` syncs
+  the viewer (thread-agnostic; the proven headless-daemon path + viewer sync;
+  ~0.4x under the passive viewer's render thread per Case 13, but it walks +
+  renders). The startup `--scenario` path keeps PUMP (1.0x, main-thread driven).
+- **Lesson:** a "caller-thread-pumped" execution model only works if the caller
+  is a long-lived loop. Code launched by a one-shot tool call on a worker thread
+  needs its OWN driver thread — don't assume someone will keep pumping it.

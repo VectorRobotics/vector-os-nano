@@ -1,0 +1,228 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
+"""RED-first: the honest photoreal-perception-driven grasp (campaign #10 R10).
+
+Both existing pick paths read GT object poses; this closes the loop honestly —
+a VLM recognises the object on the PHOTOREAL frame, depth back-projects its bbox
+to a 3D world point, and that PERCEPTION-derived point (never GT) is handed to
+PickTopDownSkill as ``target_xyz``. Tested with fakes (no Blender/VLM/MuJoCo)."""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from vector_os_nano.perception.target_locate import locate_xyz_from_depth
+from vector_os_nano.skills.recognize_pick import RecognizePickSkill
+
+
+# -- locate_xyz_from_depth: same back-projection as locate_from_depth, keeps z --
+
+def test_locate_xyz_returns_three_d_point_centre_pixel():
+    # Camera at origin, identity pose (looks down world -Z, +Y up, +X right);
+    # a flat depth of 2.0 m everywhere. Centre pixel (x_norm=y_norm=0) → straight
+    # ahead along -Z → world (0, 0, -2).
+    depth = np.full((48, 64), 2.0, dtype=np.float32)
+    xyz = locate_xyz_from_depth(0.0, 0.0, depth, [0.0, 0.0, 0.0],
+                                np.eye(3).reshape(-1), 60.0)
+    assert xyz is not None
+    x, y, z = xyz
+    assert abs(x) < 1e-6 and abs(y) < 1e-6
+    assert abs(z - (-2.0)) < 1e-6           # 2 m straight along -Z
+
+
+def test_locate_xyz_none_on_empty_depth():
+    depth = np.zeros((10, 10), dtype=np.float32)   # all invalid (<0.1)
+    assert locate_xyz_from_depth(0.0, 0.0, depth, [0, 0, 0],
+                                 np.eye(3).reshape(-1), 60.0) is None
+
+
+# -- RecognizePickSkill: perception -> target_xyz -> pick --------------------
+
+class _FakeDetector:
+    def __init__(self, dets):
+        self._dets = dets
+    def detect_targets(self, rgb, query):
+        return list(self._dets)
+
+
+class _FakePick:
+    def __init__(self):
+        self.params = None
+    def execute(self, params, context):
+        self.params = params
+        from vector_os_nano.core.types import SkillResult
+        return SkillResult(success=True, result_data={"grasped": True})
+
+
+class _FakeBase:
+    """Exposes a g1-style get_camera_observation (rgb+depth+pose)."""
+    def __init__(self):
+        self._depth = np.full((48, 64), 1.5, dtype=np.float32)
+    def get_camera_frame(self):
+        return np.zeros((48, 64, 3), np.uint8)
+    def get_camera_observation(self):
+        return {"rgb": np.zeros((48, 64, 3), np.uint8), "depth": self._depth,
+                "cam_pos": np.array([1.0, 2.0, 0.9]), "cam_mat": np.eye(3).reshape(-1),
+                "fovy": 60.0}
+
+
+class _Ctx:
+    def __init__(self, base):
+        self.base = base
+        self.world_model = None
+        self.perception = None
+        self.calibration = None
+
+
+def test_recognize_pick_locates_then_delegates_target_xyz():
+    base = _FakeBase()
+    det = _FakeDetector([{"label": "red can", "x_norm": 0.0, "y_norm": 0.0,
+                          "area_frac": 0.05}])
+    pick = _FakePick()
+    skill = RecognizePickSkill(detector=det, pick=pick)
+    res = skill.execute({"label": "red can"}, _Ctx(base))
+    assert res.success
+    # the pick was handed a PERCEPTION-derived target_xyz (not GT)
+    assert pick.params is not None and "target_xyz" in pick.params
+    x, y, z = pick.params["target_xyz"]
+    # centre pixel, depth 1.5, cam at (1,2,0.9) identity → (1, 2, 0.9-1.5)
+    assert abs(x - 1.0) < 1e-3 and abs(y - 2.0) < 1e-3 and abs(z - (-0.6)) < 1e-3
+
+
+def test_recognize_pick_fails_when_not_recognised():
+    skill = RecognizePickSkill(detector=_FakeDetector([]), pick=_FakePick())
+    skill._DETECT_BACKOFF_S = 0.0       # don't sleep through the retries in tests
+    res = skill.execute({"label": "red can"}, _Ctx(_FakeBase()))
+    assert not res.success
+    assert res.result_data.get("diagnosis") in {"not_found", "not_located"}
+
+
+def test_recognize_pick_no_base():
+    skill = RecognizePickSkill(detector=_FakeDetector([]), pick=_FakePick())
+    res = skill.execute({"label": "x"}, _Ctx(None))
+    assert not res.success and res.result_data.get("diagnosis") == "no_base"
+
+
+# -- locate_on_plane: ray-to-support-plane (top-down pick localization) --------
+
+def test_locate_on_plane_centre_ray_hits_plane_below_camera():
+    from vector_os_nano.perception.target_locate import locate_on_plane
+    # camera at (1,2,1) identity (looks down world -Z). Centre pixel ray = straight
+    # down -Z -> hits plane z=0.25 directly below the camera at (1,2,0.25).
+    xyz = locate_on_plane(0.0, 0.0, [1.0, 2.0, 1.0], np.eye(3).reshape(-1), 60.0, 0.25)
+    assert xyz is not None
+    np.testing.assert_allclose(xyz, [1.0, 2.0, 0.25], atol=1e-9)
+
+
+def test_locate_on_plane_none_when_ray_parallel_or_away():
+    from vector_os_nano.perception.target_locate import locate_on_plane
+    # camera looking UP (-Z of cam points +Z world) can't hit a plane below it
+    # forward = -col2; make col2 = -Z world so forward = +Z (up) -> no down hit
+    cam_mat = np.array([1,0,0, 0,1,0, 0,0,-1.0])   # forward = +Z (up)
+    assert locate_on_plane(0.0, 0.0, [0,0,1.0], cam_mat, 60.0, 0.25) is None
+
+
+# == campaign #10 DQ-13: eye-in-hand wrist-camera scan path ====================
+#
+# The forward d435 sees an in-reach object at a shallow grazing angle -> the
+# bbox ray overshoots the support plane by ~0.2-0.3 m (R18). A downward wrist
+# camera observed from an overhead scan pose makes the ray near-vertical, so the
+# overshoot collapses. These pin the pure logic; the geometry + grasp are proven
+# in real sim (sandbox r19_*).
+
+def test_locate_on_plane_overshoot_collapses_with_vertical_ray():
+    """The whole fix: locate error scales ~1/sin(grazing angle). A shallow ray
+    (forward cam) badly amplifies a fixed pixel error; a near-vertical ray
+    (wrist cam) does not. Inject the SAME bbox pixel offset at both angles and
+    assert the near-vertical hit error is far smaller."""
+    from vector_os_nano.perception.target_locate import locate_on_plane
+    plane_z, cam_z = 0.20, 0.70
+    dy = 0.10                       # same normalized bbox error in y at both poses
+    # (a) shallow/forward-ish cam: optical axis ~20deg below horizontal.
+    import math
+    th = math.radians(20.0)
+    # cam looks mostly +x, tilted down: forward = (cos th, 0, -sin th); build a
+    # cam_mat whose -col2 (forward) is that, up roughly +z.
+    fwd = np.array([math.cos(th), 0.0, -math.sin(th)])
+    up = np.array([math.sin(th), 0.0, math.cos(th)])
+    right = np.cross(fwd, up)
+    shallow_mat = np.column_stack([right, up, -fwd]).reshape(-1)
+    base = locate_on_plane(0.0, 0.0, [10.6, 3.0, cam_z], shallow_mat, 58.0, plane_z)
+    off = locate_on_plane(0.0, dy, [10.6, 3.0, cam_z], shallow_mat, 58.0, plane_z)
+    shallow_err = math.dist(base[:2], off[:2])
+    # (b) near-vertical wrist cam (identity = straight down).
+    vbase = locate_on_plane(0.0, 0.0, [10.6, 3.0, cam_z], np.eye(3).reshape(-1), 58.0, plane_z)
+    voff = locate_on_plane(0.0, dy, [10.6, 3.0, cam_z], np.eye(3).reshape(-1), 58.0, plane_z)
+    vert_err = math.dist(vbase[:2], voff[:2])
+    assert vert_err < 0.25 * shallow_err   # vertical ray hugely reduces the error
+
+
+class _FakeArm:
+    def __init__(self, reachable=True):
+        self.reachable = reachable
+        self.moved_to = None
+    def ik_top_down(self, xyz):
+        return [0.0] * 6 if self.reachable else None
+    def move_joints(self, q, duration=3.0):
+        self.moved_to = list(q)
+        return True
+
+
+class _WristBase(_FakeBase):
+    """A base that ALSO offers the eye-in-hand scan path (DQ-13)."""
+    def __init__(self):
+        super().__init__()
+        self.scan_observed = False
+    def get_scan_pose(self, scan_height=0.25):
+        return (11.0, 3.0, 0.45)
+    def get_support_z(self):
+        return 0.20
+    def get_grasp_observation(self, width=640, height=480):
+        self.scan_observed = True
+        # near-vertical wrist view: identity cam_mat, straight down from above.
+        return {"rgb": np.zeros((48, 64, 3), np.uint8), "depth": None,
+                "cam_pos": np.array([11.0, 3.0, 0.525]),
+                "cam_mat": np.eye(3).reshape(-1), "fovy": 58.0}
+
+
+class _ArmCtx(_Ctx):
+    def __init__(self, base, arm):
+        super().__init__(base)
+        self.arm = arm
+
+
+def test_scan_path_uses_wrist_cam_and_table_support_z():
+    """With a wrist-capable base + reachable arm, the skill moves to the scan
+    pose, observes with the wrist cam, and locates on the table support plane
+    (support_z from the base, never object GT)."""
+    base = _WristBase()
+    arm = _FakeArm(reachable=True)
+    # bbox bottom centred -> straight-down ray hits the plane under the camera.
+    det = _FakeDetector([{"label": "red can", "x_norm": 0.0, "y_norm": 0.0,
+                          "y_norm_bottom": 0.0, "area_frac": 0.05}])
+    pick = _FakePick()
+    skill = RecognizePickSkill(detector=det, pick=pick)
+    res = skill.execute({"label": "red can"}, _ArmCtx(base, arm))
+    assert res.success
+    assert base.scan_observed and arm.moved_to is not None
+    x, y, z = pick.params["target_xyz"]
+    # camera at (11,3,0.525) straight down, plane 0.20 -> (11, 3, 0.20)
+    assert abs(x - 11.0) < 1e-2 and abs(y - 3.0) < 1e-2 and abs(z - 0.20) < 1e-9
+
+
+def test_scan_path_falls_back_to_forward_cam_when_ik_unreachable():
+    """Scan pose IK-unreachable -> degrade to the forward-cam path (rule 8 fail
+    loud, never silent), still produce a perception target from get_camera_observation."""
+    base = _WristBase()
+    arm = _FakeArm(reachable=False)        # ik_top_down returns None
+    det = _FakeDetector([{"label": "red can", "x_norm": 0.0, "y_norm": 0.0,
+                          "area_frac": 0.05}])
+    pick = _FakePick()
+    skill = RecognizePickSkill(detector=det, pick=pick)
+    res = skill.execute({"label": "red can"}, _ArmCtx(base, arm))
+    assert res.success
+    assert not base.scan_observed          # never observed via wrist cam
+    # used the forward get_camera_observation (cam at (1,2,0.9), depth 1.5)
+    x, y, z = pick.params["target_xyz"]
+    assert abs(x - 1.0) < 1e-3 and abs(y - 2.0) < 1e-3

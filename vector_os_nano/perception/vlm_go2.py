@@ -460,8 +460,53 @@ def _parse_json_response(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
+    # Last resort: extract the FIRST balanced {...} object and ignore anything
+    # around it. Handles an unclosed ```json fence (no trailing ```) and the
+    # trailing-garbage Qwen sometimes appends (e.g. `{...}']` — campaign #9 R1),
+    # both of which defeat json.loads on the whole string but leave a valid
+    # object embedded. Brace counting respects string literals/escapes.
+    obj = _first_balanced_object(stripped)
+    if obj is not None:
+        try:
+            return json.loads(obj)  # type: ignore[return-value]
+        except json.JSONDecodeError:
+            pass
+
     logger.error("Failed to parse JSON from VLM response: %.200s", text)
     return {}
+
+
+def _first_balanced_object(s: str) -> "str | None":
+    """Return the first balanced ``{...}`` substring of *s*, or None.
+
+    Tracks brace depth while skipping over string literals (so braces inside
+    quotes don't miscount) and backslash escapes. Tolerates leading fence
+    markers / trailing junk that make whole-string json.loads fail."""
+    start = s.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        c = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start:i + 1]
+    return None
 
 
 def _parse_detected_object(raw: dict[str, Any]) -> DetectedObject:

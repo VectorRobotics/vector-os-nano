@@ -180,6 +180,36 @@ G1_ROOM = Scenario(
         "closed room (real collision, real gait, obstacle avoidance)."),
 )
 
+# Campaign #9 R1 (track A): same closed room, but the targets are REAL Kenney
+# furniture meshes (chair / sofa / potted plant) so a real VLM (Qwen-VL) can
+# ground a SEMANTIC object class instead of a colour. g1_runtime boots this id
+# in furnished room mode and registers VlmSeekSkill.
+G1_ROOM_VLM = Scenario(
+    id="g1_room_vlm",
+    embodiment="g1",
+    scene_xml=_G1_SCENE_XML,
+    object_names=("target_chair", "target_sofa", "target_plant"),
+    task_hint=(
+        "Find a household object (chair / sofa / potted plant) by VLM "
+        "recognition and walk to it in a furnished room (real gait, real "
+        "collision, real vision-language perception)."),
+)
+
+# Campaign #9 R2 (track C): the Go2 quadruped in the SAME furnished VLM room as
+# g1_room_vlm (one world-agnostic builder, two embodiments). Same explore-free
+# VLM recognise→approach stack (VlmSeekSkill), proving the kernel is embodiment-
+# agnostic. embodiment="go2" routes through the go2 sim boot in furnished mode.
+GO2_ROOM_VLM = Scenario(
+    id="go2_room_vlm",
+    embodiment="go2",
+    scene_xml=str(_GO2_SIM_DIR / "scene_flat.xml"),
+    object_names=("target_chair", "target_sofa", "target_plant"),
+    task_hint=(
+        "Find a household object (chair / sofa / potted plant) by VLM "
+        "recognition and walk to it with the Go2 quadruped in a furnished "
+        "room (real trot gait, real collision, real vision-language perception)."),
+)
+
 # id -> Scenario. Additive: new preset scenes append here.
 SCENARIOS: dict[str, Scenario] = {
     TABLETOP.id: TABLETOP,
@@ -189,6 +219,8 @@ SCENARIOS: dict[str, Scenario] = {
     HOUSE.id: HOUSE,
     G1_FLAT.id: G1_FLAT,
     G1_ROOM.id: G1_ROOM,
+    G1_ROOM_VLM.id: G1_ROOM_VLM,
+    GO2_ROOM_VLM.id: GO2_ROOM_VLM,
 }
 
 

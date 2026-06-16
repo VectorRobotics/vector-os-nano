@@ -80,18 +80,22 @@ class SimStartTool:
         "properties": {
             "sim_type": {
                 "type": "string",
-                "enum": ["arm", "go2", "habitat"],
+                "enum": ["arm", "go2", "g1", "habitat"],
                 "description": (
-                    "Which simulation to start: 'arm' (SO-101), 'go2' "
-                    "(Unitree Go2), or 'habitat' (photoreal scanned world)"
+                    "Which simulation to start: 'arm' (SO-101 6-DOF arm), 'go2' "
+                    "(Unitree Go2 quadruped), 'g1' (Unitree G1 humanoid — real "
+                    "policy gait in a furnished room; recognises furniture by VLM "
+                    "and walks to it), or 'habitat' (photoreal scanned world)"
                 ),
             },
             "scenario": {
                 "type": "string",
                 "default": "house",
                 "description": (
-                    "ONLY for sim_type='habitat': the playground scenario id "
-                    "to load (default 'house', the multi-room world)"
+                    "For sim_type='habitat': the playground scenario id (default "
+                    "'house'). For sim_type='g1': 'g1_room_vlm' (default — "
+                    "furnished room with VLM furniture recognition), 'g1_room' "
+                    "(colour-target room), or 'g1_flat' (open gait scene)."
                 ),
             },
             "gui": {
@@ -145,7 +149,7 @@ class SimStartTool:
             current_base = getattr(current_agent, "_base", None)
             if sim_type == "arm" and current_arm is not None:
                 return ToolResult(content=f"Arm sim already running: {type(current_arm).__name__}")
-            if sim_type in ("go2", "habitat") and current_base is not None:
+            if sim_type in ("go2", "g1", "habitat") and current_base is not None:
                 base_name = getattr(current_base, "name", type(current_base).__name__)
                 return ToolResult(
                     content=(
@@ -156,12 +160,18 @@ class SimStartTool:
 
         # The habitat world carries its own playground world (verify
         # predicates + persona); thread it through to the prompt/VGG rebuild.
+        # A playground world (habitat OR g1) carries its own verify predicates +
+        # persona; thread it through to the prompt/VGG rebuild like --scenario.
         habitat_world: Any = None
 
         try:
             if sim_type == "habitat":
                 agent, habitat_world = self._start_habitat(
                     params.get("scenario", "house"), gui=gui
+                )
+            elif sim_type == "g1":
+                agent, habitat_world = self._start_g1(
+                    params.get("scenario", "g1_room_vlm"), gui=gui
                 )
             elif backend == "isaac":
                 if sim_type == "go2":
@@ -202,63 +212,9 @@ class SimStartTool:
         except Exception as exc:
             return ToolResult(content=f"Failed to start {sim_type} sim: {exc}", is_error=True)
 
-        # Update app state
-        app["agent"] = agent
-        app["scene_graph"] = getattr(agent, "_spatial_memory", None)
-        app["skill_registry"] = getattr(agent, "_skill_registry", None)
-        if habitat_world is not None:
-            # The habitat scenario IS the active world (verify predicates +
-            # persona) — mirror the --scenario launch path.
-            app["world"] = habitat_world
-            app["scenario"] = getattr(habitat_world, "name", None)
-
-        # Register skill tools under the 'robot' category (matches the --sim path)
-        registry = app.get("registry")
-        if registry is not None:
-            from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
-            for skill_tool in wrap_skills(agent):
-                registry.register(skill_tool, category="robot")
-            # The bare dev-world startup disabled robot/diag/system; re-enable
-            # now that a robot is connected so skill + diag tools AND the
-            # status surface (robot_status lives in 'system') become visible.
-            if hasattr(registry, "enable_category"):
-                registry.enable_category("robot")
-                registry.enable_category("diag")
-                registry.enable_category("system")
-
-        # Rebuild the system prompt as a LIVE DynamicSystemPrompt with an arm-aware
-        # robot context, so subsequent turns correctly see the connected hardware
-        # (a bare list would freeze state and drop the [Robot State] block).
-        engine = app.get("engine")
-        if engine is not None:
-            from vector_os_nano.vcli.prompt import build_system_prompt
-            from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
-            from vector_os_nano.vcli.robot_context import RobotContextProvider
-            from vector_os_nano.vcli.worlds import resolve_world
-            world = habitat_world if habitat_world is not None else resolve_world(agent)
-            provider = RobotContextProvider(
-                base=getattr(agent, "_base", None),
-                scene_graph=getattr(agent, "_spatial_memory", None),
-                arm=getattr(agent, "_arm", None),
-                world=world,
-                world_model=getattr(agent, "_world_model", None),
-            )
-            app["robot_ctx_provider"] = provider
-            static_blocks = build_system_prompt(
-                agent=agent, cwd=context.cwd, robot_context=provider,
-                world=world,
-            )
-            engine._system_prompt = DynamicSystemPrompt(static_blocks, provider)
-            # Reinit VGG with new agent so verifier has live robot state
-            try:
-                engine.init_vgg(
-                    agent=agent,
-                    skill_registry=getattr(agent, "_skill_registry", None),
-                    on_vgg_step=app.get("vgg_step_callback"),
-                    world=world,
-                )
-            except Exception as _exc:
-                logger.warning("init_vgg after sim start failed: %s", _exc)
+        # Single-source rebind (rule 3) — the SAME sequence switch_embodiment
+        # reuses (ADR-011 / campaign #11); start and switch must never drift.
+        self._rebind_agent(app, context, agent, habitat_world)
 
         # Report SceneGraph status
         sg = getattr(agent, "_spatial_memory", None)
@@ -284,6 +240,87 @@ class SimStartTool:
         return ToolResult(
             content=f"Started {sim_type} simulation: {hw_name}, {skill_count} skills registered.{sg_info}"
         )
+
+    @staticmethod
+    def _rebind_agent(app: dict, context: "ToolContext", agent: Any,
+                      world: Any = None) -> None:
+        """Bind ``agent`` as the active embodiment: app state, robot-category
+        skill tools, live system prompt + VGG (ADR-011, campaign #11).
+
+        SINGLE SOURCE (rule 3): both start_simulation and switch_embodiment call
+        this, so they cannot drift. ``world`` is the explicit playground world
+        (habitat / switched scenario) or None to derive from the agent.
+
+        Drops the PREVIOUS embodiment's stale robot-category skill-wrapper tools
+        first (same loop as stop_simulation) so a switch never leaves the planner
+        offering a skill bound to a now-disconnected base.
+        """
+        app["agent"] = agent
+        app["scene_graph"] = getattr(agent, "_spatial_memory", None)
+        app["skill_registry"] = getattr(agent, "_skill_registry", None)
+        if world is not None:
+            # The playground scenario IS the active world (verify predicates +
+            # persona) — mirror the --scenario launch path.
+            app["world"] = world
+            app["scenario"] = getattr(world, "name", None)
+
+        # Register skill tools under the 'robot' category (matches the --sim path)
+        registry = app.get("registry")
+        if registry is not None:
+            # Drop the old embodiment's skill-wrapper tools first (switch path);
+            # a no-op on a fresh start (dev world has no skill wrappers yet).
+            if hasattr(registry, "list_tools") and hasattr(registry, "unregister"):
+                for tool_name in list(registry.list_tools()):
+                    t = registry.get(tool_name)
+                    if t is not None and getattr(t, "_is_skill_wrapper", False):
+                        try:
+                            registry.unregister(tool_name)
+                        except Exception:  # noqa: BLE001
+                            pass
+            from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
+            for skill_tool in wrap_skills(agent):
+                registry.register(skill_tool, category="robot")
+            # The bare dev-world startup disabled robot/diag/system; re-enable
+            # now that a robot is connected so skill + diag tools AND the
+            # status surface (robot_status lives in 'system') become visible.
+            if hasattr(registry, "enable_category"):
+                registry.enable_category("robot")
+                registry.enable_category("diag")
+                registry.enable_category("system")
+
+        # Rebuild the system prompt as a LIVE DynamicSystemPrompt with an arm-aware
+        # robot context, so subsequent turns correctly see the connected hardware
+        # (a bare list would freeze state and drop the [Robot State] block).
+        engine = app.get("engine")
+        if engine is not None:
+            from vector_os_nano.vcli.prompt import build_system_prompt
+            from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
+            from vector_os_nano.vcli.robot_context import RobotContextProvider
+            from vector_os_nano.vcli.worlds import resolve_world
+            world = world if world is not None else resolve_world(agent)
+            provider = RobotContextProvider(
+                base=getattr(agent, "_base", None),
+                scene_graph=getattr(agent, "_spatial_memory", None),
+                arm=getattr(agent, "_arm", None),
+                world=world,
+                world_model=getattr(agent, "_world_model", None),
+            )
+            app["robot_ctx_provider"] = provider
+            static_blocks = build_system_prompt(
+                agent=agent, cwd=context.cwd, robot_context=provider,
+                world=world,
+            )
+            engine._system_prompt = DynamicSystemPrompt(static_blocks, provider)
+            # Reinit VGG with new agent so verifier has live robot state
+            try:
+                engine.init_vgg(
+                    agent=agent,
+                    skill_registry=getattr(agent, "_skill_registry", None),
+                    on_vgg_step=app.get("vgg_step_callback"),
+                    world=world,
+                )
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning("init_vgg after rebind failed: %s", _exc)
 
     @staticmethod
     def _start_habitat(scenario_id: str, gui: bool = True) -> tuple[Any, Any]:
@@ -316,6 +353,33 @@ class SimStartTool:
                 habitat_runtime.wire_sysnav_feed(agent)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("SysNav wiring skipped: %s", exc)
+        return agent, world
+
+    @staticmethod
+    def _start_g1(scenario_id: str, gui: bool = True) -> tuple[Any, Any]:
+        """Boot the G1 humanoid world for ``scenario_id``; return (agent, world).
+
+        Mirrors the ``--scenario g1_*`` launch path so g1 is startable in-REPL
+        ('启动g1' / 'start g1') the same way as arm/go2/habitat. The resolved
+        playground world IS the active world (its verify predicates + persona).
+        Fails loud: an unknown id raises (resolve_world_named); a non-g1 id
+        raises ValueError — never a silent fallback.
+        """
+        import vector_os_nano.playground  # noqa: F401  (register scenarios)
+        from vector_os_nano.vcli import g1_runtime
+        from vector_os_nano.vcli.worlds import resolve_world_named
+
+        world = resolve_world_named(scenario_id)
+        embodiment = getattr(getattr(world, "scenario", None), "embodiment", "")
+        if embodiment != "g1":
+            raise ValueError(
+                f"scenario '{scenario_id}' is not a g1 scenario "
+                f"(embodiment={embodiment!r}); use start_simulation with the "
+                f"matching sim_type instead")
+        # prefer_daemon: booted mid-REPL on a tool worker thread, so the gait
+        # must run on its own daemon thread (which also syncs the viewer) — the
+        # pump-mode caller-thread driver would never run here (R7).
+        agent = g1_runtime.boot_g1_agent(world, gui=gui, prefer_daemon=True)
         return agent, world
 
     @staticmethod

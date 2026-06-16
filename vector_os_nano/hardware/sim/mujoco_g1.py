@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -80,6 +82,17 @@ _NAV_STALL_WINDOW_S = 6.0    # forward-walk no-progress window
 _NAV_INFLATION = 0.40
 _NAV_WAYPOINT_TOL = 0.45
 _NAV_STALL_MIN_M = 0.10      # min net progress within the window
+
+# Campaign #11 R5: the shared world-agnostic controller's constant pack for G1.
+# EVERY value is the existing _NAV_* above — extraction must not change behavior.
+from vector_os_nano.hardware.sim._nav_controller import NavConsts  # noqa: E402
+_G1_NAV = NavConsts(
+    fall_z=_NAV_FALL_Z, tol_floor=_NAV_TOL_FLOOR, speed=_NAV_SPEED,
+    vyaw_max=_NAV_VYAW_MAX, k_yaw=_NAV_K_YAW, face_tol=_NAV_FACE_TOL,
+    yaw_deadband=_NAV_YAW_DEADBAND, capture_r=_NAV_CAPTURE_R, tick_s=_NAV_TICK_S,
+    settle_s=_NAV_SETTLE_S, timeout_s=_NAV_TIMEOUT_S,
+    stall_window_s=_NAV_STALL_WINDOW_S, stall_min_m=_NAV_STALL_MIN_M,
+    inflation=_NAV_INFLATION, waypoint_tol=_NAV_WAYPOINT_TOL)
 _OCC_RESOLUTION = 0.25       # m/cell — occupancy grid resolution (room mode)
 
 
@@ -113,7 +126,20 @@ class G1MuJoCoBase:
         asset_dir: "Path | str | None" = None,
         gui: bool = False,
         room: bool = False,
+        furnished: bool = False,
+        prefer_daemon: bool = False,
+        photoreal: bool = False,
+        photoreal_bridge: "Any | None" = None,
     ) -> None:
+        # prefer_daemon (campaign #9 R7): when a viewer is open, normally PUMP
+        # mode drives the gait on the caller thread (1.0x). But when the base is
+        # booted MID-REPL (start_simulation tool, on a worker thread), nothing
+        # pumps it → frozen gait. prefer_daemon forces a DAEMON control thread
+        # that drives the gait AND syncs the viewer itself (thread-agnostic,
+        # ~0.4x under the passive viewer's render thread — Case 13 — but it
+        # walks and renders). The --scenario startup path leaves this False (the
+        # main REPL thread pumps, 1.0x).
+        self._prefer_daemon: bool = prefer_daemon
         self._asset_dir = Path(asset_dir) if asset_dir else _ASSET_DIR
         if not (self._asset_dir / "motion.pt").exists():
             raise FileNotFoundError(
@@ -156,8 +182,9 @@ class G1MuJoCoBase:
         self._cam_lock = threading.Lock()
         self._cam_req = threading.Event()
         self._cam_done = threading.Event()
-        self._cam_rgb = None
+        self._cam_rgb = None     # holds the latest camera OBSERVATION dict (R5)
         self._cam_renderer = None
+        self._cam_depth_renderer = None   # depth (R5 depth-at-bbox); lazily built
         self._cam_opt = None     # MjvOption (all geom groups) — lazily built
         # Live passive viewer window (campaign #8 R0). The owner controls the
         # G1 entirely through vector-cli and must SEE the gait, not just an
@@ -192,6 +219,11 @@ class G1MuJoCoBase:
         # Brings real obstacle avoidance + a virtual lidar into the G1 world,
         # all substrate-agnostic (MuJoCo physics is reused under DQ-10 A or D).
         self._room: bool = room
+        # Furnished room (campaign #9 R1, track A): real Kenney furniture meshes
+        # (chair/sofa/potted plant) as semantic targets instead of colour boxes,
+        # so a real VLM can recognise an object CLASS. Walls + obstacles + lidar
+        # + camera are identical; only the target geometry differs.
+        self._furnished: bool = furnished
         # Routing polygons enumerated from the compiled model at connect()
         # (g1_vgraph.obstacles_from_model) — the single source of truth for both
         # the path navigate_to walks AND the geodesic verify reads (rule 5).
@@ -203,6 +235,16 @@ class G1MuJoCoBase:
         self._lidar_snap_lock = threading.Lock()
         self._lidar_snap = None     # latest LidarSample, or None
         self._occ = None            # OccupancyGrid (room mode), filled by observe()
+        # Photoreal co-sim (campaign #10): when on, get_camera_observation's RGB
+        # is rendered by Blender Cycles/OptiX from the SAME camera pose MuJoCo
+        # rendered the depth at (hybrid — rgb=Blender, depth/pose=MuJoCo, one
+        # camera frame). Default OFF → the furnished-room behaviour is byte-
+        # identical (rule 2/9). The Blender bridge is a subprocess over a socket
+        # (no GL in our process → safe off the control thread). A bridge may be
+        # injected for tests; otherwise it is spawned lazily on first camera obs.
+        self._photoreal: bool = photoreal
+        self._photoreal_bridge = photoreal_bridge   # injected (tests) or lazy
+        self._photoreal_renderer = None
 
     # -- lifecycle ---------------------------------------------------------
     def connect(self) -> None:
@@ -215,7 +257,8 @@ class G1MuJoCoBase:
             # Room scene built programmatically (walls + obstacles + targets)
             # from the flat gait scene — keeps asset paths intact (R1 spike).
             from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
-            self._model = g1_room.build_room_model(self._asset_dir)
+            self._model = g1_room.build_room_model(
+                self._asset_dir, furnished=self._furnished)
         else:
             self._model = mujoco.MjModel.from_xml_path(
                 str(self._asset_dir / "scene.xml"))
@@ -242,9 +285,16 @@ class G1MuJoCoBase:
                 # mapped (not just where a wall was struck) — without it a
                 # short-range lidar leaves a blank map and explore cannot
                 # progress. geom_group masks the env so rays ignore the robot.
+                # Colour room: 3 m forces frontier exploration (explore must
+                # MOVE to grow the map). Furnished VLM room (campaign #9 R3): its
+                # purpose is recognise→navigate, which ranges a recognised object
+                # to a world point — give it room-spanning range so the lidar
+                # locates a target the VLM sees (the chair sits at 3.6 m) without
+                # a fragile close-in phase.
+                _lidar_range = 8.0 if self._furnished else 3.0
                 self._lidar = MuJoCoLivox360(
                     self._model, self._data, body_name="pelvis",
-                    max_range=3.0, geom_group=g1_room.ENV_GEOM_GROUP,
+                    max_range=_lidar_range, geom_group=g1_room.ENV_GEOM_GROUP,
                     include_misses=True)
             except Exception as exc:  # noqa: BLE001 — lidar is non-fatal
                 logger.warning("G1 lidar init failed: %s", exc)
@@ -264,7 +314,11 @@ class G1MuJoCoBase:
         # Mode resolution: a live window → PUMP (caller thread drives the loop
         # via _advance, no daemon, so the gait runs 1x against the viewer's
         # render thread). No window → DAEMON (the proven headless path).
-        self._pump_mode = self._viewer is not None
+        # PUMP only when a viewer is open AND we are NOT forced to daemon. A
+        # mid-REPL (tool) boot sets prefer_daemon so the gait runs on its own
+        # thread (and _step_batch syncs the viewer) regardless of which thread
+        # booted it — the pump-mode caller-thread driver would never run there.
+        self._pump_mode = self._viewer is not None and not self._prefer_daemon
         if self._pump_mode:
             self._target = _DEFAULT_ANGLES.copy()   # fresh stance reference
             self._advance(0.3)                       # settle into stance (pump)
@@ -294,12 +348,19 @@ class G1MuJoCoBase:
             self._viewer = mujoco.viewer.launch_passive(
                 self._model, self._data,
                 show_left_ui=False, show_right_ui=False)
+            # Show ALL geom groups: the room geometry (walls / obstacles / colour
+            # targets / furniture) is tagged ENV_GEOM_GROUP=3 for the lidar mask,
+            # which the viewer HIDES by default — so the owner would see only the
+            # robot on an empty floor (owner-caught 2026-06-14). The robot's own
+            # first-person camera already enables all groups; the live window must
+            # too, or the GUI acceptance view is misleading.
+            self._viewer.opt.geomgroup[:] = 1
             cam = self._viewer.cam
             cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-            cam.distance = 3.5
-            cam.elevation = -20
-            cam.azimuth = 120
-            cam.lookat[:] = self._data.qpos[:3]
+            cam.distance = 5.5            # pulled back to frame the room + targets
+            cam.elevation = -25
+            cam.azimuth = 130
+            cam.lookat[:] = [1.6, 0.0, 0.4]   # room centre, not just the robot
         except Exception as exc:  # noqa: BLE001 — never break the boot
             logger.warning("G1MuJoCoBase viewer failed to launch: %s", exc)
             self._viewer = None
@@ -322,7 +383,7 @@ class G1MuJoCoBase:
         # Release the offscreen GL renderers (chase-cam + first-person camera)
         # — leaking the EGL context across reconnect/multi-instance runs is the
         # historical crash class (tricky-bugs Case 12 discipline).
-        for _r in (self._renderer, self._cam_renderer):
+        for _r in (self._renderer, self._cam_renderer, self._cam_depth_renderer):
             if _r is not None:
                 try:
                     _r.close()
@@ -335,8 +396,23 @@ class G1MuJoCoBase:
             self._lidar_snap = None
         self._lidar = None
         self._occ = None
-        self._cam_renderer = self._cam_rgb = self._cam_opt = None
+        self._cam_renderer = self._cam_depth_renderer = None
+        if getattr(self, "_pano", None) is not None:
+            try:
+                self._pano.close()      # release the pano GL renderers (M4)
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
+            self._pano = None
+        self._cam_rgb = self._cam_opt = None
         self._model = self._data = self._policy = None
+        # Photoreal co-sim: terminate the Blender subprocess (idempotent).
+        if self._photoreal_bridge is not None:
+            try:
+                self._photoreal_bridge.close()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
+            self._photoreal_bridge = None
+        self._photoreal_renderer = None
 
     close = disconnect
 
@@ -383,11 +459,14 @@ class G1MuJoCoBase:
             raise RuntimeError("g1 viewer frame render produced no image")
         return png
 
-    def _render_camera_frame(self, m, d, h: int = 240, w: int = 320):
-        """Render the pelvis-mounted FIRST-PERSON forward camera as an
-        (h, w, 3) uint8 RGB array (control thread). Uses the named fixed camera
-        g1_room adds to the pelvis (rotates with the robot) — what the G1
-        'sees' for object recognition."""
+    def _render_camera_obs(self, m, d, h: int = 240, w: int = 320):
+        """Render the pelvis FIRST-PERSON camera (control thread) and capture an
+        atomic observation: ``{rgb (h,w,3 uint8), depth (h,w float32 m), cam_pos
+        (3,), cam_mat (9,), fovy}``. RGB + depth + camera pose come from ONE
+        scene update so they are mutually consistent (the robot does not move
+        between them) — the recognise→navigate pivot (R5) back-projects the depth
+        at the recognised bbox to a world point. Depth needs its own Renderer
+        (MuJoCo renders either colour OR depth per renderer)."""
         import mujoco
         if self._cam_renderer is None:
             self._cam_renderer = mujoco.Renderer(m, height=h, width=w)
@@ -397,10 +476,26 @@ class G1MuJoCoBase:
             # sees an empty floor.
             self._cam_opt = mujoco.MjvOption()
             self._cam_opt.geomgroup[:] = 1
+        if self._cam_depth_renderer is None:
+            self._cam_depth_renderer = mujoco.Renderer(m, height=h, width=w)
+            self._cam_depth_renderer.enable_depth_rendering()
         from vector_os_nano.hardware.sim.g1_room import HEAD_CAM  # noqa: PLC0415
-        self._cam_renderer.update_scene(
-            d, camera=HEAD_CAM, scene_option=self._cam_opt)
-        return self._cam_renderer.render().copy()
+        cam_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, HEAD_CAM)
+        self._cam_renderer.update_scene(d, camera=HEAD_CAM, scene_option=self._cam_opt)
+        rgb = self._cam_renderer.render().copy()
+        self._cam_depth_renderer.update_scene(d, camera=HEAD_CAM, scene_option=self._cam_opt)
+        depth = self._cam_depth_renderer.render().copy()
+        return {
+            "rgb": rgb,
+            "depth": depth,
+            "cam_pos": np.array(d.cam_xpos[cam_id], dtype=np.float64).copy(),
+            "cam_mat": np.array(d.cam_xmat[cam_id], dtype=np.float64).copy(),
+            "fovy": float(m.cam_fovy[cam_id]),
+        }
+
+    def _render_camera_frame(self, m, d, h: int = 240, w: int = 320):
+        """RGB-only convenience (back-compat): the ``rgb`` of the full obs."""
+        return self._render_camera_obs(m, d, h, w)["rgb"]
 
     def get_camera_frame(self, timeout: float = 5.0):
         """A first-person forward RGB frame (H,W,3 uint8) for recognition.
@@ -417,17 +512,59 @@ class G1MuJoCoBase:
             raise RuntimeError(
                 "no forward camera — get_camera_frame needs room mode "
                 "(--scenario g1_room)")
+        return self.get_camera_observation(timeout=timeout)["rgb"]
+
+    def get_camera_observation(self, timeout: float = 5.0) -> dict:
+        """Atomic first-person observation ``{rgb, depth, cam_pos, cam_mat,
+        fovy}`` (R5). Same control-thread render discipline as get_camera_frame
+        (pump → direct; daemon → _cam_req hand-off). The recognise→navigate skill
+        back-projects the depth at the recognised bbox to a world point."""
+        self._require_connected()
+        if not self._room:
+            raise RuntimeError(
+                "no forward camera — needs room mode (--scenario g1_room)")
         if self._pump_mode:
-            return self._render_camera_frame(self._model, self._data)
+            obs = self._render_camera_obs(self._model, self._data)
+            return self._photoreal_swap(obs)
         with self._cam_lock:
             self._cam_done.clear()
             self._cam_req.set()
             if not self._cam_done.wait(timeout=timeout):
-                raise RuntimeError("g1 camera frame render timed out")
-            rgb = self._cam_rgb
-        if rgb is None:
-            raise RuntimeError("g1 camera frame render produced no image")
-        return rgb
+                raise RuntimeError("g1 camera obs render timed out")
+            obs = self._cam_rgb
+        if obs is None:
+            raise RuntimeError("g1 camera obs render produced no image")
+        return self._photoreal_swap(obs)
+
+    # -- photoreal co-sim (campaign #10) -----------------------------------
+    def _ensure_photoreal_renderer(self):
+        """Lazily build the PhotorealRenderer (spawns the Blender bridge unless one
+        was injected). Fails loud if photoreal was requested with no Blender."""
+        if self._photoreal_renderer is not None:
+            return self._photoreal_renderer
+        from vector_os_nano.hardware.sim.g1_room import HEAD_CAM  # noqa: PLC0415
+        from vector_os_nano.playground.photoreal.cosim import furnished_room_renderer
+
+        # Shared furnished-room co-sim factory (rule 7 — same wiring the Go2 base
+        # uses; only the head camera differs). Reuses an injected bridge in tests.
+        renderer, bridge = furnished_room_renderer(
+            cam_name=HEAD_CAM, bridge=self._photoreal_bridge,
+            width=640, height=480, samples=48)
+        self._photoreal_bridge = bridge
+        self._photoreal_renderer = renderer
+        return self._photoreal_renderer
+
+    def _photoreal_swap(self, obs: dict) -> dict:
+        """Replace the MuJoCo RGB with a photoreal Blender frame from the SAME
+        pose (no-op when photoreal is off — keeps existing behaviour identical)."""
+        if not self._photoreal:
+            return obs
+        renderer = self._ensure_photoreal_renderer()
+        rgb = renderer.render_from_pose(obs["cam_pos"], obs["cam_mat"], obs["fovy"])
+        out = dict(obs)
+        out["rgb_mujoco"] = obs["rgb"]   # keep the physics render for debugging
+        out["rgb"] = rgb
+        return out
 
     # -- control loop (one thread owns ALL mujoco/torch state) -------------
     # The control loop runs in ONE of two modes (resolved in connect()):
@@ -512,10 +649,11 @@ class G1MuJoCoBase:
                 self._render_png = None
             self._render_req.clear()
             self._render_done.set()
-        # On-demand forward-camera RGB (R9): render on THIS thread (owns GL).
+        # On-demand forward-camera OBSERVATION (R9 rgb + R5 depth/pose): render
+        # on THIS thread (owns GL). _cam_rgb holds the full obs dict.
         if self._cam_req.is_set():
             try:
-                self._cam_rgb = self._render_camera_frame(m, d)
+                self._cam_rgb = self._render_camera_obs(m, d)
             except Exception as exc:  # noqa: BLE001 — never break the gait
                 logger.warning("g1 camera render failed: %s", exc)
                 self._cam_rgb = None
@@ -602,6 +740,8 @@ class G1MuJoCoBase:
         if not self._room:
             return {}
         from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+        if self._furnished:
+            return g1_room.furnished_targets()
         return {t.name: (t.cx, t.cy) for t in g1_room.TARGETS}
 
     def observe(self) -> float:
@@ -664,46 +804,14 @@ class G1MuJoCoBase:
         self._require_connected()
         if not self._obstacles:
             return self._navigate_point(x, y, tol, speed)
-        if not all(math.isfinite(v) for v in (x, y, tol, speed)):
-            return {"reached": False, "already_there": False, "moved_m": 0.0,
-                    "elapsed_s": 0.0, "remaining": float("inf"),
-                    "reason": "bad_params_nan", "transport": "sim_oracle"}
-        from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
-        sx, sy, _sz = self.get_position()
-        waypoints, _length = g1_vgraph.plan_path(
-            (sx, sy), (float(x), float(y)), self._obstacles, _NAV_INFLATION)
-        if waypoints is None:
-            return {"reached": False, "already_there": False, "moved_m": 0.0,
-                    "elapsed_s": 0.0, "remaining": float("inf"),
-                    "reason": "unreachable", "transport": "sim_oracle"}
-        # Drive each leg; waypoints[0] is the start, so skip it. Intermediate
-        # waypoints use a loose tol (just round the corner), the goal the real.
-        t0 = time.monotonic()
-        total_moved = 0.0
-        legs = waypoints[1:]
-        last = None
-        for i, (wx, wy) in enumerate(legs):
-            is_final = (i == len(legs) - 1)
-            leg_tol = tol if is_final else _NAV_WAYPOINT_TOL
-            last = self._navigate_point(wx, wy, leg_tol, speed)
-            total_moved += float(last.get("moved_m", 0.0))
-            if last.get("reason") in ("fell", "stalled_no_progress"):
-                break
-        fx, fy, fz = self.get_position()
-        remaining = math.hypot(float(x) - fx, float(y) - fy)
-        eff_tol = max(float(tol), _NAV_TOL_FLOOR)
-        reached = bool(remaining <= eff_tol and fz >= _NAV_FALL_Z)
-        return {
-            "reached": reached, "already_there": False,
-            "moved_m": round(total_moved, 3),
-            "net_m": round(math.hypot(fx - sx, fy - sy), 3),
-            "elapsed_s": round(time.monotonic() - t0, 3),
-            "remaining": round(remaining, 3),
-            "pos": [fx, fy, fz], "effective_tol": eff_tol,
-            "waypoints": [[round(p[0], 2), round(p[1], 2)] for p in waypoints],
-            "reason": "ok" if reached else (last or {}).get("reason", "timeout"),
-            "transport": "sim_oracle",
-        }
+        # Shared world-agnostic controller (campaign #11 R5); G1 uses a no-op
+        # ctrl_token so its control path is byte-identical to campaign #6.
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        return _nav_controller.route_and_drive(
+            x=x, y=y, tol=tol, speed=speed, obstacles=self._obstacles,
+            get_position=self.get_position, get_heading=self.get_heading,
+            set_velocity=self.set_velocity, stop=self.stop,
+            tick_fn=self._advance, consts=_G1_NAV)
 
     def _navigate_point(self, x: float, y: float, tol: float = 0.2,
                         speed: float = _NAV_SPEED) -> dict:
@@ -727,105 +835,15 @@ class G1MuJoCoBase:
         """
 
         self._require_connected()
-        if not all(math.isfinite(v) for v in (x, y, tol, speed)):
-            return {"reached": False, "already_there": False, "moved_m": 0.0,
-                    "elapsed_s": 0.0, "remaining": float("inf"),
-                    "reason": "bad_params_nan", "transport": "sim_oracle"}
-        tx, ty = float(x), float(y)
-        eff_tol = max(float(tol), _NAV_TOL_FLOOR)   # gait floor, reported below
-        speed = max(0.1, float(speed))
-
-        sx, sy, sz = self.get_position()
-        start_dist = math.hypot(tx - sx, ty - sy)
-        if start_dist <= eff_tol:
-            # already there — never command the gait (no spurious steps)
-            return {"reached": True, "already_there": True, "moved_m": 0.0,
-                    "net_m": 0.0, "elapsed_s": 0.0, "remaining": start_dist,
-                    "pos": [sx, sy, sz], "effective_tol": eff_tol,
-                    "reason": "already_within_tol", "transport": "sim_oracle"}
-
-        t0 = time.monotonic()
-        px, py = sx, sy
-        moved = 0.0
-        best_dist = start_dist
-        best_t = t0
-        reason = "timeout"
-
-        def _wrap(a: float) -> float:
-            return math.atan2(math.sin(a), math.cos(a))
-
-        try:
-            while time.monotonic() - t0 < _NAV_TIMEOUT_S:
-                cx, cy, cz = self.get_position()
-                yaw = self.get_heading()
-                moved += math.hypot(cx - px, cy - py)
-                px, py = cx, cy
-                dist = math.hypot(tx - cx, ty - cy)
-
-                if cz < _NAV_FALL_Z:           # fallen — stop trying
-                    reason = "fell"
-                    break
-                if dist <= eff_tol:
-                    reason = "arrived"
-                    break
-
-                err = _wrap(math.atan2(ty - cy, tx - cx) - yaw)
-                if dist < _NAV_CAPTURE_R:
-                    # capture: stop steering (yaw error near goal is noise),
-                    # creep straight at the last heading — no pivot-orbit.
-                    vx, vyaw = max(0.15, 0.4 * speed), 0.0
-                elif abs(err) > _NAV_FACE_TOL:
-                    # face-first: pivot in place (measured stable for this
-                    # policy), don't walk wide of a badly-aimed target.
-                    vx = 0.0
-                    vyaw = max(-_NAV_VYAW_MAX, min(_NAV_VYAW_MAX,
-                                                   _NAV_K_YAW * err))
-                else:
-                    vx = speed
-                    vyaw = (0.0 if abs(err) < _NAV_YAW_DEADBAND
-                            else max(-_NAV_VYAW_MAX, min(_NAV_VYAW_MAX,
-                                                         _NAV_K_YAW * err)))
-                self.set_velocity(vx, 0.0, vyaw)
-
-                # stall: only judged while actually walking forward (a long
-                # legitimate pivot is not a stall). Net progress toward goal.
-                if vx > 0.0:
-                    if dist < best_dist - _NAV_STALL_MIN_M:
-                        best_dist, best_t = dist, time.monotonic()
-                    elif time.monotonic() - best_t > _NAV_STALL_WINDOW_S:
-                        reason = "stalled_no_progress"
-                        break
-                else:
-                    best_t = time.monotonic()   # pause stall clock while pivoting
-                self._advance(_NAV_TICK_S)
-        finally:
-            self.stop()
-
-        # Settle: hold commanded stance ~1 gait period and re-sample the
-        # AUTHORITATIVE arrival pose — the biped coasts past the in-flight
-        # break sample (review high-finding). moved_m accrues across settle.
-        settle_end = time.monotonic() + _NAV_SETTLE_S
-        while time.monotonic() < settle_end:
-            self.set_velocity(0.0, 0.0, 0.0)   # re-arm deadman at zero
-            cx, cy, _cz = self.get_position()
-            moved += math.hypot(cx - px, cy - py)
-            px, py = cx, cy
-            self._advance(_NAV_TICK_S)
-
-        fx, fy, fz = self.get_position()
-        remaining = math.hypot(tx - fx, ty - fy)
-        reached = bool(remaining <= eff_tol and fz >= _NAV_FALL_Z)
-        if reached:
-            reason = "ok"
-        return {
-            "reached": reached, "already_there": False,
-            "moved_m": round(moved, 3),
-            "net_m": round(math.hypot(fx - sx, fy - sy), 3),
-            "elapsed_s": round(time.monotonic() - t0, 3),
-            "remaining": round(remaining, 3),
-            "pos": [fx, fy, fz], "effective_tol": eff_tol,
-            "reason": reason, "transport": "sim_oracle",
-        }
+        # Shared world-agnostic controller (campaign #11 R5). G1 omits ctrl_token
+        # (-> no-op nullcontext), so the control path is byte-identical to the
+        # campaign #6 loop this was extracted from.
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        return _nav_controller.drive_to_point(
+            x=x, y=y, tol=tol, speed=speed,
+            get_position=self.get_position, get_heading=self.get_heading,
+            set_velocity=self.set_velocity, stop=self.stop,
+            tick_fn=self._advance, consts=_G1_NAV)
 
     def stop(self) -> None:
         self._require_connected()
@@ -860,12 +878,32 @@ class G1MuJoCoBase:
         diverge (rule 5). Declaring it lets the kernel's ``geodesic_dist(x, y)``
         verify predicate bind for coordinate goals.
         """
-        if getattr(self, "_obstacles", None):
-            from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
-            return g1_vgraph.path_length(
-                (float(a[0]), float(a[1])), (float(b[0]), float(b[1])),
-                self._obstacles, _NAV_INFLATION)
-        return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        return _nav_controller.path_length_geodesic(
+            a, b, getattr(self, "_obstacles", None) or [], _G1_NAV.inflation)
+
+    def get_pano(self) -> dict:
+        """Pose-synced equirect panorama for SysNav (campaign #11 M4 feed source).
+
+        Returns the SAME contract as HabitatBase.get_pano — {rgb (640,1920,3)
+        uint8, depth (640,1920) f32, pos[3], heading} — so the embodiment-agnostic
+        SysNav feed (wire_sysnav_feed) drives G1 with no habitat dependency. The
+        pano is a real MuJoCoPano360 render (rule 5: pixels from the sim, never GT)."""
+        self._require_connected()
+        if getattr(self, "_pano", None) is None:
+            from vector_os_nano.hardware.sim.sensors.pano360 import MuJoCoPano360  # noqa: PLC0415,E501
+            self._pano = MuJoCoPano360(
+                self._model, self._data, body_name="pelvis",
+                offset=(0.0, 0.0, 0.5))   # ~eye height above the pelvis
+        # Render under _render_lock so the cube-face update_scene/render does NOT
+        # read mjData while the control thread mj_steps it (R8 review: off-thread
+        # render is a data race / segfault risk; same lock the first-person cam uses).
+        with self._render_lock:
+            rgb, depth = self._pano.render_rgbd()
+        pos = self.get_position()
+        return {"rgb": rgb, "depth": depth,
+                "pos": [float(pos[0]), float(pos[1]), float(pos[2])],
+                "heading": float(self.get_heading())}
 
     def get_odometry(self):
         from vector_os_nano.core.types import Odometry

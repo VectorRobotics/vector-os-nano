@@ -83,13 +83,15 @@ class SysnavPerceptionTool:
 
         # action == "start"
         base = agent._base
+        # Capability probe (campaign #11 M4, rule 3/7): SysNav runs on ANY base
+        # exposing get_pano — habitat, MuJoCo G1, or MuJoCo Go2 — never gated by
+        # embodiment/world name. wire_sysnav_feed picks the feed source the same way.
         if not hasattr(base, "get_pano"):
             return ToolResult(
                 content=(
                     f"The connected base ({getattr(base, 'name', type(base).__name__)}) "
-                    "has no panorama capability — SysNav perception runs on the "
-                    "habitat world. Start it with start_simulation("
-                    "sim_type=\"habitat\")."
+                    "has no panorama capability (get_pano) — SysNav perception "
+                    "needs a pano-capable sim (habitat, mujoco g1, or mujoco go2)."
                 ),
                 is_error=True,
             )

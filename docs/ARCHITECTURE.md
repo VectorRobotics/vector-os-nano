@@ -450,6 +450,33 @@ parallel but meet at milestones.
   derives the decompose vocabulary from the skill registry (killing the GO2 split-brain);
   base primitives are gated on `has_base`; the StrategySelector is world-scoped; validation
   is fail-loud and feeds `GoalTree.validation_notes` back into re-plan.
+- **Playground photoreal co-sim (campaign #10, ADR-010).** `vector_os_nano/playground/photoreal/`
+  is a self-built lightweight co-sim: MuJoCo physics (unchanged) + a Blender Cycles/OptiX photoreal
+  renderer behind a `PhotorealRenderer` world adapter, joined per-frame. The repo venv never imports
+  `bpy` — `server.py` runs under a standalone Blender subprocess over a socket (the #9 bridge pattern;
+  GPL stays isolated). Env-gated (`VECTOR_G1_PHOTOREAL`/`VECTOR_GO2_PHOTOREAL`) so default behaviour is
+  byte-identical. It feeds the real VLM a photoreal frame: g1+go2 photoreal VLN is vector-cli-accepted.
+  A `RecognizePickSkill` (VLM→ray-to-plane locate→top-down grasp) is built; the closed grasp is deferred
+  to an eye-in-hand wrist camera (DQ-12 — forward-camera geometry, not perception, is the limit).
+- **Embodiment-switch seam + capability matrix (campaign #11, ADR-011).** One vector-cli session
+  can hot-swap the active embodiment (G1 ⇄ Go2) at runtime via `SwitchEmbodimentTool`
+  (`vcli/tools/switch_tool.py`): boot-then-swap, then `SimStartTool._rebind_agent` — the SINGLE-SOURCE
+  rebind that `start_simulation` also uses (app-state + robot-category skill tools + live prompt + VGG;
+  rule 3). Skills register by CAPABILITY PROBE (`callable(base, 'navigate_to')` / `hasattr 'get_pano'`),
+  never by embodiment name, so the planner is never offered a skill the current base can't run. The seam
+  lives entirely in the vcli runtime/tool layer — kernel/BaseProtocol unchanged (rules 2/7). Toward a
+  capability matrix (locomotion / nav stack / VLN / SysNav × G1/Go2): Go2 gained `navigate_to`/
+  `geodesic_distance` reusing the world-agnostic `g1_vgraph` planner (the trot follows the waypoint chain)
+  + a world-frame `LaserScan.points` cloud, so `recognize_navigate` (lidar VLN) registers on Go2 too.
+  The nav controller is now a single world-agnostic `hardware/sim/_nav_controller.py` (R5: `drive_to_point`
+  + `route_and_drive` + frozen `NavConsts` + a ctrl-token factory) that both bases delegate to — G1's
+  campaign-#6 behaviour preserved byte-for-byte (no-op nullcontext), Go2 injects its skill-ctrl token; no
+  drift. `NavigateToPointSkill` is registered on both (M3). SysNav (M4): both bases expose
+  `get_pano()→{rgb,depth,pos,heading}` (via `MuJoCoPano360.render_rgbd`, rendered under the physics
+  lock/pause to avoid an mjData race), so the embodiment-agnostic feed (`wire_sysnav_feed`) + capability-probe
+  `sysnav_tool` gate drive G1/Go2 — the live semantic-mapping nodes (object_nodes) remain a re-provision gate
+  (DQ-16). FAR ROS2 nav stack is likewise gated (DQ-15). Known track-C: the MuJoCo pano depth↔latitude
+  mapping (±60° vs the bridge's ±90°) must be reconciled when SysNav is re-provisioned.
 
 **Remaining:**
 

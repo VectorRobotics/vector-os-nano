@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import math
+import contextlib
 import os
 import threading
 import time
@@ -189,6 +190,41 @@ _MPC_LEG_NAMES: list[str] = ["FL", "FR", "RL", "RR"]
 # ---------------------------------------------------------------------------
 
 _LIDAR_UPDATE_INTERVAL: int = 200  # physics steps between scans (~5 Hz, 5200 rays/scan)
+
+# --- navigate_to closed-loop constants (campaign #11 M2) --------------------
+# Mirror of g1.py's _NAV_* (the same face->walk->capture->settle controller +
+# g1_vgraph routing), retuned for the Go2 quadruped. SEEDS pending a real-sim
+# tuning pass (record actual stand-z / vyaw / stall before shipping as final).
+# CRITICAL: the Go2 stands at qpos[2]=0.35 (connect()), NOT the G1 pelvis 0.77 —
+# so _GO2_NAV_FALL_Z=0.20, NOT G1's 0.4 (0.4 would make `reached` NEVER true and
+# silently report 'fell' on every successful arrival).
+_GO2_NAV_FALL_Z = 0.20       # m: base height below this = fallen (Go2 stands ~0.35)
+_GO2_NAV_TOL_FLOOR = 0.20    # gait COM oscillation floor — tol can't beat this
+_GO2_NAV_SPEED = 0.5         # default forward cmd (Go2 _VX_MAX ~0.8)
+_GO2_NAV_VYAW_MAX = 1.0      # cmd ceiling (Go2 _VYAW_MAX ~4.0; conservative)
+_GO2_NAV_K_YAW = 2.0         # proportional heading gain
+_GO2_NAV_FACE_TOL = 0.35     # rad: pivot-in-place until aligned within this
+_GO2_NAV_YAW_DEADBAND = 0.12  # rad: stop steering when aligned (anti-hunt)
+_GO2_NAV_CAPTURE_R = 0.5     # m: inside, freeze steering + drive straight
+_GO2_NAV_TICK_S = 0.05       # 20 Hz drive ticks
+_GO2_NAV_SETTLE_S = 0.5      # hold stance + re-sample before deciding arrival
+_GO2_NAV_TIMEOUT_S = 60.0
+_GO2_NAV_STALL_WINDOW_S = 6.0  # forward-walk no-progress window
+_GO2_NAV_STALL_MIN_M = 0.10  # min net progress within the window
+# Go2 is a cylinder ~0.34 m front / 0.19 m side (feedback) — inflate isotropic-
+# conservative by the front radius so the planned path keeps the body clear.
+_GO2_NAV_INFLATION = 0.34
+_GO2_NAV_WAYPOINT_TOL = 0.45
+
+# Campaign #11 R5: the shared world-agnostic controller's constant pack for Go2.
+from vector_os_nano.hardware.sim._nav_controller import NavConsts  # noqa: E402
+_GO2_NAV = NavConsts(
+    fall_z=_GO2_NAV_FALL_Z, tol_floor=_GO2_NAV_TOL_FLOOR, speed=_GO2_NAV_SPEED,
+    vyaw_max=_GO2_NAV_VYAW_MAX, k_yaw=_GO2_NAV_K_YAW, face_tol=_GO2_NAV_FACE_TOL,
+    yaw_deadband=_GO2_NAV_YAW_DEADBAND, capture_r=_GO2_NAV_CAPTURE_R,
+    tick_s=_GO2_NAV_TICK_S, settle_s=_GO2_NAV_SETTLE_S, timeout_s=_GO2_NAV_TIMEOUT_S,
+    stall_window_s=_GO2_NAV_STALL_WINDOW_S, stall_min_m=_GO2_NAV_STALL_MIN_M,
+    inflation=_GO2_NAV_INFLATION, waypoint_tol=_GO2_NAV_WAYPOINT_TOL)
 
 
 # ---------------------------------------------------------------------------
@@ -404,10 +440,26 @@ class MuJoCoGo2:
 
     def __init__(
         self, gui: bool = False, room: bool = True, backend: str = "auto",
-        viewer_track: bool = True,
+        viewer_track: bool = True, furnished: bool = False,
+        photoreal: bool = False, photoreal_bridge: "Any | None" = None,
     ) -> None:
         self._gui: bool = gui
         self._room: bool = room
+        # Photoreal co-sim (campaign #10 R6): when on, get_camera_frame returns a
+        # Blender Cycles/OptiX render from the SAME head-cam pose instead of
+        # MuJoCo's basic render — the real VLM (and thus photoreal-driven Piper
+        # picking + Go2 VLN) grounds a photoreal frame. Default OFF → byte-
+        # identical. Shares the furnished-room co-sim factory with the G1 base
+        # (rule 7). Bridge is a socket subprocess (safe off the control thread).
+        self._photoreal: bool = photoreal
+        self._photoreal_bridge = photoreal_bridge
+        self._photoreal_renderer = None
+        # Furnished VLM room (campaign #9 R2, track C): the SAME shared furnished
+        # room g1 uses (g1_room.build_furnished_room_model) on the go2 flat scene
+        # — collidable chair/sofa/plant targets for VLM recognition. Proves the
+        # world-agnostic invariant (one room builder, two embodiments). Implies
+        # room semantics (spawn at origin facing the targets, not the apartment).
+        self._furnished: bool = furnished
         self._backend_pref: str = backend
         self._viewer_track: bool = viewer_track
         self._mj: _Go2Model | None = None
@@ -457,6 +509,10 @@ class MuJoCoGo2:
         # the token (tid match).
         self._skill_ctrl_until: float = 0.0
         self._skill_ctrl_tid: int = 0
+        # Obstacle polygons for navigate_to/geodesic (campaign #11 M2). Filled in
+        # connect() for furnished/room scenes; [] on flat -> navigate_to degrades
+        # to a straight-line drive (and the M1 switch path never AttributeErrors).
+        self._obstacles: list = []
 
     # ------------------------------------------------------------------
     # Capability properties (BaseProtocol)
@@ -482,7 +538,31 @@ class MuJoCoGo2:
         """Load MuJoCo model and optionally open viewer."""
         mj = _get_mujoco()
 
-        if self._room:
+        if self._furnished:
+            # Furnished VLM room: the shared world-agnostic builder on the go2
+            # flat scene (walls + obstacles + collidable furniture targets). Go2
+            # ships its own d435_rgb camera, so no pelvis head-cam is added.
+            from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+            base_scene = _build_flat_scene_xml()
+            # Mount a forward wide recognition camera on the base (Go2's stock
+            # d435 is too low/narrow/down to frame furniture at range).
+            model = g1_room.build_furnished_room_model(
+                base_scene, recog_cam_body="base_link",
+                recog_cam_pos=(0.28, 0.0, 0.06))
+            data = mj.MjData(model)
+            self._mj = _Go2Model(model, data)
+            self._scene_xml_path = str(base_scene)
+            # Spawn at the origin facing +x, toward the targets at x≈3.6 (same
+            # layout as the g1 furnished room — world-agnostic parity).
+            data.qpos[0] = 0.0
+            data.qpos[1] = 0.0
+            data.qpos[2] = 0.35
+            data.qpos[7:19] = _STAND_JOINTS
+            if model.nq >= 27:
+                data.qpos[19:27] = _PIPER_STOW_QPOS
+            if model.nu >= 19:
+                data.ctrl[12:19] = _PIPER_STOW_CTRL
+        elif self._room:
             scene_path = _build_room_scene_xml()
             model = mj.MjModel.from_xml_path(str(scene_path))
             data = mj.MjData(model)
@@ -521,6 +601,19 @@ class MuJoCoGo2:
 
         mj.mj_forward(self._mj.model, self._mj.data)
 
+        # navigate_to / geodesic obstacle polygons (campaign #11 M2). The SAME
+        # world-agnostic builder G1 uses (wall_*/obstacle_* geoms; target_*
+        # furniture is intentionally excluded — the target IS the goal). Flat
+        # scenes leave [] -> navigate_to degrades to a straight-line drive.
+        if self._furnished or self._room:
+            try:
+                from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+                self._obstacles = g1_room.obstacles_from_model(
+                    self._mj.model, self._mj.data)
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning("obstacles_from_model failed (flat fallback): %s", _exc)
+                self._obstacles = []
+
         if self._gui:
             try:
                 import mujoco.viewer  # noqa: PLC0415
@@ -531,8 +624,19 @@ class MuJoCoGo2:
                     show_right_ui=False,
                 )
                 if self._viewer is not None:
+                    # Show ALL geom groups so the furnished room's group-3
+                    # walls/furniture render in the window (else the owner sees
+                    # an empty floor — owner-caught 2026-06-14).
+                    if self._furnished:
+                        self._viewer.opt.geomgroup[:] = 1
                     self._viewer.cam.type = mj.mjtCamera.mjCAMERA_FREE
-                    if self._room:
+                    if self._furnished:
+                        # Frame the spawn + the targets ahead (x≈3.6).
+                        self._viewer.cam.lookat[:] = [1.8, 0.0, 0.3]
+                        self._viewer.cam.distance = 6.0
+                        self._viewer.cam.elevation = -25
+                        self._viewer.cam.azimuth = 180
+                    elif self._room:
                         self._viewer.cam.lookat[:] = [10.0, 3.0, 0.3]
                         self._viewer.cam.distance = 5.5
                         self._viewer.cam.elevation = -20
@@ -612,6 +716,20 @@ class MuJoCoGo2:
         self._last_odom = None
         self._last_scan = None
         self._connected = False
+        # Photoreal co-sim: terminate the Blender subprocess (idempotent).
+        if self._photoreal_bridge is not None:
+            try:
+                self._photoreal_bridge.close()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
+            self._photoreal_bridge = None
+        self._photoreal_renderer = None
+        if getattr(self, "_pano", None) is not None:
+            try:
+                self._pano.close()      # release the pano GL renderers (M4)
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
+            self._pano = None
 
     def _require_connection(self) -> None:
         if not self._connected:
@@ -1022,6 +1140,21 @@ class MuJoCoGo2:
         self._require_connection()
         return list(self._mj.data.qpos[0:3].astype(float))
 
+    # Seek step (campaign #9 R2): Go2's walk() is BLOCKING (drives the full
+    # duration then stops), so — unlike G1's async deadman — there is no
+    # mid-call stutter to bridge; a short step suffices and keeps the approach
+    # well-sampled. VlmSeekSkill reads this hint (G1 leaves the 3.0 s default).
+    seek_step_duration: float = 1.2
+
+    def list_targets(self) -> "dict[str, tuple[float, float]]":
+        """Labeled furniture targets in the furnished room ({name: (x, y)}),
+        empty otherwise. The deterministic at_position verify anchor — the same
+        world-agnostic furniture coordinates the g1 furnished room exposes."""
+        if not self._furnished:
+            return {}
+        from vector_os_nano.hardware.sim import g1_room  # noqa: PLC0415
+        return g1_room.furnished_targets()
+
     def get_velocity(self) -> list[float]:
         """Return base linear velocity [vx, vy, vz] in world frame."""
         self._require_connection()
@@ -1082,10 +1215,135 @@ class MuJoCoGo2:
             self._cam_renderer = mj.Renderer(self._mj.model, height, width)
             self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
             self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_REFLECTION] = True
+            # Furnished VLM room: the shared room builder tags walls/furniture
+            # with ENV_GEOM_GROUP=3, which the DEFAULT render option hides — the
+            # VLM would see an empty floor (the g1 R9 / Case-from-R9 bug). Enable
+            # all geom groups so the furniture renders. Scoped to furnished so
+            # the apartment go2 view is byte-identical.
+            if self._furnished:
+                self._cam_opt = mj.MjvOption()
+                self._cam_opt.geomgroup[:] = 1
 
-        cam_id = self._mj.model.cam("d435_rgb").id
-        self._cam_renderer.update_scene(self._mj.data, camera=cam_id)
+        # Furnished VLM room uses the forward wide recognition camera; otherwise
+        # the stock d435_rgb (apartment / depth pipeline unchanged).
+        cam_name = "d435_rgb"
+        if self._furnished:
+            from vector_os_nano.hardware.sim.g1_room import RECOG_CAM  # noqa: PLC0415,E501
+            if mj.mj_name2id(self._mj.model, mj.mjtObj.mjOBJ_CAMERA, RECOG_CAM) >= 0:
+                cam_name = RECOG_CAM
+        cam_id = self._mj.model.cam(cam_name).id
+        if self._photoreal:
+            return self._photoreal_frame(cam_id, cam_name)
+        if getattr(self, "_cam_opt", None) is not None:
+            self._cam_renderer.update_scene(
+                self._mj.data, camera=cam_id, scene_option=self._cam_opt)
+        else:
+            self._cam_renderer.update_scene(self._mj.data, camera=cam_id)
         return self._cam_renderer.render().copy()
+
+    def _ensure_photoreal_renderer(self, cam_name: str):
+        if self._photoreal_renderer is None:
+            if self._furnished:
+                from vector_os_nano.playground.photoreal.cosim import (  # noqa: PLC0415,E501
+                    furnished_room_renderer)
+                renderer, bridge = furnished_room_renderer(
+                    cam_name=cam_name, bridge=self._photoreal_bridge,
+                    width=640, height=480, samples=48)
+            else:
+                # Manipulation scene: render the table + the live graspable
+                # objects as photoreal primitives (campaign #10 R7).
+                from vector_os_nano.playground.photoreal.cosim import (  # noqa: PLC0415,E501
+                    build_pick_scene_spec, pick_object_texture, scene_renderer)
+                objs = self._pick_objects()
+                # R14: TEXTURE the physics cylinders (a product label) instead of
+                # substituting a bottle MESH (R12/R13). The rendered object keeps
+                # the cylinder's exact SHAPE, so the VLM bbox stays aligned with the
+                # MuJoCo depth (R13 root cause: a mesh != the physics cylinder broke
+                # depth-at-bbox). A textured cylinder is VLM-detectable as a 'can'
+                # where a bare colour primitive garbled it (R11).
+                tex = pick_object_texture()
+                if tex:
+                    for o in objs:
+                        o["texture"] = tex
+                # R15: render only ONE graspable object (the 3 cylinders sit 15 cm
+                # apart and confuse the VLM — unstable bbox -> bad ray-to-plane
+                # locate). A single object gives a clean, stable detection. The
+                # other physics objects still exist; we just present one to grasp.
+                if len(objs) > 1 and os.environ.get("VECTOR_PICK_SINGLE", "1") != "0":
+                    # Optionally present a NAMED object (VECTOR_PICK_SINGLE_LABEL,
+                    # substring of the body name) so the scene matches the query
+                    # (e.g. 'can' -> pickable_can_red). This only chooses what to
+                    # RENDER; the VLM still must find + locate it (rule 5).
+                    want = os.environ.get("VECTOR_PICK_SINGLE_LABEL", "").strip().lower()
+                    if want:
+                        match = [o for o in objs if want in o.get("name", "").lower()]
+                        objs = match[:1] or objs[:1]
+                    else:
+                        objs = objs[:1]
+                spec = build_pick_scene_spec(objs, table=self._pick_table())
+                renderer, bridge = scene_renderer(
+                    spec, cam_name=cam_name, bridge=self._photoreal_bridge,
+                    width=640, height=480, samples=48)
+            self._photoreal_bridge = bridge
+            self._photoreal_renderer = renderer
+        return self._photoreal_renderer
+
+    def _body_first_geom(self, bid: int):
+        mj = _get_mujoco()
+        for gid in range(self._mj.model.ngeom):
+            if int(self._mj.model.geom_bodyid[gid]) == bid:
+                return gid, mj
+        return None, mj
+
+    def _pick_objects(self) -> list:
+        """Enumerate graspable ``pickable_*`` bodies as photoreal primitives at
+        their LIVE world poses (type/size/colour read from the model — no
+        hardcoding). The VLM still must FIND them in the image (rule 5)."""
+        mj = _get_mujoco()
+        m, d = self._mj.model, self._mj.data
+        objs = []
+        for bid in range(m.nbody):
+            name = mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, bid)
+            if not name or not name.startswith("pickable_"):
+                continue
+            gid, _ = self._body_first_geom(bid)
+            if gid is None:
+                continue
+            gtype = int(m.geom_type[gid])
+            is_cyl = gtype == int(mj.mjtGeom.mjGEOM_CYLINDER)
+            size = [float(v) for v in m.geom_size[gid]]
+            objs.append({
+                "name": name,
+                "type": "cylinder" if is_cyl else "box",
+                "pos": [float(v) for v in d.xpos[bid]],
+                "size": size[:2] if is_cyl else size[:3],
+                "color": [float(v) for v in m.geom_rgba[gid][:3]],
+            })
+        return objs
+
+    def _pick_table(self) -> "dict | None":
+        mj = _get_mujoco()
+        m, d = self._mj.model, self._mj.data
+        bid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_BODY, "pick_table")
+        if bid < 0:
+            return None
+        gid, _ = self._body_first_geom(bid)
+        if gid is None:
+            return None
+        # the table geom sits at body pos + its local geom offset (z lift)
+        gpos = [float(v) for v in d.geom_xpos[gid]]
+        return {"pos": gpos, "scale": [float(v) for v in m.geom_size[gid]],
+                "color": [0.55, 0.40, 0.25]}
+
+    def _photoreal_frame(self, cam_id: int, cam_name: str) -> "np.ndarray":
+        """Photoreal RGB from the head cam's LIVE pose (hybrid co-sim — rgb from
+        Blender, the rest of the pipeline unchanged). Off the control thread is
+        fine: the Blender render is a socket subprocess, no GL in our process."""
+        renderer = self._ensure_photoreal_renderer(cam_name)
+        cam_pos = self._mj.data.cam_xpos[cam_id]
+        cam_mat = self._mj.data.cam_xmat[cam_id]
+        fovy = float(self._mj.model.cam_fovy[cam_id])
+        return renderer.render_from_pose(cam_pos, cam_mat, fovy)
 
     def get_depth_frame(
         self, width: int = 640, height: int = 480,
@@ -1141,6 +1399,112 @@ class MuJoCoGo2:
         rgb = self.get_camera_frame(width, height)
         depth = self.get_depth_frame(width, height)
         return rgb, depth
+
+    # ------------------------------------------------------------------
+    # Eye-in-hand grasp perception (campaign #10 DQ-13)
+    #
+    # The forward d435 sees an in-reach object at a shallow grazing angle, so a
+    # bbox-ray to the support plane overshoots by ~0.2-0.3 m (R15-R18). The Piper
+    # carries a downward wrist camera (piper_wrist_rgb/_depth on link6, optical
+    # axis = link6 +z = world -Z at a top-down pose). Observing from an overhead
+    # SCAN POSE makes the ray near-vertical -> overshoot collapses. The scan point
+    # and support height come ONLY from the table geometry (a scene constant), never
+    # any pickable_* pose (rule 5). These are additive, optional, duck-typed methods
+    # on the concrete world — kernel/BaseProtocol unchanged (rules 2, 7).
+    # ------------------------------------------------------------------
+
+    _WRIST_RGB_CAM = "piper_wrist_rgb"
+    _WRIST_DEPTH_CAM = "piper_wrist_depth"
+
+    def _has_wrist_cam(self) -> bool:
+        import mujoco as mj  # noqa: PLC0415
+        return mj.mj_name2id(
+            self._mj.model, mj.mjtObj.mjOBJ_CAMERA, self._WRIST_RGB_CAM) >= 0
+
+    def get_support_z(self) -> "float | None":
+        """World z of the pick table's TOP surface — the grasp support plane.
+
+        A SCENE constant (the table the robot picks from), read from the
+        ``pick_table`` geometry, NOT any object's ground-truth pose (rule 5).
+        Returned to the skill as ``support_z`` so ``locate_on_plane`` casts the
+        wrist-cam bbox ray onto the correct height. None if no pick table.
+        """
+        self._require_connection()
+        table = self._pick_table()
+        if table is None:
+            return None
+        return float(table["pos"][2] + table["scale"][2])
+
+    def get_scan_pose(self, scan_height: float = 0.25) -> "tuple | None":
+        """Overhead observation point above the table centre: ``(cx, cy,
+        table_top + scan_height)``. The arm is driven here (top-down) so the
+        downward wrist cam frames the workspace from near-vertical. Derived
+        ONLY from the table geometry — the object's xy is still found purely by
+        the VLM + ``locate_on_plane`` (rule 5). None if no pick table.
+
+        scan_height=0.25 was chosen from a real-sim reachability sweep (DQ-13
+        STEP 0): reachable from the grasp standoff, ~10 deg off vertical (vs the
+        forward cam's ~70 deg), and frames the full +-0.15 m object span at
+        fovy=58.
+        """
+        self._require_connection()
+        table = self._pick_table()
+        if table is None:
+            return None
+        cx, cy = float(table["pos"][0]), float(table["pos"][1])
+        top_z = float(table["pos"][2] + table["scale"][2])
+        return (cx, cy, top_z + float(scan_height))
+
+    def get_grasp_observation(
+        self, width: int = 640, height: int = 480,
+    ) -> "dict | None":
+        """A ``{rgb, depth, cam_pos, cam_mat, fovy}`` observation from the
+        downward wrist camera at its LIVE pose. RGB is photoreal (Blender
+        co-sim via render_from_pose) when ``photoreal`` is on, else MuJoCo;
+        depth is MuJoCo from the pixel-aligned ``piper_wrist_depth`` twin.
+
+        None if the model has no wrist camera (bare-Go2 / no-arm scene) so
+        callers fall back to the forward-cam path. cam_pos/cam_mat are read
+        WITHOUT mj_forward (the pose is kept current by the physics thread —
+        a main-thread mj_forward on live data races it: the R13 segfault).
+        """
+        self._require_connection()
+        import mujoco as mj  # noqa: PLC0415
+        if not self._has_wrist_cam():
+            return None
+        cam_id = self._mj.model.cam(self._WRIST_RGB_CAM).id
+
+        if self._photoreal:
+            rgb = self._photoreal_frame(cam_id, self._WRIST_RGB_CAM)
+        else:
+            if not hasattr(self, "_cam_renderer"):
+                self._cam_renderer = mj.Renderer(self._mj.model, height, width)
+                self._cam_renderer.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
+            self._cam_renderer.update_scene(self._mj.data, camera=cam_id)
+            rgb = self._cam_renderer.render().copy()
+
+        # Depth twin (MuJoCo) — pixel-aligned. Best-effort: the scan path drives
+        # locate_on_plane (support_z), which needs no depth, but provide it for
+        # the generic _observe contract / depth fallback.
+        depth = None
+        if mj.mj_name2id(self._mj.model, mj.mjtObj.mjOBJ_CAMERA,
+                         self._WRIST_DEPTH_CAM) >= 0:
+            if not hasattr(self, "_grasp_depth_renderer"):
+                self._grasp_depth_renderer = mj.Renderer(self._mj.model, height, width)
+                self._grasp_depth_renderer.enable_depth_rendering()
+            ddid = self._mj.model.cam(self._WRIST_DEPTH_CAM).id
+            self._grasp_depth_renderer.update_scene(self._mj.data, camera=ddid)
+            import numpy as np  # noqa: PLC0415
+            depth = self._grasp_depth_renderer.render().copy().astype(np.float32)
+            depth[(depth < 0.05) | (depth > 5.0)] = 0.0
+
+        return {
+            "rgb": rgb,
+            "depth": depth,
+            "cam_pos": self._mj.data.cam_xpos[cam_id].copy(),
+            "cam_mat": self._mj.data.cam_xmat[cam_id].copy(),
+            "fovy": float(self._mj.model.cam_fovy[cam_id]),
+        }
 
     # ------------------------------------------------------------------
     # Sensor update helpers
@@ -1276,6 +1640,10 @@ class MuJoCoGo2:
             range_min=0.1,
             range_max=12.0,
             ranges=tuple(mid_ring_ranges),
+            # World-frame return cloud (x,y,z,intensity) so recognize_navigate's
+            # bearing+range locate has real points (campaign #11 M2). points_3d
+            # is already world-frame (pos_lidar + dist*world_direction above).
+            points=tuple(points_3d),
         )
         self._last_pointcloud = points_3d
 
@@ -1395,3 +1763,90 @@ class MuJoCoGo2:
         finally:
             self._skill_ctrl_until = 0.0
             self._skill_ctrl_tid = 0
+
+    def navigate_to(self, x: float, y: float, tol: float = 0.2,
+                    speed: float = _GO2_NAV_SPEED) -> dict:
+        """Drive to world (x, y), routing AROUND obstacles in room mode.
+
+        Quadruped sibling of MuJoCoG1.navigate_to (campaign #11 M2): same
+        g1_vgraph routing + face->walk->capture->settle controller, returning
+        the IDENTICAL three-value dict so NavigateToPointSkill / recognize_navigate
+        consume it unchanged. Flat scene (no obstacles) -> straight-line drive.
+        An honest 'unreachable' (goal boxed in) returns reached=False, never a
+        phantom straight line (rule 5)."""
+        self._require_connection()
+        # Shared world-agnostic controller (campaign #11 R5). Go2 passes its
+        # skill-ctrl token factory (set_velocity is thread-gated) + _drive_for.
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        if not self._obstacles:
+            return _nav_controller.drive_to_point(
+                x=x, y=y, tol=tol, speed=speed,
+                get_position=self.get_position, get_heading=self.get_heading,
+                set_velocity=self.set_velocity, stop=self.stop,
+                tick_fn=self._drive_for, consts=_GO2_NAV, ctrl_token=self._ctrl_token)
+        return _nav_controller.route_and_drive(
+            x=x, y=y, tol=tol, speed=speed, obstacles=self._obstacles,
+            get_position=self.get_position, get_heading=self.get_heading,
+            set_velocity=self.set_velocity, stop=self.stop,
+            tick_fn=self._drive_for, consts=_GO2_NAV, ctrl_token=self._ctrl_token)
+
+    def _go2_navigate_point(self, x: float, y: float, tol: float = 0.2,
+                            speed: float = _GO2_NAV_SPEED) -> dict:
+        """Single-point drive — delegates to the shared controller with Go2's
+        ctrl-token factory (campaign #11 R5; kept for callers/tests)."""
+        self._require_connection()
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        return _nav_controller.drive_to_point(
+            x=x, y=y, tol=tol, speed=speed,
+            get_position=self.get_position, get_heading=self.get_heading,
+            set_velocity=self.set_velocity, stop=self.stop,
+            tick_fn=self._drive_for, consts=_GO2_NAV, ctrl_token=self._ctrl_token)
+
+    @contextlib.contextmanager
+    def _ctrl_token(self):
+        """Acquire skill control authority on THIS thread for the duration (else
+        the bridge path-follower's set_velocity overrides the nav drive). Released
+        on exit — never fences the bridge. Per-leg acquire/release (route_and_drive
+        enters this each leg, matching the pre-R5 semantics)."""
+        self._skill_ctrl_tid = threading.get_ident()
+        self._skill_ctrl_until = (time.time() + _GO2_NAV_TIMEOUT_S
+                                  + _GO2_NAV_SETTLE_S + 1.0)
+        try:
+            yield
+        finally:
+            self._skill_ctrl_until = 0.0
+            self._skill_ctrl_tid = 0
+
+    def geodesic_distance(self, a: "list[float]", b: "list[float]") -> float:
+        """Planar distance a->b: visibility-graph path length around the room
+        obstacles (the SAME planner navigate_to walks — rule 5), or straight-line
+        on a flat scene. inf when boxed in."""
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        return _nav_controller.path_length_geodesic(
+            a, b, getattr(self, "_obstacles", None) or [], _GO2_NAV.inflation)
+
+    def get_pano(self) -> dict:
+        """Pose-synced equirect panorama for SysNav (campaign #11 M4 feed source).
+
+        Same contract as HabitatBase.get_pano / MuJoCoG1.get_pano — {rgb
+        (640,1920,3) uint8, depth (640,1920) f32, pos[3], heading} — so the
+        embodiment-agnostic SysNav feed drives Go2 too. Real MuJoCoPano360 render
+        (rule 5: sim pixels, never GT)."""
+        self._require_connection()
+        if getattr(self, "_pano", None) is None:
+            from vector_os_nano.hardware.sim.sensors.pano360 import MuJoCoPano360  # noqa: PLC0415,E501
+            self._pano = MuJoCoPano360(
+                self._mj.model, self._mj.data, body_name="base_link",
+                offset=(0.0, 0.0, 0.1))   # just above the trunk (dog eye height)
+        # Pause the 50Hz physics daemon during the cube-face render so update_scene
+        # does NOT read mjData mid-mj_step (R8 review: off-thread render data race /
+        # segfault risk). Resume in finally — never leave physics paused.
+        self._pause_physics()
+        try:
+            rgb, depth = self._pano.render_rgbd()
+        finally:
+            self._resume_physics()
+        pos = self.get_position()
+        return {"rgb": rgb, "depth": depth,
+                "pos": [float(pos[0]), float(pos[1]), float(pos[2])],
+                "heading": float(self.get_heading())}
