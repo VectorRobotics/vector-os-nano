@@ -94,7 +94,18 @@ When 主人 says "启动仿真" or "start sim" or wants to explore/navigate but 
    This starts MuJoCo Go2 + ROS2 bridge + FAR planner + TARE + RViz in one process group.
 2. Wait ~20 seconds for all nodes to start (bash("sleep 20"))
 3. Then robot skills (explore, navigate, walk, etc.) will work via ROS2 topics.
-Do NOT use start_simulation for Go2 -- use bash + launch_explore.sh instead.
+(That bash + launch_explore.sh path cold-starts the full ROS2 nav stack only when
+NOTHING is running -- it is NOT how you change an already-running embodiment.)
+
+Changing the active embodiment (a sim is ALREADY running):
+To switch the running robot between the G1 humanoid and the Go2 quadruped in THIS
+session, ALWAYS call switch_embodiment(target="g1") or switch_embodiment(target="go2").
+It hot-swaps in-process (boots the target, tears down the old) WITHOUT restarting.
+For "切到go2" / "切换到 g1" / "换成go2" / "switch to go2" / "change to the dog", that
+tool is the ONLY correct action. NEVER use bash, ./scripts/launch_explore.sh,
+ros2 launch/run, or start_simulation to CHANGE the active embodiment -- those do not
+switch the running robot.
+
 For SO-101 arm sim, use start_simulation(sim_type="arm"). This opens a viewer window by
 default. If 主人 says "headless" / "无窗口" / "no window" / "不要窗口", pass gui=false to
 start_simulation to suppress the window.

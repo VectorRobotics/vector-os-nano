@@ -301,6 +301,15 @@ class IntentRouter:
             "habitat", "sysnav", "语义感知",
             # Headless modifier — pass gui=false to start_simulation; not a VGG task.
             "headless", "无窗口", "不要窗口", "no window",
+            # Embodiment switch (campaign #11) — switch_embodiment is a TOOL, not
+            # a @skill, so it is UNREACHABLE on the VGG/decompose path. Force the
+            # tool_use/answer path (which offers switch_embodiment). These mirror
+            # the sim-rule switch keywords (route() already excludes bash for
+            # them). The Chinese forms otherwise trip the motor check via "到"
+            # ("切到"/"切换到") and mis-route to VGG. Kept narrow so genuine
+            # navigation ("走到", "去") is NOT captured.
+            "切换", "换成", "切到", "切换到", "换到", "变成",
+            "embodiment", "具身", "switch to", "change to ",
         )
         if any(kw in msg_lower for kw in _SYSTEM_BYPASS):
             return False

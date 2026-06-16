@@ -150,6 +150,16 @@ class TestHabitatPersona:
 
         assert 'sim_type="habitat"' in ROBOT_TOOL_INSTRUCTIONS
 
+    def test_robot_persona_names_switch_embodiment(self) -> None:
+        # Campaign #11 R11: the persona must teach switch_embodiment as the way
+        # to CHANGE the running embodiment, and must NOT teach the old
+        # "use bash + launch_explore.sh instead" directive that biased the LLM
+        # toward raw shell for "switch to go2".
+        from vector_os_nano.vcli.prompt import ROBOT_TOOL_INSTRUCTIONS
+
+        assert "switch_embodiment" in ROBOT_TOOL_INSTRUCTIONS
+        assert "use bash + launch_explore.sh instead" not in ROBOT_TOOL_INSTRUCTIONS
+
     def test_dev_persona_teaches_sim_tools(self) -> None:
         # Dev world keeps the sim category enabled; the persona must say how
         # NL sim startup works ("启动habitat模拟" from a bare REPL).

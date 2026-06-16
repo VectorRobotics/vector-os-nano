@@ -500,3 +500,29 @@ Routine bugs do NOT belong here; git history covers those.
   shared module globals, so a stale binding silently fails `isinstance`/`except`
   and swallows a real 429. A typed exception only helps if both sides see the
   SAME class object.
+
+## c11 R11 — "switch to go2 runs bash" blamed the wrong layer
+- **Symptom (M5 R9):** NL "switch to go2" made the LLM run
+  `bash("./scripts/launch_explore.sh &")` instead of `switch_embodiment`. STATUS
+  hypothesized "the answer/ReAct path offers the planner raw bash / doesn't honor
+  the intent category filter."
+- **Reality (workflow wsv6u3ddo, empirically reproduced):** the engine answer
+  path DOES honor the filter — `route('切到go2'/'switch to go2')=['robot','sim',
+  'system']` excludes bash (category `code`) and offers `switch_embodiment`. The
+  bash symptom had THREE unrelated causes: (1) Chinese `切到/切换到X` contains `到`,
+  a `_MOTOR_PATTERN`, so `should_use_vgg`→True → the VGG decompose path where a
+  `@tool` (not `@skill`) is unreachable (decompose vocab is SKILL-registry-only,
+  rule 3); (2) `ROBOT_TOOL_INSTRUCTIONS` literally taught bash+launch_explore.sh
+  for Go2 and never named `switch_embodiment`, so the LLM improvised shell from
+  persona text even when bash was filtered out of the schema; (3) the M5 harness
+  registered every tool with the default category → route filter returned ZERO
+  tools → switch_embodiment unavailable → fell back to the prompt's bash text.
+- **Fix:** route switch intents to the tool_use path (`_SYSTEM_BYPASS` += switch
+  markers, before the motor check) + remove the persona's bash directive. Do NOT
+  add `switch_embodiment` as a `@skill` (rule-3 split-brain) and do NOT disable
+  bash for the planner (no operator-vs-planner split → would break dev bash).
+- **Lesson:** before "fix" a path, REPRODUCE the route empirically. The cheap
+  keyword router returning `None` (= all tools) for unanticipated phrasings, plus
+  a persona that teaches the wrong tool, looked exactly like "the filter is
+  broken." It wasn't — three separate layers each contributed. A symptom that
+  names a mechanism ("offers raw bash") is a hypothesis, not a diagnosis.
