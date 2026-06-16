@@ -4,15 +4,20 @@
 """Campaign #11 M2 — Go2 navigate_to / geodesic / VLN-symmetry pure-logic tests.
 
 MuJoCoGo2.navigate_to mirrors MuJoCoG1's three-value contract so recognize_navigate
-runs on Go2 (lidar VLN). These exercise the control/contract logic via a stub (no
-MuJoCo/GL — avoids the known MUJOCO_GL pollution reds); real-sim VLN arrival lives
-in the sandbox harness + vector-cli."""
+runs on Go2 (lidar VLN). Most tests exercise the control/contract logic via a stub
+(no MuJoCo/GL). The capability-probe registration tests drive the REAL
+go2_runtime.boot_go2_agent / _build_go2_skill_registry instead of a copy (R15): the
+negative branch uses a navigate_to-less fake (no GL); the positive is a real headless
+MuJoCoGo2 boot, marked @pytest.mark.integration (deselectable, disconnect in finally)."""
 from __future__ import annotations
 
 import math
+import os
 import types
 
 import pytest
+
+os.environ.setdefault("MUJOCO_GL", "egl")   # headless render (sensors/conftest.py:17)
 
 from vector_os_nano.core.types import LaserScan
 from vector_os_nano.hardware.sim import mujoco_go2 as G
@@ -104,56 +109,60 @@ def test_geodesic_flat_is_hypot():
     assert d == pytest.approx(5.0)
 
 
-# -- capability-probe registration in go2_runtime ---------------------------
+# -- capability-probe registration: drive the REAL boot_go2_agent (R15) ------
+# (was a test that COPIED go2_runtime's registration block — a copy catches no
+#  change to the real probe. Now both branches run the real code.)
 
-def test_recognize_navigate_registered_only_with_navigate_to(monkeypatch):
-    """boot_go2_agent registers recognize_navigate IFF base.navigate_to is
-    callable; walk/turn/stop/vlm_seek always present (M1 unaffected)."""
+def test_boot_go2_agent_omits_nav_skills_without_navigate_to(monkeypatch):
+    """NEGATIVE branch of the REAL capability probe: a base WITHOUT navigate_to
+    must NOT get the nav skills (only reachable via a navigate_to-less base, since
+    a real MuJoCoGo2 always has navigate_to). Drives the actual boot_go2_agent —
+    only the heavy ctor is swapped for a fake base."""
     import vector_os_nano.vcli.go2_runtime as gr
 
-    captured = {}
+    fake_base = types.SimpleNamespace(
+        connect=lambda: None, stand=lambda: None, list_targets=lambda: {})
+    # boot_go2_agent's import is FUNCTION-LOCAL — patch the SOURCE module so the
+    # in-function `from ...mujoco_go2 import MuJoCoGo2` picks up the fake.
+    monkeypatch.setattr(
+        "vector_os_nano.hardware.sim.mujoco_go2.MuJoCoGo2",
+        lambda *a, **k: fake_base)
+    agent = gr.boot_go2_agent(world=None, gui=False)
+    names = set(agent.skills)
+    assert "navigate_to" not in names and "recognize_navigate" not in names
+    assert {"walk", "turn", "stop", "vlm_seek"}.issubset(names)  # M1 intact
 
-    class _Reg:
-        def __init__(self):
-            self.names = []
-        def register(self, s):
-            self.names.append(getattr(s, "name", type(s).__name__))
 
-    def fake_base(has_nav):
-        b = types.SimpleNamespace(
-            connect=lambda: None, stand=lambda: None,
-            list_targets=lambda: {})
-        if has_nav:
-            b.navigate_to = lambda *a, **k: {}
-        return b
+def test_build_go2_skill_registry_probes_navigate_to():
+    """The single-source helper itself: nav skills registered IFF navigate_to is
+    callable. Pure (no boot) — pins the probe contract directly."""
+    import vector_os_nano.vcli.go2_runtime as gr
 
-    # Patch the heavy bits: MuJoCoGo2 ctor, Agent, SkillRegistry, world model add.
-    monkeypatch.setattr(gr, "_emit", lambda *a, **k: None)
-    import vector_os_nano.core.skill as skill_mod
-    monkeypatch.setattr(skill_mod, "SkillRegistry", _Reg)
+    with_nav = gr._build_go2_skill_registry(
+        types.SimpleNamespace(navigate_to=lambda *a, **k: {}))
+    assert {"navigate_to", "recognize_navigate"}.issubset(set(with_nav.list_skills()))
+    without = gr._build_go2_skill_registry(types.SimpleNamespace())
+    got = set(without.list_skills())
+    assert "navigate_to" not in got and "recognize_navigate" not in got
+    assert {"walk", "turn", "stop", "vlm_seek"}.issubset(got)
 
-    for has_nav in (True, False):
-        reg = _Reg()
-        # emulate the registration block directly (the runtime's exact logic)
-        from vector_os_nano.skills.go2.stop import StopSkill
-        from vector_os_nano.skills.go2.turn import TurnSkill
-        from vector_os_nano.skills.go2.walk import WalkSkill
-        from vector_os_nano.skills.vlm_seek import VlmSeekSkill
-        for s in (WalkSkill(), TurnSkill(), StopSkill(), VlmSeekSkill()):
-            reg.register(s)
-        base = fake_base(has_nav)
-        if callable(getattr(base, "navigate_to", None)):
-            from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
-            from vector_os_nano.skills.recognize_navigate import RecognizeNavigateSkill
-            reg.register(NavigateToPointSkill())   # M3: coordinate nav on Go2
-            reg.register(RecognizeNavigateSkill())
-        captured[has_nav] = reg.names
 
-    # M3: Go2 with navigate_to registers BOTH navigate_to + recognize_navigate.
-    assert "navigate_to" in captured[True] and "recognize_navigate" in captured[True]
-    assert "navigate_to" not in captured[False] and "recognize_navigate" not in captured[False]
-    for nm in ("walk", "turn", "stop"):
-        assert any(nm in n for n in captured[False])  # M1 locomotion intact
+@pytest.mark.integration
+def test_boot_go2_agent_registers_navigate_skills_real_boot():
+    """POSITIVE branch on a REAL headless MuJoCoGo2 (real-sim mandate): a booted
+    Go2 has navigate_to, so the full skill set is registered. Disconnect in
+    finally to release the physics daemon + GL (no leak)."""
+    import threading
+
+    import vector_os_nano.vcli.go2_runtime as gr
+    agent = gr.boot_go2_agent(world=None, gui=False)
+    try:
+        names = set(agent.skills)
+        assert {"walk", "turn", "stop", "vlm_seek",
+                "navigate_to", "recognize_navigate"}.issubset(names)
+    finally:
+        agent._base.disconnect()
+    assert not any(t.name == "mujoco_go2_physics" for t in threading.enumerate())
 
 
 def test_navigate_skill_loud_fail_on_bool_contract():

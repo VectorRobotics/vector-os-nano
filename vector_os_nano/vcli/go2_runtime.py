@@ -31,6 +31,34 @@ def _emit(on_status: "Callable[[str], None] | None", line: str) -> None:
     logger.info("go2_runtime: %s", line)
 
 
+def _build_go2_skill_registry(base: Any) -> Any:
+    """The Go2 skill set — SINGLE SOURCE (rule 3), so both boot_go2_agent and
+    its tests exercise the SAME registration, never a copy.
+
+    Mobile base set + VlmSeekSkill always; no arm skills on a quadruped base.
+    The nav skills (NavigateToPointSkill = coordinate nav / M3, and
+    RecognizeNavigateSkill = photoreal VLN / M2) are registered by CAPABILITY
+    PROBE: only when the base actually exposes a callable ``navigate_to`` (Go2
+    grew it via the shared _nav_controller, campaign #11 R5), never by
+    embodiment name — so a future navigate_to-less Go2 mode gets no broken
+    option (rule 3, fail clean)."""
+    from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.skills.go2.stop import StopSkill
+    from vector_os_nano.skills.go2.turn import TurnSkill
+    from vector_os_nano.skills.go2.walk import WalkSkill
+    from vector_os_nano.skills.vlm_seek import VlmSeekSkill
+
+    registry = SkillRegistry()
+    for s in (WalkSkill(), TurnSkill(), StopSkill(), VlmSeekSkill()):
+        registry.register(s)
+    if callable(getattr(base, "navigate_to", None)):
+        from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
+        from vector_os_nano.skills.recognize_navigate import RecognizeNavigateSkill
+        registry.register(NavigateToPointSkill())
+        registry.register(RecognizeNavigateSkill())
+    return registry
+
+
 def boot_go2_agent(
     world: Any,
     on_status: "Callable[[str], None] | None" = None,
@@ -60,33 +88,11 @@ def boot_go2_agent(
     base.stand()
     agent = Agent(base=base)
 
-    # Mobile base set + VlmSeekSkill (rule 3 — single-source registry; no arm
-    # skills on a quadruped base). RecognizeNavigateSkill is registered by
-    # CAPABILITY PROBE (campaign #11 M2): Go2 now has navigate_to (+ geodesic +
-    # a lidar return cloud), so the SAME photoreal VLN skill G1 runs becomes
-    # available — but only when the base actually exposes navigate_to, never by
-    # embodiment name (so a future Go2 mode without it gets no broken option).
-    # NavigateToPointSkill stays omitted (recognize_navigate is the M2 target).
-    from vector_os_nano.core.skill import SkillRegistry
-    from vector_os_nano.skills.go2.stop import StopSkill
-    from vector_os_nano.skills.go2.turn import TurnSkill
-    from vector_os_nano.skills.go2.walk import WalkSkill
-    from vector_os_nano.skills.vlm_seek import VlmSeekSkill
-
-    registry = SkillRegistry()
-    for s in (WalkSkill(), TurnSkill(), StopSkill(), VlmSeekSkill()):
-        registry.register(s)
-    vln = False
-    if callable(getattr(base, "navigate_to", None)):
-        # Go2 now has navigate_to (shared _nav_controller, campaign #11 R5) ->
-        # register BOTH the coordinate-nav skill (M3) and photoreal VLN (M2),
-        # the same base-generic skills G1 runs. Capability-probe (rule 3): never
-        # by embodiment name, so a future navigate_to-less Go2 mode stays clean.
-        from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
-        from vector_os_nano.skills.recognize_navigate import RecognizeNavigateSkill
-        registry.register(NavigateToPointSkill())
-        registry.register(RecognizeNavigateSkill())
-        vln = True
+    # Skill registry built by the SINGLE-SOURCE capability probe (rule 3) — see
+    # _build_go2_skill_registry. ``vln`` is derived from the registry so the
+    # status string below cannot drift from what was actually registered.
+    registry = _build_go2_skill_registry(base)
+    vln = "recognize_navigate" in registry.list_skills()
     agent._skill_registry = registry
 
     # GT furniture targets → world model: the deterministic at_position verify
