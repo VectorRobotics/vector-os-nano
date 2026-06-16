@@ -397,6 +397,12 @@ class G1MuJoCoBase:
         self._lidar = None
         self._occ = None
         self._cam_renderer = self._cam_depth_renderer = None
+        if getattr(self, "_pano", None) is not None:
+            try:
+                self._pano.close()      # release the pano GL renderers (M4)
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
+            self._pano = None
         self._cam_rgb = self._cam_opt = None
         self._model = self._data = self._policy = None
         # Photoreal co-sim: terminate the Blender subprocess (idempotent).
@@ -875,6 +881,25 @@ class G1MuJoCoBase:
         from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
         return _nav_controller.path_length_geodesic(
             a, b, getattr(self, "_obstacles", None) or [], _G1_NAV.inflation)
+
+    def get_pano(self) -> dict:
+        """Pose-synced equirect panorama for SysNav (campaign #11 M4 feed source).
+
+        Returns the SAME contract as HabitatBase.get_pano — {rgb (640,1920,3)
+        uint8, depth (640,1920) f32, pos[3], heading} — so the embodiment-agnostic
+        SysNav feed (wire_sysnav_feed) drives G1 with no habitat dependency. The
+        pano is a real MuJoCoPano360 render (rule 5: pixels from the sim, never GT)."""
+        self._require_connected()
+        if getattr(self, "_pano", None) is None:
+            from vector_os_nano.hardware.sim.sensors.pano360 import MuJoCoPano360  # noqa: PLC0415,E501
+            self._pano = MuJoCoPano360(
+                self._model, self._data, body_name="pelvis",
+                offset=(0.0, 0.0, 0.5))   # ~eye height above the pelvis
+        rgb, depth = self._pano.render_rgbd()
+        pos = self.get_position()
+        return {"rgb": rgb, "depth": depth,
+                "pos": [float(pos[0]), float(pos[1]), float(pos[2])],
+                "heading": float(self.get_heading())}
 
     def get_odometry(self):
         from vector_os_nano.core.types import Odometry

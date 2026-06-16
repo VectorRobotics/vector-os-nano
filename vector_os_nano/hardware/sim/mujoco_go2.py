@@ -724,6 +724,12 @@ class MuJoCoGo2:
                 pass
             self._photoreal_bridge = None
         self._photoreal_renderer = None
+        if getattr(self, "_pano", None) is not None:
+            try:
+                self._pano.close()      # release the pano GL renderers (M4)
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
+            self._pano = None
 
     def _require_connection(self) -> None:
         if not self._connected:
@@ -1818,3 +1824,22 @@ class MuJoCoGo2:
         from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
         return _nav_controller.path_length_geodesic(
             a, b, getattr(self, "_obstacles", None) or [], _GO2_NAV.inflation)
+
+    def get_pano(self) -> dict:
+        """Pose-synced equirect panorama for SysNav (campaign #11 M4 feed source).
+
+        Same contract as HabitatBase.get_pano / MuJoCoG1.get_pano — {rgb
+        (640,1920,3) uint8, depth (640,1920) f32, pos[3], heading} — so the
+        embodiment-agnostic SysNav feed drives Go2 too. Real MuJoCoPano360 render
+        (rule 5: sim pixels, never GT)."""
+        self._require_connection()
+        if getattr(self, "_pano", None) is None:
+            from vector_os_nano.hardware.sim.sensors.pano360 import MuJoCoPano360  # noqa: PLC0415,E501
+            self._pano = MuJoCoPano360(
+                self._mj.model, self._mj.data, body_name="base_link",
+                offset=(0.0, 0.0, 0.1))   # just above the trunk (dog eye height)
+        rgb, depth = self._pano.render_rgbd()
+        pos = self.get_position()
+        return {"rgb": rgb, "depth": depth,
+                "pos": [float(pos[0]), float(pos[1]), float(pos[2])],
+                "heading": float(self.get_heading())}

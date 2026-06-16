@@ -147,6 +147,7 @@ class MuJoCoPano360:
         # called so unit tests that only exercise LUT math do not allocate
         # a renderer.
         self._renderer: Any = None
+        self._depth_renderer: Any = None    # lazy, M4 feed-source depth
         self._cube_cam: Any = None
 
         self._face_idx, self._fx, self._fy = _build_equirec_lut(
@@ -202,15 +203,58 @@ class MuJoCoPano360:
         self._last_step_t = now
         return sample
 
+    def render_rgbd(self) -> "tuple[np.ndarray, np.ndarray]":
+        """Render an equirect (rgb, depth) pair NOW (campaign #11 M4 feed source).
+
+        rgb is (out_h, out_w, 3) uint8 (same as step().image); depth is
+        (out_h, out_w) float32 metres — the per-pixel cube-face depth stitched
+        with the SAME LUT. Depth is the renderer's z-buffer distance per face
+        (good enough for the SysNav feed's registered-scan; the bridge's
+        unproject handles the equirect geometry). Used by base.get_pano()."""
+        if self._renderer is None:
+            self._init_renderer()
+        if self._depth_renderer is None:
+            self._depth_renderer = self._mujoco.Renderer(
+                self._model, height=self._face_size, width=self._face_size)
+            self._depth_renderer.enable_depth_rendering()
+        body_pos = np.array(self._data.xpos[self._body_id], dtype=np.float64)
+        body_quat = np.array(self._data.xquat[self._body_id], dtype=np.float64)
+        eye = body_pos + _quat_wxyz_to_rot(body_quat) @ np.array(
+            self._offset, dtype=np.float64)
+        rgb_faces = np.zeros(
+            (6, self._face_size, self._face_size, 3), dtype=np.uint8)
+        depth_faces = np.zeros(
+            (6, self._face_size, self._face_size), dtype=np.float32)
+        for face in range(6):
+            self._cube_cam.lookat[:] = eye
+            self._cube_cam.azimuth = self._FACE_AZIMUTH_DEG[face]
+            self._cube_cam.elevation = self._FACE_ELEVATION_DEG[face]
+            self._renderer.update_scene(self._data, camera=self._cube_cam)
+            rgb_faces[face] = self._renderer.render()
+            self._depth_renderer.update_scene(self._data, camera=self._cube_cam)
+            depth_faces[face] = self._depth_renderer.render()
+        rgb = _stitch_equirec(rgb_faces, self._face_idx, self._fx, self._fy)
+        # Depth stitch: same LUT but NEAREST-pixel gather (the LUT's fx/fy are
+        # fractional for the rgb bilinear sample; depth must not interpolate
+        # across depth discontinuities). Round + clip, then clamp far-plane.
+        fidx = self._face_idx.astype(np.intp)
+        fy_i = np.clip(np.rint(self._fy).astype(np.intp), 0, self._face_size - 1)
+        fx_i = np.clip(np.rint(self._fx).astype(np.intp), 0, self._face_size - 1)
+        depth = depth_faces[fidx, fy_i, fx_i].astype(np.float32)
+        depth[(depth <= 0.0) | (depth > 30.0)] = 0.0
+        return rgb, depth
+
     def close(self) -> None:
-        """Release the GL renderer (if allocated)."""
-        if self._renderer is not None:
-            try:
-                self._renderer.close()
-            except Exception:
-                pass
-            self._renderer = None
-            self._cube_cam = None
+        """Release the GL renderer(s) (if allocated)."""
+        for attr in ("_renderer", "_depth_renderer"):
+            r = getattr(self, attr, None)
+            if r is not None:
+                try:
+                    r.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        self._cube_cam = None
 
     # ------------------------------------------------------------------
     # Internals
