@@ -892,11 +892,20 @@ class GoalExecutor:
 
         Trivial sentinels ('', 'True' — trace_store's no-evidence set) are
         never flagged: pre-eval on them is meaningless noise. Expressions
-        that cannot evaluate without the step's own output (step_output())
-        fail closed to False — the baseline never blocks execution.
+        that reference ``step_output()`` ALWAYS fail closed to False — that is
+        THIS step's own structured output, which by definition does not exist
+        until the step runs, so the baseline can never legitimately be
+        pre-satisfied by a predicate over it. Guarding here (rather than
+        relying on the old NameError-to-False accident) keeps the moat tight:
+        a clearing/removal verify like ``not step_output('items')`` would
+        otherwise evaluate True against the bound-None pre-output and SKIP the
+        step (a campaign-#3 false-PASS). The verify still runs honestly
+        POST-execution against the real output (Rule 4 / Rule 5).
         """
         expr = (verify or "").strip()
         if expr in _NO_EVIDENCE_VERIFIES:
+            return False
+        if "step_output" in expr:
             return False
         try:
             ok, _ = self._verify_and_value(expr, None)
@@ -921,20 +930,21 @@ class GoalExecutor:
         instead of re-querying a separate oracle. Old-signature verifiers
         (and mocks) keep working: a TypeError falls back to the bare call.
         """
-        extra_ns = (
-            {"step_output": _make_step_output(exec_output)}
-            if exec_output is not None
-            else None
-        )
+        # step_output is a KERNEL contract: the decomposer advertises it as
+        # always-callable in every world (goal_decomposer.py), so the executor
+        # must ALWAYS inject it (Rule 4 — close the loop). Bound to None when the
+        # step has no structured output yet (pre-exec baseline / no-output step):
+        # _make_step_output is fail-safe (any path -> None, never raises), so the
+        # verify evaluates HONESTLY against the real (empty) observation instead
+        # of NameError-ing and being swallowed to a false False (Rule 5).
+        extra_ns = {"step_output": _make_step_output(exec_output)}
         evaluate = getattr(self._verifier, "evaluate", None)
         if callable(evaluate):
             try:
-                if extra_ns is not None:
-                    try:
-                        outcome = evaluate(expression, extra_ns=extra_ns)
-                    except TypeError:
-                        outcome = evaluate(expression)
-                else:
+                try:
+                    outcome = evaluate(expression, extra_ns=extra_ns)
+                except TypeError:
+                    # Old-signature verifiers / test mocks: no extra_ns param.
                     outcome = evaluate(expression)
                 if isinstance(outcome, tuple) and len(outcome) == 2:
                     return bool(outcome[0]), outcome[1]

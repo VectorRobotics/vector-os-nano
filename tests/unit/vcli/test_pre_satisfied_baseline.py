@@ -79,6 +79,56 @@ class TestPreSatisfiedEvaluation:
         rec = ex._execute_sub_goal(_sg("check(step_output()['n'])"))
         assert rec.pre_satisfied is False
 
+    def test_pre_eval_step_output_does_not_namerror(self, caplog):
+        """R11 regression — step_output is a kernel contract the executor must
+        ALWAYS inject (Rule 4). A step_output()-verify evaluated pre-exec
+        (exec_output is None) must NOT raise 'name step_output is not defined'
+        and be swallowed to a false False (Rule 5). It evaluates HONESTLY
+        against the bound-None output instead.
+        """
+        import logging
+
+        ex = _executor({})
+        with caplog.at_level(logging.WARNING):
+            rec = ex._execute_sub_goal(_sg("len(step_output('objects')) > 0"))
+        # Honest baseline: None has no len -> False (step observed nothing),
+        # NOT a NameError. The exact R11 string must never appear.
+        assert rec.pre_satisfied is False
+        assert "name 'step_output' is not defined" not in caplog.text
+
+    def test_verify_and_value_none_path_injects_step_output(self):
+        """The gate itself: exec_output=None still binds step_output (kernel
+        contract), so step_output() resolves to None — not a NameError."""
+        ex = _executor({})
+        ok, val = ex._verify_and_value("step_output() is None", None)
+        assert ok is True and val is True  # bound to None, honestly evaluated
+
+    def test_verify_and_value_binds_real_output_when_present(self):
+        """Regression: a non-None exec_output still flows into the verify —
+        the close-the-loop path (Rule 4) is unchanged."""
+        ex = _executor({})
+        ok, val = ex._verify_and_value(
+            "len(step_output('objects')) > 0", {"objects": [1, 2]}
+        )
+        assert ok is True and val is True
+
+    def test_pre_satisfied_never_passes_a_step_output_verify(self):
+        """Moat guard (Rule 5): step_output is THIS step's own output, which
+        does not exist before the step runs, so the PRE-exec baseline must
+        ALWAYS be False for any step_output verify. Without this guard, a
+        clearing/removal predicate like ``not step_output('items')`` evaluates
+        True against bound-None pre-output and the step is SKIPPED — a
+        campaign-#3 false-PASS. These must never pre-satisfy."""
+        ex = _executor({})
+        for expr in ("not step_output('items')",
+                     "step_output() is None",
+                     "step_output('count') == 0",
+                     "len(step_output('objects')) > 0"):
+            assert ex._pre_satisfied(expr) is False, expr
+            # and end-to-end: the step is NOT skipped as pre-satisfied
+            rec = ex._execute_sub_goal(_sg(expr))
+            assert rec.pre_satisfied is False, expr
+
     def test_verify_fail_record_carries_pre_satisfied(self):
         # pre-true but post-false (state regressed mid-step): the failed
         # record still carries the baseline for the replan context.

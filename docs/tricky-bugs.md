@@ -526,3 +526,27 @@ Routine bugs do NOT belong here; git history covers those.
   a persona that teaches the wrong tool, looked exactly like "the filter is
   broken." It wasn't — three separate layers each contributed. A symptom that
   names a mechanism ("offers raw bash") is a hypothesis, not a diagnosis.
+
+## c11 R12 — fixing a NameError reopened a verify false-PASS (the moat)
+- **Symptom:** `GoalVerifier: runtime error: name 'step_output' is not defined`
+  on VGG walk turns. `step_output` is a KERNEL verify fn the decomposer promises
+  unconditionally (goal_decomposer.py:410), but the executor only injected it
+  when `exec_output is not None` (goal_executor.py:924) → the `_pre_satisfied`
+  pre-exec baseline (hardcodes `None`) NameError'd → swallowed to False.
+- **The trap:** the "obvious" fix — always inject `step_output` (bound to
+  `_make_step_output(None)`, fail-safe) — removes the NameError but REOPENS a
+  false-PASS. `_pre_satisfied` now evaluates step_output verifies against
+  bound-None pre-execution: `not step_output('items')` → `not None` → True →
+  the step is marked already-satisfied and SKIPPED before it runs (a clearing/
+  removal verify). The NameError had ACCIDENTALLY enforced the documented
+  invariant ("step_output expressions fail closed to False at the baseline").
+- **Fix (two parts):** (1) always inject in `_verify_and_value` (honor the
+  contract, kill the NameError); (2) `_pre_satisfied` explicitly returns False
+  for any `step_output` verify — `step_output` is THIS step's own output, which
+  cannot exist before the step runs, so the baseline can never be pre-satisfied
+  by a predicate over it. The verify still runs honestly POST-exec.
+- **Lesson:** when a swallowed error was silently upholding an invariant,
+  removing the error can drop the invariant. On the verify moat (Rule 5: only
+  stricter, never looser) re-derive the invariant EXPLICITLY, don't rely on a
+  side effect — and probe the pathological predicate shapes (`not f()`,
+  `f() == 0`, `f() is None`), not just the happy `len(f()) > 0`.
