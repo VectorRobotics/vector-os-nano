@@ -526,6 +526,18 @@ Routine bugs do NOT belong here; git history covers those.
   a persona that teaches the wrong tool, looked exactly like "the filter is
   broken." It wasn't — three separate layers each contributed. A symptom that
   names a mechanism ("offers raw bash") is a hypothesis, not a diagnosis.
+- **R13 follow-up (the fix over-reached):** R11's first cut added broad switch
+  substrings (`切换`/`换成`/`变成`/`切到`) to `_SYSTEM_BYPASS`, checked BEFORE
+  `is_complex`/motor. `切换` is a substring of `切换机房` (switchgear room) →
+  `去切换机房` stopped navigating; and any multi-step command with a switch word
+  (`先走一米再切到go2`) collapsed to the single-turn path, DROPPING the walk leg.
+  Fix: require BOTH a switch verb AND an embodiment target (`_is_embodiment_switch`),
+  run it AFTER `is_complex`. **Lesson:** an unanchored substring marker placed
+  ahead of the complexity/motor gates is a trap — it fires on nouns that merely
+  contain the word and pre-empts multi-step decomposition. Detect an intent by a
+  CONJUNCTION of signals (verb + target), and order it so it can't swallow a
+  more-specific classification (complexity, explicit motor verb). Caught only by
+  an adversarial REVIEW that probed `verb`-named-destinations and `verb`+`then`.
 
 ## c11 R12 — fixing a NameError reopened a verify false-PASS (the moat)
 - **Symptom:** `GoalVerifier: runtime error: name 'step_output' is not defined`

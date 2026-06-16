@@ -174,6 +174,35 @@ _GO_DO_VERBS: tuple[str, ...] = (
 )
 
 
+# Embodiment switch (campaign #11 R11, hardened R13). switch_embodiment is a
+# @tool — UNREACHABLE on the VGG/decompose path (which only plans @skills) — so a
+# SINGLE-STEP switch command must route to the tool_use/answer path. Detected by a
+# switch VERB *and* an embodiment TARGET, both required: a destination merely NAMED
+# with a switch word (e.g. "切换机房" switchgear room, "切换室") has no embodiment
+# target, so it is NOT a switch and still navigates. The check runs AFTER is_complex
+# so a multi-step command ("走一米再切到go2") still decomposes (the walk leg is not
+# dropped), and BEFORE the motor check so a pure switch's "到" ("切到go2") does not
+# mis-route to VGG. (R11's first cut put broad substrings in _SYSTEM_BYPASS ahead of
+# is_complex/motor — that over-reached onto "切换"-named places and dropped the
+# non-switch leg of multi-step commands; R13 review caught it.)
+_SWITCH_VERBS: tuple[str, ...] = (
+    "切换", "切到", "切换到", "换成", "换到", "变成",
+    "switch to", "switch the", "change to", "change the",
+)
+_EMBODIMENT_TARGETS: tuple[str, ...] = (
+    "go2", "g1", "狗", "dog", "humanoid", "人形", "具身",
+    "embodiment", "quadruped", "四足",
+)
+
+
+def _is_embodiment_switch(msg_lower: str) -> bool:
+    """True when the message is a single embodiment-switch command — a switch
+    verb AND an embodiment target both present (so a place merely named with a
+    switch word is not mis-classified)."""
+    return (any(v in msg_lower for v in _SWITCH_VERBS)
+            and any(t in msg_lower for t in _EMBODIMENT_TARGETS))
+
+
 def _residual_has_motor_signal(msg_lower: str) -> bool:
     """Return True if, after removing meta-request markers, a genuine motor /
     navigation command remains.
@@ -301,15 +330,6 @@ class IntentRouter:
             "habitat", "sysnav", "语义感知",
             # Headless modifier — pass gui=false to start_simulation; not a VGG task.
             "headless", "无窗口", "不要窗口", "no window",
-            # Embodiment switch (campaign #11) — switch_embodiment is a TOOL, not
-            # a @skill, so it is UNREACHABLE on the VGG/decompose path. Force the
-            # tool_use/answer path (which offers switch_embodiment). These mirror
-            # the sim-rule switch keywords (route() already excludes bash for
-            # them). The Chinese forms otherwise trip the motor check via "到"
-            # ("切到"/"切换到") and mis-route to VGG. Kept narrow so genuine
-            # navigation ("走到", "去") is NOT captured.
-            "切换", "换成", "切到", "切换到", "换到", "变成",
-            "embodiment", "具身", "switch to", "change to ",
         )
         if any(kw in msg_lower for kw in _SYSTEM_BYPASS):
             return False
@@ -317,6 +337,14 @@ class IntentRouter:
         # Complex tasks → VGG
         if self.is_complex(user_message):
             return True
+
+        # Single-step embodiment switch → tool_use (switch_embodiment is a @tool,
+        # unreachable via VGG). AFTER is_complex (a multi-step "walk then switch"
+        # still decomposes) and BEFORE the motor check (so a pure switch's "到" in
+        # "切到go2" does not mis-route to VGG). Requires a switch verb AND an
+        # embodiment target, so "去切换机房"/"导航到切换室" still navigate.
+        if _is_embodiment_switch(msg_lower):
+            return False
 
         # Conversational questions / greetings → tool_use (answer directly), so a
         # question like "为什么一开始那么卡" is NOT mis-routed into a plan just because

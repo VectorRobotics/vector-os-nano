@@ -92,3 +92,22 @@ class TestSwitchIntentRouting:
         for msg in ("去厨房", "navigate to the kitchen", "走到客厅",
                     "探索一下房子", "走过去"):
             assert self.router.should_use_vgg(msg) is True, msg
+
+    def test_switch_bypass_does_not_overreach(self):
+        # R13 review regression guard: the bypass must require BOTH a switch verb
+        # AND an embodiment target. A destination merely NAMED with a switch word
+        # (切换机房 = switchgear room) has no embodiment target → still navigates;
+        # a MULTI-STEP command (walk THEN switch) must still decompose via VGG so
+        # the non-switch leg is not dropped.
+        for msg in ("去切换机房", "导航到切换机房", "走到切换室", "去切换站",
+                    "先走一米再切到go2", "把灯换成红色然后走",
+                    "navigate then change to room b"):
+            assert self.router.should_use_vgg(msg) is True, msg
+
+    def test_switch_needs_verb_and_target(self):
+        # non-switch uses of 切/换 substrings (no switch verb) stay on VGG
+        for msg in ("去切水果", "换个房间走", "走到go2旁边"):
+            assert self.router.should_use_vgg(msg) is True, msg
+        # switch verb + target (incl. 具身/dog) → tool_use
+        for msg in ("切换具身", "变成狗", "change to the go2"):
+            assert self.router.should_use_vgg(msg) is False, msg
