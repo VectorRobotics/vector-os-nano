@@ -245,7 +245,15 @@ class MuJoCoPano360:
         return rgb, depth
 
     def close(self) -> None:
-        """Release the GL renderer(s) (if allocated)."""
+        """Release the GL renderer(s) (if allocated) + restore the global FoV."""
+        # Restore the model's free-camera fovy clobbered in _init_renderer (the
+        # model is shared with the live viewer; R8 review: it was never restored).
+        if getattr(self, "_saved_fovy", None) is not None:
+            try:
+                self._model.vis.global_.fovy = self._saved_fovy
+            except Exception:
+                pass
+            self._saved_fovy = None
         for attr in ("_renderer", "_depth_renderer"):
             r = getattr(self, attr, None)
             if r is not None:

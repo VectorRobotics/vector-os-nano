@@ -895,7 +895,11 @@ class G1MuJoCoBase:
             self._pano = MuJoCoPano360(
                 self._model, self._data, body_name="pelvis",
                 offset=(0.0, 0.0, 0.5))   # ~eye height above the pelvis
-        rgb, depth = self._pano.render_rgbd()
+        # Render under _render_lock so the cube-face update_scene/render does NOT
+        # read mjData while the control thread mj_steps it (R8 review: off-thread
+        # render is a data race / segfault risk; same lock the first-person cam uses).
+        with self._render_lock:
+            rgb, depth = self._pano.render_rgbd()
         pos = self.get_position()
         return {"rgb": rgb, "depth": depth,
                 "pos": [float(pos[0]), float(pos[1]), float(pos[2])],

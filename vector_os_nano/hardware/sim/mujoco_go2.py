@@ -1838,7 +1838,14 @@ class MuJoCoGo2:
             self._pano = MuJoCoPano360(
                 self._mj.model, self._mj.data, body_name="base_link",
                 offset=(0.0, 0.0, 0.1))   # just above the trunk (dog eye height)
-        rgb, depth = self._pano.render_rgbd()
+        # Pause the 50Hz physics daemon during the cube-face render so update_scene
+        # does NOT read mjData mid-mj_step (R8 review: off-thread render data race /
+        # segfault risk). Resume in finally — never leave physics paused.
+        self._pause_physics()
+        try:
+            rgb, depth = self._pano.render_rgbd()
+        finally:
+            self._resume_physics()
         pos = self.get_position()
         return {"rgb": rgb, "depth": depth,
                 "pos": [float(pos[0]), float(pos[1]), float(pos[2])],

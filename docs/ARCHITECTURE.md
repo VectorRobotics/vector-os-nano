@@ -468,8 +468,15 @@ parallel but meet at milestones.
   capability matrix (locomotion / nav stack / VLN / SysNav × G1/Go2): Go2 gained `navigate_to`/
   `geodesic_distance` reusing the world-agnostic `g1_vgraph` planner (the trot follows the waypoint chain)
   + a world-frame `LaserScan.points` cloud, so `recognize_navigate` (lidar VLN) registers on Go2 too.
-  KNOWN DEBT (R4 review): the ~180-line nav controller is duplicated G1/Go2 — to extract into a shared
-  world-agnostic `_nav_controller` (R5, gated on the G1 nav regression) so the two cannot drift.
+  The nav controller is now a single world-agnostic `hardware/sim/_nav_controller.py` (R5: `drive_to_point`
+  + `route_and_drive` + frozen `NavConsts` + a ctrl-token factory) that both bases delegate to — G1's
+  campaign-#6 behaviour preserved byte-for-byte (no-op nullcontext), Go2 injects its skill-ctrl token; no
+  drift. `NavigateToPointSkill` is registered on both (M3). SysNav (M4): both bases expose
+  `get_pano()→{rgb,depth,pos,heading}` (via `MuJoCoPano360.render_rgbd`, rendered under the physics
+  lock/pause to avoid an mjData race), so the embodiment-agnostic feed (`wire_sysnav_feed`) + capability-probe
+  `sysnav_tool` gate drive G1/Go2 — the live semantic-mapping nodes (object_nodes) remain a re-provision gate
+  (DQ-16). FAR ROS2 nav stack is likewise gated (DQ-15). Known track-C: the MuJoCo pano depth↔latitude
+  mapping (±60° vs the bridge's ±90°) must be reconciled when SysNav is re-provisioned.
 
 **Remaining:**
 
