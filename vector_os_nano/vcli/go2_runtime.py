@@ -78,7 +78,13 @@ def boot_go2_agent(
         registry.register(s)
     vln = False
     if callable(getattr(base, "navigate_to", None)):
+        # Go2 now has navigate_to (shared _nav_controller, campaign #11 R5) ->
+        # register BOTH the coordinate-nav skill (M3) and photoreal VLN (M2),
+        # the same base-generic skills G1 runs. Capability-probe (rule 3): never
+        # by embodiment name, so a future navigate_to-less Go2 mode stays clean.
+        from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
         from vector_os_nano.skills.recognize_navigate import RecognizeNavigateSkill
+        registry.register(NavigateToPointSkill())
         registry.register(RecognizeNavigateSkill())
         vln = True
     agent._skill_registry = registry
@@ -97,6 +103,6 @@ def boot_go2_agent(
             properties={"source": "go2_room_ground_truth"}))
 
     _emit(on_status, "Go2 base connected — walk/turn/stop/vlm_seek"
-          + ("/recognize_navigate" if vln else "") + " ready"
+          + ("/navigate_to/recognize_navigate" if vln else "") + " ready"
           f" — {len(base.list_targets())} known targets")
     return agent

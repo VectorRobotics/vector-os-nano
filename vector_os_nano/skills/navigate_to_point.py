@@ -231,6 +231,18 @@ class NavigateToPointSkill:
             out = feed.navigate_to(x, y, tol)
         else:
             out = base.navigate_to(x, y, tol)
+        # Fail loud (rule 8) on the three-value-dict contract: a base whose
+        # navigate_to returns a bare bool (e.g. the raw Go2ROS2Proxy / FAR path,
+        # track-B) would otherwise AttributeError on out.get(). Surface it.
+        if not isinstance(out, dict):
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"navigate_to on {type(base).__name__} returned "
+                    f"{type(out).__name__}, not the three-value dict this skill "
+                    "requires (reached/remaining/pos). Wire it through a "
+                    "NavProvider/_nav_controller adapter first."),
+                result_data={"diagnosis": "nav_contract_violation"})
         reached = bool(out.get("reached", False))
         remaining = float(out.get("remaining", float("inf")))
         result_data = {

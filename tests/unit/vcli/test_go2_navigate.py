@@ -143,11 +143,30 @@ def test_recognize_navigate_registered_only_with_navigate_to(monkeypatch):
             reg.register(s)
         base = fake_base(has_nav)
         if callable(getattr(base, "navigate_to", None)):
+            from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
             from vector_os_nano.skills.recognize_navigate import RecognizeNavigateSkill
+            reg.register(NavigateToPointSkill())   # M3: coordinate nav on Go2
             reg.register(RecognizeNavigateSkill())
         captured[has_nav] = reg.names
 
-    assert "recognize_navigate" in captured[True]
-    assert "recognize_navigate" not in captured[False]
+    # M3: Go2 with navigate_to registers BOTH navigate_to + recognize_navigate.
+    assert "navigate_to" in captured[True] and "recognize_navigate" in captured[True]
+    assert "navigate_to" not in captured[False] and "recognize_navigate" not in captured[False]
     for nm in ("walk", "turn", "stop"):
         assert any(nm in n for n in captured[False])  # M1 locomotion intact
+
+
+def test_navigate_skill_loud_fail_on_bool_contract():
+    """M3 guard (rule 8): NavigateToPointSkill against a base whose navigate_to
+    returns a bare bool (raw Go2ROS2Proxy / FAR track-B) fails LOUDLY with a
+    clear diagnosis, never an AttributeError on out.get()."""
+    from vector_os_nano.skills.navigate_to_point import NavigateToPointSkill
+    base = types.SimpleNamespace(
+        navigate_to=lambda x, y, tol=0.2: True,    # bool, not the 3-value dict
+        get_position=lambda: [0.0, 0.0, 0.3],
+        list_targets=lambda: {})
+    ctx = types.SimpleNamespace(base=base, world_model=None, world=None,
+                                scene_graph=None, perception=None, config={})
+    res = NavigateToPointSkill().execute({"x": 2.0, "y": 0.0}, ctx)
+    assert res.success is False
+    assert res.result_data.get("diagnosis") == "nav_contract_violation"
