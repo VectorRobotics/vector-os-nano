@@ -61,6 +61,11 @@ _MAX_BLIND_ADVANCES = 4  # cap forward advances taken WITHOUT a lidar lock so a
 _LOCATE_AGREE_M = 1.2    # two located estimates within this confirm the target —
                          # a single bad VLM bbox gives an outlier estimate that
                          # will NOT repeat, so require agreement before navigating
+_MIN_LOCATE_AREA = 0.025  # below this bbox area-fraction the target is too far/small
+                         # to trust its located (x,y): the off-centre bbox + back-
+                         # projection lock a near object, not the far target
+                         # (campaign #12 R2 instrumentation: af 0.011 wrong vs
+                         # 0.040 first reliable). Advance to grow it before locating.
 _MAX_RL_STREAK = 3       # consecutive VLM 429s (rate-limit) before giving up —
                          # a throttled endpoint is NOT "object absent", so fail
                          # honestly (vlm_unavailable) WITHOUT blind-walking the
@@ -195,24 +200,60 @@ class RecognizeNavigateSkill:
             y_norm = float(det.get("y_norm", 0.0))
             pos = base.get_position()
             heading = float(_heading()) if callable(_heading) else 0.0
-            # 1) DEPTH-AT-BBOX (preferred, semantic): depth at the recognised
-            #    pixel = the object's distance, skipping intervening obstacles.
+            # (campaign #12 R3) AREA GATE: a too-small bbox is too far to trust its
+            # located (x,y) — the off-centre VLM box back-projects onto a near
+            # object/wall, not the far target (R2 instrumentation: af 0.011 wrong).
+            # Advance to grow it before committing a locate (applied BEFORE
+            # prev_located is set so a tiny far bbox can't poison the buffer).
+            if float(det.get("area_frac", 0.0)) < _MIN_LOCATE_AREA:
+                if abs(x_norm) > _ALIGN_TOL:
+                    base.walk(0.0, 0.0,
+                              -_TURN_VYAW if x_norm > 0 else _TURN_VYAW,
+                              duration=_TURN_DUR)
+                else:
+                    base.walk(_FWD_VX, 0.0, 0.0, duration=_ADVANCE_DUR)
+                continue
+
+            # Locate via BOTH modalities this frame. DEPTH-AT-BBOX is semantic but
+            # rides on the VLM bbox CENTRE — a noisy/off-centre box back-projects
+            # wrong even when the depth VALUE is right (campaign #12 R2). LIDAR
+            # bearing+range (floor-filtered) is robust to bbox-centre noise but can
+            # pick an intervening obstacle (Case 22, the reason depth is preferred).
             located = None
+            loc_depth = None
             if obs is not None and obs.get("depth") is not None:
-                located = locate_from_depth(
+                loc_depth = locate_from_depth(
                     x_norm, y_norm, obs["depth"], obs["cam_pos"],
                     obs["cam_mat"], obs["fovy"])
-                if located is not None:
-                    located_by = "depth"
-            # 2) FALLBACK: lidar range at the recognised bearing (Case 22 risk —
-            #    may pick an obstacle; only used when no depth is available).
-            if located is None:
-                scan = base.get_lidar_scan() if callable(
-                    getattr(base, "get_lidar_scan", None)) else None
-                pts = getattr(scan, "points", None) if scan is not None else None
-                located = locate_from_bearing((pos[0], pos[1]), heading, x_norm, pts)
-                if located is not None:
-                    located_by = "lidar"
+            scan = base.get_lidar_scan() if callable(
+                getattr(base, "get_lidar_scan", None)) else None
+            pts = getattr(scan, "points", None) if scan is not None else None
+            loc_lidar = (locate_from_bearing((pos[0], pos[1]), heading, x_norm, pts)
+                         if pts is not None else None)
+
+            # Two INDEPENDENT sensors agreeing in the SAME frame is stronger
+            # evidence than two consecutive frames of one noisy sensor → commit NOW,
+            # preferring the lidar front-surface point (robust to bbox-centre error,
+            # R2: depth==lidar==chair when both right). This only ACCELERATES a
+            # commit; it never BLOCKS one (so G1, whose depth/lidar disagree, is
+            # unaffected — see below).
+            if (loc_depth is not None and loc_lidar is not None and math.hypot(
+                    loc_depth[0] - loc_lidar[0],
+                    loc_depth[1] - loc_lidar[1]) <= _LOCATE_AGREE_M):
+                located = loc_lidar
+                located_by = "depth+lidar"
+                break                       # confirmed by two sensors → go navigate
+
+            # Single sensor OR the two DISAGREE: depth-preferred (the G1 R5 path —
+            # G1 depth lands on the chair while its lidar lands on an obstacle, so a
+            # lidar disagreement must NEVER block the depth commit), lidar fallback,
+            # then the EXISTING consecutive-frame agreement guard (byte-identical).
+            if loc_depth is not None:
+                located = loc_depth
+                located_by = "depth"
+            elif loc_lidar is not None:
+                located = loc_lidar
+                located_by = "lidar"
             if located is not None:
                 # Confirm with a second AGREEING estimate — a single bad VLM bbox
                 # yields an outlier that will not repeat, so don't navigate to it.

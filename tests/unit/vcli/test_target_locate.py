@@ -115,3 +115,60 @@ class TestLocateFromDepth:
         z = np.zeros((240, 320), dtype=np.float32)   # all zero (no return)
         assert locate_from_depth(0.0, 0.0, z, (0.0, 0.0, 1.0),
                                  _CAM_MAT_FWD_X.flatten(), 70.0) is None
+
+
+class TestFloorRejection:
+    """Campaign #12 R2 — both locate paths must reject the GROUND PLANE between
+    the robot and a distant target (the floor is NEARER than a far object, so the
+    nearest-surface rule grabbed it → ~1.5 m short-locate for a 3.6 m chair). Floor
+    z≈0 is a universal scene constant (same class as locate_on_plane's plane_z),
+    never the object's GT (rule 5)."""
+
+    # --- lidar: reject floor hits, keep the object hit ---
+    def test_lidar_rejects_floor_hits_returns_object(self):
+        # downward lidar rings strike the floor (z≈0.02) NEARER (~1.2-1.5 m) than
+        # the chair (3.6 m, body z≈0.5) — all in the same forward bearing.
+        pts = _pts([[1.2, 0.05, 0.02, 1.0],   # near floor strike
+                    [1.5, 0.00, 0.02, 1.0],   # near floor strike
+                    [3.6, 0.00, 0.50, 1.0]])  # the chair body, far
+        xy = locate_from_bearing((0.0, 0.0), 0.0, 0.0, pts)
+        assert xy is not None
+        assert xy[0] > 3.0, f"expected the chair (~3.6), got a floor pick {xy}"
+
+    def test_lidar_keeps_low_but_above_floor_object(self):
+        # an object hit at z=0.3 (chair seat) must survive the floor gate.
+        pts = _pts([[1.5, 0.0, 0.02, 1.0],    # floor (rejected)
+                    [3.6, 0.0, 0.30, 1.0]])   # seat (kept)
+        xy = locate_from_bearing((0.0, 0.0), 0.0, 0.0, pts)
+        assert xy is not None and xy[0] > 3.0
+
+    def test_lidar_noop_when_only_object(self):
+        # no floor hits → unchanged behaviour.
+        pts = _pts([[3.6, 0.0, 0.5, 1.0]])
+        xy = locate_from_bearing((0.0, 0.0), 0.0, 0.0, pts)
+        assert xy is not None and abs(xy[0] - 3.6) < 1e-3
+
+    def test_lidar_none_when_all_floor(self):
+        # every in-bearing hit is floor → honest None (caller advances), never a
+        # bogus floor point.
+        pts = _pts([[1.2, 0.0, 0.02, 1.0], [1.5, 0.0, 0.03, 1.0]])
+        assert locate_from_bearing((0.0, 0.0), 0.0, 0.0, pts) is None
+
+    # --- depth: reject samples whose back-projected world-z is on the floor ---
+    def test_depth_all_floor_returns_none(self):
+        # a low camera (z=0.05) seeing a near surface → the whole window
+        # back-projects to ~floor height (world z≈0.05 ≪ 0.12 margin) → all
+        # samples rejected → None (the caller advances / falls back to lidar).
+        d = _depth()
+        d[110:130, 150:170] = 1.0
+        assert locate_from_depth(0.0, 0.0, d, (0.0, 0.0, 0.05),
+                                 _CAM_MAT_FWD_X.flatten(), 70.0) is None
+
+    def test_depth_noop_when_object_above_floor(self):
+        # camera at z=1.0 → the surface back-projects to world z≈1.0 (>> floor) →
+        # every sample survives → identical to the unfiltered result.
+        d = _depth()
+        d[110:130, 150:170] = 3.0
+        xy = locate_from_depth(0.0, 0.0, d, (0.0, 0.0, 1.0),
+                               _CAM_MAT_FWD_X.flatten(), 70.0)
+        assert xy is not None and abs(xy[0] - 3.0) < 0.15 and abs(xy[1]) < 0.15

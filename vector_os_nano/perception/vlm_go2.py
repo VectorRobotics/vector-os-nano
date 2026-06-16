@@ -61,7 +61,13 @@ _MODEL: str = os.environ.get("VECTOR_VLM_MODEL_OPENROUTER", "") or "qwen/qwen2.5
 _TIMEOUT_S: float = 30.0
 _MAX_RETRIES: int = 2
 _JPEG_QUALITY: int = 50
-_VLM_IMAGE_MAX_DIM: int = 160  # resize before encoding to keep base64 < 10KB (remote)
+_VLM_IMAGE_MAX_DIM: int = int(os.environ.get("VECTOR_VLM_MAX_DIM", "") or 512)
+# ^ remote downsize, env-overridable. Was 160 (tiny payload), but campaign #12 R4
+# proved that starved photoreal-VLN grounding on BOTH embodiments — a far target is
+# only a few pixels at 160, so the VLM mis-grounded onto near objects/obstacles
+# (Go2 AND G1 both ~2/5 arrival). At 512 the locate error dropped 2.1 m -> 0.29 m
+# (the chair is grounded correctly every run); OpenRouter handles the larger inline
+# image fine (~1-2 s). Matches the local-model dim.
 _VLM_IMAGE_MAX_DIM_LOCAL: int = 512  # local models can handle larger images
 
 # ---------------------------------------------------------------------------

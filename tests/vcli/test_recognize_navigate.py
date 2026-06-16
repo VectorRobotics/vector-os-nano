@@ -206,3 +206,55 @@ class TestDepthPath:
         # navigated to a standoff in front of the DEPTH point (3,0 → 2.3,0), NOT
         # the closer lidar obstacle (1.5,0) — proves depth was preferred.
         assert abs(base.nav_goal[0] - 2.3) < 0.2 and abs(base.nav_goal[1]) < 0.2
+
+
+class TestLocateGating:
+    """Campaign #12 R3 — far/small bbox is gated (advance, don't trust its xy); a
+    same-frame depth+lidar AGREEMENT commits immediately preferring the lidar point;
+    DISAGREEMENT falls back to the unchanged depth two-frame path (G1 no-regression)."""
+
+    _CAM_MAT = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                        dtype=np.float64)
+
+    def _obs_base(self, depth_x, lidar_pts):
+        depth = np.full((240, 320), 40.0, dtype=np.float32)
+        depth[110:130, 150:170] = depth_x       # surface at centre, depth_x m ahead
+        cam_mat = self._CAM_MAT
+
+        class _ObsBase(_FakeBase):
+            def get_camera_observation(self, timeout=5.0):
+                return {"rgb": "frame", "depth": depth,
+                        "cam_pos": np.array([0.0, 0.0, 1.0]),
+                        "cam_mat": cam_mat.flatten(), "fovy": 70.0}
+
+        return _ObsBase(lidar_pts)
+
+    def test_far_small_bbox_advances_not_commit(self):
+        # area_frac below the gate → never commit, just close distance.
+        base = _FakeBase([[2.0, 0.0, 0.3, 1.0]])
+        det = _Det([[{"label": "chair", "x_norm": 0.0, "area_frac": 0.011}]])
+        res = RecognizeNavigateSkill(detector=det).execute(
+            {"label": "chair", "max_iters": 3}, _ctx(base))
+        assert res.success is False
+        assert base.nav_goal is None        # never navigated to the tiny far bbox
+        assert base.walks > 0               # advanced to grow it instead
+
+    def test_depth_lidar_agree_commits_lidar_point(self):
+        # depth → (3,0); lidar hit at (3.1,0) AGREES (<1.2 m) → commit in one frame,
+        # preferring the LIDAR surface point → standoff in front of 3.1 (→2.4,0).
+        base = self._obs_base(3.0, [[3.1, 0.0, 0.3, 1.0]])
+        det = _Det([[{"label": "chair", "x_norm": 0.0, "area_frac": 0.04, "y_norm": 0.0}]])
+        res = RecognizeNavigateSkill(detector=det).execute({"label": "chair"}, _ctx(base))
+        assert res.success is True
+        assert res.result_data["located_by"] == "depth+lidar"
+        assert abs(base.nav_goal[0] - 2.4) < 0.2 and abs(base.nav_goal[1]) < 0.2
+
+    def test_depth_lidar_disagree_falls_to_depth_two_frame(self):
+        # depth → (3,0); lidar obstacle at (1.5,0) DISAGREES (>1.2 m) → must NOT
+        # block; commit via the unchanged depth two-frame path (the G1 R5 guard).
+        base = self._obs_base(3.0, [[1.5, 0.0, 0.3, 1.0]])
+        det = _Det([[{"label": "chair", "x_norm": 0.0, "area_frac": 0.04, "y_norm": 0.0}]])
+        res = RecognizeNavigateSkill(detector=det).execute({"label": "chair"}, _ctx(base))
+        assert res.success is True
+        assert res.result_data["located_by"] == "depth"   # depth, NOT blocked by lidar
+        assert abs(base.nav_goal[0] - 2.3) < 0.2 and abs(base.nav_goal[1]) < 0.2

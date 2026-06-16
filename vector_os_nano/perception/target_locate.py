@@ -28,6 +28,18 @@ _HALF_FOV = 0.80
 _ANG_WINDOW = 0.30       # rad — accept lidar hits within this of the target bearing
 _MIN_RANGE = 0.15        # ignore self/near specks below this range
 
+# Ground-plane rejection (campaign #12 R2). The floor between the robot and a
+# DISTANT object is NEARER than the object, so the nearest-surface rules below
+# (lidar nearest-hit / depth low-percentile) grabbed the FLOOR and located a far
+# target ~1.5 m short (a 3.6 m chair read as ~1.5 m, in BOTH depth and lidar). We
+# drop samples whose world z is within _FLOOR_MARGIN of the floor plane. _FLOOR_Z
+# is a UNIVERSAL scene constant (the room floor at z=0; furniture rests on it) —
+# the same class of known-constant locate_on_plane already uses as plane_z, NEVER
+# the object's GT pose (rule 5). The margin sits above floor/sensor noise (~0.02 m)
+# and below an object's body/seat (~0.3-0.5 m), so the object survives.
+_FLOOR_Z = 0.0
+_FLOOR_MARGIN = 0.12
+
 
 def locate_from_bearing(
     robot_xy: "tuple[float, float]",
@@ -36,6 +48,8 @@ def locate_from_bearing(
     lidar_points: "np.ndarray | None",
     half_fov: float = _HALF_FOV,
     ang_window: float = _ANG_WINDOW,
+    floor_z: float = _FLOOR_Z,
+    floor_margin: float = _FLOOR_MARGIN,
 ) -> "tuple[float, float] | None":
     """World (x, y) of the recognised object, or None if not sensed in its
     direction.
@@ -59,6 +73,8 @@ def locate_from_bearing(
     for p in pts:
         if p[3] <= 0.0:                      # miss (free-ray endpoint) → ignore
             continue
+        if p[2] - floor_z <= floor_margin:   # floor/ground strike → not the object
+            continue
         dx, dy = p[0] - rx, p[1] - ry
         rng = math.hypot(dx, dy)
         if rng < _MIN_RANGE:
@@ -80,6 +96,8 @@ def locate_from_depth(
     fovy_deg: float,
     win: int = 6,
     max_depth: float = 30.0,
+    floor_z: float = _FLOOR_Z,
+    floor_margin: float = _FLOOR_MARGIN,
 ) -> "tuple[float, float] | None":
     """World (x, y) of the RECOGNISED object by back-projecting the depth at its
     bbox centre — the semantically-correct estimate (depth at the object's OWN
@@ -104,23 +122,40 @@ def locate_from_depth(
     py = max(0, min(H - 1, py))
     x0, x1 = max(0, px - win), min(W, px + win + 1)
     y0, y1 = max(0, py - win), min(H, py + win + 1)
-    patch = dimg[y0:y1, x0:x1].ravel()
-    valid = patch[(patch > 0.1) & (patch < max_depth)]
-    if valid.size == 0:
-        return None
-    # NEAREST surface in the bbox window, not the median: a thin object (chair
-    # legs/back) lets the bbox see THROUGH to the wall behind, biasing a median
-    # too far (and to an unreachable point past the target — R5). A low
-    # percentile is the object's own FRONT FACE, robust to a few near specks.
-    z = float(np.percentile(valid, 20))
+    win_d = dimg[y0:y1, x0:x1]
 
     # OpenGL pinhole back-projection. fovy is the VERTICAL field of view.
     f = (H / 2.0) / math.tan(math.radians(fovy_deg) / 2.0)
-    xc = (px - W / 2.0) / f
-    yc = -(py - H / 2.0) / f          # image y is down → camera y is up
-    p_cam = np.array([xc * z, yc * z, -z], dtype=np.float64)   # looks along -z
     rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
-    p_world = np.asarray(cam_pos, dtype=np.float64) + rot @ p_cam
+    cpos = np.asarray(cam_pos, dtype=np.float64)
+
+    # Back-project EVERY valid window sample to its world z and DROP ground-plane
+    # samples (the floor between robot and a distant object reads NEARER than the
+    # object — campaign #12 R2). Then take the nearest SURVIVING surface, so the
+    # floor can no longer out-vote a far target. When no floor is present the
+    # survivors == all valid samples → byte-identical to the old percentile (the
+    # G1 R5 success path is unchanged).
+    gx, gy = np.meshgrid(np.arange(x0, x1), np.arange(y0, y1))
+    mask = (win_d > 0.1) & (win_d < max_depth)
+    if not mask.any():
+        return None
+    dv = win_d[mask].astype(np.float64)
+    xc_v = (gx[mask] - W / 2.0) / f
+    yc_v = -(gy[mask] - H / 2.0) / f          # image y is down → camera y is up
+    # world z of each sample = cam_z + (rot · [xc*d, yc*d, -d])_z
+    wz = cpos[2] + rot[2, 0] * (xc_v * dv) + rot[2, 1] * (yc_v * dv) + rot[2, 2] * (-dv)
+    surv = dv[(wz - floor_z) > floor_margin]
+    if surv.size == 0:
+        return None      # window is all floor → honest None (caller advances)
+    # NEAREST surviving surface, not the median: a thin object (chair legs/back)
+    # lets the bbox see THROUGH to the wall behind, biasing a median too far. A
+    # low percentile is the object's own FRONT FACE, robust to a few near specks.
+    z = float(np.percentile(surv, 20))
+
+    xc = (px - W / 2.0) / f
+    yc = -(py - H / 2.0) / f
+    p_cam = np.array([xc * z, yc * z, -z], dtype=np.float64)   # looks along -z
+    p_world = cpos + rot @ p_cam
     return (float(p_world[0]), float(p_world[1]))
 
 
@@ -169,11 +204,15 @@ def locate_xyz_from_depth(
     fovy_deg: float,
     win: int = 6,
     max_depth: float = 30.0,
+    floor_z: float = _FLOOR_Z,
+    floor_margin: float = _FLOOR_MARGIN,
 ) -> "tuple[float, float, float] | None":
     """Like ``locate_from_depth`` but returns the full world ``(x, y, z)`` — the
     3D grasp target for the recognised object (campaign #10 R10). Same OpenGL
     back-projection of the bbox-centre depth; z is the object's own surface
-    height, never read from ground truth (rule 5)."""
+    height, never read from ground truth (rule 5). Ground-plane samples are
+    rejected like locate_from_depth (campaign #12 R2) — a no-op when no floor is
+    in the window (the grasp path's window is on the object)."""
     if depth is None:
         return None
     dimg = np.asarray(depth, dtype=np.float64)
@@ -184,15 +223,24 @@ def locate_xyz_from_depth(
     py = max(0, min(H - 1, int(round((float(y_norm) + 1.0) * 0.5 * (H - 1)))))
     x0, x1 = max(0, px - win), min(W, px + win + 1)
     y0, y1 = max(0, py - win), min(H, py + win + 1)
-    patch = dimg[y0:y1, x0:x1].ravel()
-    valid = patch[(patch > 0.1) & (patch < max_depth)]
-    if valid.size == 0:
-        return None
-    z = float(np.percentile(valid, 20))    # nearest surface (object front face)
+    win_d = dimg[y0:y1, x0:x1]
     f = (H / 2.0) / math.tan(math.radians(fovy_deg) / 2.0)
+    rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
+    cpos = np.asarray(cam_pos, dtype=np.float64)
+    gx, gy = np.meshgrid(np.arange(x0, x1), np.arange(y0, y1))
+    mask = (win_d > 0.1) & (win_d < max_depth)
+    if not mask.any():
+        return None
+    dv = win_d[mask].astype(np.float64)
+    xc_v = (gx[mask] - W / 2.0) / f
+    yc_v = -(gy[mask] - H / 2.0) / f
+    wz = cpos[2] + rot[2, 0] * (xc_v * dv) + rot[2, 1] * (yc_v * dv) + rot[2, 2] * (-dv)
+    surv = dv[(wz - floor_z) > floor_margin]
+    if surv.size == 0:
+        return None
+    z = float(np.percentile(surv, 20))     # nearest surviving surface (front face)
     xc = (px - W / 2.0) / f
     yc = -(py - H / 2.0) / f
     p_cam = np.array([xc * z, yc * z, -z], dtype=np.float64)
-    rot = np.asarray(cam_mat, dtype=np.float64).reshape(3, 3)
-    p_world = np.asarray(cam_pos, dtype=np.float64) + rot @ p_cam
+    p_world = cpos + rot @ p_cam
     return (float(p_world[0]), float(p_world[1]), float(p_world[2]))
