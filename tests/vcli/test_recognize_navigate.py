@@ -14,6 +14,10 @@ from types import SimpleNamespace
 
 import numpy as np
 
+# Import the MODULE so the rate-limit class is resolved LIVE (an earlier test,
+# test_qwen_vl_wiring, importlib.reloads vlm_go2 → a cached class binding would
+# not match the live class recognize_navigate catches).
+from vector_os_nano.perception import vlm_go2 as _vlm_go2
 from vector_os_nano.skills.recognize_navigate import RecognizeNavigateSkill
 
 
@@ -55,15 +59,24 @@ class _FakeBase:
 
 
 class _Det:
+    """Scripted fake detector. A sequence entry that is a _vlm_go2.VlmRateLimitError
+    (instance or the class) is RAISED — mirroring production where the opt-in
+    ``raise_on_rate_limit=True`` propagates a 429; any other entry is returned."""
+
     def __init__(self, seq):
         self._seq = list(seq)
         self._i = 0
         self.queries = []
 
-    def detect_targets(self, frame, query, min_area_frac=0.0025):  # noqa: ARG002
+    def detect_targets(self, frame, query, min_area_frac=0.0025,  # noqa: ARG002
+                       raise_on_rate_limit=False):
         self.queries.append(query)
         d = self._seq[min(self._i, len(self._seq) - 1)]
         self._i += 1
+        if d is _vlm_go2.VlmRateLimitError or isinstance(d, _vlm_go2.VlmRateLimitError):
+            if raise_on_rate_limit:
+                raise d if isinstance(d, _vlm_go2.VlmRateLimitError) else _vlm_go2.VlmRateLimitError("429")
+            return []          # swallowed when caller did not opt in (legacy)
         return d
 
 
@@ -113,6 +126,56 @@ class TestRecognizeNavigate:
             {"label": "chair"}, _ctx(base))
         assert res.success is False
         assert res.result_data["diagnosis"] == "no_navigate"
+
+
+class TestRateLimit:
+    """A throttled VLM (HTTP 429) must give up HONESTLY (vlm_unavailable) without
+    blind-walking the robot or hammering the endpoint for the full max_iters —
+    and must stay distinct from an honest 'object not in frame' miss."""
+
+    def test_persistent_429_gives_up_without_walking(self, monkeypatch):
+        import vector_os_nano.skills.recognize_navigate as rn
+        monkeypatch.setattr(rn, "_RL_BACKOFF_S", 0.0)
+        base = _FakeBase([[2.0, 0.0, 0.3, 1.0]])     # would locate if VLM worked
+        det = _Det([_vlm_go2.VlmRateLimitError("429")])        # every call raises 429
+        res = RecognizeNavigateSkill(detector=det).execute(
+            {"label": "chair", "max_iters": 16}, _ctx(base))
+        assert res.success is False
+        assert res.result_data["diagnosis"] == "vlm_unavailable"
+        assert res.result_data["rl_streak"] == rn._MAX_RL_STREAK
+        assert base.walks == 0                        # CORE: zero blind walks
+        assert base.nav_goal is None                  # never navigated to a phantom
+        # capped: did NOT run all 16 iters — exactly _MAX_RL_STREAK VLM calls
+        assert len(det.queries) == rn._MAX_RL_STREAK
+
+    def test_429_then_success_rides_through_and_navigates(self, monkeypatch):
+        import vector_os_nano.skills.recognize_navigate as rn
+        monkeypatch.setattr(rn, "_RL_BACKOFF_S", 0.0)
+        base = _FakeBase([[2.0, 0.0, 0.3, 1.0]])
+        # raise twice, then ground the chair every frame (last entry repeats →
+        # the second agreeing estimate confirms and navigation proceeds)
+        det = _Det([_vlm_go2.VlmRateLimitError("429"), _vlm_go2.VlmRateLimitError("429"),
+                    [{"label": "chair", "x_norm": 0.0, "area_frac": 0.03}]])
+        res = RecognizeNavigateSkill(detector=det).execute(
+            {"label": "chair", "max_iters": 16}, _ctx(base))
+        assert res.success is True                     # rode through the 429s
+        assert res.result_data["diagnosis"] == "ok"
+        assert base.nav_goal is not None
+        assert abs(base.nav_goal[0] - 1.3) < 0.05 and abs(base.nav_goal[1]) < 1e-3
+
+    def test_single_429_between_good_frames_does_not_escalate(self, monkeypatch):
+        import vector_os_nano.skills.recognize_navigate as rn
+        monkeypatch.setattr(rn, "_RL_BACKOFF_S", 0.0)
+        base = _FakeBase([[2.0, 0.0, 0.3, 1.0]])
+        good = [{"label": "chair", "x_norm": 0.0, "area_frac": 0.03}]
+        # alternating raise / good — streak resets on each good frame, so the
+        # cap is never reached and the run completes normally (navigates).
+        det = _Det([_vlm_go2.VlmRateLimitError("429"), good,
+                    _vlm_go2.VlmRateLimitError("429"), good, good])
+        res = RecognizeNavigateSkill(detector=det).execute(
+            {"label": "chair", "max_iters": 16}, _ctx(base))
+        assert res.result_data["diagnosis"] != "vlm_unavailable"
+        assert res.success is True                     # good frames carried it
 
 
 class TestDepthPath:

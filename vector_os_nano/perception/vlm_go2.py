@@ -36,6 +36,16 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+
+class VlmRateLimitError(RuntimeError):
+    """Raised when the VLM endpoint returns HTTP 429 (rate limited).
+
+    Subclass of RuntimeError so existing ``except RuntimeError`` paths (and the
+    broad ``except Exception`` swallow in VlmTargetDetector) are unchanged; a
+    caller that wants to DISTINGUISH a throttled endpoint from "object absent"
+    can catch this type instead of blind-walking on an empty detection."""
+
+
 # ---------------------------------------------------------------------------
 # Cost model — GPT-4o via OpenRouter (as of 2026-04)
 # ---------------------------------------------------------------------------
@@ -345,7 +355,14 @@ class Go2VLMPerception:
 
                 elapsed = time.monotonic() - t_start
 
-                # 4xx — auth/quota errors, do not retry
+                # 4xx — auth/quota errors, do not retry. A 429 (rate limited) is
+                # classified as a TYPED error so recognize_navigate can give up
+                # honestly instead of mistaking the throttle for "object absent".
+                # 529 (overloaded) is 5xx and intentionally keeps its retry path.
+                if response.status_code == 429:
+                    raise VlmRateLimitError(
+                        f"OpenRouter rate limited (429): {response.text[:200]}"
+                    )
                 if 400 <= response.status_code < 500:
                     raise RuntimeError(
                         f"OpenRouter API client error {response.status_code}: "

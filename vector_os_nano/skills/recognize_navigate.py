@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
@@ -32,6 +33,9 @@ from vector_os_nano.perception.target_locate import (
     locate_from_bearing,
     locate_from_depth,
 )
+# Import the MODULE so VlmRateLimitError is resolved LIVE in the `except`
+# (importlib.reload(vlm_go2) rebinds the class; a cached binding would miss it).
+from vector_os_nano.perception import vlm_go2 as _vlm_go2
 from vector_os_nano.perception.vlm_targets import VlmTargetDetector
 
 logger = logging.getLogger(__name__)
@@ -57,6 +61,12 @@ _MAX_BLIND_ADVANCES = 4  # cap forward advances taken WITHOUT a lidar lock so a
 _LOCATE_AGREE_M = 1.2    # two located estimates within this confirm the target —
                          # a single bad VLM bbox gives an outlier estimate that
                          # will NOT repeat, so require agreement before navigating
+_MAX_RL_STREAK = 3       # consecutive VLM 429s (rate-limit) before giving up —
+                         # a throttled endpoint is NOT "object absent", so fail
+                         # honestly (vlm_unavailable) WITHOUT blind-walking the
+                         # robot or hammering the endpoint for the full max_iters
+_RL_BACKOFF_S = 2.0      # backoff between consecutive rate-limit retries (mirrors
+                         # recognize_pick._DETECT_BACKOFF_S); single sleep site
 
 
 @skill(
@@ -96,7 +106,8 @@ class RecognizeNavigateSkill:
     preconditions: list = ["base with camera + lidar + navigate_to (room mode)"]
     postconditions: list = []
     effects: dict = {}
-    failure_modes: list = ["no_base", "no_camera", "no_navigate", "not_found", "not_located"]
+    failure_modes: list = ["no_base", "no_camera", "no_navigate", "not_found",
+                           "not_located", "vlm_unavailable"]
 
     def __init__(self, detector: "VlmTargetDetector | None" = None) -> None:
         self._detector = detector or VlmTargetDetector()
@@ -133,6 +144,7 @@ class RecognizeNavigateSkill:
         located = None
         prev_located = None     # last estimate, awaiting a consistent confirm
         miss_streak = 0
+        rl_streak = 0           # consecutive VLM rate-limit (429) errors
         blind_advances = 0      # forward advances taken without a lidar lock
         for _ in range(max_iters):
             try:
@@ -145,7 +157,19 @@ class RecognizeNavigateSkill:
             except Exception as exc:  # noqa: BLE001
                 return SkillResult(success=False, error_message=f"camera failed: {exc}",
                                    result_data={"diagnosis": "no_camera"})
-            dets = self._detector.detect_targets(frame, query)
+            try:
+                dets = self._detector.detect_targets(
+                    frame, query, raise_on_rate_limit=True)
+            except _vlm_go2.VlmRateLimitError:
+                # The VLM endpoint is throttled — NOT "object not in frame".
+                # Do NOT blind-walk or hammer the endpoint: count consecutive
+                # 429s, back off, and after _MAX_RL_STREAK give up honestly.
+                rl_streak += 1
+                if rl_streak >= _MAX_RL_STREAK:
+                    break
+                time.sleep(_RL_BACKOFF_S)
+                continue        # skip det/miss/walk handling → ZERO walk on 429
+            rl_streak = 0       # any non-raising return resets the streak
             det = max(dets, key=lambda d: d["area_frac"]) if dets else None
             if det is None:
                 # The VLM detects a far/small target only intermittently. HOLD
@@ -212,6 +236,17 @@ class RecognizeNavigateSkill:
             base.stop()
         except Exception as exc:  # noqa: BLE001
             logger.debug("recognize_navigate teardown stop() failed: %s", exc)
+
+        # Honest giveup on a throttled VLM (returns BEFORE the not_found branch so
+        # a rate-limit is never mislabelled "object absent"). The robot is halted
+        # (base.stop() above), never left mid-gait.
+        if rl_streak >= _MAX_RL_STREAK and located is None:
+            return SkillResult(
+                success=False,
+                error_message=(f"VLM unavailable (rate limited {rl_streak}x) — "
+                               f"could not recognise the {query}; not blind-walking"),
+                result_data={"diagnosis": "vlm_unavailable", "seen": seen,
+                             "query": query, "rl_streak": rl_streak})
 
         if located is None:
             return SkillResult(

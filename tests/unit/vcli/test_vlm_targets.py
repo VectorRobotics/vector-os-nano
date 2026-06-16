@@ -14,6 +14,7 @@ called, never peeking ground truth).
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from vector_os_nano.perception.vlm_targets import VlmTargetDetector
 
@@ -121,3 +122,34 @@ class TestHonesty:
         det.detect_targets(_frame(), query="chair")
         assert seen.get("called") is True
         assert seen.get("query_in_prompt") is True
+
+
+class TestRateLimitOptIn:
+    """The opt-in ``raise_on_rate_limit`` is the ONLY behaviour change: a 429 is
+    swallowed to [] by default (byte-identical for vlm_seek/recognize_pick which
+    never pass it) and propagates only when a caller opts in."""
+
+    def _raiser(self):
+        from vector_os_nano.perception.vlm_go2 import VlmRateLimitError
+
+        def call(frame, prompt):  # noqa: ARG001
+            raise VlmRateLimitError("429")
+        return call
+
+    def test_default_swallows_rate_limit(self):
+        det = VlmTargetDetector(vlm_call=self._raiser())
+        assert det.detect_targets(_frame(), query="chair") == []
+
+    def test_opt_in_propagates_rate_limit(self):
+        from vector_os_nano.perception.vlm_go2 import VlmRateLimitError
+        det = VlmTargetDetector(vlm_call=self._raiser())
+        with pytest.raises(VlmRateLimitError):
+            det.detect_targets(_frame(), query="chair", raise_on_rate_limit=True)
+
+    def test_opt_in_still_swallows_other_errors(self):
+        def call(frame, prompt):  # noqa: ARG001
+            raise ValueError("garbled")
+        det = VlmTargetDetector(vlm_call=call)
+        # a non-rate-limit failure is still swallowed even with the flag on
+        assert det.detect_targets(_frame(), query="chair",
+                                  raise_on_rate_limit=True) == []

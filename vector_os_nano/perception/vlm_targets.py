@@ -31,6 +31,11 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 # Reuse the robust JSON extractor (handles ```json fences / bare JSON / garbage).
+# Import the MODULE (not the class) so the rate-limit type is resolved LIVE at
+# call time: importlib.reload(vlm_go2) rebinds VlmRateLimitError, and the
+# exception is always raised from the live module — a cached class binding would
+# go stale and silently swallow a real 429.
+from vector_os_nano.perception import vlm_go2 as _vlm_go2
 from vector_os_nano.perception.vlm_go2 import _parse_json_response
 
 logger = logging.getLogger(__name__)
@@ -136,12 +141,20 @@ class VlmTargetDetector:
         rgb: np.ndarray,
         query: str,
         min_area_frac: float = _DEFAULT_MIN_AREA_FRAC,
+        raise_on_rate_limit: bool = False,
     ) -> "list[dict]":
         """Ground ``query`` in ``rgb`` with the VLM; return contract detections.
 
         Returns one dict per localised instance ``{label, x_norm, y_norm,
         area_frac}``, sorted by descending area_frac. Returns [] when the model
         sees nothing, returns garbage, or the call fails — NEVER a GT fallback.
+
+        ``raise_on_rate_limit`` (opt-in, default False = byte-identical legacy
+        behaviour): when True, a ``VlmRateLimitError`` (HTTP 429) PROPAGATES so
+        the caller can distinguish a throttled endpoint from "object absent"
+        (recognize_navigate uses this to give up honestly instead of blind-
+        walking); every other failure is still swallowed to []. Single-source:
+        only exception PROPAGATION changes — the detection body is shared.
         """
         if rgb is None or getattr(rgb, "ndim", 0) != 3:
             return []
@@ -149,6 +162,8 @@ class VlmTargetDetector:
         try:
             raw = self._caller()(rgb, prompt)
         except Exception as exc:  # noqa: BLE001 — a flaky VLM never crashes seek
+            if raise_on_rate_limit and isinstance(exc, _vlm_go2.VlmRateLimitError):
+                raise
             logger.warning("VLM grounding call failed for %r: %s", query, exc)
             return []
         data = _parse_json_response(raw) if isinstance(raw, str) else {}

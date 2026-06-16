@@ -117,3 +117,63 @@ def test_navconsts_pinned_values():
     assert _G1_NAV.fall_z == 0.4 and _G1_NAV.tol_floor == 0.30 and _G1_NAV.inflation == 0.40
     assert _GO2_NAV.fall_z == 0.20 and _GO2_NAV.tol_floor == 0.20 and _GO2_NAV.inflation == 0.34
     assert _G1_NAV.speed == 0.5 and _GO2_NAV.speed == 0.5
+
+
+# --------------------------------------------------------------------------
+# route_and_drive per-leg terminal-reason early-break (campaign #11 R10 debt)
+# --------------------------------------------------------------------------
+
+def _route_kw():
+    """Fixed far standing pose; the drive_to_point itself is monkeypatched, so
+    pose/heading/cmd callables are inert."""
+    return dict(get_position=lambda: [0.0, 0.0, 0.5], get_heading=lambda: 0.0,
+                set_velocity=lambda *a: None, stop=lambda: None,
+                tick_fn=lambda s: None)
+
+
+def _stub_two_legs(monkeypatch, first_reason):
+    """Plan a 3-point path (= 2 legs) and record each leg drive_to_point drives.
+    Leg 1 returns ``first_reason``; any later leg returns 'ok'."""
+    from vector_os_nano.hardware.sim import g1_vgraph
+    monkeypatch.setattr(g1_vgraph, "plan_path",
+                        lambda a, b, obs, infl: ([(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)], 2.0))
+    driven = []
+
+    def fake_drive(*, x, y, **kw):
+        driven.append((x, y))
+        reason = first_reason if len(driven) == 1 else "ok"
+        return {"moved_m": 0.1, "reason": reason, "reached": reason == "ok"}
+
+    monkeypatch.setattr(NC, "drive_to_point", fake_drive)
+    return driven
+
+
+def test_route_and_drive_breaks_on_leg_timeout(monkeypatch):
+    driven = _stub_two_legs(monkeypatch, "timeout")
+    out = NC.route_and_drive(x=2.0, y=0.0, tol=0.3, speed=0.5, obstacles=[],
+                             consts=_consts(), **_route_kw())
+    assert len(driven) == 1                     # leg 2 NEVER driven after a timeout
+    assert out["reason"] == "timeout"
+
+
+def test_route_and_drive_continues_past_benign_leg_reason(monkeypatch):
+    driven = _stub_two_legs(monkeypatch, "ok")
+    NC.route_and_drive(x=2.0, y=0.0, tol=0.3, speed=0.5, obstacles=[],
+                       consts=_consts(), **_route_kw())
+    assert len(driven) == 2                     # a reached intermediate leg → continue
+
+
+@pytest.mark.parametrize("terminal", ["fell", "stalled_no_progress"])
+def test_route_and_drive_still_breaks_on_fell_and_stall(monkeypatch, terminal):
+    driven = _stub_two_legs(monkeypatch, terminal)
+    NC.route_and_drive(x=2.0, y=0.0, tol=0.3, speed=0.5, obstacles=[],
+                       consts=_consts(), **_route_kw())
+    assert len(driven) == 1                     # pre-existing terminals still break
+
+
+def test_drive_to_point_default_reason_is_timeout():
+    # far standing pose, never arrives/falls/stalls; timeout_s=0 → loop exits at once
+    kw, _ = _driver([[0, 0, 0.5]])
+    out = drive_to_point(x=5.0, y=0.0, tol=0.2, speed=0.5,
+                         consts=_consts(timeout_s=0.0, settle_s=0.0), **kw)
+    assert out["reason"] == "timeout" and out["reached"] is False

@@ -1068,20 +1068,6 @@ class MuJoCoGo2:
         self._require_connection()
         _gated = (time.time() < self._skill_ctrl_until
                   and threading.get_ident() != self._skill_ctrl_tid)
-        # TEMP DIAGNOSTIC (off unless VECTOR_CMDVEL_LOG is set): record the full
-        # command stream — source thread + values + skill-gate state — so the
-        # explore "weird gait" can be checked for bursty/duplicate/conflicting
-        # set_velocity traffic from the bridge/nav stack. Remove after debugging.
-        _dbg = os.environ.get("VECTOR_CMDVEL_LOG", "")
-        if _dbg:
-            try:
-                with open(_dbg, "a") as _f:
-                    _f.write(
-                        f"{time.time():.4f}\t{threading.current_thread().name}\t"
-                        f"vx={vx:+.3f}\tvy={vy:+.3f}\tvyaw={vyaw:+.3f}\tgated={int(_gated)}\n"
-                    )
-            except Exception:  # noqa: BLE001
-                pass
         if _gated:
             return
         with self._cmd_lock:

@@ -204,7 +204,11 @@ def route_and_drive(
             set_velocity=set_velocity, stop=stop, tick_fn=tick_fn,
             consts=consts, ctrl_token=ctrl_token)
         total_moved += float(last.get("moved_m", 0.0))
-        if last.get("reason") in ("fell", "stalled_no_progress"):
+        # Break on any TERMINAL leg failure: a fall, a stall, OR a per-leg
+        # timeout (the leg consumed its full independent budget without reaching
+        # even waypoint_tol — driving the next leg from a not-yet-reached
+        # waypoint just compounds path error and burns the global budget).
+        if last.get("reason") in ("fell", "stalled_no_progress", "timeout"):
             break
     fx, fy, fz = get_position()
     remaining = math.hypot(float(x) - fx, float(y) - fy)

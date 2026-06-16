@@ -480,3 +480,23 @@ Routine bugs do NOT belong here; git history covers those.
 - **Lesson:** a "caller-thread-pumped" execution model only works if the caller
   is a long-lived loop. Code launched by a one-shot tool call on a worker thread
   needs its OWN driver thread — don't assume someone will keep pumping it.
+
+## c11 R10 — a swallowed VLM 429 reads as "object absent" + blind-walks (silent)
+- **Symptom:** under upstream qwen-VL rate-limiting, `recognize_navigate` reported
+  `not_found` and the robot wandered for the full `max_iters` — pointing AT the
+  object/recognition, AWAY from the real cause (the endpoint was throttled).
+- **Cause:** `_call_vlm` raised a generic `RuntimeError` on 429; `detect_targets`'
+  broad `except Exception` swallowed it to `[]` — indistinguishable from "VLM saw
+  nothing". The seek loop treated each 429 as a miss → after `_MISS_BEFORE_SWEEP`
+  it WALKED, hammering the throttled endpoint with no backoff, then lied `not_found`.
+- **Fix:** typed `VlmRateLimitError(RuntimeError)` (429-only; 529 keeps its 5xx
+  retry path) + opt-in `detect_targets(raise_on_rate_limit=True)` re-raise +
+  `recognize_navigate` consecutive-`rl_streak` cap (3, with backoff) → honest
+  `diagnosis="vlm_unavailable"`, ZERO walks. The post-streak `continue` is
+  load-bearing (without it a 429 falls into the miss branch and walks).
+- **Lesson (module identity):** resolve the exception class from the LIVE module
+  (`_vlm_go2.VlmRateLimitError`), not a cached `from … import` binding —
+  `importlib.reload(vlm_go2)` (a wiring test does this) rebinds the class via
+  shared module globals, so a stale binding silently fails `isinstance`/`except`
+  and swallows a real 429. A typed exception only helps if both sides see the
+  SAME class object.
