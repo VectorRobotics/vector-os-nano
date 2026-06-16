@@ -82,6 +82,17 @@ _NAV_STALL_WINDOW_S = 6.0    # forward-walk no-progress window
 _NAV_INFLATION = 0.40
 _NAV_WAYPOINT_TOL = 0.45
 _NAV_STALL_MIN_M = 0.10      # min net progress within the window
+
+# Campaign #11 R5: the shared world-agnostic controller's constant pack for G1.
+# EVERY value is the existing _NAV_* above — extraction must not change behavior.
+from vector_os_nano.hardware.sim._nav_controller import NavConsts  # noqa: E402
+_G1_NAV = NavConsts(
+    fall_z=_NAV_FALL_Z, tol_floor=_NAV_TOL_FLOOR, speed=_NAV_SPEED,
+    vyaw_max=_NAV_VYAW_MAX, k_yaw=_NAV_K_YAW, face_tol=_NAV_FACE_TOL,
+    yaw_deadband=_NAV_YAW_DEADBAND, capture_r=_NAV_CAPTURE_R, tick_s=_NAV_TICK_S,
+    settle_s=_NAV_SETTLE_S, timeout_s=_NAV_TIMEOUT_S,
+    stall_window_s=_NAV_STALL_WINDOW_S, stall_min_m=_NAV_STALL_MIN_M,
+    inflation=_NAV_INFLATION, waypoint_tol=_NAV_WAYPOINT_TOL)
 _OCC_RESOLUTION = 0.25       # m/cell — occupancy grid resolution (room mode)
 
 
@@ -787,46 +798,14 @@ class G1MuJoCoBase:
         self._require_connected()
         if not self._obstacles:
             return self._navigate_point(x, y, tol, speed)
-        if not all(math.isfinite(v) for v in (x, y, tol, speed)):
-            return {"reached": False, "already_there": False, "moved_m": 0.0,
-                    "elapsed_s": 0.0, "remaining": float("inf"),
-                    "reason": "bad_params_nan", "transport": "sim_oracle"}
-        from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
-        sx, sy, _sz = self.get_position()
-        waypoints, _length = g1_vgraph.plan_path(
-            (sx, sy), (float(x), float(y)), self._obstacles, _NAV_INFLATION)
-        if waypoints is None:
-            return {"reached": False, "already_there": False, "moved_m": 0.0,
-                    "elapsed_s": 0.0, "remaining": float("inf"),
-                    "reason": "unreachable", "transport": "sim_oracle"}
-        # Drive each leg; waypoints[0] is the start, so skip it. Intermediate
-        # waypoints use a loose tol (just round the corner), the goal the real.
-        t0 = time.monotonic()
-        total_moved = 0.0
-        legs = waypoints[1:]
-        last = None
-        for i, (wx, wy) in enumerate(legs):
-            is_final = (i == len(legs) - 1)
-            leg_tol = tol if is_final else _NAV_WAYPOINT_TOL
-            last = self._navigate_point(wx, wy, leg_tol, speed)
-            total_moved += float(last.get("moved_m", 0.0))
-            if last.get("reason") in ("fell", "stalled_no_progress"):
-                break
-        fx, fy, fz = self.get_position()
-        remaining = math.hypot(float(x) - fx, float(y) - fy)
-        eff_tol = max(float(tol), _NAV_TOL_FLOOR)
-        reached = bool(remaining <= eff_tol and fz >= _NAV_FALL_Z)
-        return {
-            "reached": reached, "already_there": False,
-            "moved_m": round(total_moved, 3),
-            "net_m": round(math.hypot(fx - sx, fy - sy), 3),
-            "elapsed_s": round(time.monotonic() - t0, 3),
-            "remaining": round(remaining, 3),
-            "pos": [fx, fy, fz], "effective_tol": eff_tol,
-            "waypoints": [[round(p[0], 2), round(p[1], 2)] for p in waypoints],
-            "reason": "ok" if reached else (last or {}).get("reason", "timeout"),
-            "transport": "sim_oracle",
-        }
+        # Shared world-agnostic controller (campaign #11 R5); G1 uses a no-op
+        # ctrl_token so its control path is byte-identical to campaign #6.
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        return _nav_controller.route_and_drive(
+            x=x, y=y, tol=tol, speed=speed, obstacles=self._obstacles,
+            get_position=self.get_position, get_heading=self.get_heading,
+            set_velocity=self.set_velocity, stop=self.stop,
+            tick_fn=self._advance, consts=_G1_NAV)
 
     def _navigate_point(self, x: float, y: float, tol: float = 0.2,
                         speed: float = _NAV_SPEED) -> dict:
@@ -850,105 +829,15 @@ class G1MuJoCoBase:
         """
 
         self._require_connected()
-        if not all(math.isfinite(v) for v in (x, y, tol, speed)):
-            return {"reached": False, "already_there": False, "moved_m": 0.0,
-                    "elapsed_s": 0.0, "remaining": float("inf"),
-                    "reason": "bad_params_nan", "transport": "sim_oracle"}
-        tx, ty = float(x), float(y)
-        eff_tol = max(float(tol), _NAV_TOL_FLOOR)   # gait floor, reported below
-        speed = max(0.1, float(speed))
-
-        sx, sy, sz = self.get_position()
-        start_dist = math.hypot(tx - sx, ty - sy)
-        if start_dist <= eff_tol:
-            # already there — never command the gait (no spurious steps)
-            return {"reached": True, "already_there": True, "moved_m": 0.0,
-                    "net_m": 0.0, "elapsed_s": 0.0, "remaining": start_dist,
-                    "pos": [sx, sy, sz], "effective_tol": eff_tol,
-                    "reason": "already_within_tol", "transport": "sim_oracle"}
-
-        t0 = time.monotonic()
-        px, py = sx, sy
-        moved = 0.0
-        best_dist = start_dist
-        best_t = t0
-        reason = "timeout"
-
-        def _wrap(a: float) -> float:
-            return math.atan2(math.sin(a), math.cos(a))
-
-        try:
-            while time.monotonic() - t0 < _NAV_TIMEOUT_S:
-                cx, cy, cz = self.get_position()
-                yaw = self.get_heading()
-                moved += math.hypot(cx - px, cy - py)
-                px, py = cx, cy
-                dist = math.hypot(tx - cx, ty - cy)
-
-                if cz < _NAV_FALL_Z:           # fallen — stop trying
-                    reason = "fell"
-                    break
-                if dist <= eff_tol:
-                    reason = "arrived"
-                    break
-
-                err = _wrap(math.atan2(ty - cy, tx - cx) - yaw)
-                if dist < _NAV_CAPTURE_R:
-                    # capture: stop steering (yaw error near goal is noise),
-                    # creep straight at the last heading — no pivot-orbit.
-                    vx, vyaw = max(0.15, 0.4 * speed), 0.0
-                elif abs(err) > _NAV_FACE_TOL:
-                    # face-first: pivot in place (measured stable for this
-                    # policy), don't walk wide of a badly-aimed target.
-                    vx = 0.0
-                    vyaw = max(-_NAV_VYAW_MAX, min(_NAV_VYAW_MAX,
-                                                   _NAV_K_YAW * err))
-                else:
-                    vx = speed
-                    vyaw = (0.0 if abs(err) < _NAV_YAW_DEADBAND
-                            else max(-_NAV_VYAW_MAX, min(_NAV_VYAW_MAX,
-                                                         _NAV_K_YAW * err)))
-                self.set_velocity(vx, 0.0, vyaw)
-
-                # stall: only judged while actually walking forward (a long
-                # legitimate pivot is not a stall). Net progress toward goal.
-                if vx > 0.0:
-                    if dist < best_dist - _NAV_STALL_MIN_M:
-                        best_dist, best_t = dist, time.monotonic()
-                    elif time.monotonic() - best_t > _NAV_STALL_WINDOW_S:
-                        reason = "stalled_no_progress"
-                        break
-                else:
-                    best_t = time.monotonic()   # pause stall clock while pivoting
-                self._advance(_NAV_TICK_S)
-        finally:
-            self.stop()
-
-        # Settle: hold commanded stance ~1 gait period and re-sample the
-        # AUTHORITATIVE arrival pose — the biped coasts past the in-flight
-        # break sample (review high-finding). moved_m accrues across settle.
-        settle_end = time.monotonic() + _NAV_SETTLE_S
-        while time.monotonic() < settle_end:
-            self.set_velocity(0.0, 0.0, 0.0)   # re-arm deadman at zero
-            cx, cy, _cz = self.get_position()
-            moved += math.hypot(cx - px, cy - py)
-            px, py = cx, cy
-            self._advance(_NAV_TICK_S)
-
-        fx, fy, fz = self.get_position()
-        remaining = math.hypot(tx - fx, ty - fy)
-        reached = bool(remaining <= eff_tol and fz >= _NAV_FALL_Z)
-        if reached:
-            reason = "ok"
-        return {
-            "reached": reached, "already_there": False,
-            "moved_m": round(moved, 3),
-            "net_m": round(math.hypot(fx - sx, fy - sy), 3),
-            "elapsed_s": round(time.monotonic() - t0, 3),
-            "remaining": round(remaining, 3),
-            "pos": [fx, fy, fz], "effective_tol": eff_tol,
-            "reason": reason, "transport": "sim_oracle",
-        }
+        # Shared world-agnostic controller (campaign #11 R5). G1 omits ctrl_token
+        # (-> no-op nullcontext), so the control path is byte-identical to the
+        # campaign #6 loop this was extracted from.
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        return _nav_controller.drive_to_point(
+            x=x, y=y, tol=tol, speed=speed,
+            get_position=self.get_position, get_heading=self.get_heading,
+            set_velocity=self.set_velocity, stop=self.stop,
+            tick_fn=self._advance, consts=_G1_NAV)
 
     def stop(self) -> None:
         self._require_connected()
@@ -983,12 +872,9 @@ class G1MuJoCoBase:
         diverge (rule 5). Declaring it lets the kernel's ``geodesic_dist(x, y)``
         verify predicate bind for coordinate goals.
         """
-        if getattr(self, "_obstacles", None):
-            from vector_os_nano.hardware.sim import g1_vgraph  # noqa: PLC0415
-            return g1_vgraph.path_length(
-                (float(a[0]), float(a[1])), (float(b[0]), float(b[1])),
-                self._obstacles, _NAV_INFLATION)
-        return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+        from vector_os_nano.hardware.sim import _nav_controller  # noqa: PLC0415
+        return _nav_controller.path_length_geodesic(
+            a, b, getattr(self, "_obstacles", None) or [], _G1_NAV.inflation)
 
     def get_odometry(self):
         from vector_os_nano.core.types import Odometry

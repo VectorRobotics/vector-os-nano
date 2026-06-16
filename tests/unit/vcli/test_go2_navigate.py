@@ -53,6 +53,7 @@ def test_fall_z_below_go2_stand_height():
 def _stub(positions):
     """A MuJoCoGo2-shaped stub: get_position pops from `positions` (last repeats)."""
     seq = list(positions)
+    import contextlib
     st = types.SimpleNamespace(
         _obstacles=[], _skill_ctrl_until=0.0, _skill_ctrl_tid=0,
         _require_connection=lambda: None,
@@ -60,6 +61,7 @@ def _stub(positions):
         set_velocity=lambda *a, **k: None,
         stop=lambda: None,
         _drive_for=lambda s: None,
+        _ctrl_token=lambda: contextlib.nullcontext(),
     )
     def get_position():
         return seq[0] if len(seq) == 1 else seq.pop(0)
