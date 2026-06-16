@@ -92,7 +92,11 @@ _G1_NAV = NavConsts(
     yaw_deadband=_NAV_YAW_DEADBAND, capture_r=_NAV_CAPTURE_R, tick_s=_NAV_TICK_S,
     settle_s=_NAV_SETTLE_S, timeout_s=_NAV_TIMEOUT_S,
     stall_window_s=_NAV_STALL_WINDOW_S, stall_min_m=_NAV_STALL_MIN_M,
-    inflation=_NAV_INFLATION, waypoint_tol=_NAV_WAYPOINT_TOL)
+    inflation=_NAV_INFLATION, waypoint_tol=_NAV_WAYPOINT_TOL,
+    # G1 reaches reliably (settle_s=1.0, tol_floor=0.30); explicit 0.0 keeps the
+    # shared controller byte-identical for G1 (the Go2 trot is the only case that
+    # overshoots and needs a deeper break).
+    arrive_margin=0.0)
 _OCC_RESOLUTION = 0.25       # m/cell — occupancy grid resolution (room mode)
 
 

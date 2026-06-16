@@ -44,6 +44,12 @@ class NavConsts:
     stall_min_m: float      # min net progress within the window
     inflation: float        # obstacle inflation (vgraph routing)
     waypoint_tol: float     # loose tol for intermediate waypoints
+    arrive_margin: float = 0.0  # m: break the drive loop at eff_tol - this so the
+                                # robot drives DEEPER; its post-settle coast then
+                                # lands inside the UNCHANGED eff_tol (Go2 trot
+                                # overshoots ~1-4cm). 0.0 = current behaviour (G1
+                                # byte-identical). The verify ring (reached =
+                                # remaining<=eff_tol) is never widened (rule 5).
 
 
 def _null_token() -> Any:
@@ -111,7 +117,13 @@ def drive_to_point(
                 if cz < consts.fall_z:
                     reason = "fell"
                     break
-                if dist <= eff_tol:
+                # Break DEEPER than eff_tol by arrive_margin so a coasting trot
+                # settles inside eff_tol (floor-guarded — never tighter than the
+                # gait COM-oscillation floor, never <0). The FINAL reached below
+                # still compares against the unchanged eff_tol (rule 5: moat not
+                # loosened). For G1 (arrive_margin=0.0) this is byte-identical.
+                arrive_tol = max(eff_tol - consts.arrive_margin, consts.tol_floor)
+                if dist <= arrive_tol:
                     reason = "arrived"
                     break
 

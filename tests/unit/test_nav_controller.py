@@ -117,6 +117,54 @@ def test_navconsts_pinned_values():
     assert _G1_NAV.fall_z == 0.4 and _G1_NAV.tol_floor == 0.30 and _G1_NAV.inflation == 0.40
     assert _GO2_NAV.fall_z == 0.20 and _GO2_NAV.tol_floor == 0.20 and _GO2_NAV.inflation == 0.34
     assert _G1_NAV.speed == 0.5 and _GO2_NAV.speed == 0.5
+    # R16 go2-trot arrival: Go2 breaks 5cm deeper (coast lands in-tol); G1 unchanged.
+    assert _GO2_NAV.arrive_margin == 0.05 and _G1_NAV.arrive_margin == 0.0
+
+
+# --------------------------------------------------------------------------
+# arrive_margin — break DEEPER so the go2-trot coast settles in-tol (R16)
+# --------------------------------------------------------------------------
+
+def test_arrive_margin_drives_deeper_through_coast():
+    """Models the Go2 trot: a gait dip triggers the 'arrived' break, but the
+    SETTLED re-sample sits a few cm farther (the R6/R10/R13 straddle). With no
+    margin the settled pose lands OUTSIDE eff_tol; arrive_margin forces a DEEPER
+    break so the SAME coast lands INSIDE the unchanged eff_tol. tol_floor<eff_tol
+    so the margin bites. The verify ring (reached=remaining<=eff_tol) is unchanged."""
+    # Both runs approach through the SAME point (rem 0.39). eff_tol=0.4.
+    # no margin (arrive_tol=0.4): STOPS at 0.39, coasts +0.05 to rem 0.44 -> False
+    kw0, _ = _driver([[0, 0, 0.5], [1.61, 0, 0.5], [1.56, 0, 0.5]])
+    out0 = drive_to_point(x=2.0, y=0.0, tol=0.4, speed=0.5,
+                          consts=_consts(tol_floor=0.2, arrive_margin=0.0, settle_s=0.0), **kw0)
+    assert out0["reason"] == "arrived" and out0["reached"] is False
+    assert out0["remaining"] > 0.4              # the documented boundary straddle
+
+    # margin 0.05 (arrive_tol=0.35): keeps going past 0.39 to rem 0.34, coasts
+    # +0.05 back to 0.39 -> inside the UNCHANGED eff_tol 0.4 -> reached
+    kwm, _ = _driver([[0, 0, 0.5], [1.61, 0, 0.5], [1.66, 0, 0.5], [1.61, 0, 0.5]])
+    outm = drive_to_point(x=2.0, y=0.0, tol=0.4, speed=0.5,
+                          consts=_consts(tol_floor=0.2, arrive_margin=0.05, settle_s=0.0), **kwm)
+    assert outm["reached"] is True and outm["reason"] == "ok"
+    assert outm["remaining"] <= 0.4             # eff_tol UNCHANGED — genuinely arrived
+
+
+def test_arrive_margin_default_zero_no_op():
+    """The additive field defaults to 0.0 (rule 6): _consts()/existing constructors
+    omit it, so arrive_tol == eff_tol byte-identical (G1 path unchanged)."""
+    assert _consts().arrive_margin == 0.0
+    kw, _ = _driver([[0, 0, 0.5]] + [[2.0, 0, 0.5]] * 30)
+    out = drive_to_point(x=2.0, y=0.0, tol=0.2, speed=0.5, consts=_consts(), **kw)
+    assert out["reached"] is True and out["reason"] == "ok"
+
+
+def test_arrive_margin_clamped_to_tol_floor():
+    """A margin larger than eff_tol clamps to tol_floor — never <0, so a fat
+    margin can never make arrival impossible or breach the gait COM floor."""
+    # eff_tol = max(0.4, 0.3) = 0.4; arrive_tol = max(0.4-1.0, 0.3) = 0.3 (floor)
+    kw, _ = _driver([[0, 0, 0.5], [1.65, 0, 0.5], [1.73, 0, 0.5]])
+    out = drive_to_point(x=2.0, y=0.0, tol=0.4, speed=0.5,
+                         consts=_consts(tol_floor=0.3, arrive_margin=1.0, settle_s=0.0), **kw)
+    assert out["reached"] is True and out["reason"] == "ok"   # arrived at the floor
 
 
 # --------------------------------------------------------------------------

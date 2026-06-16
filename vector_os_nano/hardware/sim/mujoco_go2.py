@@ -215,6 +215,12 @@ _GO2_NAV_STALL_MIN_M = 0.10  # min net progress within the window
 # conservative by the front radius so the planned path keeps the body clear.
 _GO2_NAV_INFLATION = 0.34
 _GO2_NAV_WAYPOINT_TOL = 0.45
+# Break the drive loop ~5cm INSIDE the tol ring: the Go2 trot breaks while still
+# moving forward and coasts ~1-4cm during settle (R6/R10/R13), so arriving deeper
+# lands the authoritative settled pose inside the unchanged verify tol (rule 5 —
+# we tighten the controller, never loosen eff_tol). 0.05 >> the observed coast,
+# << tol_floor=0.20 so it can never invert the ring. G1 keeps 0.0 (unchanged).
+_GO2_NAV_ARRIVE_MARGIN = 0.05
 
 # Campaign #11 R5: the shared world-agnostic controller's constant pack for Go2.
 from vector_os_nano.hardware.sim._nav_controller import NavConsts  # noqa: E402
@@ -224,7 +230,8 @@ _GO2_NAV = NavConsts(
     yaw_deadband=_GO2_NAV_YAW_DEADBAND, capture_r=_GO2_NAV_CAPTURE_R,
     tick_s=_GO2_NAV_TICK_S, settle_s=_GO2_NAV_SETTLE_S, timeout_s=_GO2_NAV_TIMEOUT_S,
     stall_window_s=_GO2_NAV_STALL_WINDOW_S, stall_min_m=_GO2_NAV_STALL_MIN_M,
-    inflation=_GO2_NAV_INFLATION, waypoint_tol=_GO2_NAV_WAYPOINT_TOL)
+    inflation=_GO2_NAV_INFLATION, waypoint_tol=_GO2_NAV_WAYPOINT_TOL,
+    arrive_margin=_GO2_NAV_ARRIVE_MARGIN)
 
 
 # ---------------------------------------------------------------------------
