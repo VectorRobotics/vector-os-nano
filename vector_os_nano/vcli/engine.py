@@ -1507,6 +1507,20 @@ class VectorEngine:
                 # geodesic verify) when the planner can read real positions.
                 best: dict[str, Any] = {}
                 for obj in wm.get_objects():
+                    # rule 5 (moat): GT-seeded objects exist ONLY as the verify
+                    # anchor (boot writes them with source '*_ground_truth'). They
+                    # must NOT reach the planner-facing world context — else the
+                    # decomposer reads their ground-truth (x, y) and navigate_to's
+                    # them, bypassing VLN (the chair is "found" without ever being
+                    # perceived). Only PERCEIVED objects (detect/VLM-populated)
+                    # belong here; the verify still binds to the GT anchor directly
+                    # via the world model. Filtering here only tightens the moat.
+                    try:
+                        _src = str((getattr(obj, "properties", None) or {}).get("source", ""))
+                    except Exception:  # noqa: BLE001
+                        _src = ""
+                    if _src.endswith("ground_truth"):
+                        continue
                     label = obj.label or obj.object_id
                     cur = best.get(label)
                     if cur is None or obj.confidence > cur.confidence:
