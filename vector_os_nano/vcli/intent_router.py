@@ -46,7 +46,7 @@ _RULES: list[tuple[frozenset[str], tuple[str, ...]]] = [
     (frozenset({
         "仿真", "sim", "simulation", "reset", "重置", "启动", "模拟",
         "habitat", "sysnav",
-        "switch", "切换", "换成", "切到", "embodiment", "具身",
+        "switch", "切换", "换成", "切到", "切回", "变身", "embodiment", "具身",
         "headless", "无窗口", "不要窗口", "no window",
     }), ("sim", "system", "robot")),
 ]
@@ -187,6 +187,7 @@ _GO_DO_VERBS: tuple[str, ...] = (
 # non-switch leg of multi-step commands; R13 review caught it.)
 _SWITCH_VERBS: tuple[str, ...] = (
     "切换", "切到", "切换到", "换成", "换到", "变成",
+    "切回", "变身", "变身成", "switch back",   # campaign #12 M4 DEBT-2 synonyms
     "switch to", "switch the", "change to", "change the",
 )
 _EMBODIMENT_TARGETS: tuple[str, ...] = (

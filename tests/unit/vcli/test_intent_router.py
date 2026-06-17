@@ -111,3 +111,16 @@ class TestSwitchIntentRouting:
         # switch verb + target (incl. 具身/dog) → tool_use
         for msg in ("切换具身", "变成狗", "change to the go2"):
             assert self.router.should_use_vgg(msg) is False, msg
+
+
+def test_switch_synonyms_debt2():
+    # campaign #12 M4 DEBT-2: 切回/变身 are switch verbs (gated by an embodiment
+    # target) and narrow route() to sim so switch_embodiment is offered.
+    from vector_os_nano.vcli.intent_router import IntentRouter, _is_embodiment_switch
+    assert _is_embodiment_switch("变身go2")
+    assert _is_embodiment_switch("切回go2")
+    assert _is_embodiment_switch("变身成 g1")
+    assert not _is_embodiment_switch("切回原点")   # no embodiment target → not a switch
+    r = IntentRouter()
+    assert "sim" in (r.route("切回go2") or [])
+    assert "sim" in (r.route("变身go2") or [])

@@ -69,7 +69,11 @@ class VlmSeekSkill:
     failure_modes: list = ["no_base", "no_camera", "not_found"]
 
     def __init__(self, detector: "VlmTargetDetector | None" = None) -> None:
-        self._detector = detector or VlmTargetDetector()
+        # DEBT-1: the 70-iter seek loop servos on bearing/area of a target it is
+        # actively approaching (not a far precise locate), so it opts the VLM image
+        # DOWN to 256px — ~4x less payload/latency per tick than the LOCATE path's
+        # 512 (which recognize_navigate keeps). 256 >> the proven-bad 160.
+        self._detector = detector or VlmTargetDetector(max_dim=256)
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         base = context.base

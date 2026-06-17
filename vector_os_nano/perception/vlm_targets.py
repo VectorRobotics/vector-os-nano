@@ -61,16 +61,18 @@ _GROUNDING_PROMPT = (
 VlmCall = Callable[[np.ndarray, str], str]
 
 
-def _default_vlm_call() -> VlmCall:
+def _default_vlm_call(max_dim: "int | None" = None) -> VlmCall:
     """Build the production caller: Qwen-VL via OpenRouter (Go2VLMPerception).
 
     Constructed lazily so importing this module never needs a key or network.
     The underlying ``_call_vlm(frame, prompt) -> str`` issues the real request;
     the API key is read from the environment by Go2VLMPerception itself.
-    """
+    ``max_dim`` (campaign #12 M4 DEBT-1) opts the image downsize DOWN for callers
+    that don't need far-locate precision (e.g. vlm_seek's 70-iter loop -> 256);
+    None keeps the module default (512)."""
     from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
 
-    client = Go2VLMPerception()
+    client = Go2VLMPerception(config={"max_dim": max_dim} if max_dim else None)
 
     def call(frame: np.ndarray, prompt: str) -> str:
         return client._call_vlm(frame, prompt)  # noqa: SLF001 — intended raw hook
@@ -127,13 +129,15 @@ class VlmTargetDetector:
             Tests inject a deterministic fake.
     """
 
-    def __init__(self, vlm_call: Optional[VlmCall] = None) -> None:
+    def __init__(self, vlm_call: Optional[VlmCall] = None,
+                 max_dim: "int | None" = None) -> None:
         self._vlm_call = vlm_call
         self._lazy = vlm_call is None
+        self._max_dim = max_dim   # DEBT-1: opt the lazy default caller down (e.g. seek=256)
 
     def _caller(self) -> VlmCall:
         if self._vlm_call is None:
-            self._vlm_call = _default_vlm_call()
+            self._vlm_call = _default_vlm_call(max_dim=self._max_dim)
         return self._vlm_call
 
     def detect_targets(

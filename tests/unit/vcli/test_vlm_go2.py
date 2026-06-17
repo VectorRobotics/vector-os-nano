@@ -70,3 +70,18 @@ def test_call_vlm_400_raises_plain_runtimeerror_not_rate_limit(monkeypatch):
         vlm._call_vlm(_frame(), "prompt")
     assert not isinstance(ei.value, v.VlmRateLimitError)   # non-429 4xx unchanged
     assert calls["n"] == 1
+
+
+def test_encode_frame_respects_instance_max_dim_debt1():
+    # campaign #12 M4 DEBT-1: per-instance max_dim opts the seek loop down to 256
+    # while the LOCATE path keeps the default 512.
+    import base64
+    import io
+
+    from PIL import Image
+    v = _live()
+    big = np.zeros((480, 640, 3), dtype=np.uint8)   # 640 > 512 > 256
+    d512 = v.Go2VLMPerception(config={"api_key": "x"})._encode_frame(big)
+    assert max(Image.open(io.BytesIO(base64.b64decode(d512))).size) == 512
+    d256 = v.Go2VLMPerception(config={"api_key": "x", "max_dim": 256})._encode_frame(big)
+    assert max(Image.open(io.BytesIO(base64.b64decode(d256))).size) == 256

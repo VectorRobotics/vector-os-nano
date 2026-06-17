@@ -153,3 +153,21 @@ class TestRateLimitOptIn:
         # a non-rate-limit failure is still swallowed even with the flag on
         assert det.detect_targets(_frame(), query="chair",
                                   raise_on_rate_limit=True) == []
+
+
+def test_detector_threads_max_dim_debt1(monkeypatch):
+    # DEBT-1: VlmTargetDetector(max_dim=256) opts the lazy default caller down;
+    # the default (None) keeps the module 512.
+    from vector_os_nano.perception import vlm_targets
+    cap = {}
+
+    def fake(max_dim=None):
+        cap["m"] = max_dim
+        return lambda f, p: "[]"
+
+    monkeypatch.setattr(vlm_targets, "_default_vlm_call", fake)
+    vlm_targets.VlmTargetDetector(max_dim=256)._caller()
+    assert cap["m"] == 256
+    cap.clear()
+    vlm_targets.VlmTargetDetector()._caller()
+    assert cap["m"] is None

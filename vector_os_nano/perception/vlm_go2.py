@@ -193,6 +193,14 @@ class Go2VLMPerception:
             self._local = False
             self._timeout: float = _TIMEOUT_S
 
+        # Per-instance image downsize (campaign #12 M4 DEBT-1): defaults to the
+        # module global (512 remote / 512 local), but a caller can opt DOWN — e.g.
+        # vlm_seek's 70-iter servo loop passes max_dim=256 (it approaches a target
+        # and stalls on progress, it does NOT need far-locate precision), keeping
+        # the recognize_navigate LOCATE path at the proven 512. Single-source: the
+        # global stays the default; this is an additive opt-down (rule 6).
+        self._max_dim: int = int(cfg.get("max_dim") or (
+            _VLM_IMAGE_MAX_DIM_LOCAL if self._local else _VLM_IMAGE_MAX_DIM))
         self._cost_usd: float = 0.0
         self._cost_lock: threading.Lock = threading.Lock()
 
@@ -297,8 +305,8 @@ class Go2VLMPerception:
             Base64-encoded JPEG bytes (no data URI prefix).
         """
         pil_image = Image.fromarray(frame)
-        # Resize if larger than max dimension
-        max_dim = _VLM_IMAGE_MAX_DIM_LOCAL if self._local else _VLM_IMAGE_MAX_DIM
+        # Resize if larger than max dimension (per-instance, DEBT-1)
+        max_dim = self._max_dim
         w, h = pil_image.size
         if max(w, h) > max_dim:
             scale = max_dim / max(w, h)
