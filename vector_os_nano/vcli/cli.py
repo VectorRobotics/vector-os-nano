@@ -589,10 +589,16 @@ def _maybe_init_g1_agent(args: argparse.Namespace, world: Any) -> Any:
     # display-less box).
     gui = not getattr(args, "headless", False)
     try:
+        # prefer_daemon=True: run the gait on a daemon control thread (matching the
+        # mid-REPL _start_g1 boot) instead of viewer pump-mode. In pump-mode the gait
+        # + camera only advance on the MAIN thread, but VGG skills run on the
+        # background vgg-executor thread — so a launched g1 would freeze mid-skill
+        # (walk/recognize_navigate never pumped). Daemon mode lets any thread drive it.
         return g1_runtime.boot_g1_agent(
             world,
             on_status=lambda line: console.print(f"[dim]  {line}[/dim]"),
             gui=gui,
+            prefer_daemon=True,
         )
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]g1 scenario boot failed: {exc}[/red]")
@@ -1564,6 +1570,9 @@ def main(argv: list[str] | None = None) -> None:
         "robot_ctx_provider": robot_ctx_provider,
         "world": world,
         "scenario": _active_scenario,
+        # switch_embodiment reads sim_gui to decide the target embodiment's window
+        # mode on a mid-session switch; without it the switch defaulted to gui=True.
+        "sim_gui": not getattr(args, "headless", False),
     }
 
     # VGG cognitive layer (optional)
@@ -1949,8 +1958,25 @@ def main(argv: list[str] | None = None) -> None:
                 # VECTOR_LEGACY_TURN=1 restores the exact pre-cutover fork
                 # (vgg_decompose-then-run_turn) for one release as a fallback.
                 _legacy_turn = os.environ.get("VECTOR_LEGACY_TURN") == "1"
+                # M4-B (ADR-012): a compound "switch + act" command (e.g.
+                # "切到go2，然后找到椅子并走过去") MUST go through run_turn_unified, which
+                # owns switch-segmentation — the async VGG fork below plans only @skills
+                # and cannot reach the switch_embodiment @tool, so it would silently drop
+                # the switch leg (the robot stays on the old embodiment). Detect it via
+                # the single-source router (rule 3) and force the run_turn_unified path
+                # (goal_tree=None) so the switch leg runs, rebinds, then the residual
+                # runs on the NEW embodiment.
+                _router = getattr(engine, "_intent_router", None)
+                _switch_compound = (
+                    not _legacy_turn
+                    and _router is not None
+                    and app_state.get("agent") is not None
+                    and _router.split_switch_segments(user_input) is not None
+                )
                 if _legacy_turn:
                     goal_tree = engine.vgg_decompose(user_input)
+                elif _switch_compound:
+                    goal_tree = None  # -> run_turn_unified (switch-segmentation) path
                 else:
                     goal_tree = (
                         engine.vgg_decompose(user_input)

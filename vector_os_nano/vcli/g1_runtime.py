@@ -66,7 +66,13 @@ def boot_g1_agent(
     # from Blender Cycles/OptiX (photoreal CC0 assets) instead of MuJoCo's basic
     # render, so the real VLM grounds a photoreal frame. Default off (opt-in).
     import os
-    photoreal = furnished and os.environ.get("VECTOR_G1_PHOTOREAL", "") not in ("", "0")
+    # Read EITHER flag (mirror go2_runtime) so the furnished VLN room is photoreal
+    # whether the owner set VECTOR_G1_PHOTOREAL or VECTOR_GO2_PHOTOREAL — the prior
+    # g1-only flag silently no-op'd photoreal when only the go2 flag was exported.
+    photoreal = furnished and (
+        os.environ.get("VECTOR_G1_PHOTOREAL", "") not in ("", "0")
+        or os.environ.get("VECTOR_GO2_PHOTOREAL", "") not in ("", "0")
+    )
     _emit(on_status, "booting G1 humanoid (unitree_rl_gym policy gait)"
           + (" — furnished room (furniture/VLM)" if furnished
              else " — room (walls/obstacles/lidar)" if room else "")
