@@ -143,6 +143,11 @@ NL input
   |
   v
 run_turn_unified (ONE closed-loop controller — both frontends call it)
+  [M4-B switch-segmentation pre-pass (ADR-012): a compound "switch + act" command
+   (e.g. "切到go2，然后往前走一米") is split at switch boundaries; each switch leg runs
+   via the proven top-level switch_embodiment path (rebinds the active agent), and
+   later segments run on the NEW embodiment. Fires ONLY for that shape (app_state
+   present); every other turn falls straight through to classify_intent unchanged.]
   classify_intent  ==> IntentDecision{route, reason, complex}   [HINT, not a verify gate]
   |   (should_use_vgg is now a cheap shape PRE-CLASSIFIER feeding the controller,
   |    incl. the conversational-question guard; it no longer forks AROUND verify)

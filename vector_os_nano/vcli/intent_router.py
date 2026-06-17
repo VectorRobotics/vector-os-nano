@@ -11,6 +11,8 @@ when intent is ambiguous.
 """
 from __future__ import annotations
 
+import re
+
 
 # (keywords, categories) — checked in order, all matches accumulated
 _RULES: list[tuple[frozenset[str], tuple[str, ...]]] = [
@@ -90,7 +92,7 @@ _PERCEPTION_JUDGMENT_PHRASES: tuple[str, ...] = (
 # If 2+ distinct GROUPS are present, task is multi-action → complex.
 _ACTION_VERB_GROUPS: list[tuple[str, frozenset[str]]] = [
     ("navigate", frozenset({"去", "到", "导航", "走到", "去到", "go", "navigate"})),
-    ("move", frozenset({"走", "前进", "walk"})),
+    ("move", frozenset({"走", "前进", "挪", "walk"})),
     ("look", frozenset({"看", "观察", "look", "scan"})),
     ("find", frozenset({"找", "检查", "check", "find"})),
     ("explore", frozenset({"探索", "explore"})),
@@ -235,6 +237,23 @@ def _residual_has_motor_signal(msg_lower: str) -> bool:
             start = idx + len(particle)
 
     return False
+
+
+# M4-B (ADR-012 Option A): compound-command segmentation at switch boundaries.
+# We split ONLY on sequential word-connectors and CJK punctuation — NOT the ASCII
+# comma, so a coordinate list ("x=2, y=1.5") inside a residual is never broken.
+# "and then" must precede "then" in the alternation so the longer match wins.
+_SEGMENT_DELIMITER_RE = re.compile(
+    r"然后|接着|之后|，|。|；|\band\s+then\b|\bthen\b", re.IGNORECASE
+)
+_SEGMENT_STRIP = " \t\r\n,，。；;、"
+
+
+def _split_on_sequential(msg: str) -> list[str]:
+    """Split *msg* into ordered, non-empty, punctuation-trimmed pieces on the
+    sequential delimiters above."""
+    parts = _SEGMENT_DELIMITER_RE.split(msg)
+    return [p.strip(_SEGMENT_STRIP) for p in parts if p and p.strip(_SEGMENT_STRIP)]
 
 
 class IntentRouter:
@@ -439,3 +458,30 @@ class IntentRouter:
             return None  # ambiguous → send all tools
 
         return sorted(matched)
+
+    def split_switch_segments(self, user_message: str) -> list[str] | None:
+        """Split a compound command that BOTH switches embodiment AND acts into
+        ordered segments at switch boundaries (M4-B / ADR-012 Option A).
+
+        Returns the ordered segment list when the message contains an embodiment
+        switch AND at least one other (non-switch) step; returns None otherwise —
+        a pure switch, a non-switch command, or an unsplittable compound — so the
+        caller routes it normally (rule 8: do not guess at an ambiguous split).
+
+        Reuses the single-source switch detector (``_is_embodiment_switch`` /
+        ``_SWITCH_VERBS`` / ``_EMBODIMENT_TARGETS``, rule 3) — no second vocab.
+        The switch leg is run via the proven top-level ``switch_embodiment`` path
+        (rebinding the active agent) BEFORE the residual is routed on the NEW
+        embodiment, which is why the switch (a @tool, unreachable inside a single
+        VGG decompose) need not be made a planner step.
+        """
+        if not user_message or not _is_embodiment_switch(user_message.lower()):
+            return None
+        pieces = _split_on_sequential(user_message)
+        if len(pieces) < 2:
+            return None
+        has_switch = any(_is_embodiment_switch(p.lower()) for p in pieces)
+        has_action = any(not _is_embodiment_switch(p.lower()) for p in pieces)
+        if not (has_switch and has_action):
+            return None
+        return pieces

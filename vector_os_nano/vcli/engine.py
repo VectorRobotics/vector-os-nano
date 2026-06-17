@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1784,6 +1784,24 @@ class VectorEngine:
         ``None`` trace (no closed loop is possible without the cognitive layer) — the
         text is still returned so the turn is never silently dropped.
         """
+        # M4-B (ADR-012 Option A): a compound command that BOTH switches embodiment
+        # and acts is split at switch boundaries and run segment-by-segment — the
+        # switch leg rebinds the active agent (ADR-011) via the proven top-level
+        # path, then later segments run on the NEW embodiment. This composes
+        # switch+action WITHOUT making switch_embodiment (a @tool) reachable inside a
+        # single VGG decompose (which only plans @skills, rule 3). Guarded on
+        # app_state (needed to rebind between segments) and the router's presence;
+        # split returns None for a pure switch / non-switch / unsplittable command,
+        # so the normal route below is unchanged for every non-compound-switch turn.
+        router = getattr(self, "_intent_router", None)
+        if app_state is not None and router is not None:
+            segments = router.split_switch_segments(user_message)
+            if segments is not None:
+                return self._run_switch_segmented(
+                    segments, session, agent, on_text, on_tool_start,
+                    on_tool_end, ask_permission, app_state, on_reasoning,
+                )
+
         intent = self.classify_intent(user_message)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
@@ -1798,6 +1816,64 @@ class VectorEngine:
             on_tool_start, on_tool_end, ask_permission, app_state, on_reasoning,
             intent,
         )
+
+    def _run_switch_segmented(
+        self,
+        segments: list[str],
+        session: Session,
+        agent: Any,
+        on_text: Callable[[str], None] | None,
+        on_tool_start: Callable[[str, dict[str, Any]], None] | None,
+        on_tool_end: Callable[[str, ToolResult], None] | None,
+        ask_permission: Callable[[str, dict[str, Any]], str] | None,
+        app_state: dict[str, Any],
+        on_reasoning: Callable[[str], None] | None,
+    ) -> UnifiedTurnResult:
+        """Run a switch-segmented compound command (M4-B / ADR-012 Option A).
+
+        Each segment is run as its own ``run_turn_unified`` turn IN ORDER. The active
+        agent is re-read from ``app_state`` before every segment, so a switch segment
+        that rebinds ``app_state['agent']`` (via switch_embodiment's ``_rebind_agent``)
+        makes every subsequent segment run on the NEW embodiment — eliminating the
+        stale-agent hazard by construction (the switch completes before the next plan
+        begins). Each segment splits to None (a pure switch or a non-switch action),
+        so there is no re-entry into segmentation. Returns the LAST segment's result
+        (the residual action's verified trace); switch text streams live via on_text.
+        """
+        result: UnifiedTurnResult | None = None
+        all_tool_calls: list[Any] = []
+        texts: list[str] = []
+        for seg in segments:
+            current = app_state.get("agent", agent)
+            result = self.run_turn_unified(
+                seg,
+                session,
+                agent=current,
+                on_text=on_text,
+                on_tool_start=on_tool_start,
+                on_tool_end=on_tool_end,
+                ask_permission=ask_permission,
+                app_state=app_state,
+                on_reasoning=on_reasoning,
+            )
+            all_tool_calls.extend(getattr(result, "tool_calls", None) or [])
+            seg_text = (getattr(result, "text", "") or "").strip()
+            if seg_text:
+                texts.append(seg_text)
+        # Surface the compound turn faithfully: the UNION of tool_calls across all
+        # segments (so the switch the command performed is observable, not only the
+        # last leg's), plus the joined text. The trace/verify/snapshot stay the LAST
+        # (residual action) segment's — the action whose success the user asked for.
+        if result is not None and all_tool_calls:
+            try:
+                result = replace(
+                    result,
+                    tool_calls=all_tool_calls,
+                    text="\n".join(texts) if texts else result.text,
+                )
+            except Exception:  # noqa: BLE001 — non-dataclass stub (tests) → as-is
+                pass
+        return result  # type: ignore[return-value]  # segments is non-empty by construction
 
     def _unified_answer_turn(
         self,

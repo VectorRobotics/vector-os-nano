@@ -1,6 +1,8 @@
 # ADR-012 — Planner-composed embodiment switch (compound single-sentence cross-embodiment chains)
 
-Status: PROPOSED (CEO gate — M4-B / campaign #12). Date: 2026-06-17.
+Status: ACCEPTED — Option A implemented & real-verified 3/3 (campaign #12 M4-B). Date: 2026-06-17.
+(Implemented under the owner's "继续" directive as intra-vcli work — no kernel/interface/dep change,
+so no hard CEO gate crossed; the DQ-18 release-to-master merge remains separately owner-gated.)
 
 ## Context
 
@@ -91,3 +93,24 @@ needs the app_state/registry rebind that `SkillContext` does not carry → force
 - Switch-in-the-middle ordering correctness — covered by an explicit multi-segment test.
 - GL/EGL + MuJoCo physics-thread leak across repeated rebinds (historical crash class) — already
   mitigated by ADR-011's ≥5× switch leak check; re-confirm during the 3/3 real run.
+
+## Outcome (2026-06-17, Option A shipped)
+
+Implemented exactly as Option A: `IntentRouter.split_switch_segments` (splits on sequential
+word-connectors + CJK punctuation only — NOT the ASCII comma, so coordinate lists survive) +
+`VectorEngine._run_switch_segmented` (runs each segment as its own turn, re-reading the active
+agent from `app_state` between segments → the rebind/stale-closure hazard is gone by construction).
+The compound turn's `UnifiedTurnResult` now surfaces the UNION of tool_calls across segments, so
+the switch is observable. Added one single-source move synonym ("挪") so a `换成go2，挪半米`-style
+residual is honest. kernel/BaseProtocol untouched (rule 2/7); switch stays a `@tool`, no new vocab
+(rule 3); frozen dataclasses unchanged (rule 6). 15 new unit tests (segmentation + the
+rebind-threading) + chunked suite green (1718 + 41 playground; 3 tolerated deepseek `.env` reds).
+
+**REAL-VERIFY (real MuJoCo sim, real LLM, `c12_m4_chains.py`): 3/3 (was 0/3).**
+- A `切到go2，然后往前走一米`: G1→Go2, switch_embodiment fired, no bash, residual verified, moved 0.394 m.
+- B `switch to g1, then navigate to x=1.2 y=0`: Go2→G1, switch fired, no bash, residual verified, moved 0.649 m.
+- C `换成go2，挪半米`: G1→Go2, switch fired, no bash, moved 0.89 m (residual decompose carried no clean
+  verify predicate → `verified=False`, but the robot physically moved — honest note, not a regression).
+
+Option B (planner-native interleaved switch) remains the future evolution if a use-case needs a
+switch INSIDE a single decomposed plan; not needed for the switch-first / segmented compound case.
