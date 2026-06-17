@@ -587,3 +587,21 @@ Routine bugs do NOT belong here; git history covers those.
   you which layer the accumulator ISN'T in. (Caveat: the locate fix collapses the M1
   recognise loop to ~3 renders so the M1 path no longer REACHES the cliff — but the
   server bug was real for any long render loop and is now fixed at the source.)
+
+## "Go2 photoreal-VLN gap" was a SHARED VLM-grounding ceiling — a 160px image (campaign #12)
+- **Symptom:** Go2 "find the chair and walk to it" arrived only ~2/5; depth-at-bbox located the
+  chair ~1.5-2m short. It LOOKED like a Go2-specific locate/nav bug.
+- **Two wrong turns (each disproven by a falsify-first probe, not bulldozed):** (1) floor-in-bbox
+  depth-percentile — fixed it (ground-plane rejection) → still ~2/5. (2) bbox-straddle — instrumented
+  the real depth window: it was UNIFORM (one surface), not straddling. So the depth VALUE wasn't the
+  issue.
+- **Root cause:** the remote VLM only saw a **160px** image (`vlm_go2._VLM_IMAGE_MAX_DIM`, set tiny for
+  payload). A 3.6m chair is a few pixels at 160px, so Qwen-VL mis-grounded onto near objects/obstacles.
+  Raising to **512px** dropped the locate error **2.1m → 0.29m** (5/5 correct grounding). The decisive
+  lever was upstream perception RESOLUTION, not the locate geometry.
+- **The reframe that cracked it:** running G1 at N=5 showed G1 was ALSO 2/5 (it committed Case-22
+  obstacles too) — its earlier "3/3" was lucky single runs. The "Go2 gap" was a ceiling BOTH embodiments
+  shared. Characterizing the reference embodiment at the SAME N as the suspect one is what exposed it.
+- **Lesson:** when a capability looks embodiment-specific, measure the "working" embodiment at the same
+  sample size before assuming a gap — a shared upstream ceiling masquerades as a per-embodiment bug. And
+  a flat-value sensor window with a wrong RESULT points upstream (perception input), not at the estimator.
