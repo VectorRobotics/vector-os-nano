@@ -1395,6 +1395,32 @@ def _ensure_sigint_under_mjpython() -> None:
         pass  # not the main thread / no SIGINT on this platform — leave as-is
 
 
+def _apply_runtime_env_defaults(
+    env: Any, *, blender_present: bool, has_display: bool
+) -> Any:
+    """Make a bare ``vector-cli`` self-sufficient (project rule 11).
+
+    The user types only ``vector-cli`` — never env prefixes / scenario flags. So
+    the CLI fills the sim/runtime env the photoreal VLN scenarios need, here at
+    startup, leaving the user nothing to export:
+      - photoreal co-sim ON by default for the furnished rooms when a Blender
+        binary is present (the runtimes still read ``VECTOR_*_PHOTOREAL``
+        unchanged); an explicit flag — including ``0`` to disable — is honoured.
+      - ``MUJOCO_GL=egl`` only when headless (no display), where MuJoCo needs an
+        offscreen backend; on a desktop MuJoCo's default (windowed viewer) stands.
+    Set HERE, not in the runtimes, so the test suite — which never runs through
+    ``main()`` — stays byte-identical. Mutates and returns ``env``.
+    """
+    if (blender_present
+            and "VECTOR_G1_PHOTOREAL" not in env
+            and "VECTOR_GO2_PHOTOREAL" not in env):
+        env["VECTOR_G1_PHOTOREAL"] = "1"
+        env["VECTOR_GO2_PHOTOREAL"] = "1"
+    if not has_display and "MUJOCO_GL" not in env:
+        env["MUJOCO_GL"] = "egl"
+    return env
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
@@ -1419,6 +1445,16 @@ def main(argv: list[str] | None = None) -> None:
     # (e.g. a daemonized parent) authoritative.
     import uuid as _uuid
     os.environ.setdefault("VECTOR_RUN_ID", f"cli-{_uuid.uuid4().hex[:8]}")
+
+    # Rule 11: bare `vector-cli` must be self-sufficient — fill the sim/runtime env
+    # the user would otherwise have to export (photoreal on when Blender is present;
+    # headless GL backend). Explicit env always wins. Done before any sim import.
+    from vector_os_nano.playground.photoreal.bridge import blender_available
+    _apply_runtime_env_defaults(
+        os.environ,
+        blender_present=blender_available(),
+        has_display=bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")),
+    )
 
     # --- macOS mjpython re-exec guard (must be before any credential/agent init) ---
     _maybe_reexec_under_mjpython(args)

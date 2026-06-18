@@ -124,10 +124,16 @@ def resolve_credentials(
     import os  # noqa: PLC0415
     from dotenv import load_dotenv  # noqa: PLC0415
 
-    # Load repo-root .env into the process environment BEFORE reading any env var.
-    # Standard find-from-cwd behaviour: walks up from cwd until it finds .env.
-    # No-op when absent; existing env vars are NOT overwritten (override=False default).
+    # Load .env BEFORE reading any env var. First the cwd-walk (a checkout you are
+    # standing in), then the .env that ships at THIS package's repo root so a bare
+    # `vector-cli` launched from ANY directory still finds keys (rule 11 — the user
+    # types only `vector-cli`, never `cd ... && source .env`). override=False: real
+    # env wins; the cwd .env wins over the package one. Both no-op when absent.
+    from pathlib import Path as _Path  # noqa: PLC0415
     load_dotenv()
+    _repo_env = _Path(__file__).resolve().parents[2] / ".env"
+    if _repo_env.is_file():
+        load_dotenv(_repo_env)
 
     config = load_config()
 
