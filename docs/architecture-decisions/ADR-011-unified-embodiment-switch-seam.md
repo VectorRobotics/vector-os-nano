@@ -1,6 +1,8 @@
 # ADR-011 — Unified embodiment-switch seam (G1 ⇄ Go2 in one vector-cli session)
 
 Status: PROPOSED (CEO gate — DQ-14). Date: 2026-06-15. Campaign #11 M0.
+**Resolution (appended 2026-06-18):** Accepted + shipped — campaign #11 merged to `master` @ `f282180`
+(DQ-17, owner-approved 2026-06-15). The "PROPOSED" status above is historical.
 
 ## Context
 

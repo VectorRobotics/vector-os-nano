@@ -1,3 +1,9 @@
+> ⚠️ **STALE — under redesign (2026-06-18).** This describes the pre-redesign direction (the
+> habitat "house world", superseded by the MuJoCo+Blender co-sim, ADR-010) and uses launch flags
+> that violate rule 11 (bare `vector-cli` only). The project direction is being restarted — see
+> [docs/REDESIGN-BRIEF.md](docs/REDESIGN-BRIEF.md) and [docs/agent-kernel-STATUS.md](docs/agent-kernel-STATUS.md).
+> This file will be regenerated once the new design exists; do not rely on it.
+
 # QUICKSTART — the House World in 30 minutes
 
 Drive a Unitree G1 through a furnished photoreal apartment with natural

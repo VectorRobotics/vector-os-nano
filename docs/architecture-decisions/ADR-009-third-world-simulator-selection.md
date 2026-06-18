@@ -4,6 +4,9 @@
 - Date: 2026-06-10
 - Related: ADR-005 (Isaac, superseded/paused), ADR-008 (playground parallel track),
   [ARCHITECTURE.md](../ARCHITECTURE.md)
+- **Resolution (appended 2026-06-18):** Accepted + shipped (habitat backend integrated),
+  then **SUPERSEDED by ADR-010** (MuJoCo + Blender photoreal co-sim) as the perception
+  substrate. The "Proposed — awaiting CEO approval" status above is historical.
 
 ## Context
 

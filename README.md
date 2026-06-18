@@ -1,3 +1,7 @@
+<!-- ⚠️ STALE — under redesign (2026-06-18). Entry points below (--sim-go2, habitat apartment,
+     deepseek-v4-flash) are outdated and the project direction is being restarted from scratch.
+     See docs/REDESIGN-BRIEF.md and docs/agent-kernel-STATUS.md. Will be rewritten post-redesign. -->
+
 <p align="center">
   <img src="images/ascii-art.png" width="800" alt="Vector Robotics">
 </p>
