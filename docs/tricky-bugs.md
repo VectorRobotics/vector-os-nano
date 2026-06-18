@@ -8,6 +8,36 @@ Routine bugs do NOT belong here; git history covers those.
 
 ---
 
+## Case N — GT-fallback rule-5 moat: one patched serializer, two un-patched siblings (2026-06-18)
+
+- **Symptom:** after `63e1cda` "closed" the VLN GT-fallback (filter GT from `_live_objects_line`
+  → planner prompt), the moat still leaked — the robot could "find the chair" without the VLM
+  ever running.
+- **Why hidden:** the fix was on the OBVIOUS surface (the prompt's `Objects (live):` line) and it
+  worked there, giving false confidence. The same GT-seeded world-model objects were read by TWO
+  OTHER channels the patch never touched: (1) `WorldQueryTool` (a read_only+allow tool that
+  serializes `wm.get_objects()` with coords — a second prompt surface), and (2)
+  `NavigateToPointSkill` Path A (`get_objects_by_label("chair")` matches the GT-SEEDED anchor and
+  navigates to its coords). Verify can't catch it: `at_position`/`visited` honestly anchor on GT,
+  so a GT-teleport means auto-passes — the moat's integrity rests ENTIRELY on the means never
+  reading GT.
+- **Root cause:** the anchor-vs-perceived distinction was an inline `source.endswith("ground_truth")`
+  check copy-pasted at one site — a per-reader guard with no single source, so every new
+  WM-reader silently re-opens the hole; the suffix-string convention is also brittle (a GT source
+  not ending in `ground_truth`, e.g. `mjcf_scan`, slips through).
+- **Cracked by:** an adversarial audit workflow (fan-out one auditor per leak surface → skeptic
+  refutes each by tracing the exact cheat path). It found the two siblings AND refuted a 3rd (Path
+  B `list_targets`, shadowed by Path A) — but flagged that *fixing* Path A re-opens Path B, so B
+  needed gating too. The refuter corrected the first read.
+- **Fix:** one predicate `core.world_model.is_verify_anchor()` (explicit `verify_anchor` flag +
+  back-compat suffix) + `get_perceived_objects[_by_label]()`; every planner/means-facing reader
+  routes through it; Path B (`list_targets`) gated on `not base._furnished` (legit in the non-VLN
+  color-box room, a cheat in VLN). `get_objects`/`get_objects_by_label` (verify side) unchanged.
+- **Lesson:** when a leak has a TYPE ("a verify-only GT anchor must never reach the means"),
+  fixing the one observed site is whack-a-mole — centralize the predicate + the accessor so every
+  current AND future reader is covered by construction. Audit ALL siblings of a confirmed leak,
+  and check whether fixing one re-opens another (shadowing).
+
 ## Case 1 — Go2 explore gait instability (飘/瘸腿): two-clock skew (2026-06, fixed `d7e158b`)
 
 - **Symptom:** during explore the gait went unstable/limping, step size over/undershoot.

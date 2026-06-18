@@ -116,6 +116,29 @@ class RobotState:
         )
 
 
+def is_verify_anchor(obj: Any) -> bool:
+    """Return True if *obj* is a verify-only ground-truth anchor (rule 5).
+
+    Boot seeds the scenario's known targets into the world model with their
+    GROUND-TRUTH coordinates so the deterministic verify predicates
+    (``visited``/``at_position``) can bind to them — the honest judge that the
+    robot ACTUALLY reached the thing it perceived. Those anchors must stay
+    invisible to every PLANNER- or MEANS-facing reader (prompt serializers, the
+    navigate label resolver); otherwise the robot "arrives" by reading GT instead
+    of perceiving (VLN bypassed). This is the SINGLE source of truth for that
+    distinction — every such reader routes through it (or the perceived-only
+    accessors below) so a new reader can not silently re-open the moat.
+
+    An anchor is marked by an explicit ``properties['verify_anchor']`` flag
+    (preferred); the legacy ``source`` suffix ``*_ground_truth`` is honoured for
+    back-compat with objects/saved state seeded before the flag existed.
+    """
+    props = getattr(obj, "properties", None) or {}
+    if props.get("verify_anchor"):
+        return True
+    return str(props.get("source", "")).endswith("ground_truth")
+
+
 class WorldModel:
     """Persistent world state. Tracks objects, robot, and spatial relations.
 
@@ -147,8 +170,17 @@ class WorldModel:
         return self._objects.get(object_id)
 
     def get_objects(self) -> list[ObjectState]:
-        """Return all tracked objects as a list (order unspecified)."""
+        """Return ALL tracked objects, incl. verify anchors (verify side only)."""
         return list(self._objects.values())
+
+    def get_perceived_objects(self) -> list[ObjectState]:
+        """Return only PERCEIVED objects — verify-only GT anchors excluded.
+
+        The planner/means-facing accessor (rule 5): prompt serializers and skill
+        label resolvers read this, never :meth:`get_objects`, so a GT anchor can
+        never become the MEANS of reaching a target. See :func:`is_verify_anchor`.
+        """
+        return [o for o in self._objects.values() if not is_verify_anchor(o)]
 
     def get_objects_by_label(self, label: str) -> list[ObjectState]:
         """Return all objects matching the given label (case-insensitive, normalised).
@@ -167,6 +199,17 @@ class WorldModel:
             if obj_label == query or query in obj_label or obj_label in query:
                 results.append(o)
         return results
+
+    def get_perceived_objects_by_label(self, label: str) -> list[ObjectState]:
+        """:meth:`get_objects_by_label` with verify-only GT anchors excluded.
+
+        The means-facing label resolver (rule 5): a skill resolving "go to the
+        chair" reads this so it can only bind a PERCEIVED chair, never the GT
+        anchor. If only the anchor matches it returns ``[]`` — the caller then
+        fails loud, forcing genuine perception. See :func:`is_verify_anchor`.
+        """
+        return [o for o in self.get_objects_by_label(label)
+                if not is_verify_anchor(o)]
 
     # ------------------------------------------------------------------
     # Robot state

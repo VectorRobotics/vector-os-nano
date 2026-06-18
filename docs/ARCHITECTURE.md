@@ -225,6 +225,19 @@ These are the contracts the kernel guarantees. Anything that violates them is a 
   of re-querying a separate oracle that false-passes when the requested target is absent.
   The overlay never persists and the sandbox is not loosened.
 
+- **Verify anchors are means-invisible (the GT-teleport guard).** Boot may seed a scenario's
+  known targets into the world model with their ground-truth coordinates as the deterministic
+  verify ANCHOR (so `at_position`/`visited` honestly judge whether the robot reached the thing
+  it perceived). Because those predicates anchor on GT, the moat's integrity rests entirely on
+  the MEANS never reading GT — a GT-teleport would auto-pass. So every planner- or means-facing
+  reader (prompt serializers like `_live_objects_line` and the `world_query` tool; skill label
+  resolvers like `NavigateToPointSkill`) reads ONLY perceived objects, via the single
+  `world_model.is_verify_anchor()` predicate + `get_perceived_objects[_by_label]()`. The raw
+  `get_objects`/`get_objects_by_label` (verify side) still see anchors. A label that matches only
+  an anchor resolves to nothing → the skill fails loud → perception (e.g. `recognize_navigate`)
+  is forced. (Substrate GT coord-nav — the non-perception color-box room — is the one sanctioned
+  exception, gated on the base not being a perception/VLN scenario.)
+
 - **Closed-loop observation flow.** Each step's output is written to the per-run
   Blackboard. Downstream parameters bind to upstream outputs via `${step.output.path}`
   references, resolved by pure dict/list traversal (no code execution). `StepRecord`

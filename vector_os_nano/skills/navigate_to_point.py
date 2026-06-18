@@ -157,7 +157,20 @@ class NavigateToPointSkill:
         label = str(params.get("label", "") or "").strip()
         if label:
             wm = getattr(context, "world_model", None)
-            matches = wm.get_objects_by_label(label) if wm is not None else []
+            # rule 5 (moat): resolve the label against PERCEIVED objects only —
+            # the boot-seeded GT anchor (source '*_ground_truth' / verify_anchor)
+            # is verify-only and must NOT become the means. If only the anchor
+            # matches, matches is empty -> fail loud below -> the planner must use
+            # a perception skill (recognize_navigate / vlm_seek), never a GT
+            # teleport. See core.world_model.is_verify_anchor.
+            if wm is None:
+                matches = []
+            elif hasattr(wm, "get_perceived_objects_by_label"):
+                matches = wm.get_perceived_objects_by_label(label)
+            else:
+                from vector_os_nano.core.world_model import is_verify_anchor
+                matches = [m for m in wm.get_objects_by_label(label)
+                           if not is_verify_anchor(m)]
             if matches:
                 best = max(matches, key=lambda o: o.confidence)
                 x, y = float(best.x), float(best.y)
@@ -187,7 +200,14 @@ class NavigateToPointSkill:
                 # R5): a base may expose GROUND-TRUTH labeled targets
                 # (g1_room.list_targets) — the 'go to the target object's point'
                 # half of req #5 WITHOUT photoreal recognition (DQ-10-gated).
-                gt_target = _resolve_base_target(base, label)
+                # Path B (rule 5): the raw list_targets() GT read. Legit in the
+                # non-VLN color-box room (no perception; coordinate-to-target IS
+                # the designed means), a CHEAT in a furnished VLN room (perception
+                # is the means — recognize_navigate). Gate it off when the base is
+                # furnished so a VLN "go to the chair" with nothing perceived fails
+                # loud below and forces recognition, never a GT teleport.
+                gt_target = (None if getattr(base, "_furnished", False)
+                             else _resolve_base_target(base, label))
                 if gt_target is not None:
                     x, y = gt_target
                     params = dict(params)

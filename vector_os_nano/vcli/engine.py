@@ -1506,21 +1506,18 @@ class VectorEngine:
                 # resolvable into an actionable binding (navigate_to(x, y) +
                 # geodesic verify) when the planner can read real positions.
                 best: dict[str, Any] = {}
-                for obj in wm.get_objects():
-                    # rule 5 (moat): GT-seeded objects exist ONLY as the verify
-                    # anchor (boot writes them with source '*_ground_truth'). They
-                    # must NOT reach the planner-facing world context — else the
-                    # decomposer reads their ground-truth (x, y) and navigate_to's
-                    # them, bypassing VLN (the chair is "found" without ever being
-                    # perceived). Only PERCEIVED objects (detect/VLM-populated)
-                    # belong here; the verify still binds to the GT anchor directly
-                    # via the world model. Filtering here only tightens the moat.
-                    try:
-                        _src = str((getattr(obj, "properties", None) or {}).get("source", ""))
-                    except Exception:  # noqa: BLE001
-                        _src = ""
-                    if _src.endswith("ground_truth"):
-                        continue
+                # rule 5 (moat): the planner-facing context shows only PERCEIVED
+                # objects — verify-only GT anchors are excluded so the decomposer
+                # can never read a target's ground-truth (x, y) and navigate_to it,
+                # bypassing VLN. Routed through the single perceived accessor (a
+                # bare fake world model without it falls back to the same
+                # is_verify_anchor predicate). See core.world_model.is_verify_anchor.
+                from vector_os_nano.core.world_model import is_verify_anchor
+                if hasattr(wm, "get_perceived_objects"):
+                    _objs = wm.get_perceived_objects()
+                else:
+                    _objs = [o for o in wm.get_objects() if not is_verify_anchor(o)]
+                for obj in _objs:
                     label = obj.label or obj.object_id
                     cur = best.get(label)
                     if cur is None or obj.confidence > cur.confidence:

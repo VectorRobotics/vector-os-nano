@@ -73,10 +73,18 @@ class WorldQueryTool:
             if parts:
                 lines.append("Robot: " + ", ".join(parts))
 
-        # Objects
+        # Objects — rule 5 (moat): surface only PERCEIVED objects. The boot-seeded
+        # GT anchors live in the world model for the verify predicates only; if
+        # world_query (read_only + auto-allowed) serialized their coordinates the
+        # planner would read a target's ground truth and navigate_to it, "finding"
+        # it with the VLM never invoked. Routed through the single perceived
+        # accessor (see core.world_model.is_verify_anchor).
         objects: list[Any] = []
-        if hasattr(wm, "get_objects"):
-            objects = wm.get_objects()
+        if hasattr(wm, "get_perceived_objects"):
+            objects = wm.get_perceived_objects()
+        elif hasattr(wm, "get_objects"):
+            from vector_os_nano.core.world_model import is_verify_anchor
+            objects = [o for o in wm.get_objects() if not is_verify_anchor(o)]
 
         query: str = params.get("query", "").lower()
         for obj in objects:

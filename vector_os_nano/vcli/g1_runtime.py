@@ -143,7 +143,8 @@ def boot_g1_agent(
                 object_id=name, label=labels.get(name, name),
                 x=float(tx), y=float(ty),
                 confidence=1.0, state="placed",
-                properties={"source": "g1_room_ground_truth"}))
+                properties={"source": "g1_room_ground_truth",
+                            "verify_anchor": True}))
 
     _emit(on_status, "G1 base connected — walk/turn/stop/navigate_to ready"
           + (f" — {len(base.list_targets())} known targets" if room else ""))

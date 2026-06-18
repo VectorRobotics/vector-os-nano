@@ -106,7 +106,8 @@ def boot_go2_agent(
             object_id=name, label=labels.get(name, name),
             x=float(tx), y=float(ty),
             confidence=1.0, state="placed",
-            properties={"source": "go2_room_ground_truth"}))
+            properties={"source": "go2_room_ground_truth",
+                        "verify_anchor": True}))
 
     _emit(on_status, "Go2 base connected — walk/turn/stop/vlm_seek"
           + ("/navigate_to/recognize_navigate" if vln else "") + " ready"
