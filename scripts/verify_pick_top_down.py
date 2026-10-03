@@ -44,7 +44,6 @@ _MIN_LIFT_CM: float = 1.0
 # verification works whether the repo is cloned or symlinked anywhere.
 _CHILD_TEMPLATE = textwrap.dedent("""
     import os, sys, time, logging, mujoco
-    os.environ["VECTOR_SIM_WITH_ARM"] = "1"
     logging.basicConfig(level=logging.ERROR, stream=sys.stderr)
     from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
     from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
@@ -59,7 +58,7 @@ _CHILD_TEMPLATE = textwrap.dedent("""
     # Direct hardware path — no ROS2 bridge, pure in-process MuJoCo. This
     # bypasses the production proxy flow but exercises the same IK / grasp
     # logic the proxy uses.
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
     go2.connect()
     piper = MuJoCoPiper(go2); piper.connect()
     gripper = MuJoCoPiperGripper(go2); gripper.connect()

@@ -13,9 +13,7 @@ scene are NOT touched.
 """
 from __future__ import annotations
 
-import os
 
-os.environ.setdefault("VECTOR_SIM_WITH_ARM", "1")
 
 import time
 
@@ -37,7 +35,7 @@ from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
 @pytest.fixture(scope="module")
 def sim():
     """Session-scope Go2+Piper sim. Headless. Torn down after the module."""
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
     go2.connect()
     piper = MuJoCoPiper(go2)
     piper.connect()

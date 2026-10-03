@@ -3,8 +3,7 @@
 
 """Unit tests for _build_go2_perception (Spec 3 — perception wiring guard).
 
-The go2 sim launchers (SimStartTool._start_go2 and the in-process --sim-go2
-path in cli) must wire a REAL RGB-D + detector + segmenter perception backend
+The go2 SimSession (behind NL start_simulation and --sim-go2) must wire a REAL RGB-D + detector + segmenter perception backend
 onto agent._perception so look/explore can depth-localize VLM-named objects to
 accurate world (x, y, z) via localize_objects_3d.
 
@@ -19,7 +18,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from vector_os_nano.vcli.tools.sim_tool import _build_go2_perception
+from vector_os_nano.sim.session import _build_go2_perception as _build
+
+
+def _build_go2_perception(base: Any) -> Any:
+    return _build(base, width=320, height=240)
 
 
 class _FullCameraBase:
@@ -59,8 +62,9 @@ def test_build_perception_with_full_camera_base():
     base = _FullCameraBase()
     perception = _build_go2_perception(base)
     assert isinstance(perception, Go2GraspPerception)
-    # The perception wraps the exact base it was given.
+    # The perception wraps the exact base it was given, at the manifest size.
     assert perception._base is base
+    assert (perception._w, perception._h) == (320, 240)
 
 
 def test_build_perception_none_when_base_is_none():

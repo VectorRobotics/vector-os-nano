@@ -18,7 +18,6 @@ Run with:
 from __future__ import annotations
 
 import math
-import os
 import time
 
 import pytest
@@ -148,10 +147,9 @@ def test_navigate_to_with_piper_attached_does_not_crash() -> None:
     (arm-enabled scene + Piper attached + tight tol) and asserts navigate_to returns
     in bounded wall-time having moved the dog. Self-contained (own arm-enabled sim).
     """
-    os.environ["VECTOR_SIM_WITH_ARM"] = "1"
     from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
 
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
     go2.connect()
     piper = MuJoCoPiper(go2)
     piper.connect()
@@ -176,4 +174,3 @@ def test_navigate_to_with_piper_attached_does_not_crash() -> None:
     finally:
         piper.disconnect()
         go2.disconnect()
-        os.environ.pop("VECTOR_SIM_WITH_ARM", None)

@@ -152,11 +152,15 @@ def test_sim_agent_has_gripper_and_perception():
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 
-    ns = argparse.Namespace(sim=True, sim_go2=False, gui=False, api_key=None)
-    agent = cli._init_agent(ns)
-    assert isinstance(agent._gripper, MuJoCoGripper)
-    assert isinstance(agent._perception, MuJoCoPerception)
-    assert agent.execute_skill("gripper_open").success
+    ns = argparse.Namespace(sim=True, sim_go2=False, headless=True, api_key=None)
+    session = cli._init_agent(ns)  # --sim -> the so101 SimSession
+    try:
+        agent = session.agent
+        assert isinstance(agent._gripper, MuJoCoGripper)
+        assert isinstance(agent._perception, MuJoCoPerception)
+        assert agent.execute_skill("gripper_open").success
+    finally:
+        session.stop()
 
 
 def test_vgg_gate_admits_arm_only(arm):
@@ -278,13 +282,14 @@ def test_sim_tool_lifecycle_dev_to_arm_to_dev():
                       abort=threading.Event(), app_state=app)
 
     tools_before = set(reg.list_tools())
-    SimStartTool().execute({"sim_type": "arm"}, ctx)
+    res = SimStartTool().execute({"embodiment": "so101", "gui": False}, ctx)
+    assert not res.is_error and "Started so101" in res.content, res.content
     assert set(reg.list_tools()) - tools_before, "skills should be registered on start"
     sp = eng._system_prompt
     assert isinstance(sp, DynamicSystemPrompt)
     assert sp._provider is not None and sp._provider._arm is not None
     assert "No hardware connected" not in "".join(b.get("text", "") for b in sp)
-    assert reg.is_category_enabled("robot") and reg.is_category_enabled("diag")
+    assert all(reg.is_category_enabled(c) for c in ("robot", "diag", "system"))
     assert app["agent"] is not None
     # gui defaults headless: no viewer in-process
     assert getattr(app["agent"]._arm, "_viewer", None) is None
@@ -293,8 +298,8 @@ def test_sim_tool_lifecycle_dev_to_arm_to_dev():
     sp2 = eng._system_prompt
     assert isinstance(sp2, DynamicSystemPrompt)
     assert sp2._provider._arm is None
-    assert not reg.is_category_enabled("robot")
-    assert app["agent"] is None
+    assert not any(reg.is_category_enabled(c) for c in ("robot", "diag", "system"))
+    assert app["agent"] is None and app["sim_session"] is None
     # skill tools are actually unregistered (not merely hidden), so restart is clean
     assert set(reg.list_tools()) == tools_before
 

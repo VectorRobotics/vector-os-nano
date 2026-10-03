@@ -13,7 +13,6 @@ import logging
 import os
 
 os.environ.setdefault("MUJOCO_GL", "egl")
-os.environ["VECTOR_SIM_WITH_ARM"] = "1"
 
 _QUERY = os.environ.get("GRASP_QUERY", "绿色的瓶子")
 _TARGET = os.environ.get("GRASP_TARGET", "pickable_bottle_green")
@@ -45,7 +44,7 @@ def main() -> int:
     from vector_os_nano.skills.pick_top_down import PickTopDownSkill
     from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
 
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc"); go2.connect()
+    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True); go2.connect()
     piper = MuJoCoPiper(go2); piper.connect()
     gripper = MuJoCoPiperGripper(go2); gripper.connect()
     perception = Go2GraspPerception(go2, width=320, height=240)
