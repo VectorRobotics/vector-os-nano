@@ -22,14 +22,14 @@ import re
 
 import pytest
 
-# go2 starts at (10, 3); a generous forward walk reaches within at_position tol of
-# (11, 3) (the same honest-walk script the trichotomy / native-first -p tests use).
+# go2 starts at (10, 3); a 1.0 m backward walk reaches within at_position tol of
+# (9, 3) (the same honest-walk script the trichotomy / native-first -p tests use).
 _WALK_SCRIPT = {
     "turns": [
         {"tool_calls": [
-            {"name": "walk", "input": {"direction": "forward", "distance": 2.5, "speed": 0.3}}
+            {"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}
         ]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0)"}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(9.0, 3.0)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -38,12 +38,12 @@ _WALK_SCRIPT = {
 @pytest.mark.cli_main
 @pytest.mark.capability
 def test_repl_native_walk_routes_to_native_on_go2_sim(sim_cleanup) -> None:
-    """`vector-cli` + "走到坐标 (11,3)" routes to native on the real go2 sim, verifies honestly."""
+    """`vector-cli` + "走到坐标 (9,3)" routes to native on the real go2 sim, verifies honestly."""
     pytest.importorskip("mujoco")
     from tests.harness.pty_cli import run_repl_session
 
     result = run_repl_session(
-        ["走到坐标 (11.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT, native=True,
+        ["走到坐标 (9.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT, native=True,
         timeout_sec=240,
     )
     text = result.text
@@ -80,7 +80,7 @@ def test_repl_legacy_env_does_not_attempt_native(sim_cleanup) -> None:
     from tests.harness.pty_cli import run_repl_session
 
     result = run_repl_session(
-        ["走到坐标 (11.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT,
+        ["走到坐标 (9.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT,
         native=False,  # VECTOR_REPL_NATIVE=0
         timeout_sec=240,
     )

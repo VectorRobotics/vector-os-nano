@@ -10,7 +10,7 @@ gate that the VECTOR_VERDICT carries — never a re-derivation.
 
 Three cases, each on the real sim, each landing on the real verdict:
 
-- HONEST walk  (verify=at_position(11.0,3.0), strategy walk_skill -> base.walk()):
+- HONEST walk  (verify=at_position(9.0,3.0), strategy walk_skill -> base.walk()):
       the actor COMMANDS motion (instrumented set_velocity) AND displaces ~1m ->
       CAUSED -> GROUNDED -> verified True / exit 0.  Driven through the R2a PTY
       harness (the REAL ``python -m vector_os_nano.vcli.cli -p ... --json --sim-go2``).
@@ -19,7 +19,7 @@ Three cases, each on the real sim, each landing on the real verdict:
       predicate true at baseline + zero commanded motion -> UNCAUSED -> downgraded
       to RAN -> verified False / exit 2.  Also driven through the PTY harness.
 
-- TELEPORT     (a fake/test sub_goal pokes the root x=11.0 with NO set_velocity):
+- TELEPORT     (a fake/test sub_goal pokes the root x=9.0 with NO set_velocity):
       pose jumps but zero commanded motion -> UNCAUSED -> RAN -> verified False /
       exit 2.  Modeled by a TEST-ONLY primitive (NO production teleport tool — the
       qpos poke cannot cross the cli subprocess boundary without one, which is
@@ -38,7 +38,6 @@ its own process group reaped after each case (sim_cleanup).
 """
 from __future__ import annotations
 
-import time
 
 import pytest
 
@@ -46,18 +45,17 @@ pytest.importorskip("mujoco")
 
 from tests.harness.pty_cli import run_cli_turn  # noqa: E402
 
-# go2 starts at (10, 3); a forward walk_skill must reach within at_position's 0.5m
-# tol of (11, 3). The MPC gait runs slower than wall-clock, so the plan asks for a
-# longer nominal distance (duration = distance/speed) to actually displace ~1m.
+# go2 starts at (10, 3); a 1.0 m backward walk_skill (SIM-timed) must reach within
+# at_position's 0.5m tol of (9, 3) (forward is blocked by the pick table at x~10.47).
 _HONEST_PLAN = {
-    "goal": "走到坐标 (11.0,3.0)",
+    "goal": "走到坐标 (9.0,3.0)",
     "sub_goals": [
         {
             "name": "walk_to_target",
-            "description": "向前走到 (11,3)",
-            "verify": "at_position(11.0, 3.0)",
+            "description": "向后走到 (9,3)",
+            "verify": "at_position(9.0, 3.0)",
             "strategy": "walk_skill",  # validator-kept; -> WalkSkill -> base.walk()
-            "strategy_params": {"direction": "forward", "distance": 2.5, "speed": 0.3},
+            "strategy_params": {"direction": "backward", "distance": 1.0, "speed": 0.3},
         }
     ],
 }
@@ -89,7 +87,7 @@ _SIM_TIMEOUT_SEC = 220.0
 def test_honest_walk_is_caused_and_verified(sim_cleanup) -> None:
     """Honest walk_skill -> base.walk() displaces ~1m -> CAUSED -> verified/exit 0."""
     r = run_cli_turn(
-        "走到坐标 (11.0,3.0)",
+        "走到坐标 (9.0,3.0)",
         fake_plan=_HONEST_PLAN,
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
@@ -164,13 +162,14 @@ def test_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         eng._world = RobotWorld()
         eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())
 
-        # TEST-ONLY teleport: poke the root x directly (atomic numpy write, NO
-        # mj_forward — that races the 1 kHz daemon), NO set_velocity. The
-        # commanded-motion counter never advances, so the grader sees a large
-        # displacement with zero commanded motion -> UNCAUSED.
+        # TEST-ONLY teleport: poke the root x at a step boundary (runtime.call),
+        # NO set_velocity. The commanded-motion counter never advances, so the
+        # grader sees a large displacement with zero commanded motion -> UNCAUSED.
+        adr = base._mj.layout.root_qpos_adr
+
         def teleport_primitive(**_):
-            base._mj.data.qpos[base._mj.layout.root_qpos_adr] = 11.0
-            time.sleep(0.15)
+            base.runtime.call(lambda _m, d: d.qpos.__setitem__(adr, 9.0))
+            base.wait_sim(0.15)
             return True
 
         ex = GoalExecutor(
@@ -181,21 +180,21 @@ def test_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         )
         sg = SubGoal(
             name="tp", description="瞬移(fake)",
-            verify="at_position(11.0, 3.0)", strategy="teleport_skill",
+            verify="at_position(9.0, 3.0)", strategy="teleport_skill",
             timeout_sec=20.0,
         )
         start = list(base.get_position()[:2])
-        trace = ex.execute(GoalTree(goal="走到坐标 (11.0,3.0)", sub_goals=(sg,)))
+        trace = ex.execute(GoalTree(goal="走到坐标 (9.0,3.0)", sub_goals=(sg,)))
         step = trace.steps[0]
 
-        # The teleport "succeeded" and the predicate is TRUE (pose jumped to ~11),
+        # The teleport "succeeded" and the predicate is TRUE (pose jumped to ~9),
         # but no command was issued — the grader catches it.
         assert step.success is True
         assert step.verify_result is True
         from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
         assert step.actor_caused is ActorCaused.UNCAUSED
         assert abs(base.cmd_motion()) < 1e-9, "teleport issued zero commanded motion"
-        assert base.get_position()[0] > start[0] + 0.5, "qpos actually jumped"
+        assert base.get_position()[0] < start[0] - 0.5, "qpos actually jumped"
 
         # The SAME verdict gate the PTY harness asserts -> verified False / exit 2.
         report = VerdictReport.from_trace(trace, verify_oracle_names(agent, eng))

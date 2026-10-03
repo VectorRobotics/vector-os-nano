@@ -83,11 +83,12 @@ def test_step_syncs_only_on_the_caller_thread():
     go2 = MuJoCoGo2(gui=False)
     go2.connect()
     try:
-        go2._pause_physics()  # stop the daemon so only step() drives sync
-        viewer = _RecordingViewer()
-        go2._viewer = viewer
-        go2._sim_step = 0  # first step hits the viewer-sync decimation boundary
-        go2.step(1)
+        with go2.runtime.paused():  # park the stepper so only step() drives sync
+            viewer = _RecordingViewer()
+            go2._viewer = viewer
+            go2._sim_step = 0  # first step hits the viewer-sync decimation boundary
+            go2.step(1)
+            go2._viewer = None
         assert viewer.sync_threads, "step() did not sync the viewer"
         assert all(tid == threading.get_ident() for tid in viewer.sync_threads)
     finally:
@@ -117,8 +118,8 @@ def test_walk_pumps_physics_on_caller_thread_in_pump_mode(monkeypatch):
         go2.disconnect()
 
 
-def test_resume_physics_does_not_spawn_a_thread_in_pump_mode(monkeypatch):
-    """A posture (pause/resume) must NOT restart a daemon under pump mode."""
+def test_posture_does_not_spawn_a_thread_in_pump_mode(monkeypatch):
+    """A posture (stepped on the caller) must NOT start a stepper under pump mode."""
     from vector_os_nano.hardware.sim import viewer_mode as vm
     from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 
@@ -129,10 +130,10 @@ def test_resume_physics_does_not_spawn_a_thread_in_pump_mode(monkeypatch):
     go2 = MuJoCoGo2(gui=False)
     go2.connect()
     try:
-        go2._pause_physics()
-        go2._resume_physics()
-        assert go2._running is True
-        assert go2._physics_thread is None
+        t0 = go2.get_sim_time()
+        go2.sit(duration=0.1)
+        assert go2.get_sim_time() > t0
+        assert go2.runtime.threaded is False
         assert not any(t.name == "mujoco_go2_physics" for t in threading.enumerate())
     finally:
         go2.disconnect()
