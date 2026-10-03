@@ -396,6 +396,35 @@ def _print_native_enabled() -> bool:
     )
 
 
+def _flush_turn_state(session: Any, app_state: dict[str, Any]) -> None:
+    """Persist the transcript and the scene graph NOW (called between REPL turns).
+
+    A MuJoCo segfault kills the process without the exit-time saves, so this
+    bounds the loss to the turn that crashed; ``vector-cli --resume`` restores
+    the transcript and the next sim start reloads the scene graph.
+    """
+    try:
+        session.save()
+        sm = getattr(app_state.get("agent"), "_spatial_memory", None)
+        if sm is not None and hasattr(sm, "save"):
+            sm.save()
+    except Exception as exc:  # noqa: BLE001 — persistence is best-effort, never a crash
+        logger.debug("per-turn flush failed: %s", exc)
+
+
+def _enable_crash_log(session: Any) -> Any:
+    """faulthandler -> ``<session>.crash.log`` next to the transcript (C-level crash traces)."""
+    import faulthandler
+
+    try:
+        fh = open(Path(session._path).with_suffix(".crash.log"), "a")  # noqa: SIM115 — lives as long as the process
+        faulthandler.enable(file=fh, all_threads=True)
+        return fh
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("crash log unavailable: %s", exc)
+        return None
+
+
 def _gait_backend(agent: Any) -> str:
     """The sim body's active locomotion backend ('mpc' / 'sinusoidal'), else ''."""
     return str(getattr(getattr(agent, "_base", None), "gait_backend", "") or "")
@@ -2059,9 +2088,11 @@ def main(argv: list[str] | None = None) -> None:
     # Ctrl-C UX (R2-4): one ^C aborts a running task and returns to the prompt;
     # a second consecutive ^C (at the prompt) exits cleanly. Reset on any input.
     interrupt_pending = False
+    app_state["crash_log"] = _enable_crash_log(session)
 
     try:
         while True:
+            _flush_turn_state(session, app_state)  # a segfault loses at most one turn
             # ---- Read input ----
             try:
                 raw = pt_session.prompt(
