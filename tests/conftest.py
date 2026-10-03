@@ -28,6 +28,7 @@ Hygiene (WP01) — every test runs as if it were alone on a shared box:
 from __future__ import annotations
 
 import functools
+import inspect
 import os
 import re
 import subprocess
@@ -147,24 +148,37 @@ def _hygiene(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
 # The sim tier: auto 'sim' marker + ONE session preflight.
 # ---------------------------------------------------------------------------
 
-# A file that constructs a MuJoCo model / sim (in-process or via a PTY child) is
-# sim-tier. ponytail: per-file source regex, so a file's fake-only tests ride along
-# into the sim tier; split such files if hermetic coverage matters.
+# A test whose file or fixtures construct a MuJoCo model / sim (in-process or via a
+# PTY child) is sim-tier. ponytail: a source regex per file, so a file's fake-only
+# tests ride along into the sim tier; split such files if hermetic coverage matters.
 _SIM_SOURCE = re.compile(
     r"MuJoCo(Go2|Arm|Piper|G1)\(|mujoco\.MjModel|MjModel\.from_xml|build_room_scene"
     r"|sim_go2=True|\bsim=True|\"--sim(-go2)?\"|_init_agent\(|^import mujoco",
     re.M,
 )
-_sim_file_cache: dict[Path, bool] = {}
-
-
+@functools.cache
 def _is_sim_file(path: Path) -> bool:
-    if path not in _sim_file_cache:
-        try:
-            _sim_file_cache[path] = bool(_SIM_SOURCE.search(path.read_text(encoding="utf-8")))
-        except OSError:
-            _sim_file_cache[path] = False
-    return _sim_file_cache[path]
+    try:
+        return bool(_SIM_SOURCE.search(path.read_text(encoding="utf-8")))
+    except OSError:
+        return False
+
+
+@functools.cache
+def _is_sim_fixture(func: object) -> bool:
+    try:
+        return bool(_SIM_SOURCE.search(inspect.getsource(func)))  # type: ignore[arg-type]
+    except (OSError, TypeError):
+        return False
+
+
+def _builds_sim(item: pytest.Item) -> bool:
+    """The test's file, or any fixture it uses (e.g. a conftest go2 fixture), builds a sim."""
+    if _is_sim_file(Path(str(item.path))):
+        return True
+    info = getattr(item, "_fixtureinfo", None)
+    defs = info.name2fixturedefs.values() if info is not None else ()
+    return any(_is_sim_fixture(d.func) for ds in defs for d in ds)
 
 
 @functools.cache
@@ -232,7 +246,7 @@ def pytest_collection_modifyitems(
             continue
         if row is not None:
             item.add_marker(pytest.mark.xfail(reason=row[2], strict=False))
-        if _is_sim_file(Path(str(item.path))) and item.get_closest_marker("sim") is None:
+        if item.get_closest_marker("sim") is None and _builds_sim(item):
             item.add_marker(pytest.mark.sim)
         if item.get_closest_marker("live_llm") is not None and not _LIVE:
             item.add_marker(pytest.mark.skip(reason="live_llm: set VECTOR_LIVE_LLM=1 (billed opt-in)"))
