@@ -12,7 +12,7 @@ Each test pins a confirmed finding's fix so it cannot regress:
 - TemplateLibrary() is in-memory (no home-dir writes)
 - comment-only code is not a successful execution
 - template value substitution is word-boundary aware
-- the code sandbox excludes the subprocess-spawning tests_pass predicate
+- the code sandbox carries only read-only dev predicates (tests_pass is removed)
 - vector-eval distinguishes an empty suite from a failed case
 
 Pure kernel logic — no robot, no network, no mujoco fixtures.
@@ -225,7 +225,7 @@ def test_code_sandbox_excludes_tests_pass(tmp_path: Path, monkeypatch) -> None:
     eng = VectorEngine(backend=MagicMock(), intent_router=MagicMock())
     eng.init_vgg(agent=None, skill_registry=None, world=DevWorld(), persist_dir=tmp_path)
     ns = eng._goal_executor._code_executor._namespace
-    assert "tests_pass" not in ns  # subprocess runner stripped from the sandbox
+    assert "tests_pass" not in ns  # WP02 removed tests_pass entirely (an action, not a verify)
     assert "file_exists" in ns      # read-only predicates retained
 
 

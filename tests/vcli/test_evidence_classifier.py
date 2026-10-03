@@ -40,15 +40,22 @@ GROUNDED = [
     "facing(-1.57)",
     "visited('kitchen')",
     "path_contains('note.txt', 'note')",  # goal-conditioned bool — bare call OK
-    "not holding_object()",  # the existing place verify
     "'table' in describe_scene()",
     "placed_count() == 2",
     "len(detect_objects()) > 0",
 ]
 
+# WP02 stricter-only: `not <rise-predicate>` is RAN. A release re-homes to a
+# positive fall-transition oracle, never `not holding_object()` (which the actor-
+# causation layer already graded UNCAUSED->RAN at runtime). See RAN below.
+
 RAN = [
     "",
     "True",
+    "not holding_object()",       # WP02: negation of a rise predicate is not evidence
+    "get_position() is not None", # WP02: `is`/`is not` never evidence
+    "len(detect_objects()) >= 0", # WP02: vacuous count lower bound
+    "'' in describe_scene()",     # WP02: empty-string membership is always true
     "1 == 1",  # no oracle
     "len([1, 2, 3]) == 3",  # no oracle
     "get_position()",  # bare state oracle (always truthy)

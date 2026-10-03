@@ -21,6 +21,7 @@ from typing import Any
 from vector_os_nano.vcli.cognitive.blackboard import Blackboard
 from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
+from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 from vector_os_nano.vcli.cognitive.strategy_selector import StrategyResult
 from vector_os_nano.vcli.cognitive.strategy_stats import StrategyStats
 from vector_os_nano.vcli.cognitive.types import ForEachSpec, GoalTree, SubGoal
@@ -50,7 +51,11 @@ def _build(objects: list[dict[str, Any]]) -> tuple[GoalExecutor, StrategyStats]:
     # the gate rewards each verified child. (A bespoke ``picked()`` would classify
     # RAN under the honest gate and never count as a success.)
     namespace = {
-        "holding_object": lambda label: label in state["picked"],
+        # WP02: only @oracle-tagged callables count as evidence. holding_object is a
+        # robot GT oracle, so tag it; the reward gate then grounds each verified child.
+        "holding_object": oracle(scope="robot", channel="gripper")(
+            lambda label=None: label in state["picked"]
+        ),
         "detected": lambda: len(objects) > 0,
     }
     # In-memory only StrategyStats (persist_path=None -> no file I/O).

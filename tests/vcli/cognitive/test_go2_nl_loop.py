@@ -44,6 +44,7 @@ import pytest
 
 from vector_os_nano.playground.catalog import GO2_ROOM
 from vector_os_nano.playground.world import PlaygroundWorld
+from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names
 from vector_os_nano.vcli.cognitive.blackboard import Blackboard
 from vector_os_nano.vcli.cognitive.goal_decomposer import GoalDecomposer
 from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
@@ -369,7 +370,10 @@ def test_explore_room_snapshot_json_safe_and_renders() -> None:
     executor = _executor(agent)
 
     trace = executor.execute(tree)
-    snapshot = run_snapshot(trace)
+    # Grade against the playground's tagged GT oracles (what verify_oracle_names
+    # returns in this world). Each step's verify is a real base predicate.
+    oracle_names = evidence_names(PlaygroundWorld(GO2_ROOM).build_verify_namespace(agent))
+    snapshot = run_snapshot(trace, oracle_names)
 
     # Round-trips through json.dumps (deterministic, no exotic objects leaked).
     encoded = json.dumps(snapshot)
@@ -378,19 +382,21 @@ def test_explore_room_snapshot_json_safe_and_renders() -> None:
     # The snapshot reflects the go2 chain.
     step_names = [sv["sub_goal_name"] for sv in snapshot["steps"]]
     assert step_names == ["walk_to_kitchen", "scan", "explore"]
-    # Every exported step shows success + verify_result (the verified loop).
+    # Every exported step shows success + verify_result AND grades GROUNDED (the
+    # verifies are real base predicates over the live sim-oracle ground truth).
     assert all(sv["success"] and sv["verify_result"] for sv in snapshot["steps"])
-    assert snapshot["success"] is True
+    assert all(sv["evidence"] == "GROUNDED" for sv in snapshot["steps"])
+    assert snapshot["success"] is True and snapshot["verified"] is True
 
-    # The verified loop renders to readable text with stable PASS markers and the
-    # base verify predicates shown per step.
+    # The verified loop renders with the spine's own evidence markers (GROUNDED),
+    # not a success&verify_result "PASS" that would mislabel a merely-RAN step.
     text = render_run_snapshot(snapshot)
     assert "Goal: explore the room" in text
-    # Three verified step lines plus the overall outcome line, all PASS.
-    assert text.count("[PASS]") == 4
-    assert "Outcome: [PASS] 3/3 steps verified" in text
+    # Three grounded step lines plus the overall outcome line, all GROUNDED.
+    assert text.count("[GROUNDED]") == 4
+    assert "Outcome: [GROUNDED] 3/3 steps grounded" in text
     assert "visited('kitchen')" in text  # a base predicate is surfaced
-    assert "[FAIL]" not in text
+    assert "[FAILED]" not in text
 
 
 # ---------------------------------------------------------------------------

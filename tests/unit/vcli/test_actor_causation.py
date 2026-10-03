@@ -9,8 +9,6 @@ Pin the actor-causation mechanism in isolation, on duck-typed fakes (no sim):
             (0,0,0) "write" (zero magnitude) does NOT satisfy causation.
 (grade)     honest / no-op / teleport / missing-baseline(fail-closed) -> the right
             CAUSED/UNCAUSED grade.
-(frozen)    baseline_namespace binds the oracle over the SNAPSHOT — advancing the
-            live base after capture does NOT change the baseline predicate (fix 5).
 (gate)      a robot at_position step is GROUNDED only when CAUSED (single-source
             through classify_step_evidence).
 (holding)   weld eq_active 0->1 grades CAUSED; no transition grades UNCAUSED.
@@ -20,9 +18,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from vector_os_nano.vcli.cognitive.actor_causation import (
-    ActorBaseline,
     ActorCaused,
-    baseline_namespace,
     capture,
     from_name,
     grade,
@@ -145,29 +141,6 @@ def test_grade_command_without_displacement_is_uncaused() -> None:
     base.command(0.5)  # commanded, but no teleport => no displacement
     after = capture(_agent(base=base))
     assert grade(before, after, "at_position(11.0, 3.0)", ROBOT_ORACLES) == ActorCaused.UNCAUSED
-
-
-# ---------------------------------------------------------------------------
-# (frozen) baseline_namespace binds the SNAPSHOT, immune to live drift (fix 5)
-# ---------------------------------------------------------------------------
-
-
-def test_baseline_namespace_uses_snapshot_not_live_base() -> None:
-    base = _FakeBase(10.0, 3.0, cmd_motion=0.0)
-    before = capture(_agent(base=base))
-    ns = baseline_namespace(before)
-    # At capture the base was at (10,3) -> at_position(10,3) true @ baseline.
-    assert ns["at_position"](10.0, 3.0) is True
-    # Advance the LIVE base far away; the FROZEN namespace must NOT change.
-    base.teleport(50.0, 50.0)
-    assert ns["at_position"](10.0, 3.0) is True  # still answers from the snapshot
-    assert ns["at_position"](50.0, 50.0) is False
-
-
-def test_baseline_namespace_absent_base_fails_safe() -> None:
-    ns = baseline_namespace(capture(None))
-    # No captured pose -> the frozen base is "disconnected" -> predicate False.
-    assert ns["at_position"](0.0, 0.0) is False
 
 
 # ---------------------------------------------------------------------------

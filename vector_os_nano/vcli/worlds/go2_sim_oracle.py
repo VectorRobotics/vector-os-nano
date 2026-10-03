@@ -33,12 +33,19 @@ import logging
 import math
 from typing import Any, Callable
 
+from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M, _MAX_FACING_TOL_RAD
+from vector_os_nano.vcli.cognitive.oracle_registry import oracle
+
 logger = logging.getLogger(__name__)
 
 # Tolerances (metres / radians). Deliberately generous: verify is a coarse gate
 # on "did the step reach roughly the intended state", not a precision check.
 _AT_POSITION_TOL_M: float = 0.5
 _FACING_TOL_RAD: float = math.radians(20.0)
+# A caller-supplied tol is clamped to these caps INSIDE the oracle, so tolerance
+# inflation (``at_position(0, 0, 1e6)``, ``facing(0, 7)``) is vacuous for every goal,
+# not only coordinate goals (FG-3). Honest tols (0.5-2 m, <=45 deg) pass unchanged.
+# The classifier also refuses an over-cap literal tol (evidence_classifier._TOL_ARG).
 
 
 def _get_base(agent: Any) -> Any | None:
@@ -93,12 +100,13 @@ def make_at_position(agent: Any) -> Callable[..., bool]:
     deterministic ground truth; fails safe to ``False`` (bad args or no base).
     """
 
+    @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_ARRIVAL_TOL_M)
     def at_position(x: Any, y: Any, tol: Any = _AT_POSITION_TOL_M) -> bool:
         base = _get_base(agent)
         if base is None:
             return False
         try:
-            tx, ty, t = float(x), float(y), float(tol)
+            tx, ty, t = float(x), float(y), min(float(tol), _MAX_ARRIVAL_TOL_M)
         except (TypeError, ValueError):
             return False
         pos = _base_position(base)
@@ -118,12 +126,13 @@ def make_facing(agent: Any) -> Callable[..., bool]:
     ``False`` (bad args or no base).
     """
 
+    @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_FACING_TOL_RAD)
     def facing(heading: Any, tol: Any = _FACING_TOL_RAD) -> bool:
         base = _get_base(agent)
         if base is None:
             return False
         try:
-            target, t = float(heading), float(tol)
+            target, t = float(heading), min(float(tol), _MAX_FACING_TOL_RAD)
         except (TypeError, ValueError):
             return False
         yaw = _base_heading(base)
@@ -150,6 +159,7 @@ def make_visited(agent: Any, rooms: dict[str, tuple[float, float, float, float]]
         if _is_box(box)
     }
 
+    @oracle(scope="robot", channel="base", transition="rise")
     def visited(room: Any) -> bool:
         base = _get_base(agent)
         if base is None:

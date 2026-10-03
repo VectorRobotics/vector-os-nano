@@ -77,7 +77,7 @@ class EvalRunner:
         self._verifier = verifier
 
     def _oracle_names(self) -> frozenset[str]:
-        """Live dev verify-namespace callable names (single source, rule 3).
+        """Live dev evidence-oracle names (``@oracle(scope="dev")``, rule 3).
 
         The eval runner is dev-world by construction (module docstring): its oracle
         names are the keys of the SAME dev verify namespace the injected
@@ -85,12 +85,14 @@ class EvalRunner:
         (never a second copy); otherwise we read ``dev_verify_namespace()``
         directly — never an empty set, which would falsely fail every dev case.
         """
+        from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names
+
         ns = getattr(self._verifier, "_namespace", None)
         if isinstance(ns, dict) and ns:
-            return frozenset(ns.keys())
+            return evidence_names(ns, "dev")
         from vector_os_nano.vcli.worlds.dev import dev_verify_namespace
 
-        return frozenset(dev_verify_namespace().keys())
+        return evidence_names(dev_verify_namespace(), "dev")
 
     def run_case(self, case: dict[str, Any]) -> EvalCaseResult:
         task = str(case.get("task", "")).strip()

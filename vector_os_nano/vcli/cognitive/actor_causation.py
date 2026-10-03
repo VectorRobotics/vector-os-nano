@@ -42,8 +42,8 @@ from __future__ import annotations
 import enum
 import logging
 import math
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -227,88 +227,6 @@ def capture(agent: Any) -> ActorBaseline:
         arm_joints=arm_joints,
         gripper_welds=gripper_welds,
     )
-
-
-# ---------------------------------------------------------------------------
-# Baseline namespace — oracle predicates frozen over the SNAPSHOT (fix 5)
-# ---------------------------------------------------------------------------
-
-
-class _FrozenBase:
-    """A read-only base stub returning the SNAPSHOT's pose, never the live base.
-
-    Duck-types the accessors ``go2_sim_oracle`` reads (``get_position`` /
-    ``get_heading`` / ``_connected``) so the same oracle factories bind against a
-    frozen pose. This is the heart of fix 5: the baseline predicate must evaluate
-    against the pose AT CAPTURE, so advancing the live base afterwards cannot make a
-    satisfied-at-baseline NO-OP look like it was already-satisfied "now".
-    """
-
-    def __init__(self, pos: tuple[float, float, float] | None, heading: float | None) -> None:
-        self._pos = pos
-        self._heading = heading
-        # Frozen but "connected" only when a real pose was captured; otherwise the
-        # oracle fails safe to False (an absent base never grades as satisfied).
-        self._connected = pos is not None
-
-    def get_position(self) -> list[float]:
-        if self._pos is None:
-            raise RuntimeError("frozen base: no captured position")
-        return [self._pos[0], self._pos[1], self._pos[2]]
-
-    def get_heading(self) -> float:
-        if self._heading is None:
-            raise RuntimeError("frozen base: no captured heading")
-        return float(self._heading)
-
-
-class _FrozenArm:
-    """A read-only arm stub returning the SNAPSHOT's joints, never the live arm."""
-
-    def __init__(self, joints: tuple[float, ...] | None) -> None:
-        self._joints = joints
-        self._connected = joints is not None
-
-    def get_joint_positions(self) -> list[float]:
-        if self._joints is None:
-            raise RuntimeError("frozen arm: no captured joints")
-        return list(self._joints)
-
-    def fk(self, joint_positions: list[float]) -> Any:  # pragma: no cover - parity stub
-        raise RuntimeError("frozen arm: fk not snapshotted")
-
-
-def baseline_namespace(baseline: ActorBaseline) -> dict[str, Callable[..., Any]]:
-    """Build the verify oracle namespace bound to the FROZEN baseline snapshot.
-
-    Binds the SAME oracle factories (``make_at_position`` / ``make_facing`` /
-    ``make_arm_at_home``) over a frozen stub agent built from *baseline*'s
-    snapshot, NEVER the live robot. So ``baseline_namespace(b)["at_position"](x,y)``
-    answers "was the predicate already true AT CAPTURE", immune to drift afterward.
-
-    Used by ``grade`` to detect a NO-OP: a GROUNDED predicate that was ALREADY
-    satisfied at baseline (true here) with no commanded motion is UNCAUSED.
-    """
-    from types import SimpleNamespace
-
-    stub = SimpleNamespace(
-        _base=_FrozenBase(baseline.base_pos, baseline.base_heading),
-        _arm=_FrozenArm(baseline.arm_joints),
-        _gripper=None,
-    )
-    ns: dict[str, Callable[..., Any]] = {}
-    try:
-        from vector_os_nano.vcli.worlds.go2_sim_oracle import make_at_position, make_facing
-        ns["at_position"] = make_at_position(stub)
-        ns["facing"] = make_facing(stub)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("actor_causation: go2 oracle bind failed: %s", exc)
-    try:
-        from vector_os_nano.vcli.worlds.arm_sim_oracle import make_arm_at_home
-        ns["arm_at_home"] = make_arm_at_home(stub)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("actor_causation: arm oracle bind failed: %s", exc)
-    return ns
 
 
 # ---------------------------------------------------------------------------

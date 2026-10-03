@@ -195,8 +195,12 @@ def test_run_snapshot_over_real_execute() -> None:
         assert sv["result_data"]["output"]["moved_to"] == [0.1, 0.2, 0.3]
 
     assert snapshot["success"] is True
-    # The per-step callback view matches the run-complete step views.
-    assert captured_steps == snapshot["steps"]
+    # WP02: the run-complete snapshot grades each step (evidence key); the live
+    # per-step view is pre-grading and carries no evidence. They match otherwise.
+    for sv in snapshot["steps"]:
+        assert sv["evidence"] in ("GROUNDED", "RAN", "FAILED")
+    stripped = [{k: v for k, v in sv.items() if k != "evidence"} for sv in snapshot["steps"]]
+    assert captured_steps == stripped
 
     # Full snapshot round-trips through json.dumps.
     json.dumps(snapshot)
@@ -287,3 +291,38 @@ def test_engine_emits_step_view_and_run_snapshot() -> None:
     assert snapshot["goal"] == "g"
     assert snapshot["steps"][0]["sub_goal_name"] == "pick"
     json.dumps(snapshot)
+
+
+def test_engine_run_snapshot_grades_against_the_world_scoped_tagged_oracles() -> None:
+    """vgg_run_snapshot grades with verify_oracle_names: the engine's namespace, its
+    @oracle tags, filtered by the active world's scope (a dev predicate in a robot
+    world, or an untagged callable, never grounds)."""
+    from types import SimpleNamespace
+
+    from vector_os_nano.vcli.cognitive.oracle_registry import oracle
+    from vector_os_nano.vcli.engine import VectorEngine
+
+    eng = VectorEngine.__new__(VectorEngine)  # skip heavy __init__
+    eng._build_verifier_namespace = lambda agent: {
+        "holding_object": oracle(scope="robot")(lambda *a: True),
+        "file_exists": oracle(scope="dev")(lambda *a: True),
+        "nearest_room": lambda: "kitchen",
+    }
+    eng._world = SimpleNamespace(is_robot=lambda: True)
+
+    def _snap(verify: str) -> dict[str, Any]:
+        sg = SubGoal(name="s", description="d", verify=verify)
+        step = StepRecord(
+            sub_goal_name="s", strategy="x", success=True, verify_result=True, duration_sec=0.1
+        )
+        trace = ExecutionTrace(
+            goal_tree=GoalTree(goal="g", sub_goals=(sg,)), steps=(step,), success=True,
+            total_duration_sec=0.1,
+        )
+        return eng.vgg_run_snapshot(trace)
+
+    snap = _snap("holding_object('mug')")
+    assert snap["steps"][0]["evidence"] == "GROUNDED" and snap["verified"] is True
+    for verify in ("file_exists('a.txt')", "nearest_room() == 'kitchen'"):
+        snap = _snap(verify)
+        assert snap["steps"][0]["evidence"] == "RAN" and snap["verified"] is False, verify

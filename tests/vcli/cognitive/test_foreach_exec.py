@@ -206,7 +206,7 @@ def test_foreach_empty_list_yields_zero_children() -> None:
 
 
 def test_foreach_missing_producer_yields_zero_children() -> None:
-    # No producing step has run with that name/path -> empty (not an error).
+    # No producing step has run with that name/path -> a MISS (fail loud, not silent).
     executor, _ = _build([{"name": "mug"}])
     loop = SubGoal(
         name="pick_each",
@@ -230,8 +230,15 @@ def test_foreach_missing_producer_yields_zero_children() -> None:
     )
     trace = executor.execute(GoalTree(goal="g", sub_goals=(loop,)))
 
-    assert trace.success is True
-    assert trace.steps == ()  # zero children, no producing step either
+    # WP02 (B11 fix): a source that does not resolve to a list is a MISS -> the
+    # foreach owner records a FAILED step with an actionable error, never a silent
+    # zero-iteration success.
+    assert trace.success is False
+    assert [s.sub_goal_name for s in trace.steps] == ["pick_each"]
+    miss = trace.steps[0]
+    assert miss.success is False
+    assert miss.failure_class == "exec_error"
+    assert "never_ran" in miss.error
 
 
 # ---------------------------------------------------------------------------

@@ -30,7 +30,6 @@ from vector_os_nano.vcli.cognitive.strategy_selector import StrategySelector
 from vector_os_nano.vcli.cognitive.trace_store import (
     evidence_passed,
     load_trace,
-    replay,
     save_trace,
 )
 from vector_os_nano.vcli.cognitive.types import (
@@ -222,12 +221,6 @@ def test_answer_and_action_mixed_trace_fails_on_unverified_action() -> None:
     assert evidence_passed(trace, ORACLES) is False
 
 
-def test_replay_skips_answer_only_no_false_evidence() -> None:
-    # replay() reports "no deterministic predicate checked" for a pure-answer
-    # trace (it manufactures no evidence) — and never raises.
-    assert replay(_answer_trace(), GoalVerifier({})) is False
-
-
 def test_answer_only_round_trips_through_trace_store(tmp_path: Path) -> None:
     tr = _answer_trace()
     path = save_trace(tr, tmp_path / "answer.json")
@@ -336,13 +329,6 @@ def test_llm_answer_only_on_action_step_still_fails_gate_moat() -> None:
     # the LLM set answer_only=True — the exemption is tied to the zero-I/O
     # "answer" route. So a laundered action step still fails the evidence gate.
     assert evidence_passed(_laundered_action_trace(), ORACLES) is False
-
-
-def test_llm_answer_only_on_action_step_not_skipped_by_replay() -> None:
-    # replay() must also NOT skip a mislabeled action step as if it were an
-    # answer leaf: its sentinel verify is the only predicate, so the trace has
-    # nothing deterministic to replay and returns False (no false evidence).
-    assert replay(_laundered_action_trace(), GoalVerifier({})) is False
 
 
 def test_decomposer_refuses_answer_only_on_action_strategy() -> None:

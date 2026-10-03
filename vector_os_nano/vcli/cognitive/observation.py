@@ -110,21 +110,42 @@ def goal_tree_view(tree: GoalTree) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def run_snapshot(trace: ExecutionTrace) -> dict[str, Any]:
+def run_snapshot(
+    trace: ExecutionTrace, oracle_names: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """Return the JSON-safe run-complete snapshot from an ExecutionTrace.
 
-    Includes the goal tree, every executed step's view, the run's
-    ``validation_notes`` (replan feedback, lifted from the tree for easy UI
-    access), and the overall outcome. Guaranteed to ``json.dumps`` cleanly.
+    Includes the goal tree, every executed step's view carrying its ``evidence``
+    (GROUNDED / RAN / FAILED, from ``classify_step_evidence``), the run's
+    ``validation_notes`` (replan feedback), the outcome and ``verified``
+    (``evidence_passed``). *oracle_names* are the live evidence oracles
+    (``verify_oracle_names``); the empty default fails closed (nothing grounded).
+    Guaranteed to ``json.dumps`` cleanly.
     """
+    from vector_os_nano.vcli.cognitive.trace_store import (
+        classify_step_evidence,
+        evidence_passed,
+    )
+
     tree = trace.goal_tree
+    sg_by_name = {sg.name: sg for sg in tree.sub_goals}
+    steps = []
+    for s in trace.steps:
+        sg = sg_by_name.get(s.sub_goal_name)
+        view = step_view(s)
+        if sg is None:  # an ungradable step (e.g. a foreach child) never grounds
+            view["evidence"] = "RAN" if s.success else "FAILED"
+        else:
+            view["evidence"] = classify_step_evidence(s, sg, oracle_names, tree.goal)
+        steps.append(view)
     return {
         "snapshot_version": SNAPSHOT_VERSION,
         "goal": tree.goal,
         "goal_tree": goal_tree_view(tree),
-        "steps": [step_view(s) for s in trace.steps],
+        "steps": steps,
         "validation_notes": list(getattr(tree, "validation_notes", ()) or ()),
         "success": bool(trace.success),
+        "verified": bool(evidence_passed(trace, oracle_names)),
         "total_duration_sec": float(trace.total_duration_sec),
     }
 
@@ -136,27 +157,23 @@ def run_snapshot(trace: ExecutionTrace) -> dict[str, Any]:
 # These turn the JSON-safe export views above into human-readable plain-text
 # lines so a CLI front-end can SHOW the verified loop without re-deriving
 # anything from the frozen VGG types. They are pure (no rich markup, no I/O,
-# no side effects) — the caller decides how to colourize/print. The PASS/FAIL
-# markers are stable tokens the UI (and tests) can key off.
-
-
-# Stable, render-agnostic markers (assert on these, not on prose).
-_PASS = "PASS"
-_FAIL = "FAIL"
+# no side effects) — the caller decides how to colourize/print. The markers are
+# the spine's own evidence words (GROUNDED / RAN / FAILED): a step that merely ran
+# with a passing verify is never shown as proven.
 
 
 def render_step_view(view: dict[str, Any], verify: str | None = None) -> str:
     """Render one per-step EXPORT VIEW as a single readable line.
 
     Shows the sub-goal, its strategy, the verify predicate (passed in from the
-    goal tree, since the per-step view carries only the result), and a stable
-    ``PASS``/``FAIL`` marker. ``verify`` is optional: when the predicate is not
-    available the line still renders without it.
+    goal tree, since the per-step view carries only the result), and the step's
+    evidence marker. A live view that has not been graded yet (no ``evidence``
+    key) shows ``FAILED`` or ``RAN`` — never ``GROUNDED``.
     """
     name = view.get("sub_goal_name", "?")
     strategy = view.get("strategy") or "(none)"
     passed = bool(view.get("success")) and bool(view.get("verify_result"))
-    marker = _PASS if passed else _FAIL
+    marker = view.get("evidence") or ("RAN" if view.get("success") else "FAILED")
     parts = [f"[{marker}] {name}", f"via {strategy}"]
     if verify:
         parts.append(f"verify {verify}")
@@ -174,9 +191,10 @@ def render_run_snapshot(snapshot: dict[str, Any]) -> str:
     """Render a run-complete snapshot as a readable multi-line block.
 
     Lays out the goal, the goal tree (each sub-goal's strategy + verify
-    predicate), each executed step's ``PASS``/``FAIL`` marker, any replan /
-    validation notes, and the overall outcome. Pure: consumes only the
-    JSON-safe snapshot (the ``run_snapshot`` shape), returns a string.
+    predicate), each executed step's evidence marker, any replan / validation
+    notes, and the outcome: GROUNDED iff the snapshot is ``verified``, else FAILED
+    when the run failed, else RAN (the VerdictReport convention). Pure: consumes
+    only the JSON-safe snapshot (the ``run_snapshot`` shape), returns a string.
     """
     tree = snapshot.get("goal_tree", {}) or {}
     sub_goals = tree.get("sub_goals", []) or []
@@ -215,9 +233,14 @@ def render_run_snapshot(snapshot: dict[str, Any]) -> str:
             lines.append(f"  - {note}")
 
     n_steps = len(steps)
-    n_pass = sum(1 for sv in steps if bool(sv.get("success")) and bool(sv.get("verify_result")))
-    outcome = _PASS if snapshot.get("success") else _FAIL
+    n_grounded = sum(1 for sv in steps if sv.get("evidence") == "GROUNDED")
+    if snapshot.get("verified"):
+        outcome = "GROUNDED"
+    elif not snapshot.get("success"):
+        outcome = "FAILED"
+    else:
+        outcome = "RAN"
     dur = snapshot.get("total_duration_sec", 0.0)
-    lines.append(f"Outcome: [{outcome}] {n_pass}/{n_steps} steps verified ({dur:.1f}s)")
+    lines.append(f"Outcome: [{outcome}] {n_grounded}/{n_steps} steps grounded ({dur:.1f}s)")
 
     return "\n".join(lines)

@@ -2146,21 +2146,22 @@ def main(argv: list[str] | None = None) -> None:
 
     # Observation surface (INC8): make the verified loop VISIBLE. The per-step
     # EXPORT VIEW (JSON-safe dict) is rendered to a readable line carrying the
-    # sub-goal, strategy, verify predicate and a stable PASS/FAIL marker. Runs
+    # sub-goal, strategy, verify predicate and a stable RAN/FAILED marker. Runs
     # alongside _vgg_step_display (best-effort) — never affects execution. The
     # verify predicate lives on the active goal tree's sub_goals; the REPL loop
     # refreshes this map when it decomposes each task.
     _vgg_verify_by_name: dict[str, str] = {}
 
     def _vgg_step_view_display(view: dict[str, Any]) -> None:
-        """Render one per-step EXPORT VIEW (sub-goal/strategy/verify/PASS-FAIL)."""
+        """Render one per-step EXPORT VIEW (sub-goal/strategy/verify/RAN-FAILED)."""
         try:
             from vector_os_nano.vcli.cognitive.observation import render_step_view
             verify = _vgg_verify_by_name.get(view.get("sub_goal_name"))
             line = render_step_view(view, verify)
-            ok = bool(view.get("success")) and bool(view.get("verify_result"))
-            colour = "green" if ok else "red"
-            # markup=False: the rendered line carries literal [PASS]/[FAIL]
+            # The live view is ungraded (evidence is graded on the whole trace in the
+            # run snapshot), so it renders [RAN]/[FAILED] and is never green.
+            colour = "yellow" if view.get("success") else "red"
+            # markup=False: the rendered line carries literal [RAN]/[FAILED]
             # markers that must NOT be parsed as rich style tags.
             console.print(f"    VGG {line}", style=colour, markup=False)
         except Exception:  # noqa: BLE001 — display must never break the loop
@@ -2582,7 +2583,7 @@ def main(argv: list[str] | None = None) -> None:
                             )
                             snapshot = engine.vgg_run_snapshot(trace)
                             for snap_line in render_run_snapshot(snapshot).splitlines():
-                                # markup=False: literal [PASS]/[FAIL] markers.
+                                # markup=False: literal [GROUNDED]/[RAN]/[FAILED] markers.
                                 console.print(f"  {snap_line}", style="dim", markup=False)
                         except Exception:  # noqa: BLE001 — display only
                             pass

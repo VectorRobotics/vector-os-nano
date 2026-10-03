@@ -39,6 +39,8 @@ import logging
 import math
 from typing import Any, Callable
 
+from vector_os_nano.vcli.cognitive.oracle_registry import oracle
+
 logger = logging.getLogger(__name__)
 
 # Home joint configuration for the SO-101 arm (matches skills/home.py default).
@@ -117,6 +119,7 @@ def make_holding_object(agent: Any) -> Callable[..., bool]:
     Reads only deterministic ground truth; fails safe to ``False``.
     """
 
+    @oracle(scope="robot", channel="gripper", transition="rise")
     def holding_object(target: Any = None) -> bool:
         arm = _get_arm(agent)
         if arm is None:
@@ -156,6 +159,7 @@ def make_arm_at_home(agent: Any) -> Callable[[], bool]:
     Reads deterministic joint ground truth; fails safe to ``False``.
     """
 
+    @oracle(scope="robot", channel="arm", transition="rise")
     def arm_at_home() -> bool:
         arm = _get_arm(agent)
         if arm is None:
@@ -188,6 +192,7 @@ def make_placed_count(agent: Any, default_region: Any = None) -> Callable[..., i
 
     scene_region = _parse_region(default_region)
 
+    @oracle(scope="robot", channel="gripper")
     def placed_count(target_region: Any = None) -> int:
         arm = _get_arm(agent)
         if arm is None:
@@ -293,6 +298,7 @@ def make_detect_objects(
     case-insensitive substring match on the object name. Fails safe to ``[]``.
     """
 
+    @oracle(scope="robot")
     def detect_objects(query: str = "") -> list[dict[str, Any]]:
         objects = _scene_objects(agent, object_names)
         q = (query or "").strip().lower()
@@ -346,6 +352,7 @@ def make_describe_scene(
     Fails safe to ``""`` when no objects are observable.
     """
 
+    @oracle(scope="robot")
     def describe_scene() -> str:
         objects = _scene_objects(agent, object_names)
         if not objects:

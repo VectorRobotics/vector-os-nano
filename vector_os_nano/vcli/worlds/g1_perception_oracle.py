@@ -60,6 +60,8 @@ from typing import Any, Callable
 
 import numpy as np
 
+from vector_os_nano.vcli.cognitive.oracle_registry import oracle
+
 logger = logging.getLogger(__name__)
 
 # Pixel tolerance for the box-center ↔ segmentation-centroid match. The red stool in
@@ -236,6 +238,7 @@ def make_detection_matches_gt(agent: Any) -> Callable[..., bool]:
     spurious True.
     """
 
+    @oracle(scope="robot", channel="perception")
     def detection_matches_gt(target: Any = None, tol: float = _DEFAULT_TOL_PX) -> bool:
         base = _g1_base(agent)
         if base is None:

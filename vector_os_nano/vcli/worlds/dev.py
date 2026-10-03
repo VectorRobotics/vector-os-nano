@@ -8,22 +8,18 @@ Ships with the kernel. Provides:
 - deterministic, side-effect-free verify predicates over the project tree,
 - a software-task decompose vocabulary for the GoalDecomposer.
 
-Verify predicates are intentionally observational. The read-only predicates
-(``file_exists``, ``grep_count``, ``path_contains``) are always available;
-``tests_pass`` executes a command and is therefore opt-in (env
-``VECTOR_DEV_ALLOW_TESTS=1``) and bounded. Command-executing predicates beyond
-``tests_pass`` are deferred (see docs/ARCHITECTURE.md, Phase B).
+Verify predicates are strictly observational (``file_exists``, ``grep_count``,
+``path_contains``). Running a command (e.g. a test suite) is an ACTION — the
+permission-gated ``bash`` tool — never a verify predicate.
 """
 
 from __future__ import annotations
 
-import os
 import re
-import shlex
-import subprocess
 from pathlib import Path
 from typing import Any
 
+from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 from vector_os_nano.vcli.prompt import DEV_ROLE_PROMPT, DEV_TOOL_INSTRUCTIONS
 from vector_os_nano.vcli.worlds.base import DecomposeVocab
 
@@ -31,7 +27,6 @@ from vector_os_nano.vcli.worlds.base import DecomposeVocab
 # GoalVerifier 5s sandbox).
 _MAX_FILES = 2000
 _MAX_BYTES_PER_FILE = 1_000_000
-_TESTS_TIMEOUT_SEC = 120
 _SKIP_DIRS = {
     ".git",
     ".venv",
@@ -64,12 +59,14 @@ def _safe_path(path: str) -> Path | None:
         return None
 
 
+@oracle(scope="dev")
 def file_exists(path: str) -> bool:
     """True if *path* (relative to cwd) exists."""
     p = _safe_path(path)
     return bool(p is not None and p.exists())
 
 
+@oracle(scope="dev")
 def path_contains(path: str, substr: str) -> bool:
     """True if the text file at *path* contains *substr* (bounded read)."""
     p = _safe_path(path)
@@ -84,6 +81,7 @@ def path_contains(path: str, substr: str) -> bool:
         return False
 
 
+@oracle(scope="dev")
 def grep_count(pattern: str, path: str = ".") -> int:
     """Count regex *pattern* matches in text files under *path* (bounded)."""
     root = _safe_path(path)
@@ -114,53 +112,13 @@ def grep_count(pattern: str, path: str = ".") -> int:
     return total
 
 
-def _tests_allowed() -> bool:
-    return os.environ.get("VECTOR_DEV_ALLOW_TESTS", "") == "1"
-
-
-def tests_pass(cmd: str = "pytest -q") -> bool:
-    """Run *cmd* (opt-in) and return True iff it exits 0.
-
-    Disabled unless ``VECTOR_DEV_ALLOW_TESTS=1``. Bounded by a timeout, run in
-    cwd, argv-split (no shell), so the LLM-authored predicate cannot inject a
-    shell pipeline. Returns False when disabled or on any failure/timeout.
-    """
-    if not _tests_allowed():
-        return False
-    try:
-        argv = shlex.split(cmd)
-    except ValueError:
-        return False
-    if not argv:
-        return False
-    try:
-        proc = subprocess.run(
-            argv,
-            cwd=str(Path.cwd()),
-            timeout=_TESTS_TIMEOUT_SEC,
-            capture_output=True,
-        )
-        return proc.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
-def dev_verify_namespace(allow_tests: bool | None = None) -> dict[str, Any]:
-    """Return the dev world's verify predicates.
-
-    Read-only predicates are always present; ``tests_pass`` is included only
-    when commands are allowed (explicit ``allow_tests`` or
-    ``VECTOR_DEV_ALLOW_TESTS=1``).
-    """
-    ns: dict[str, Any] = {
+def dev_verify_namespace() -> dict[str, Any]:
+    """Return the dev world's read-only verify predicates."""
+    return {
         "file_exists": file_exists,
         "grep_count": grep_count,
         "path_contains": path_contains,
     }
-    allow = _tests_allowed() if allow_tests is None else allow_tests
-    if allow:
-        ns["tests_pass"] = tests_pass
-    return ns
 
 
 # --- Decompose vocabulary --------------------------------------------------
@@ -169,7 +127,6 @@ _DEV_VERIFY_SIGNATURES: dict[str, str] = {
     "file_exists": "file_exists(path: str) -> bool  # path (relative to cwd) exists",
     "grep_count": "grep_count(pattern: str, path: str = '.') -> int  # regex match count under path",
     "path_contains": "path_contains(path: str, substr: str) -> bool  # file at path contains substr",
-    "tests_pass": "tests_pass(cmd: str = 'pytest -q') -> bool  # cmd exits 0 (opt-in; may be disabled)",
 }
 
 _DEV_EXAMPLE = """\

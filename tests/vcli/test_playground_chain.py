@@ -295,7 +295,8 @@ def test_chain_emits_sane_observation_snapshot() -> None:
         assert sv["success"] is True
         assert sv["verify_result"] is True
 
-    # The per-step callback views match the run-complete step views.
-    assert captured == snapshot["steps"]
+    # WP02: snapshot steps carry a graded evidence key the live view lacks.
+    stripped = [{k: v for k, v in sv.items() if k != "evidence"} for sv in snapshot["steps"]]
+    assert captured == stripped
     # Full snapshot round-trips cleanly.
     json.dumps(snapshot)

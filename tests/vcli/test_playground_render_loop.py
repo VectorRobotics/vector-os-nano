@@ -38,6 +38,7 @@ from vector_os_nano.playground import PlaygroundWorld
 from vector_os_nano.playground.verify.arm_predicates import _HOME_JOINTS
 from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
+from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names
 from vector_os_nano.vcli.cognitive.observation import (
     render_run_snapshot,
     render_step_view,
@@ -222,17 +223,20 @@ def test_cli_engine_path_emits_step_views_and_renders_verified_loop() -> None:
         assert v["verify_result"] is True
         json.dumps(v)  # each view round-trips
 
-    # --- Per-step rendering carries sub-goal + strategy + verify + PASS marker. ---
+    # --- Per-step rendering carries sub-goal + strategy + verify. A LIVE view is
+    #     pre-grading, so its marker is RAN (never a false PASS). ---
     verify_by_name = {sg.name: sg.verify for sg in _TREE.sub_goals}
     for v in emitted_views:
         line = render_step_view(v, verify_by_name[v["sub_goal_name"]])
-        assert "[PASS]" in line
+        assert "[RAN]" in line
         assert v["sub_goal_name"] in line
         assert v["strategy"] in line
         assert verify_by_name[v["sub_goal_name"]] in line
 
-    # --- Run-complete snapshot renders the FULL verified loop. ---
-    snapshot = engine.vgg_run_snapshot(trace)
+    # --- Run-complete snapshot renders the FULL verified loop, graded against the
+    #     playground's tagged GT oracles. ---
+    oracle_names = evidence_names(namespace)
+    snapshot = run_snapshot(trace, oracle_names)
     json.dumps(snapshot)  # the snapshot the CLI renders round-trips
 
     rendered = render_run_snapshot(snapshot)
@@ -244,17 +248,17 @@ def test_cli_engine_path_emits_step_views_and_renders_verified_loop() -> None:
         assert sg.strategy in rendered
         assert sg.verify in rendered
 
-    # One PASS/FAIL marker per step (all four verified-done here -> four PASS).
-    assert rendered.count("[PASS]") >= len(_TREE.sub_goals)
-    assert "[FAIL]" not in rendered
+    # One GROUNDED marker per step (all four proven here via GT oracles).
+    assert rendered.count("[GROUNDED]") >= len(_TREE.sub_goals)
+    assert "[FAILED]" not in rendered
 
     # The replan / validation note surfaces in the render.
     assert "scan_360" in rendered
     assert "not valid" in rendered
 
-    # Overall outcome line present and marked PASS.
+    # Overall outcome line present and marked GROUNDED.
     assert "Outcome:" in rendered
-    assert "4/4 steps verified" in rendered
+    assert "4/4 steps grounded" in rendered
 
 
 def test_render_run_snapshot_marks_failed_steps_and_partial_outcome() -> None:
@@ -282,18 +286,19 @@ def test_render_run_snapshot_marks_failed_steps_and_partial_outcome() -> None:
         success=False,
         total_duration_sec=0.3,
     )
-    snapshot = run_snapshot(trace)
+    snapshot = run_snapshot(trace, frozenset({"arm_at_home", "holding_object"}))
 
     rendered = render_run_snapshot(snapshot)
     json.dumps(snapshot)
 
-    # Mixed markers: one PASS (a) and one FAIL (b).
-    assert "[PASS]" in rendered
-    assert "[FAIL]" in rendered
+    # Mixed markers: step a is GROUNDED (arm_at_home, verify True); step b FAILED.
+    assert "[GROUNDED]" in rendered
+    assert "[FAILED]" in rendered
     # The failing step's error surfaces.
     assert "grasp failed" in rendered
     # The replan note surfaces.
     assert "look_skill" in rendered
-    # Outcome marked FAIL, 1/2 verified.
+    # Outcome marked FAILED (the run did not succeed), 1/2 grounded.
     assert "Outcome:" in rendered
-    assert "1/2 steps verified" in rendered
+    assert "[FAILED]" in rendered.splitlines()[-1]
+    assert "1/2 steps grounded" in rendered
