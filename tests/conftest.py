@@ -118,6 +118,10 @@ def _hygiene(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
         except ImportError:
             pass
     _SHIM_LOG.unlink(missing_ok=True)
+    # The process-global abort Event: a stop/abort test must not abort the next one.
+    abort = sys.modules.get("vector_os_nano.vcli.cognitive.abort")
+    if abort is not None:
+        abort.clear_abort()
     yield
     stubs.restore(mods)
     os.environ.clear()

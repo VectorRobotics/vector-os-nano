@@ -23,11 +23,13 @@ _ROBOT_DEPS = (
 )
 
 
-def test_cli_imports_without_robot_deps() -> None:
+def test_cli_imports_without_robot_deps(monkeypatch) -> None:
     """Importing the CLI module must not import any robot/heavy dependency."""
-    # Drop any pre-imported robot deps so we observe the CLI import's own effect.
+    # Hide any pre-imported robot deps so we observe the CLI import's own effect.
+    # monkeypatch puts them back: a re-imported torch re-registers its TORCH_LIBRARY
+    # namespaces and raises in every later torch user.
     for mod in _ROBOT_DEPS:
-        sys.modules.pop(mod, None)
+        monkeypatch.delitem(sys.modules, mod, raising=False)
 
     import vector_os_nano.vcli.cli  # noqa: F401
 

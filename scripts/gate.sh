@@ -13,9 +13,12 @@
 #   e2e       tests/e2e_repl: bare vector-cli on a PTY, one REPL per scenario
 #   all       hermetic, then sim, then e2e
 #
-# Env: GATE_PER_FILE=1  one capped pytest process per test file, so a crash/abort/
-#                       OOM in one file cannot take down the run (GATE_JOBS=4 files
-#                       at a time for hermetic; sim/e2e run serially)
+# Env: GATE_PER_FILE=1  (default) one capped pytest process per test file, so a
+#                       crash/abort/OOM in one file cannot take down the run
+#                       (GATE_JOBS=4 files at a time for hermetic; sim/e2e serially).
+#                       GATE_PER_FILE=0 runs one process: today that aborts in
+#                       rclpy (a leaked ROS2-proxy spin thread) and crawls behind
+#                       CodeExecutor's runaway `while True` thread (WP03/WP04/WP15).
 #      GATE_PATHS="a b" test paths instead of the tier default
 #      GATE_OUT=<dir>   junit + logs (default: a fresh temp dir, printed)
 #      MEMMAX=16G (6G per file in per-file mode)  TMO=<sec>  ROS_DOMAIN_ID=<n>
@@ -70,7 +73,7 @@ fi
 OUT=${GATE_OUT:-$(mktemp -d -t "vos_gate_${TIER}_XXXX")}
 mkdir -p "$OUT"
 
-if [ "${GATE_PER_FILE:-}" = 1 ]; then
+if [ "${GATE_PER_FILE-1}" = 1 ]; then
   "$PY" -m pytest -p no:cacheprovider --co -q "${PATHS[@]}" ${MARK:+-m "$MARK"} "${IGNORE[@]}" "$@" 2>/dev/null \
     | grep '::' | cut -d: -f1 | sort -u > "$OUT/files.txt"
   JOBS=${GATE_JOBS:-4}; [ "$TIER" = hermetic ] || JOBS=1
