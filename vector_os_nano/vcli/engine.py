@@ -834,11 +834,11 @@ class VectorEngine:
 
         # --- validate verify-function names ---
         # A name is "documented-lazy" (opt-in, conditionally bound) when its
-        # signature string contains "opt-in" or "may be disabled" — this is the
-        # convention used for verify predicates that are available only under
-        # specific conditions (e.g. tests_pass requires VECTOR_DEV_ALLOW_TESTS).
-        # Lazy names that are absent from verify_ns generate a WARNING only, not
-        # a hard fail, because their absence is a designed opt-in posture, not drift.
+        # signature string contains "opt-in" or "may be disabled", OR the world is a
+        # robot world (every robot verify oracle binds only when the embodiment
+        # connects, which can follow init_vgg). Lazy names absent from verify_ns
+        # generate a WARNING only, not a hard fail — their absence is a designed
+        # pre-boot posture, not registration drift.
         verify_fn_signatures: dict[str, str] = vocab_kwargs.get("verify_fn_signatures", {})
         for fn_name in sorted(verify_fn_names):
             if fn_name not in verify_ns:

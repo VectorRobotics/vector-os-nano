@@ -2160,7 +2160,7 @@ def main(argv: list[str] | None = None) -> None:
             line = render_step_view(view, verify)
             ok = bool(view.get("success")) and bool(view.get("verify_result"))
             colour = "green" if ok else "red"
-            # markup=False: the rendered line carries literal [PASS]/[FAIL]
+            # markup=False: the rendered line carries literal [GROUNDED]/[RAN]/[FAILED]
             # markers that must NOT be parsed as rich style tags.
             console.print(f"    VGG {line}", style=colour, markup=False)
         except Exception:  # noqa: BLE001 — display must never break the loop
@@ -2582,7 +2582,7 @@ def main(argv: list[str] | None = None) -> None:
                             )
                             snapshot = engine.vgg_run_snapshot(trace)
                             for snap_line in render_run_snapshot(snapshot).splitlines():
-                                # markup=False: literal [PASS]/[FAIL] markers.
+                                # markup=False: literal [GROUNDED]/[RAN]/[FAILED] markers.
                                 console.print(f"  {snap_line}", style="dim", markup=False)
                         except Exception:  # noqa: BLE001 — display only
                             pass
