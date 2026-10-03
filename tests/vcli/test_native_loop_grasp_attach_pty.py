@@ -1,231 +1,163 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""S3b SEAL — the native producer grounds a PERCEPTION grasp on the go2+Piper ATTACH scene.
+"""E1 + E3a — bare ``vector-cli`` + NL launches go2+Piper and grounds a perception grasp.
 
-``test_native_loop_arm_pty.py`` proves the native producer routes + grades the
-arm/gripper class — but only on the STANDALONE SO-101 arm, whose ``pick`` reads
-the simulator's omniscient object table. This module is the analogue on the
-combined **go2 + Piper attach scene** (the scene S3b's ONE ``MjSpec.attach``
-builder assembles), driven by the honest, perception-first skill the North Star
-calls for — ``perception_grasp``:
+The owner's acceptance face, driven on a PTY with NO flags (the D97 failure mode
+was this test hand-building the rig instead of using the product launcher):
 
-    [抓绿色的瓶子]  -> verify(holding_object('pickable_bottle_green'))  -> GROUNDED + CAUSED
-    finish
+    vector> 启动 go2 仿真 带机械臂 无窗口
+      ▸ sim start go2_piper ok
+      ▸ Started go2_piper simulation, ready in …            (E1: within 90 s)
+    vector> 拿起绿色的瓶子
+      ▸ perception_grasp → verify holding_object('pickable_bottle_green') ✓
+      verdict GROUNDED verified=True                         (E3a)
 
-A SCRIPTED ``FakeToolScriptBackend`` replays the single (action -> verify) pair,
-so the test is NETWORK-FREE (no deepseek multi-turn REPL — 5 prior live runs
-stalled on model REPL variance: network drop / cold-load timeout / a faked grasp
-/ bash-wander / launch-wander, NEVER the grasp code). But the grasp runs the FULL
-real pipeline on a REAL ``MuJoCoGo2`` + ``MuJoCoPiper`` + ``MuJoCoPiperGripper``
-base — VLM/colour resolve -> EdgeTAM segment -> rendered-depth pointcloud -> 3D
-grasp point (NEVER ground truth) -> approach walk -> Piper top-down IK -> weld ->
-lift — and the trace is graded by the UNTOUCHED honest spine
-(``VerdictReport.from_trace`` + ``verify_oracle_names``) PLUS the D69 object-goal
-turn gate (the goal "把前面的绿色瓶子抓起来" carries grasp intent, so the turn passes
-ONLY if a step is GROUNDED via a NECESSARY ``holding_object`` conjunct).
+Only the network LLM is replaced (``VECTOR_FAKE_LLM_TOOLS`` replays the model's tool
+calls). Everything else is the product: SimSession (MuJoCoGo2 + MuJoCoPiper +
+MuJoCoPiperGripper), rebind_world, the native producer, perception_grasp (colour
+resolve -> rendered depth -> IK -> weld, never ground truth) and the untouched
+verify spine. The driver is reactive: it waits for each line the REPL prints
+instead of sleeping fixed delays.
 
-What this proves that the SO-101 ``pick`` template cannot:
-  - ROUTING: the producing skill is the perception-first manipulation skill
-    ``perception_grasp`` (never ``pick``, which reads GT pose);
-  - PREDICATE: the verify names the registry-derived GRIPPER oracle that MEASURES
-    the goal — ``holding_object('pickable_bottle_green')`` — TARGET-AWARE (the
-    green bottle, not "holding anything");
-  - CAUSATION: a real Piper grasp toggles the green bottle's weld 0->1, graded
-    CAUSED via ``MuJoCoPiperGripper.weld_is_active()`` — the gripper-weld channel
-    on the go2 physics thread (distinct from the SO-101's standalone arm);
-  - HONESTY: the 3D grasp point comes ONLY from rendered depth + the EdgeTAM/colour
-    mask; the skill FAILS LOUD if perception fails and NEVER substitutes a GT pose.
-
-Why GREEN (a real, verified choice):
-``pickable_bottle_green`` sits dead-ahead on the dog's spawn-y line (y=3.0), the
-D47-proven head-on "前面的东西" target. A colour query ("抓绿色的瓶子") routes through
-the classical HSV ``front_object`` resolver (no grounding-dino network) and resolves
-the verify LABEL to ``pickable_bottle_green`` (``_COLOR_TO_SCENE``), so the
-target-aware oracle matches the body the weld pins — the faithful analogue of the
-arm template's ``holding_object('banana')``. The dog boots NOT holding (all welds
-``active="false"``), so a successful grasp is a genuine actor-CAUSED 0->1 transition.
-
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + rosm nuke after the
-case via the fixture. ``VECTOR_SIM_WITH_ARM=1`` MUST be set before the scene builds
-so ``MuJoCoGo2`` assembles the go2_piper attach scene (cylinders + welds). Reproduce::
-
-    MUJOCO_GL=egl PATH=/usr/bin:$PATH .venv/bin/python -m pytest \\
-      tests/vcli/test_native_loop_grasp_attach_pty.py -v -s -m sim
+The grasp itself is physics (measured ~0.83 reliable, D94/D95): a red here is
+first a grasp miss — read the transcript before blaming the launcher.
 """
 from __future__ import annotations
 
+import json
 import os
-
-# Select the go2_piper attach scene (cylinders + INACTIVE welds) at scene-build
-# time — MuJoCoGo2._build_room_scene_xml reads this env var. MUST precede import.
-os.environ.setdefault("VECTOR_SIM_WITH_ARM", "1")
-
+import pty
+import re
+import select
+import signal
 import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
 
 import pytest
 
 pytest.importorskip("mujoco")
 
-# Colour query -> classical HSV front_object resolver (no network); resolves the
-# verify LABEL to the green bottle's scene name. Dead-ahead on the spawn-y line.
-_GRASP_QUERY: str = "抓绿色的瓶子"
-_GRASP_TARGET: str = "pickable_bottle_green"
-# The NL goal carries grasp INTENT (抓) -> the D69 object-goal turn gate applies,
-# so the turn passes ONLY if a step is GROUNDED via a NECESSARY holding_object.
-_GOAL: str = "把前面的绿色瓶子抓起来"
+_REPO = Path(__file__).resolve().parents[2]
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[=>()][0-9A-B]?")
+
+_SCRIPT = {"turns": [
+    # turn 1 (legacy tool_use path: "仿真" bypasses the planner)
+    {"tool_calls": [{"name": "start_simulation",
+                     "input": {"embodiment": "go2_piper", "gui": False}}]},
+    {"text": "go2_piper is up."},
+    # turn 2 (native producer): perceive + grasp, then prove possession by GT
+    {"tool_calls": [{"name": "perception_grasp", "input": {"query": "绿色的瓶子"}}]},
+    {"tool_calls": [{"name": "verify",
+                     "input": {"expr": "holding_object('pickable_bottle_green')"}}]},
+    {"text": "holding the green bottle."},
+]}
 
 
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
+class _Repl:
+    """Bare vector-cli on a PTY; ``expect`` waits for printed text, then moves on."""
 
+    def __init__(self, env: dict[str, str]) -> None:
+        self._master, slave = pty.openpty()
+        self.proc = subprocess.Popen(
+            [sys.executable, "-m", "vector_os_nano.vcli.cli"],
+            stdin=slave, stdout=slave, stderr=slave, cwd=str(_REPO), env=env,
+            close_fds=True, start_new_session=True,  # own pgid -> killpg at teardown
+        )
+        os.close(slave)
+        self._buf: list[bytes] = []
+        self._pos = 0
+        self._stop = threading.Event()
+        threading.Thread(target=self._read, daemon=True).start()
 
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
+    def _read(self) -> None:
+        while not self._stop.is_set():
+            r, _, _ = select.select([self._master], [], [], 0.2)
+            if r:
+                try:
+                    data = os.read(self._master, 65536)
+                except OSError:
+                    return
+                if not data:
+                    return
+                self._buf.append(data)
+
+    def text(self) -> str:
+        raw = b"".join(self._buf).decode("utf-8", errors="replace")
+        return " ".join(_ANSI.sub("", raw).split())
+
+    def expect(self, pattern: str, timeout: float) -> re.Match:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            m = re.compile(pattern).search(self.text(), self._pos)
+            if m:
+                self._pos = m.end()
+                return m
+            if self.proc.poll() is not None:
+                break
+            time.sleep(0.3)
+        t = self.text()
+        raise AssertionError(f"timed out waiting for {pattern!r}; transcript:\n{t[:3000]}\n...\n{t[-3000:]}")
+
+    def send(self, line: str) -> None:
+        os.write(self._master, (line + "\n").encode("utf-8"))
+
+    def close(self) -> None:
+        try:
+            self.send("quit")
+            self.proc.wait(timeout=30)
+        except Exception:  # noqa: BLE001
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(self.proc.pid, sig)
+                    self.proc.wait(timeout=10)
+                    break
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    continue
+        self._stop.set()
+        os.close(self._master)
 
 
 @pytest.mark.sim
-def test_native_grasp_attach_routes_and_grounds_holding(sim_cleanup) -> None:
-    """perception_grasp -> holding_object, GROUNDED+CAUSED on the go2+Piper attach scene.
-
-    Mirrors ``test_native_loop_arm_pty.py`` (a real sim base + an ``Agent`` with the
-    go2+arm skill set + a scripted backend + the real ``eng.run_turn_native``), but
-    drives the PERCEPTION grasp on the COMBINED dog+arm attach scene to seal S3b: the
-    grasp pipeline routes to the real ``perception_grasp`` and grounds through the
-    untouched spine + the D69 gate, with NO live LLM in the loop.
-    """
-    os.environ["VECTOR_SIM_WITH_ARM"] = "1"
-
-    from pathlib import Path as _Path
-
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-    from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
-    from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
-    from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
-    from vector_os_nano.skills.go2 import get_go2_skills
-    from vector_os_nano.skills.mobile_pick import MobilePickSkill
-    from vector_os_nano.skills.mobile_place import MobilePlaceSkill
-    from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
-    from vector_os_nano.skills.pick_top_down import PickTopDownSkill
-    from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
-    from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
-    from vector_os_nano.vcli.cognitive.trace_store import (
-        classify_step_evidence,
-        evidence_passed,
-        verify_oracle_names,
+@pytest.mark.cli_main
+@pytest.mark.capability
+def test_bare_cli_nl_launch_go2_piper_then_grasp_grounds(tmp_path) -> None:
+    script = tmp_path / "script.json"
+    script.write_text(json.dumps(_SCRIPT, ensure_ascii=False))
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("VECTOR_NATIVE_LOOP", "VECTOR_NATIVE_FIRST", "VECTOR_REPL_NATIVE")}
+    env.update(
+        # Explicitly empty (not absent): the CLI's load_dotenv would otherwise pull it
+        # from a repo .env and start the optional TARE stack, which E1/E3a must not
+        # depend on (its bridge also follows a machine-global /tmp nav flag).
+        VECTOR_NAV_STACK="",
+        PYTHONPATH=os.pathsep.join([str(_REPO), env.get("PYTHONPATH", "")]).rstrip(os.pathsep),
+        HOME=tempfile.mkdtemp(prefix="vector_e1_home_", dir=tmp_path),
+        TERM="xterm-256color", COLUMNS="220", PROMPT_TOOLKIT_NO_CPR="1",
+        MUJOCO_GL=env.get("MUJOCO_GL", "egl"),
+        VECTOR_FAKE_LLM_TOOLS=str(script),
     )
-    from vector_os_nano.vcli.engine import VectorEngine
-    from vector_os_nano.vcli.permissions import PermissionContext
-    from vector_os_nano.vcli.session import Session
-    from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
-    from vector_os_nano.vcli.verdict import VerdictReport
-    from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
-    from vector_os_nano.vcli.worlds.robot import RobotWorld
+    env.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
 
-    from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
-
-    # Build the go2+Piper world EXACTLY as sim_tool._start_go2(with_arm=True) does,
-    # but IN-PROCESS (no ROS2 proxy) — the analogue of test_mujoco_piper.py's fixture.
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
-    go2.connect()
-    piper = gripper = None
+    repl = _Repl(env)
     try:
-        piper = MuJoCoPiper(go2)
-        piper.connect()
-        gripper = MuJoCoPiperGripper(go2)
-        gripper.connect()
-        perception = Go2GraspPerception(go2, width=320, height=240)
-        agent = Agent(base=go2, arm=piper, gripper=gripper, perception=perception, config={})
+        repl.expect(r"vector>", 90)
+        repl.send("启动 go2 仿真 带机械臂 无窗口")
+        t0 = time.monotonic()
+        repl.expect(r"sim start go2_piper ok", 90)
+        ready = repl.expect(r"Started go2_piper simulation, ready in [0-9.]+s: MuJoCoGo2 \+ MuJoCoPiper", 30)
+        assert time.monotonic() - t0 < 90, "E1: the ready line must arrive within 90 s"
+        line = repl.text()[ready.start():ready.start() + 300]
+        assert "gait=" in line and "explore: unavailable (VECTOR_NAV_STACK unset)" in line
 
-        # Skill set EXACTLY as sim_tool registers for go2+arm: base skills + the
-        # Piper manipulation skills + perception_grasp LAST (wins the 抓/grab aliases).
-        for s in get_go2_skills():
-            agent._skill_registry.register(s)
-        for sk in (PickTopDownSkill(), PlaceTopDownSkill(), MobilePickSkill(), MobilePlaceSkill()):
-            agent._skill_registry.register(sk)
-        agent._skill_registry.register(PerceptionGraspSkill())
-
-        # The dog must START not holding anything — that is what makes a successful
-        # grasp a genuine, actor-CAUSED 0->1 weld transition (never a NO-OP).
-        assert make_holding_object(agent)() is False, (
-            "the go2+Piper rig must boot NOT holding so the grasp is genuinely caused"
-        )
-
-        backend = FakeToolScriptBackend.from_tool_script([
-            # The ONLY (action -> verify) pair: perceive+grasp the green bottle, then
-            # prove possession via the target-aware GT oracle.
-            tool_turn(("perception_grasp", {"query": _GRASP_QUERY})),
-            tool_turn(("verify", {"expr": f"holding_object('{_GRASP_TARGET}')"})),
-            tool_turn(end=True),
-        ])
-        eng = VectorEngine(
-            backend=backend, registry=CategorizedToolRegistry(),
-            permissions=PermissionContext(),
-        )
-        eng._world = RobotWorld()
-        eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())
-        eng._vgg_agent = agent
-        eng._backend = backend
-
-        session = Session(
-            session_id="native-grasp", created_at="t", updated_at="t",
-            path=_Path("/tmp/native_grasp_attach.jsonl"),
-        )
-        trace = eng.run_turn_native(_GOAL, session=session)
-
-        # EXACTLY one StepRecord — one (perception_grasp -> holding_object) pair.
-        assert len(trace.steps) == 1, (
-            f"expected 1 native step (perception_grasp->holding_object); got "
-            f"{len(trace.steps)}: "
-            f"{[(s.strategy, sg.verify) for s, sg in zip(trace.steps, trace.goal_tree.sub_goals)]}"
-        )
-
-        names = verify_oracle_names(agent, eng)
-        (sub0,) = trace.goal_tree.sub_goals
-        (step0,) = trace.steps
-
-        # ROUTING — the producing skill is the perception-first grasp, never `pick`.
-        assert step0.strategy == "perception_grasp", (
-            f"step strategy must be perception_grasp; got {step0.strategy!r}"
-        )
-        # PREDICATE — the registry-derived GRIPPER oracle that MEASURES the goal,
-        # TARGET-AWARE on the green bottle.
-        assert sub0.verify.startswith("holding_object"), f"verify={sub0.verify!r}"
-        # GROUNDING — a real perceived grasp lifted + welded the green bottle.
-        assert step0.verify_result is True, (
-            f"perception_grasp should leave holding_object True; "
-            f"result_data={getattr(step0, 'result_data', None)}"
-        )
-        # CAUSATION — a fresh Piper weld 0->1 grades CAUSED through the UNTOUCHED
-        # actor-causation spine (gripper-weld channel on the go2 physics thread).
-        assert step0.actor_caused is ActorCaused.CAUSED, (
-            f"grasp must grade CAUSED (fresh weld 0->1); got {step0.actor_caused.value}"
-        )
-        assert classify_step_evidence(step0, sub0, names) == "GROUNDED"
-
-        # SAME verdict gate the PTY harness asserts -> grounded -> verified.
-        report = VerdictReport.from_trace(trace, names)
-        assert report.verified is True, f"a grounded grasp must verify; {report.evidence}"
-        assert report.evidence == "GROUNDED"
-        assert report.exit_code() == 0
-
-        # D69 OBJECT-GOAL GATE (explicit): the goal carries grasp intent and the world
-        # exposes holding_object, so the turn passes the gate ONLY because a step is
-        # GROUNDED via a NECESSARY holding_object conjunct (a faked file-based grasp
-        # would downgrade to RAN here).
-        assert evidence_passed(trace, names) is True
+        repl.expect(r"vector>", 60)
+        repl.send("拿起绿色的瓶子")
+        repl.expect(r"perception_grasp → verify holding_object\('pickable_bottle_green'\)", 300)
+        verdict = repl.expect(r"verdict (\w+) verified=(\w+)", 60)
+        assert verdict.group(1, 2) == ("GROUNDED", "True"), repl.text()[-3000:]
     finally:
-        for dev in (gripper, piper, go2):
-            if dev is None:
-                continue
-            try:
-                dev.disconnect()
-            except Exception:  # noqa: BLE001
-                pass
-        _nuke()
+        repl.close()

@@ -2226,8 +2226,7 @@ def main(argv: list[str] | None = None) -> None:
                     if name == "terrain_status":
                         return "[dim]terrain_status[/]"
                     if name == "start_simulation":
-                        st = p.get("sim_type", "go2")
-                        return f"[dim]sim start[/] {st}"
+                        return f"[dim]sim start[/] {p.get('embodiment', '?')}"
                     # Fallback: generic display
                     if p:
                         items = [f"{k}={str(v)[:20]}" for k, v in list(p.items())[:2]]
