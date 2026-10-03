@@ -9,8 +9,6 @@ Pin the actor-causation mechanism in isolation, on duck-typed fakes (no sim):
             (0,0,0) "write" (zero magnitude) does NOT satisfy causation.
 (grade)     honest / no-op / teleport / missing-baseline(fail-closed) -> the right
             CAUSED/UNCAUSED grade.
-(frozen)    baseline_namespace binds the oracle over the SNAPSHOT — advancing the
-            live base after capture does NOT change the baseline predicate (fix 5).
 (gate)      a robot at_position step is GROUNDED only when CAUSED (single-source
             through classify_step_evidence).
 (holding)   weld eq_active 0->1 grades CAUSED; no transition grades UNCAUSED.

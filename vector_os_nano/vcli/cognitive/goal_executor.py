@@ -112,15 +112,15 @@ class GoalExecutor:
         """Live evidence-oracle names (single source, rule 3).
 
         The ``@oracle``-tagged callables of the SAME namespace the executor's
-        ``GoalVerifier`` uses (any scope — a namespace carries one world's oracles,
-        so there is nothing to mix). An absent namespace yields the empty set, which
+        ``GoalVerifier`` uses, in the namespace's one scope (a namespace mixing scopes
+        yields the empty set). An absent namespace yields the empty set too, which
         fails the evidence gate closed (everything classifies RAN).
         """
         from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names
 
         ns = getattr(self._verifier, "_namespace", None)
         if isinstance(ns, dict):
-            return evidence_names(ns)  # any tagged scope (one world per namespace)
+            return evidence_names(ns)  # the namespace's one scope; mixed fails closed
         return frozenset()
 
     def _record_strategy_stats(self, step: StepRecord, sub_goal: SubGoal) -> None:

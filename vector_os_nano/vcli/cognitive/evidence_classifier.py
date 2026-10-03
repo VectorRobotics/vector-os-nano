@@ -22,8 +22,10 @@ The grammar is an ALLOWLIST — anything not listed is RAN:
 
 Rejected by construction: value-absorbing wrappers (``|``, ``*0``, ``max``/``min``/
 ``abs``/``bool``…), ``is`` / ``is not``, ``!=``, ``not in``, ``not``, a bool predicate
-ordered against a constant, ``'' in ...``, oracle-vs-oracle, chained compares, and
-oracle arguments that are not literals (``at_position(get_position()[0], …)``).
+ordered against a constant, ``'' in ...``, oracle-vs-oracle, chained compares,
+oracle arguments that are not literals (``at_position(get_position()[0], …)``), an
+empty container as a literal (``detect_objects() == []`` — true on the fail-safe
+value), and a literal tolerance above its cap (``at_position(0, 0, 1e6)``, FG-3).
 
 SCOPE (honest — do not overclaim): this is STRUCTURAL. It does not prove the literal
 is the TASK's goal (coord_goal / object_goal turn gates do that for coordinate and
@@ -35,6 +37,8 @@ from __future__ import annotations
 
 import ast
 from typing import Literal
+
+from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M, _MAX_FACING_TOL_RAD
 
 Verdict = Literal["GROUNDED", "RAN"]
 
@@ -63,6 +67,14 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
 # ponytail: kernel lists until the @oracle tag grows a return kind.
 _BOOL_ORACLES: frozenset[str] = _PREDICATE_ORACLES | {"detection_matches_gt"}
 
+# Tolerance-taking predicates: positional index of ``tol`` and its cap (the cap the
+# oracle clamps to = its ``@oracle(max_tol=...)``). A literal tol above the cap, or a
+# non-numeric one, is "within 1e6 m" — vacuous, never evidence (FG-3).
+_TOL_ARG: dict[str, tuple[int, float]] = {
+    "at_position": (2, _MAX_ARRIVAL_TOL_M),
+    "facing": (1, _MAX_FACING_TOL_RAD),
+}
+
 _ORDERING = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
 # Mirror an ordering when the literal is on the LEFT (``0 < len(x)`` == ``len(x) > 0``).
 _FLIP = {ast.Lt: ast.Gt, ast.LtE: ast.GtE, ast.Gt: ast.Lt, ast.GtE: ast.LtE}
@@ -70,13 +82,14 @@ _FLIP = {ast.Lt: ast.Gt, ast.LtE: ast.GtE, ast.Gt: ast.Lt, ast.GtE: ast.LtE}
 
 def _literal(node: ast.AST) -> bool:
     """A literal the author wrote: a non-None constant, a signed number, or a
-    tuple/list of literals (``placed_count((0, 0, 1, 1))``)."""
+    NON-EMPTY tuple/list of literals (``placed_count((0, 0, 1, 1))``). An empty
+    container is no goal: ``detect_objects() == []`` holds on the fail-safe value."""
     if isinstance(node, ast.Constant):
         return node.value is not None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
         return _number(node) is not None
     if isinstance(node, (ast.Tuple, ast.List)):
-        return all(_literal(e) for e in node.elts)
+        return bool(node.elts) and all(_literal(e) for e in node.elts)
     return False
 
 
@@ -104,7 +117,15 @@ def _oracle_call(node: ast.AST, oracle_names: frozenset[str]) -> str | None:
         k.arg is None for k in node.keywords
     ):
         return None
-    return node.func.id if all(_literal(a) for a in args) else None
+    if not all(_literal(a) for a in args):
+        return None
+    spec = _TOL_ARG.get(node.func.id)
+    if spec is not None:
+        i, cap = spec
+        tols = [k.value for k in node.keywords if k.arg == "tol"] + node.args[i : i + 1]
+        if any((v := _number(t)) is None or v > cap for t in tols):
+            return None
+    return node.func.id
 
 
 def _predicate_call(node: ast.AST, oracle_names: frozenset[str]) -> bool:

@@ -62,13 +62,15 @@ def evidence_names(ns: Mapping[str, Any], scope: str | None = None) -> frozenset
 
     *scope* restricts to that scope (``"robot"`` / ``"dev"``) — the done-gate passes
     the active world's scope so a dev predicate can never ground in a robot world.
-    ``None`` accepts any scope: the reward gate uses it because it has no world
-    handle, and a namespace only ever carries ONE world's oracles (the engine never
-    merges dev predicates into a robot world), so there is nothing to mix.
+    ``None`` (the reward gate, which has no world handle) takes the namespace's one
+    scope; a namespace mixing scopes fails closed to the empty set, since the engine
+    never merges dev predicates into a robot world.
     """
-    return frozenset(
-        name
+    tagged = {
+        name: fn.__oracle__.scope
         for name, fn in ns.items()
         if isinstance(getattr(fn, "__oracle__", None), OracleTag)
-        and (scope is None or fn.__oracle__.scope == scope)
-    )
+    }
+    if scope is None and len(set(tagged.values())) > 1:
+        return frozenset()
+    return frozenset(n for n, s in tagged.items() if scope is None or s == scope)

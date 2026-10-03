@@ -8,11 +8,10 @@
     WP02, 4 of the 5 graded GROUNDED.
 (2) A real ``pick`` + ``holding_object('banana')`` -> GROUNDED, exit 0.
 
-Scripted native tool-use (no live LLM); serialized, headless, ``rosm nuke`` after.
+Scripted native tool-use (no live LLM); serialized, headless. The arm sim lives in the
+vector-cli process, so nothing outlives the turn and no machine-wide ``rosm nuke`` runs.
 """
 from __future__ import annotations
-
-import subprocess
 
 import pytest
 
@@ -40,18 +39,9 @@ def _turns(*pairs):  # noqa: ANN002, ANN202
     return {"turns": turns}
 
 
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
 @pytest.mark.sim
 @pytest.mark.cli_main
-def test_arm_vacuous_verifies_grade_ran(sim_cleanup) -> None:
+def test_arm_vacuous_verifies_grade_ran() -> None:
     r = run_cli_turn(
         "回到初始位置",
         sim=True,
@@ -70,7 +60,7 @@ def test_arm_vacuous_verifies_grade_ran(sim_cleanup) -> None:
 
 @pytest.mark.sim
 @pytest.mark.cli_main
-def test_arm_honest_grasp_grades_grounded(sim_cleanup) -> None:
+def test_arm_honest_grasp_grades_grounded() -> None:
     r = run_cli_turn(
         "把香蕉抓起来拿在手里",
         sim=True,

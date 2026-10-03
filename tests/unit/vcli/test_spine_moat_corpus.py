@@ -70,9 +70,30 @@ CORPUS_RAN: list[str] = [
     "detection_matches_gt('red') == False",
     "not detection_matches_gt('red')",
     "len(detection_matches_gt('red')) == 0",
-    # FG-3 tolerance inflation is NOT a classifier rule: at_position(0, 0, 1e6) still
-    # classifies GROUNDED, and the oracle clamps the tol to the 2 m cap, so it is exactly
-    # at_position(0, 0, 2.0). See test_tolerance_is_clamped_in_oracle.
+    # an empty container is no goal: `detect_objects() == []` holds on the arm oracle's
+    # fail-safe value (RAN on base, which demanded a Constant in the compare)
+    "detect_objects() == []",
+    "detect_objects() == ()",
+    "get_position() == []",
+    "get_position() == ()",
+    "get_heading() == ()",
+    "[] == describe_scene()",
+    "placed_count() == []",
+    "[[]] == placed_count()",
+    "placed_count() == ((),)",
+    "[] in detect_objects()",
+    "(detect_objects() == []) and (get_position() == ())",
+    "at_position(1, 2) or detect_objects() == []",
+    # FG-3 tolerance inflation: a literal tol above the cap (2 m / 45 deg) is vacuous
+    # (the oracle also clamps it at runtime, see test_tolerance_is_clamped_in_oracle)
+    "at_position(0, 0, 1e6)",
+    "at_position(0, 0, tol=99)",
+    "at_position(x=0, y=0, tol=2.01)",
+    "at_position(0, 0, 1e6) == True",
+    "at_position(0, 0, 'big')",
+    "facing(0, 7)",
+    "facing(0.0, tol=3.2)",
+    "facing(0.0, 0.8) and at_position(11, 3)",
     # FG-4 dev predicates in a robot world (not in ROBOT_ORACLES -> no oracle call)
     "file_exists('.')",
     "file_exists('README.md')",
@@ -120,6 +141,11 @@ HONEST_GROUNDED: list[str] = [
     "'table' in describe_scene()",
     "get_position()[0] < 5.0",
     "at_position(11, 3) == True",
+    "at_position(10.0, 3.0, 2.0)",                  # tol exactly at the cap
+    "at_position(x=11, y=3, tol=0.3)",
+    "facing(0.52, 0.78)",                           # just under 45 deg
+    "facing(0.0, tol=0.5)",
+    "detect_objects() == ['banana']",
     "detection_matches_gt('red') == True",  # g1 (R7); its bare call stays RAN
 ]
 
@@ -191,7 +217,9 @@ def test_scope_filter_keeps_dev_predicates_out_of_robot_evidence() -> None:
     robot = evidence_names(ns, "robot")
     assert robot == {"at_position"}
     assert evidence_names(ns, "dev") == {"file_exists"}
-    assert evidence_names(ns) == {"at_position", "file_exists"}
+    # No scope (the reward gate) on a namespace mixing scopes fails closed.
+    assert evidence_names(ns) == frozenset()
+    assert evidence_names({k: ns[k] for k in ("at_position", "nearest_room")}) == {"at_position"}
     assert classify_verify_expr("file_exists('.')", robot) == "RAN"
     assert classify_verify_expr("file_exists('.')", robot | {"file_exists"}) == "GROUNDED"
 
@@ -215,6 +243,32 @@ def _tagged_bool_oracles() -> set[str]:
             ):
                 names.add(node.name)
     return names
+
+
+def test_every_capped_tol_oracle_is_capped_in_the_classifier() -> None:
+    """Every ``@oracle(max_tol=...)`` must have the SAME cap in the classifier's
+    _TOL_ARG, else an over-cap literal tol grades GROUNDED."""
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from vector_os_nano.vcli.worlds import go2_sim_oracle as g
+
+    capped = {
+        node.name
+        for path in Path(ec.__file__).resolve().parents[1].rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.FunctionDef)
+        and any(
+            isinstance(d, ast.Call) and getattr(d.func, "id", None) == "oracle"
+            and any(k.arg == "max_tol" for k in d.keywords)
+            for d in node.decorator_list
+        )
+    }
+    assert capped == set(ec._TOL_ARG), sorted(capped ^ set(ec._TOL_ARG))
+    agent = SimpleNamespace(_base=None)
+    tagged = {f.__name__: f.__oracle__.max_tol for f in (g.make_at_position(agent), g.make_facing(agent))}
+    assert tagged == {name: cap for name, (_i, cap) in ec._TOL_ARG.items()}
 
 
 def test_every_bool_oracle_gets_the_bool_rules() -> None:

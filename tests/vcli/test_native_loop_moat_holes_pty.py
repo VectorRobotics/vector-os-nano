@@ -14,7 +14,7 @@ real product now grades them RAN / exit 2 (the moat may only get STRICTER, rule 
     -> RAN even though the predicate EVALUATES True and the walk was CAUSED.
 
 (B) FACING CROSS-CHANNEL CAUSATION (actor_causation): a forward walk (planar move,
-    heading preserved) + ``verify('facing(0.0, 3.2)')`` (tol clamped to 45 deg; true at spawn). The
+    heading preserved) + ``verify('facing(0.0, 0.78)')`` (true at spawn, tol under the 45-deg cap). The
     heading no-op used to grade CAUSED via the old ``max(planar, yaw)`` metric; the
     per-channel fix grades the FORWARD walk UNCAUSED for a facing predicate -> RAN.
     This ALSO empirically checks the yaw threshold against REAL forward-walk gait
@@ -49,7 +49,7 @@ _MEMBERSHIP_FALSE_GREEN = {
 _FACING_FORWARD_WALK_FALSE_GREEN = {
     "turns": [
         {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 2.5, "speed": 0.3}}]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "facing(0.0, 3.2)"}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "facing(0.0, 0.78)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -104,7 +104,7 @@ def test_membership_shortcircuit_false_green_flips_to_ran(sim_cleanup) -> None:
 @pytest.mark.cli_main
 @pytest.mark.capability
 def test_facing_forward_walk_false_green_flips_to_ran(sim_cleanup) -> None:
-    """(B) a forward walk + `facing(0.0, 3.2)` (true at the spawn heading) -> RAN
+    """(B) a forward walk + `facing(0.0, 0.78)` (true at the spawn heading) -> RAN
     / verified False / exit 2. The walk moved planar, not heading, so a facing
     predicate must grade UNCAUSED — proving the per-channel causation fix holds on the
     real gait (incl. any forward-walk yaw drift below the ~10deg threshold)."""

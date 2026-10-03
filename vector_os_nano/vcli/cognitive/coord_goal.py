@@ -41,6 +41,9 @@ _COORD_RE = re.compile(r"\(\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*
 # verify is not an honest "reached (x, y)" assertion. Generous on purpose (accepts honest
 # 0.5–2 m), so it only ever rejects an EGREGIOUS tolerance (stricter-only, rule 5).
 _MAX_ARRIVAL_TOL_M: float = 2.0
+# The same line for a heading tolerance (``facing(h, tol)``): above 45 deg "facing h"
+# no longer names a direction.
+_MAX_FACING_TOL_RAD: float = math.radians(45.0)
 
 
 def _at_position_tol() -> float:

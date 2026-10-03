@@ -33,7 +33,7 @@ import logging
 import math
 from typing import Any, Callable
 
-from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M
+from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M, _MAX_FACING_TOL_RAD
 from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ _FACING_TOL_RAD: float = math.radians(20.0)
 # A caller-supplied tol is clamped to these caps INSIDE the oracle, so tolerance
 # inflation (``at_position(0, 0, 1e6)``, ``facing(0, 7)``) is vacuous for every goal,
 # not only coordinate goals (FG-3). Honest tols (0.5-2 m, <=45 deg) pass unchanged.
-_MAX_FACING_TOL_RAD: float = math.radians(45.0)
+# The classifier also refuses an over-cap literal tol (evidence_classifier._TOL_ARG).
 
 
 def _get_base(agent: Any) -> Any | None:

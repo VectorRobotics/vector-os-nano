@@ -347,12 +347,10 @@ class _Verifier:
     ``_namespace`` (the SAME keys verify_oracle_names single-sources)."""
 
     def __init__(self) -> None:
-        # WP02: only @oracle-tagged callables count as evidence. Tag each stub with
-        # its scope (dev file predicates vs robot GT) so the reward gate sees them.
-        _dev = {"file_exists", "grep_count", "path_contains"}
+        # WP02: only @oracle-tagged callables count as evidence, and a namespace
+        # carries one world's scope (a mixed one fails closed). These are dev tests.
         self._namespace = {
-            name: oracle(scope="dev" if name in _dev else "robot")(lambda *a, **k: False)
-            for name in ORACLES
+            name: oracle(scope="dev")(lambda *a, **k: False) for name in ORACLES
         }
 
 
