@@ -152,11 +152,16 @@ def test_sim_agent_has_gripper_and_perception():
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 
-    ns = argparse.Namespace(sim=True, sim_go2=False, gui=False, api_key=None)
+    # cli._init_agent reads `headless` (not `gui`): without it a viewer opens.
+    ns = argparse.Namespace(sim=True, sim_go2=False, headless=True, api_key=None)
     agent = cli._init_agent(ns)
-    assert isinstance(agent._gripper, MuJoCoGripper)
-    assert isinstance(agent._perception, MuJoCoPerception)
-    assert agent.execute_skill("gripper_open").success
+    try:
+        assert getattr(agent._arm, "_viewer", None) is None
+        assert isinstance(agent._gripper, MuJoCoGripper)
+        assert isinstance(agent._perception, MuJoCoPerception)
+        assert agent.execute_skill("gripper_open").success
+    finally:
+        agent._arm.disconnect()
 
 
 def test_vgg_gate_admits_arm_only(arm):
@@ -278,7 +283,7 @@ def test_sim_tool_lifecycle_dev_to_arm_to_dev():
                       abort=threading.Event(), app_state=app)
 
     tools_before = set(reg.list_tools())
-    SimStartTool().execute({"sim_type": "arm"}, ctx)
+    SimStartTool().execute({"sim_type": "arm", "gui": False}, ctx)
     assert set(reg.list_tools()) - tools_before, "skills should be registered on start"
     sp = eng._system_prompt
     assert isinstance(sp, DynamicSystemPrompt)
@@ -286,7 +291,7 @@ def test_sim_tool_lifecycle_dev_to_arm_to_dev():
     assert "No hardware connected" not in "".join(b.get("text", "") for b in sp)
     assert reg.is_category_enabled("robot") and reg.is_category_enabled("diag")
     assert app["agent"] is not None
-    # gui defaults headless: no viewer in-process
+    # gui=False: no viewer in-process (the product default is a window)
     assert getattr(app["agent"]._arm, "_viewer", None) is None
 
     SimStopTool().execute({}, ctx)

@@ -114,16 +114,13 @@ def _run_repl() -> dict:
     print(f"[capstone] REPL: three-turn bare cli.main — g1 switch + nav {_TARGET} + detect red")
     result = run_repl_session(
         [
-            (0.0, "启动 g1 仿真"),                          # turn 1: NL embodiment switch
-            (45.0, f"走到坐标 ({_TARGET[0]},{_TARGET[1]})"),  # turn 2: NL nav
-            (90.0, _QUERY_ZH),                              # turn 3: NL detect
-            (110.0, "quit"),
+            "启动 g1 仿真",                          # turn 1: NL embodiment switch
+            f"走到坐标 ({_TARGET[0]},{_TARGET[1]})",  # turn 2: NL nav
+            _QUERY_ZH,                              # turn 3: NL detect
         ],
         tool_script=_TOOL_SCRIPT,
         native=True,
-        boot_sec=8.0,
-        settle_sec=10.0,
-        extra_args=["--native-first"],
+        extra_args=["--native-first", "--no-permission"],
     )
     text = _strip(result.transcript)
     with open(_REPL_TX, "w") as fh:

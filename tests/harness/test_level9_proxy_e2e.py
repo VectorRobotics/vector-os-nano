@@ -99,60 +99,23 @@ def _make_ros2_msg_stubs() -> dict[str, types.ModuleType]:
     return stubs
 
 
-# Install stubs into sys.modules ONLY for packages not already installed.
-# This avoids overwriting real ROS2 packages (e.g. visualization_msgs)
-# that other test files depend on.
-_rclpy_stub = _make_rclpy_stub()
-sys.modules.setdefault("rclpy", _rclpy_stub)
-sys.modules.setdefault("rclpy.node", _rclpy_stub.node)
-sys.modules.setdefault("rclpy.qos", _rclpy_stub.qos)
-for _name, _mod in _make_ros2_msg_stubs().items():
-    sys.modules.setdefault(_name, _mod)
-
-# Reset scene_graph_viz cached imports after this module's tests finish,
-# so subsequent test files (e.g. test_level8) can re-import real ROS2 types.
-# Also remove our stub modules to restore real imports.
-@pytest.fixture(autouse=True, scope="module")
-def _cleanup_ros2_stubs():
-    """Yield-fixture that restores real ROS2 modules after all L9 tests."""
-    yield
-    # Remove stub modules — let real imports work again
-    stubs_to_remove = [
-        k for k in sys.modules
-        if isinstance(sys.modules[k], types.ModuleType)
-        and hasattr(sys.modules[k], "__name__")
-        and sys.modules[k].__name__ in (
-            "rclpy", "rclpy.node", "rclpy.qos",
-            "geometry_msgs", "geometry_msgs.msg",
-            "nav_msgs", "nav_msgs.msg",
-            "sensor_msgs", "sensor_msgs.msg",
-            "visualization_msgs", "visualization_msgs.msg",
-        )
-        and not hasattr(sys.modules[k], "__file__")  # stubs have no __file__
-    ]
-    for k in stubs_to_remove:
-        del sys.modules[k]
-    # Clear scene_graph_viz lazy-import cache
-    try:
-        from vector_os_nano.ros2.nodes import scene_graph_viz as _sgv
-        _sgv._MarkerArray = None
-        _sgv._Marker = None
-        _sgv._ColorRGBA = None
-        _sgv._Point = None
-        _sgv._Vector3 = None
-        _sgv._Header = None
-    except Exception:
-        pass
-
-# ---------------------------------------------------------------------------
-# Now safe to import from the project
-# ---------------------------------------------------------------------------
-
-from vector_os_nano.hardware.sim.go2_ros2_proxy import Go2ROS2Proxy  # noqa: E402
+# The stubs exist only while the proxy module is imported, so no other file ever
+# sees a fake rclpy (tests:fake-modules-leak). Project modules that need no ROS are
+# imported first, outside the stub window, so they stay the shared real copies.
 from vector_os_nano.skills.go2.look import LookSkill  # noqa: E402
 from vector_os_nano.core.scene_graph import SceneGraph  # noqa: E402
 from vector_os_nano.core.skill import SkillContext  # noqa: E402
 from vector_os_nano.core.types import SkillResult  # noqa: E402
+
+from tests.harness.stubs import stubbed_modules  # noqa: E402
+
+_rclpy_stub = _make_rclpy_stub()
+with stubbed_modules({
+    "rclpy": _rclpy_stub, "rclpy.node": _rclpy_stub.node, "rclpy.qos": _rclpy_stub.qos,
+    **_make_ros2_msg_stubs(),
+}):
+    from vector_os_nano.hardware.sim.go2_ros2_proxy import Go2ROS2Proxy  # noqa: E402
+
 from vector_os_nano.perception.vlm_go2 import (  # noqa: E402
     DetectedObject,
     RoomIdentification,
@@ -418,9 +381,6 @@ class TestLookSkillWithProxy:
             f"Expected room='kitchen', got {result.result_data.get('room')!r}"
         )
 
-    def test_look_skill_result_data_contains_objects(self):
-        """result_data['objects'] contains dicts for each VLM-detected object."""
-
     def test_look_skill_room_confidence_from_proxy_pipeline(self):
         """room_confidence in result_data matches the mock VLM's confidence."""
         proxy = _proxy_with_frame(_rgb_frame())
@@ -501,9 +461,6 @@ class TestSceneGraphUpdatedViaProxy:
         assert pytest.approx(vp.x, abs=0.01) == 5.0
         assert pytest.approx(vp.y, abs=0.01) == 3.0
 
-    def test_scene_graph_objects_created_after_look(self):
-        """ObjectNodes for each detected object exist in the scene graph."""
-
     def test_scene_graph_room_visit_count_incremented(self):
         """RoomNode.visit_count is >= 1 after LookSkill runs."""
         proxy = _proxy_with_frame(_rgb_frame())
@@ -555,9 +512,6 @@ class TestSceneGraphUpdatedViaProxy:
 class TestFullProxyPipeline:
     """End-to-end pipeline: inject frame into proxy → run LookSkill → verify graph."""
 
-    def test_full_pipeline_camera_to_scene_graph(self):
-        """Simulate a full observation cycle from proxy frame to SceneGraph."""
-
     def test_full_pipeline_second_look_skips_nearby_viewpoint(self):
         """A second look from nearly the same position does not duplicate viewpoints."""
         proxy = _proxy_with_frame(_rgb_frame())
@@ -600,6 +554,3 @@ class TestFullProxyPipeline:
         assert len(vps) >= 2, (
             f"Expected at least 2 viewpoints in 'garage', got {len(vps)}"
         )
-
-    def test_stats_reflect_observation_after_pipeline(self):
-        """SceneGraph.stats() shows non-zero rooms/viewpoints/objects after look."""

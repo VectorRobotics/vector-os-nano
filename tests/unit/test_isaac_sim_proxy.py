@@ -14,6 +14,8 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, patch, PropertyMock
 
+from tests.harness.clock import fake_clock
+
 import pytest
 
 
@@ -85,16 +87,6 @@ class TestIsaacSimProxyProtocolCompliance:
     def test_supports_lidar_is_true(self) -> None:
         proxy = _make_proxy()
         assert proxy.supports_lidar is True
-
-    def test_supports_holonomic_is_true(self) -> None:
-        # Inherited from Go2ROS2Proxy — Go2 is omnidirectional
-        proxy = _make_proxy()
-        # Go2ROS2Proxy doesn't declare supports_holonomic; check via BaseProtocol
-        # The protocol requires it; confirm attribute exists and is True
-        # (set by checking the parent Go2ROS2Proxy interface)
-        assert hasattr(proxy, "supports_holonomic") or True  # structural check
-        # IsaacSimProxy inherits Go2ROS2Proxy — Go2 is holonomic
-        # We test the attribute is accessible (may not be declared explicitly)
 
     def test_node_name_class_attribute(self) -> None:
         from vector_os_nano.hardware.sim.isaac_sim_proxy import IsaacSimProxy
@@ -496,22 +488,17 @@ class TestIsaacSimProxyMotion:
 
     def test_walk_is_blocking_uses_sleep(self) -> None:
         proxy = self._connected_proxy()
-        sleep_calls: list[float] = []
+        proxy.set_velocity = MagicMock()
 
-        def mock_set_velocity(vx: float, vy: float, vyaw: float) -> None:
-            pass
-
-        proxy.set_velocity = mock_set_velocity
-
-        with patch("time.sleep", side_effect=lambda t: sleep_calls.append(t)):
+        with fake_clock() as slept:
             proxy.walk(vx=0.3, vy=0.0, vyaw=0.0, duration=0.5)
 
-        assert len(sleep_calls) > 0
+        assert slept[0] >= 0.5  # walk blocked (slept) for its duration
 
     def test_walk_returns_true(self) -> None:
         proxy = self._connected_proxy()
         proxy.set_velocity = MagicMock()
-        with patch("time.sleep"):
+        with fake_clock():
             result = proxy.walk(vx=0.1, vy=0.0, vyaw=0.0, duration=0.1)
         assert result is True
 
@@ -520,7 +507,7 @@ class TestIsaacSimProxyMotion:
         calls: list[tuple] = []
         proxy.set_velocity = lambda vx, vy, vyaw: calls.append((vx, vy, vyaw))
 
-        with patch("time.sleep"):
+        with fake_clock():
             proxy.stand()
 
         assert any(c == (0.0, 0.0, 0.0) for c in calls)
@@ -530,7 +517,7 @@ class TestIsaacSimProxyMotion:
         calls: list[tuple] = []
         proxy.set_velocity = lambda vx, vy, vyaw: calls.append((vx, vy, vyaw))
 
-        with patch("time.sleep"):
+        with fake_clock():
             proxy.sit()
 
         assert any(c == (0.0, 0.0, 0.0) for c in calls)
@@ -541,7 +528,7 @@ class TestIsaacSimProxyMotion:
         calls: list[tuple] = []
         proxy.set_velocity = lambda vx, vy, vyaw: calls.append((vx, vy, vyaw))
 
-        with patch("time.sleep"):
+        with fake_clock():
             proxy.walk(vx=0.5, vy=0.0, vyaw=0.0, duration=0.1)
 
         # Last call must be stop
@@ -579,7 +566,7 @@ class TestIsaacSimProxyNavigation:
         # Fake clock: patching time.sleep alone turned the probe loop into a real-time
         # busy loop whose MagicMock call records grew past 50 GB (machine-wide OOM).
         clock = iter(range(10_000))
-        with patch("time.sleep"), \
+        with fake_clock(), \
              patch("time.time", side_effect=lambda: 1_000.0 + 0.5 * next(clock)), \
              patch("os.path.exists", return_value=True):  # never patch builtins.open: yaml on a MagicMock stream never hits EOF (unbounded alloc)
             try:
@@ -612,7 +599,7 @@ class TestIsaacSimProxyNavigation:
         # Alternatively, simply test navigate_to with FAR waypoint already set
         proxy._last_waypoint_time = _t0 + 1000  # FAR "responded" long ago
 
-        with patch("time.sleep"), \
+        with fake_clock(), \
              patch("os.path.exists", return_value=True):  # never patch builtins.open: yaml on a MagicMock stream never hits EOF (unbounded alloc)
             with patch("time.time", side_effect=mock_time):
                 result = proxy.navigate_to(0.4, 0.3, timeout=5.0)

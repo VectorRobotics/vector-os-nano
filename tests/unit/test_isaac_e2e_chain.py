@@ -13,6 +13,8 @@ import math
 from typing import Any
 from unittest.mock import MagicMock, patch, PropertyMock, call
 
+from tests.harness.clock import fake_clock
+
 import pytest
 
 
@@ -209,7 +211,7 @@ class TestProxyPrimitivesChain:
         proxy = _make_connected_proxy()
         with patch.object(proxy, "set_velocity") as mock_sv:
             # Use very short duration to avoid real sleep in test
-            with patch("time.sleep"):
+            with fake_clock():
                 proxy.walk(0.5, duration=0.01)
             # set_velocity must have been called (at least once with positive vx)
             assert mock_sv.call_count >= 1, "walk() must call set_velocity at least once"

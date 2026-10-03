@@ -28,6 +28,10 @@ from typing import Any
 import numpy as np
 import pytest
 
+# Billed VLM calls: opt in with VECTOR_LIVE_LLM=1 (a key in the env or
+# config is NOT consent; tests:missed2).
+pytestmark = pytest.mark.live_llm
+
 # Ensure repo root is importable (mirrors conftest.py pattern)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
@@ -70,33 +74,10 @@ def _get_api_key() -> str:
 # ---------------------------------------------------------------------------
 
 def _import_mujoco_go2():
-    """Import MuJoCoGo2 by direct file path, avoiding package cascade.
+    """The ONE MuJoCoGo2 class (a by-path re-load made a second copy in sys.modules)."""
+    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 
-    Mirrors the pattern in conftest.py — avoids importing httpx and other
-    optional deps that may not be present in the harness environment.
-    Loads vector_os_nano.core.types first since mujoco_go2 requires it.
-    """
-    import importlib.util
-
-    module_path = (
-        _REPO_ROOT / "vector_os_nano" / "hardware" / "sim" / "mujoco_go2.py"
-    )
-    types_path = _REPO_ROOT / "vector_os_nano" / "core" / "types.py"
-
-    types_spec = importlib.util.spec_from_file_location(
-        "vector_os_nano.core.types", str(types_path)
-    )
-    types_mod = importlib.util.module_from_spec(types_spec)  # type: ignore[arg-type]
-    sys.modules.setdefault("vector_os_nano.core.types", types_mod)
-    types_spec.loader.exec_module(types_mod)  # type: ignore[union-attr]
-
-    spec = importlib.util.spec_from_file_location(
-        "vector_os_nano.hardware.sim.mujoco_go2", str(module_path)
-    )
-    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    sys.modules["vector_os_nano.hardware.sim.mujoco_go2"] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod.MuJoCoGo2
+    return MuJoCoGo2
 
 
 # ---------------------------------------------------------------------------

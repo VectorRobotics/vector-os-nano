@@ -40,7 +40,7 @@ NOT holding anything (every ``<weld ... active="false">`` in so101_mujoco.xml), 
 real grasp is a genuine 0->1 transition BY THE ACTOR: a true caused state change,
 not a satisfied-at-baseline NO-OP.
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + rosm nuke after the
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after the
 case via the fixture. The arm sim does NOT write its scene xml (verified), so no
 scene restore is needed. Reproduce::
 
@@ -49,7 +49,6 @@ scene restore is needed. Reproduce::
 """
 from __future__ import annotations
 
-import subprocess
 
 import pytest
 
@@ -58,19 +57,6 @@ pytest.importorskip("mujoco")
 # The graspable object the script targets — present in so101_mujoco.xml with a
 # pre-defined weld constraint, and the historic 30/30 grasp target.
 _PICK_TARGET: str = "banana"
-
-
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
 
 
 @pytest.mark.sim
@@ -185,4 +171,3 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
             arm.disconnect()
         except Exception:  # noqa: BLE001
             pass
-        _nuke()

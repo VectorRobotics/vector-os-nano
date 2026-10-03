@@ -19,14 +19,10 @@ Run (offline subset):
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import numpy as np
 import pytest
-
-# Force headless EGL rendering (matches test_g1_room.py) — no GL window.
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.embodiments.dof_layout import (

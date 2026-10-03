@@ -28,6 +28,10 @@ HOME_JOINTS = [-0.014, -1.238, 0.562, 0.858, 0.311]
 @pytest.fixture(scope="module")
 def ik():
     from vector_os_nano.hardware.so101.ik_solver import IKSolver
+    if not Path(URDF_PATH).exists():
+        # The shipped urdf/so101.urdf cannot load (package:// meshes); the calibrated
+        # URDF lives in an external ROS workspace (tests:hardcoded-machine-paths).
+        pytest.skip(f"external SO-101 URDF not present: {URDF_PATH}")
     return IKSolver(urdf_path=URDF_PATH)
 
 

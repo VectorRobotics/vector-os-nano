@@ -22,6 +22,10 @@ import time
 import numpy as np
 import pytest
 
+# Billed VLM calls: opt in with VECTOR_LIVE_LLM=1 (a key in the env or
+# config is NOT consent; tests:missed2).
+pytestmark = pytest.mark.live_llm
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

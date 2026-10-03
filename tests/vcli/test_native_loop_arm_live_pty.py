@@ -43,13 +43,12 @@ SKIPPED unless BOTH a real provider key is present in the repo-root ``.env`` AND
     VECTOR_LIVE_LLM=1 MUJOCO_GL=egl PATH=/usr/bin:$PATH \\
       .venv/bin/python -m pytest tests/vcli/test_native_loop_arm_live_pty.py -v -s -m sim
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + rosm nuke after the
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after the
 case via the ``sim_cleanup`` fixture. The arm sim does NOT write its scene xml.
 """
 from __future__ import annotations
 
 import os
-import subprocess
 
 import pytest
 
@@ -101,19 +100,6 @@ pytestmark = pytest.mark.skipif(
     not (_env_has_provider_key() and _live_opted_in()),
     reason=_SKIP_REASON,
 )
-
-
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
 
 
 @pytest.mark.sim

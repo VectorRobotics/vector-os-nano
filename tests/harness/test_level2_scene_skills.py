@@ -129,9 +129,6 @@ class TestLookSkill:
         assert "room" in result.result_data, "result_data missing 'room' key"
         assert result.result_data["room"], "room value is empty"
 
-    def test_look_skill_returns_objects_list(self):
-        """LookSkill result_data includes an 'objects' list."""
-
     def test_look_skill_no_base(self):
         """LookSkill fails gracefully with diagnosis_code 'no_base' when base is absent."""
         from vector_os_nano.skills.go2.look import LookSkill

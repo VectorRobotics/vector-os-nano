@@ -18,7 +18,6 @@ Run with:
 from __future__ import annotations
 
 import math
-import os
 import time
 
 import pytest
@@ -137,7 +136,7 @@ def test_navigate_to_arrives_and_avoids_table(go2_sim: MuJoCoGo2) -> None:
 
 
 @pytest.mark.sim
-def test_navigate_to_with_piper_attached_does_not_crash() -> None:
+def test_navigate_to_with_piper_attached_does_not_crash(monkeypatch) -> None:
     """REGRESSION (R12): navigate_to must not segfault/hang with the Piper attached.
 
     The grasp path runs navigate_to with a MuJoCoPiper connected and a tight tol. The
@@ -148,15 +147,15 @@ def test_navigate_to_with_piper_attached_does_not_crash() -> None:
     (arm-enabled scene + Piper attached + tight tol) and asserts navigate_to returns
     in bounded wall-time having moved the dog. Self-contained (own arm-enabled sim).
     """
-    os.environ["VECTOR_SIM_WITH_ARM"] = "1"
+    monkeypatch.setenv("VECTOR_SIM_WITH_ARM", "1")  # never leaks past this test
     from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
 
     go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
-    go2.connect()
-    piper = MuJoCoPiper(go2)
-    piper.connect()
-    time.sleep(0.5)
     try:
+        go2.connect()
+        piper = MuJoCoPiper(go2)
+        piper.connect()
+        time.sleep(0.5)
         start = go2.get_position()
         t0 = time.time()
         # Tight tol (the grasp-context value) toward the table-front standoff.
@@ -174,6 +173,4 @@ def test_navigate_to_with_piper_attached_does_not_crash() -> None:
         # Dog actually advanced toward the goal (didn't no-op).
         assert moved > 0.15, f"dog barely moved ({moved:.2f} m)"
     finally:
-        piper.disconnect()
-        go2.disconnect()
-        os.environ.pop("VECTOR_SIM_WITH_ARM", None)
+        go2.disconnect()  # the Piper rides on the go2 sim (its disconnect is a flag)

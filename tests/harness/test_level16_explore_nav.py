@@ -15,6 +15,8 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
+from tests.harness.clock import fake_clock
+
 import numpy as np
 import pytest
 
@@ -77,7 +79,7 @@ class TestSeedBehavior:
         t.start()
 
         with patch("vector_os_nano.skills.go2.explore._start_tare", return_value=True):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _exploration_loop(base, has_bridge=True)
 
         t.join(timeout=3)
@@ -147,7 +149,7 @@ class TestAutoLookOnExplore:
 
         # Patch subprocess.run to avoid 5s TARE start timeout
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _exploration_loop(base, has_bridge=False)
 
         _explore_mod._spatial_memory = None

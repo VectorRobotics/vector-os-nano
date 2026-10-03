@@ -27,6 +27,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+# Billed VLM calls: opt in with VECTOR_LIVE_LLM=1 (a key in the env or
+# config is NOT consent; tests:missed2).
+pytestmark = pytest.mark.live_llm
+
 # ---------------------------------------------------------------------------
 # Ensure repo root on sys.path (conftest may not run before module-level code)
 # ---------------------------------------------------------------------------
@@ -248,7 +252,7 @@ class TestLevel4Patrol:
 
         nav_result = nav.execute({"room": "hallway"}, ctx)
         if not nav_result.success:
-            pytest.skip("Navigation to hallway failed — cannot test memory persistence")
+            pytest.fail("Navigation to hallway failed — cannot test memory persistence")
 
         look_result = look.execute({}, ctx)
         assert look_result.success, f"LookSkill failed: {look_result.error_message}"

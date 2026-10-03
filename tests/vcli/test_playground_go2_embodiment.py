@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from vector_os_nano.hardware.sim.mujoco_go2 import _ROOM_XML
 from vector_os_nano.playground import PlaygroundWorld, register_scenarios
 from vector_os_nano.playground.catalog import GO2_ROOM, get_scenario
 from vector_os_nano.playground.verify.base_predicates import _FACING_TOL_RAD
@@ -393,10 +394,12 @@ class TestArmUnaffected:
 
 
 # ---------------------------------------------------------------------------
-# G2 — the go2 room geometry is RECONCILED with the real scene_room.xml.
+# G2 — the go2 room geometry is RECONCILED with the real room scene.
 #
-# Reads the bundled scene XML as DATA (xml.etree, never MuJoCo: no sim load, no
-# MUJOCO_GL pollution) and asserts every playground room box matches the matching
+# Reads the tracked go2_room.xml template that scene_room.xml is built from, as
+# DATA (xml.etree, never MuJoCo: no sim load, no MUJOCO_GL pollution). Never the
+# generated, gitignored scene_room.xml: it exists only after a sim test has run,
+# which made this hermetic test order-dependent. Asserts every playground room box matches the matching
 # ``f_<room>`` floor-plane geom's extent, that the real Go2 spawn (10, 3) lands in
 # the hallway, and that the rooms producer (the foreach source) emits those real
 # room centres. This locks the placeholder-quadrant -> real-house swap.
@@ -432,7 +435,7 @@ class TestGo2GeometryReconciledWithScene:
 
     def test_perimeter_room_boxes_match_floor_geoms(self) -> None:
         scen = get_scenario("go2_room")
-        floor = _floor_boxes_from_scene_xml(scen.scene_xml)
+        floor = _floor_boxes_from_scene_xml(str(_ROOM_XML))
         # Every room with a dedicated f_<room> floor geom matches it exactly.
         # (master_bedroom -> f_master, guest_bedroom -> f_guest.) The bathroom is
         # the documented exception: the XML merged the laundry INTO the bathroom
@@ -458,7 +461,7 @@ class TestGo2GeometryReconciledWithScene:
         # The merged bathroom+laundry room (x=7..12) must contain BOTH the tiled
         # f_bath floor region AND the laundry appliances (washer/dryer at x=11).
         scen = get_scenario("go2_room")
-        floor = _floor_boxes_from_scene_xml(scen.scene_xml)
+        floor = _floor_boxes_from_scene_xml(str(_ROOM_XML))
         bx_min, by_min, bx_max, by_max = scen.rooms["bathroom"]
         fx_min, fy_min, fx_max, fy_max = floor["bath"]
         # The room box covers the entire tiled floor geom...

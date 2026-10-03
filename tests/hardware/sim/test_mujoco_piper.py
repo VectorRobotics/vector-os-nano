@@ -13,10 +13,6 @@ scene are NOT touched.
 """
 from __future__ import annotations
 
-import os
-
-os.environ.setdefault("VECTOR_SIM_WITH_ARM", "1")
-
 import time
 
 import numpy as np
@@ -36,21 +32,24 @@ from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
 
 @pytest.fixture(scope="module")
 def sim():
-    """Session-scope Go2+Piper sim. Headless. Torn down after the module."""
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
-    go2.connect()
-    piper = MuJoCoPiper(go2)
-    piper.connect()
-    gripper = MuJoCoPiperGripper(go2)
-    gripper.connect()
-    time.sleep(0.5)  # let physics settle
+    """Module-scope Go2+Piper sim. Headless. Torn down after the module.
 
-    try:
-        yield {"go2": go2, "piper": piper, "gripper": gripper}
-    finally:
-        gripper.disconnect()
-        piper.disconnect()
-        go2.disconnect()
+    VECTOR_SIM_WITH_ARM selects the go2_piper scene; it is set for this module
+    only (never at import, which made every later test's scene order-dependent).
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("VECTOR_SIM_WITH_ARM", "1")
+        go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+        try:
+            go2.connect()
+            piper = MuJoCoPiper(go2)
+            piper.connect()
+            gripper = MuJoCoPiperGripper(go2)
+            gripper.connect()
+            time.sleep(0.5)  # let physics settle
+            yield {"go2": go2, "piper": piper, "gripper": gripper}
+        finally:
+            go2.disconnect()  # the arm + gripper ride on the go2 sim
 
 
 # ---------------------------------------------------------------------------

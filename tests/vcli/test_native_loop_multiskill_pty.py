@@ -40,8 +40,8 @@ outcome); the over-command is the honest way the gait reaches it. The target hea
 is computed from the base's ACTUAL heading read BEFORE the run, so the test is
 self-calibrating to whatever pose ``stand()`` settles into.
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + rosm nuke + scene xml
-restored after the case via fixtures. Reproduce::
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after the
+case via fixtures (the generated scene xml is untracked). Reproduce::
 
     MUJOCO_GL=egl PATH=/usr/bin:$PATH .venv/bin/python -m pytest \\
       tests/vcli/test_native_loop_multiskill_pty.py -v -s -m sim
@@ -49,7 +49,6 @@ restored after the case via fixtures. Reproduce::
 from __future__ import annotations
 
 import math
-import subprocess
 
 import pytest
 
@@ -59,27 +58,6 @@ pytest.importorskip("mujoco")
 # commanded rotation within the step, so command 180deg to actually reach +90deg.
 _COMMANDED_TURN_DEG: float = 180.0
 _TARGET_TURN_RAD: float = math.radians(90.0)  # the heading the step must PROVE
-
-
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
-    try:
-        subprocess.run(
-            ["git", "checkout",
-             "vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml"],
-            timeout=20, capture_output=True,
-        )
-    except Exception:  # noqa: BLE001
-        pass
 
 
 @pytest.mark.sim
@@ -195,4 +173,3 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
             base.disconnect()
         except Exception:  # noqa: BLE001
             pass
-        _nuke()

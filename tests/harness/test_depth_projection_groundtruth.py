@@ -39,25 +39,10 @@ pytest.importorskip("mujoco", reason="mujoco not installed — skipping depth pr
 
 
 def _import_mujoco_go2():
-    """Import MuJoCoGo2 by file path, loading its dependency chain."""
-    import importlib.util
+    """The ONE MuJoCoGo2 class (a by-path re-load made a second copy in sys.modules)."""
+    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 
-    _types_path = _REPO_ROOT / "vector_os_nano" / "core" / "types.py"
-    types_spec = importlib.util.spec_from_file_location(
-        "vector_os_nano.core.types", str(_types_path)
-    )
-    types_mod = importlib.util.module_from_spec(types_spec)  # type: ignore[arg-type]
-    sys.modules.setdefault("vector_os_nano.core.types", types_mod)
-    types_spec.loader.exec_module(types_mod)  # type: ignore[union-attr]
-
-    spec = importlib.util.spec_from_file_location(
-        "vector_os_nano.hardware.sim.mujoco_go2",
-        str(_REPO_ROOT / "vector_os_nano" / "hardware" / "sim" / "mujoco_go2.py"),
-    )
-    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    sys.modules["vector_os_nano.hardware.sim.mujoco_go2"] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod.MuJoCoGo2
+    return MuJoCoGo2
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +125,7 @@ class TestDepthProjectionGroundTruth:
             patch = depth[int(cy) - 10:int(cy) + 10, int(cx) - 10:int(cx) + 10]
             valid = patch[(patch > 0.1) & (patch < 10.0)]
             if len(valid) == 0:
-                pytest.skip("No valid depth at center — scene may not be visible")
+                pytest.fail("No valid depth at center — scene may not be visible")
             d_center = float(np.median(valid))
 
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d_center, intrinsics)
@@ -197,7 +182,7 @@ class TestDepthProjectionGroundTruth:
 
         d = float(depth[int(cy), int(cx)])
         if d <= 0.1 or d > 10.0:
-            pytest.skip("No valid depth at center pixel")
+            pytest.fail("No valid depth at center pixel")
 
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
 
@@ -242,7 +227,7 @@ class TestDepthProjectionGroundTruth:
         # Use same depth for center and right pixel (eliminates depth ambiguity)
         d = float(depth[int(cy), int(cx)])
         if d <= 0.1 or d > 9.0:
-            pytest.skip("No valid depth at center pixel")
+            pytest.fail("No valid depth at center pixel")
 
         # Center
         xc_cam, yc_cam, zc_cam = pixel_to_camera(cx, cy, d, intrinsics)
@@ -328,7 +313,7 @@ class TestDepthProjectionGroundTruth:
 
         d = float(depth[int(cy), int(cx)])
         if d <= 0.1 or d > 10.0:
-            pytest.skip("No valid depth at center")
+            pytest.fail("No valid depth at center")
 
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
         pos = go2_room.get_position()
@@ -387,7 +372,7 @@ class TestTimingMismatchBug:
 
         d = float(depth_a[int(cy), int(cx)])
         if d <= 0.1 or d > 8.0:
-            pytest.skip("No valid center depth at position A")
+            pytest.fail("No valid center depth at position A")
 
         # Ground-truth world point (correct: depth A + pose A)
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
@@ -400,8 +385,8 @@ class TestTimingMismatchBug:
         # --- Move robot forward 1.5m ---
         try:
             robot.walk(vx=0.5, vy=0.0, vyaw=0.0, duration=3.0)
-        except Exception:
-            pytest.skip("walk() failed — cannot test timing mismatch")
+        except Exception as exc:  # noqa: BLE001 — a failed precondition is a FAIL
+            pytest.fail(f"walk() raised {exc!r} — cannot test timing mismatch")
 
         # --- Position B: capture pose ONLY (simulating the bug) ---
         cam_xpos_b, cam_xmat_b = robot.get_camera_pose()
@@ -414,7 +399,7 @@ class TestTimingMismatchBug:
             (float(pos_b[1]) - float(pos_a[1]))**2
         )
         if dist_moved < 0.5:
-            pytest.skip(f"Robot only moved {dist_moved:.2f}m — need at least 0.5m to test bug")
+            pytest.fail(f"Robot only moved {dist_moved:.2f}m — need at least 0.5m to test bug")
 
         # --- Buggy projection: depth from A, pose from B ---
         wx_wrong, wy_wrong, _ = camera_to_world(
@@ -460,7 +445,7 @@ class TestTimingMismatchBug:
         d = float(depth[int(cy), int(cx)])
 
         if d <= 0.1 or d > 10.0:
-            pytest.skip("No valid depth at center")
+            pytest.fail("No valid depth at center")
 
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(
@@ -529,7 +514,7 @@ class TestAtomicCapturePattern:
         d = float(depth_cached[int(cy), int(cx)])
 
         if d <= 0.1 or d > 10.0:
-            pytest.skip("No valid center depth in cached frame")
+            pytest.fail("No valid center depth in cached frame")
 
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(
@@ -582,7 +567,7 @@ class TestAtomicCapturePattern:
         d = float(depth[int(cy), int(cx)])
 
         if d <= 0.1 or d > 10.0:
-            pytest.skip("No valid center depth")
+            pytest.fail("No valid center depth")
 
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(

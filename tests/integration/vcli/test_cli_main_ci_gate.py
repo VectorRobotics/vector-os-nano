@@ -21,6 +21,7 @@ Two responsibilities:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,30 +36,29 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.cli_main
-def test_cli_main_marker_selects_at_least_one() -> None:
-    """`pytest -m cli_main --co` collects >= 1 test (instrument exists)."""
+def test_cli_main_marker_selects_real_pty_runs() -> None:
+    """`-m cli_main` selects >= 1 test that really SPAWNS cli.main on a PTY.
+
+    Regression (tests:self-satisfying-gate-guard): the guard used to count its own
+    file's cli_main tests, so it stayed green with every real PTY test deleted.
+    Now a selected test only counts if its file drives run_cli_turn /
+    run_repl_session, and this guard file never counts.
+    """
     proc = subprocess.run(
         [
-            sys.executable, "-m", "pytest",
-            "tests/integration/vcli", "-m", "cli_main", "--co", "-q",
-            "-p", "no:cacheprovider",
+            sys.executable, "-m", "pytest", "tests/vcli", "tests/integration/vcli",
+            "tests/e2e_repl", "-m", "cli_main", "--co", "-q", "-p", "no:cacheprovider",
         ],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=120,
+        cwd=str(_REPO_ROOT), capture_output=True, text=True, timeout=300,
     )
-    # Collection must succeed and report at least one selected test.
     assert proc.returncode == 0, f"collection failed:\n{proc.stdout}\n{proc.stderr}"
-    # pytest -q --co prints one line per collected test id.
-    selected = [
-        ln for ln in proc.stdout.splitlines()
-        if "::test_" in ln
-    ]
-    assert len(selected) >= 1, (
-        f"expected >=1 cli_main test, got {len(selected)}:\n{proc.stdout}"
+    files = {ln.split("::", 1)[0] for ln in proc.stdout.splitlines() if "::test_" in ln}
+    spawning = sorted(
+        f for f in files
+        if Path(f).name != Path(__file__).name
+        and re.search(r"run_(cli_turn|repl_session)\(", (_REPO_ROOT / f).read_text(encoding="utf-8"))
     )
+    assert spawning, f"no cli_main test spawns cli.main on a PTY; selected files: {sorted(files)}"
 
 
 # ---------------------------------------------------------------------------

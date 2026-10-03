@@ -19,7 +19,7 @@ Three cases, each on the real sim, each landing on the real verdict:
       predicate true at baseline + zero commanded motion -> UNCAUSED -> downgraded
       to RAN -> verified False / exit 2.  Also driven through the PTY harness.
 
-- TELEPORT     (a fake/test sub_goal pokes qpos[0]=11.0 with NO set_velocity):
+- TELEPORT     (a fake/test sub_goal pokes the root x=11.0 with NO set_velocity):
       pose jumps but zero commanded motion -> UNCAUSED -> RAN -> verified False /
       exit 2.  Modeled by a TEST-ONLY primitive (NO production teleport tool — the
       qpos poke cannot cross the cli subprocess boundary without one, which is
@@ -34,11 +34,10 @@ navigate would false-FAIL. ``walk_skill`` (-> base.walk(), which sets
 
 SIM DISCIPLINE: serialized (one sim at a time), headless (no GLFW window — the
 viewer's glXSwapBuffers crashes under a PTY-spawned subprocess), MuJoCo closed +
-``rosm nuke`` after each case via fixtures.
+its own process group reaped after each case (sim_cleanup).
 """
 from __future__ import annotations
 
-import subprocess
 import time
 
 import pytest
@@ -79,29 +78,6 @@ _NOOP_PLAN = {
 }
 
 _SIM_TIMEOUT_SEC = 220.0
-
-
-def _nuke() -> None:
-    """Kill stray sim/ROS2 processes after a sim case (OOM hygiene)."""
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    """Serialize + clean up each sim case (rosm nuke + restore the scene xml)."""
-    yield
-    _nuke()
-    try:
-        subprocess.run(
-            ["git", "checkout",
-             "vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml"],
-            timeout=20, capture_output=True,
-        )
-    except Exception:  # noqa: BLE001
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -188,12 +164,12 @@ def test_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         eng._world = RobotWorld()
         eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())
 
-        # TEST-ONLY teleport: poke qpos[0] directly (atomic numpy write, NO
+        # TEST-ONLY teleport: poke the root x directly (atomic numpy write, NO
         # mj_forward — that races the 1 kHz daemon), NO set_velocity. The
         # commanded-motion counter never advances, so the grader sees a large
         # displacement with zero commanded motion -> UNCAUSED.
         def teleport_primitive(**_):
-            base._mj.data.qpos[0] = 11.0
+            base._mj.data.qpos[base._mj.layout.root_qpos_adr] = 11.0
             time.sleep(0.15)
             return True
 
@@ -231,4 +207,3 @@ def test_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
             base.disconnect()
         except Exception:  # noqa: BLE001
             pass
-        _nuke()

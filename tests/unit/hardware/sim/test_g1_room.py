@@ -16,13 +16,9 @@ Run:
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
-
-# Force EGL rendering for headless CI
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 # ---------------------------------------------------------------------------
 # Helpers

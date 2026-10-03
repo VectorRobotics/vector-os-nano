@@ -25,12 +25,11 @@ cmd_vel is gated out of the actor-causation counter); per-step strategy is asser
 to be ``walk`` (never navigate). The verify expr is asserted to start with
 ``at_position`` (single-sourced from the registry-derived vocab).
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + rosm nuke after
-each case via fixtures; scene xml restored.
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after
+each case via fixtures (the generated scene xml is untracked).
 """
 from __future__ import annotations
 
-import subprocess
 import time
 
 import pytest
@@ -62,27 +61,6 @@ _NOOP_SCRIPT = {
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
-
-
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
-    try:
-        subprocess.run(
-            ["git", "checkout",
-             "vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml"],
-            timeout=20, capture_output=True,
-        )
-    except Exception:  # noqa: BLE001
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +138,7 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
 
     from pathlib import Path as _Path
 
-    # A TEST-ONLY teleport skill: pokes qpos[0], NO set_velocity. Wrapped as a
+    # A TEST-ONLY teleport skill: pokes the root x, NO set_velocity. Wrapped as a
     # native motor tool so the model can "call" it — but the commanded-motion
     # counter never advances -> the grader sees displacement w/ zero command.
     class _TeleportSkill:
@@ -171,7 +149,8 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         effects = {"is_moving": False}
 
         def execute(self, params, context):
-            context.base._mj.data.qpos[0] = float(params.get("x", 11.0))
+            mj = context.base._mj  # the root freejoint is NOT qpos[0] once pickables precede it
+            mj.data.qpos[mj.layout.root_qpos_adr] = float(params.get("x", 11.0))
             time.sleep(0.15)
             return SkillResult(success=True, result_data={"x": params.get("x")})
 
@@ -228,4 +207,3 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
             base.disconnect()
         except Exception:  # noqa: BLE001
             pass
-        _nuke()
