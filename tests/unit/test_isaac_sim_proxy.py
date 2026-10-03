@@ -88,16 +88,6 @@ class TestIsaacSimProxyProtocolCompliance:
         proxy = _make_proxy()
         assert proxy.supports_lidar is True
 
-    def test_supports_holonomic_is_true(self) -> None:
-        # Inherited from Go2ROS2Proxy — Go2 is omnidirectional
-        proxy = _make_proxy()
-        # Go2ROS2Proxy doesn't declare supports_holonomic; check via BaseProtocol
-        # The protocol requires it; confirm attribute exists and is True
-        # (set by checking the parent Go2ROS2Proxy interface)
-        assert hasattr(proxy, "supports_holonomic") or True  # structural check
-        # IsaacSimProxy inherits Go2ROS2Proxy — Go2 is holonomic
-        # We test the attribute is accessible (may not be declared explicitly)
-
     def test_node_name_class_attribute(self) -> None:
         from vector_os_nano.hardware.sim.isaac_sim_proxy import IsaacSimProxy
         assert IsaacSimProxy._NODE_NAME == "isaac_sim_proxy"

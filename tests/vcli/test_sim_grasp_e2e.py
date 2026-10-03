@@ -63,22 +63,6 @@ class TestSimPickConfig:
     def test_hardware_offsets_disabled(self):
         assert SIM_PICK_CONFIG["hardware_offsets"] is False
 
-    def test_importable_from_cli(self):
-        """cli.py can import SIM_PICK_CONFIG without error."""
-        from vector_os_nano.skills.pick import SIM_PICK_CONFIG as _cfg  # noqa: F401
-        assert _cfg is not None
-
-    def test_importable_from_sim_tool(self):
-        """sim_tool.py import path doesn't break at import time."""
-        # We just verify the import resolves; the actual usage is at runtime.
-        from vector_os_nano.skills.pick import SIM_PICK_CONFIG as _cfg  # noqa: F401
-        assert _cfg is not None
-
-    def test_importable_from_mcp_server(self):
-        """mcp/server.py import path resolves (mcp package may not be installed)."""
-        from vector_os_nano.skills.pick import SIM_PICK_CONFIG as _cfg  # noqa: F401
-        assert _cfg is not None
-
 
 # ---------------------------------------------------------------------------
 # Headless grasp regression

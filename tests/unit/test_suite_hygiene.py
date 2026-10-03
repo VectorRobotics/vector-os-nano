@@ -72,6 +72,27 @@ def test_no_import_time_env_writes() -> None:
                           skip=("conftest.py",))
 
 
+def test_no_vacuous_tests() -> None:
+    """tests:vacuous-tests — a test whose body is only a docstring/pass, or whose
+    assert ends in `or True`, passes whatever the product does."""
+    import ast
+
+    bad = []
+    for p, lines in _test_sources():
+        if not p.name.startswith("test_"):
+            continue
+        for node in ast.walk(ast.parse("\n".join(lines))):
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
+                body = [b for b in node.body if not (isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant))]
+                if all(isinstance(b, ast.Pass) for b in body):
+                    bad.append(f"{p.relative_to(_REPO)}:{node.lineno} {node.name}: empty body")
+            if (isinstance(node, ast.Assert) and isinstance(node.test, ast.BoolOp)
+                    and isinstance(node.test.op, ast.Or)
+                    and any(isinstance(v, ast.Constant) and v.value is True for v in node.test.values)):
+                bad.append(f"{p.relative_to(_REPO)}:{node.lineno}: assert ... or True")
+    assert not bad, bad
+
+
 def _tracked_assets() -> list[str]:
     out = subprocess.run(
         ["git", "ls-files", "*.xml", "*.yaml", "*.yml", "*.urdf"],

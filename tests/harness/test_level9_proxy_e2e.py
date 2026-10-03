@@ -381,9 +381,6 @@ class TestLookSkillWithProxy:
             f"Expected room='kitchen', got {result.result_data.get('room')!r}"
         )
 
-    def test_look_skill_result_data_contains_objects(self):
-        """result_data['objects'] contains dicts for each VLM-detected object."""
-
     def test_look_skill_room_confidence_from_proxy_pipeline(self):
         """room_confidence in result_data matches the mock VLM's confidence."""
         proxy = _proxy_with_frame(_rgb_frame())
@@ -464,9 +461,6 @@ class TestSceneGraphUpdatedViaProxy:
         assert pytest.approx(vp.x, abs=0.01) == 5.0
         assert pytest.approx(vp.y, abs=0.01) == 3.0
 
-    def test_scene_graph_objects_created_after_look(self):
-        """ObjectNodes for each detected object exist in the scene graph."""
-
     def test_scene_graph_room_visit_count_incremented(self):
         """RoomNode.visit_count is >= 1 after LookSkill runs."""
         proxy = _proxy_with_frame(_rgb_frame())
@@ -518,9 +512,6 @@ class TestSceneGraphUpdatedViaProxy:
 class TestFullProxyPipeline:
     """End-to-end pipeline: inject frame into proxy → run LookSkill → verify graph."""
 
-    def test_full_pipeline_camera_to_scene_graph(self):
-        """Simulate a full observation cycle from proxy frame to SceneGraph."""
-
     def test_full_pipeline_second_look_skips_nearby_viewpoint(self):
         """A second look from nearly the same position does not duplicate viewpoints."""
         proxy = _proxy_with_frame(_rgb_frame())
@@ -563,6 +554,3 @@ class TestFullProxyPipeline:
         assert len(vps) >= 2, (
             f"Expected at least 2 viewpoints in 'garage', got {len(vps)}"
         )
-
-    def test_stats_reflect_observation_after_pipeline(self):
-        """SceneGraph.stats() shows non-zero rooms/viewpoints/objects after look."""

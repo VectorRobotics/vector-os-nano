@@ -71,8 +71,6 @@ class TestGo2AgentIntegration:
 
         agent._sync_robot_state()
         robot = agent._world_model.get_robot()
-        # Should have non-zero position (Go2 starts at some position in the scene)
-        assert robot.position_xy != (0.0, 0.0) or robot.heading != 0.0 or True
         # At minimum, heading should be a float
         assert isinstance(robot.heading, float)
 

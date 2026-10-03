@@ -50,28 +50,6 @@ _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 class TestDirectLineCollision:
     """Prove that straight-line /way_point between rooms crosses walls."""
 
-    @pytest.mark.parametrize("src_room,dst_room", [
-        ("hallway", "living_room"),
-        ("hallway", "kitchen"),
-        ("living_room", "kitchen"),
-        ("living_room", "study"),
-        ("kitchen", "master_bedroom"),
-        ("bathroom", "living_room"),
-    ])
-    def test_direct_line_crosses_wall(self, src_room: str, dst_room: str):
-        """A straight line between room centers crosses at least one wall.
-
-        This is what happens when the proxy publishes /way_point directly
-        to localPlanner before FAR has a routing graph.
-        """
-        sx, sy = ROOM_CENTERS[src_room]
-        dx, dy = ROOM_CENTERS[dst_room]
-        crosses = path_crosses_wall(sx, sy, dx, dy)
-        # Most cross-room straight lines should cross walls
-        # (This test DOCUMENTS the problem — it's expected to pass)
-        if crosses:
-            pass  # Expected: straight line crosses walls
-        # If it doesn't cross, that's fine too (adjacent rooms with open door)
 
     def test_study_to_guest_bedroom_crosses_wall(self):
         """Study (17,7.5) to guest bedroom (16,12) crosses y=10 partition."""
