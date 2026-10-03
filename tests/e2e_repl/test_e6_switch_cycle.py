@@ -36,7 +36,6 @@ _SCRIPT = {"steps": [s for say, e in _CYCLE for s in _switch(say, e)]}
 
 @pytest.mark.sim
 @pytest.mark.cli_main
-@pytest.mark.xfail(strict=True, reason="acceptance path = subprocess bridge until WP03")
 def test_e6_switch_cycle_every_start_succeeds() -> None:
     r = run_repl_session([say for say, _ in _CYCLE], tool_script=_SCRIPT,
                          answers=["y"] * 8, timeout_sec=600)

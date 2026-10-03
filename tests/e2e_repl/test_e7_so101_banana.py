@@ -27,6 +27,6 @@ def test_e7_nl_launch_arm_then_grasp_banana_grounded() -> None:
                          answers=["y"], timeout_sec=180)
     text = r.text
     assert not r.timed_out, text[-3000:]
-    assert "sim start arm ok" in text, f"NL launch did not start the arm sim:\n{text[-3000:]}"
+    assert "sim start so101 ok" in text, f"NL launch did not start the arm sim:\n{text[-3000:]}"
     assert "pick → verify holding_object('banana') ✓ (actor=CAUSED)" in text, text[-3000:]
     assert "verdict GROUNDED verified=True (1/1 grounded)" in text, text[-3000:]

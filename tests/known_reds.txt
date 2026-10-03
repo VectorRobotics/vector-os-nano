@@ -156,15 +156,6 @@ tests/unit/test_skill_schemas.py::TestGetDefaultSkills::test_all_skill_names_pre
 # sim tier: a precondition that was a skip is now an honest FAIL (tests:skip-on-failure-depth-gt)
 tests/harness/test_depth_projection_groundtruth.py::TestTimingMismatchBug::test_mismatched_pose_causes_large_error | xfail | gait undershoot: 3 s at vx=0.5 moves ~0.45 m, under the 0.5 m this test needs (skills-nav:stop-and-go-gait-timeout family; WP08)
 
-# sim tier: honest-walk PTY scripts. The walk-2.5m -> at_position(11,3) script verifies False under
-# the BASE c188658 harness too (side-by-side probe); multiskill + routing_spike were red in the baseline run.
-tests/vcli/test_native_loop_trichotomy_pty.py::test_native_honest_walk_is_caused_and_verified | xfail | open-loop walk script misses at_position(11,3): calibrated on another gait/real-time factor, the vendored MPC gait (c188658) now runs (wall-clock walk budgets; WP06 sim-time, WP08)
-tests/vcli/test_r2b_actor_causation_pty.py::test_honest_walk_is_caused_and_verified | xfail | open-loop walk script misses at_position(11,3): calibrated on another gait/real-time factor, the vendored MPC gait (c188658) now runs (wall-clock walk budgets; WP06 sim-time, WP08)
-tests/vcli/test_native_loop_recover_pty.py::test_native_inturn_recovery_is_fail_closed_not_verified | xfail | open-loop walk script misses at_position(11,3): calibrated on another gait/real-time factor, the vendored MPC gait (c188658) now runs (wall-clock walk budgets; WP06 sim-time, WP08)
-tests/vcli/test_native_loop_multiskill_pty.py::test_native_multiskill_walk_then_turn_routes_and_grounds | xfail | open-loop walk script misses at_position(11,3): calibrated on another gait/real-time factor, the vendored MPC gait (c188658) now runs (wall-clock walk budgets; WP06 sim-time, WP08)
-tests/vcli/test_repl_native_cutover_pty.py::test_repl_native_walk_routes_to_native_on_go2_sim | xfail | open-loop walk script misses at_position(11,3): calibrated on another gait/real-time factor, the vendored MPC gait (c188658) now runs (wall-clock walk budgets; WP06 sim-time, WP08)
-tests/vcli/test_native_first_routing_spike.py::test_native_first_covered_go2_routes_to_native | xfail | open-loop walk script misses at_position(11,3): calibrated on another gait/real-time factor, the vendored MPC gait (c188658) now runs (wall-clock walk budgets; WP06 sim-time, WP08)
-
 # sim tier, rest of the per-file run (2026-10-04)
 tests/unit/embodiments/test_dof_layout.py::test_g1_layout_matches_g1offsets | xfail | sim-locomotion:g1-assets-unshipped (assets/g1_gait/g1_12dof.xml absent, its setup script missing; WP17)
 tests/unit/embodiments/test_dof_layout.py::test_g1_stance_vector_equals_default_angles | xfail | sim-locomotion:g1-assets-unshipped (WP17)

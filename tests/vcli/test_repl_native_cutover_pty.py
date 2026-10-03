@@ -52,7 +52,11 @@ def test_repl_native_walk_routes_to_native_on_go2_sim(sim_cleanup) -> None:
     # The NL command reached the REPL.
     assert "走到坐标" in text, f"command not echoed; transcript:\n{result.transcript[:2000]}"
     # The CUTOVER engaged: native (not the legacy planner) handled the turn.
-    assert "native" in text and "working" in text, "native producer was not attempted in the REPL"
+    # (The first spinner frame, "native working…", is only drawn if the fake LLM's
+    # first tool call takes longer than Rich's 80 ms refresh; the per-call progress
+    # lines "native <tool> …" / "native finishing" always are.)
+    assert re.search(r"native (working|walk|finishing)", text), (
+        "native producer was not attempted in the REPL")
     # Native dispatched the WALK skill (routing contract: walk, not navigate) and the
     # deterministic verify read real sim state.
     assert "walk" in text and "verify at_position" in text, (

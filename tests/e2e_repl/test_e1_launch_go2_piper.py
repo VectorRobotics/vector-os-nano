@@ -14,7 +14,6 @@ from tests.harness.pty_cli import run_repl_session
 
 @pytest.mark.sim
 @pytest.mark.cli_main
-@pytest.mark.xfail(strict=True, reason="acceptance path = subprocess bridge until WP03")
 def test_e1_nl_launch_go2_piper_reports_ready() -> None:
     r = run_repl_session([LAUNCH], tool_script={"steps": LAUNCH_STEPS}, answers=["y"], timeout_sec=150)
     text = r.text
