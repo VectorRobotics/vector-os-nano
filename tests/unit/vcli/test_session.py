@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from vector_os_nano.vcli.session import (
-    DEFAULT_SESSION_DIR,
     Session,
     SessionSummary,
     TokenUsage,
@@ -69,10 +68,18 @@ def test_create_session_creates_file(tmp_path: Path) -> None:
     assert expected_path.exists()
 
 
-def test_session_default_directory() -> None:
-    """DEFAULT_SESSION_DIR resolves to ~/.vector/sessions/."""
-    expected = Path.home() / ".vector" / "sessions"
-    assert DEFAULT_SESSION_DIR == expected
+def test_session_default_directory_follows_home_at_call_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default dir is ~/.vector/sessions resolved per call, not at import.
+
+    Regression (tests:dotenv-credential-leak): an import-time constant ignored a
+    test's HOME override, so in-process REPL tests wrote into the real ~/.vector.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    session = create_session()
+    assert (tmp_path / ".vector" / "sessions" / f"{session.session_id}.jsonl").exists()
+    assert get_latest_session().session_id == session.session_id
 
 
 def test_session_metadata(tmp_path: Path) -> None:

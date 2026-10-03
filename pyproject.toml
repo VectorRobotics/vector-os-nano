@@ -128,7 +128,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-p no:launch_ros -p no:launch_testing -p no:ament_copyright -p no:ament_flake8 -p no:ament_pep257 -p no:ament_xmllint -p no:ament_lint"
+addopts = "--strict-markers -p no:launch_ros -p no:launch_testing -p no:ament_copyright -p no:ament_flake8 -p no:ament_pep257 -p no:ament_xmllint -p no:ament_lint"
 markers = [
     "level0: Level 0 — MuJoCo physics validity (no MuJoCoGo2 wrapper required)",
     "level1: Level 1 — PD standing stability",
@@ -140,5 +140,6 @@ markers = [
     "live_llm: hits a real LLM backend; skipped unless VECTOR_LIVE_LLM=1; deselect with -m 'not live_llm'",
     "cli_main: exercises the REAL cli.main entrypoint (PTY/-p/--json verdict); CI acceptance gate, select with -m cli_main",
     "capability: a claimed product capability; MUST also carry @pytest.mark.cli_main so it is verified through the real product, never a bypass script",
-    "sim: requires headless MuJoCo (MUJOCO_GL=egl); skip on machines without EGL",
+    "sim: builds a MuJoCo sim (auto-added per file by tests/conftest.py); gated by the session sim_preflight",
+    "slow: long-running test (minutes); deselect with -m 'not slow'",
 ]

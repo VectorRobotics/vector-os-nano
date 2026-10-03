@@ -117,10 +117,14 @@ class FakeToolScriptBackend:
         harness masquerade as a real native run.
         """
         data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "steps" in data:
+            # A reactive (closed-loop) script rides the SAME env seam, so the CLI
+            # under test stays bare `vector-cli` (cli.py imports only this class).
+            return ReactiveFakeBackend(data["steps"])  # type: ignore[return-value]
         if not isinstance(data, dict) or "turns" not in data:
             raise ValueError(
                 "VECTOR_FAKE_LLM_TOOLS payload must be a JSON object with a 'turns' "
-                f"list, got {type(data).__name__}"
+                f"(open-loop) or 'steps' (reactive) list, got {type(data).__name__}"
             )
         return cls.from_tool_script(_turns_from_dicts(data["turns"]))
 
@@ -151,6 +155,92 @@ class FakeToolScriptBackend:
         if on_text is not None and turn.text:
             on_text(turn.text)
         return turn
+
+
+def _observation(messages: list[dict[str, Any]]) -> tuple[str, bool]:
+    """The last thing the model 'sees': (text, is_error) of the final message.
+
+    A tool_result message yields its results' content (is_error if any result is an
+    error); a plain user message yields the user's text.
+    """
+    if not messages:
+        return "", False
+    content = messages[-1].get("content", "")
+    if isinstance(content, str):
+        return content, False
+    parts: list[str] = []
+    is_error = False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_result":
+            is_error = is_error or bool(block.get("is_error"))
+            inner = block.get("content", "")
+            if isinstance(inner, list):
+                inner = " ".join(str(b.get("text", "")) for b in inner if isinstance(b, dict))
+            parts.append(str(inner))
+        elif block.get("type") == "text":
+            parts.append(str(block.get("text", "")))
+    return "\n".join(parts), is_error
+
+
+class ReactiveFakeBackend:
+    """A CLOSED-LOOP scripted ``LLMBackend``: each step fires on what the model just saw.
+
+    Payload (``VECTOR_FAKE_LLM_TOOLS`` JSON)::
+
+        {"steps": [{"when"?: str, "is_error"?: bool, "text"?: str,
+                    "stop_reason"?: str, "tool_calls": [{"name", "input"}, ...]}, ...]}
+
+    On every ``.call()`` the observation is the LAST message (its tool_result content,
+    or the user's text). The first not-yet-used step fires iff ``when`` is a substring
+    of the observation, ``is_error`` (if given) equals the observation's error flag,
+    and every tool it calls is in the offered ``tools`` (a real model cannot call a
+    tool it was not offered, so a native attempt that lacks ``start_simulation`` never
+    consumes the legacy turn's step). Each step fires once; tool-call ids are unique
+    per step (``call_<step>_<j>``). No match -> ``end_turn`` with no tools and a
+    ``[reactive-fake] no step matched`` text, so a broken script fails visibly.
+
+    ``calls`` records ``(messages, offered tool names)`` per call for assertions.
+    """
+
+    def __init__(self, steps: list[dict[str, Any]]) -> None:
+        if not isinstance(steps, list):
+            raise ValueError(f"'steps' must be a list, got {type(steps).__name__}")
+        self._steps = list(steps)
+        self._turns = _turns_from_dicts(self._steps)
+        self._used: set[int] = set()
+        self.calls: list[tuple[list[dict[str, Any]], list[str]]] = []
+
+    def call(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        system: list[dict[str, Any]],
+        max_tokens: int,
+        on_text: Callable[[str], None] | None = None,
+        on_reasoning: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        offered = [str(t.get("name", "")) for t in (tools or []) if isinstance(t, dict)]
+        self.calls.append((list(messages), offered))
+        obs, obs_error = _observation(messages)
+        for i, step in enumerate(self._steps):
+            if i in self._used or str(step.get("when", "")) not in obs:
+                continue
+            if "is_error" in step and bool(step["is_error"]) != obs_error:
+                continue
+            if any(tc.name not in offered for tc in self._turns[i].tool_calls):
+                continue
+            self._used.add(i)
+            turn = self._turns[i]
+            if on_text is not None and turn.text:
+                on_text(turn.text)
+            return turn
+        return LLMResponse(
+            text=f"[reactive-fake] no step matched: {obs[:120]!r}",
+            tool_calls=[], stop_reason="end_turn",
+            usage=TokenUsage(input_tokens=0, output_tokens=0),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,5 @@
+# Known reds: the committed, commented list tests/conftest.py applies at collection.
+#   <nodeid or nodeid-prefix> | deselect | <why it is environment-only>
+#   <nodeid or nodeid-prefix> | xfail    | <ledger key of the genuine bug it pins>
+# Never deselect a genuine bug: link it to its ledger key as an xfail instead.
+# Remove a row the moment its cause is fixed (an xfail that passes shows as XPASS).
