@@ -91,26 +91,40 @@ module is the correct pattern.
 
 | Interface | Sim (MuJoCoGo2) | Real (Go2ROS2Proxy) |
 |-----------|-----------------|---------------------|
-| `set_velocity` | writes `_cmd_vel` -> physics thread | ROS2 `/cmd_vel` topic |
-| `walk` | `set_velocity` + sleep | same |
+| `set_velocity` | writes `_cmd_vel` -> the runtime's gait controller | ROS2 `/cmd_vel` topic |
+| `walk` | `set_velocity` + `wait_sim` (SIM seconds) | same |
 | `stand` | PD control to `_STAND_JOINTS` | Unitree SDK high-level |
 | `sit` | PD control to `_SIT_JOINTS` | Unitree SDK high-level |
 | `get_position` | `qpos[0:3]` | ROS2 odometry |
 | `get_heading` | quaternion from `qpos[3:7]` | ROS2 odometry yaw |
-| `get_lidar_scan` | `mj_ray` 360-degree scan (~31 rings) | Livox MID360 pointcloud |
-| `get_camera_frame` | `mj.Renderer` (d435_rgb) | RealSense D435 |
+| `get_lidar_scan` | one `mj_multiRay` over a step-boundary copy (~31 rings) | Livox MID360 pointcloud |
+| `get_camera_frame` / `get_rgbd_frame` | `SimRuntime.render` (d435_rgb, one instant) | RealSense D435 |
+
+## Physics ownership (SimRuntime)
+
+`MuJoCoGo2.runtime` (`vector_os_nano/sim/runtime.py`) is the ONE owner of MjData:
+one stepper runs the gait controller every 5 ms tick (1 kHz physics), paced to an
+absolute wall schedule. Never write `base._mj.data` from another thread and never
+`mj_forward` it: mutate with `base.runtime.call(lambda m, d: ...)` (applied at a step
+boundary), read `base.runtime.snapshot()` (qpos/qvel of one instant) or
+`base.get_rgbd_frame(w, h)` (RGB, depth, seg and camera pose of one `sim_time`, `K`
+from the frame shape). Timed motions count SIM seconds (`wait_sim`), so they cover
+the same ground at any real-time ratio. `VECTOR_SIM_LOCKSTEP=1` starts no stepper:
+physics advances only inside `wait_sim`/`step`, so a scripted run is deterministic
+(two runs end in identical ground truth). Generated scenes go to
+`~/.cache/vector_os_nano/scenes/` (content-addressed), never the package dir.
 
 ## MuJoCo Go2 Backends
 
 | Backend | Controller | Dependencies | When to use |
 |---------|-----------|--------------|-------------|
-| `sinusoidal` | Open-loop trot gait + PD torque | `mujoco`, `numpy` | Default, always available |
-| `convex_mpc` | Centroidal MPC + leg controller | `convex_mpc`, `casadi`, `pinocchio` | Optional, physics-accurate |
+| `sinusoidal` | Open-loop trot gait + PD torque | `mujoco`, `numpy` | Loud fallback when the MPC stack cannot start |
+| `convex_mpc` | Centroidal MPC + leg controller | vendored `third_party/convex_mpc` + `casadi`, `pin` (`[go2]` extra) | Default (`auto`); the readiness line and the verdict say which one ran (`gait=`) |
 
 Select backend:
 
 ```python
-robot = MuJoCoGo2(gui=False, room=False)          # auto (sinusoidal if no MPC)
+robot = MuJoCoGo2(gui=False, room=False)          # auto (MPC; sinusoidal + warning if it cannot start)
 robot = MuJoCoGo2(gui=False, backend="sinusoidal") # force sinusoidal
 robot = MuJoCoGo2(gui=False, backend="mpc")        # force MPC (raises if unavailable)
 ```
