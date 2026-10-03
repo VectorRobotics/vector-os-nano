@@ -73,8 +73,8 @@ EXIT_COMMANDS: frozenset[str] = frozenset({"quit", "exit", "q"})
 
 _LOGO_PATH = Path(__file__).resolve().parent.parent / "cli" / "logo_braille.txt"
 
-# A stop reports the base speed this much SIM time after the stop command.
-_STOP_SETTLE_SIM_S = 0.2
+# A stop reports the base speed at these SIM times after the stop command.
+_STOP_SETTLE_SIM_S = (0.2, 0.5)
 # After a stop, wait this long for the cancelled turn to unwind before re-prompting.
 _UNWIND_S = 5.0
 
@@ -606,21 +606,25 @@ def _repl_attempt_native(
 
 
 def _stop_report(agent: Any) -> str:
-    """'; base 0.02 m/s after 0.2 sim-s' — the measured proof the stop took."""
+    """'; base 0.12 m/s at 0.2 sim-s, 0.00 m/s at 0.5 sim-s' — the measured proof.
+
+    The command is zeroed at once; a legged body decelerates, so its measured speed
+    is reported at each settle mark (sim time when the body exposes it).
+    """
     base = getattr(agent, "_base", None)
     get_v = getattr(base, "get_velocity", None)
     if not callable(get_v):
         return ""
     sim_t = getattr(base, "get_sim_time", None)
+    clock = sim_t if callable(sim_t) else time.monotonic
     try:
-        if callable(sim_t):
-            t0, wall_end = sim_t(), time.monotonic() + 2.0
-            while sim_t() - t0 < _STOP_SETTLE_SIM_S and time.monotonic() < wall_end:
-                time.sleep(0.01)
-        else:
-            time.sleep(_STOP_SETTLE_SIM_S)
-        v = get_v()
-        return f"; base {math.hypot(v[0], v[1]):.2f} m/s after {_STOP_SETTLE_SIM_S} sim-s"
+        t0, wall_end, marks = clock(), time.monotonic() + 3.0, []
+        for mark in _STOP_SETTLE_SIM_S:
+            while clock() - t0 < mark and time.monotonic() < wall_end:
+                time.sleep(0.005)
+            v = get_v()
+            marks.append(f"{math.hypot(v[0], v[1]):.2f} m/s at {mark} sim-s")
+        return "; base " + ", ".join(marks)
     except Exception:  # noqa: BLE001 — the report is display only
         return ""
 

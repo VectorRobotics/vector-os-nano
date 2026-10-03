@@ -57,7 +57,7 @@ def _run(tool_script, on_progress=None, skill=None):
         agent._skill_registry.register(skill if skill is not None else _WriteFileSkill())
         backend = _CountingBackend(FakeToolScriptBackend.from_tool_script(tool_script))
         eng = VectorEngine(backend=backend, registry=CategorizedToolRegistry(),
-                           permissions=PermissionContext())
+                           permissions=PermissionContext(no_permission=True))  # harness grants asks
         eng._world = DevWorld()
         eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=DevWorld())
         eng._vgg_agent = agent
@@ -133,11 +133,16 @@ def test_verify_skip_is_nudged_then_recorded():
 
 def test_stubborn_no_verify_terminates_bounded_and_honest():
     """A model that NEVER verifies (only an action, then narration) still terminates
-    (bounded nudges, not max_turns) with an EMPTY trace — honest, never a false green."""
+    (bounded nudges, not max_turns), and the action stays ON the record as an unproven
+    step (never silently dropped, which let the caller re-run it) — never a false green."""
     from tests.harness.fake_backend import tool_turn
+    from vector_os_nano.vcli.verdict import VerdictReport
 
     calls, trace = _run([tool_turn(_WRITE)])  # then script exhausts -> end_turn forever
-    assert len(trace.steps) == 0          # no verify ever -> nothing graded (honest)
+    assert [(s.strategy, s.error) for s in trace.steps] == [("write_file", "not verified")]
+    assert trace.actions_dispatched == 1
+    report = VerdictReport.from_trace(trace, frozenset({"path_contains"}))
+    assert not report.verified and report.evidence == "RAN"
     assert calls <= 6                     # bounded by _MAX_VERIFY_NUDGES, NOT max_turns=24
 
 

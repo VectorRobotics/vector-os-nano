@@ -40,7 +40,11 @@ _SCRIPT = {"steps": [
     {"when": "Skill 'walk' succeeded", "raise": "injected LLM outage (503)"},
 ]}
 
-_STOPPED = re.compile(r"■ stopped \((\d+) ms, no LLM call; base ([\d.]+) m/s after 0\.2 sim-s\)")
+# The command is zeroed in the reported ms; the legged body decelerates (measured:
+# ~0.1 m/s left at 0.2 sim-s from a 0.4 m/s cruise, ~0 by 0.5 sim-s).
+_STOPPED = re.compile(
+    r"■ stopped \((\d+) ms, no LLM call; base ([\d.]+) m/s at 0\.2 sim-s, ([\d.]+) m/s at 0\.5 sim-s\)"
+)
 
 
 @pytest.fixture(scope="module")
@@ -77,7 +81,9 @@ def test_e5_ctrl_c_mid_navigate_keeps_the_repl_and_stops_the_base(e5) -> None:
     assert "Interrupted" in nav, nav
     m = _STOPPED.search(nav)
     assert m, nav
-    assert float(m.group(2)) < 0.1, f"base still moving 0.2 sim-s after Ctrl-C: {m.group(0)}"
+    assert int(m.group(1)) < 100, m.group(0)  # the zero command went out at once
+    assert float(m.group(2)) < 0.25, f"not decelerating 0.2 sim-s after Ctrl-C: {m.group(0)}"
+    assert float(m.group(3)) < 0.08, f"base still moving 0.5 sim-s after Ctrl-C (gait sway < 0.08): {m.group(0)}"
     assert "aborted" in nav and "verdict FAILED" in nav, nav
     assert r.exit_code == 0  # the session went on and quit normally
 
