@@ -193,6 +193,7 @@ def test_live_bare_cli_launch_and_grasp_two_of_three(tmp_path) -> None:
             results.append(("NO_VERDICT", str(exc)[-1500:]))
         finally:
             repl.close()
+            (trial_dir / "transcript.txt").write_text(repl.text())  # why a trial was RAN
         print(f"[live trial {i}] {results[-1][0]} verified={results[-1][1][:200]}")
     grounded = sum(1 for e, v in results if (e, v) == ("GROUNDED", "True"))
     assert grounded * 3 >= 2 * len(results), results
