@@ -8,6 +8,7 @@
 
 id: go2
 display_name: "Unitree Go2 (quadruped)"
+driver: mujoco_go2                # transitional (WP17: one generic driver)
 
 model:
   # Bare-Go2 room scene model (mujoco_go2._MJCF_DIR / go2.xml).
@@ -43,6 +44,9 @@ sensors:
   - role: camera
     mount_body: base_link
     name: d435_rgb
+    params:
+      width: 640                  # perception render size (intrinsics follow it)
+      height: 480
   # RealSense D435 depth — named 'd435_depth' camera, same mounting as RGB.
   - role: depth
     mount_body: base_link
@@ -87,3 +91,6 @@ capabilities:
   lidar: true                     # supports_lidar -> True
   # supports_holonomic -> True (Go2 can strafe) is a base MOTION trait, carried
   # in policy.spec.holonomic below — not a CapabilityProfile field.
+
+nav:
+  explorer: tare                  # needs VECTOR_NAV_STACK; else explore is unavailable

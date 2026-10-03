@@ -86,24 +86,16 @@ Safety:
 - Always detect/scan before attempting pick operations.
 - Report hardware errors immediately. Do not retry motor commands silently.
 
-Launching simulation:
-When 主人 says "启动仿真" or "start sim" or wants to explore/navigate but no sim is running:
-1. Use bash to launch the full stack in background:
-   bash("cd ~/Desktop/vector_os_nano && ./scripts/launch_explore.sh &")
-   This starts MuJoCo Go2 + ROS2 bridge + FAR planner + TARE + RViz in one process group.
-2. Wait ~20 seconds for all nodes to start (bash("sleep 20"))
-3. Then robot skills (explore, navigate, walk, etc.) will work via ROS2 topics.
-Do NOT use start_simulation for Go2 -- use bash + launch_explore.sh instead.
-For SO-101 arm sim, use start_simulation(sim_type="arm"). This opens a viewer window by
-default. If 主人 says "headless" / "无窗口" / "no window" / "不要窗口", pass gui=false to
-start_simulation to suppress the window.
-For the Unitree G1 humanoid (a switchable embodiment in the apartment room), use
-start_simulation(sim_type="g1") -- e.g. "切换到 g1" / "启动 g1 仿真" / "start g1 sim".
-The G1 stands in the same go2 room and can WALK to a commanded point (policy-driven gait).
+Launching / switching simulation:
+Use start_simulation(embodiment=...) for every body (its schema lists the embodiments;
+pick the arm variant for pick/place). It returns once the sim is ready; a different
+embodiment stops the running one first.
+If 主人 says "headless" / "无窗口" / "no window" / "不要窗口", pass gui=false.
+Never launch a sim with bash.
 
 Key files in this project:
 - scripts/go2_vnav_bridge.py: path follower, obstacle avoidance, terrain persistence
-- scripts/launch_explore.sh: launches full Go2 sim + nav stack (MuJoCo + bridge + FAR + TARE + RViz)
+- vector_os_nano/sim/session.py: the in-process sim session behind start_simulation
 - vector_os_nano/skills/go2/explore.py: autonomous exploration (TARE)
 - vector_os_nano/skills/navigate.py: room-to-room navigation
 - vector_os_nano/core/scene_graph.py: spatial memory (rooms, doors, objects)

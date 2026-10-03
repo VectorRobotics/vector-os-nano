@@ -118,6 +118,14 @@ class EmbodimentConfig:
     policy: PolicySpec
     capabilities: CapabilityProfile
     grasp: GraspSpec | None = None
+    # Which in-process driver stands the body up (mujoco_go2 | mujoco_g1 |
+    # mujoco_arm). Transitional: removed once one generic driver reads the
+    # manifest (WP17).
+    driver: str = ""
+    # Arm mounted on the body (e.g. the Piper on go2_piper), or None.
+    arm: dict[str, Any] | None = None
+    # Navigation capabilities the body asks for, e.g. {"explorer": "tare"}.
+    nav: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +223,15 @@ def _parse_grasp(raw: dict[str, Any], ctx: str) -> GraspSpec | None:
     )
 
 
+def _optional_mapping(raw: dict[str, Any], key: str, ctx: str) -> dict[str, Any] | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise EmbodimentConfigError(f"{ctx}.{key} must be a mapping, got {type(value).__name__}")
+    return dict(value)
+
+
 def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> EmbodimentConfig:
     """Parse an already-loaded dict into an EmbodimentConfig (fail-loud)."""
     if not isinstance(raw, dict):
@@ -232,6 +249,9 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> Emb
         policy=_parse_policy(raw, ctx),
         capabilities=_parse_capabilities(raw, ctx),
         grasp=_parse_grasp(raw, ctx),
+        driver=str(raw.get("driver", "") or ""),
+        arm=_optional_mapping(raw, "arm", ctx),
+        nav=_optional_mapping(raw, "nav", ctx) or {},
     )
 
 

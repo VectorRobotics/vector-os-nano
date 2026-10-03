@@ -106,10 +106,8 @@ class SysnavSimTool:
         # 2. Boot the underlying go2 + Piper sim via SimStartTool.
         sim_tool = self._build_sim_tool()
         sim_params = {
-            "sim_type": "go2",
-            "with_arm": True,
+            "embodiment": "go2_piper",
             "gui": bool(params.get("gui", True)),
-            "backend": str(params.get("backend", "mujoco")),
         }
         sim_result = sim_tool.execute(sim_params, context)
         self._sim_tool = sim_tool

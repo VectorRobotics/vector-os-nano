@@ -127,8 +127,7 @@ def test_run_starts_sim_then_bridge(context) -> None:
     result = tool.execute({"gui": False}, context)
     # Sim called exactly once with our params merged in
     assert len(stub_sim.executions) == 1
-    assert stub_sim.executions[0]["sim_type"] == "go2"
-    assert stub_sim.executions[0]["with_arm"] is True
+    assert stub_sim.executions[0]["embodiment"] == "go2_piper"
     # Bridge constructed and started
     assert len(bridges) == 1
     assert bridges[0].started is True

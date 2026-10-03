@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+#
+# SO-101 5-DoF tabletop arm + gripper — embodiment manifest. Fixed base on the
+# so101_mujoco.xml table scene (MuJoCoArm + MuJoCoGripper + MuJoCoPerception).
+
+id: so101
+display_name: "SO-101 (5-DoF tabletop arm)"
+driver: mujoco_arm                # transitional (WP17: one generic driver)
+
+model:
+  path: vector_os_nano/hardware/sim/so101_mujoco.xml
+  root_body: base_link
+
+spawn:
+  # Fixed base bolted to the table scene (no free joint).
+  xy: [0.0, 0.0]
+  base_height: 0.02
+
+# Home pose (arm_sim_oracle._HOME_JOINTS), by joint name.
+stance:
+  shoulder_pan:  -0.014
+  shoulder_lift: -1.238
+  elbow_flex:    0.562
+  wrist_flex:    0.858
+  wrist_roll:    0.311
+
+sensors:
+  - role: camera
+    mount_body: world
+    name: overhead
+
+policy:
+  ref: position_actuators         # MuJoCo position servos, no gait
+  spec: {}
+
+capabilities:
+  has_base: false
+  has_arm: true
+  has_gripper: true
+  camera: true
+  lidar: false
