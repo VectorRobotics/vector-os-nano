@@ -14,7 +14,7 @@ real product now grades them RAN / exit 2 (the moat may only get STRICTER, rule 
     -> RAN even though the predicate EVALUATES True and the walk was CAUSED.
 
 (B) FACING CROSS-CHANNEL CAUSATION (actor_causation): a forward walk (planar move,
-    heading preserved) + ``verify('facing(0.0, 3.2)')`` (huge tol -> always true). The
+    heading preserved) + ``verify('facing(0.0, 3.2)')`` (tol clamped to 45 deg; true at spawn). The
     heading no-op used to grade CAUSED via the old ``max(planar, yaw)`` metric; the
     per-channel fix grades the FORWARD walk UNCAUSED for a facing predicate -> RAN.
     This ALSO empirically checks the yaw threshold against REAL forward-walk gait
@@ -44,7 +44,7 @@ _MEMBERSHIP_FALSE_GREEN = {
     ]
 }
 
-# (B) forward walk (no turn) + a facing predicate with huge tol (always true). The
+# (B) forward walk (no turn) + a facing predicate already true at spawn. The
 # heading no-op must NOT grade CAUSED off the walk's planar displacement.
 _FACING_FORWARD_WALK_FALSE_GREEN = {
     "turns": [
@@ -104,7 +104,7 @@ def test_membership_shortcircuit_false_green_flips_to_ran(sim_cleanup) -> None:
 @pytest.mark.cli_main
 @pytest.mark.capability
 def test_facing_forward_walk_false_green_flips_to_ran(sim_cleanup) -> None:
-    """(B) a forward walk + `facing(0.0, 3.2)` (always-true heading predicate) -> RAN
+    """(B) a forward walk + `facing(0.0, 3.2)` (true at the spawn heading) -> RAN
     / verified False / exit 2. The walk moved planar, not heading, so a facing
     predicate must grade UNCAUSED — proving the per-channel causation fix holds on the
     real gait (incl. any forward-walk yaw drift below the ~10deg threshold)."""
@@ -120,7 +120,7 @@ def test_facing_forward_walk_false_green_flips_to_ran(sim_cleanup) -> None:
     assert r.evidence == "RAN", f"got evidence={r.evidence}"
     step = r.verdict["per_step"][0]
     assert step["evidence"] == "RAN"
-    # The facing predicate is true (huge tol) — only actor-causation stops it.
+    # The facing predicate is true (heading kept) — only actor-causation stops it.
     assert step["verify_result"] is True
 
 
@@ -202,16 +202,17 @@ def test_callable_container_shortcircuit_flips_to_ran(sim_cleanup) -> None:
 
 
 # (E) STEP-15 WRONG-PREDICATE-TYPE: a COORDINATE goal verified ENTIRELY with a non-
-# at_position predicate. A real left TURN (yaw command -> facing graded CAUSED -> the
-# step is honestly GROUNDED per-step) + a huge-tol facing verify (always true). The
-# coord '走到坐标 (11,3)' is NEVER asserted by an at_position step, so the TURN-LEVEL
-# coordinate gate must reject the turn (verified False) EVEN THOUGH the step itself is
-# GROUNDED — the distinction from R2b (which downgrades the step) and from STEP-13
-# (which needs a literal at_position to mismatch).
+# at_position predicate. A real 90-deg left TURN (yaw command -> facing graded CAUSED ->
+# the step is honestly GROUNDED per-step) + an honest facing verify of the post-turn
+# heading (+y, within 0.78 rad: under the oracle's 45-deg tol cap, so true for a landing
+# anywhere in 45..135 deg). The coord '走到坐标 (11,3)' is NEVER asserted by an
+# at_position step, so the TURN-LEVEL coordinate gate must reject the turn (verified
+# False) EVEN THOUGH the step itself is GROUNDED — the distinction from R2b (which
+# downgrades the step) and from STEP-13 (which needs a literal at_position to mismatch).
 _WRONG_PREDICATE_TYPE_FALSE_GREEN = {
     "turns": [
-        {"tool_calls": [{"name": "turn", "input": {"direction": "left", "angle": 120}}]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "facing(0.0, 3.2)"}}]},
+        {"tool_calls": [{"name": "turn", "input": {"direction": "left", "angle": 90}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "facing(1.5708, 0.78)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -248,15 +249,15 @@ def test_wrong_predicate_type_coord_goal_flips_to_ran(sim_cleanup) -> None:
 
 
 # (F) STEP-16 BOOLEAN-NECESSITY (4th moat review): a real CAUSED walk to the WRONG place +
-# an OR-decoy verify whose goal-matching at_position(11,3) is NOT necessary — a second,
-# always-true at_position disjunct (huge tol) carries the truth, so the verify is True with
-# the robot anywhere while the (11,3) constant is an inert decoy. The decoy uses only
+# an OR-decoy verify whose goal-matching at_position(11,3) is NOT necessary — a second
+# at_position disjunct around the spawn (10,3) with a 2 m tol (at the oracle's tol cap)
+# carries the truth after the short walk, while the (11,3) constant is an inert decoy. The decoy uses only
 # at_position (not facing), so the BASE channel grades CAUSED off the real forward walk;
 # ONLY the necessity gate (matching at_position must be an AND-conjunct) can stop it.
 _OR_DECOY_FALSE_GREEN = {
     "turns": [
         {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 0.4, "speed": 0.3}}]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0) or at_position(0.0, 0.0, 1000000.0)"}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0) or at_position(10.0, 3.0, 2.0)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -267,9 +268,9 @@ _OR_DECOY_FALSE_GREEN = {
 @pytest.mark.capability
 def test_or_decoy_non_necessary_at_position_flips_to_ran(sim_cleanup) -> None:
     """(F, STEP-16) a coordinate goal '走到坐标 (11,3)' verified with
-    `at_position(11,3) or at_position(0,0,1000000)` after a real CAUSED forward walk ->
-    RAN / verified False / exit 2. The OR EVALUATES True (the huge-tol decoy disjunct is
-    always true) and the walk is CAUSED on the planar channel, so R1+R2b both pass and
+    `at_position(11,3) or at_position(10,3,2.0)` after a real CAUSED 0.4 m forward walk
+    from the (10,3) spawn -> RAN / verified False / exit 2. The OR EVALUATES True (the
+    decoy disjunct holds at the landing) and the walk is CAUSED on the planar channel, so R1+R2b both pass and
     the goal-matching constant (11,3) is PRESENT — only the necessity gate (the matching
     at_position must be an AND-conjunct that gates the verdict) rejects it."""
     r = run_cli_turn(
@@ -284,7 +285,7 @@ def test_or_decoy_non_necessary_at_position_flips_to_ran(sim_cleanup) -> None:
     assert r.evidence == "RAN", f"got evidence={r.evidence}"
     step = r.verdict["per_step"][0]
     assert step["evidence"] == "RAN"
-    # The OR genuinely evaluates True (always-true decoy disjunct) and the walk is a real
+    # The OR genuinely evaluates True (the decoy disjunct) and the walk is a real
     # CAUSED walk — only the necessity gate (matching at_position is not a gating conjunct)
     # downgrades it, at the per-step level (coord_goal_mismatch) as well as the turn gate.
     assert step["verify_result"] is True
