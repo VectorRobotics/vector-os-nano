@@ -192,3 +192,27 @@ def test_two_lockstep_runs_end_in_identical_ground_truth() -> None:
     assert a == b
     base = np.array(a["base_link"][0])
     assert np.linalg.norm(base[:2] - [10.0, 3.0]) > 0.2, "the scripted walk did not move the dog"
+
+
+def test_missing_mpc_stack_falls_back_loudly_and_reports_the_gait(monkeypatch, caplog) -> None:
+    def _no_casadi(self):
+        raise ModuleNotFoundError("No module named 'casadi'")
+
+    monkeypatch.setattr(MuJoCoGo2, "_init_mpc_stack", _no_casadi)
+    caplog.set_level(logging.WARNING, logger="vector_os_nano.hardware.sim.mujoco_go2")
+    go2 = MuJoCoGo2(gui=False, room=False, backend="auto")
+    go2.connect()
+    try:
+        assert go2.gait_backend == "sinusoidal"
+        msg = " ".join(r.getMessage() for r in caplog.records)
+        assert "convex-MPC gait unavailable" in msg and "third_party/convex_mpc" in msg, msg
+    finally:
+        go2.disconnect()
+
+
+def test_arm_scene_model_missing_fails_loud(monkeypatch, tmp_path) -> None:
+    from vector_os_nano.hardware.sim import mujoco_go2
+
+    monkeypatch.setattr(mujoco_go2, "_GO2_PIPER_XML", tmp_path / "go2_piper.xml")
+    with pytest.raises(FileNotFoundError, match="go2\\+arm scene model missing"):
+        mujoco_go2._build_room_scene_xml(with_arm=True)
