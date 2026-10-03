@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from pathlib import Path
@@ -573,8 +574,17 @@ class MuJoCoGo2:
         self._mj.model.opt.timestep = _SIM_DT
 
         mj.mj_forward(self._mj.model, self._mj.data)
+        self.runtime = SimRuntime(
+            self._mj.model, self._mj.data, controller=self._control,
+            substeps=_CTRL_DECIM, name="mujoco_go2",
+        )
 
         if self._gui:
+            if os.environ.get("MUJOCO_GL", "").lower() == "egl":
+                # EGL offscreen contexts must exist before the viewer's GLFW/GLX init.
+                # ponytail: the head-camera sizes in use (go2 640x480, go2_piper and the
+                # nav bridge 320x240); a new size with the window open fails loud.
+                self.runtime.warm_renderers(("rgb", "depth", "seg"), ((320, 240), (640, 480)))
             try:
                 import mujoco.viewer  # noqa: PLC0415
                 self._viewer = mujoco.viewer.launch_passive(
@@ -636,11 +646,7 @@ class MuJoCoGo2:
         )
         self._drive_mode = resolve_viewer_drive_mode(self._viewer is not None)
         self._reset_step_state()
-        self.runtime = SimRuntime(
-            self._mj.model, self._mj.data, controller=self._control,
-            substeps=_CTRL_DECIM, threaded=uses_background_physics(self._drive_mode),
-            name="mujoco_go2",
-        )
+        self.runtime.threaded = self.runtime.threaded and uses_background_physics(self._drive_mode)
         self.runtime.start()
         if not self.runtime.threaded:
             logger.info(
@@ -651,14 +657,18 @@ class MuJoCoGo2:
     def disconnect(self) -> None:
         """Stop the runtime (physics + renderers), close the viewer, release the model."""
         rt, self.runtime = self.runtime, None
-        if rt is not None:
-            rt.close()
-        if self._viewer is not None:
+        viewer, self._viewer = self._viewer, None
+        if viewer is not None:  # window first (stepper parked: no sync mid-close), then GL
             try:
-                self._viewer.close()
+                if rt is not None:
+                    with rt.paused():
+                        viewer.close()
+                else:
+                    viewer.close()
             except Exception:  # noqa: BLE001
                 pass
-            self._viewer = None
+        if rt is not None:
+            rt.close()
         self._mj = None
         self._stance_qpos = None
         self._pin = None
@@ -831,13 +841,14 @@ class MuJoCoGo2:
 
     def _sync_viewer(self) -> None:
         """Every _VIEWER_SYNC_EVERY physics steps: track the dog and sync the window."""
-        if self._viewer is None or self._sim_step % _VIEWER_SYNC_EVERY >= _CTRL_DECIM:
+        viewer = self._viewer
+        if viewer is None or self._sim_step % _VIEWER_SYNC_EVERY >= _CTRL_DECIM:
             return
         if self._viewer_track:
             rq = self._mj.layout.root_qpos_adr
             pos = self._mj.data.qpos[rq : rq + 3]
-            self._viewer.cam.lookat[:] = [float(pos[0]), float(pos[1]), 0.3]
-        self._viewer.sync()
+            viewer.cam.lookat[:] = [float(pos[0]), float(pos[1]), 0.3]
+        viewer.sync()
 
     def _mj_update_pin(self) -> None:
         """Sync Pinocchio model state from MuJoCo qpos/qvel.

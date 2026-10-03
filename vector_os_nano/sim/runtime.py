@@ -361,6 +361,20 @@ class SimRuntime:
             raise RuntimeError(f"{self.name}: runtime closed")
         return pool.submit(job).result()
 
+    def warm_renderers(self, kinds: Iterable[str], sizes: Iterable[tuple[int, int]]) -> None:
+        """Create the renderers for every (kind, size) now, on the render thread.
+
+        Needed before a passive viewer opens under MUJOCO_GL=egl: an EGL context
+        created AFTER the viewer's GLFW/GLX init can never be made current (probed
+        on this NVIDIA box; contexts created before it keep working).
+        """
+        def job() -> None:
+            for w, h in sizes:
+                for kind in kinds:
+                    self._renderer(kind, int(w), int(h))
+
+        self._render_pool.submit(job).result()
+
     def _renderer(self, kind: str, width: int, height: int) -> Any:
         """The cached offscreen renderer for (kind, width, height); render thread only."""
         key = (kind, width, height)
@@ -368,7 +382,14 @@ class SimRuntime:
         if r is None:
             import mujoco as mj
 
-            r = mj.Renderer(self.model, height, width)
+            try:
+                r = mj.Renderer(self.model, height, width)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"{self.name}: cannot create a {width}x{height} {kind} renderer ({exc}); "
+                    f"with a viewer window open under MUJOCO_GL=egl only the renderers "
+                    f"created before it work: {sorted(self._renderers)}"
+                ) from exc
             if kind == "seg":
                 r.enable_segmentation_rendering()
             else:
