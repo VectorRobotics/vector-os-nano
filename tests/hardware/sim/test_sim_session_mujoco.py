@@ -153,9 +153,9 @@ def test_interpreter_exit_stops_the_session_cleanly() -> None:
 
 
 def test_dead_physics_thread_is_an_error_never_started(monkeypatch) -> None:
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from vector_os_nano.sim.runtime import SimRuntime
 
-    monkeypatch.setattr(MuJoCoGo2, "_physics_loop", lambda self: None)  # thread dies at once
+    monkeypatch.setattr(SimRuntime, "_loop", lambda self: None)  # thread dies at once
     app: dict[str, Any] = {"registry": CategorizedToolRegistry()}
     threads0 = threading.active_count()
     res = _start(app, "go2")
