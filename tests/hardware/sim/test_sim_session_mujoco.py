@@ -100,6 +100,58 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
     assert spawned == [], f"the in-process sim spawned subprocesses: {spawned}"
 
 
+def test_frames_render_from_any_thread_after_start(monkeypatch) -> None:
+    """The ready probe renders on the starting (REPL) thread; skills then render
+    from the vgg-executor thread and the nav bridge's camera timer. A GL context
+    bound to the thread that last rendered (EGL_BAD_ACCESS) must not lock them out.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from vector_os_nano.sim.session import SimSession, SimSpec
+
+    monkeypatch.setenv("VECTOR_NAV_STACK", "")
+    threads0 = threading.active_count()
+    s = SimSession.start(SimSpec("go2_piper", gui=False))
+    try:
+        p, base = s.agent._perception, s.agent._base
+        assert p.get_color_frame().shape == (240, 320, 3)  # the starting thread
+
+        def grab(_: int) -> tuple:
+            return (p.get_color_frame().shape, p.get_depth_frame().shape,
+                    base.get_camera_frame().shape)
+
+        want = ((240, 320, 3), (240, 320), (480, 640, 3))
+        out: list[tuple] = []
+        t = threading.Thread(target=lambda: out.append(grab(0)), name="vgg-executor")
+        t.start()
+        t.join()
+        assert out == [want]  # another thread, while the starting thread lives on
+        with ThreadPoolExecutor(4) as ex:  # concurrent callers serialize, none fails
+            assert list(ex.map(grab, range(8))) == [want] * 8
+        assert p.get_color_frame().shape == (240, 320, 3)  # and back on the start thread
+    finally:
+        s.stop()
+    assert threading.active_count() == threads0
+
+
+def test_interpreter_exit_stops_the_session_cleanly() -> None:
+    """The bare REPL leaves an NL-launched session to atexit, which runs after the
+    interpreter has already retired the render thread."""
+    code = (
+        "import vector_os_nano.sim.session as S\n"
+        "orig = S.SimSession.stop\n"
+        "def stop(self):\n"
+        "    r = orig(self); print('STOP:', r, flush=True); return r\n"
+        "S.SimSession.stop = stop\n"
+        "s = S.SimSession.start(S.SimSpec('go2', gui=False))\n"
+        "s.agent._base.get_camera_frame()\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], cwd=_REPO, capture_output=True,
+                         text=True, env={**os.environ, "VECTOR_NAV_STACK": ""}, timeout=180)
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert "disconnected" in out.stdout and "FAILED" not in out.stdout, out.stdout
+
+
 def test_dead_physics_thread_is_an_error_never_started(monkeypatch) -> None:
     from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 

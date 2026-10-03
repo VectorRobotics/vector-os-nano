@@ -25,6 +25,7 @@ import logging
 import math
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -62,10 +63,15 @@ class SimStartError(RuntimeError):
 _LIVE: list["SimSession"] = []
 
 
-def stop_all() -> None:
-    """Stop every live session (used before ``os._exit``, which skips atexit)."""
-    for s in list(_LIVE):
+def stop_all() -> int:
+    """Stop every live session (used before ``os._exit``, which skips atexit).
+
+    Returns how many were live.
+    """
+    live = list(_LIVE)
+    for s in live:
         s.stop()
+    return len(live)
 
 
 class SimSession:
@@ -170,7 +176,7 @@ def _probe_ready(agent: Any, cfg: Any, *, deadline: float) -> dict[str, Any]:
         while (now := clock()) - t0 < _READY_SIM_S:
             if now != last:
                 last, moved_at = now, time.monotonic()
-            elif time.monotonic() - moved_at > _STALL_S or time.monotonic() > deadline:
+            if time.monotonic() - moved_at > _STALL_S or time.monotonic() > deadline:
                 raise SimStartError(
                     "not ready",
                     f"sim time advanced {now - t0:.2f}s (< {_READY_SIM_S}s): physics is not stepping",
@@ -182,11 +188,13 @@ def _probe_ready(agent: Any, cfg: Any, *, deadline: float) -> dict[str, Any]:
 
     if cfg.capabilities.camera:
         perception = getattr(agent, "_perception", None)
+        grab = getattr(perception, "get_color_frame", None) or getattr(base, "get_camera_frame", None)
         frame = None
-        if callable(getattr(perception, "get_color_frame", None)):
-            frame = perception.get_color_frame()
-        elif callable(getattr(base, "get_camera_frame", None)):
-            frame = base.get_camera_frame()
+        if callable(grab):
+            # On a thread that then exits: a GL context stays bound to the live
+            # thread that last rendered with it, and this is the REPL thread.
+            with ThreadPoolExecutor(1) as ex:
+                frame = ex.submit(grab).result()
         if frame is None or not np.asarray(frame).any():
             raise SimStartError("not ready", "camera frame is empty/black")
         h, w = np.asarray(frame).shape[:2]

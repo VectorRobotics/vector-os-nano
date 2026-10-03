@@ -31,6 +31,7 @@ import math
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -455,6 +456,8 @@ class MuJoCoGo2:
         # Offscreen renderers keyed by (kind, width, height): a frame always has
         # the size it was asked for, so intrinsics computed from that size match.
         self._renderers: dict[tuple[str, int, int], Any] = {}
+        # The ONE thread that creates, uses and closes those renderers (see _render).
+        self._render_pool: ThreadPoolExecutor | None = None
         self._backend_pref: str = backend
         self._viewer_track: bool = viewer_track
         self._mj: _Go2Model | None = None
@@ -548,6 +551,8 @@ class MuJoCoGo2:
     def connect(self) -> None:
         """Load MuJoCo model and optionally open viewer."""
         mj = _get_mujoco()
+        # No thread is started until the first render.
+        self._render_pool = ThreadPoolExecutor(1, thread_name_prefix="mujoco_go2_render")
 
         if self._room:
             scene_path = _build_room_scene_xml(with_arm=self._with_arm)
@@ -685,12 +690,13 @@ class MuJoCoGo2:
             except Exception:  # noqa: BLE001
                 pass
             self._viewer = None
-        for r in self._renderers.values():
-            try:
-                r.close()
-            except Exception:  # noqa: BLE001
-                pass
-        self._renderers.clear()
+        pool, self._render_pool = self._render_pool, None
+        if pool is not None:
+            try:  # queued behind any in-flight render; closes each context on its thread
+                pool.submit(self._close_renderers).result()
+            except RuntimeError:  # atexit: interpreter shutdown already retired that thread
+                self._close_renderers()
+            pool.shutdown(wait=True)
         self._mj = None
         self._stance_qpos = None
         self._pin = None
@@ -1211,13 +1217,33 @@ class MuJoCoGo2:
         mounted on the robot — no free-camera approximation.
         """
         self._require_connection()
-        r = self._renderer("rgb", width, height)
-        cam_id = self._mj.model.cam("d435_rgb").id
-        r.update_scene(self._mj.data, camera=cam_id)
-        return r.render().copy()
+        return self._render("rgb", "d435_rgb", width, height)
+
+    def _render(self, kind: str, camera: str, width: int, height: int) -> "np.ndarray":
+        """Render *camera* on the ONE render thread and return a copy of the frame.
+
+        A GL context (EGL/GLX) stays bound to the live thread that last rendered
+        with it; any other thread then fails with EGL_BAD_ACCESS. The REPL, the
+        vgg-executor, the ready probe and the nav bridge's camera timer all
+        render, so every render runs here (which also serializes them).
+        """
+        def job() -> "np.ndarray":
+            r = self._renderer(kind, width, height)
+            r.update_scene(self._mj.data, camera=self._mj.model.cam(camera).id)
+            return r.render().copy()
+
+        return self._render_pool.submit(job).result()
+
+    def _close_renderers(self) -> None:
+        for r in self._renderers.values():
+            try:
+                r.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._renderers.clear()
 
     def _renderer(self, kind: str, width: int, height: int) -> Any:
-        """The cached offscreen renderer for (kind, width, height); closed on disconnect."""
+        """The cached offscreen renderer for (kind, width, height); render thread only."""
         key = (kind, int(width), int(height))
         r = self._renderers.get(key)
         if r is None:
@@ -1243,14 +1269,7 @@ class MuJoCoGo2:
         'd435_depth' camera — same mounting as RGB for pixel alignment.
         """
         self._require_connection()
-
-        r = self._renderer("depth", width, height)
-        cam_id = self._mj.model.cam("d435_depth").id
-        r.update_scene(self._mj.data, camera=cam_id)
-        raw = r.render().copy()
-
-        import numpy as np
-        depth = raw.astype(np.float32)
+        depth = self._render("depth", "d435_depth", width, height).astype(np.float32)
         depth[(depth < 0.1) | (depth > 10.0)] = 0.0
         return depth
 
@@ -1300,7 +1319,6 @@ class MuJoCoGo2:
         mj = _get_mujoco()
         import numpy as np
         model = self._mj.model
-        seg_renderer = self._renderer("seg", width, height)
         if not hasattr(self, "_piper_geom_ids"):
             # Collect EVERY body in the arm subtree (descendants of piper_base_link),
             # not just "piper*"-named ones — the gripper/finger bodies are named
@@ -1323,9 +1341,7 @@ class MuJoCoGo2:
                 or (mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[g])) or "").startswith("piper")
             ]
             self._piper_geom_ids = np.asarray(ids, dtype=np.int32)
-        cam_id = model.cam("d435_rgb").id
-        seg_renderer.update_scene(self._mj.data, camera=cam_id)
-        seg = seg_renderer.render()  # (H, W, 2): [...,0] = geom id, -1 = none
+        seg = self._render("seg", "d435_rgb", width, height)  # (H, W, 2): [...,0] = geom id, -1 = none
         geom_ids = seg[:, :, 0] if seg.ndim == 3 else seg
         if self._piper_geom_ids.size == 0:
             return np.zeros(geom_ids.shape, dtype=bool)

@@ -227,11 +227,21 @@ def test_tool_paused_not_registered_in_init() -> None:
     assert SysnavSimTool.__name__ == "SysnavSimTool"
 
 
-def test_input_schema_documents_optional_gui_and_backend() -> None:
+def test_input_schema_offers_only_gui() -> None:
+    # There is one in-process MuJoCo sim; a backend choice would be silently ignored.
     schema = SysnavSimTool.input_schema
-    assert "gui" in schema["properties"]
-    assert "backend" in schema["properties"]
+    assert set(schema["properties"]) == {"gui"}
     assert schema["required"] == []
+
+
+def test_sim_start_failure_is_an_error_never_mujoco_up(context) -> None:
+    tool, stub_sim, bridges = _build_tool()
+    stub_sim.execute = lambda params, ctx: ToolResult(
+        content="Simulation failed to start: not ready: physics is not stepping", is_error=True)
+    result = tool.execute({"gui": False}, context)
+    assert result.is_error and "physics is not stepping" in result.content
+    assert "MuJoCo up" not in result.content and bridges == []
+    assert tool._started is False  # a retry is allowed
 
 
 def test_pre_flight_log_warning_when_missing(context, monkeypatch, caplog) -> None:

@@ -1763,10 +1763,10 @@ def main(argv: list[str] | None = None) -> None:
         # decided code (after flushing) to keep the harness invariant
         # ``verified == (exit_code == 0)`` honest. Interactive / non-sim turns are
         # unaffected (no daemon to crash). os._exit skips atexit/GC by design.
-        if _requested_embodiment(args):
-            # os._exit skips atexit: stop the session (its nav pgids included) first.
-            from vector_os_nano.sim.session import stop_all
-            stop_all()
+        # os._exit skips atexit: stop every session first (its nav pgids included),
+        # the flag's and one the turn launched by NL alike.
+        from vector_os_nano.sim.session import stop_all
+        if stop_all() or _requested_embodiment(args):
             try:
                 sys.stdout.flush()
                 sys.stderr.flush()

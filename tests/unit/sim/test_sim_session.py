@@ -119,6 +119,34 @@ def test_ready_probe_fails_fast_when_the_clock_is_dead(monkeypatch) -> None:
     assert time.monotonic() - t0 < 5  # a dead thread is detected, not waited out
 
 
+def test_ready_probe_deadline_holds_for_a_creeping_clock() -> None:
+    import time
+
+    cfg = registry.load("go2")
+    t0 = time.monotonic()
+    with pytest.raises(SimStartError, match="physics is not stepping"):
+        # Moves every poll (never "stalled") but would need ~250 s to reach 0.5 s.
+        sess._probe_ready(_agent(base=_Clock(1e-4)), cfg, deadline=time.monotonic() + 1)
+    assert time.monotonic() - t0 < 3
+
+
+def test_ready_probe_never_renders_on_the_calling_thread() -> None:
+    """A GL context stays bound to the live thread that last rendered with it, so a
+    probe frame grabbed on the REPL thread would lock every other thread out."""
+    import numpy as np
+
+    seen: list[threading.Thread] = []
+
+    def frame() -> Any:
+        seen.append(threading.current_thread())
+        return np.ones((24, 32, 3), np.uint8)
+
+    agent = SimpleNamespace(_base=None, _arm=None,
+                            _perception=SimpleNamespace(get_color_frame=frame))
+    assert sess._probe_ready(agent, registry.load("go2"), deadline=1e18)["camera"] == "32x24"
+    assert seen and seen[0] is not threading.current_thread() and not seen[0].is_alive()
+
+
 def test_ready_probe_rejects_black_frame_and_nan_arm() -> None:
     import time
 
@@ -327,13 +355,28 @@ def test_print_path_stops_live_sessions_before_os_exit(monkeypatch) -> None:
     monkeypatch.setattr(cli, "run_one_turn", lambda args: 0)
     monkeypatch.setattr(cli, "_setup_logging", lambda verbose: None)  # no global side effect
 
+    hard_exits: list[int] = []
+
     def fake_exit(code: int) -> None:
+        hard_exits.append(code)
         raise SystemExit(code)
 
     monkeypatch.setattr(cli.os, "_exit", fake_exit)
     with pytest.raises(SystemExit):
         cli.main(["-p", "hi", "--sim-go2", "--headless"])
-    assert s.stopped == 1
+    assert s.stopped == 1 and hard_exits == [0]
+
+    # A session the turn itself launched (NL start_simulation, no flag) gets the
+    # same stop + hard exit; a turn with no sim keeps the plain sys.exit.
+    nl = _FakeSession(SimSpec("go2_piper"))
+    monkeypatch.setattr(sess, "_LIVE", [nl])
+    with pytest.raises(SystemExit):
+        cli.main(["-p", "启动 go2 仿真"])
+    assert nl.stopped == 1 and hard_exits == [0, 0]
+    monkeypatch.setattr(sess, "_LIVE", [])
+    with pytest.raises(SystemExit):
+        cli.main(["-p", "hi"])
+    assert hard_exits == [0, 0]
 
 
 def test_go2_scene_never_silently_drops_the_arm(monkeypatch, tmp_path) -> None:
