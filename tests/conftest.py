@@ -237,6 +237,8 @@ def _known_reds() -> dict[str, tuple[str, str]]:
 
     ``xfail`` is strict: a row whose test now passes turns red until it is deleted.
     ``flaky`` is a non-strict xfail, only for a test that is red on some runs.
+    ``crash`` is an xfail that is NOT run: the test can take the whole process
+    down (a segfault no xfail can catch), so running it would hide the rest.
     """
     rows: dict[str, tuple[str, str]] = {}
     for line in _KNOWN_REDS.read_text(encoding="utf-8").splitlines():
@@ -244,7 +246,7 @@ def _known_reds() -> dict[str, tuple[str, str]]:
         if not line or line.startswith("#"):
             continue
         nodeid, mode, reason = (part.strip() for part in line.split("|", 2))
-        if mode not in ("deselect", "xfail", "flaky"):
+        if mode not in ("deselect", "xfail", "flaky", "crash"):
             raise pytest.UsageError(f"known_reds.txt: bad mode {mode!r} in {line!r}")
         rows[nodeid] = (mode, reason)
     return rows
@@ -262,7 +264,7 @@ def pytest_collection_modifyitems(
             deselected.append(item)
             continue
         if mode is not None:
-            item.add_marker(pytest.mark.xfail(reason=reason, strict=mode == "xfail"))
+            item.add_marker(pytest.mark.xfail(reason=reason, strict=mode == "xfail", run=mode != "crash"))
         if item.get_closest_marker("sim") is None and _builds_sim(item):
             item.add_marker(pytest.mark.sim)
         if item.get_closest_marker("live_llm") is not None and not _LIVE:
