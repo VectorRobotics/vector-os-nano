@@ -27,6 +27,7 @@ Hygiene (WP01) — every test runs as if it were alone on a shared box:
 """
 from __future__ import annotations
 
+import functools
 import os
 import re
 import subprocess
@@ -166,9 +167,9 @@ def _is_sim_file(path: Path) -> bool:
     return _sim_file_cache[path]
 
 
-@pytest.fixture(scope="session")
+@functools.cache
 def sim_preflight() -> str:
-    """'' when the sim tier can run here, else the ONE reason it cannot.
+    """'' when the sim tier can run here, else the ONE reason it cannot (once per session).
 
     Runs tests/harness/sim_preflight.py in a child (an EGL or MuJoCo crash must not
     take the session down): vendored convex_mpc imports, the go2 and go2_piper
@@ -190,12 +191,11 @@ def sim_preflight() -> str:
     return reason
 
 
-@pytest.fixture(autouse=True)
-def _sim_gate(request: pytest.FixtureRequest) -> None:
-    if request.node.get_closest_marker("sim") is not None:
-        reason = request.getfixturevalue("sim_preflight")
-        if reason:
-            pytest.skip(f"sim preflight: {reason}")
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    # Raised from this hook (not a fixture) so every skip shares THIS location and
+    # `-rs` folds the whole sim tier into one line.
+    if item.get_closest_marker("sim") is not None and sim_preflight():
+        pytest.skip(f"sim preflight: {sim_preflight()}")
 
 
 # ---------------------------------------------------------------------------

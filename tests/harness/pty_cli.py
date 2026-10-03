@@ -167,14 +167,24 @@ def _read_chunk(master_fd: int, wait_sec: float) -> bytes | None:
     return data or None
 
 
-def _drain(master_fd: int, deadline: float) -> tuple[str, bool]:
-    """Read the PTY until EOF or *deadline*; return (output, reached_eof)."""
+def _drain(master_fd: int, deadline: float, proc: subprocess.Popen) -> tuple[str, bool]:
+    """Read the PTY until EOF, *deadline*, or the child has exited and gone quiet.
+
+    A grandchild that inherited the PTY (a ROS node the sim started) can hold it
+    open after the child exits, so EOF alone may never come; the caller then kills
+    the group. Returns (output, reached_eof).
+    """
     chunks: list[bytes] = []
+    quiet_since = _now()
     while _now() < deadline:
         data = _read_chunk(master_fd, min(0.5, deadline - _now()))
         if data is None:
             return b"".join(chunks).decode("utf-8", errors="replace"), True
-        chunks.append(data)
+        if data:
+            chunks.append(data)
+            quiet_since = _now()
+        elif proc.poll() is not None and _now() - quiet_since > 1.0:
+            break
     return b"".join(chunks).decode("utf-8", errors="replace"), False
 
 
@@ -274,7 +284,7 @@ def run_cli_turn(
     deadline = _now() + timeout_sec
     proc, master_fd = _spawn(argv, env, cwd or _REPO_ROOT)
     try:
-        output, _eof = _drain(master_fd, deadline)
+        output, _eof = _drain(master_fd, deadline, proc)
         try:
             proc.wait(timeout=max(0.1, deadline - _now()))
         except subprocess.TimeoutExpired:
@@ -482,11 +492,14 @@ def run_repl_session(
                 break
             tty.send(step)
             typed = step
-        # Read to EOF after quit (the verdict of a last async turn is not lost).
+        # Read to EOF after quit (the verdict of a last async turn is not lost), or
+        # until the child has exited and gone quiet (a grandchild may hold the PTY).
         deadline = _now() + turn_timeout_sec
         while not tty.eof and _now() < deadline:
-            tty.pump(deadline - _now())
-        timed_out = timed_out or not tty.eof
+            tty.pump(min(0.5, deadline - _now()))
+            if proc.poll() is not None and _now() - tty.last_data > 1.0:
+                break
+        timed_out = timed_out or proc.poll() is None
         try:
             proc.wait(timeout=max(0.1, deadline - _now()))
         except subprocess.TimeoutExpired:

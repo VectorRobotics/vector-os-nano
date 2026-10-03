@@ -7,6 +7,7 @@ Each rule names the ledger key it pins. A guard failure lists every offending li
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -134,3 +135,26 @@ def test_billed_vlm_benchmarks_are_live_llm_gated() -> None:
               "test_level4_patrol.py", "test_level5_vlm_accuracy.py"):
         src = (_TESTS / "harness" / f).read_text(encoding="utf-8")
         assert "pytestmark = pytest.mark.live_llm" in src, f
+
+
+def test_sim_preflight_skips_the_tier_with_one_reason(tmp_path) -> None:
+    """tests:sim-prereq-error-not-skip — on a box without EGL the sim tier used to
+    ERROR test by test; now ONE preflight skips it with ONE aggregated reason."""
+    probe = tmp_path / "test_probe_sim.py"
+    probe.write_text(
+        "import pytest\n\n"
+        "@pytest.mark.sim\ndef test_a():\n    raise AssertionError('must not run')\n\n"
+        "@pytest.mark.sim\ndef test_b():\n    raise AssertionError('must not run')\n"
+    )
+    env = {**os.environ, "MUJOCO_GL": "egl",
+           "__EGL_VENDOR_LIBRARY_FILENAMES": "/nonexistent/egl_vendor.json"}
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
+         "-c", str(_REPO / "pyproject.toml"), "-q", "-rs", "--rootdir", str(tmp_path), str(probe)],
+        cwd=_REPO, env=env, capture_output=True, text=True, timeout=300,
+    )
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out[-3000:]
+    assert "2 skipped" in out, out[-3000:]
+    reasons = [ln for ln in r.stdout.splitlines() if ln.startswith("SKIPPED")]
+    assert len(reasons) == 1 and "sim preflight: no offscreen GL" in reasons[0], out[-3000:]

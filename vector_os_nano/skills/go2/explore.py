@@ -130,25 +130,13 @@ def get_explore_status() -> dict:
 def stop_tare_only() -> None:
     """Stop TARE planner while keeping FAR + localPlanner alive.
 
-    Uses pkill to kill just the TARE planner node by process name, without
-    touching the nav stack process group that contains FAR + localPlanner.
-    Also removes the nav flag file so the bridge path follower stops following
-    TARE-generated paths.
+    Stops only the TARE process group THIS process started. Never by name: a
+    ``pkill -f tare_planner_node`` also killed other projects' planners on a
+    shared machine. Also removes the nav flag file so the bridge path follower
+    stops following TARE-generated paths.
     """
     global _tare_proc
 
-    # Kill TARE by process name — works whether TARE was launched by us or
-    # by launch_explore.sh as part of a larger process group.
-    try:
-        subprocess.run(
-            ["pkill", "-f", "tare_planner_node"],
-            capture_output=True, timeout=5,
-        )
-        logger.info("[EXPLORE] TARE planner stopped via pkill")
-    except Exception as exc:
-        logger.warning("[EXPLORE] pkill tare_planner_node failed: %s", exc)
-
-    # Also kill via process group if we own _tare_proc
     if _tare_proc is not None and _tare_proc.poll() is None:
         try:
             os.killpg(os.getpgid(_tare_proc.pid), signal.SIGTERM)

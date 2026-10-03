@@ -385,8 +385,8 @@ class TestTimingMismatchBug:
         # --- Move robot forward 1.5m ---
         try:
             robot.walk(vx=0.5, vy=0.0, vyaw=0.0, duration=3.0)
-        except Exception:
-            pytest.fail("walk() failed — cannot test timing mismatch")
+        except Exception as exc:  # noqa: BLE001 — a failed precondition is a FAIL
+            pytest.fail(f"walk() raised {exc!r} — cannot test timing mismatch")
 
         # --- Position B: capture pose ONLY (simulating the bug) ---
         cam_xpos_b, cam_xmat_b = robot.get_camera_pose()

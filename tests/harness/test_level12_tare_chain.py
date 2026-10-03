@@ -34,70 +34,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# ---------------------------------------------------------------------------
-# Lazy imports: explore.py depends on navigate._ROOM_CENTERS and _detect_current_room.
-# We stub both before importing explore so no MuJoCo / httpx cascade is triggered.
-# ---------------------------------------------------------------------------
-
-import importlib
-import types as _types
-
-
-def _load_explore_module():
-    """Load explore.py with navigate stub injected into sys.modules."""
-    # Build a minimal navigate stub
-    nav_stub = _types.ModuleType("vector_os_nano.skills.navigate")
-    nav_stub._ROOM_CENTERS = {
-        "living_room": (0.0, 0.0),
-        "kitchen": (5.0, 0.0),
-        "bedroom": (0.0, 5.0),
-    }
-
-    def _detect(x: float, y: float) -> str:
-        best, best_d = "living_room", 1e9
-        for name, (cx, cy) in nav_stub._ROOM_CENTERS.items():
-            d = (x - cx) ** 2 + (y - cy) ** 2
-            if d < best_d:
-                best, best_d = name, d
-        return best
-
-    nav_stub._detect_current_room = _detect
-
-    # Inject stubs before importing explore
-    sys.modules.setdefault("vector_os_nano.skills.navigate", nav_stub)
-
-    # core stubs
-    core_stub = _types.ModuleType("vector_os_nano.core")
-    core_stub.__path__ = [str(_REPO_ROOT / "vector_os_nano" / "core")]
-    sys.modules.setdefault("vector_os_nano.core", core_stub)
-
-    skill_stub = _types.ModuleType("vector_os_nano.core.skill")
-    skill_stub.SkillContext = MagicMock
-    skill_stub.skill = lambda **kw: (lambda cls: cls)
-    sys.modules.setdefault("vector_os_nano.core.skill", skill_stub)
-
-    types_stub = _types.ModuleType("vector_os_nano.core.types")
-    types_stub.SkillResult = MagicMock
-    sys.modules.setdefault("vector_os_nano.core.types", types_stub)
-
-    explore_path = (
-        _REPO_ROOT / "vector_os_nano" / "skills" / "go2" / "explore.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "vector_os_nano.skills.go2.explore", str(explore_path)
-    )
-    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    sys.modules["vector_os_nano.skills.go2.explore"] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
-
-
-# Load under a sys.modules snapshot: the stubs (and the by-path explore module)
-# must not replace the real vector_os_nano.core for every later test file.
-from tests.harness.stubs import stubbed_modules  # noqa: E402
-
-with stubbed_modules({}):
-    _explore = _load_explore_module()
+# The real module: a by-path load behind stub vector_os_nano.core/.types/.skill
+# modules broke every later import (and this file itself when collected first).
+from vector_os_nano.skills.go2 import explore as _explore  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
