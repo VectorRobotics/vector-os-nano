@@ -204,7 +204,8 @@ def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
     broken.write_text("import nonexistent_module_xyz\n")
     r = subprocess.run(
         ["bash", str(_REPO / "scripts" / "gate.sh"), "hermetic"],
-        env={**os.environ, "GATE_PATHS": str(broken), "GATE_OUT": str(tmp_path / "out")},
+        env={**os.environ, "GATE_PER_FILE": "1", "GATE_PATHS": str(broken),
+             "GATE_OUT": str(tmp_path / "out")},
         cwd=_REPO, capture_output=True, text=True, timeout=300,
     )
     assert r.returncode != 0, r.stdout[-2000:] + r.stderr[-2000:]
