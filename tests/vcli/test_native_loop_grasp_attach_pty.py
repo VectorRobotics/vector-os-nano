@@ -46,7 +46,7 @@ target-aware oracle matches the body the weld pins — the faithful analogue of 
 arm template's ``holding_object('banana')``. The dog boots NOT holding (all welds
 ``active="false"``), so a successful grasp is a genuine actor-CAUSED 0->1 transition.
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + rosm nuke after the
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after the
 case via the fixture. ``VECTOR_SIM_WITH_ARM=1`` MUST be set before the scene builds
 so ``MuJoCoGo2`` assembles the go2_piper attach scene (cylinders + welds). Reproduce::
 
@@ -54,14 +54,6 @@ so ``MuJoCoGo2`` assembles the go2_piper attach scene (cylinders + welds). Repro
       tests/vcli/test_native_loop_grasp_attach_pty.py -v -s -m sim
 """
 from __future__ import annotations
-
-import os
-
-# Select the go2_piper attach scene (cylinders + INACTIVE welds) at scene-build
-# time — MuJoCoGo2._build_room_scene_xml reads this env var. MUST precede import.
-os.environ.setdefault("VECTOR_SIM_WITH_ARM", "1")
-
-import subprocess
 
 import pytest
 
@@ -76,21 +68,8 @@ _GRASP_TARGET: str = "pickable_bottle_green"
 _GOAL: str = "把前面的绿色瓶子抓起来"
 
 
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
-
-
 @pytest.mark.sim
-def test_native_grasp_attach_routes_and_grounds_holding(sim_cleanup) -> None:
+def test_native_grasp_attach_routes_and_grounds_holding(sim_cleanup, monkeypatch) -> None:
     """perception_grasp -> holding_object, GROUNDED+CAUSED on the go2+Piper attach scene.
 
     Mirrors ``test_native_loop_arm_pty.py`` (a real sim base + an ``Agent`` with the
@@ -99,7 +78,9 @@ def test_native_grasp_attach_routes_and_grounds_holding(sim_cleanup) -> None:
     grasp pipeline routes to the real ``perception_grasp`` and grounds through the
     untouched spine + the D69 gate, with NO live LLM in the loop.
     """
-    os.environ["VECTOR_SIM_WITH_ARM"] = "1"
+    # Select the go2_piper attach scene (cylinders + INACTIVE welds) at scene-build
+    # time — MuJoCoGo2._build_room_scene_xml reads this env var.
+    monkeypatch.setenv("VECTOR_SIM_WITH_ARM", "1")
 
     from pathlib import Path as _Path
 
@@ -228,4 +209,3 @@ def test_native_grasp_attach_routes_and_grounds_holding(sim_cleanup) -> None:
                 dev.disconnect()
             except Exception:  # noqa: BLE001
                 pass
-        _nuke()

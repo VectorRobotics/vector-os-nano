@@ -29,7 +29,6 @@ Three proofs, no LLM required for (a)/(b):
 """
 from __future__ import annotations
 
-import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -323,27 +322,6 @@ _HONEST_SCRIPT = {
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
-
-
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
-    try:
-        subprocess.run(
-            ["git", "checkout",
-             "vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml"],
-            timeout=20, capture_output=True,
-        )
-    except Exception:  # noqa: BLE001
-        pass
 
 
 @pytest.mark.sim

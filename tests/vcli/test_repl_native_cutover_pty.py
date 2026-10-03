@@ -19,7 +19,6 @@ shutdown artifact AFTER the verdict has already been rendered).
 from __future__ import annotations
 
 import re
-import subprocess
 
 import pytest
 
@@ -35,32 +34,6 @@ _WALK_SCRIPT = {
     ]
 }
 
-_ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
-
-
-def _strip(s: str) -> str:
-    """Remove ANSI escapes so styled spans collapse to their visible text."""
-    return _ANSI.sub("", s)
-
-
-def _nuke_and_restore() -> None:
-    for cmd in (
-        ["rosm", "nuke", "--yes"],
-        ["git", "checkout",
-         "vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml"],
-    ):
-        try:
-            subprocess.run(cmd, timeout=30, capture_output=True)
-        except Exception:  # noqa: BLE001
-            pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke_and_restore()
-
-
 @pytest.mark.sim
 @pytest.mark.cli_main
 @pytest.mark.capability
@@ -70,14 +43,11 @@ def test_repl_native_walk_routes_to_native_on_go2_sim(sim_cleanup) -> None:
     from tests.harness.pty_cli import run_repl_session
 
     result = run_repl_session(
-        [(0.0, "走到坐标 (11.0,3.0)"), (130.0, "quit")],
-        sim_go2=True,
-        tool_script=_WALK_SCRIPT,
-        native=True,
-        boot_sec=30.0,
-        settle_sec=5.0,
+        ["走到坐标 (11.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT, native=True,
+        turn_timeout_sec=240,
     )
-    text = _strip(result.transcript)
+    text = result.text
+    assert not result.timed_out, text[-2500:]
 
     # The NL command reached the REPL.
     assert "走到坐标" in text, f"command not echoed; transcript:\n{result.transcript[:2000]}"
@@ -110,14 +80,14 @@ def test_repl_legacy_env_does_not_attempt_native(sim_cleanup) -> None:
     from tests.harness.pty_cli import run_repl_session
 
     result = run_repl_session(
-        [(0.0, "走到坐标 (11.0,3.0)"), (20.0, "quit")],
-        sim_go2=True,
-        tool_script=_WALK_SCRIPT,
+        ["走到坐标 (11.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT,
         native=False,  # VECTOR_REPL_NATIVE=0
-        boot_sec=30.0,
-        settle_sec=5.0,
+        turn_timeout_sec=240,
     )
-    text = _strip(result.transcript)
-    assert "走到坐标" in text, "command not echoed"
+    text = result.text
+    assert not result.timed_out, text[-2500:]
+    # POSITIVE legacy marker: the legacy planner rendered its plan for the command
+    # (an absence-only check also passed when the REPL hung at boot).
+    assert re.search(r"VGG .*走到坐标", text), f"legacy plan not rendered:\n{text[-2500:]}"
     # The native cutover path's signatures must be ABSENT (legacy planner handled it).
     assert "actor=CAUSED" not in text, "native verdict rendered despite VECTOR_REPL_NATIVE=0"

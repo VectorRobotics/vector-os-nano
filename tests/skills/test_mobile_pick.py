@@ -14,6 +14,8 @@ from __future__ import annotations
 import math
 from unittest.mock import MagicMock, patch
 
+from tests.harness.clock import fake_clock
+
 
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.types import SkillResult
@@ -127,7 +129,7 @@ def test_mobile_pick_already_reachable_skips_navigate():
     with (
         patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
         patch("vector_os_nano.skills.mobile_pick._wait_stable", return_value=True),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         ctx = _make_context(
             base=base, arm=MagicMock(), gripper=MagicMock(), world_model=wm
@@ -174,7 +176,7 @@ def test_mobile_pick_calls_navigate_then_wait_then_pick_in_order():
     with (
         patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
         patch("vector_os_nano.skills.mobile_pick._wait_stable", side_effect=wait_side_effect),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         ctx = _make_context(
             base=base, arm=MagicMock(), gripper=MagicMock(), world_model=wm
@@ -201,7 +203,7 @@ def test_mobile_pick_nav_failed_returns_nav_failed():
     with (
         patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
         patch("vector_os_nano.skills.mobile_pick._wait_stable", return_value=True),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         ctx = _make_context(
             base=base, arm=MagicMock(), gripper=MagicMock(), world_model=wm
@@ -228,7 +230,7 @@ def test_mobile_pick_wait_stable_timeout_returns_wait_stable_timeout():
     with (
         patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
         patch("vector_os_nano.skills.mobile_pick._wait_stable", return_value=False),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         ctx = _make_context(
             base=base, arm=MagicMock(), gripper=MagicMock(), world_model=wm
@@ -260,7 +262,7 @@ def test_mobile_pick_propagates_pick_ik_unreachable_failure():
     with (
         patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
         patch("vector_os_nano.skills.mobile_pick._wait_stable", return_value=True),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         ctx = _make_context(
             base=base, arm=MagicMock(), gripper=MagicMock(), world_model=wm
@@ -290,7 +292,7 @@ def test_mobile_pick_object_not_found_returns_object_not_found():
 
     with (
         patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         ctx = _make_context(
             base=base, arm=MagicMock(), gripper=MagicMock(), world_model=empty_wm
@@ -336,7 +338,7 @@ def test_mobile_pick_skip_navigate_param_honoured():
     with (
         patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
         patch("vector_os_nano.skills.mobile_pick._wait_stable", return_value=True),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         ctx = _make_context(
             base=base, arm=MagicMock(), gripper=MagicMock(), world_model=wm
@@ -424,7 +426,7 @@ def test_wait_stable_returns_true_when_dog_still():
 
     with (
         patch("vector_os_nano.skills.mobile_pick.time.monotonic", side_effect=fake_monotonic),
-        patch("vector_os_nano.skills.mobile_pick.time.sleep"),
+        fake_clock(),
     ):
         result = _wait_stable(base, max_speed=0.05, settle_duration=0.5, timeout=10.0)
 
@@ -450,7 +452,7 @@ def test_wait_stable_returns_false_on_timeout():
 
     with (
         patch("vector_os_nano.skills.mobile_pick.time.monotonic", side_effect=fast_clock),
-        patch("vector_os_nano.skills.mobile_pick.time.sleep"),
+        fake_clock(),
     ):
         result = _wait_stable(base, max_speed=0.05, settle_duration=2.0, timeout=3.0)
 
@@ -535,7 +537,7 @@ def test_mobile_pick_auto_detect_on_miss_then_hit():
         ),
         patch("vector_os_nano.skills.mobile_pick.compute_approach_pose", return_value=_APPROACH_POSE),
         patch("vector_os_nano.skills.mobile_pick._wait_stable", return_value=True),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
 
@@ -568,7 +570,7 @@ def test_mobile_pick_no_retry_when_perception_none():
         calibration=MagicMock(),
     )
 
-    with patch("time.sleep"):
+    with fake_clock():
         result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
 
     assert not result.success
@@ -599,7 +601,7 @@ def test_mobile_pick_no_retry_when_calibration_none():
         calibration=None,
     )
 
-    with patch("time.sleep"):
+    with fake_clock():
         result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
 
     assert not result.success
@@ -640,7 +642,7 @@ def test_mobile_pick_vlm_returns_empty_then_object_not_found():
 
     with (
         patch("vector_os_nano.skills.detect.DetectSkill", return_value=fake_det_empty),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
 
@@ -678,7 +680,7 @@ def test_mobile_pick_detect_crash_does_not_crash_skill():
 
     with (
         patch("vector_os_nano.skills.detect.DetectSkill", return_value=crashing_det),
-        patch("time.sleep"),
+        fake_clock(),
     ):
         result = skill_inst.execute({"object_label": "blue bottle"}, ctx)
 

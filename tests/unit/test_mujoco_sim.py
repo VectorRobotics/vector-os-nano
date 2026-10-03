@@ -329,7 +329,7 @@ class TestMuJoCoGripperWeld:
         gripper.close()
 
         if not gripper.is_holding():
-            pytest.skip("Grasp did not succeed — skipping release check")
+            pytest.fail("Grasp did not succeed — cannot check release")
 
         gripper.open()
         assert gripper.is_holding() is False

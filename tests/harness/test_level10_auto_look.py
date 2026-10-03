@@ -16,6 +16,8 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from tests.harness.clock import fake_clock
+
 import numpy as np
 import pytest
 
@@ -196,7 +198,7 @@ class TestAutoLookCallback:
 
         # Patch subprocess.run to avoid 5s TARE start timeout
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _exploration_loop(base, has_bridge=False)
 
         cancel_thread.join(timeout=3.0)
@@ -232,7 +234,7 @@ class TestAutoLookCallback:
 
         # Patch subprocess.run to avoid 5s TARE start timeout
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 # Should not raise
                 _exploration_loop(base, has_bridge=False)
 
@@ -265,7 +267,7 @@ class TestAutoLookCallback:
 
         # Patch subprocess.run to avoid 5s TARE start timeout
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _exploration_loop(base, has_bridge=False)
 
         cancel_thread.join(timeout=3.0)
@@ -359,7 +361,7 @@ class TestAutoLookSceneGraphIntegration:
         import time
         _orig_sleep = time.sleep  # capture before patch
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 with patch(
                     "vector_os_nano.skills.go2.explore._start_bridge_on_go2",
                     return_value=False,
@@ -406,7 +408,7 @@ class TestAutoLookSceneGraphIntegration:
         cancel_thread.start()
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _exploration_loop(base, has_bridge=False)
 
         cancel_thread.join(timeout=3.0)

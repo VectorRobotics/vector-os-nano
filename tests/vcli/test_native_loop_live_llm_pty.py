@@ -33,13 +33,12 @@ ONLY when explicitly opted in. Reproduce with::
     VECTOR_LIVE_LLM=1 MUJOCO_GL=egl PATH=/usr/bin:$PATH \\
       .venv/bin/python -m pytest tests/vcli/test_native_loop_live_llm_pty.py -v -m sim
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + rosm nuke + scene xml
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped + scene xml
 restored after each case via the ``sim_cleanup`` fixture.
 """
 from __future__ import annotations
 
 import os
-import subprocess
 
 import pytest
 
@@ -94,27 +93,6 @@ pytestmark = pytest.mark.skipif(
     not (_env_has_provider_key() and _live_opted_in()),
     reason=_SKIP_REASON,
 )
-
-
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
-    try:
-        subprocess.run(
-            ["git", "checkout",
-             "vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml"],
-            timeout=20, capture_output=True,
-        )
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def _assert_walk_at_position(r, *, prompt: str) -> None:

@@ -34,7 +34,6 @@ import sys
 import sysconfig
 import tempfile
 import time
-import types
 from pathlib import Path
 
 import pytest
@@ -43,6 +42,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from tests.harness import stubs  # noqa: E402
 from tests.harness.sim_cleanup import cmdline, descendants, reap, sim_cleanup  # noqa: E402,F401
 
 _LIVE = os.environ.get("VECTOR_LIVE_LLM", "").strip().lower() in ("1", "true")
@@ -68,6 +68,10 @@ if _ros_shadows_venv(sys.path, sysconfig.get_paths()["purelib"]):
 
 # Never share a DDS domain with the other stacks on this box (they run on 0).
 os.environ.setdefault("ROS_DOMAIN_ID", "87")
+# Headless rendering, decided ONCE before any test imports mujoco (a per-module
+# setdefault made the GL backend depend on which file was collected first).
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("MUJOCO_GL", "egl")
 
 _LLM_KEYS = re.compile(r"^(DEEPSEEK_|OPENROUTER_|ANTHROPIC_|OPENAI_|VECTOR_LLM_|VECTOR_PROVIDER$)")
 if not _LIVE:
@@ -99,37 +103,10 @@ except Exception:  # noqa: BLE001 — non-Linux: direct children are still check
 # Per-test isolation: env + sys.modules snapshot/restore, .env, shims, leaks.
 # ---------------------------------------------------------------------------
 
-_WATCHED_MODULES = re.compile(r"^(rclpy|\w+_msgs|tf2_ros|yaml|mujoco|vector_os_nano)(\.|$)")
-
-
-def _is_stub(mod: object) -> bool:
-    return not isinstance(mod, types.ModuleType) or getattr(mod, "__spec__", None) is None
-
-
-def _restore_modules(before: dict[str, object]) -> None:
-    """Undo stub installs: put replaced entries back, drop stubs added by the test.
-
-    A real module first imported by the test is kept (a legit lazy import) unless
-    the test also tampered with a watched entry, in which case it may be bound to a
-    stub and is dropped too.
-    """
-    now = {k: v for k, v in sys.modules.items() if _WATCHED_MODULES.match(k)}
-    added = {k: v for k, v in now.items() if k not in before}
-    tampered = any(before[k] is not v for k, v in now.items() if k in before) or any(
-        _is_stub(v) for v in added.values()
-    )
-    for k, v in added.items():
-        if tampered or _is_stub(v):
-            del sys.modules[k]
-    for k, v in before.items():
-        if sys.modules.get(k) is not v:
-            sys.modules[k] = v
-
-
 @pytest.fixture(autouse=True)
 def _hygiene(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
     env = dict(os.environ)
-    mods = {k: v for k, v in sys.modules.items() if _WATCHED_MODULES.match(k)}
+    mods = stubs.snapshot()
     kids = descendants()
     if not _LIVE:
         try:
@@ -140,7 +117,7 @@ def _hygiene(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
             pass
     _SHIM_LOG.unlink(missing_ok=True)
     yield
-    _restore_modules(mods)
+    stubs.restore(mods)
     os.environ.clear()
     os.environ.update(env)
     problems: list[str] = []
@@ -174,7 +151,7 @@ def _hygiene(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
 # into the sim tier; split such files if hermetic coverage matters.
 _SIM_SOURCE = re.compile(
     r"MuJoCo(Go2|Arm|Piper|G1)\(|mujoco\.MjModel|MjModel\.from_xml|build_room_scene"
-    r"|sim_go2=True|\bsim=True|\"--sim(-go2)?\"|run_repl_session|_init_agent\(|^import mujoco",
+    r"|sim_go2=True|\bsim=True|\"--sim(-go2)?\"|_init_agent\(|^import mujoco",
     re.M,
 )
 _sim_file_cache: dict[Path, bool] = {}

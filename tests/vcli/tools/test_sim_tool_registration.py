@@ -16,10 +16,9 @@ Instead we use two focused guards:
    means any register(XyzSkill()) call in sim_tool will raise ImportError or
    TypeError at runtime.
 
-2. test_sim_tool_module_contains_all_manipulation_registrations — inspects the
-   source text of sim_tool to confirm each skill class name appears with a
-   register() call pattern. Catches typos, missing imports, or accidental
-   deletions without running the full method.
+2. test_register_manipulation_skills_* — run the single-source helper both
+   launchers call (skills/manipulation_setup.py) on a real SkillRegistry, and
+   check both launchers call it.
 """
 from __future__ import annotations
 
@@ -42,23 +41,44 @@ def test_manipulation_skills_importable_and_instantiable() -> None:
     MobilePlaceSkill()
 
 
-def test_sim_tool_module_contains_all_manipulation_registrations() -> None:
-    """Sanity: the sim_tool source text imports and registers all 4 skill
-    classes inside the piper_arm guard block. Not a behaviour test but catches
-    most typos and missing lines that would break runtime registration.
+def test_register_manipulation_skills_wires_the_full_set() -> None:
+    """Behaviour, not source text: the single-source helper registers every
+    manipulation skill + the grasp perception on a real registry, and honours the
+    VECTOR_ENABLE_MANIPULATION=0 opt-out.
+
+    Regression (tests:undocumented-gate-red): the old guard grepped sim_tool.py for
+    ``PickTopDownSkill()``, which went red when registration moved into
+    skills/manipulation_setup.py although the wiring was correct.
     """
+    from types import SimpleNamespace
+
+    from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
+    from vector_os_nano.skills.manipulation_setup import register_manipulation_skills
+
+    agent = SimpleNamespace(_skill_registry=SkillRegistry(), _perception=None)
+    assert register_manipulation_skills(agent, base=object()) is True
+    assert {"pick_top_down", "place_top_down", "mobile_pick", "mobile_place",
+            "perception_grasp"} <= set(agent._skill_registry.list_skills())
+    assert isinstance(agent._perception, Go2GraspPerception)
+
+
+def test_register_manipulation_skills_opt_out(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.skills.manipulation_setup import register_manipulation_skills
+
+    monkeypatch.setenv("VECTOR_ENABLE_MANIPULATION", "0")
+    agent = SimpleNamespace(_skill_registry=SkillRegistry(), _perception=None)
+    assert register_manipulation_skills(agent, base=object()) is False
+    assert agent._skill_registry.list_skills() == []
+
+
+def test_both_go2_arm_launchers_use_the_single_source_helper() -> None:
+    """The NL launcher and the --sim-go2 launcher both route through the helper."""
+    from vector_os_nano.vcli import cli
     from vector_os_nano.vcli.tools import sim_tool
 
-    src = inspect.getsource(sim_tool)
-
-    expected_classes = (
-        "PickTopDownSkill",
-        "PlaceTopDownSkill",
-        "MobilePickSkill",
-        "MobilePlaceSkill",
-    )
-    for cls in expected_classes:
-        assert f"{cls}()" in src, (
-            f"{cls}() not found in sim_tool.py — "
-            "skill will not be registered when with_arm=True"
-        )
+    for mod in (cli, sim_tool):
+        assert "register_manipulation_skills(agent, base)" in inspect.getsource(mod), mod.__name__

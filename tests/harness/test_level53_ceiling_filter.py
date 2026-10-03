@@ -71,31 +71,8 @@ def _get_ceiling_filter_height() -> float:
 
     After the nav.yaml refactor, _CEILING_FILTER_HEIGHT is assigned via
     _nav("ceiling_filter_height", 1.8) rather than a numeric literal.
-    We import the module to get the actual resolved value.
+    The value is read from the source (the bridge needs ROS2 to import).
     """
-    import importlib.util
-    import sys
-    spec = importlib.util.spec_from_file_location("_bridge_tmp", str(_BRIDGE))
-    # The bridge imports ROS2 packages — mock them so we can import the module.
-    _ros_mocks = [
-        "rclpy", "rclpy.node", "rclpy.qos", "rclpy.executors",
-        "geometry_msgs", "geometry_msgs.msg",
-        "nav_msgs", "nav_msgs.msg",
-        "sensor_msgs", "sensor_msgs.msg",
-        "std_msgs", "std_msgs.msg",
-        "tf2_ros",
-        "visualization_msgs", "visualization_msgs.msg",
-        "unitree_go", "unitree_go.msg",
-        "unitree_go2_ros2_interfaces", "unitree_go2_ros2_interfaces.msg",
-        "sensor_msgs.msg",
-        "std_srvs", "std_srvs.srv",
-        "point_cloud2", "sensor_msgs.point_cloud2",
-    ]
-    import types
-    for name in _ros_mocks:
-        if name not in sys.modules:
-            sys.modules[name] = types.ModuleType(name)
-
     # Read the constant via source regex since the bridge has complex ROS2 deps
     src = _read_bridge()
     # Accept both: literal assignment AND _nav() call

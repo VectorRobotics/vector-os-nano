@@ -15,9 +15,6 @@ file stays light (per ``feedback_no_parallel_agents.md``).
 from __future__ import annotations
 
 import math
-import os
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 import numpy as np
 import pytest

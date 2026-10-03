@@ -99,60 +99,23 @@ def _make_ros2_msg_stubs() -> dict[str, types.ModuleType]:
     return stubs
 
 
-# Install stubs into sys.modules ONLY for packages not already installed.
-# This avoids overwriting real ROS2 packages (e.g. visualization_msgs)
-# that other test files depend on.
-_rclpy_stub = _make_rclpy_stub()
-sys.modules.setdefault("rclpy", _rclpy_stub)
-sys.modules.setdefault("rclpy.node", _rclpy_stub.node)
-sys.modules.setdefault("rclpy.qos", _rclpy_stub.qos)
-for _name, _mod in _make_ros2_msg_stubs().items():
-    sys.modules.setdefault(_name, _mod)
-
-# Reset scene_graph_viz cached imports after this module's tests finish,
-# so subsequent test files (e.g. test_level8) can re-import real ROS2 types.
-# Also remove our stub modules to restore real imports.
-@pytest.fixture(autouse=True, scope="module")
-def _cleanup_ros2_stubs():
-    """Yield-fixture that restores real ROS2 modules after all L9 tests."""
-    yield
-    # Remove stub modules — let real imports work again
-    stubs_to_remove = [
-        k for k in sys.modules
-        if isinstance(sys.modules[k], types.ModuleType)
-        and hasattr(sys.modules[k], "__name__")
-        and sys.modules[k].__name__ in (
-            "rclpy", "rclpy.node", "rclpy.qos",
-            "geometry_msgs", "geometry_msgs.msg",
-            "nav_msgs", "nav_msgs.msg",
-            "sensor_msgs", "sensor_msgs.msg",
-            "visualization_msgs", "visualization_msgs.msg",
-        )
-        and not hasattr(sys.modules[k], "__file__")  # stubs have no __file__
-    ]
-    for k in stubs_to_remove:
-        del sys.modules[k]
-    # Clear scene_graph_viz lazy-import cache
-    try:
-        from vector_os_nano.ros2.nodes import scene_graph_viz as _sgv
-        _sgv._MarkerArray = None
-        _sgv._Marker = None
-        _sgv._ColorRGBA = None
-        _sgv._Point = None
-        _sgv._Vector3 = None
-        _sgv._Header = None
-    except Exception:
-        pass
-
-# ---------------------------------------------------------------------------
-# Now safe to import from the project
-# ---------------------------------------------------------------------------
-
-from vector_os_nano.hardware.sim.go2_ros2_proxy import Go2ROS2Proxy  # noqa: E402
+# The stubs exist only while the proxy module is imported, so no other file ever
+# sees a fake rclpy (tests:fake-modules-leak). Project modules that need no ROS are
+# imported first, outside the stub window, so they stay the shared real copies.
 from vector_os_nano.skills.go2.look import LookSkill  # noqa: E402
 from vector_os_nano.core.scene_graph import SceneGraph  # noqa: E402
 from vector_os_nano.core.skill import SkillContext  # noqa: E402
 from vector_os_nano.core.types import SkillResult  # noqa: E402
+
+from tests.harness.stubs import stubbed_modules  # noqa: E402
+
+_rclpy_stub = _make_rclpy_stub()
+with stubbed_modules({
+    "rclpy": _rclpy_stub, "rclpy.node": _rclpy_stub.node, "rclpy.qos": _rclpy_stub.qos,
+    **_make_ros2_msg_stubs(),
+}):
+    from vector_os_nano.hardware.sim.go2_ros2_proxy import Go2ROS2Proxy  # noqa: E402
+
 from vector_os_nano.perception.vlm_go2 import (  # noqa: E402
     DetectedObject,
     RoomIdentification,

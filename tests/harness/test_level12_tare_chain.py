@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch, call
 
+from tests.harness.clock import fake_clock
+
 import pytest
 
 # Ensure repo root is importable
@@ -90,7 +92,12 @@ def _load_explore_module():
     return mod
 
 
-_explore = _load_explore_module()
+# Load under a sys.modules snapshot: the stubs (and the by-path explore module)
+# must not replace the real vector_os_nano.core for every later test file.
+from tests.harness.stubs import stubbed_modules  # noqa: E402
+
+with stubbed_modules({}):
+    _explore = _load_explore_module()
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +198,7 @@ class TestWanderBehavior:
         # _start_tare must return True (TARE running) to get past the guard
         # clause. Patching subprocess.run makes pgrep return 0 → tare found.
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         # Seed walk should have called base.walk()
@@ -210,7 +217,7 @@ class TestWanderBehavior:
 
         # Must get past _start_tare guard to verify main loop behavior.
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         # No set_velocity calls — TARE + bridge path follower handle movement
@@ -273,7 +280,7 @@ class TestWanderBehavior:
         # Patch subprocess.run to avoid 5-second TARE start timeout, and
         # patch time.sleep to instant so seed phase (2s walk + 1s buffer) finishes fast.
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         # Loop entered the while block and ran at least one position check
@@ -335,7 +342,7 @@ class TestWanderDirection:
         stopper.start()
 
         with patch.object(_explore, "_start_tare", return_value=False):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         # If any wander calls happened, they should have non-zero vyaw
@@ -374,7 +381,7 @@ class TestExploreLoopContinuity:
         base.get_position = _pos
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         assert True in running_states, "_explore_running never became True"
@@ -390,7 +397,7 @@ class TestExploreLoopContinuity:
         base.get_position = _pos
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         assert not _explore._explore_running
@@ -407,7 +414,7 @@ class TestExploreLoopContinuity:
         _explore._on_event = _on_event
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         assert "stopped" in events
@@ -450,7 +457,7 @@ class TestExploreLoopContinuity:
         base.get_position = _pos
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         # Restore module state
@@ -474,7 +481,7 @@ class TestExploreLoopContinuity:
         base.get_position = _pos
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with patch("time.sleep", return_value=None):
+            with fake_clock():
                 _explore._exploration_loop(base, has_bridge=True)
 
         assert "some_old_room" not in _explore._explore_visited

@@ -3,3 +3,4 @@
 #   <nodeid or nodeid-prefix> | xfail    | <ledger key of the genuine bug it pins>
 # Never deselect a genuine bug: link it to its ledger key as an xfail instead.
 # Remove a row the moment its cause is fixed (an xfail that passes shows as XPASS).
+tests/unit/test_suite_hygiene.py::test_no_absolute_home_paths_in_committed_assets[vector_os_nano/hardware/sim/mjcf/g1/g1.xml] | xfail | docs-vs-code:go2piper-abs-mesh-paths (g1 meshes live in an unshipped menagerie checkout; WP03/WP17)

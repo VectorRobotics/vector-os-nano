@@ -40,13 +40,12 @@ let the test set over-claim the recover pillar):
   Goal-authenticity of the verify constant (does (11,3) match the real task goal)
   remains the documented deferred residual — STEP 11 does not close it.
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + ``rosm nuke`` + scene
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped + scene
 xml restored after each case via the ``sim_cleanup`` fixture. Do NOT parallelize with
 any other sim or pytest-heavy job (64 GB host).
 """
 from __future__ import annotations
 
-import subprocess
 
 import pytest
 
@@ -94,27 +93,6 @@ _GENUINE_RECOVERY_SCRIPT = {
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
-
-
-def _nuke() -> None:
-    try:
-        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@pytest.fixture()
-def sim_cleanup():
-    yield
-    _nuke()
-    try:
-        subprocess.run(
-            ["git", "checkout",
-             "vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml"],
-            timeout=20, capture_output=True,
-        )
-    except Exception:  # noqa: BLE001
-        pass
 
 
 # ---------------------------------------------------------------------------

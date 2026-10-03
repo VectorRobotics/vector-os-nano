@@ -24,13 +24,20 @@ STDLIB ONLY — uses ``pty`` + ``subprocess`` + ``os``; deliberately NO ``pexpec
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import pty
+import re
 import select
+import shutil
+import signal
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -87,31 +94,88 @@ def _write_tool_script(tool_script: dict[str, Any]) -> str:
     return path
 
 
-def _drain(master_fd: int, timeout_sec: float) -> str:
-    """Read all bytes from the PTY master until EOF or timeout."""
-    chunks: list[bytes] = []
-    deadline = _now() + timeout_sec
-    while True:
-        remaining = deadline - _now()
-        if remaining <= 0:
-            break
-        r, _, _ = select.select([master_fd], [], [], min(0.5, remaining))
-        if master_fd in r:
-            try:
-                data = os.read(master_fd, 4096)
-            except OSError:
-                break  # slave closed
-            if not data:
-                break  # EOF
-            chunks.append(data)
-        # loop continues until EOF or deadline
-    return b"".join(chunks).decode("utf-8", errors="replace")
-
-
 def _now() -> float:
-    import time
-
     return time.monotonic()
+
+
+def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
+    """The env every PTY child gets: repo on PYTHONPATH, its own temp HOME, and —
+    unless *live* — no route to a real LLM or VLM (placeholder Anthropic key, blank
+    DeepSeek/OpenRouter keys so the child's ``load_dotenv`` cannot fill them from the
+    repo-root ``.env``). Producer-selection env seams are stripped; the caller opts in.
+    """
+    env = dict(os.environ)
+    # The child must import `tests` (the fake backends live under tests/harness).
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(_REPO_ROOT), env.get("PYTHONPATH", "")]
+    ).rstrip(os.pathsep)
+    env.pop("VECTOR_NATIVE_LOOP", None)
+    env.pop("VECTOR_NATIVE_FIRST", None)
+    if not live:
+        env.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
+        env["DEEPSEEK_API_KEY"] = ""
+        env["OPENROUTER_API_KEY"] = ""
+    # Per-run HOME: a compiled template / session / history from a prior run must
+    # never leak into this one, and the developer's real ~/.vector stays untouched.
+    home = tempfile.mkdtemp(prefix=home_prefix)
+    env["HOME"] = home
+    return env, home
+
+
+def _spawn(argv: list[str], env: dict[str, str], cwd: str | Path) -> tuple[subprocess.Popen, int]:
+    """Start *argv* on a fresh PTY as the leader of its OWN session + process group.
+
+    The PTY is the child's controlling terminal (so a written ``\\x03`` is a real
+    Ctrl-C), and :func:`_kill_group` can take down the child and everything it
+    spawned without touching any other process on the machine.
+    """
+    master_fd, slave_fd = pty.openpty()
+    # A wide, fixed terminal: Rich never wraps a verdict line mid-token.
+    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 220, 0, 0))
+    try:
+        proc = subprocess.Popen(
+            argv, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+            cwd=str(cwd), env=env, close_fds=True, start_new_session=True,
+            preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0),
+        )
+    finally:
+        os.close(slave_fd)  # parent keeps only the master end
+    return proc, master_fd
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    """SIGKILL the child's whole process group (it leads its own), then reap it."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass  # group already gone
+    try:
+        proc.wait(timeout=10.0)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _read_chunk(master_fd: int, wait_sec: float) -> bytes | None:
+    """One read from the PTY master: bytes, b'' on timeout, None on EOF."""
+    r, _, _ = select.select([master_fd], [], [], max(0.0, wait_sec))
+    if master_fd not in r:
+        return b""
+    try:
+        data = os.read(master_fd, 65536)
+    except OSError:
+        return None  # slave closed (EIO on Linux)
+    return data or None
+
+
+def _drain(master_fd: int, deadline: float) -> tuple[str, bool]:
+    """Read the PTY until EOF or *deadline*; return (output, reached_eof)."""
+    chunks: list[bytes] = []
+    while _now() < deadline:
+        data = _read_chunk(master_fd, min(0.5, deadline - _now()))
+        if data is None:
+            return b"".join(chunks).decode("utf-8", errors="replace"), True
+        chunks.append(data)
+    return b"".join(chunks).decode("utf-8", errors="replace"), False
 
 
 def _find_verdict_line(output: str) -> dict[str, Any] | None:
@@ -182,107 +246,49 @@ def run_cli_turn(
     if extra_args:
         argv += list(extra_args)
 
-    env = dict(os.environ)
-    # Ensure the child can import `tests` (the FakeBackend lives under tests/harness).
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(_REPO_ROOT), env.get("PYTHONPATH", "")]
-    ).rstrip(os.pathsep)
+    env, home_dir = _child_env(live=live, home_prefix="vector_pty_home_")
     # Test ISOLATION (M1): each PTY child's turn path is decided by ITS OWN args,
-    # never by an ambient global env. Strip any inherited VECTOR_NATIVE_LOOP so a
-    # legacy `fake_plan` test always runs the legacy path; a native test opts in
-    # explicitly via ``tool_script`` (which re-sets it below) or ``--native-loop``
-    # in ``extra_args``. Without this strip, running the whole suite with
-    # VECTOR_NATIVE_LOOP=1 set would silently route legacy decompose-plan children
-    # through the native loop and false-fail them.
-    env.pop("VECTOR_NATIVE_LOOP", None)
-    # Likewise strip any inherited VECTOR_NATIVE_FIRST (STEP 5 native-first mode) so
-    # an ambient global never silently routes a legacy/native-loop child through the
-    # native-attempt-then-fallback path. A native-first test opts in explicitly via
-    # ``--native-first`` in ``extra_args`` (set below).
-    env.pop("VECTOR_NATIVE_FIRST", None)
+    # never by an ambient global env (_child_env strips VECTOR_NATIVE_LOOP/FIRST).
     _native_first = bool(extra_args) and "--native-first" in extra_args
     if extra_args and "--native-loop" in extra_args:
         env["VECTOR_NATIVE_LOOP"] = "1"
     if _native_first:
         env["VECTOR_NATIVE_FIRST"] = "1"
-    # A deterministic API key so create_backend* runs (the fake seam ignores it).
-    # In a LIVE run we must NOT inject this placeholder — it would shadow the real
-    # provider creds in resolve_credentials' priority order and the child would talk
-    # to a dead Anthropic key instead of the repo-root .env provider. So leave the
-    # inherited env untouched (the real key reaches the child) and let
-    # resolve_credentials load the repo-root .env from cwd (==_REPO_ROOT below).
-    if not live:
-        env.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
-    # Isolate HOME so the dev world's persistent template/experience tier
-    # (~/.vector/goal_templates.json) is per-run — a compiled template from a
-    # prior turn must NEVER short-circuit a later decompose and reuse a stale
-    # goal/plan. Also keeps the harness from polluting the developer's real
-    # ~/.vector. Caller can override via extra_env["HOME"].
-    home_dir = tempfile.mkdtemp(prefix="vector_pty_home_")
-    env["HOME"] = home_dir
-    if fake_plan is not None:
-        plan_path = _write_fake_plan(fake_plan)
+    plan_path = _write_fake_plan(fake_plan) if fake_plan is not None else None
+    if plan_path is not None:
         env["VECTOR_FAKE_LLM"] = plan_path
-    else:
-        plan_path = None
-    # M1 native-loop seam: a native tool-use SCRIPT (parallel to fake_plan). When
-    # given, point VECTOR_FAKE_LLM_TOOLS at the written script (overriding any
-    # placeholder a caller passed via extra_env).
-    if tool_script is not None:
-        script_path = _write_tool_script(tool_script)
-        env["VECTOR_FAKE_LLM_TOOLS"] = script_path
-    else:
-        script_path = None
+    script_path = _write_tool_script(tool_script) if tool_script is not None else None
     if extra_env:
         env.update(extra_env)
-    if tool_script is not None:
-        # A native tool-script IS an opt-in to the native path: ensure the real
-        # written path wins over any placeholder in extra_env. Select the always-on
-        # native loop UNLESS the caller asked for STEP 5 native-first — in which case
-        # native-first (already set above) is the producer-selection seam and we must
-        # NOT force VECTOR_NATIVE_LOOP (which would shadow the native-first routing
-        # decision with the unconditional native bypass). Scripted callers that don't
-        # pass --native-first are byte-identical (they still get VECTOR_NATIVE_LOOP=1).
+    if script_path is not None:
+        # A native tool-script IS an opt-in to the native path: the real written path
+        # wins over any placeholder in extra_env. Select the always-on native loop
+        # UNLESS the caller asked for native-first (that flag is then the
+        # producer-selection seam and VECTOR_NATIVE_LOOP would shadow it).
         env["VECTOR_FAKE_LLM_TOOLS"] = script_path
         if not _native_first:
             env["VECTOR_NATIVE_LOOP"] = "1"
 
-    master_fd, slave_fd = pty.openpty()
+    # ONE deadline for the whole turn: drain to EOF, then give the child whatever is
+    # left to exit; past the deadline the whole process group is killed.
+    deadline = _now() + timeout_sec
+    proc, master_fd = _spawn(argv, env, cwd or _REPO_ROOT)
     try:
-        proc = subprocess.Popen(
-            argv,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            cwd=str(cwd or _REPO_ROOT),
-            env=env,
-            close_fds=True,
-        )
-        os.close(slave_fd)  # parent keeps only the master end
-        output = _drain(master_fd, timeout_sec)
+        output, _eof = _drain(master_fd, deadline)
         try:
-            proc.wait(timeout=max(1.0, timeout_sec))
+            proc.wait(timeout=max(0.1, deadline - _now()))
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5.0)
+            pass
         exit_code = proc.returncode if proc.returncode is not None else 1
     finally:
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
-        if plan_path is not None:
-            try:
-                os.unlink(plan_path)
-            except OSError:
-                pass
-        if script_path is not None:
-            try:
-                os.unlink(script_path)
-            except OSError:
-                pass
-        import shutil
-
+        _kill_group(proc)  # also reaps anything the child left in its group
+        os.close(master_fd)
+        for path in (plan_path, script_path):
+            if path is not None:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
         shutil.rmtree(home_dir, ignore_errors=True)
 
     verdict = _find_verdict_line(output)
@@ -299,155 +305,202 @@ def run_cli_turn(
 
 
 # ---------------------------------------------------------------------------
-# REPL session driver — drive the INTERACTIVE REPL (not -p) by NL, capture output.
+# REPL session driver — drive the INTERACTIVE REPL (bare vector-cli) by NL.
 # ---------------------------------------------------------------------------
 #
-# The REPL CUTOVER acceptance instrument: the interactive ``vector-cli`` REPL is the
-# owner's ONLY test interface (bare ``vector-cli`` + natural language). Unlike the
-# ``-p`` path it emits a HUMAN-readable verdict line ("verdict GROUNDED verified=True
-# (1/1 grounded)"), not the ``VECTOR_VERDICT`` JSON sentinel — so this driver returns
-# the full transcript and the caller asserts on the rendered text. Same STDLIB-only
-# pty/subprocess machinery; a background reader thread accumulates output while the
-# main thread sends NL lines at paced delays.
+# The owner's ONLY acceptance interface is bare ``vector-cli`` + natural language.
+# The REPL renders a HUMAN verdict line ("verdict GROUNDED verified=True (1/1
+# grounded)"), not the JSON sentinel, so this driver returns the transcript and the
+# caller asserts on the rendered text. It is event-driven, not wall-clock scripted:
+# each line is typed when the REPL is back at its prompt, permission prompts are
+# answered as they appear, and after ``quit`` the transcript is read to EOF.
+
+PROMPT = "vector>"
+PERMISSION_PROMPT = "Allow?"  # cli.ask_permission -> rich Prompt "Allow? [y/n/a] (y): "
+_QUIET_SEC = 0.75  # no output for this long = the child is waiting for input
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]|\x1b[=>78]|\r")
+
+
+def strip_ansi(text: str) -> str:
+    """Drop terminal escapes and CRs so styled spans collapse to visible text."""
+    return _ANSI.sub("", text)
 
 
 @dataclass(frozen=True)
 class ReplSessionResult:
     """The transcript + exit code of one interactive REPL session driven by NL."""
 
-    transcript: str
+    transcript: str           # raw PTY bytes, decoded
     exit_code: int
+    timed_out: bool = False   # a step hit its deadline; the group was killed
+
+    @property
+    def text(self) -> str:
+        return strip_ansi(self.transcript)
+
+
+def _is_echo(after_prompt: str, typed: str) -> bool:
+    """Is this prompt line just the REPL redrawing what we typed (not a new prompt)?
+
+    Only the prompt's own line counts: an async turn may print the typed goal on
+    later lines after a genuinely fresh prompt.
+    """
+    line = after_prompt.split("\n", 1)[0].strip()
+    return bool(typed and line) and (line.startswith(typed) or typed.startswith(line))
+
+
+class _Pty:
+    """The parent side of one REPL child: accumulate output, type into it."""
+
+    def __init__(self, master_fd: int) -> None:
+        self.fd = master_fd
+        self.buf = bytearray()
+        self.eof = False
+        self.last_data = _now()
+        self.mark = 0  # visible-text offset of the last thing we typed
+
+    def pump(self, wait_sec: float) -> None:
+        data = _read_chunk(self.fd, wait_sec)
+        if data is None:
+            self.eof = True
+        elif data:
+            self.buf += data
+            self.last_data = _now()
+
+    def text(self) -> str:
+        return strip_ansi(self.buf.decode("utf-8", errors="replace"))
+
+    def send(self, text: str) -> None:
+        self.mark = len(self.text())
+        raw = text if len(text) == 1 and ord(text) < 32 else text + "\n"
+        os.write(self.fd, raw.encode("utf-8"))
+
+    def wait_input(self, deadline: float, typed: str) -> str:
+        """Pump until the REPL wants input: 'prompt' | 'permission' | 'eof' | 'timeout'.
+
+        Only output after the last send counts, the PTY echo of *typed* is not a
+        fresh prompt, and the child must have gone quiet (a running turn animates).
+        """
+        while True:
+            if self.eof:
+                return "eof"
+            if _now() >= deadline:
+                return "timeout"
+            self.pump(0.1)
+            if _now() - self.last_data < _QUIET_SEC:
+                continue
+            new = self.text()[self.mark:]
+            perm, prompt = new.rfind(PERMISSION_PROMPT), new.rfind(PROMPT)
+            if perm != -1 and perm > prompt:
+                return "permission"
+            if prompt != -1 and not _is_echo(new[prompt + len(PROMPT):], typed):
+                return "prompt"
 
 
 def run_repl_session(
-    lines: list[tuple[float, str]],
+    lines: list[str | tuple[float, str]],
     *,
+    tool_script: dict[str, Any] | None = None,
+    answers: list[str] | None = None,
+    live: bool = False,
     sim: bool = False,
     sim_go2: bool = False,
-    tool_script: dict[str, Any] | None = None,
     native: bool = True,
-    live: bool = False,
-    boot_sec: float = 30.0,
-    settle_sec: float = 5.0,
     extra_env: dict[str, str] | None = None,
     extra_args: list[str] | None = None,
+    turn_timeout_sec: float = 240.0,
+    cwd: str | Path | None = None,
 ) -> ReplSessionResult:
-    """Drive the REAL interactive ``cli.main`` REPL under a PTY; capture the transcript.
+    """Drive the REAL interactive ``vector-cli`` REPL under a PTY; return the transcript.
+
+    The child is bare ``python -m vector_os_nano.vcli.cli`` — no flags unless the
+    caller asks (``sim``/``sim_go2`` add the launch flag + ``--headless``;
+    ``extra_args`` is the escape hatch). The LLM is the only thing replaced, via the
+    ``VECTOR_FAKE_LLM_TOOLS`` env seam (an open-loop ``{"turns"}`` or a reactive
+    ``{"steps"}`` script); ``live=True`` uses the real provider from ``.env``.
 
     Args:
-        lines:     ordered ``(delay_before_send_sec, text)`` NL turns; the delay is the
-                   wait AFTER the previous line (e.g. give a walk turn time to run)
-                   BEFORE sending this one.
-        sim/sim_go2: pre-boot a sim via the launch flag (heavy — caller serializes).
-        tool_script: a canned native tool-use script injected via VECTOR_FAKE_LLM_TOOLS
-                   (deterministic, network-free); None = the real LLM drives native.
-        native:    REPL native-first default (True = VECTOR_REPL_NATIVE unset/ON;
-                   False = VECTOR_REPL_NATIVE=0 forces the legacy REPL).
-        live:      real LLM provider (do NOT inject the placeholder key; the child's
-                   resolve_credentials loads the repo-root .env).
-        boot_sec:  wait after launch before the first line (sim boot headroom).
-        settle_sec: wait after the final line before reading EOF / killing.
-
-    Returns the full transcript (for the caller to assert on the rendered verdict) and
-    the child exit code. ``--headless`` is added for ``sim``/``sim_go2`` so no GL window
-    opens during an automated drive.
+        lines:   a ``str`` is typed once the REPL is idle at its prompt; a
+                 ``(delay_sec, text)`` tuple is typed ``delay_sec`` after the previous
+                 line WITHOUT waiting (mid-turn input; ``"\x03"`` is a Ctrl-C).
+                 ``quit`` is appended unless the last line already exits.
+        answers: replies to permission prompts, in order; a prompt with no answer
+                 left is refused with ``n`` (the safe default a user would pick).
+        native:  False sets ``VECTOR_REPL_NATIVE=0`` (the pure-legacy REPL).
+        turn_timeout_sec: per-step deadline (boot, each turn, the exit). On expiry
+                 the process group is killed and ``timed_out`` is set.
     """
-    argv = [
-        sys.executable, "-m", "vector_os_nano.vcli.cli", "--no-permission",
-    ]
+    argv = [sys.executable, "-m", "vector_os_nano.vcli.cli"]
     if sim:
         argv.append("--sim")
     if sim_go2:
         argv.append("--sim-go2")
-    if (sim or sim_go2) and (not extra_args or "--headless" not in extra_args):
+    if (sim or sim_go2) and "--headless" not in (extra_args or []):
         argv.append("--headless")
-    if extra_args:
-        argv += list(extra_args)
+    argv += list(extra_args or [])
 
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(_REPO_ROOT), env.get("PYTHONPATH", "")]
-    ).rstrip(os.pathsep)
+    env, home_dir = _child_env(live=live, home_prefix="vector_pty_repl_home_")
     env.setdefault("TERM", "xterm-256color")
-    # The REPL turn path is decided by THIS session's env only — strip the -p seams.
-    env.pop("VECTOR_NATIVE_LOOP", None)
-    env.pop("VECTOR_NATIVE_FIRST", None)
+    env["PROMPT_TOOLKIT_NO_CPR"] = "1"  # no cursor-position round-trips on a PTY
     if native:
         env.pop("VECTOR_REPL_NATIVE", None)  # default ON
     else:
         env["VECTOR_REPL_NATIVE"] = "0"
-    if not live:
-        env.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
-    home_dir = tempfile.mkdtemp(prefix="vector_pty_repl_home_")
-    env["HOME"] = home_dir
-    script_path = None
-    if tool_script is not None:
-        script_path = _write_tool_script(tool_script)
+    script_path = _write_tool_script(tool_script) if tool_script is not None else None
+    if script_path is not None:
         env["VECTOR_FAKE_LLM_TOOLS"] = script_path
     if extra_env:
         env.update(extra_env)
 
-    import threading
-
-    master_fd, slave_fd = pty.openpty()
-    chunks: list[bytes] = []
-    stop = threading.Event()
-
-    def _reader() -> None:
-        while not stop.is_set():
-            try:
-                r, _, _ = select.select([master_fd], [], [], 0.3)
-            except OSError:
-                break
-            if master_fd in r:
-                try:
-                    data = os.read(master_fd, 4096)
-                except OSError:
-                    break
-                if not data:
-                    break
-                chunks.append(data)
-
-    proc = subprocess.Popen(
-        argv, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
-        cwd=str(_REPO_ROOT), env=env, close_fds=True,
-    )
-    os.close(slave_fd)
-    reader = threading.Thread(target=_reader, daemon=True)
-    reader.start()
-
-    import time as _time
-
+    steps: list[str | tuple[float, str]] = list(lines)
+    last = steps[-1] if steps else ""
+    if not (isinstance(last, str) and last.strip().lower() in ("quit", "exit", "q", "/quit", "/exit")):
+        steps.append("quit")
+    pending = list(answers or [])
+    timed_out = False
+    proc, master_fd = _spawn(argv, env, cwd or _REPO_ROOT)
+    tty = _Pty(master_fd)
     try:
-        _time.sleep(boot_sec)
-        for delay, text in lines:
-            if delay:
-                _time.sleep(delay)
-            os.write(master_fd, (text + "\n").encode("utf-8"))
-        _time.sleep(settle_sec)
-    finally:
-        stop.set()
+        typed = ""
+        for step in steps:
+            if isinstance(step, tuple):
+                delay, text = step
+                until = _now() + delay
+                while _now() < until and not tty.eof:
+                    tty.pump(until - _now())
+                tty.send(text)
+                typed = text
+                continue
+            while True:
+                state = tty.wait_input(_now() + turn_timeout_sec, typed)
+                if state != "permission":
+                    break
+                tty.send(pending.pop(0) if pending else "n")
+                typed = ""
+            if state in ("eof", "timeout"):
+                timed_out = state == "timeout"
+                break
+            tty.send(step)
+            typed = step
+        # Read to EOF after quit (the verdict of a last async turn is not lost).
+        deadline = _now() + turn_timeout_sec
+        while not tty.eof and _now() < deadline:
+            tty.pump(deadline - _now())
+        timed_out = timed_out or not tty.eof
         try:
-            proc.wait(timeout=15.0)
+            proc.wait(timeout=max(0.1, deadline - _now()))
         except subprocess.TimeoutExpired:
-            proc.kill()
-            try:
-                proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                pass
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
+            timed_out = True
+    finally:
+        _kill_group(proc)
+        os.close(master_fd)
         if script_path is not None:
             try:
                 os.unlink(script_path)
             except OSError:
                 pass
-        import shutil
-
         shutil.rmtree(home_dir, ignore_errors=True)
 
     exit_code = proc.returncode if proc.returncode is not None else 1
-    transcript = b"".join(chunks).decode("utf-8", errors="replace")
-    return ReplSessionResult(transcript=transcript, exit_code=exit_code)
+    transcript = tty.buf.decode("utf-8", errors="replace")
+    return ReplSessionResult(transcript=transcript, exit_code=exit_code, timed_out=timed_out)

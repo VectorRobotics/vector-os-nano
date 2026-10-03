@@ -9,12 +9,6 @@ is OOM-prone under parallel pytest; sensor unit tests must stay light.
 """
 from __future__ import annotations
 
-import os
-
-# EGL is the only headless render backend that ships in the .venv-nano
-# image. Honoured by both lidar (mj_ray needs no GL) and pano (Renderer
-# does need GL).
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 import pytest
 

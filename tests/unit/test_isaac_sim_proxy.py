@@ -14,6 +14,8 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, patch, PropertyMock
 
+from tests.harness.clock import fake_clock
+
 import pytest
 
 
@@ -511,7 +513,7 @@ class TestIsaacSimProxyMotion:
     def test_walk_returns_true(self) -> None:
         proxy = self._connected_proxy()
         proxy.set_velocity = MagicMock()
-        with patch("time.sleep"):
+        with fake_clock():
             result = proxy.walk(vx=0.1, vy=0.0, vyaw=0.0, duration=0.1)
         assert result is True
 
@@ -520,7 +522,7 @@ class TestIsaacSimProxyMotion:
         calls: list[tuple] = []
         proxy.set_velocity = lambda vx, vy, vyaw: calls.append((vx, vy, vyaw))
 
-        with patch("time.sleep"):
+        with fake_clock():
             proxy.stand()
 
         assert any(c == (0.0, 0.0, 0.0) for c in calls)
@@ -530,7 +532,7 @@ class TestIsaacSimProxyMotion:
         calls: list[tuple] = []
         proxy.set_velocity = lambda vx, vy, vyaw: calls.append((vx, vy, vyaw))
 
-        with patch("time.sleep"):
+        with fake_clock():
             proxy.sit()
 
         assert any(c == (0.0, 0.0, 0.0) for c in calls)
@@ -541,7 +543,7 @@ class TestIsaacSimProxyMotion:
         calls: list[tuple] = []
         proxy.set_velocity = lambda vx, vy, vyaw: calls.append((vx, vy, vyaw))
 
-        with patch("time.sleep"):
+        with fake_clock():
             proxy.walk(vx=0.5, vy=0.0, vyaw=0.0, duration=0.1)
 
         # Last call must be stop
@@ -579,7 +581,7 @@ class TestIsaacSimProxyNavigation:
         # Fake clock: patching time.sleep alone turned the probe loop into a real-time
         # busy loop whose MagicMock call records grew past 50 GB (machine-wide OOM).
         clock = iter(range(10_000))
-        with patch("time.sleep"), \
+        with fake_clock(), \
              patch("time.time", side_effect=lambda: 1_000.0 + 0.5 * next(clock)), \
              patch("os.path.exists", return_value=True):  # never patch builtins.open: yaml on a MagicMock stream never hits EOF (unbounded alloc)
             try:
@@ -612,7 +614,7 @@ class TestIsaacSimProxyNavigation:
         # Alternatively, simply test navigate_to with FAR waypoint already set
         proxy._last_waypoint_time = _t0 + 1000  # FAR "responded" long ago
 
-        with patch("time.sleep"), \
+        with fake_clock(), \
              patch("os.path.exists", return_value=True):  # never patch builtins.open: yaml on a MagicMock stream never hits EOF (unbounded alloc)
             with patch("time.time", side_effect=mock_time):
                 result = proxy.navigate_to(0.4, 0.3, timeout=5.0)

@@ -17,6 +17,8 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
+from tests.harness.clock import fake_clock
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -330,7 +332,7 @@ class TestIsaacArmProxyMotion:
         # Mock convergence — positions already at target after command
         arm._joint_positions = target.copy()
 
-        with patch("time.sleep"):
+        with fake_clock():
             result = arm.move_joints(target, duration=0.1)
 
         arm._cmd_pub.publish.assert_called()
@@ -352,7 +354,7 @@ class TestIsaacArmProxyMotion:
         # Positions already at target
         arm._joint_positions = [0.0] * _DOF
 
-        with patch("time.sleep"):
+        with fake_clock():
             result = arm.move_joints(target, duration=0.5)
 
         assert result is True
@@ -363,7 +365,7 @@ class TestIsaacArmProxyMotion:
         # Positions never reach target
         arm._joint_positions = [0.0] * _DOF
 
-        with patch("time.sleep"):
+        with fake_clock():
             # Very short duration to force timeout
             result = arm.move_joints(target, duration=0.001)
 
@@ -396,7 +398,7 @@ class TestIsaacArmProxyMotion:
     def test_move_joints_correct_count_does_not_raise(self) -> None:
         arm = self._connected_arm()
         arm._joint_positions = [0.0] * _DOF
-        with patch("time.sleep"):
+        with fake_clock():
             # Must not raise ValueError
             try:
                 arm.move_joints([0.0] * _DOF, duration=0.01)
