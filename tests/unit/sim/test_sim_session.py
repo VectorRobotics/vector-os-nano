@@ -62,6 +62,15 @@ def test_unknown_embodiment_fails_loud_with_the_valid_set() -> None:
     assert res.is_error and "drone" in res.content and "go2_piper" in res.content
 
 
+def test_gui_must_be_a_real_bool(monkeypatch) -> None:
+    def no_start(spec: SimSpec, **_k: Any) -> Any:
+        raise SimStartError("not started", f"gui={spec.gui}")
+
+    monkeypatch.setattr(SimSession, "start", staticmethod(no_start))
+    res = SimStartTool().execute({"embodiment": "go2", "gui": "false"}, _ctx({}))
+    assert res.is_error and "gui must be true or false" in res.content
+
+
 def test_corrupt_manifest_is_error_naming_the_key(tmp_path, monkeypatch) -> None:
     bad = tmp_path / "broken"
     bad.mkdir()

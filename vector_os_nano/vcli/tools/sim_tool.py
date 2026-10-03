@@ -106,7 +106,10 @@ class SimStartTool:
         app = context.app_state
         if app is None:
             return ToolResult(content="No app state available", is_error=True)
-        spec = SimSpec(embodiment=str(params.get("embodiment", "")), gui=bool(params.get("gui", True)))
+        gui = params.get("gui", True)
+        if not isinstance(gui, bool):  # bool("false") is True: never guess a window
+            return ToolResult(content=f"gui must be true or false, got {gui!r}", is_error=True)
+        spec = SimSpec(embodiment=str(params.get("embodiment", "")), gui=gui)
 
         current = app.get("sim_session")
         if current is not None and current.spec == spec:
