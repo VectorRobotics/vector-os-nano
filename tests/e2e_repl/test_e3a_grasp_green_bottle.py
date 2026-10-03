@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e_repl import LAUNCH, LAUNCH_STEPS, NO_NAV_STACK
+from tests.e2e_repl import LAUNCH, LAUNCH_STEPS
 from tests.harness.pty_cli import run_repl_session
 
 _TARGET = "pickable_bottle_green"
@@ -22,8 +22,7 @@ _SCRIPT = {"steps": LAUNCH_STEPS + [
 @pytest.mark.cli_main
 @pytest.mark.xfail(strict=True, reason="acceptance path = subprocess bridge until WP03")
 def test_e3a_grasp_green_bottle_grounded() -> None:
-    r = run_repl_session([LAUNCH, "拿起绿色的瓶子"], tool_script=_SCRIPT, answers=["y"],
-                         extra_env=NO_NAV_STACK, turn_timeout_sec=240)
+    r = run_repl_session([LAUNCH, "拿起绿色的瓶子"], tool_script=_SCRIPT, answers=["y"], turn_timeout_sec=240)
     text = r.text
     assert not r.timed_out, text[-3000:]
     assert f"verify holding_object('{_TARGET}') ✓ (actor=CAUSED)" in text, text[-3000:]

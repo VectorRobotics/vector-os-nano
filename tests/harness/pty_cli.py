@@ -100,9 +100,10 @@ def _now() -> float:
 
 def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
     """The env every PTY child gets: repo on PYTHONPATH, its own temp HOME, and —
-    unless *live* — no route to a real LLM or VLM (placeholder Anthropic key, blank
-    DeepSeek/OpenRouter keys so the child's ``load_dotenv`` cannot fill them from the
-    repo-root ``.env``). Producer-selection env seams are stripped; the caller opts in.
+    unless *live* — no route to a real LLM/VLM or the external nav stack
+    (placeholder Anthropic key; blank DeepSeek/OpenRouter keys and VECTOR_NAV_STACK,
+    so the child's ``load_dotenv`` cannot fill them from the repo-root ``.env``).
+    Producer-selection env seams are stripped; the caller opts in.
     """
     env = dict(os.environ)
     # The child must import `tests` (the fake backends live under tests/harness).
@@ -115,6 +116,9 @@ def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
         env.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
         env["DEEPSEEK_API_KEY"] = ""
         env["OPENROUTER_API_KEY"] = ""
+        # No external CMU nav stack either: every --sim-go2 child would start it
+        # (and rviz2) in its own sessions, outliving the child on a shared box.
+        env["VECTOR_NAV_STACK"] = ""
     # Per-run HOME: a compiled template / session / history from a prior run must
     # never leak into this one, and the developer's real ~/.vector stays untouched.
     home = tempfile.mkdtemp(prefix=home_prefix)
@@ -499,7 +503,6 @@ def run_repl_session(
             tty.pump(min(0.5, deadline - _now()))
             if proc.poll() is not None and _now() - tty.last_data > 1.0:
                 break
-        timed_out = timed_out or proc.poll() is None
         try:
             proc.wait(timeout=max(0.1, deadline - _now()))
         except subprocess.TimeoutExpired:

@@ -13,13 +13,12 @@ package that turns it green: the honest baseline. Flipping one means deleting it
 xfail in the WP that fixes it; an unexpected pass fails the run (strict).
 """
 
-# NL go2_piper launch shared by the go2 scenarios. The child gets no CMU nav stack
-# (VECTOR_NAV_STACK blank): launching must not depend on the external stack, and the
-# e2e tier must never start it on a shared box.
+# NL go2_piper launch shared by the go2 scenarios. The harness gives every child a
+# blank VECTOR_NAV_STACK: a launch must not depend on the external CMU stack, and
+# the e2e tier never starts it on a shared box.
 LAUNCH = "启动 go2 仿真 带机械臂 无窗口"
 LAUNCH_STEPS = [
     {"when": "启动 go2 仿真", "tool_calls": [
         {"name": "start_simulation", "input": {"sim_type": "go2", "with_arm": True, "gui": False}}]},
     {"when": "", "text": "go2 仿真已启动", "tool_calls": []},
 ]
-NO_NAV_STACK = {"VECTOR_NAV_STACK": ""}

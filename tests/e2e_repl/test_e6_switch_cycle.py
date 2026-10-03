@@ -8,9 +8,10 @@ half of E6 is the suite-wide check in tests/conftest.py (pytest is a subreaper).
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from tests.e2e_repl import NO_NAV_STACK
 from tests.harness.pty_cli import run_repl_session
 
 
@@ -39,8 +40,12 @@ _SCRIPT = {"steps": [s for say, t, a in _CYCLE for s in _switch(say, t, a)]}
 @pytest.mark.xfail(strict=True, reason="acceptance path = subprocess bridge until WP03")
 def test_e6_switch_cycle_every_start_succeeds() -> None:
     r = run_repl_session([say for say, _, _ in _CYCLE], tool_script=_SCRIPT,
-                         answers=["y"] * 8, extra_env=NO_NAV_STACK, turn_timeout_sec=150)
+                         answers=["y"] * 8, turn_timeout_sec=150)
     text = r.text
     assert not r.timed_out, text[-3000:]
     assert text.count("sim start") >= len(_CYCLE), text[-3000:]
     assert "already running" not in text and " fail " not in text, text[-3000:]
+    # Each go2 start must report readiness (the subprocess bridge says 'ok' even
+    # when the sim never came up). WP03 owns the ready-line format, as in E1.
+    go2_starts = sum(1 for _, t, _ in _CYCLE if t == "go2")
+    assert len(re.findall(r"\bready\b", text, re.I)) >= go2_starts, text[-3000:]
