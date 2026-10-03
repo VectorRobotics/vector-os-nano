@@ -7,7 +7,7 @@
 #   scripts/gate.sh <hermetic|sim|e2e|all> [extra pytest args...]
 #
 #   hermetic  everything not marked sim/live_llm; throwaway HOME, no LLM keys
-#   sim       tests marked sim (auto-marked per file by tests/conftest.py); the
+#   sim       tests marked sim (auto-marked by file/fixture in tests/conftest.py); the
 #             session sim_preflight skips the tier with ONE reason if this box
 #             cannot run MuJoCo (no EGL, missing weights, scene does not compile)
 #   e2e       tests/e2e_repl: bare vector-cli on a PTY, one REPL per scenario
@@ -90,12 +90,17 @@ if [ "${GATE_PER_FILE:-}" = 1 ]; then
   exit
 fi
 
-CAP=()
+CAP=(); UNIT=
 if command -v systemd-run >/dev/null && systemd-run --user --scope -q true 2>/dev/null; then
-  CAP=(systemd-run --user --scope -q -p MemoryMax="${MEMMAX:-16G}" -p MemorySwapMax=0)
+  # A named scope: if pytest dies (timeout, OOM), stopping the scope still kills
+  # every process the run left behind, wherever it re-parented.
+  UNIT=vos-gate-$$-$RANDOM
+  CAP=(systemd-run --user --scope -q --unit="$UNIT" -p MemoryMax="${MEMMAX:-16G}" -p MemorySwapMax=0)
 fi
 echo "[gate] $TIER: ${PATHS[*]} -m '$MARK' -> $OUT/junit.xml (ROS_DOMAIN_ID=$ROS_DOMAIN_ID)"
 "${CAP[@]}" timeout "${TMO:-7200}" "$PY" -m pytest -p no:cacheprovider --timeout=300 -q -rfE \
   -o junit_family=xunit2 --junitxml="$OUT/junit.xml" \
   "${PATHS[@]}" ${MARK:+-m "$MARK"} "${IGNORE[@]}" "$@" 2>&1 | tee "$OUT/pytest.log"
-exit "${PIPESTATUS[0]}"
+rc=${PIPESTATUS[0]}
+[ -n "$UNIT" ] && systemctl --user stop "$UNIT.scope" 2>/dev/null
+exit "$rc"
