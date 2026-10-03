@@ -202,17 +202,18 @@ def test_callable_container_shortcircuit_flips_to_ran(sim_cleanup) -> None:
 
 
 # (E) STEP-15 WRONG-PREDICATE-TYPE: a COORDINATE goal verified ENTIRELY with a non-
-# at_position predicate. A real 90-deg left TURN (yaw command -> facing graded CAUSED ->
-# the step is honestly GROUNDED per-step) + an honest facing verify of the post-turn
-# heading (+y, within 0.78 rad: under the oracle's 45-deg tol cap, so true for a landing
-# anywhere in 45..135 deg). The coord '走到坐标 (11,3)' is NEVER asserted by an
-# at_position step, so the TURN-LEVEL coordinate gate must reject the turn (verified
+# at_position predicate. A real 60-deg left TURN (yaw command -> facing graded CAUSED ->
+# the step is honestly GROUNDED per-step) + a facing verify within the oracle's 45-deg
+# tol cap: facing(0.52, 0.78) holds for any heading in -15..75 deg, so it is true
+# wherever the open-loop turn lands (it lands short when the sim runs below real time;
+# CAUSED needs only >= 10 deg of yaw). The coord '走到坐标 (11,3)' is NEVER asserted by
+# an at_position step, so the TURN-LEVEL coordinate gate must reject the turn (verified
 # False) EVEN THOUGH the step itself is GROUNDED — the distinction from R2b (which
 # downgrades the step) and from STEP-13 (which needs a literal at_position to mismatch).
 _WRONG_PREDICATE_TYPE_FALSE_GREEN = {
     "turns": [
-        {"tool_calls": [{"name": "turn", "input": {"direction": "left", "angle": 90}}]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "facing(1.5708, 0.78)"}}]},
+        {"tool_calls": [{"name": "turn", "input": {"direction": "left", "angle": 60}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "facing(0.52, 0.78)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
