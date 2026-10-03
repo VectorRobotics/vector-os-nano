@@ -42,24 +42,6 @@ _POSITION_SAMPLE_INTERVAL: float = 2.0
 _nav_stack_proc: subprocess.Popen | None = None
 _bridge_thread: threading.Thread | None = None
 
-def _deploy_tare_config() -> None:
-    """Always copy Go2-tuned TARE config to nav stack install dir.
-
-    Must run BEFORE the "already running" check so that even a pre-existing
-    TARE process picks up the latest config on its next restart.
-    """
-    _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)
-    ))))
-    go2_cfg = os.path.join(_repo, "config", "tare_go2_indoor.yaml")
-    tare_install = os.path.expanduser(
-        "~/Desktop/vector_navigation_stack/install/tare_planner/share/tare_planner"
-    )
-    if os.path.isfile(go2_cfg) and os.path.isdir(tare_install):
-        shutil.copy2(go2_cfg, os.path.join(tare_install, "indoor_small.yaml"))
-        logger.info("[EXPLORE] Deployed Go2-tuned TARE config")
-
-
 def _start_tare() -> bool:
     """Check that TARE autonomous exploration planner is already running.
 
@@ -68,12 +50,7 @@ def _start_tare() -> bool:
     does NOT start one.  Launching TARE here would create a second process group
     with broken DDS connectivity.
 
-    Always deploys the Go2-tuned config first so a running TARE picks up the
-    latest margins on its next restart.
     """
-    # Always deploy config first — even if TARE is already running,
-    # so the next restart picks up latest margins.
-    _deploy_tare_config()
 
     # Check if TARE is already running (launched by _launch_ros2_stack / launch_explore.sh)
     if shutil.which("pgrep"):

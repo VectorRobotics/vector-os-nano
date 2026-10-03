@@ -120,9 +120,8 @@ def build_room_scene(
             after attach (grasp welds; bodies must exist post-attach).
         out_path: if given, the compiled scene is serialized (with the attach-
             default repair) to this path for cross-process from_xml_path consumers.
-        robot_meshes_dir: if given, every non-absolute robot ``mesh.file`` is made
-            absolute against it (bare go2.xml / g1 use relative meshdir). Models
-            with already-absolute mesh paths (go2_piper.xml) are unaffected.
+        robot_meshes_dir: base directory for relative robot ``mesh.file`` paths.
+            Defaults to the model file's directory + its ``meshdir`` (MuJoCo's rule).
         camera: optional ``{mount_body, name, pos, xyaxes}`` head camera added to
             the named robot body before attach.
 
@@ -134,12 +133,19 @@ def build_room_scene(
     room_spec = _room_only_spec(mj, Path(room_template_path), Path(room_assets_dir))
     robot_spec = mj.MjSpec.from_file(str(robot_model_path))
 
-    if robot_meshes_dir is not None:
-        meshes_dir = Path(robot_meshes_dir)
-        for mesh in robot_spec.meshes:
-            if not os.path.isabs(mesh.file):
-                mesh.file = str(meshes_dir / mesh.file)
-        robot_spec.meshdir = ""
+    # Resolve every relative mesh path to an absolute one so the attached scene is
+    # loadable from any directory. Default base = MuJoCo's own rule: the model
+    # file's directory joined with its meshdir. Committed MJCF must stay relative
+    # (absolute paths only ever work on the machine that generated them).
+    meshes_dir = (
+        Path(robot_meshes_dir)
+        if robot_meshes_dir is not None
+        else Path(robot_model_path).resolve().parent / (robot_spec.meshdir or "")
+    )
+    for mesh in robot_spec.meshes:
+        if not os.path.isabs(mesh.file):
+            mesh.file = str((meshes_dir / mesh.file).resolve())
+    robot_spec.meshdir = ""
 
     if camera is not None:
         mount = camera["mount_body"]

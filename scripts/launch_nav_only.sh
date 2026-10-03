@@ -12,7 +12,7 @@ set -m
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-NAV_STACK="/home/yusen/Desktop/vector_navigation_stack"
+source "$(cd "$(dirname "$0")" && pwd)/nav_env.sh"
 
 NO_TARE=""
 NO_RVIZ=""
@@ -31,17 +31,7 @@ PIDS=()
 cleanup() {
     echo ""
     echo "Stopping nav stack..."
-    for p in "${PIDS[@]}"; do
-        kill -- -"$p" 2>/dev/null || kill "$p" 2>/dev/null
-    done
-    sleep 1
-    for proc in pathFollower terrainAnalysis terrainAnalysisExt sensorScanGeneration \
-                localPlanner far_planner graphDecoder visualizationTools \
-                odom_transformer vehicleTransPublisher sensorTransPublisher \
-                tare_planner_node; do
-        pkill -9 -f "$proc" 2>/dev/null || true
-    done
-    rm -f /dev/shm/fastrtps_* 2>/dev/null
+    nav_stop_groups "${PIDS[@]}"
     wait 2>/dev/null
     echo "Done."
 }
@@ -88,7 +78,8 @@ sleep 3
 
 if [ -z "$NO_TARE" ]; then
     echo "[4.5/5] Starting TARE planner..."
-    ros2 launch tare_planner explore.launch scenario:=indoor_small &
+    ros2 run tare_planner tare_planner_node --ros-args -r __node:=tare_planner_node \
+        --params-file "$REPO_DIR/config/tare_go2_indoor.yaml" &
     PIDS+=($!)
     sleep 2
 fi

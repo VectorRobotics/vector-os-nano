@@ -4,7 +4,7 @@
 """Integration tests for Go2 MuJoCo — full Agent + Skills pipeline."""
 import pytest
 
-pytest.importorskip("convex_mpc")
+pytest.importorskip("vector_os_nano.third_party.convex_mpc")
 
 
 class TestGo2AgentIntegration:

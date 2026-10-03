@@ -15,7 +15,6 @@ set -m
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-NAV_STACK="/home/yusen/Desktop/vector_navigation_stack"
 
 NO_GUI=""
 for arg in "$@"; do
@@ -26,12 +25,8 @@ done
 export VECTOR_VLM_URL="${VECTOR_VLM_URL:-http://localhost:11434/v1}"
 export VECTOR_VLM_MODEL="${VECTOR_VLM_MODEL:-gemma4:e4b}"
 
-# Repo venv site-packages (uv-managed .venv; falls back to legacy .venv-nano)
-VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
-[ -d "$VENV_SP" ] || VENV_SP="$REPO_DIR/.venv-nano/lib/python3.12/site-packages"
-CMEEL_SP="$VENV_SP/cmeel.prefix/lib/python3.12/site-packages"
-CONVEX_SRC="/home/yusen/Desktop/go2-convex-mpc/src"
-export PYTHONPATH="$VENV_SP:$CMEEL_SP:$CONVEX_SRC:$REPO_DIR:$PYTHONPATH"
+source "$REPO_DIR/scripts/nav_env.sh"
+export PYTHONPATH="$VENV_SP:$CMEEL_SP:$REPO_DIR:$PYTHONPATH"
 export ROBOT_CONFIG_PATH="unitree/unitree_go2"
 
 source /opt/ros/jazzy/setup.bash
@@ -41,17 +36,8 @@ PIDS=()
 cleanup() {
     echo ""
     echo "Stopping all processes..."
-    for p in "${PIDS[@]}"; do
-        kill -- -"$p" 2>/dev/null || kill "$p" 2>/dev/null
-    done
-    sleep 1
-    for proc in pathFollower terrainAnalysis terrainAnalysisExt sensorScanGeneration \
-                localPlanner far_planner graphDecoder visualizationTools \
-                odom_transformer vehicleTransPublisher sensorTransPublisher \
-                tare_planner_node go2_vnav_bridge; do
-        pkill -9 -f "$proc" 2>/dev/null || true
-    done
-    rm -f /dev/shm/fastrtps_* /tmp/vector_nav_active 2>/dev/null
+    nav_stop_groups "${PIDS[@]}"
+    rm -f /tmp/vector_nav_active 2>/dev/null
     wait 2>/dev/null
     echo "Done."
 }
@@ -121,10 +107,9 @@ sleep 3
 
 # 6. TARE Planner (autonomous exploration — includes navigationBoundary)
 # Deploy Go2-tuned config BEFORE launch (kAutoStart=false, tuned margins)
-cp "$REPO_DIR/config/tare_go2_indoor.yaml" \
-   "$NAV_STACK/install/tare_planner/share/tare_planner/indoor_small.yaml" 2>/dev/null
 echo "[6/7] Starting TARE exploration planner..."
-ros2 launch tare_planner explore.launch scenario:=indoor_small &
+ros2 run tare_planner tare_planner_node --ros-args -r __node:=tare_planner_node \
+    --params-file "$REPO_DIR/config/tare_go2_indoor.yaml" &
 PIDS+=($!)
 sleep 2
 

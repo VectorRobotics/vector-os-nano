@@ -50,11 +50,11 @@ def main() -> None:
                 body.mass = float(body.mass) * PIPER_MASS_SCALE
                 body.inertia = [float(v) * PIPER_MASS_SCALE for v in body.inertia]
 
-    # Rewrite mesh file paths to ABSOLUTE paths. This makes the combined XML
-    # include-safe: whether loaded directly or via <include> from another scene
-    # xml, mesh resolution is independent of the including file's directory.
-    go2_assets = (mjcf_root / "go2" / "assets").resolve()
-    piper_assets = (mjcf_root / "piper" / "assets").resolve()
+    # Rewrite mesh file paths RELATIVE to this directory (where go2_piper.xml is
+    # written). Absolute paths only work on the generating machine; consumers go
+    # through scene_builder.build_room_scene, which resolves them at load time.
+    go2_assets = Path(os.path.relpath(mjcf_root / "go2" / "assets", this_dir))
+    piper_assets = Path(os.path.relpath(mjcf_root / "piper" / "assets", this_dir))
     for mesh in go2.meshes:
         if not os.path.isabs(mesh.file):
             mesh.file = str(go2_assets / mesh.file)

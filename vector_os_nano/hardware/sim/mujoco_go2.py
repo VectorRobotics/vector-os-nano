@@ -322,8 +322,8 @@ def _build_room_scene_xml(with_arm: bool | None = None) -> Path:
     if with_arm and _GO2_PIPER_XML.exists():
         go2_xml = _GO2_PIPER_XML
         scene_name = "scene_room_piper.xml"
-        # go2_piper.xml carries ABSOLUTE mesh paths (build_go2_piper writes them
-        # absolute so it is include-safe) — do NOT rewrite, pass meshes_dir=None.
+        # go2_piper.xml carries mesh paths relative to its own directory;
+        # build_room_scene resolves them (meshes_dir=None = model-file dir).
         robot_meshes_dir = None
         # Grasp welds (name, body1, body2) — only with the arm (the no-arm model
         # has no piper_link6; a weld to a missing body fails to compile).
@@ -801,10 +801,10 @@ class MuJoCoGo2:
         # QP then fails EVERY tick silently (qp_fail, no torque, no walk). Importing
         # it here makes a missing casadi raise at connect → loud fallback below.
         import casadi  # noqa: F401,PLC0415
-        from convex_mpc.go2_robot_data import PinGo2Model  # noqa: PLC0415
-        from convex_mpc.gait import Gait                   # noqa: PLC0415
-        from convex_mpc.com_trajectory import ComTraj       # noqa: PLC0415
-        from convex_mpc.leg_controller import LegController # noqa: PLC0415
+        from vector_os_nano.third_party.convex_mpc.go2_robot_data import PinGo2Model  # noqa: PLC0415
+        from vector_os_nano.third_party.convex_mpc.gait import Gait                   # noqa: PLC0415
+        from vector_os_nano.third_party.convex_mpc.com_trajectory import ComTraj       # noqa: PLC0415
+        from vector_os_nano.third_party.convex_mpc.leg_controller import LegController # noqa: PLC0415
 
         self._pin = PinGo2Model()
         if self._pin.model.nq > self._mj.model.nq:
@@ -938,7 +938,7 @@ class MuJoCoGo2:
                             vx, vy, _MPC_Z_DES, vyaw, time_step=self._mpc_dt,
                         )
                         if self._mpc is None:
-                            from convex_mpc.centroidal_mpc import CentroidalMPC  # noqa: PLC0415
+                            from vector_os_nano.third_party.convex_mpc.centroidal_mpc import CentroidalMPC  # noqa: PLC0415
                             self._mpc = CentroidalMPC(self._pin, self._traj)
 
                         sol = self._mpc.solve_QP(self._pin, self._traj, False)

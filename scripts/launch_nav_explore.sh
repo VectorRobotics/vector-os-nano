@@ -8,31 +8,19 @@
 set -e
 set -m
 
-NAV_STACK="/home/yusen/Desktop/vector_navigation_stack"
+source "$(cd "$(dirname "$0")" && pwd)/nav_env.sh"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 export ROBOT_CONFIG_PATH="unitree/unitree_go2"
 source /opt/ros/jazzy/setup.bash
 source "$NAV_STACK/install/setup.bash"
 
-# Deploy Go2-tuned TARE config
-cp "$REPO_DIR/config/tare_go2_indoor.yaml" \
-   "$NAV_STACK/install/tare_planner/share/tare_planner/indoor_small.yaml" 2>/dev/null || true
 
 PIDS=()
 cleanup() {
     echo ""
     echo "Stopping nav stack..."
-    for p in "${PIDS[@]}"; do
-        kill -- -"$p" 2>/dev/null || kill "$p" 2>/dev/null
-    done
-    sleep 1
-    for proc in pathFollower terrainAnalysis terrainAnalysisExt sensorScanGeneration \
-                localPlanner far_planner graphDecoder visualizationTools \
-                odom_transformer vehicleTransPublisher sensorTransPublisher \
-                tare_planner_node; do
-        pkill -9 -f "$proc" 2>/dev/null || true
-    done
+    nav_stop_groups "${PIDS[@]}"
     rm -f /tmp/vector_nav_active 2>/dev/null
     echo "Nav stack stopped."
 }
@@ -78,7 +66,8 @@ PIDS+=($!)
 sleep 3
 
 echo "[5/7] Starting TARE planner..."
-ros2 launch tare_planner explore.launch scenario:=indoor_small &
+ros2 run tare_planner tare_planner_node --ros-args -r __node:=tare_planner_node \
+        --params-file "$REPO_DIR/config/tare_go2_indoor.yaml" &
 PIDS+=($!)
 sleep 2
 

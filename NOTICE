@@ -32,6 +32,13 @@ Runtime dependencies (PyPI):
   - mujoco           (Apache-2.0)
   - ultralytics      (AGPL-3.0)            -- optional, perception extra
 
+Vendored source (copied into this repository, original license kept beside it):
+  - go2-convex-mpc (https://github.com/elijah-waichong-chan/go2-convex-mpc)
+        @ 1c63c6a, MIT License, vector_os_nano/third_party/convex_mpc/
+        Local changes: numpy>=2 shape fixes (compute_com_x_vec -> (12,),
+        compute_current_mask -> (4,)); kinematics-only URDF load via
+        pin.buildModelFromUrdf (bundled go2_description.urdf, no meshes).
+
 Hardware / firmware integrations referenced under their original licenses:
   - Unitree Go2 SDK (unitree_sdk2)         -- BSD-3-Clause (Unitree)
   - AgileX Piper assets via mujoco_menagerie (Apache-2.0)
