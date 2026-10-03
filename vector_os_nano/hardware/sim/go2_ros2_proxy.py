@@ -525,7 +525,8 @@ class Go2ROS2Proxy:
         self._last_waypoint_time = 0.0
 
         # Phase 1: probe FAR — send /goal_point, wait for /way_point response
-        probe_deadline = start_time + _FAR_PROBE_S
+        # The probe never outlives the caller's timeout (a 3 s probe on a 1 s budget overran it).
+        probe_deadline = start_time + min(_FAR_PROBE_S, timeout)
         while time.time() < probe_deadline:
             if not os.path.exists("/tmp/vector_nav_active"):
                 logger.info("[NAV] Cancelled by stop command")

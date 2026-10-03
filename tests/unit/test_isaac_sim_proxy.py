@@ -576,9 +576,14 @@ class TestIsaacSimProxyNavigation:
         # FAR responds immediately (waypoint received)
         proxy._last_waypoint_time = time.time() + 100  # already received
 
+        # Fake clock: patching time.sleep alone turned the probe loop into a real-time
+        # busy loop whose MagicMock call records grew past 50 GB (machine-wide OOM).
+        clock = iter(range(10_000))
         with patch("time.sleep"), \
+             patch("time.time", side_effect=lambda: 1_000.0 + 0.5 * next(clock)), \
              patch("os.path.exists", return_value=True), \
-             patch("builtins.open", MagicMock()):
+             patch("builtins.open", MagicMock()), \
+             patch("vector_os_nano.hardware.sim.go2_ros2_proxy._load_nav_config", return_value={}):  # yaml on a MagicMock stream never hits EOF -> unbounded alloc
             try:
                 result = proxy.navigate_to(0.5, 0.5, timeout=1.0)
             except Exception:
@@ -611,7 +616,8 @@ class TestIsaacSimProxyNavigation:
 
         with patch("time.sleep"), \
              patch("os.path.exists", return_value=True), \
-             patch("builtins.open", MagicMock()):
+             patch("builtins.open", MagicMock()), \
+             patch("vector_os_nano.hardware.sim.go2_ros2_proxy._load_nav_config", return_value={}):  # yaml on a MagicMock stream never hits EOF -> unbounded alloc
             with patch("time.time", side_effect=mock_time):
                 result = proxy.navigate_to(0.4, 0.3, timeout=5.0)
 
