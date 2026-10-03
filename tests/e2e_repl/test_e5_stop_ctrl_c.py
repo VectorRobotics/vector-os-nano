@@ -10,7 +10,7 @@ from tests.harness.pty_cli import run_repl_session
 
 _SCRIPT = {"steps": [
     {"when": "启动 go2 仿真", "tool_calls": [
-        {"name": "start_simulation", "input": {"sim_type": "go2", "with_arm": False, "gui": False}}]},
+        {"name": "start_simulation", "input": {"embodiment": "go2", "gui": False}}]},
     {"when": "", "text": "go2 仿真已启动", "tool_calls": []},
     {"when": "往前走五米", "tool_calls": [
         {"name": "walk", "input": {"direction": "forward", "distance": 5.0, "speed": 0.3}}]},

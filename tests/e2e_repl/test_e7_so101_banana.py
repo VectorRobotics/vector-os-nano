@@ -10,7 +10,7 @@ from tests.harness.pty_cli import run_repl_session
 
 _SCRIPT = {"steps": [
     {"when": "启动机械臂仿真", "tool_calls": [
-        {"name": "start_simulation", "input": {"sim_type": "arm", "gui": False}}]},
+        {"name": "start_simulation", "input": {"embodiment": "so101", "gui": False}}]},
     {"when": "", "is_error": False, "text": "机械臂仿真已启动", "tool_calls": []},
     {"when": "抓起香蕉", "tool_calls": [
         {"name": "pick", "input": {"object_label": "banana", "mode": "hold"}}]},

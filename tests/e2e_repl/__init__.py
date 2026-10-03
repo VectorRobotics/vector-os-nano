@@ -19,7 +19,7 @@ xfail in the WP that fixes it; an unexpected pass fails the run (strict).
 LAUNCH = "启动 go2 仿真 带机械臂 无窗口"
 LAUNCH_STEPS = [
     {"when": "启动 go2 仿真", "tool_calls": [
-        {"name": "start_simulation", "input": {"sim_type": "go2", "with_arm": True, "gui": False}}]},
+        {"name": "start_simulation", "input": {"embodiment": "go2_piper", "gui": False}}]},
     {"when": "", "text": "go2 仿真已启动", "tool_calls": []},
 ]
 
