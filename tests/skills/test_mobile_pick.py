@@ -6,7 +6,7 @@
 8 primary tests covering guard clauses, navigation decisions, ordering, and
 composition with PickTopDownSkill.  Additional helper-unit tests cover
 _wait_stable and _ang_diff to reach >=80% coverage.
-All hardware is mocked; time.sleep is patched to a no-op so _wait_stable
+All hardware is mocked; tests.harness.clock.fake_clock skips the waits so _wait_stable
 does not block in the primary tests.
 """
 from __future__ import annotations
@@ -97,19 +97,6 @@ def _make_skill_with_mock_pick(
     skill._pick = mock_pick
 
     return skill, mock_pick
-
-
-# Monotonic counter for _wait_stable fast termination
-class _MonotonicCounter:
-    """Advances by `step` each call; call count drives the stable loop."""
-
-    def __init__(self, step: float = 0.3):
-        self._t = 0.0
-        self._step = step
-
-    def __call__(self) -> float:
-        self._t += self._step
-        return self._t
 
 
 # ---------------------------------------------------------------------------
@@ -418,16 +405,7 @@ def test_wait_stable_returns_true_when_dog_still():
     base = MagicMock()
     base.get_position.return_value = (1.0, 1.0, 0.0)
 
-    _t = [0.0]
-
-    def fake_monotonic():
-        _t[0] += 0.21  # slightly more than poll_dt=0.2
-        return _t[0]
-
-    with (
-        patch("vector_os_nano.skills.mobile_pick.time.monotonic", side_effect=fake_monotonic),
-        fake_clock(),
-    ):
+    with fake_clock():  # each poll sleep advances the clock
         result = _wait_stable(base, max_speed=0.05, settle_duration=0.5, timeout=10.0)
 
     assert result is True
@@ -444,16 +422,7 @@ def test_wait_stable_returns_false_on_timeout():
 
     base.get_position.side_effect = moving_pos
 
-    _t = [0.0]
-
-    def fast_clock():
-        _t[0] += 1.5  # advances quickly so deadline is hit fast
-        return _t[0]
-
-    with (
-        patch("vector_os_nano.skills.mobile_pick.time.monotonic", side_effect=fast_clock),
-        fake_clock(),
-    ):
+    with fake_clock():  # each poll sleep advances the clock to the deadline
         result = _wait_stable(base, max_speed=0.05, settle_duration=2.0, timeout=3.0)
 
     assert result is False

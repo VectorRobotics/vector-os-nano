@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import math
+import os
+import signal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -256,6 +258,33 @@ class TestExploreNonBlocking:
         assert _explore_cancel.is_set()
         _mod._explore_running = False
         _explore_cancel.clear()
+
+    def test_tare_stop_is_scoped_to_our_own_descendants(self):
+        """stop_tare_only finds TARE by name only below this process: never a
+        machine-wide pkill (other projects' planners), and never a no-op either
+        (TARE kept publishing /way_point after cancel)."""
+        import subprocess
+        import sys
+
+        from vector_os_nano.skills.go2.explore import _own_descendants_named
+
+        sleeper = "import time; time.sleep(60)"
+        spawner = (
+            "import subprocess, sys; "
+            f"p = subprocess.Popen([sys.executable, '-c', {sleeper!r}, 'tare_planner_node']); "
+            "print(p.pid, flush=True); p.wait()"
+        )
+        parent = subprocess.Popen([sys.executable, "-c", spawner], stdout=subprocess.PIPE, text=True)
+        theirs = subprocess.Popen([sys.executable, "-c", sleeper, "tare_planner_node"])
+        ours = int(parent.stdout.readline())
+        try:
+            assert _own_descendants_named("tare_planner_node", root=parent.pid) == [ours]
+            assert {ours, theirs.pid} <= set(_own_descendants_named("tare_planner_node"))
+        finally:
+            os.kill(ours, signal.SIGKILL)  # the parent's wait() reaps it, then it exits
+            parent.wait(timeout=10)
+            theirs.kill()
+            theirs.wait()
 
     def test_get_explored_rooms(self):
         """get_explored_rooms returns sorted room list."""

@@ -26,7 +26,7 @@ to be ``walk`` (never navigate). The verify expr is asserted to start with
 ``at_position`` (single-sourced from the registry-derived vocab).
 
 SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after
-each case via fixtures; scene xml restored.
+each case via fixtures (the generated scene xml is untracked).
 """
 from __future__ import annotations
 

@@ -29,7 +29,7 @@ _SCRIPT = {"steps": [
 def test_e5_ctrl_c_mid_walk_keeps_repl_and_next_turn_works() -> None:
     r = run_repl_session(
         ["启动 go2 仿真 无窗口", "往前走五米", (3.0, "\x03"), "往前走一米"],
-        tool_script=_SCRIPT, answers=["y"], turn_timeout_sec=150,
+        tool_script=_SCRIPT, answers=["y"], timeout_sec=300,
     )
     text = r.text
     assert not r.timed_out, text[-3000:]

@@ -40,8 +40,8 @@ let the test set over-claim the recover pillar):
   Goal-authenticity of the verify constant (does (11,3) match the real task goal)
   remains the documented deferred residual — STEP 11 does not close it.
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped + scene
-xml restored after each case via the ``sim_cleanup`` fixture. Do NOT parallelize with
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after each
+case via the ``sim_cleanup`` fixture (the generated scene xml is untracked). Do NOT parallelize with
 any other sim or pytest-heavy job (64 GB host).
 """
 from __future__ import annotations

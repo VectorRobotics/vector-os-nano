@@ -149,9 +149,7 @@ class TestAutoLookOnExplore:
 
         # Patch subprocess.run to avoid 5s TARE start timeout
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            # The loop paces itself on a REAL Event.wait and real monotonic (no
-            # wall-clock spin), so a non-recording no-op sleep is safe here.
-            with patch("time.sleep", new=lambda *_: None):
+            with fake_clock():
                 _exploration_loop(base, has_bridge=False)
 
         _explore_mod._spatial_memory = None

@@ -422,7 +422,7 @@ def run_repl_session(
     native: bool = True,
     extra_env: dict[str, str] | None = None,
     extra_args: list[str] | None = None,
-    turn_timeout_sec: float = 240.0,
+    timeout_sec: float = 240.0,
     cwd: str | Path | None = None,
 ) -> ReplSessionResult:
     """Drive the REAL interactive ``vector-cli`` REPL under a PTY; return the transcript.
@@ -441,8 +441,8 @@ def run_repl_session(
         answers: replies to permission prompts, in order; a prompt with no answer
                  left is refused with ``n`` (the safe default a user would pick).
         native:  False sets ``VECTOR_REPL_NATIVE=0`` (the pure-legacy REPL).
-        turn_timeout_sec: per-step deadline (boot, each turn, the exit). On expiry
-                 the process group is killed and ``timed_out`` is set.
+        timeout_sec: ONE deadline for the whole session (boot, every turn, the
+                 exit). On expiry the process group is killed and ``timed_out`` is set.
     """
     argv = [sys.executable, "-m", "vector_os_nano.vcli.cli"]
     if sim:
@@ -474,19 +474,20 @@ def run_repl_session(
     timed_out = False
     proc, master_fd = _spawn(argv, env, cwd or _REPO_ROOT)
     tty = _Pty(master_fd)
+    deadline = _now() + timeout_sec
     try:
         typed = ""
         for step in steps:
             if isinstance(step, tuple):
                 delay, text = step
-                until = _now() + delay
+                until = min(_now() + delay, deadline)
                 while _now() < until and not tty.eof:
                     tty.pump(until - _now())
                 tty.send(text)
                 typed = text
                 continue
             while True:
-                state = tty.wait_input(_now() + turn_timeout_sec, typed)
+                state = tty.wait_input(deadline, typed)
                 if state != "permission":
                     break
                 tty.send(pending.pop(0) if pending else "n")
@@ -498,7 +499,6 @@ def run_repl_session(
             typed = step
         # Read to EOF after quit (the verdict of a last async turn is not lost), or
         # until the child has exited and gone quiet (a grandchild may hold the PTY).
-        deadline = _now() + turn_timeout_sec
         while not tty.eof and _now() < deadline:
             tty.pump(min(0.5, deadline - _now()))
             if proc.poll() is not None and _now() - tty.last_data > 1.0:

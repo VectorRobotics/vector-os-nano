@@ -1,8 +1,10 @@
 # Known reds: the committed, commented list tests/conftest.py applies at collection.
-#   <nodeid or nodeid-prefix> | deselect | <why it is environment-only>
-#   <nodeid or nodeid-prefix> | xfail    | <ledger key of the genuine bug it pins>
+#   <exact nodeid> | deselect | <why it is environment-only>
+#   <exact nodeid> | xfail    | <ledger key of the genuine bug it pins>   (strict)
+#   <exact nodeid> | flaky    | <why it is red on some runs only>         (non-strict)
 # Never deselect a genuine bug: link it to its ledger key as an xfail instead.
-# Remove a row the moment its cause is fixed (an xfail that passes shows as XPASS).
+# xfail is strict: once its cause is fixed the test XPASSes, which is red until the
+# row is deleted. Use flaky only for a test that really alternates.
 tests/unit/test_suite_hygiene.py::test_no_absolute_home_paths_in_committed_assets[vector_os_nano/hardware/sim/mjcf/g1/g1.xml] | xfail | docs-vs-code:go2piper-abs-mesh-paths (g1 meshes live in an unshipped menagerie checkout; WP03/WP17)
 
 # ---- hermetic-tier baseline (scripts/gate.sh hermetic, 2026-10-04): every red on base c188658 that
@@ -170,5 +172,5 @@ tests/unit/hardware/sim/test_g1_room.py::test_g1_head_camera_in_compiled_model |
 tests/unit/hardware/sim/test_g1_room.py::test_g1_self_geom_set_nonempty | xfail | sim-locomotion:g1-assets-unshipped (WP17)
 tests/unit/hardware/sim/test_g1_room.py::test_walk_forward_displacement | xfail | sim-locomotion:g1-assets-unshipped (WP17)
 tests/unit/test_scene_builder.py::test_build_room_scene_go2_arm_byte_identical | xfail | relative mesh resolution reads mjcf/go2/go2/assets (doubled dir); red on base c188658 too (docs-vs-code:go2piper-abs-mesh-paths family; WP03)
-tests/unit/test_mujoco_go2.py::TestMuJoCoGo2SpeedCommand::test_set_velocity_stop | xfail | 0.104 m/s (> 0.1) after stop; green in the pre-c188658 baseline, when backend=auto fell back to the sinusoidal gait (WP06/WP08)
-tests/e2e/test_explore_navigate_e2e.py::TestNavigate::test_walk_toward_kitchen | xfail | sinusoidal walk 4 s at vx=0.5 moves ~0 m on this box; red with --noconftest too, so not suite hygiene (WP06/WP08)
+tests/unit/test_mujoco_go2.py::TestMuJoCoGo2SpeedCommand::test_set_velocity_stop | flaky | 0.104 m/s (> 0.1) after stop; green in the pre-c188658 baseline, when backend=auto fell back to the sinusoidal gait (WP06/WP08)
+tests/e2e/test_explore_navigate_e2e.py::TestNavigate::test_walk_toward_kitchen | flaky | sinusoidal walk 4 s at vx=0.5 moves ~0 m on this box; red with --noconftest too, so not suite hygiene (WP06/WP08)

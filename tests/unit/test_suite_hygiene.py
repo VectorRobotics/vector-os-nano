@@ -30,10 +30,11 @@ def _test_sources() -> list[tuple[Path, list[str]]]:
 
 
 def _offenders(pattern: str, *, unless: str | None = None, skip: tuple[str, ...] = ()) -> list[str]:
+    """Matching lines in tests/**.py; *skip* holds repo-relative paths (exact files)."""
     rx, ok = re.compile(pattern), re.compile(unless) if unless else None
     return [
         f"{p.relative_to(_REPO)}:{i}: {line.strip()}"
-        for p, lines in _test_sources() if p.name not in skip
+        for p, lines in _test_sources() if p.relative_to(_REPO).as_posix() not in skip
         for i, line in enumerate(lines, 1)
         if rx.search(line) and not (ok and ok.search(line))
     ]
@@ -44,16 +45,31 @@ def test_no_builtins_open_patch() -> None:
     assert not _offenders(r"""patch\(\s*["']builtins\.open["']""")
 
 
+# Every way to patch time.sleep: patch("...time.sleep", <anything>) and patch.object(time, "sleep").
+_SLEEP_PATCH = r"""patch\(\s*["'][\w.]*\btime\.sleep["']|patch\.object\(\s*[\w.]*\btime\s*,\s*["']sleep["']"""
+
+
 def test_no_recording_sleep_patch_without_a_fake_clock() -> None:
     """tests:isaac-mock-open-oom sibling — a MagicMock time.sleep under a real wall
     clock turns `while time.monotonic() < deadline` into a busy loop that records a
     call per spin. Use tests.harness.clock.fake_clock (or patch the clock alongside).
     """
     assert not _offenders(
-        r"""patch\(\s*["'][\w.]*time\.sleep["']\s*(,\s*return_value\s*=\s*None\s*)?\)""",
-        unless=r"""patch\(\s*["']time\.(time|monotonic)["']""",
-        skip=("clock.py",),
+        _SLEEP_PATCH,
+        unless=r"""patch\(\s*["'][\w.]*\btime\.(time|monotonic)["']""",
+        skip=("tests/harness/clock.py",),
     )
+
+
+@pytest.mark.parametrize("line", [
+    'with patch("time.sleep"):',
+    'with patch("time.sleep", new=lambda *_: None):',
+    'with patch("pkg.mod.time.sleep", side_effect=calls.append):',
+    'with patch.object(time, "sleep"):',
+])
+def test_sleep_guard_catches_every_patch_form(line: str) -> None:
+    """The guard once matched only patch("time.sleep"[, return_value=None])."""
+    assert re.search(_SLEEP_PATCH, line)
 
 
 def test_no_machine_wide_kill_commands() -> None:
@@ -61,7 +77,7 @@ def test_no_machine_wide_kill_commands() -> None:
     projects' stacks. Kill only your own process group (tests/harness/sim_cleanup.py)."""
     assert not _offenders(
         r"""\[\s*["'](rosm|pkill|killall)["']|["'](pkill|killall) -|["']rosm nuke""",
-        skip=("conftest.py",),
+        skip=("tests/conftest.py",),  # the shims that fail those calls
     )
 
 
@@ -69,7 +85,7 @@ def test_no_import_time_env_writes() -> None:
     """tests:env-leak-sim-with-arm — a module-level os.environ write at collection
     made scene choice depend on test order. Use monkeypatch in a fixture."""
     assert not _offenders(r"""^os\.environ(\[.*\]\s*=|\.setdefault\(|\.update\()""",
-                          skip=("conftest.py",))
+                          skip=("tests/conftest.py",))
 
 
 def test_no_vacuous_tests() -> None:
@@ -179,3 +195,17 @@ def test_sim_preflight_skips_the_tier_with_one_reason(tmp_path) -> None:
     assert "2 skipped" in out, out[-3000:]
     reasons = [ln for ln in r.stdout.splitlines() if ln.startswith("SKIPPED")]
     assert len(reasons) == 1 and "sim preflight: no offscreen GL" in reasons[0], out[-3000:]
+
+
+def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
+    """scripts/gate.sh per-file mode listed files from collected items only, so a
+    file that failed to import vanished from the run and the gate stayed green."""
+    broken = tmp_path / "test_broken_import.py"
+    broken.write_text("import nonexistent_module_xyz\n")
+    r = subprocess.run(
+        ["bash", str(_REPO / "scripts" / "gate.sh"), "hermetic"],
+        env={**os.environ, "GATE_PATHS": str(broken), "GATE_OUT": str(tmp_path / "out")},
+        cwd=_REPO, capture_output=True, text=True, timeout=300,
+    )
+    assert r.returncode != 0, r.stdout[-2000:] + r.stderr[-2000:]
+    assert "RED rc=2 collection" in r.stdout, r.stdout[-2000:]

@@ -24,7 +24,7 @@ _SCRIPT = {"steps": [
 @pytest.mark.capability
 def test_e7_nl_launch_arm_then_grasp_banana_grounded() -> None:
     r = run_repl_session(["启动机械臂仿真 无窗口", "抓起香蕉"], tool_script=_SCRIPT,
-                         answers=["y"], turn_timeout_sec=180)
+                         answers=["y"], timeout_sec=180)
     text = r.text
     assert not r.timed_out, text[-3000:]
     assert "sim start arm ok" in text, f"NL launch did not start the arm sim:\n{text[-3000:]}"

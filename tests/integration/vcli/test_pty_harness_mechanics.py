@@ -50,6 +50,34 @@ def test_timeout_is_one_deadline_and_kills_the_whole_group(tmp_path, monkeypatch
     assert not _alive(grandchild), "the child's process group survived the timeout"
 
 
+_SLOW_REPL = textwrap.dedent('''
+    import sys, time
+    while True:
+        print("vector> ", end="", flush=True)
+        if not sys.stdin.readline():
+            break
+        time.sleep(1.5)  # every turn is silent and slow
+''')
+
+
+def test_repl_session_is_one_deadline_not_one_per_step(tmp_path, monkeypatch) -> None:
+    # Four 1.5 s turns against a 2 s budget: a per-step deadline would let all of
+    # them (and the quit) through in ~7 s; one session deadline stops at ~2 s.
+    script = tmp_path / "slow_repl.py"
+    script.write_text(_SLOW_REPL)
+    fake = tmp_path / "fake_python"
+    fake.write_text(f"#!/bin/sh\nexec {sys.executable} {script}\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(pty_cli.sys, "executable", str(fake))
+
+    t0 = time.monotonic()
+    r = pty_cli.run_repl_session(["a", "b", "c", "d"], timeout_sec=2.0, cwd=tmp_path)
+    elapsed = time.monotonic() - t0
+
+    assert r.timed_out, r.text
+    assert elapsed < 3.5, f"session ran {elapsed:.1f}s on a 2s budget (a deadline per step?)"
+
+
 _FAKE_REPL = textwrap.dedent('''
     import sys, time
     print("banner"); print("vector> ", end="", flush=True)

@@ -27,10 +27,12 @@ Hygiene (WP01) — every test runs as if it were alone on a shared box:
 """
 from __future__ import annotations
 
+import atexit
 import functools
 import inspect
 import os
 import re
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -68,8 +70,10 @@ if _ros_shadows_venv(sys.path, sysconfig.get_paths()["purelib"]):
         returncode=4,
     )
 
-# Never share a DDS domain with the other stacks on this box (they run on 0).
-os.environ.setdefault("ROS_DOMAIN_ID", "87")
+# Never share a DDS domain with the other stacks on this box (they run on 0): an
+# unset or inherited 0 becomes 87; any other explicit domain (gate, sim slot) stays.
+if os.environ.get("ROS_DOMAIN_ID", "").strip() in ("", "0"):
+    os.environ["ROS_DOMAIN_ID"] = "87"
 # Headless rendering, decided ONCE before any test imports mujoco (a per-module
 # setdefault made the GL backend depend on which file was collected first).
 if sys.platform.startswith("linux"):
@@ -85,6 +89,7 @@ if not _LIVE:
 # ---------------------------------------------------------------------------
 
 _SHIM_DIR = Path(tempfile.mkdtemp(prefix="vos_test_shims_"))
+atexit.register(shutil.rmtree, _SHIM_DIR, True)
 _SHIM_LOG = _SHIM_DIR / "calls.log"
 for _name in ("rosm", "pkill", "killall"):
     _p = _SHIM_DIR / _name
@@ -124,8 +129,12 @@ def _hygiene(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
         abort.clear_abort()
     yield
     stubs.restore(mods)
-    os.environ.clear()
-    os.environ.update(env)
+    # Restore by diff, never clear(): a thread still running must not see an empty env.
+    for k in [k for k in os.environ if k not in env]:
+        del os.environ[k]
+    for k, v in env.items():
+        if os.environ.get(k) != v:
+            os.environ[k] = v
     problems: list[str] = []
     if _SHIM_LOG.exists():
         problems.append(
@@ -223,33 +232,37 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 _KNOWN_REDS = Path(__file__).with_name("known_reds.txt")
 
 
-def _known_reds() -> list[tuple[str, str, str]]:
-    """``(nodeid_prefix, mode, reason)`` rows of tests/known_reds.txt."""
-    rows = []
+def _known_reds() -> dict[str, tuple[str, str]]:
+    """``{nodeid: (mode, reason)}`` from tests/known_reds.txt (exact nodeids, no prefixes).
+
+    ``xfail`` is strict: a row whose test now passes turns red until it is deleted.
+    ``flaky`` is a non-strict xfail, only for a test that is red on some runs.
+    """
+    rows: dict[str, tuple[str, str]] = {}
     for line in _KNOWN_REDS.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         nodeid, mode, reason = (part.strip() for part in line.split("|", 2))
-        if mode not in ("deselect", "xfail"):
+        if mode not in ("deselect", "xfail", "flaky"):
             raise pytest.UsageError(f"known_reds.txt: bad mode {mode!r} in {line!r}")
-        rows.append((nodeid, mode, reason))
+        rows[nodeid] = (mode, reason)
     return rows
 
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    reds = _known_reds() if _KNOWN_REDS.exists() else []
+    reds = _known_reds() if _KNOWN_REDS.exists() else {}
     deselected: list[pytest.Item] = []
     kept: list[pytest.Item] = []
     for item in items:
-        row = next((r for r in reds if item.nodeid.startswith(r[0])), None)
-        if row is not None and row[1] == "deselect":
+        mode, reason = reds.get(item.nodeid, (None, ""))
+        if mode == "deselect":
             deselected.append(item)
             continue
-        if row is not None:
-            item.add_marker(pytest.mark.xfail(reason=row[2], strict=False))
+        if mode is not None:
+            item.add_marker(pytest.mark.xfail(reason=reason, strict=mode == "xfail"))
         if item.get_closest_marker("sim") is None and _builds_sim(item):
             item.add_marker(pytest.mark.sim)
         if item.get_closest_marker("live_llm") is not None and not _LIVE:

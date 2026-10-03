@@ -22,3 +22,8 @@ LAUNCH_STEPS = [
         {"name": "start_simulation", "input": {"sim_type": "go2", "with_arm": True, "gui": False}}]},
     {"when": "", "text": "go2 仿真已启动", "tool_calls": []},
 ]
+
+# A readiness line: the word 'ready' on a line with no 'not' ('already' and 'not
+# ready' do not count). WP03 owns the real ready-line format; tighten this to it
+# when E1/E6 flip green.
+READY = r"(?im)^(?!.*\bnot\b).*\bready\b"

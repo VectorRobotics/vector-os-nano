@@ -44,7 +44,7 @@ def test_repl_native_walk_routes_to_native_on_go2_sim(sim_cleanup) -> None:
 
     result = run_repl_session(
         ["走到坐标 (11.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT, native=True,
-        turn_timeout_sec=240,
+        timeout_sec=240,
     )
     text = result.text
     assert not result.timed_out, text[-2500:]
@@ -82,7 +82,7 @@ def test_repl_legacy_env_does_not_attempt_native(sim_cleanup) -> None:
     result = run_repl_session(
         ["走到坐标 (11.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT,
         native=False,  # VECTOR_REPL_NATIVE=0
-        turn_timeout_sec=240,
+        timeout_sec=240,
     )
     text = result.text
     assert not result.timed_out, text[-2500:]

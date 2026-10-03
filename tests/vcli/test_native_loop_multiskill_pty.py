@@ -40,8 +40,8 @@ outcome); the over-command is the honest way the gait reaches it. The target hea
 is computed from the base's ACTUAL heading read BEFORE the run, so the test is
 self-calibrating to whatever pose ``stand()`` settles into.
 
-SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped + scene xml
-restored after the case via fixtures. Reproduce::
+SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after the
+case via fixtures (the generated scene xml is untracked). Reproduce::
 
     MUJOCO_GL=egl PATH=/usr/bin:$PATH .venv/bin/python -m pytest \\
       tests/vcli/test_native_loop_multiskill_pty.py -v -s -m sim

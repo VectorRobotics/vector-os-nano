@@ -127,26 +127,51 @@ def get_explore_status() -> dict:
     }
 
 
+def _own_descendants_named(name: str, root: int | None = None) -> list[int]:
+    """PIDs anywhere below *root* (default: this process) whose command line contains *name*.
+
+    TARE runs inside the nav-stack launch (launch_explore.sh) this CLI started, a
+    descendant in another process group, so its group cannot be killed without
+    FAR + localPlanner. Matching by name only among OUR descendants never touches
+    another project's planner on a shared machine (a bare pkill -f did).
+    """
+    children: dict[int, list[int]] = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat") as fh:
+                ppid = int(fh.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(int(entry))
+    found, todo = [], [os.getpid() if root is None else root]
+    while todo:
+        for pid in children.get(todo.pop(), []):
+            todo.append(pid)
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                    if name.encode() in fh.read():
+                        found.append(pid)
+            except OSError:
+                pass
+    return found
+
+
 def stop_tare_only() -> None:
     """Stop TARE planner while keeping FAR + localPlanner alive.
 
-    Stops only the TARE process group THIS process started. Never by name: a
-    ``pkill -f tare_planner_node`` also killed other projects' planners on a
-    shared machine. Also removes the nav flag file so the bridge path follower
+    SIGTERMs only the tare_planner_node processes this process launched (its
+    descendants). Also removes the nav flag file so the bridge path follower
     stops following TARE-generated paths.
     """
-    global _tare_proc
-
-    if _tare_proc is not None and _tare_proc.poll() is None:
+    stopped = 0
+    for pid in _own_descendants_named("tare_planner_node"):
         try:
-            os.killpg(os.getpgid(_tare_proc.pid), signal.SIGTERM)
-            _tare_proc.wait(timeout=3)
-        except Exception:
-            try:
-                os.killpg(os.getpgid(_tare_proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
-        _tare_proc = None
+            os.kill(pid, signal.SIGTERM)
+            stopped += 1
+        except OSError:
+            pass
 
     # Remove nav flag — bridge path follower stops acting on TARE paths
     try:
@@ -154,7 +179,7 @@ def stop_tare_only() -> None:
     except FileNotFoundError:
         pass
 
-    logger.info("[EXPLORE] TARE stopped; FAR + localPlanner remain running")
+    logger.info("[EXPLORE] TARE stopped (%d own process(es)); FAR + localPlanner remain running", stopped)
 
 
 def is_nav_stack_running() -> bool:

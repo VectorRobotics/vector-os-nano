@@ -488,17 +488,12 @@ class TestIsaacSimProxyMotion:
 
     def test_walk_is_blocking_uses_sleep(self) -> None:
         proxy = self._connected_proxy()
-        sleep_calls: list[float] = []
+        proxy.set_velocity = MagicMock()
 
-        def mock_set_velocity(vx: float, vy: float, vyaw: float) -> None:
-            pass
-
-        proxy.set_velocity = mock_set_velocity
-
-        with patch("time.sleep", side_effect=lambda t: sleep_calls.append(t)):
+        with fake_clock() as slept:
             proxy.walk(vx=0.3, vy=0.0, vyaw=0.0, duration=0.5)
 
-        assert len(sleep_calls) > 0
+        assert slept[0] >= 0.5  # walk blocked (slept) for its duration
 
     def test_walk_returns_true(self) -> None:
         proxy = self._connected_proxy()

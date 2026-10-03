@@ -28,7 +28,7 @@ _SCRIPT = {"steps": [
 @pytest.fixture(scope="module")
 def e0_session():
     shutil.rmtree(_TARGET.parent, ignore_errors=True)
-    result = run_repl_session([_PROMPT], tool_script=_SCRIPT, answers=["y"], turn_timeout_sec=120)
+    result = run_repl_session([_PROMPT], tool_script=_SCRIPT, answers=["y"], timeout_sec=120)
     yield result
     shutil.rmtree(_TARGET.parent, ignore_errors=True)
 
