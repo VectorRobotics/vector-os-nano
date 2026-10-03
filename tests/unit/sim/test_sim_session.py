@@ -349,3 +349,28 @@ def test_arm_choice_comes_from_the_ctor_not_the_env(monkeypatch) -> None:
     monkeypatch.setenv("VECTOR_SIM_WITH_ARM", "1")
     assert MuJoCoGo2()._with_arm is False
     assert MuJoCoGo2(with_arm=True)._with_arm is True
+
+
+def test_nav_teardown_kills_every_group_in_its_session_and_nothing_else() -> None:
+    """launch_nav_only.sh runs nodes under ``set -m`` (own pgid each): killing only the
+    script's group orphaned them (seen live: rviz2/terrainAnalysis outliving the REPL)."""
+    import subprocess
+    import time
+
+    bystander = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    script = subprocess.Popen(
+        ["bash", "-c", "set -m; sleep 60 & sleep 60 & wait"],
+        stdin=subprocess.DEVNULL, start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while len(sess._session_pgids({script.pid})) < 3 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert len(sess._session_pgids({script.pid})) == 3  # bash + 2 job groups
+        sess._kill_sessions({script.pid}, grace_s=2.0)
+        script.wait(timeout=5)
+        assert sess._session_pgids({script.pid}) == set()
+        assert bystander.poll() is None, "a process outside our session was killed"
+    finally:
+        bystander.kill()
+        bystander.wait()

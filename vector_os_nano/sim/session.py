@@ -307,7 +307,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
             session.notes.append("explore: unavailable (VECTOR_NAV_STACK unset)")
         else:
             try:
-                session.own("nav stack stopped", _launch_ros2_stack(base))
+                session.own("nav stack stopped", _launch_ros2_stack(base, gui=spec.gui))
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: unavailable ({exc})")
@@ -359,14 +359,46 @@ _BUILDERS: dict[str, Callable[[SimSession, str | None], Any]] = {
 # ---------------------------------------------------------------------------
 
 
-def _launch_ros2_stack(go2: Any) -> Callable[[], None]:
-    """Start the ROS2 bridge (thread) + nav stack (own process group).
+def _session_pgids(sids: set[int]) -> set[int]:
+    """Process groups of every live process in the given sessions.
 
-    Returns the cleanup the session owns: stops the monitor, kills ONLY the
-    process group this call spawned (and only while it is alive), closes the log.
+    The nav script runs its nodes under ``set -m`` (one process group each), so
+    killing the script's own group orphans them; they all keep the script's SID.
+    """
+    pgids: set[int] = set()
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            try:
+                f = Path(f"/proc/{d}/stat").read_text().rsplit(")", 1)[1].split()
+            except OSError:
+                continue
+            if int(f[3]) in sids and f[0] != "Z":
+                pgids.add(int(f[2]))
+    return pgids
+
+
+def _kill_sessions(sids: set[int], grace_s: float = 5.0) -> None:
+    """SIGTERM, then SIGKILL, every process group in sessions we created."""
+    import signal
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for g in _session_pgids(sids):
+            try:
+                os.killpg(g, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+        deadline = time.monotonic() + grace_s
+        while _session_pgids(sids) and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+
+def _launch_ros2_stack(go2: Any, *, gui: bool) -> Callable[[], None]:
+    """Start the ROS2 bridge (thread) + nav stack (its own session).
+
+    Returns the cleanup the session owns: stops the monitor and kills every
+    process group in the sessions this call created (nothing else), closes the log.
     """
     import importlib.util
-    import signal
     import subprocess
     import sys
     import threading
@@ -394,36 +426,37 @@ def _launch_ros2_stack(go2: Any) -> Callable[[], None]:
     spin_t = threading.Thread(target=_spin, daemon=True, name="vnav_bridge_spin")
     spin_t.start()
 
-    script = str(_REPO / "scripts" / "launch_nav_only.sh")
+    argv = [str(_REPO / "scripts" / "launch_nav_only.sh")] + ([] if gui else ["--no-rviz"])
     log_path = Path("/tmp/vector_nav_only.log")
     if log_path.exists() and log_path.stat().st_size > 5 * 1024 * 1024:
         log_path.write_text("")  # bound disk use
     log_fh = open(log_path, "a")
-    proc_ref = [subprocess.Popen([script], stdout=log_fh, stderr=subprocess.STDOUT,
-                                 start_new_session=True)]
+    sids: set[int] = set()  # every session we started (each Popen leads one)
+
+    def _spawn() -> Any:
+        # stdin from /dev/null: a node must never hold the REPL's terminal open.
+        p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log_fh,
+                             stderr=subprocess.STDOUT, start_new_session=True)
+        sids.add(p.pid)
+        return p
+
+    proc_ref = [_spawn()]
     stop_evt = threading.Event()
 
     def _monitor() -> None:
         while not stop_evt.wait(5.0):
             if proc_ref[0].poll() is not None:
                 logger.warning("nav stack exited (%s), restarting", proc_ref[0].returncode)
-                proc_ref[0] = subprocess.Popen([script], stdout=log_fh, stderr=subprocess.STDOUT,
-                                               start_new_session=True)
+                proc_ref[0] = _spawn()
 
-    threading.Thread(target=_monitor, daemon=True, name="nav_stack_monitor").start()
+    monitor = threading.Thread(target=_monitor, daemon=True, name="nav_stack_monitor")
+    monitor.start()
 
     def _cleanup() -> None:
         stop_evt.set()
-        proc = proc_ref[0]
-        if proc.poll() is None:  # never signal a reaped (possibly reused) pid
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-                proc.wait(timeout=5)
-            except Exception:  # noqa: BLE001
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+        monitor.join(timeout=6.0)
+        _kill_sessions(sids)
+        proc_ref[0].poll()  # reap
         log_fh.close()
         try:
             node.destroy_node()
