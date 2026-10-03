@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 
 from vector_os_nano.vcli.cognitive.coord_goal import (
-    at_position_const,
     coord_goal_mismatch,
+    has_necessary_at_position,
     parse_goal_coord,
 )
 
@@ -42,27 +42,28 @@ def test_parse_goal_coord(goal, expected) -> None:
 
 
 @pytest.mark.parametrize(
-    "expr, expected",
+    "expr, present",
     [
-        ("at_position(11.0, 3.0)", (11.0, 3.0)),
-        ("at_position(11, 3, 0.5)", (11.0, 3.0)),       # tol == oracle tol -> kept
-        ("at_position(-2, 0)", (-2.0, 0.0)),
-        ("facing(1.5708)", None),
-        ("holding_object('banana')", None),
-        ("path_contains('out.txt', 'ready')", None),
-        ("at_position(get_x(), 3)", None),    # non-literal target -> fail open
-        ("len(get_position()) == 3", None),
-        ("", None),
-        # STEP-15 hardening:
-        ("at_position(x=11, y=3)", (11.0, 3.0)),        # kwarg form read
-        ("at_position(x=11, y=3, tol=0.3)", (11.0, 3.0)),  # tighter tol -> kept
-        ("at_position(11, 3, 99)", None),               # TOL-INFLATION (positional) -> rejected
-        ("at_position(11, 3, tol=99)", None),           # TOL-INFLATION (kwarg) -> rejected
-        ("at_position(11, 3, get_tol())", None),        # non-literal tol -> rejected
+        ("at_position(11.0, 3.0)", True),
+        ("at_position(11, 3, 0.5)", True),              # tol == oracle tol -> kept
+        ("at_position(-2, 0)", True),
+        ("facing(1.5708)", False),
+        ("holding_object('banana')", False),
+        ("path_contains('out.txt', 'ready')", False),
+        ("at_position(get_x(), 3)", False),    # non-literal target -> not a gating const
+        ("len(get_position()) == 3", False),
+        ("", False),
+        # STEP-15 hardening (via _at_position_call_xy, still used here):
+        ("at_position(x=11, y=3)", True),               # kwarg form read
+        ("at_position(x=11, y=3, tol=0.3)", True),      # tighter tol -> kept
+        ("at_position(11, 3, 99)", False),              # TOL-INFLATION (positional) -> rejected
+        ("at_position(11, 3, tol=99)", False),          # TOL-INFLATION (kwarg) -> rejected
+        ("at_position(11, 3, get_tol())", False),       # non-literal tol -> rejected
+        ("at_position(11, 3) or visited('x')", False),  # non-necessary (OR decoy)
     ],
 )
-def test_at_position_const(expr, expected) -> None:
-    assert at_position_const(expr) == expected
+def test_has_necessary_at_position(expr, present) -> None:
+    assert has_necessary_at_position(expr) is present
 
 
 def test_coord_goal_mismatch() -> None:

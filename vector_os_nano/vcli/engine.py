@@ -533,13 +533,9 @@ class VectorEngine:
         tool_dispatcher: Any = None
         try:
             from vector_os_nano.vcli.cognitive.code_executor import CodeExecutor
-            # The code-as-policy sandbox must NOT receive side-effecting verifier
-            # predicates (e.g. tests_pass spawns subprocesses, bypassing the
-            # permission gate). The GoalVerifier keeps the full namespace; the
-            # executor gets a filtered copy.
-            _SANDBOX_DENY = {"tests_pass"}
-            code_ns = {k: v for k, v in ns.items() if k not in _SANDBOX_DENY}
-            code_executor = CodeExecutor(code_ns)
+            # The verify namespace is side-effect-free (no command-running
+            # predicate exists), so the code sandbox gets a plain copy.
+            code_executor = CodeExecutor(dict(ns))
         except Exception as exc:  # noqa: BLE001
             logger.debug("VGG: CodeExecutor unavailable: %s", exc)
         # Tool-backed execution is dev-world only; the robot world keeps its
@@ -616,7 +612,8 @@ class VectorEngine:
         _world_name = getattr(world, "name", repr(world)) if world is not None else "<no-world>"
         try:
             self._preflight_validate_world(
-                _vocab_kwargs, selector, ns, _world_name, _has_base
+                _vocab_kwargs, selector, ns, _world_name, _has_base,
+                is_robot=bool(world is not None and world.is_robot()),
             )
         except ValueError:
             raise  # genuine drift — fail loud
@@ -752,6 +749,7 @@ class VectorEngine:
         verify_ns: dict,
         world_name: str,
         has_base: bool,
+        is_robot: bool = False,
     ) -> None:
         """Validate that vocab, selector routes, and verify namespace are consistent.
 
@@ -845,10 +843,16 @@ class VectorEngine:
         for fn_name in sorted(verify_fn_names):
             if fn_name not in verify_ns:
                 sig = verify_fn_signatures.get(fn_name, "")
-                if "opt-in" in sig or "may be disabled" in sig:
+                if "opt-in" in sig or "may be disabled" in sig or is_robot:
+                    # A robot world's verify oracles bind only when the embodiment
+                    # connects (sim start can follow init_vgg), so their absence at
+                    # pre-boot is a designed lazy posture, not registration drift —
+                    # exactly like a dev opt-in predicate. (Constant stubs used to
+                    # paper over this; WP02 removed them so an unbound oracle fails
+                    # closed instead of reading a fake constant.)
                     logger.debug(
                         "VGG preflight: world %r — verify-fn %r absent from namespace "
-                        "(documented opt-in/lazy binding; not a drift error)",
+                        "(embodiment-conditional / opt-in; not a drift error)",
                         world_name,
                         fn_name,
                     )
@@ -884,24 +888,28 @@ class VectorEngine:
     def _build_verifier_namespace(self, agent: Any) -> dict[str, Any]:
         """Build function namespace for GoalVerifier from agent state.
 
-        Dev-world predicates (file_exists/grep_count/path_contains, and opt-in
-        tests_pass) are always included so the verifier works without a robot;
-        robot bindings are added on top when an agent is connected.
+        Only the active WORLD contributes predicates for its domain (the dev world
+        its file predicates, a robot world its sim oracles) — dev predicates are
+        never merged into a robot world. Only ``@oracle``-tagged callables count as
+        evidence (``trace_store.verify_oracle_names``); the SceneGraph / ObjectMemory
+        / predict readers below are the actor's own memory and stay callable but
+        untagged. No constant stubs: a verify naming an unavailable function fails
+        closed (NameError -> False) instead of reading a fake constant.
         """
         ns: dict[str, Any] = {}
-        # Domain-general dev predicates — always available (no robot required).
-        try:
-            from vector_os_nano.vcli.worlds.dev import dev_verify_namespace
-            ns.update(dev_verify_namespace())
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("dev verify namespace unavailable: %s", exc)
         if agent is None:
             return self._merge_world_verify_namespace(ns, agent)
+        from vector_os_nano.vcli.cognitive.oracle_registry import oracle
+
         base = getattr(agent, "_base", None)
         sg = getattr(agent, "_spatial_memory", None)
         if base:
-            ns["get_position"] = lambda: tuple(base.get_position())
-            ns["get_heading"] = base.get_heading
+            ns["get_position"] = oracle(scope="robot", channel="base")(
+                lambda: tuple(base.get_position())
+            )
+            ns["get_heading"] = oracle(scope="robot", channel="base")(
+                lambda: base.get_heading()
+            )
         if sg:
             ns["nearest_room"] = lambda: sg.nearest_room(
                 *base.get_position()[:2]
@@ -912,9 +920,6 @@ class VectorEngine:
                 for r in sg.get_all_rooms()
             ]
             ns["world_stats"] = sg.stats
-        # Safe stubs for perception (require camera — may not be available)
-        ns.setdefault("describe_scene", lambda: "")
-        ns.setdefault("detect_objects", lambda query="": [])
 
         # --- Phase 3: Active World Model functions ---
         # ObjectMemory functions (if ObjectMemory available on engine)
@@ -937,23 +942,6 @@ class VectorEngine:
                 current = _current_room_fn() if _current_room_fn else ""
                 return predict_navigation(sg, current or "", target)
             ns["predict_navigation"] = _predict_nav
-
-        # Safe stubs for Phase 3 functions when dependencies unavailable
-        ns.setdefault("last_seen", lambda category="": None)
-        ns.setdefault("certainty", lambda fact="": 0.0)
-        ns.setdefault("objects_in_room", lambda room_id="": [])
-        ns.setdefault("find_object", lambda category="": [])
-        ns.setdefault("room_coverage", lambda room_id="": 0.0)
-        ns.setdefault(
-            "predict_navigation",
-            lambda target="": {
-                "reachable": False,
-                "door_count": 0,
-                "estimated_steps": 0,
-                "rooms_on_path": [],
-                "confidence": 0.0,
-            },
-        )
         return self._merge_world_verify_namespace(ns, agent)
 
     def _merge_world_verify_namespace(
@@ -961,12 +949,11 @@ class VectorEngine:
     ) -> dict[str, Any]:
         """Merge the active world's verify-namespace contribution into *ns*.
 
-        Shared-prelude (1): a world may OWN verify predicates. The engine builds
-        its existing dev/robot bindings and stubs first, then merges in
-        ``world.build_verify_namespace(agent)`` on top — additively. World-
-        provided predicates take precedence over the engine's empty perception
-        stubs (``describe_scene`` -> "", ``detect_objects`` -> []); a world that
-        contributes ``{}`` (RobotWorld/DevWorld today) leaves *ns* byte-identical.
+        Shared-prelude (1): a world OWNS its verify predicates. The engine builds
+        its robot base / memory bindings first, then merges in
+        ``world.build_verify_namespace(agent)`` on top — additively (the dev
+        world contributes its file predicates here, a robot world its sim GT
+        oracles).
 
         The active world is the one wired into this engine (``self._world``); when
         none is wired (older/headless call paths) it is resolved from the agent via
@@ -1486,7 +1473,10 @@ class VectorEngine:
         not mutate the trace and adds no fields to the frozen VGG types.
         """
         from vector_os_nano.vcli.cognitive.observation import run_snapshot
-        return run_snapshot(trace)
+        from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
+
+        agent = getattr(self, "_vgg_agent", None)
+        return run_snapshot(trace, verify_oracle_names(agent, self))
 
     # ------------------------------------------------------------------
     # Public API

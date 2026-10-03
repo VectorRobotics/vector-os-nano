@@ -41,6 +41,8 @@ _ORACLES = frozenset(
         "at_position(11, 3) and True",          # dead-weight constant in an AND
         "at_position(11, 3) or (1 == 1)",       # constant-true compare disjunct
         "visited('kitchen') or not False",
+        "not holding_object('banana')",         # WP02: negation of a rise predicate
+        "'mug' not in describe_scene()",        # WP02: `not in` is author-satisfiable
     ],
 )
 def test_truthy_constant_shortcircuit_is_ran(expr: str) -> None:
@@ -62,7 +64,6 @@ def test_truthy_constant_shortcircuit_is_ran(expr: str) -> None:
         "file_exists('out.txt')",
         "at_position(11, 3) or at_position(12, 3)",   # every operand oracle-gated
         "at_position(11, 3) and facing(0.0)",
-        "not holding_object('banana')",
         "placed_count() == 2",
         "'table' in describe_scene()",
     ],
@@ -125,7 +126,6 @@ def test_membership_constant_container_shortcircuit_is_ran(expr: str) -> None:
     "expr",
     [
         "'table' in describe_scene()",     # the documented LEGIT form
-        "'mug' not in describe_scene()",
     ],
 )
 def test_membership_against_oracle_container_stays_grounded(expr: str) -> None:
@@ -180,13 +180,13 @@ def test_callable_wrapper_and_reduction_shortcircuit_is_ran(expr: str) -> None:
 @pytest.mark.parametrize(
     "expr",
     [
-        "get_position()[0] < 5.0",          # an index over an oracle PRESERVES its value
-        "get_position()[0] - 1.0 < 5.0",    # arithmetic over an oracle preserves its value
+        "get_position()[0] < 5.0",          # an index over a state oracle preserves its value
         "placed_count() == 2",
     ],
 )
 def test_truth_bearing_oracle_compare_stays_grounded(expr: str) -> None:
-    """A compare whose operand VALUE comes from an oracle (direct call, index, or
-    arithmetic over one) stays GROUNDED — STEP-14 rejects only reductions that DISCARD
-    the oracle value, never value-preserving access."""
+    """A compare whose operand value comes DIRECTLY off a state oracle (the call, a
+    constant index, or len() of it) stays GROUNDED. WP02 drops arithmetic (BinOp) from
+    the verify grammar entirely, so a value-absorbing `*0`/`-1.0` can never reach the
+    verdict — it does not even evaluate."""
     assert classify_verify_expr(expr, _ORACLES) == "GROUNDED", expr

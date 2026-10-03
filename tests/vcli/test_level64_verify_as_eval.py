@@ -4,7 +4,7 @@
 """Level 64 — Phase B.1.2: verify-as-eval, evidence gate, and vector-eval.
 
 Acceptance criteria (docs/agent-kernel-phase-b-plan.md, B-2):
-- trace save/load round-trips; replay reproduces pass/fail.
+- trace save/load round-trips; the evidence gate grades pass/fail.
 - a verify="True"-only (sentinel) trace is NOT counted as verified evidence;
   R1: robot traces NO LONGER bypass the gate — they too require deterministic
   evidence (the old ``if is_robot: return True`` short-circuit is deleted).
@@ -20,7 +20,6 @@ from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 from vector_os_nano.vcli.cognitive.trace_store import (
     evidence_passed,
     load_trace,
-    replay,
     save_trace,
     step_evidence_ok,
 )
@@ -30,6 +29,7 @@ from vector_os_nano.vcli.cognitive.types import (
     StepRecord,
     SubGoal,
 )
+from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 from vector_os_nano.vcli.eval_runner import EvalRunner, main as eval_main
 from vector_os_nano.vcli.worlds.dev import dev_verify_namespace
 
@@ -127,31 +127,7 @@ def test_load_tolerates_minimal_dict(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Replay reproduces pass/fail
-# ---------------------------------------------------------------------------
-
-
-def test_replay_reproduces_pass(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "a.txt").write_text("hello")
-    verifier = GoalVerifier(dev_verify_namespace())
-    assert replay(_trace(verify="file_exists('a.txt')"), verifier) is True
-
-
-def test_replay_reproduces_fail(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)  # a.txt does NOT exist
-    verifier = GoalVerifier(dev_verify_namespace())
-    assert replay(_trace(verify="file_exists('a.txt')"), verifier) is False
-
-
-def test_replay_sentinel_only_is_not_replayable() -> None:
-    verifier = GoalVerifier(dev_verify_namespace())
-    # Only a "True" sentinel verify -> nothing deterministic to replay -> False.
-    assert replay(_trace(verify="True"), verifier) is False
-
-
-# ---------------------------------------------------------------------------
-# Evidence gate
+# Evidence gate: pass/fail over deterministic predicates
 # ---------------------------------------------------------------------------
 
 
@@ -371,7 +347,13 @@ class _Verifier:
     ``_namespace`` (the SAME keys verify_oracle_names single-sources)."""
 
     def __init__(self) -> None:
-        self._namespace = {name: (lambda *a, **k: False) for name in ORACLES}
+        # WP02: only @oracle-tagged callables count as evidence. Tag each stub with
+        # its scope (dev file predicates vs robot GT) so the reward gate sees them.
+        _dev = {"file_exists", "grep_count", "path_contains"}
+        self._namespace = {
+            name: oracle(scope="dev" if name in _dev else "robot")(lambda *a, **k: False)
+            for name in ORACLES
+        }
 
 
 def test_w1_1_record_gate_blocks_sentinel_success_dev() -> None:

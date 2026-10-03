@@ -131,33 +131,6 @@ def _at_position_call_xy(node: ast.Call) -> tuple[float, float] | None:
     return (x, y)
 
 
-def at_position_const(expr: str | None) -> tuple[float, float] | None:
-    """The literal (x, y) of the FIRST ``at_position(x, y[, tol])`` in *expr*, or None.
-
-    None (fail OPEN) for any non-``at_position`` predicate, or an ``at_position`` whose
-    coordinate args are not numeric literals (a state-derived target). Hardened
-    (STEP-15) against the KWARG (``at_position(x=11, y=3)``) and TOL-INFLATION
-    (``at_position(11, 3, 99)`` / ``tol=99``) evasions — see ``_at_position_call_xy``.
-
-    NOTE (STEP-16): this returns the FIRST at_position constant regardless of boolean
-    position, so it does NOT prove the constant is NECESSARY for the verify's truth
-    (an ``or``/``not``/arithmetic decoy can carry a goal-matching constant while the
-    verify is True elsewhere). The coordinate gates use ``at_position_is_necessary`` /
-    ``has_necessary_at_position`` (necessary-conjunct) for the honest assertion; this
-    helper stays the single-constant accessor for ``coord_goal_mismatch``.
-    """
-    if not expr:
-        return None
-    try:
-        tree = ast.parse(expr.strip(), mode="eval")
-    except SyntaxError:
-        return None
-    for node in ast.walk(tree):
-        if _is_at_position_call(node):
-            return _at_position_call_xy(node)
-    return None
-
-
 def _necessary_at_position_consts(node: ast.AST) -> list[tuple[float, float]]:
     """The (x, y) consts of every ``at_position`` call that is a NECESSARY CONJUNCT of
     *node* — reachable from the root through ``BoolOp(And)`` nodes ONLY.
@@ -212,8 +185,8 @@ def at_position_is_necessary(
     The matching ``at_position`` must GATE the verify (a top-level or nested ``and``
     conjunct), so the verify cannot evaluate True with the robot away from the commanded
     coordinate. Fail-CLOSED (False) on syntax error / no necessary match. STEP-16: this
-    replaces the mere-PRESENCE check (``at_position_const`` is not None) that an
-    ``or``/``not``/arithmetic decoy could satisfy with a goal-matching-but-inert constant.
+    replaces a mere-PRESENCE check that an ``or``/``not``/arithmetic decoy could
+    satisfy with a goal-matching-but-inert constant.
     """
     t = _at_position_tol() if tol is None else float(tol)
     return any(math.dist(goal_xy, xy) <= t for xy in _necessary_consts(expr))

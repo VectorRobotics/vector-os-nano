@@ -195,8 +195,12 @@ def test_run_snapshot_over_real_execute() -> None:
         assert sv["result_data"]["output"]["moved_to"] == [0.1, 0.2, 0.3]
 
     assert snapshot["success"] is True
-    # The per-step callback view matches the run-complete step views.
-    assert captured_steps == snapshot["steps"]
+    # WP02: the run-complete snapshot grades each step (evidence key); the live
+    # per-step view is pre-grading and carries no evidence. They match otherwise.
+    for sv in snapshot["steps"]:
+        assert sv["evidence"] in ("GROUNDED", "RAN", "FAILED")
+    stripped = [{k: v for k, v in sv.items() if k != "evidence"} for sv in snapshot["steps"]]
+    assert captured_steps == stripped
 
     # Full snapshot round-trips through json.dumps.
     json.dumps(snapshot)

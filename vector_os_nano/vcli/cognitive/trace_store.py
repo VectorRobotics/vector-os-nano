@@ -1,15 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""trace_store — persist, reload, and replay VGG execution traces.
-
-Turns a run's ``ExecutionTrace`` into a replayable, self-grading eval signal:
+"""trace_store — persist and reload VGG execution traces, and grade their evidence.
 
 - ``save_trace`` / ``load_trace`` round-trip a trace to JSON under
   ``~/.vector/traces/`` (frozen dataclasses -> dicts and back; tuples survive).
-- ``replay`` re-evaluates each sub-goal's *deterministic* verify predicate with
-  a fresh ``GoalVerifier``. Visual overrides are NOT reproduced — only
-  deterministic evidence counts, which is the point of replay.
 - ``evidence_passed`` gates a "verified done" in EVERY world (dev and robot
   alike — the old ``if is_robot: return True`` bypass is gone): a step backs the
   outcome with evidence only when its verify actually consumes a world oracle
@@ -27,6 +22,7 @@ from typing import Any, Literal
 
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused, from_name
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
+from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     GoalTree,
@@ -37,10 +33,6 @@ from vector_os_nano.vcli.cognitive.types import (
 logger = logging.getLogger(__name__)
 
 StepEvidence = Literal["GROUNDED", "RAN", "FAILED"]
-
-# Verify strings that carry no deterministic evidence (empty, or the trivial
-# fallback the decomposer/robot motor steps use).
-_NO_EVIDENCE: frozenset[str] = frozenset({"", "True"})
 
 _DEFAULT_TRACES_DIR = Path.home() / ".vector" / "traces"
 
@@ -77,19 +69,18 @@ def _is_answer_only(sub_goal: SubGoal) -> bool:
 
 
 def verify_oracle_names(agent: Any, engine: Any = None) -> frozenset[str]:
-    """The callable names in the LIVE verify namespace GoalVerifier uses.
+    """The EVIDENCE oracle names in the LIVE verify namespace GoalVerifier uses.
 
-    Single source (rule 3): the names are the keys of the SAME dict
-    ``engine._build_verifier_namespace(agent)`` builds for ``GoalVerifier`` (which
-    already merges ``World.build_verify_namespace(agent)`` on top — so a connected
-    sim arm's ``arm_at_home`` / ``holding_object`` overlay is visible here, and the
-    engine's empty perception stubs at engine.py:906 are correctly shadowed). NEVER
-    a hand-authored second allowlist.
+    Single source (rule 3): read off the SAME dict
+    ``engine._build_verifier_namespace(agent)`` builds for ``GoalVerifier`` — but
+    only the callables tagged ``@oracle`` with the active world's scope
+    (``"robot"`` in a robot world, ``"dev"`` in the dev world). Untagged callables
+    (memory readers, helpers) and dev predicates inside a robot world stay callable
+    but are not evidence, so a verify built on them classifies RAN.
 
-    *engine* is required to build the namespace; when it is None (or namespace
-    construction raises) this FAILS CLOSED to ``frozenset()`` — with no oracle
-    names every predicate classifies RAN, never a spurious GROUNDED. This keeps the
-    moat strict (rule 5): an absent namespace can only make verification stricter.
+    *engine* is required to build the namespace; when it is None (or namespace /
+    world resolution raises) this FAILS CLOSED to ``frozenset()`` — with no oracle
+    names every predicate classifies RAN, never a spurious GROUNDED (rule 5).
     """
     if engine is None:
         return frozenset()
@@ -98,10 +89,16 @@ def verify_oracle_names(agent: Any, engine: Any = None) -> frozenset[str]:
         return frozenset()
     try:
         ns = builder(agent)
+        world = getattr(engine, "_world", None)
+        if world is None:
+            from vector_os_nano.vcli.worlds.registry import resolve_world
+
+            world = resolve_world(agent)
+        scope = "robot" if world.is_robot() else "dev"
     except Exception as exc:  # noqa: BLE001
         logger.debug("verify_oracle_names: namespace build failed: %s", exc)
         return frozenset()
-    return frozenset(ns.keys())
+    return evidence_names(ns, scope)
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +136,7 @@ def classify_step_evidence(
         * ``classify_verify_expr(sub_goal.verify, oracle_names) == "GROUNDED"``
           AND ``step.verify_result`` AND not a visual override.
       A VLM visual override is not deterministic (not replayable) evidence, so it
-      can never reach GROUNDED — keeping this gate in agreement with ``replay``.
+      can never reach GROUNDED.
     - RAN — the step succeeded but its verify carries no real, non-tautological
       world evidence (a sentinel ``""``/``"True"``, an absent oracle, or a
       tautology), or it succeeded with a visual override.
@@ -310,38 +307,8 @@ def load_trace(path: str | Path) -> ExecutionTrace:
 
 
 # ---------------------------------------------------------------------------
-# Replay + evidence
+# Evidence
 # ---------------------------------------------------------------------------
-
-
-def replay(trace: ExecutionTrace, verifier: Any) -> bool:
-    """Re-evaluate every sub-goal's deterministic verify predicate.
-
-    Returns True iff every non-sentinel verify expression evaluates truthy under
-    *verifier* (a ``GoalVerifier``). Sentinel verifies (``""`` / ``"True"``) are
-    skipped — they carry no evidence — and a trace with *no* deterministic
-    predicate to replay returns False (nothing was actually checked).
-
-    Stage 5 (S5.2): an explicitly ``answer_only`` step carries no robot evidence
-    BY DESIGN — it is skipped exactly like a sentinel and never counts toward
-    ``checked``. This does NOT loosen the gate: the exemption is tied to the
-    side-effect-free ``answer`` strategy (``answer_only`` alone is fully
-    LLM-controlled, so it is NOT trusted to waive evidence for a step that runs a
-    side-effecting executor). An action step with a sentinel verify is still
-    non-evidence and a pure-answer trace still returns False (nothing deterministic
-    was checked).
-    """
-    checked = 0
-    for sg in trace.goal_tree.sub_goals:
-        if _is_answer_only(sg):
-            continue
-        expr = (sg.verify or "").strip()
-        if expr in _NO_EVIDENCE:
-            continue
-        checked += 1
-        if not verifier.verify(sg.verify):
-            return False
-    return checked > 0
 
 
 def evidence_passed(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool:
@@ -369,9 +336,20 @@ def evidence_passed(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool
     visual override. The exemption is keyed on the side-effect-free ``answer``
     strategy, NOT the LLM-controlled ``answer_only`` flag alone, so an LLM cannot
     launder a side-effecting step past the gate.
+
+    WHOLE-TRACE rule (stricter-only): a trace that did not succeed, a step with no
+    sub-goal to grade it against (a foreach child ``owner[i].tmpl`` — its resolved
+    verify is not in the tree), or a foreach node at all (zero iterations leave no
+    step behind) can never verify. The gate grades every step or none.
     """
+    if not trace.success:
+        return False
     sg_by_name = {sg.name: sg for sg in trace.goal_tree.sub_goals}
-    checked = [s for s in trace.steps if s.sub_goal_name in sg_by_name]
+    if any(getattr(sg, "foreach", None) is not None for sg in trace.goal_tree.sub_goals):
+        return False
+    if any(s.sub_goal_name not in sg_by_name for s in trace.steps):
+        return False
+    checked = list(trace.steps)
     if not checked:
         return False
     goal_text = trace.goal_tree.goal

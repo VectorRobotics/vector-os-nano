@@ -153,8 +153,6 @@ def test_real_grasp_via_holding_object_stays_grounded() -> None:
     [
         # pick-and-place terminating on placed_count -> honest, stays GROUNDED
         ("把香蕉抓起来放到盒子里", "placed_count() == 1", "place", ActorCaused.NOT_GRADED),
-        # pick-and-place terminating on release -> honest, stays GROUNDED
-        ("抓起香蕉放下", "not holding_object()", "place", ActorCaused.NOT_GRADED),
         # generic pick proven by holding anything
         ("pick up the cube", "holding_object()", "pick", ActorCaused.CAUSED),
         # grasp + return-home chain
@@ -165,6 +163,19 @@ def test_honest_manipulation_goals_stay_grounded(goal, verify, strategy, actor) 
     sg, rec = _step("s0", verify, strategy, actor)
     trace = _trace(goal, (sg, rec))
     assert evidence_passed(trace, _ARM_ORACLES) is True
+
+
+def test_release_negation_is_not_grounded() -> None:
+    """WP02 (stricter-only): a release terminal written as ``not holding_object()`` —
+    the negation of a RISE predicate — is RAN, not GROUNDED. A release re-homes to a
+    positive fall-transition oracle (``released()``), not ``not`` of a rise predicate;
+    and at runtime this step was already RAN (release never grades CAUSED). The
+    object-goal gate still SEES a necessary manip oracle, so this is the classifier's
+    negation rule, not the gate opening a hole."""
+    sg, rec = _step("s0", "not holding_object()", "place", ActorCaused.NOT_GRADED)
+    trace = _trace("抓起香蕉放下", (sg, rec))
+    assert evidence_passed(trace, _ARM_ORACLES) is False
+    assert has_necessary_manip_oracle("not holding_object()") is True
 
 
 @pytest.mark.parametrize(

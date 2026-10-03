@@ -4,14 +4,18 @@
 """GoalVerifier — safe sandbox for evaluating SubGoal verify expressions.
 
 Security model:
-- Only the caller-supplied primitives_namespace functions are available.
-- A restricted set of safe builtins is injected (no open, exec, eval, etc.).
-- AST is checked before eval: Import, ImportFrom, Assign, AugAssign,
-  FunctionDef, ClassDef, Exec nodes are all blocked.
-- Any name containing "__" (dunder) in the source text is rejected.
-- Execution is bounded by a 5-second timeout (signal.alarm on Unix,
-  threading.Timer fallback on Windows).
-- Any exception causes the method to return False and log a warning.
+- The expression must fit an AST ALLOWLIST (``_ALLOWED_NODES``): boolean logic,
+  comparisons, calls on a bare NAME, names, literals, tuple/list literals and
+  subscripts. No attribute access, no comprehensions / lambdas /
+  walrus / f-strings / arithmetic — so there is no path to frames, ``__globals__``
+  or the real builtins, and no ``'x' * 10**9`` style allocation bomb.
+- Only the caller-supplied primitives_namespace functions plus a restricted set
+  of safe builtins (no open, exec, eval, getattr, ...) are resolvable.
+- Any "__" (dunder) in the source text is rejected.
+- Execution is bounded by a 5-second timeout (SIGALRM on the main thread, a
+  watchdog thread elsewhere). A thread-path timeout cannot be cancelled, so the
+  verifier refuses to evaluate anything else while that evaluation still runs.
+- Any exception (including the truth test of the result) returns False.
 """
 from __future__ import annotations
 
@@ -47,18 +51,30 @@ _SAFE_BUILTINS: dict[str, Any] = {
 }
 
 # ---------------------------------------------------------------------------
-# AST node types that are unconditionally blocked
+# AST allowlist — every node of a verify expression must be one of these
 # ---------------------------------------------------------------------------
 
-_BLOCKED_NODE_TYPES = (
-    ast.Import,
-    ast.ImportFrom,
-    ast.Assign,
-    ast.AugAssign,
-    ast.FunctionDef,
-    ast.AsyncFunctionDef,
-    ast.ClassDef,
+_ALLOWED_NODES = (
+    ast.Expression,
+    ast.BoolOp, ast.And, ast.Or,
+    ast.UnaryOp, ast.Not, ast.USub, ast.UAdd,
+    ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn,
+    ast.Is, ast.IsNot,  # harmless to evaluate; never evidence (evidence_classifier)
+    ast.Call, ast.keyword, ast.Name, ast.Load,
+    ast.Constant, ast.Tuple, ast.List, ast.Subscript, ast.Slice,
 )
+
+
+def _grammar_violation(tree: ast.AST) -> str | None:
+    """The first construct outside the verify grammar, or None if *tree* fits it."""
+    for node in ast.walk(tree):
+        if not isinstance(node, _ALLOWED_NODES):
+            return type(node).__name__
+        if isinstance(node, ast.Call) and not isinstance(node.func, ast.Name):
+            return "call on a non-name"
+        if isinstance(node, ast.keyword) and node.arg is None:
+            return "**kwargs"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -73,8 +89,11 @@ _TIMEOUT_SECONDS = 5
 _EVAL_FAILED = object()
 
 
-class _TimeoutError(Exception):
-    """Raised when a verify expression exceeds the time limit."""
+class _TimeoutError(BaseException):
+    """Raised when a verify expression exceeds the time limit.
+
+    A BaseException so an oracle's own ``except Exception`` cannot swallow it.
+    """
 
 
 def _signal_handler(signum: int, frame: object) -> None:  # noqa: ARG001
@@ -91,6 +110,8 @@ class GoalVerifier:
         built-ins) will be resolvable inside verify expressions.
         """
         self._namespace: dict[str, Any] = dict(primitives_namespace)
+        # A thread-path evaluation that outlived its timeout (it cannot be killed).
+        self._runaway: threading.Thread | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -120,67 +141,50 @@ class GoalVerifier:
             _LOG.warning("GoalVerifier: empty expression")
             return False, None
 
+        if self._runaway is not None and self._runaway.is_alive():
+            _LOG.warning("GoalVerifier: a timed-out evaluation is still running; refusing %r", expression)
+            return False, None
+
         # Dunder check on raw source text
         if "__" in expression:
             _LOG.warning("GoalVerifier: dunder name rejected in expression: %r", expression)
             return False, None
 
-        # AST safety check. LLM-authored expressions can carry sloppy escape
-        # sequences (e.g. '\.'); they parse fine (the escape becomes a literal)
-        # but ast.parse would emit a SyntaxWarning to '<unknown>' on the user's
-        # console. Suppress that noise — it is model output, not a code defect.
+        # LLM-authored expressions can carry sloppy escape sequences (e.g. '\.');
+        # they parse fine (the escape becomes a literal) but ast.parse would emit a
+        # SyntaxWarning to '<unknown>' on the user's console. Suppress that noise.
         import warnings  # noqa: PLC0415
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 tree = ast.parse(expression, mode="eval")
         except SyntaxError:
-            # Try statement mode to produce a better error message for blocked constructs
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", SyntaxWarning)
-                    stmt_tree = ast.parse(expression, mode="exec")
-                for node in ast.walk(stmt_tree):
-                    if isinstance(node, _BLOCKED_NODE_TYPES):
-                        _LOG.warning(
-                            "GoalVerifier: blocked AST node %s in expression: %r",
-                            type(node).__name__,
-                            expression,
-                        )
-                        return False, None
-            except SyntaxError:
-                pass
             _LOG.warning("GoalVerifier: SyntaxError in expression: %r", expression)
             return False, None
 
-        # Walk the eval-mode AST and reject blocked node types
-        for node in ast.walk(tree):
-            if isinstance(node, _BLOCKED_NODE_TYPES):
-                _LOG.warning(
-                    "GoalVerifier: blocked AST node %s in expression: %r",
-                    type(node).__name__,
-                    expression,
-                )
-                return False, None
+        bad = _grammar_violation(tree)
+        if bad is not None:
+            _LOG.warning("GoalVerifier: %s is outside the verify grammar: %r", bad, expression)
+            return False, None
 
-        # Compile for eval
         try:
             code = compile(tree, "<verify>", "eval")
         except Exception as exc:  # noqa: BLE001
             _LOG.warning("GoalVerifier: compile error for %r: %s", expression, exc)
             return False, None
 
-        # Build execution globals
-        exec_globals: dict[str, Any] = {
-            "__builtins__": _SAFE_BUILTINS,
-        }
+        exec_globals: dict[str, Any] = {"__builtins__": _SAFE_BUILTINS}
         exec_globals.update(self._namespace)
 
         # Evaluate with timeout — returns the raw value or _EVAL_FAILED.
         raw = self._eval_with_timeout(code, exec_globals)
         if raw is _EVAL_FAILED:
             return False, None
-        return bool(raw), raw
+        try:
+            return bool(raw), raw
+        except Exception as exc:  # noqa: BLE001 — e.g. an ambiguous numpy truth value
+            _LOG.warning("GoalVerifier: result of %r has no truth value: %s", expression, exc)
+            return False, None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -208,9 +212,12 @@ class GoalVerifier:
         exec_globals: dict[str, Any],
     ) -> Any:
         old_handler = signal.signal(signal.SIGALRM, _signal_handler)
-        signal.alarm(_TIMEOUT_SECONDS)
+        prior_alarm = signal.alarm(_TIMEOUT_SECONDS)
         try:
-            return eval(code, exec_globals)  # noqa: S307
+            try:
+                return eval(code, exec_globals)  # noqa: S307
+            finally:
+                signal.alarm(0)  # disarm before anything else can be interrupted
         except _TimeoutError:
             _LOG.warning("GoalVerifier: expression timed out")
             return _EVAL_FAILED
@@ -218,15 +225,21 @@ class GoalVerifier:
             _LOG.warning("GoalVerifier: runtime error: %s", exc)
             return _EVAL_FAILED
         finally:
-            signal.alarm(0)
             signal.signal(signal.SIGALRM, old_handler)
+            if prior_alarm:
+                signal.alarm(prior_alarm)
 
     def _eval_thread_timeout(
         self,
         code: Any,
         exec_globals: dict[str, Any],
     ) -> Any:
-        """Fallback timeout using a threading.Timer (for Windows / non-main threads)."""
+        """Fallback timeout on a watchdog thread (non-main threads / no SIGALRM).
+
+        A thread cannot be cancelled: on timeout the evaluation keeps running, so it
+        is remembered and every later ``evaluate`` refuses until it finishes — it can
+        never run concurrently with the next step's verify.
+        """
         result_box: list[Any] = [_EVAL_FAILED]
         error_box: list[Exception | None] = [None]
 
@@ -241,6 +254,7 @@ class GoalVerifier:
         thread.join(timeout=_TIMEOUT_SECONDS)
 
         if thread.is_alive():
+            self._runaway = thread
             _LOG.warning("GoalVerifier: expression timed out (thread fallback)")
             return _EVAL_FAILED
 

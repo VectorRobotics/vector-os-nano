@@ -813,7 +813,7 @@ Respond with ONLY valid JSON matching this schema — no prose, no markdown fenc
         # skill) has the flag REFUSED here (fail-loud note), so the step stays a
         # real action that the gate still requires a deterministic predicate for.
         # This is belt-and-suspenders with the gate, which also keys on
-        # ``strategy == 'answer'`` (trace_store.evidence_passed / replay).
+        # ``strategy == 'answer'`` (trace_store.evidence_passed).
         answer_only = bool(raw.get("answer_only", False)) or strategy == "answer"
         if answer_only and strategy != "answer":
             _LOG.warning(

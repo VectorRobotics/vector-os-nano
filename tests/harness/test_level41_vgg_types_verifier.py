@@ -234,7 +234,9 @@ class TestGoalVerifier:
 
     # Basic arithmetic allowed
     def test_basic_arithmetic(self, verifier: GoalVerifier) -> None:
-        assert verifier.verify("1 + 1 == 2") is True
+        # WP02: arithmetic (BinOp) is outside the verify grammar -> False. Verify
+        # expressions compare oracle values against literals, never compute.
+        assert verifier.verify("1 + 1 == 2") is False
 
     # Assignment blocked by AST
     def test_assignment_blocked(self, verifier: GoalVerifier) -> None:
@@ -277,7 +279,8 @@ class TestGoalVerifier:
 
     # FunctionDef blocked
     def test_functiondef_blocked(self, verifier: GoalVerifier) -> None:
-        assert verifier.verify("lambda x: x") is True  # lambda OK in eval
+        # WP02: lambda is outside the grammar (it was a sandbox-escape vector) -> False.
+        assert verifier.verify("lambda x: x") is False
         # def statement is not a valid eval expression anyway, but verify returns False
         assert verifier.verify("def foo(): pass") is False
 

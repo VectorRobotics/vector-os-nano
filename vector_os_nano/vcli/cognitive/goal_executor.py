@@ -109,18 +109,18 @@ class GoalExecutor:
     # ------------------------------------------------------------------
 
     def _verify_oracle_names(self) -> frozenset[str]:
-        """Live verify-namespace callable names (single source, rule 3).
+        """Live evidence-oracle names (single source, rule 3).
 
-        Reads the SAME namespace the executor's ``GoalVerifier`` uses — its
-        ``_namespace`` was built by ``engine._build_verifier_namespace`` with the
-        active world's ``build_verify_namespace`` already merged on top, so a
-        connected sim arm's ``arm_at_home`` / ``holding_object`` overlay is visible
-        here. Never a hand-authored copy. An absent/empty namespace yields the
-        empty set, which fails the evidence gate closed (everything classifies RAN).
+        The ``@oracle``-tagged callables of the SAME namespace the executor's
+        ``GoalVerifier`` uses (any scope — a namespace carries one world's oracles,
+        so there is nothing to mix). An absent namespace yields the empty set, which
+        fails the evidence gate closed (everything classifies RAN).
         """
+        from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names
+
         ns = getattr(self._verifier, "_namespace", None)
         if isinstance(ns, dict):
-            return frozenset(ns.keys())
+            return evidence_names(ns)  # any tagged scope (one world per namespace)
         return frozenset()
 
     def _record_strategy_stats(self, step: StepRecord, sub_goal: SubGoal) -> None:
@@ -559,7 +559,7 @@ class GoalExecutor:
     # FOREACH expansion (Stage 4, S4-2)
     # ------------------------------------------------------------------
 
-    def _resolve_foreach_items(self, spec: ForEachSpec) -> list[Any]:
+    def _resolve_foreach_items(self, spec: ForEachSpec) -> list[Any] | None:
         """Read the producing step's iterable from the blackboard (pure traversal).
 
         The list is reached through the SAME ``${step.path}`` convention every
@@ -571,12 +571,12 @@ class GoalExecutor:
         ``<source_step>.<source_path>`` for a producer that stored the list at the
         top level. The first form that resolves to a list wins.
 
-        Returns an empty list when there is no blackboard, the path does not
-        resolve to a list, or resolution raises — an empty (or unresolved)
-        producer yields zero children, never an error.
+        Returns None when there is no blackboard, the path does not resolve to a
+        list, or resolution raises — a MISS, which the caller fails loud. Only a
+        producer that really produced ``[]`` yields zero iterations.
         """
         if self._blackboard is None:
-            return []
+            return None
         path = spec.source_path.strip(".")
         candidates = (
             f"${{{spec.source_step}.output.{path}}}",
@@ -587,16 +587,10 @@ class GoalExecutor:
                 resolved = self._blackboard.resolve(ref)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("GoalExecutor: foreach resolve raised: %s", exc)
-                return []
+                return None
             if isinstance(resolved, list):
                 return list(resolved)
-        logger.info(
-            "GoalExecutor: foreach source %r.%r did not resolve to a list — "
-            "zero iterations",
-            spec.source_step,
-            spec.source_path,
-        )
-        return []
+        return None
 
     def _execute_foreach(
         self,
@@ -613,17 +607,41 @@ class GoalExecutor:
         dict/list path traversal (never string eval/format). Child outputs are
         captured to the blackboard as usual.
 
-        Stops at the first failed child (mirrors the leaf abort semantics). An
-        empty producing list yields zero children — not an error.
+        Stops at the first failed child (mirrors the leaf abort semantics). A
+        producing list that is really empty yields zero children; an empty body or a
+        source that does not resolve to a list is a FAILED owner step (fail loud,
+        rule 8) — never a silent zero-iteration success.
         """
         spec = sub_goal.foreach
         records: list[StepRecord] = []
         if spec is None:  # defensive — caller only dispatches real foreach nodes
             return records
-        if not spec.body:
-            return records
-
-        items = self._resolve_foreach_items(spec)
+        items = self._resolve_foreach_items(spec) if spec.body else None
+        if items is None:
+            if not spec.body:
+                error = "foreach has an empty body"
+            else:
+                bb = self._blackboard.snapshot() if self._blackboard is not None else {}
+                error = (
+                    f"foreach source {spec.source_step!r}.{spec.source_path!r} did not "
+                    f"resolve to a list; produced steps: {sorted(bb)}"
+                )
+            logger.warning("GoalExecutor: %s", error)
+            miss = StepRecord(
+                sub_goal_name=sub_goal.name,
+                strategy="",
+                success=False,
+                verify_result=False,
+                duration_sec=0.0,
+                error=error,
+                failure_class="exec_error",
+            )
+            if on_step is not None:
+                try:
+                    on_step(miss)
+                except Exception:  # noqa: BLE001
+                    pass
+            return [miss]
         # The body runs once per item, but template-to-template ``depends_on`` must
         # still order the body (e.g. place_obj depends_on pick_obj). Order the body
         # ONCE by its intra-body deps; list order is the deterministic tie-break, so

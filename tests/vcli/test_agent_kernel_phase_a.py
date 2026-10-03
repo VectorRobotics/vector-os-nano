@@ -3,7 +3,7 @@
 
 """Phase A — verified agent kernel / world decoupling.
 
-Covers: dev verify predicates (read-only + opt-in tests_pass), world
+Covers: dev verify predicates (read-only), world
 resolution + persona, GoalDecomposer vocabulary injection (dev) with robot
 defaults preserved, VGG un-gated over a robot-free dev world, robot-path
 regression, and tool category gating in the dev world.
@@ -14,7 +14,6 @@ The LLM backend is always mocked; no network, no robot deps.
 from __future__ import annotations
 
 import json
-import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -69,22 +68,6 @@ class TestDevPredicates:
         assert ns["file_exists"]("../../../../etc/hosts") is False
         assert ns["grep_count"]("root", "..") == 0
         assert ns["path_contains"]("../../etc/hosts", "localhost") is False
-
-    def test_tests_pass_opt_in(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.chdir(tmp_path)
-        # Disabled by default -> not even in the namespace.
-        monkeypatch.delenv("VECTOR_DEV_ALLOW_TESTS", raising=False)
-        assert "tests_pass" not in dev_verify_namespace()
-        # Opt-in -> present and bounded; a trivially-true command returns True.
-        monkeypatch.setenv("VECTOR_DEV_ALLOW_TESTS", "1")
-        ns = dev_verify_namespace()
-        assert "tests_pass" in ns
-        py = sys.executable
-        assert ns["tests_pass"](f'{py} -c "raise SystemExit(0)"') is True
-        assert ns["tests_pass"](f'{py} -c "raise SystemExit(1)"') is False
-        # A nonexistent command fails safe (no crash).
-        assert ns["tests_pass"]("definitely-not-a-real-binary-xyz") is False
-
 
 # ---------------------------------------------------------------------------
 # World resolution + persona
@@ -237,8 +220,9 @@ class TestRobotRegression:
         ns = eng._build_verifier_namespace(agent)
         # Robot primitives present...
         assert "get_position" in ns and "get_heading" in ns
-        # ...and the dev predicates coexist.
-        assert "file_exists" in ns and "grep_count" in ns
+        # WP02 (dev-oracles-in-robot-world fix): dev file predicates are NEVER merged
+        # into a robot namespace, so they cannot ground a robot verify.
+        assert "file_exists" not in ns and "grep_count" not in ns
 
     def test_robot_world_uses_decomposer_defaults(self) -> None:
         assert RobotWorld().decompose_vocab() is None
@@ -304,8 +288,6 @@ class TestWorldOwnsVerifyNamespace:
         assert "near_object" in ns
         assert ns["near_object"]("mug") is True
         assert ns["near_object"]("bottle") is False
-        # Existing dev predicates still coexist (additive).
-        assert "file_exists" in ns and "grep_count" in ns
 
     def test_world_predicate_overrides_perception_stub(self) -> None:
         """A world predicate takes precedence over the engine's empty stub."""
@@ -313,7 +295,8 @@ class TestWorldOwnsVerifyNamespace:
         eng._world = _FakeVerifyWorld()
         agent = SimpleNamespace(_base=None, _spatial_memory=None, _object_memory=None)
         ns = eng._build_verifier_namespace(agent)
-        # Stub default is []; the world overrides it.
+        # WP02 removed the empty stub; the world is now the ONLY provider of
+        # detect_objects (no fake constant to fall back on).
         assert ns["detect_objects"]() == ["mug", "banana"]
 
     def test_world_predicate_evaluates_via_goal_verifier(self) -> None:
@@ -335,10 +318,12 @@ class TestWorldOwnsVerifyNamespace:
         eng_no_world = _make_engine("{}")
         eng_no_world._world = None  # falls back to registry -> robot world ({} too)
         ns_none = eng_no_world._build_verifier_namespace(agent)
-        # Both leave the perception stubs at their engine defaults.
-        assert ns_world["detect_objects"]() == []
-        assert ns_none["detect_objects"]() == []
-        # Same key set as before the world hook existed.
+        # WP02: the empty perception stubs are gone — a plain robot world with a
+        # baseless/armless agent contributes NO detect_objects (an unbound oracle
+        # fails closed rather than reading a fake []).
+        assert "detect_objects" not in ns_world
+        assert "detect_objects" not in ns_none
+        # Both resolution paths still agree on the (now empty) key set.
         assert set(ns_world) == set(ns_none)
 
 
