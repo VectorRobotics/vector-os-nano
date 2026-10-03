@@ -10,7 +10,7 @@ from tests.harness.pty_cli import run_repl_session
 
 _SCRIPT = {"steps": [
     {"when": "启动机械臂仿真", "tool_calls": [
-        {"name": "start_simulation", "input": {"sim_type": "arm", "gui": False}}]},
+        {"name": "start_simulation", "input": {"embodiment": "so101", "gui": False}}]},
     {"when": "", "is_error": False, "text": "机械臂仿真已启动", "tool_calls": []},
     {"when": "抓起香蕉", "tool_calls": [
         {"name": "pick", "input": {"object_label": "banana", "mode": "hold"}}]},
@@ -27,6 +27,6 @@ def test_e7_nl_launch_arm_then_grasp_banana_grounded() -> None:
                          answers=["y"], timeout_sec=180)
     text = r.text
     assert not r.timed_out, text[-3000:]
-    assert "sim start arm ok" in text, f"NL launch did not start the arm sim:\n{text[-3000:]}"
+    assert "sim start so101 ok" in text,f"NL launch did not start the arm sim:\n{text[-3000:]}"
     assert "pick → verify holding_object('banana') ✓ (actor=CAUSED)" in text, text[-3000:]
     assert "verdict GROUNDED verified=True (1/1 grounded)" in text, text[-3000:]

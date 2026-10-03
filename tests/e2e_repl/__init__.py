@@ -19,11 +19,9 @@ xfail in the WP that fixes it; an unexpected pass fails the run (strict).
 LAUNCH = "启动 go2 仿真 带机械臂 无窗口"
 LAUNCH_STEPS = [
     {"when": "启动 go2 仿真", "tool_calls": [
-        {"name": "start_simulation", "input": {"sim_type": "go2", "with_arm": True, "gui": False}}]},
+        {"name": "start_simulation", "input": {"embodiment": "go2_piper", "gui": False}}]},
     {"when": "", "text": "go2 仿真已启动", "tool_calls": []},
 ]
 
-# A readiness line: the word 'ready' on a line with no 'not' ('already' and 'not
-# ready' do not count). WP03 owns the real ready-line format; tighten this to it
-# when E1/E6 flip green.
-READY = r"(?im)^(?!.*\bnot\b).*\bready\b"
+# The SimSession readiness line (sim_tool: "Started <id> simulation, ready in Xs: ...").
+READY = r"Started \w+ simulation, ready in [0-9.]+s"
