@@ -9,7 +9,7 @@ from numpy import cos, sin
 
 # vector-os-nano vendoring: kinematics-only URDF shipped next to the package
 # (upstream loaded meshes via RobotWrapper; the visual/collision models were never used).
-URDF_PATH = Path(__file__).resolve().parent / "assets" / "go2_description.urdf"
+URDF_PATH = Path(__file__).resolve().parent / "go2_description.urdf"
 
 class ConfigurationState:
 
