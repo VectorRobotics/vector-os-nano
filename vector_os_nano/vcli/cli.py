@@ -958,9 +958,10 @@ def _init_agent(args: argparse.Namespace) -> Any:
 
     console.print(f"[dim]  Starting {embodiment} simulation...[/dim]")
     try:
+        # No vlm_api_key: --api-key is the chat LLM's credential (Anthropic /
+        # DeepSeek) and must never be sent to the OpenRouter VLM.
         session = SimSession.start(
             SimSpec(embodiment=embodiment, gui=not getattr(args, "headless", False)),
-            vlm_api_key=getattr(args, "api_key", None),
         )
     except SimStartError as exc:
         console.print(f"[red]Simulation failed to start:[/] {exc}")

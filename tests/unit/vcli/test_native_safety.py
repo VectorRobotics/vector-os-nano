@@ -550,6 +550,57 @@ def test_a_partly_answered_tool_use_is_completed_in_the_same_message() -> None:
     assert [b["tool_use_id"] for b in msgs[-1]["content"]] == ["a", "b"]
 
 
+def test_a_chat_turn_that_ran_a_side_effecting_tool_is_not_verified() -> None:
+    """producers:missed3: the answer-only wrap vouched for a turn that moved/wrote."""
+    from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
+    from vector_os_nano.vcli.session import TokenUsage
+
+    class _ReAct:
+        def __init__(self) -> None:
+            self.n = 0
+
+        def call(self, **kw: Any) -> LLMResponse:
+            self.n += 1
+            calls = [LLMToolCall(id="t1", name="deploy", input={})] if self.n == 1 else []
+            return LLMResponse(text="done", tool_calls=calls, stop_reason="end_turn", usage=TokenUsage())
+
+    eng = _dev_engine(_ReAct(), _SpyTool("deploy", "allow"))
+    result = eng.run_turn_unified("hello there", _session())
+    assert result.tool_calls and result.verified is False
+
+
+def test_navigate_is_not_rerun_when_the_base_raises_a_type_error_mid_way() -> None:
+    """producers:missed4: ANY TypeError re-ran navigate_to without a timeout."""
+    from vector_os_nano.vcli.native_loop import _NativeBaseNavigateTool
+
+    calls: list[tuple] = []
+
+    def navigate_to(x: float, y: float, timeout: float = 60.0) -> bool:
+        calls.append((x, y))
+        raise TypeError("unsupported operand mid-navigation")
+
+    ctx = SimpleNamespace(agent=SimpleNamespace(_base=SimpleNamespace(navigate_to=navigate_to)))
+    result = _NativeBaseNavigateTool().execute({"x": 1.0, "y": 2.0}, ctx)
+    assert result.is_error and calls == [(1.0, 2.0)]
+
+
+def test_the_chat_llm_key_is_never_handed_to_the_vlm(monkeypatch) -> None:
+    """cli-entry:missed4: --api-key (Anthropic/DeepSeek) went to the OpenRouter VLM."""
+    from vector_os_nano.sim import session as sim_session
+
+    seen: dict[str, Any] = {}
+
+    def fake_start(spec: Any, **kw: Any) -> Any:
+        seen.update(kw)
+        return SimpleNamespace(summary=lambda: "ok")
+
+    monkeypatch.setattr(sim_session.SimSession, "start", staticmethod(fake_start))
+    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
+    args = SimpleNamespace(api_key="sk-ant-secret", sim=False, sim_go2=True, headless=True, embodiment=None)
+    cli._init_agent(args)
+    assert seen.get("vlm_api_key") in (None, "")
+
+
 # ---------------------------------------------------------------------------
 # Fail loud on verify-fn drift in a robot world (graft h, rule 8)
 # ---------------------------------------------------------------------------

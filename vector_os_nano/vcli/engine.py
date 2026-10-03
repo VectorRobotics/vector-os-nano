@@ -1835,15 +1835,28 @@ class VectorEngine:
             trace, snapshot, verified = None, {}, False
         else:
             trace, snapshot, verified = self._verify_answer_plan(user_message, turn.text)
+        # An answer-only trace vouches for the TEXT, never for side effects the ReAct
+        # loop ran (a motor skill, bash, file_write): those are unverified.
+        acted = any(
+            tc.permission_action in ("allowed", "asked_allowed") and not self._read_only_call(tc)
+            for tc in turn.tool_calls
+        )
         return UnifiedTurnResult(
             text=turn.text,
             trace=trace,
             snapshot=snapshot,
             intent=intent,
             tool_calls=list(turn.tool_calls),
-            verified=verified,
+            verified=verified and not acted,
             usage=turn.usage,
         )
+
+    def _read_only_call(self, tc: ToolCall) -> bool:
+        tool = self._registry.get(tc.tool_name)
+        try:
+            return bool(tool.is_read_only(tc.params))
+        except Exception:  # noqa: BLE001 — unknown tool / no declaration: it acted
+            return False
 
     def _verify_answer_plan(
         self, user_message: str, answer_text: str
