@@ -16,7 +16,7 @@ must route the full agent-adaptive fetch on a fresh, EMPTY scene graph:
       -> perception_grasp('green bottle')    (re-perceive + IK + weld)
 
 and the honest spine grades the verdict (a real 0->1 weld is the only GROUNDED). The
-in-process Piper arm is attached by the --sim-go2 path itself (VECTOR_SIM_WITH_ARM=1),
+in-process Piper arm comes from the go2_piper embodiment (--embodiment go2_piper),
 so the fetch is reachable from the bare entrypoint — no ROS2 stack, no flaky multi-turn
 REPL. Each attempt is a fresh isolated subprocess (MuJoCo can't realloc worlds);
 `rosm nuke` + pkill between. The headline is `grounded/N` and the routing breakdown.
@@ -55,10 +55,10 @@ def main() -> int:
         rec: dict = {"i": i}
         try:
             r = run_cli_turn(
-                _PROMPT, sim_go2=True, live=True,
+                _PROMPT, live=True,
                 timeout_sec=_PER_RUN_TIMEOUT,
-                extra_env={"VECTOR_SIM_WITH_ARM": "1", "MUJOCO_GL": "egl"},
-                extra_args=["--headless", "--native-loop"],
+                extra_env={"MUJOCO_GL": "egl"},
+                extra_args=["--embodiment", "go2_piper", "--headless", "--native-loop"],
             )
             v = r.verdict or {}
             per_step = v.get("per_step") or []

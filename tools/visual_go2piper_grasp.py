@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 
 os.environ.setdefault("MUJOCO_GL", "egl")
-os.environ["VECTOR_SIM_WITH_ARM"] = "1"
 
 import cv2  # noqa: E402
 import mujoco as mj  # noqa: E402
@@ -21,7 +20,7 @@ from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill  # noqa:
 from vector_os_nano.skills.pick_top_down import PickTopDownSkill  # noqa: E402
 from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object  # noqa: E402
 
-go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
 go2.connect()
 piper = MuJoCoPiper(go2)
 piper.connect()

@@ -15,7 +15,6 @@ import sys
 from pathlib import Path
 
 os.environ.setdefault("MUJOCO_GL", "egl")
-os.environ["VECTOR_SIM_WITH_ARM"] = "1"          # select the go2_piper attach scene
 os.environ.pop("VECTOR_FAKE_LLM_TOOLS", None)    # ensure the REAL backend (no scripted turns)
 os.environ.pop("VECTOR_FAKE_LLM", None)
 
@@ -48,7 +47,7 @@ def main() -> int:
         from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
         from vector_os_nano.vcli.worlds.robot import RobotWorld
 
-        go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+        go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
         go2.connect()
         piper = MuJoCoPiper(go2)
         piper.connect()

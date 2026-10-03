@@ -8,6 +8,7 @@
 
 id: g1
 display_name: "Unitree G1 (humanoid, 12-DoF)"
+driver: mujoco_g1                 # transitional (WP17: one generic driver)
 
 model:
   # 12-DoF G1 model + meshes from assets/g1_gait/ (attached into the go2 room
@@ -50,6 +51,8 @@ sensors:
     pos: [0.04, 0.0, 0.42]
     params:
       xyaxes: [0, -1, 0, 0, 0, 1]
+      width: 640                  # G1HeadPerception render size
+      height: 480
   # Lidar mounted from pelvis — _LIDAR_OFFSET_X=0.0, _LIDAR_OFFSET_Z=0.72
   # (pelvis z ~0.793 + 0.72 = ~1.51 m head height). Delegated to g1_lidar_scan.
   - role: lidar

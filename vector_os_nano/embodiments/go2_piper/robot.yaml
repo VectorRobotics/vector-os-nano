@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+#
+# Unitree Go2 + AgileX Piper 6-DoF arm on its back — embodiment manifest.
+# Same body/stance/gait as go2/robot.yaml; the scene is go2_piper.xml (arm
+# attached) and the arm block below makes the session attach MuJoCoPiper +
+# MuJoCoPiperGripper and the manipulation skills.
+
+id: go2_piper
+display_name: "Unitree Go2 + AgileX Piper arm (mobile manipulator)"
+driver: mujoco_go2                # transitional (WP17: one generic driver)
+
+model:
+  # Bare-Go2 room scene model (mujoco_go2._MJCF_DIR / go2.xml).
+  path: vector_os_nano/hardware/sim/mjcf/go2_piper/go2_piper.xml
+  meshes_dir: ""                  # mesh paths are relative to go2_piper.xml
+  root_body: base_link            # _Go2Model.base_bid = mj_name2id(..., "base_link")
+
+spawn:
+  # connect(): data.qpos[0]=10.0, qpos[1]=3.0, qpos[2]=0.35 (entry hall).
+  xy: [10.0, 3.0]
+  base_height: 0.35
+  heading: 0.0
+
+# _STAND_JOINTS = [0.0, 0.9, -1.8] * 4 applied to qpos[7:19] in FL,FR,RL,RR
+# leg order (hip, thigh, calf per leg). Controller maps BY NAME via mj_name2id,
+# so the qpos slice carries FL/FR/RL/RR; every leg shares the same triple.
+stance:
+  FL_hip:   0.0
+  FL_thigh: 0.9
+  FL_calf:  -1.8
+  FR_hip:   0.0
+  FR_thigh: 0.9
+  FR_calf:  -1.8
+  RL_hip:   0.0
+  RL_thigh: 0.9
+  RL_calf:  -1.8
+  RR_hip:   0.0
+  RR_thigh: 0.9
+  RR_calf:  -1.8
+
+sensors:
+  # RealSense D435 RGB — named 'd435_rgb' camera fixed to base_link (MJCF).
+  - role: camera
+    mount_body: base_link
+    name: d435_rgb
+    params:
+      width: 320                  # the measured grasp numbers used 320x240
+      height: 240
+  # RealSense D435 depth — named 'd435_depth' camera, same mounting as RGB.
+  - role: depth
+    mount_body: base_link
+    name: d435_depth
+  # Livox MID360-like 3D lidar — _update_lidar(): offset 0.3 m forward, 0.2 m up
+  # from base; beams tilted -20 deg; ~5 Hz (_LIDAR_UPDATE_INTERVAL=200 steps).
+  - role: lidar
+    mount_body: base_link
+    pos: [0.3, 0.0, 0.2]          # _LIDAR_OFFSET_X / _LIDAR_OFFSET_Z
+    params:
+      tilt_deg: -20.0
+      elevation_min_deg: -8
+      elevation_max_deg: 52
+      elevation_step_deg: 2
+      n_azimuth: 360
+      range_min: 0.1
+      range_max: 12.0
+      update_interval_steps: 200
+
+policy:
+  # Dual-backend locomotion: convex_mpc when deps present, else sinusoidal gait.
+  # backend="auto" resolves at connect(); falls back loudly to sinusoidal.
+  ref: convex_mpc
+  spec:
+    backend: auto                 # auto | mpc | sinusoidal
+    fallback: sinusoidal
+    sim_hz: 1000
+    ctrl_hz: 200
+    mpc_z_des: 0.27               # _MPC_Z_DES
+    mpc_gait_hz: 3                # _MPC_GAIT_HZ
+    mpc_gait_duty: 0.6            # _MPC_GAIT_DUTY
+    vx_max: 0.8                   # _VX_MAX
+    vy_max: 0.4                   # _VY_MAX
+    vyaw_max: 4.0                 # _VYAW_MAX
+    holonomic: true               # supports_holonomic -> True (can strafe)
+
+arm:
+  name: piper
+  dof: 6
+  ee_site: piper_ee_site
+
+capabilities:
+  has_base: true
+  has_arm: true
+  has_gripper: true
+  camera: true                    # supports head RGB/depth
+  lidar: true                     # supports_lidar -> True
+  # supports_holonomic -> True (Go2 can strafe) is a base MOTION trait, carried
+  # in policy.spec.holonomic below — not a CapabilityProfile field.
+
+nav:
+  explorer: tare                  # needs VECTOR_NAV_STACK; else explore is unavailable

@@ -147,10 +147,9 @@ def test_navigate_to_with_piper_attached_does_not_crash(monkeypatch) -> None:
     (arm-enabled scene + Piper attached + tight tol) and asserts navigate_to returns
     in bounded wall-time having moved the dog. Self-contained (own arm-enabled sim).
     """
-    monkeypatch.setenv("VECTOR_SIM_WITH_ARM", "1")  # never leaks past this test
     from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
 
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
     try:
         go2.connect()
         piper = MuJoCoPiper(go2)

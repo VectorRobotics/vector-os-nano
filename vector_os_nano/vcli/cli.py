@@ -275,6 +275,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--sim", action="store_true", help="Start with MuJoCo arm simulation")
     parser.add_argument("--sim-go2", action="store_true", help="Start with Go2 quadruped simulation")
+    from vector_os_nano.embodiments.registry import embodiment_ids
+    parser.add_argument(
+        "--embodiment", default=None, choices=embodiment_ids(), metavar="ID",
+        help="Start with this embodiment's simulation (--sim = so101, --sim-go2 = go2). "
+        f"One of: {', '.join(embodiment_ids())}",
+    )
     parser.add_argument(
         "--scenario",
         default=None,
@@ -743,247 +749,37 @@ def enter_scenario(scenario_id: str, app_state: dict[str, Any]) -> Any:
     return world
 
 
+def _requested_embodiment(args: argparse.Namespace) -> str | None:
+    """--embodiment wins; --sim-go2 / --sim are aliases for go2 / so101."""
+    return (
+        getattr(args, "embodiment", None)
+        or ("go2" if getattr(args, "sim_go2", False) else None)
+        or ("so101" if getattr(args, "sim", False) else None)
+    )
+
+
 def _init_agent(args: argparse.Namespace) -> Any:
-    if not (args.sim or args.sim_go2):
-        return None
-    try:
-        from vector_os_nano.core.agent import Agent  # type: ignore[import]
-        if args.sim:
-            from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm  # type: ignore[import]
-            from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper  # type: ignore[import]
-            from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception  # type: ignore[import]
-            from vector_os_nano.skills.pick import SIM_PICK_CONFIG
-            arm = MuJoCoArm(gui=not getattr(args, "headless", False))
-            arm.connect()
-            gripper = MuJoCoGripper(arm)
-            perception = MuJoCoPerception(arm)
-            return Agent(
-                arm=arm,
-                gripper=gripper,
-                perception=perception,
-                config={"skills": {"pick": dict(SIM_PICK_CONFIG)}},
-            )
+    """Start the requested SimSession (the one NL start_simulation uses), or None.
 
-        # --- Go2 full stack: MuJoCo + ROS2 bridge + nav stack + VLM + Rerun ---
-        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2  # type: ignore[import]
-        import os
-
-        console.print(f"[dim]  Starting Go2 MuJoCo simulation...[/dim]")
-        # Honor --headless: open the GLFW viewer window only when NOT headless. A
-        # headless run (e.g. the R2a PTY acceptance harness, or CI) drives the REAL
-        # MuJoCo physics with no on-screen window — the viewer's glXSwapBuffers
-        # crashes (GLXBadDrawable) when launched from a PTY-spawned subprocess, and
-        # it is never needed for a non-interactive turn. Interactive desktop use
-        # (no --headless) is byte-identical: gui=True as before.
-        _go2_gui = not getattr(args, "headless", False)
-        base = MuJoCoGo2(gui=_go2_gui, room=True, backend="auto")
-        base.connect()
-        base.stand()
-
-        # Load config for API key
-        from vector_os_nano.core.config import load_config
-        cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)
-        ))), "config", "user.yaml")
-        cfg = load_config(cfg_path) if os.path.exists(cfg_path) else {}
-        api_key = (
-            args.api_key
-            or cfg.get("llm", {}).get("api_key")
-            or os.environ.get("OPENROUTER_API_KEY", "")
-        )
-
-        # Attach the in-process Piper arm when the go2_piper attach scene was
-        # selected (VECTOR_SIM_WITH_ARM=1) so the lightweight in-process --sim-go2
-        # path is manipulation-capable — same capability the heavier ROS2 NL path
-        # (sim_tool._start_go2(with_arm=True)) already provides. Without this the
-        # full fetch (look -> navigate_to_object -> perception_grasp) is
-        # unreachable from `vector-cli --sim-go2`, and "a capability behind a flag
-        # is NOT done" (North Star). The arm/gripper classes mirror the in-process
-        # rig the fetch harnesses build.
-        _with_arm = os.environ.get("VECTOR_SIM_WITH_ARM", "0") == "1"
-        piper_arm = piper_gripper = None
-        if _with_arm:
-            try:
-                from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
-                from vector_os_nano.hardware.sim.mujoco_piper_gripper import (
-                    MuJoCoPiperGripper,
-                )
-                piper_arm = MuJoCoPiper(base)
-                piper_arm.connect()
-                piper_gripper = MuJoCoPiperGripper(base)
-                piper_gripper.connect()
-                console.print(f"[dim]  Piper arm attached (in-process)[/dim]")
-            except Exception as exc:
-                console.print(f"[yellow]  Piper arm unavailable: {exc}[/yellow]")
-                piper_arm = piper_gripper = None
-
-        agent = Agent(base=base, arm=piper_arm, gripper=piper_gripper,
-                      llm_api_key=api_key, config=cfg)
-
-        # Register Go2 skills
-        from vector_os_nano.skills.go2 import get_go2_skills
-        for skill in get_go2_skills():
-            agent._skill_registry.register(skill)
-
-        # Manipulation (Piper pick/place + perception-grasp) — single-sourced with
-        # the ROS2 NL path so the two launchers never drift (Rule 3/11).
-        if piper_arm is not None:
-            from vector_os_nano.skills.manipulation_setup import (
-                register_manipulation_skills,
-            )
-            if register_manipulation_skills(agent, base):
-                console.print(f"[dim]  Manipulation: perception_grasp + pick/place[/dim]")
-
-        # VLM perception (GPT-4o via OpenRouter)
-        if api_key:
-            try:
-                from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
-                agent._vlm = Go2VLMPerception(config={"api_key": api_key})
-                console.print(f"[dim]  VLM: GPT-4o via OpenRouter[/dim]")
-            except Exception:
-                agent._vlm = None
-
-        # Real RGB-D + detector + segmenter perception over the in-process base
-        # so look/explore can depth-localize VLM-named objects to accurate world
-        # (x, y, z).  Single-sourced with the ROS2 NL launcher via
-        # _build_go2_perception (Rule 3/11) — guarded: leaves perception None
-        # when the base has no camera, never crashing the launch.
-        from vector_os_nano.vcli.tools.sim_tool import _build_go2_perception
-        agent._perception = _build_go2_perception(base)
-        if agent._perception is not None:
-            console.print(f"[dim]  Perception: RGB-D detector + segmenter[/dim]")
-
-
-        # Scene graph (SysNav-style) with persistence
-        import os as _os
-        from vector_os_nano.core.scene_graph import SceneGraph
-        _sg_path = _os.path.expanduser("~/.vector_os_nano/scene_graph.yaml")
-        _os.makedirs(_os.path.dirname(_sg_path), exist_ok=True)
-        _sg = SceneGraph(persist_path=_sg_path)
-        _sg.load()
-        _sg_stats = _sg.stats()
-        if _sg_stats["rooms"] > 0:
-            console.print(
-                f"[dim]  Memory: scene graph restored "
-                f"({_sg_stats['rooms']} rooms, {_sg_stats['objects']} objects)[/dim]"
-            )
-        else:
-            console.print(f"[dim]  Memory: scene graph (rooms -> viewpoints -> objects)[/dim]")
-        agent._spatial_memory = _sg
-
-        # ROS2 bridge + nav stack (background)
-        try:
-            _launch_ros2_stack(base)
-            console.print(f"[dim]  ROS2: bridge + nav stack launched[/dim]")
-        except Exception as exc:
-            console.print(f"[dim]  ROS2: not available ({exc})[/dim]")
-
-        return agent
-
-    except Exception as exc:
-        console.print(f"[yellow]Warning: Could not init simulation: {exc}[/yellow]")
-        import traceback
-        traceback.print_exc()
-        return None
-
-
-def _launch_ros2_stack(go2: Any) -> None:
-    """Launch ROS2 bridge + Vector Nav Stack in background.
-
-    Starts the bridge in a daemon thread and the nav stack as a subprocess.
-    Non-blocking — returns immediately after launching.
+    Fails loud: a requested sim that does not come up exits 2 instead of
+    silently degrading to the dev world.
     """
-    import subprocess
-    import signal
-    import atexit
-    import os
-    import threading
+    embodiment = _requested_embodiment(args)
+    if embodiment is None:
+        return None
+    from vector_os_nano.sim.session import SimSession, SimSpec, SimStartError
 
-    # 1. Start ROS2 bridge on existing MuJoCoGo2
+    console.print(f"[dim]  Starting {embodiment} simulation...[/dim]")
     try:
-        import rclpy
-        if not rclpy.ok():
-            rclpy.init()
-
-        import importlib.util
-        import sys
-        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        bridge_path = os.path.join(repo, "scripts", "go2_vnav_bridge.py")
-        spec = importlib.util.spec_from_file_location("_vnav_bridge", bridge_path)
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["_vnav_bridge"] = mod
-        spec.loader.exec_module(mod)
-
-        node = mod.Go2VNavBridge(go2)
-
-        def _spin():
-            try:
-                rclpy.spin(node)
-            except Exception:
-                pass
-
-        t = threading.Thread(target=_spin, daemon=True)
-        t.start()
-    except ImportError:
-        raise RuntimeError("ROS2 (rclpy) not available")
-
-    # 2. Launch nav stack nodes
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    script = os.path.join(repo, "scripts", "launch_nav_only.sh")
-    if os.path.isfile(script):
-        log_path = "/tmp/vector_nav_only.log"
-        # Truncate log if it has grown beyond 5 MB to prevent unbounded disk use
-        if os.path.exists(log_path) and os.path.getsize(log_path) > 5 * 1024 * 1024:
-            with open(log_path, "w") as _f:
-                _f.write("")  # truncate
-        log_fh = open(log_path, "a")
-        proc = subprocess.Popen(
-            [script], stdout=log_fh, stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
+        session = SimSession.start(
+            SimSpec(embodiment=embodiment, gui=not getattr(args, "headless", False)),
+            vlm_api_key=getattr(args, "api_key", None),
         )
-
-        # Use a list so the monitor thread can mutate the proc reference.
-        proc_ref = [proc]
-
-        def _nav_health_monitor(proc_ref: list, script: str, log_fh: Any, console: Any) -> None:
-            """Daemon thread: poll nav stack every 5s, restart if crashed."""
-            while True:
-                time.sleep(5)
-                current = proc_ref[0]
-                if current.poll() is not None:
-                    exit_code = current.returncode
-                    console.print(f"  [red]nav stack crashed (exit {exit_code}), restarting...[/]")
-                    try:
-                        new_proc = subprocess.Popen(
-                            [script], stdout=log_fh, stderr=subprocess.STDOUT,
-                            preexec_fn=os.setsid,
-                        )
-                        proc_ref[0] = new_proc
-                        time.sleep(3)  # let it initialize
-                        console.print("  [green]nav stack restarted[/]")
-                    except Exception as exc:
-                        console.print(f"  [red]nav stack restart failed: {exc}[/]")
-
-        monitor = threading.Thread(
-            target=_nav_health_monitor,
-            args=(proc_ref, script, log_fh, console),
-            daemon=True,
-        )
-        monitor.start()
-
-        def _cleanup():
-            current = proc_ref[0]
-            try:
-                os.killpg(os.getpgid(current.pid), signal.SIGTERM)
-                current.wait(timeout=5)
-            except Exception:
-                try:
-                    os.killpg(os.getpgid(current.pid), signal.SIGKILL)
-                except Exception:
-                    pass
-            log_fh.close()
-
-        atexit.register(_cleanup)
+    except SimStartError as exc:
+        console.print(f"[red]Simulation failed to start:[/] {exc}")
+        sys.exit(2)
+    console.print(f"[dim]  {embodiment} {session.summary()}[/dim]")
+    return session
 
 
 # ---------------------------------------------------------------------------
@@ -1231,12 +1027,15 @@ def _handle_slash_command(
                     base._scene_graph = new_sg
                 cleared = True
 
-        # Always delete the persist file (works even without agent)
-        try:
-            _os.remove(_sg_path)
-            cleared = True
-        except FileNotFoundError:
-            pass
+        # Always delete the persist file(s) (works even without agent); a running
+        # sim's world-keyed file is deleted too.
+        _live = getattr(getattr(agent_obj, "_spatial_memory", None), "_persist_path", None)
+        for _p in {_sg_path, _live} - {None}:
+            try:
+                _os.remove(_p)
+                cleared = True
+            except FileNotFoundError:
+                pass
 
         # Delete terrain map if present
         _terrain_path = _os.path.expanduser("~/.vector_os_nano/terrain_map.npz")
@@ -1446,7 +1245,7 @@ def _wants_window(args: argparse.Namespace) -> bool:
     A window is wanted when --sim or --sim-go2 is active (NL-triggered sims are
     handled separately in sim_tool.py) and --headless is NOT set.
     """
-    return (args.sim or args.sim_go2) and not getattr(args, "headless", False)
+    return bool(_requested_embodiment(args)) and not getattr(args, "headless", False)
 
 
 def _maybe_reexec_under_mjpython(args: argparse.Namespace) -> None:
@@ -1661,7 +1460,8 @@ def _build_turn_context(
     # selects the robot world, else the default cross-platform "dev" world. The
     # resolved world flows into init_vgg(world=...) below, which sets engine._world
     # BEFORE the verifier namespace is built, so the merge picks up its predicates.
-    agent = _init_agent(args)
+    sim_session = _init_agent(args)
+    agent = sim_session.agent if sim_session is not None else None
     world = _resolve_active_world(args, agent)
 
     # Tools (categorized registry for scalable tool management)
@@ -1775,6 +1575,7 @@ def _build_turn_context(
         "robot_ctx_provider": robot_ctx_provider,
         "world": world,
         "scenario": _active_scenario,
+        "sim_session": sim_session,
     }
     app_state["tool_permission_resolver"] = tool_permission_resolver or (
         lambda n, p: ask_permission(n, p)
@@ -1962,7 +1763,10 @@ def main(argv: list[str] | None = None) -> None:
         # decided code (after flushing) to keep the harness invariant
         # ``verified == (exit_code == 0)`` honest. Interactive / non-sim turns are
         # unaffected (no daemon to crash). os._exit skips atexit/GC by design.
-        if getattr(args, "sim", False) or getattr(args, "sim_go2", False):
+        # os._exit skips atexit: stop every session first (its nav pgids included),
+        # the flag's and one the turn launched by NL alike.
+        from vector_os_nano.sim.session import stop_all
+        if stop_all() or _requested_embodiment(args):
             try:
                 sys.stdout.flush()
                 sys.stderr.flush()
@@ -1993,7 +1797,8 @@ def main(argv: list[str] | None = None) -> None:
     # selects the robot world, else the default cross-platform "dev" world. The
     # resolved world flows into init_vgg(world=...) below, which sets engine._world
     # BEFORE the verifier namespace is built, so the merge picks up its predicates.
-    agent = _init_agent(args)
+    sim_session = _init_agent(args)
+    agent = sim_session.agent if sim_session is not None else None
     world = _resolve_active_world(args, agent)
 
     # Tools (categorized registry for scalable tool management)
@@ -2108,6 +1913,7 @@ def main(argv: list[str] | None = None) -> None:
         "robot_ctx_provider": robot_ctx_provider,
         "world": world,
         "scenario": _active_scenario,
+        "sim_session": sim_session,
     }
 
     # VGG cognitive layer (optional)
@@ -2424,8 +2230,7 @@ def main(argv: list[str] | None = None) -> None:
                     if name == "terrain_status":
                         return "[dim]terrain_status[/]"
                     if name == "start_simulation":
-                        st = p.get("sim_type", "go2")
-                        return f"[dim]sim start[/] {st}"
+                        return f"[dim]sim start[/] {p.get('embodiment', '?')}"
                     # Fallback: generic display
                     if p:
                         items = [f"{k}={str(v)[:20]}" for k, v in list(p.items())[:2]]
@@ -2444,6 +2249,8 @@ def main(argv: list[str] | None = None) -> None:
                             return f"  [dim]{msg}[/]\n    [yellow]{suggested}[/]"
                         return f"  [dim]{msg}[/]"
 
+                    if name in ("start_simulation", "stop_simulation"):
+                        return f"  [dim]▸ {(result.content or '').splitlines()[0][:200]}[/]"
                     meta = result.metadata if hasattr(result, "metadata") else {}
                     if not meta:
                         return ""

@@ -64,12 +64,6 @@ class SysnavSimTool:
                 "description": "Open MuJoCo viewer (default: true).",
                 "default": True,
             },
-            "backend": {
-                "type": "string",
-                "enum": ["mujoco", "gazebo"],
-                "default": "mujoco",
-                "description": "Simulation backend.",
-            },
         },
         "required": [],
     }
@@ -106,12 +100,13 @@ class SysnavSimTool:
         # 2. Boot the underlying go2 + Piper sim via SimStartTool.
         sim_tool = self._build_sim_tool()
         sim_params = {
-            "sim_type": "go2",
-            "with_arm": True,
+            "embodiment": "go2_piper",
             "gui": bool(params.get("gui", True)),
-            "backend": str(params.get("backend", "mujoco")),
         }
         sim_result = sim_tool.execute(sim_params, context)
+        if sim_result.is_error:
+            return ToolResult(content=f"sysnav-sim not started: {sim_result.content}",
+                              is_error=True)
         self._sim_tool = sim_tool
 
         # 3. Attach the LiveSysnavBridge to the agent's world_model.

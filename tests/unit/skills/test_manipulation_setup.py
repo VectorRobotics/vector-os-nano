@@ -2,11 +2,10 @@
 # Copyright (c) 2024-2026 Vector Robotics
 """Unit tests for the single-source go2+arm manipulation wiring helper.
 
-``register_manipulation_skills`` is the ONE place both go2+arm launch paths
-(the in-process ``--sim-go2`` flag path in ``cli.py`` and the ROS2 NL path in
-``sim_tool``) register the Piper manipulation skill set + perception-grasp, so the
-two can never drift (Rule 3 single-source / Rule 11 no per-embodiment forks). These
-tests pin the contract WITHOUT a real sim (Go2GraspPerception construction is lazy).
+``register_manipulation_skills`` is the ONE place the go2+arm SimSession registers
+the Piper manipulation skill set + perception-grasp (Rule 3 / Rule 11). It REUSES the
+launcher's one perception (built at the manifest camera size) and never replaces it.
+These tests pin the contract WITHOUT a real sim.
 """
 from __future__ import annotations
 
@@ -21,13 +20,18 @@ class _StubBase:
 
 
 def _agent() -> Agent:
-    # arm/gripper truthy stubs so the helper treats the arm as present.
-    return Agent(base=_StubBase(), arm=object(), gripper=object(), config={})
+    # arm/gripper truthy stubs so the helper treats the arm as present; the
+    # launcher has already built the ONE perception.
+    from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
+
+    agent = Agent(base=_StubBase(), arm=object(), gripper=object(), config={})
+    agent._perception = Go2GraspPerception(agent._base, width=320, height=240)
+    return agent
 
 
 def test_registers_perception_grasp_and_manip_skills() -> None:
     agent = _agent()
-    ok = register_manipulation_skills(agent, _StubBase())
+    ok = register_manipulation_skills(agent)
     assert ok is True
     names = set(agent._skill_registry.list_skills())
     for expected in (
@@ -37,17 +41,28 @@ def test_registers_perception_grasp_and_manip_skills() -> None:
         assert expected in names, f"{expected} not registered: {names}"
 
 
-def test_sets_grasp_perception() -> None:
+def test_reuses_the_launcher_perception() -> None:
+    """launcher-perception-drift: the helper used to REPLACE the perception with a
+    hardcoded 320x240 one, so two launchers ended at different sizes."""
     agent = _agent()
-    register_manipulation_skills(agent, _StubBase())
     from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
-    assert isinstance(agent._perception, Go2GraspPerception)
+
+    agent._perception = mine = Go2GraspPerception(agent._base, width=640, height=480)
+    register_manipulation_skills(agent)
+    assert agent._perception is mine
+
+
+def test_no_perception_fails_loud() -> None:
+    agent = Agent(base=_StubBase(), arm=object(), gripper=object(), config={})
+    agent._perception = None
+    with pytest.raises(RuntimeError, match="perception"):
+        register_manipulation_skills(agent)
 
 
 def test_perception_grasp_wins_grab_alias() -> None:
     """perception_grasp must register LAST so it wins the shared 抓/grab aliases."""
     agent = _agent()
-    register_manipulation_skills(agent, _StubBase())
+    register_manipulation_skills(agent)
     m = agent._skill_registry.match("抓绿色的瓶子")
     assert m is not None
     assert m.skill_name == "perception_grasp", m.skill_name
@@ -56,6 +71,6 @@ def test_perception_grasp_wins_grab_alias() -> None:
 def test_env_disable_skips_registration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VECTOR_ENABLE_MANIPULATION", "0")
     agent = _agent()
-    ok = register_manipulation_skills(agent, _StubBase())
+    ok = register_manipulation_skills(agent)
     assert ok is False
     assert "perception_grasp" not in set(agent._skill_registry.list_skills())

@@ -7,7 +7,7 @@ Tests are headless (MUJOCO_GL=egl) and cover:
   1. Scene compiles and contains both the room's pick_table AND g1_pelvis.
   2. The compiled model has the g1_head_rgb camera.
   3. G1 self-geom-id set is non-empty.
-  4. _start_g1 is wired in sim_tool (method exists + "g1" in schema enum).
+  4. g1 is a startable embodiment (manifest driver + start_simulation enum).
   5. walk() produces forward displacement (2 s cmd → base x >0.3 m, base z >0.5).
 
 Run:
@@ -117,25 +117,19 @@ def test_g1_self_geom_set_nonempty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 4: _start_g1 wired in sim_tool (no sim instantiated)
+# Test 4: g1 is a startable embodiment (no sim instantiated)
 # ---------------------------------------------------------------------------
 
 
-def test_start_g1_wired_in_sim_tool() -> None:
-    """SimStartTool must have _start_g1 method and 'g1' in the schema enum."""
+def test_g1_is_a_startable_embodiment() -> None:
+    """The g1 manifest names a SimSession driver and start_simulation offers it."""
+    from vector_os_nano.embodiments.registry import load
+    from vector_os_nano.sim.session import _BUILDERS
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool
 
-    assert hasattr(SimStartTool, "_start_g1"), (
-        "SimStartTool._start_g1 not found — dispatch not wired"
-    )
-    assert callable(SimStartTool._start_g1), "_start_g1 is not callable"
-
-    schema = SimStartTool.input_schema
-    sim_type_prop = schema.get("properties", {}).get("sim_type", {})
-    allowed = sim_type_prop.get("enum", [])
-    assert "g1" in allowed, (
-        f"'g1' not in sim_type enum; allowed values: {allowed}"
-    )
+    assert load("g1").driver in _BUILDERS
+    allowed = SimStartTool.input_schema["properties"]["embodiment"]["enum"]
+    assert "g1" in allowed, f"'g1' not in embodiment enum; allowed values: {allowed}"
 
 
 # ---------------------------------------------------------------------------

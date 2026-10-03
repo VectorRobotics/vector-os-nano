@@ -1835,7 +1835,10 @@ def main():
     gui = not args.no_gui
 
     print(f"Starting MuJoCoGo2 (gui={gui}, backend={backend})...")
-    go2 = MuJoCoGo2(gui=gui, room=True, backend=backend)
+    # Standalone subprocess bridge (launch_explore.sh, retired by WP04): the arm
+    # choice still arrives via this script's own env contract.
+    go2 = MuJoCoGo2(gui=gui, room=True, backend=backend,
+                    with_arm=os.environ.get("VECTOR_SIM_WITH_ARM") == "1")
     go2.connect()
     print("Standing up...")
     go2.stand(duration=2.0)
