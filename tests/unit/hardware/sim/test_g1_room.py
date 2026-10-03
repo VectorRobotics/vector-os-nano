@@ -10,9 +10,8 @@ Tests are headless (MUJOCO_GL=egl) and cover:
   4. g1 is a startable embodiment (manifest driver + start_simulation enum).
   5. walk() produces forward displacement (2 s cmd → base x >0.3 m, base z >0.5).
 
-Run:
-    cd /home/yusen/Desktop/vector_os_nano
-    PATH=/usr/bin:$PATH MUJOCO_GL=egl .venv/bin/python -m pytest tests/unit/hardware/sim/test_g1_room.py -q
+Run (from the repo root):
+    MUJOCO_GL=egl .venv/bin/python -m pytest tests/unit/hardware/sim/test_g1_room.py -q
 """
 from __future__ import annotations
 
@@ -23,11 +22,6 @@ import pytest
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_G1_SCENE_XML = Path(
-    "/home/yusen/Desktop/vector_os_nano/vector_os_nano/hardware/sim/mjcf/g1/scene_g1_12dof_room.xml"
-)
-
 
 def _ensure_scene() -> Path:
     """Build the scene if not already built (idempotent, fast on cache hit)."""

@@ -88,6 +88,23 @@ def test_no_import_time_env_writes() -> None:
                           skip=("tests/conftest.py",))
 
 
+_MACHINE_PATH = r"/home/yusen/|~/Desktop/vector_(navigation_stack|os_nano)\b"
+
+
+def test_no_hardcoded_machine_paths() -> None:
+    """tests:hardcoded-machine-paths — harness tests read ~/Desktop/vector_navigation_stack
+    and ~/Desktop/vector_os_nano (another machine's clone) and failed instead of skipping;
+    scripts hardcoded /home/yusen. An external checkout comes from its env var
+    (VECTOR_NAV_STACK via scripts/nav_env.sh), never a path baked into the source."""
+    scripts = [
+        f"{p.relative_to(_REPO)}:{i}: {line.strip()}"
+        for p in sorted((_REPO / "scripts").iterdir()) if p.is_file()
+        for i, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
+        if re.search(_MACHINE_PATH, line)
+    ]
+    assert not _offenders(_MACHINE_PATH) + scripts
+
+
 def test_no_vacuous_tests() -> None:
     """tests:vacuous-tests — a test whose body is only a docstring/pass, or whose
     assert ends in `or True`, passes whatever the product does."""
@@ -154,15 +171,25 @@ def test_stub_restore_drops_stubs_and_modules_bound_to_them() -> None:
     assert "vector_os_nano._probe_bound_to_stub" not in sys.modules
 
 
-def test_harness_stub_file_does_not_poison_later_files() -> None:
-    """The order that used to ERROR at collection: level9 (fake rclpy) then a file
-    calling find_spec('rclpy')."""
+def test_harness_stub_file_does_not_poison_later_files(tmp_path) -> None:
+    """The order that used to ERROR at collection: a file that imports under a fake
+    rclpy (the old harness level9) then a file calling find_spec('rclpy')."""
+    (tmp_path / "test_a_stubbed.py").write_text(
+        "import types\nfrom tests.harness.stubs import stubbed_modules\n\n"
+        "with stubbed_modules({'rclpy': types.ModuleType('rclpy')}):\n    import json  # noqa: F401\n\n"
+        "def test_a():\n    assert True\n"
+    )
+    (tmp_path / "test_b_find_spec.py").write_text(
+        "import importlib.util\n\nSPEC = importlib.util.find_spec('rclpy')  # ValueError on a leaked stub\n\n"
+        "def test_b():\n    assert True\n"
+    )
     r = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-         "tests/harness/test_level9_proxy_e2e.py", "tests/unit/vcli/test_ros2_proxy_logging.py"],
+        [sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
+         "-c", str(_REPO / "pyproject.toml"), "-q", "--rootdir", str(tmp_path),
+         str(tmp_path / "test_a_stubbed.py"), str(tmp_path / "test_b_find_spec.py")],
         cwd=_REPO, capture_output=True, text=True, timeout=300,
     )
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
+    assert r.returncode == 0 and "2 passed" in r.stdout, r.stdout[-3000:] + r.stderr[-2000:]
 
 
 def test_billed_vlm_benchmarks_are_live_llm_gated() -> None:

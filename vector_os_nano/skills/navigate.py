@@ -591,11 +591,10 @@ class NavigateSkill:
         target: tuple[float, float],
         context: SkillContext,
     ) -> SkillResult:
-        """Mode 0: Navigate via Go2ROS2Proxy.navigate_to() — FAR planner path.
+        """Mode 0: Navigate via base.navigate_to() — the base's own planner.
 
-        Called when context.base exposes navigate_to() (i.e. the proxy is
-        connected to the live nav stack).  Falls back to dead-reckoning if
-        the proxy call returns False.
+        Called when context.base exposes navigate_to().  Falls back to
+        dead-reckoning if the call returns False.
         """
         logger.info(
             "[NAV] Proxy mode -> room=%s target=(%.1f, %.1f)",

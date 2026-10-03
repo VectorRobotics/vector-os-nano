@@ -444,3 +444,63 @@ def test_evidence_passed_whole_trace_guards(trace_kwargs) -> None:  # noqa: ANN0
     from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
 
     assert evidence_passed(_detect_trace(**trace_kwargs), _DETECT_ONLY) is False
+
+
+# ---------------------------------------------------------------------------
+# Harvested (WP04 dead-track sweep): the deleted ROS2-proxy tests pinned a base
+# whose pose was a PLACEHOLDER — Go2ROS2Proxy started at (0, 0, 0.28), on the
+# living_room box's corner, before any odometry arrived — so visited('living_room')
+# and at_position(0, 0) graded True with no sim running (periphery B-5). A base
+# that cannot vouch for its pose must fail every base oracle closed, wherever the
+# placeholder happens to sit.
+# ---------------------------------------------------------------------------
+
+
+class _UnvouchedBase:
+    """A base parked exactly on the goal — vouched for only when connected + readable."""
+
+    def __init__(self, *, connected=True, pose=(0.0, 0.0, 0.28), heading=0.0, raises=False):  # noqa: ANN001
+        self._connected = connected
+        self._pose, self._heading, self._raises = pose, heading, raises
+
+    def get_position(self):  # noqa: ANN201
+        if self._raises:
+            raise RuntimeError("no odometry received yet")
+        return self._pose
+
+    def get_heading(self):  # noqa: ANN201
+        if self._raises:
+            raise RuntimeError("no odometry received yet")
+        return self._heading
+
+
+def _base_oracle_verdicts(base) -> tuple[bool, bool, bool]:  # noqa: ANN001
+    from types import SimpleNamespace
+
+    from vector_os_nano.vcli.worlds.go2_sim_oracle import make_at_position, make_facing, make_visited
+
+    agent = SimpleNamespace(_base=base)
+    return (
+        make_at_position(agent)(0.0, 0.0),
+        make_facing(agent)(0.0),
+        make_visited(agent, {"living_room": (0.0, 0.0, 6.0, 5.0)})("living_room"),
+    )
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        pytest.param(_UnvouchedBase(connected=False), id="disconnected-at-placeholder"),
+        pytest.param(_UnvouchedBase(raises=True), id="no-odom-yet-raises"),
+        pytest.param(_UnvouchedBase(pose=None, heading=None), id="pose-none"),
+        pytest.param(_UnvouchedBase(pose=(float("nan"),) * 3, heading=float("nan")), id="pose-nan"),
+    ],
+)
+def test_base_oracles_fail_closed_on_an_unvouched_pose(base) -> None:  # noqa: ANN001
+    assert _base_oracle_verdicts(base) == (False, False, False)
+
+
+def test_base_oracles_ground_the_same_pose_when_vouched() -> None:
+    """Control: the identical pose on a connected, readable base DOES ground, so the
+    fail-closed cases above fail for the right reason."""
+    assert _base_oracle_verdicts(_UnvouchedBase()) == (True, True, True)

@@ -5,8 +5,8 @@
 
 The skill's wiring (hardware preconditions, world-model lookup, motion
 sequencing, return-data structure) is verified here with a mock arm and
-gripper. The actual physics / MuJoCo behaviour is exercised by the E2E
-stability runs in scripts/verify_pick_top_down.py.
+gripper. The actual physics / MuJoCo behaviour is exercised by the sim e2e
+(tests/e2e_repl/test_e3a_grasp_green_bottle.py).
 """
 from __future__ import annotations
 

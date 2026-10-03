@@ -46,14 +46,14 @@ _bridge_thread: threading.Thread | None = None
 def _start_tare() -> bool:
     """Check that TARE autonomous exploration planner is already running.
 
-    TARE must be launched by _launch_ros2_stack() (via launch_explore.sh) before
+    TARE must be launched by _launch_ros2_stack() (via launch_nav_only.sh) before
     exploration starts.  This function only detects a running TARE process — it
     does NOT start one.  Launching TARE here would create a second process group
     with broken DDS connectivity.
 
     """
 
-    # Check if TARE is already running (launched by _launch_ros2_stack / launch_explore.sh)
+    # Check if TARE is already running (launched by _launch_ros2_stack / launch_nav_only.sh)
     if shutil.which("pgrep"):
         result = subprocess.run(["pgrep", "-f", "tare_planner_node"], capture_output=True)
         if result.returncode == 0:
@@ -62,7 +62,7 @@ def _start_tare() -> bool:
 
     logger.warning(
         "[EXPLORE] TARE not running. Launch the nav stack first via "
-        "sim/hardware stack startup (launch_explore.sh). Exploration cannot start."
+        "sim/hardware stack startup (launch_nav_only.sh). Exploration cannot start."
     )
     return False
 
@@ -131,7 +131,7 @@ def get_explore_status() -> dict:
 def _own_descendants_named(name: str, root: int | None = None) -> list[int]:
     """PIDs anywhere below *root* (default: this process) whose command line contains *name*.
 
-    TARE runs inside the nav-stack launch (launch_explore.sh) this CLI started, a
+    TARE runs inside the nav-stack launch (launch_nav_only.sh) this CLI started, a
     descendant in another process group, so its group cannot be killed without
     FAR + localPlanner. Matching by name only among OUR descendants never touches
     another project's planner on a shared machine (a bare pkill -f did).
@@ -342,49 +342,6 @@ def _launch_nav_stack() -> bool:
         return False
 
 
-_nav_explore_proc: subprocess.Popen | None = None
-
-
-def _launch_nav_explore() -> None:
-    """Start the full nav stack + TARE as one process group."""
-    global _nav_explore_proc
-
-    if _nav_explore_proc is not None and _nav_explore_proc.poll() is None:
-        logger.info("[EXPLORE] Nav stack already running")
-        return
-
-    _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)
-    ))))
-    script = os.path.join(_repo, "scripts", "launch_nav_explore.sh")
-    if not os.path.isfile(script):
-        logger.error("[EXPLORE] launch_nav_explore.sh not found: %s", script)
-        return
-
-    log_fh = open(run_path("vector_nav_explore.log"), "w")
-    _nav_explore_proc = subprocess.Popen(
-        ["bash", script],
-        stdout=log_fh, stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid,
-    )
-
-    import atexit
-
-    def _cleanup_nav():
-        try:
-            os.killpg(os.getpgid(_nav_explore_proc.pid), signal.SIGTERM)
-            _nav_explore_proc.wait(timeout=5)
-        except Exception:
-            try:
-                os.killpg(os.getpgid(_nav_explore_proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
-        log_fh.close()
-
-    atexit.register(_cleanup_nav)
-    logger.info("[EXPLORE] Nav stack + TARE launched (PID=%d)", _nav_explore_proc.pid)
-
-
 def _verify_nav_stack() -> None:
     """Check that critical nav stack topics are active before starting TARE.
 
@@ -423,7 +380,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     Everything runs here — execute() returns immediately.
     Runs indefinitely until _explore_cancel is set.
 
-    TARE must already be running (started by _launch_ros2_stack via launch_explore.sh).
+    TARE must already be running (started by _launch_ros2_stack via launch_nav_only.sh).
     If TARE is not detected, emits an error event and exits immediately.
     """
     global _explore_running, _explore_visited
@@ -434,7 +391,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
             "reason": "tare_not_running",
             "message": (
                 "TARE planner is not running. Start the nav stack first "
-                "(launch_explore.sh or sim stack startup)."
+                "(launch_nav_only.sh or sim stack startup)."
             ),
         })
         return
@@ -488,7 +445,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     # Any /cmd_vel_nav we send would CLEAR the bridge's _current_path and
     # override the nav stack's path follower — causing the dog to circle.
     #
-    # Reference: launch_explore.sh does the same: seed once, then hands off
+    # Reference: launch_nav_only.sh does the same: seed once, then hands off
     # to TARE entirely. The nav stack drives at up to 0.8 m/s on its own.
 
     _prev_room: str | None = None
@@ -790,7 +747,7 @@ class ExploreSkill:
         # provide spatial understanding.
         # set_auto_look(None) — explicitly not wiring VLM
 
-        # Bridge + nav stack are already running (started by launch_explore.sh
+        # Bridge + nav stack are already running (started by launch_nav_only.sh
         # via sim_tool). Do NOT call _start_bridge_on_go2 — it creates a
         # conflicting rclpy context that crashes the bridge process.
         bridge_ok = True

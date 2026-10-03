@@ -24,7 +24,9 @@ def make_mock_skill(name: str, description: str = "A skill",
     skill.postconditions = postconditions or []
     skill.effects = {}
     skill.failure_modes = []
-    skill.execute.return_value = SkillResult(success=True)
+    # Assigned, not auto-created: a runtime_checkable isinstance looks attributes up
+    # statically, and MagicMock's lazily created children are invisible to it.
+    skill.execute = MagicMock(return_value=SkillResult(success=True))
     return skill
 
 

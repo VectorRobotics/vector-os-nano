@@ -6,17 +6,11 @@
 `_NativeBaseNavigateTool` (native_loop.py) dispatches coordinate navigation POLYMORPHICALLY:
 it calls ``base.navigate_to(x, y, timeout=...)`` on whatever base is connected — there is
 NO go2-vs-g1 branch in the kernel/tool layer (Rule 11 at the tool layer is already met).
-The two PLANNER BACKENDS live behind that one interface:
-  - go2  -> ``Go2ROS2Proxy.navigate_to``  (external ROS2 CMU FAR planner over lidar terrain)
-  - g1   -> ``MuJoCoG1.navigate_to``      (in-driver visibility-graph planner, g1_vgraph)
+Both in-process drivers implement it (``MuJoCoGo2.navigate_to`` / ``MuJoCoG1.navigate_to``).
 
-This test PINS the polymorphic contract both backends must honor so the one navigate tool
-keeps dispatching to either without a per-embodiment branch (the convergence ADR-001 relies
-on this). A future change that diverges one backend's call shape fails here.
-
-NOTE: the bare in-process ``MuJoCoGo2`` has NO ``navigate_to`` — go2 coordinate-nav is only
-reachable via the ``Go2ROS2Proxy`` (external FAR). That is why the in-process sim e2es drive
-``walk`` (open-loop), not ``navigate``.
+This test PINS the polymorphic contract both must honor so the one navigate tool keeps
+dispatching to either without a per-embodiment branch. A future change that diverges one
+driver's call shape fails here.
 """
 from __future__ import annotations
 
@@ -24,7 +18,7 @@ import inspect
 
 import pytest
 
-pytest.importorskip("mujoco", reason="MuJoCoG1 needs mujoco")
+pytest.importorskip("mujoco", reason="the drivers need mujoco")
 
 
 def _navigate_params(cls) -> dict:
@@ -32,11 +26,11 @@ def _navigate_params(cls) -> dict:
 
 
 def test_go2_and_g1_navigate_to_share_the_polymorphic_contract():
-    """Both planner backends accept the (x, y, timeout=...) call _NativeBaseNavigateTool makes."""
-    from vector_os_nano.hardware.sim.go2_ros2_proxy import Go2ROS2Proxy
+    """Both drivers accept the (x, y, timeout=...) call _NativeBaseNavigateTool makes."""
     from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
+    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 
-    for cls in (Go2ROS2Proxy, MuJoCoG1):
+    for cls in (MuJoCoGo2, MuJoCoG1):
         params = _navigate_params(cls)
         assert "x" in params and "y" in params, (
             f"{cls.__name__}.navigate_to must accept x, y; got {list(params)}"
@@ -59,7 +53,7 @@ def test_native_navigate_tool_is_embodiment_agnostic():
     # No coupling to a CONCRETE driver class inside the tool (Rule 11 at the tool layer) —
     # docstring prose may mention 'go2'/'g1' as examples, but the code must not import or
     # isinstance-check a driver class (that would be a per-embodiment fork).
-    for concrete in ("MuJoCoGo2", "MuJoCoG1", "Go2ROS2Proxy", "isinstance("):
+    for concrete in ("MuJoCoGo2", "MuJoCoG1", "isinstance("):
         assert concrete not in src, (
             f"_NativeBaseNavigateTool must stay embodiment-agnostic; found {concrete!r}"
         )
