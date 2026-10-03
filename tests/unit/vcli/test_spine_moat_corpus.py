@@ -63,12 +63,13 @@ CORPUS_RAN: list[str] = [
     "get_position() == get_position()",
     "at_position(99, 99) == at_position(0, 0)",
     "len(get_position()) == len(get_position())",
-    # a bool oracle ordered / negated (detection_matches_gt was missing from the
-    # predicate list, so these graded GROUNDED under the state rules)
+    # a bool oracle ordered / negated / used as a state term (detection_matches_gt
+    # used to get the state rules, so `< 2` and `== False` graded GROUNDED)
     "detection_matches_gt('red') < 2",
     "detection_matches_gt('red') >= 0",
     "detection_matches_gt('red') == False",
     "not detection_matches_gt('red')",
+    "len(detection_matches_gt('red')) == 0",
     # FG-3 tolerance inflation is NOT a classifier rule: at_position(0, 0, 1e6) still
     # classifies GROUNDED, and the oracle clamps the tol to the 2 m cap, so it is exactly
     # at_position(0, 0, 2.0). See test_tolerance_is_clamped_in_oracle.
@@ -119,8 +120,7 @@ HONEST_GROUNDED: list[str] = [
     "'table' in describe_scene()",
     "get_position()[0] < 5.0",
     "at_position(11, 3) == True",
-    "detection_matches_gt('red')",
-    "detection_matches_gt('red') == True",
+    "detection_matches_gt('red') == True",  # g1 (R7); its bare call stays RAN
 ]
 
 
@@ -217,12 +217,12 @@ def _tagged_bool_oracles() -> set[str]:
     return names
 
 
-def test_every_bool_oracle_gets_the_predicate_rules() -> None:
-    """A tagged bool oracle missing from _PREDICATE_ORACLES falls under the state
-    rules, where ``pred(...) < 2`` / ``== False`` ground (always true / a negation)."""
+def test_every_bool_oracle_gets_the_bool_rules() -> None:
+    """A tagged bool oracle missing from _BOOL_ORACLES falls under the state rules,
+    where ``pred(...) < 2`` / ``== False`` ground (always true / a negation)."""
     found = _tagged_bool_oracles()
     assert {"at_position", "holding_object", "file_exists", "detection_matches_gt"} <= found
-    assert found <= ec._PREDICATE_ORACLES, sorted(found - ec._PREDICATE_ORACLES)
+    assert found <= ec._BOOL_ORACLES, sorted(found - ec._BOOL_ORACLES)
 
 
 # ---------------------------------------------------------------------------

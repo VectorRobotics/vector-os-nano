@@ -41,11 +41,7 @@ Verdict = Literal["GROUNDED", "RAN"]
 # Sentinels the decomposer / robot motor steps emit when there is no predicate.
 _NO_EVIDENCE: frozenset[str] = frozenset({"", "True"})
 
-# Oracle names returning a goal-conditioned bool — a BARE call is real evidence, and
-# only the bare call / ``== True`` grounds (an ordering or ``== False`` on a bool is a
-# tautology or a negation). Every ``@oracle``-tagged ``-> bool`` callable MUST be here,
-# else it falls under the looser state rules; test_spine_moat_corpus scans the tags and
-# fails on drift. ponytail: a kernel list until the @oracle tag grows a return kind.
+# Oracle names returning a goal-conditioned bool — a BARE call is real evidence.
 _PREDICATE_ORACLES: frozenset[str] = frozenset(
     {
         "at_position",
@@ -53,13 +49,19 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
         "visited",
         "holding_object",
         "arm_at_home",
-        "detection_matches_gt",
         "file_exists",
         # path_contains(path, substr) is a goal-conditioned bool (the author
         # supplies the substring goal; True only if the file actually contains it).
         "path_contains",
     }
 )
+# Every bool oracle: in a compare only ``== True`` grounds (an ordering or ``== False``
+# on a bool is a tautology or a negation), and it is never a state term. g1's
+# ``detection_matches_gt`` grounds only as ``== True`` (R7); its bare call stays RAN.
+# Every ``@oracle``-tagged ``-> bool`` callable MUST be here, else it gets the looser
+# state rules; test_spine_moat_corpus scans the tags and fails on drift.
+# ponytail: kernel lists until the @oracle tag grows a return kind.
+_BOOL_ORACLES: frozenset[str] = _PREDICATE_ORACLES | {"detection_matches_gt"}
 
 _ORDERING = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
 # Mirror an ordering when the literal is on the LEFT (``0 < len(x)`` == ``len(x) > 0``).
@@ -111,7 +113,7 @@ def _predicate_call(node: ast.AST, oracle_names: frozenset[str]) -> bool:
 
 def _state_call(node: ast.AST, oracle_names: frozenset[str]) -> bool:
     name = _oracle_call(node, oracle_names)
-    return name is not None and name not in _PREDICATE_ORACLES
+    return name is not None and name not in _BOOL_ORACLES
 
 
 def _state_term(node: ast.AST, oracle_names: frozenset[str]) -> bool:
@@ -150,8 +152,8 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
             op = _FLIP[type(op)]()
     if not _literal(right):
         return False  # oracle-vs-oracle, or an absorbing expression on the other side
-    if _predicate_call(left, oracle_names):
-        # A bool predicate: only `== True` (the bare call); `== False` is a negation
+    if _oracle_call(left, oracle_names) in _BOOL_ORACLES:
+        # A bool oracle: only `== True` (the bare call); `== False` is a negation
         # and an ordering on a bool is a tautology for some constant.
         return isinstance(op, ast.Eq) and isinstance(right, ast.Constant) and right.value is True
     if not _state_term(left, oracle_names):
