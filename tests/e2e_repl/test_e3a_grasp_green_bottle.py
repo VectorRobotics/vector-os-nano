@@ -20,7 +20,6 @@ _SCRIPT = {"steps": LAUNCH_STEPS + [
 
 @pytest.mark.sim
 @pytest.mark.cli_main
-@pytest.mark.xfail(strict=True, reason="acceptance path = subprocess bridge until WP03")
 def test_e3a_grasp_green_bottle_grounded() -> None:
     r = run_repl_session([LAUNCH, "拿起绿色的瓶子"], tool_script=_SCRIPT, answers=["y"], timeout_sec=360)
     text = r.text
