@@ -21,6 +21,7 @@ Ported from the mock helper in
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -201,7 +202,11 @@ class ReactiveFakeBackend:
     per step (``call_<step>_<j>``). No match -> ``end_turn`` with no tools and a
     ``[reactive-fake] no step matched`` text, so a broken script fails visibly.
 
-    ``calls`` records ``(messages, offered tool names)`` per call for assertions.
+    ``calls`` records ``(messages, offered tool names)`` per call for assertions; a
+    PTY child also appends each call's observation to ``$VECTOR_FAKE_LLM_LOG`` (one
+    JSON line per call — the call counter a parent test reads). A step with
+    ``"raise": "<msg>"`` raises ``RuntimeError(<msg>)`` instead of answering (an
+    injected LLM outage).
     """
 
     def __init__(self, steps: list[dict[str, Any]]) -> None:
@@ -211,6 +216,7 @@ class ReactiveFakeBackend:
         self._turns = _turns_from_dicts(self._steps)
         self._used: set[int] = set()
         self.calls: list[tuple[list[dict[str, Any]], list[str]]] = []
+        self._log = os.environ.get("VECTOR_FAKE_LLM_LOG", "")
 
     def call(
         self,
@@ -224,6 +230,9 @@ class ReactiveFakeBackend:
         offered = [str(t.get("name", "")) for t in (tools or []) if isinstance(t, dict)]
         self.calls.append((list(messages), offered))
         obs, obs_error = _observation(messages)
+        if self._log:
+            with open(self._log, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"obs": obs}, ensure_ascii=False) + "\n")
         for i, step in enumerate(self._steps):
             if i in self._used or str(step.get("when", "")) not in obs:
                 continue
@@ -232,6 +241,8 @@ class ReactiveFakeBackend:
             if any(tc.name not in offered for tc in self._turns[i].tool_calls):
                 continue
             self._used.add(i)
+            if "raise" in step:
+                raise RuntimeError(str(step["raise"]))
             turn = self._turns[i]
             if on_text is not None and turn.text:
                 on_text(turn.text)

@@ -218,7 +218,9 @@ class ExecutionTrace:
     # counts the side-effecting tool calls the producer ran — nonzero means the
     # turn acted and must never be re-planned by another producer. ``llm_error``
     # marks an LLM-backend failure (infrastructure, not an agent failure);
-    # ``model`` is the backend model id that drove the turn.
+    # ``model`` is the backend model id that drove the turn; ``refused`` lists the
+    # tool calls the permission gate refused ("<tool>: <why>").
     actions_dispatched: int = 0
     llm_error: str = ""
     model: str = ""
+    refused: tuple[str, ...] = ()

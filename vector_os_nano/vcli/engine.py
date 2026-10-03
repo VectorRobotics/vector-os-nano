@@ -1438,13 +1438,16 @@ class VectorEngine:
         # Invalidate world context cache — robot state changes after a stop
         self._world_context_cache = None
 
-        # Execute stop skill if available
+        # The stop skill itself — never via agent.execute_skill, whose plan appends a
+        # 'home' step (moving the arm and opening the gripper is not a stop).
         _agent = agent or getattr(self, "_vgg_agent", None)
-        if _agent is not None:
+        reg = getattr(_agent, "_skill_registry", None)
+        stop = reg.get("stop") if reg is not None else None
+        if stop is not None:
             try:
-                _agent.execute_skill("stop", {})
-            except Exception:
-                pass
+                stop.execute({}, _agent._build_context())
+            except Exception as exc:  # noqa: BLE001 — the run tokens are cancelled already
+                logger.warning("P0 stop: the stop skill failed: %s", exc)
 
         if session is not None:
             session.append_user(user_message)

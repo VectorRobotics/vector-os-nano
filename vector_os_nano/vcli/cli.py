@@ -32,6 +32,7 @@ import re
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.syntax import Syntax
@@ -421,9 +422,14 @@ def _native_trace_acted(trace: Any) -> bool:
 
 
 def _native_owns_turn(trace: Any) -> bool:
-    """The native result is final: it acted, or the LLM itself is unavailable (the
+    """The native result is final: it acted, the permission gate refused what it
+    tried (no second producer re-attempts it), or the LLM itself is unavailable (the
     legacy producer would only hit the same dead model)."""
-    return trace is not None and (_native_trace_acted(trace) or bool(getattr(trace, "llm_error", "")))
+    return trace is not None and (
+        _native_trace_acted(trace)
+        or bool(getattr(trace, "refused", ()))
+        or bool(getattr(trace, "llm_error", ""))
+    )
 
 
 def _repl_native_enabled() -> bool:
@@ -547,13 +553,15 @@ def _repl_attempt_native(
     sub_goals = list(getattr(trace.goal_tree, "sub_goals", ()) or ())
     steps = list(getattr(trace, "steps", ()) or ())
     console.print()
+    for refusal in getattr(trace, "refused", ()) or ():
+        console.print(f"  [{TEAL}]▸[/] [red]refused[/] {escape(refusal)}")
     for i, s in enumerate(steps):
         verify_expr = sub_goals[i].verify if i < len(sub_goals) else ""
         chain = (getattr(s, "strategy", "") or "").strip() or "(no action)"
         ok = bool(getattr(s, "verify_result", False))
         actor = getattr(getattr(s, "actor_caused", None), "value", "?")
         if not verify_expr and getattr(s, "error", ""):
-            console.print(f"  [{TEAL}]▸[/] {chain} → [yellow]{s.error}[/]", markup=True)
+            console.print(f"  [{TEAL}]▸[/] {chain} → [yellow]{escape(s.error)}[/]")
             continue
         mark = "[green]✓[/]" if ok else "[yellow]·[/]"
         console.print(
@@ -572,7 +580,7 @@ def _repl_attempt_native(
             f"[dim]({report.n_grounded}/{report.n_steps} grounded)[/]"
         )
         if report.llm_unavailable:
-            console.print(f"  [yellow]{report.error}[/] [dim](infrastructure, not an agent failure)[/]")
+            console.print(f"  [yellow]{escape(report.error)}[/] [dim](infrastructure, not an agent failure)[/]")
     except Exception as exc:  # noqa: BLE001 — fail closed (display only)
         console.print(f"  [yellow]verdict unavailable:[/] {exc}")
 
@@ -674,10 +682,22 @@ def _run_turn_busy(engine: Any, fn: Callable[[], None], app_state: dict[str, Any
     threading.Thread(target=_target, name="vector-turn", daemon=True).start()
     next_line: str | None = None
     stopped_at: float | None = None
+    interrupted = False
     reply: "queue.Queue[str] | None" = None
     try:
-        while not done.wait(0.02):
+        while True:
+            # EVERY step, the wait included, sits inside this try: a Ctrl-C lands
+            # wherever this thread happens to be and must never escape the REPL.
+            # The stop it triggers runs on the next pass (a Ctrl-C during that stop
+            # just stops again — the stop is idempotent).
             try:
+                if interrupted:
+                    interrupted = False
+                    console.print("\n[yellow]Interrupted.[/yellow]")
+                    _p0_stop(engine, "interrupt", app_state)
+                    stopped_at = stopped_at or time.monotonic()
+                if done.wait(0.02):
+                    break
                 if stopped_at is not None and time.monotonic() - stopped_at > _UNWIND_S:
                     console.print("[dim]  the stopped task is still unwinding; back to the prompt[/]")
                     break
@@ -701,10 +721,7 @@ def _run_turn_busy(engine: Any, fn: Callable[[], None], app_state: dict[str, Any
                 if reply is not None:
                     reply.put("n")
                     reply = None
-                console.print("\n[yellow]Interrupted.[/yellow]")
-                if stopped_at is None:
-                    _p0_stop(engine, "interrupt", app_state)
-                    stopped_at = time.monotonic()
+                interrupted = True
     finally:
         _ASK_Q = None
         while True:  # nobody answers once the loop ends: deny what is still queued

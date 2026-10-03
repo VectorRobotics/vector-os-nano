@@ -514,6 +514,9 @@ class NativeStepRunner:
         # Side-effecting tool calls over the whole turn: nonzero means the turn
         # acted, so no other producer may re-run it (no double execution).
         self.actions_dispatched: int = 0
+        # Calls the permission gate refused ("<tool>: <why>"): the user sees them, and
+        # no other producer re-attempts what was just refused.
+        self.refused: list[str] = []
 
         # The assembled trace pieces (one SubGoal + one StepRecord per verify pair).
         self._sub_goals: list[SubGoal] = []
@@ -553,11 +556,13 @@ class NativeStepRunner:
             swallow_check_errors=True, swallow_always_allow_errors=True,
         )
         if not decision.allowed:
-            return ToolResult(
-                content=f"Permission denied for {name}: {decision.reason or decision.kind}. "
-                "The tool did NOT run.",
-                is_error=True,
+            why = decision.reason if decision.kind == "deny" else (
+                "not allowed (permission was not granted)" if decision.kind == "ask_deny"
+                else f"permission check failed: {decision.reason}"
             )
+            self.refused.append(f"{name}: {why}")
+            return ToolResult(content=f"Permission denied for {name}: {why}. The tool did NOT run.",
+                              is_error=True)
         if not self._step_open:
             # First skill of a fresh step -> capture the causation baseline NOW.
             self._baseline = actor_causation.capture(self._agent)
@@ -736,6 +741,7 @@ class NativeStepRunner:
             actions_dispatched=self.actions_dispatched,
             llm_error=llm_error,
             model=model,
+            refused=tuple(self.refused),
         )
 
 

@@ -77,8 +77,10 @@ def _script(*turns: Any) -> FakeToolScriptBackend:
 def test_a_denied_tool_is_never_executed() -> None:
     spy = _SpyTool("bash", "deny")
     eng = _dev_engine(_script(tool_turn(("bash", {"command": "echo hi"})), tool_turn(end=True)), spy)
-    eng.run_turn_native("run it", session=_session())
+    trace = eng.run_turn_native("run it", session=_session())
     assert spy.calls == 0
+    assert trace.refused == ("bash: scripted",) and trace.actions_dispatched == 0
+    assert cli._native_owns_turn(trace)  # no second producer re-attempts a refused call
 
 
 def test_rm_rf_root_is_blocked_by_the_bash_deny_list_on_the_native_path(monkeypatch) -> None:
@@ -228,6 +230,22 @@ def test_the_answer_wrap_never_clears_a_stop_on_a_background_run() -> None:
     check.set()
     t.join(5)
     assert seen == [True]
+
+
+def test_the_p0_stop_runs_the_stop_skill_and_never_homes_the_arm() -> None:
+    """agent.execute_skill('stop') appended a 'home' step: arm moves, gripper opens."""
+    from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.vcli.engine import VectorEngine
+
+    ran: list[str] = []
+    reg = SkillRegistry()
+    reg.register(SimpleNamespace(name="stop", execute=lambda p, c: ran.append("stop")))
+    agent = SimpleNamespace(_skill_registry=reg, _build_context=lambda: None,
+                            execute_skill=lambda *a, **k: ran.append("execute_skill(stop, then home)"))
+    eng = VectorEngine(backend=None)
+    eng._vgg_agent = agent
+    eng._emergency_stop("停", None)
+    assert ran == ["stop"]
 
 
 def test_engine_runs_are_single_flight_and_preempt_the_previous_run() -> None:
@@ -441,11 +459,23 @@ def test_another_command_mid_turn_cancels_then_runs_next(typed) -> None:
     assert eng.stops == ["往后走"]  # the running turn was stopped first
 
 
-def test_ctrl_c_mid_turn_stops_and_never_exits(typed) -> None:
+@pytest.mark.parametrize("stdin_idle", [False, True])
+def test_ctrl_c_mid_turn_stops_and_never_exits(typed, monkeypatch, stdin_idle) -> None:
+    """A Ctrl-C lands wherever the REPL thread is — reading stdin, or waiting on the
+    turn (stdin_idle: the loop then lives in the wait) — and never escapes."""
+    if stdin_idle:
+        monkeypatch.setattr(cli, "_read_line", lambda timeout: None)
     eng = _ReplEngine()
-    threading.Timer(0.2, os.kill, args=(os.getpid(), signal.SIGINT)).start()
-    assert cli._run_turn_busy(eng, lambda: eng.stopped.wait(5), {}) is None  # no KeyboardInterrupt
-    assert eng.stops == ["interrupt"]
+    release = threading.Event()
+    for at in (0.2, 0.35):  # a panicked double Ctrl-C
+        threading.Timer(at, os.kill, args=(os.getpid(), signal.SIGINT)).start()
+    threading.Timer(0.6, release.set).start()
+    try:
+        nxt = cli._run_turn_busy(eng, lambda: release.wait(5), {})
+    except KeyboardInterrupt:
+        pytest.fail("Ctrl-C escaped the REPL turn loop (the REPL would exit)")
+    assert nxt is None
+    assert eng.stops and set(eng.stops) == {"interrupt"}
 
 
 def test_a_permission_prompt_from_the_turn_worker_is_answered_by_the_repl_thread(typed, monkeypatch) -> None:

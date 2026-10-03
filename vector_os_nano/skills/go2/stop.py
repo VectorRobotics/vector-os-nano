@@ -90,12 +90,13 @@ def _try_publish_zero_cmdvel() -> None:
     Errors are swallowed -- stop must succeed even if ROS2 is absent.
     """
     try:
-        import rclpy
+        import sys
+
+        rclpy = sys.modules.get("rclpy")  # never pay a cold rclpy import on the P0 path
+        if rclpy is None or not rclpy.ok():
+            return
         from rclpy.node import Node
         from geometry_msgs.msg import Twist
-
-        if not rclpy.ok():
-            return
 
         # Use a temporary one-shot publisher on an anonymous node
         node = Node("_stop_skill_oneshot")
