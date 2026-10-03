@@ -2158,8 +2158,12 @@ def main(argv: list[str] | None = None) -> None:
             from vector_os_nano.vcli.cognitive.observation import render_step_view
             verify = _vgg_verify_by_name.get(view.get("sub_goal_name"))
             line = render_step_view(view, verify)
-            ok = bool(view.get("success")) and bool(view.get("verify_result"))
-            colour = "green" if ok else "red"
+            # Green only for GROUNDED evidence; a passing-but-ungraded / RAN step is
+            # not verified, so it never shows green.
+            if view.get("evidence") == "GROUNDED":
+                colour = "green"
+            else:
+                colour = "yellow" if view.get("success") else "red"
             # markup=False: the rendered line carries literal [GROUNDED]/[RAN]/[FAILED]
             # markers that must NOT be parsed as rich style tags.
             console.print(f"    VGG {line}", style=colour, markup=False)

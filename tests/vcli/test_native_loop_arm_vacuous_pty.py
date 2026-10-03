@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
+"""WP02 e2e acceptance on the arm world, through the REAL ``cli.main`` (``--sim``).
+
+(1) Five real ``home`` steps, each "verified" by a VACUOUS predicate that evaluates
+    True whatever the world state -> every step RAN, the turn RAN, exit 2. Before
+    WP02, 4 of the 5 graded GROUNDED.
+(2) A real ``pick`` + ``holding_object('banana')`` -> GROUNDED, exit 0.
+
+Scripted native tool-use (no live LLM); serialized, headless, ``rosm nuke`` after.
+"""
+from __future__ import annotations
+
+import subprocess
+
+import pytest
+
+pytest.importorskip("mujoco")
+
+from tests.harness.pty_cli import run_cli_turn  # noqa: E402
+
+_SIM_TIMEOUT_SEC = 360.0
+
+_VACUOUS = [
+    "len(detect_objects()) >= 0",
+    "'' in describe_scene()",
+    "placed_count() >= 0",
+    "describe_scene() != ''",
+    "holding_object('banana') is not None",
+]
+
+
+def _turns(*pairs):  # noqa: ANN002, ANN202
+    turns = []
+    for tool, expr in pairs:
+        turns.append({"tool_calls": [tool]})
+        turns.append({"tool_calls": [{"name": "verify", "input": {"expr": expr}}]})
+    turns.append({"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"})
+    return {"turns": turns}
+
+
+@pytest.fixture()
+def sim_cleanup():
+    yield
+    try:
+        subprocess.run(["rosm", "nuke", "--yes"], timeout=30, capture_output=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@pytest.mark.sim
+@pytest.mark.cli_main
+def test_arm_vacuous_verifies_grade_ran(sim_cleanup) -> None:
+    r = run_cli_turn(
+        "回到初始位置",
+        sim=True,
+        timeout_sec=_SIM_TIMEOUT_SEC,
+        extra_args=["--headless", "--native-loop"],
+        tool_script=_turns(*[({"name": "home", "input": {}}, e) for e in _VACUOUS]),
+    )
+    assert r.verified is False and r.exit_code == 2, r.verdict
+    assert r.evidence == "RAN", r.verdict
+    steps = r.verdict["per_step"]
+    assert [s["verify"] for s in steps] == _VACUOUS, steps
+    # Each predicate is TRUE — only the classifier's structure check rejects it.
+    assert all(s["verify_result"] is True for s in steps), steps
+    assert all(s["evidence"] == "RAN" for s in steps), steps
+
+
+@pytest.mark.sim
+@pytest.mark.cli_main
+def test_arm_honest_grasp_grades_grounded(sim_cleanup) -> None:
+    r = run_cli_turn(
+        "把香蕉抓起来拿在手里",
+        sim=True,
+        timeout_sec=_SIM_TIMEOUT_SEC,
+        extra_args=["--headless", "--native-loop"],
+        tool_script=_turns(
+            ({"name": "pick", "input": {"object_label": "banana", "mode": "hold"}},
+             "holding_object('banana')"),
+        ),
+    )
+    assert r.verified is True and r.exit_code == 0, r.verdict
+    assert r.evidence == "GROUNDED", r.verdict
+    (step,) = r.verdict["per_step"]
+    assert step["strategy"] == "pick" and step["evidence"] == "GROUNDED", step
