@@ -69,6 +69,8 @@ def test_gui_must_be_a_real_bool(monkeypatch) -> None:
     monkeypatch.setattr(SimSession, "start", staticmethod(no_start))
     res = SimStartTool().execute({"embodiment": "go2", "gui": "false"}, _ctx({}))
     assert res.is_error and "gui must be true or false" in res.content
+    # Omitted, the default still opens the viewer (level71 passes gui=False explicitly).
+    assert "gui=True" in SimStartTool().execute({"embodiment": "go2"}, _ctx({})).content
 
 
 def test_corrupt_manifest_is_error_naming_the_key(tmp_path, monkeypatch) -> None:
