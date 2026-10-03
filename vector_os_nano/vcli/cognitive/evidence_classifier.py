@@ -41,9 +41,11 @@ Verdict = Literal["GROUNDED", "RAN"]
 # Sentinels the decomposer / robot motor steps emit when there is no predicate.
 _NO_EVIDENCE: frozenset[str] = frozenset({"", "True"})
 
-# Oracle names returning a goal-conditioned bool — a BARE call is real evidence.
-# ponytail: a kernel list; a world that brings a new bool predicate gets the state
-# rules (``pred(...) == True``) until the @oracle tag grows a return kind.
+# Oracle names returning a goal-conditioned bool — a BARE call is real evidence, and
+# only the bare call / ``== True`` grounds (an ordering or ``== False`` on a bool is a
+# tautology or a negation). Every ``@oracle``-tagged ``-> bool`` callable MUST be here,
+# else it falls under the looser state rules; test_spine_moat_corpus scans the tags and
+# fails on drift. ponytail: a kernel list until the @oracle tag grows a return kind.
 _PREDICATE_ORACLES: frozenset[str] = frozenset(
     {
         "at_position",
@@ -51,6 +53,7 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
         "visited",
         "holding_object",
         "arm_at_home",
+        "detection_matches_gt",
         "file_exists",
         # path_contains(path, substr) is a goal-conditioned bool (the author
         # supplies the substring goal; True only if the file actually contains it).

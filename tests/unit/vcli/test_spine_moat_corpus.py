@@ -22,6 +22,7 @@ from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 ROBOT_ORACLES = frozenset({
     "at_position", "facing", "visited", "holding_object", "arm_at_home",
     "placed_count", "detect_objects", "describe_scene", "get_position", "get_heading",
+    "detection_matches_gt",  # g1 perception bool oracle
 })
 
 # ---------------------------------------------------------------------------
@@ -62,9 +63,15 @@ CORPUS_RAN: list[str] = [
     "get_position() == get_position()",
     "at_position(99, 99) == at_position(0, 0)",
     "len(get_position()) == len(get_position())",
-    # FG-3 tolerance inflation (classifier sees the literal tol; oracle clamps it,
-    # but the classifier also refuses an over-cap literal at_position).
-    # (The oracle-clamp half is covered in test_tolerance_is_clamped_in_oracle.)
+    # a bool oracle ordered / negated (detection_matches_gt was missing from the
+    # predicate list, so these graded GROUNDED under the state rules)
+    "detection_matches_gt('red') < 2",
+    "detection_matches_gt('red') >= 0",
+    "detection_matches_gt('red') == False",
+    "not detection_matches_gt('red')",
+    # FG-3 tolerance inflation is NOT a classifier rule: at_position(0, 0, 1e6) still
+    # classifies GROUNDED, and the oracle clamps the tol to the 2 m cap, so it is exactly
+    # at_position(0, 0, 2.0). See test_tolerance_is_clamped_in_oracle.
     # FG-4 dev predicates in a robot world (not in ROBOT_ORACLES -> no oracle call)
     "file_exists('.')",
     "file_exists('README.md')",
@@ -112,6 +119,8 @@ HONEST_GROUNDED: list[str] = [
     "'table' in describe_scene()",
     "get_position()[0] < 5.0",
     "at_position(11, 3) == True",
+    "detection_matches_gt('red')",
+    "detection_matches_gt('red') == True",
 ]
 
 
@@ -168,13 +177,52 @@ def test_mutation_vacuous_compare_guard(monkeypatch) -> None:
     assert "len(detect_objects()) >= 0" in flipped
 
 
-def test_mutation_scope_guard() -> None:
-    """Loosen the scope guard (a dev predicate leaks into the robot oracle set). The
-    dev file predicate must then flip to GROUNDED — this is what verify_oracle_names'
-    scope filter prevents."""
-    leaked = ROBOT_ORACLES | {"file_exists"}
-    assert classify_verify_expr("file_exists('.')", ROBOT_ORACLES) == "RAN"
-    assert classify_verify_expr("file_exists('.')", leaked) == "GROUNDED"
+def test_scope_filter_keeps_dev_predicates_out_of_robot_evidence() -> None:
+    """evidence_names' scope filter: a dev-tagged predicate in the namespace is not
+    robot evidence (so ``file_exists('.')`` grades RAN), and an untagged callable is
+    evidence in no scope."""
+    from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names, oracle
+
+    ns = {
+        "file_exists": oracle(scope="dev")(lambda path: True),
+        "at_position": oracle(scope="robot")(lambda x, y, tol=0.5: True),
+        "nearest_room": lambda: "kitchen",
+    }
+    robot = evidence_names(ns, "robot")
+    assert robot == {"at_position"}
+    assert evidence_names(ns, "dev") == {"file_exists"}
+    assert evidence_names(ns) == {"at_position", "file_exists"}
+    assert classify_verify_expr("file_exists('.')", robot) == "RAN"
+    assert classify_verify_expr("file_exists('.')", robot | {"file_exists"}) == "GROUNDED"
+
+
+def _tagged_bool_oracles() -> set[str]:
+    """Names of every ``@oracle(...)``-decorated ``def f(...) -> bool`` under vcli/."""
+    import ast
+    from pathlib import Path
+
+    names: set[str] = set()
+    for path in Path(ec.__file__).resolve().parents[1].rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.FunctionDef)
+                and isinstance(node.returns, ast.Name)
+                and node.returns.id == "bool"
+                and any(
+                    isinstance(d, ast.Call) and getattr(d.func, "id", None) == "oracle"
+                    for d in node.decorator_list
+                )
+            ):
+                names.add(node.name)
+    return names
+
+
+def test_every_bool_oracle_gets_the_predicate_rules() -> None:
+    """A tagged bool oracle missing from _PREDICATE_ORACLES falls under the state
+    rules, where ``pred(...) < 2`` / ``== False`` ground (always true / a negation)."""
+    found = _tagged_bool_oracles()
+    assert {"at_position", "holding_object", "file_exists", "detection_matches_gt"} <= found
+    assert found <= ec._PREDICATE_ORACLES, sorted(found - ec._PREDICATE_ORACLES)
 
 
 # ---------------------------------------------------------------------------
@@ -268,3 +316,64 @@ def test_tolerance_is_clamped_in_oracle() -> None:
     # facing: a 7 rad tol is clamped, so a 180-deg-off heading is NOT "facing".
     assert facing(math.pi, 7.0) is False
     assert facing(0.0, 7.0) is True  # actually facing +x; clamp doesn't make it lie
+
+
+# ---------------------------------------------------------------------------
+# evidence_passed whole-trace guards (B1-foreach-evidence-blind / foreach-unchecked,
+# spine.md FG-8): the gate grades every step or none. Each case isolates one guard.
+# ---------------------------------------------------------------------------
+
+_DETECT_ONLY = frozenset({"detect_objects"})
+
+
+def _detect_trace(extra_sub_goals=(), extra_steps=(), success=True):  # noqa: ANN001, ANN202
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord, SubGoal
+
+    detect = SubGoal(name="detect", description="detect", verify="len(detect_objects()) > 0")
+    return ExecutionTrace(
+        goal_tree=GoalTree(goal="list the objects on the table", sub_goals=(detect, *extra_sub_goals)),
+        steps=(StepRecord("detect", "detect_skill", True, True, 0.1), *extra_steps),
+        success=success,
+        total_duration_sec=0.1,
+    )
+
+
+def _pick_each():  # noqa: ANN202
+    from vector_os_nano.vcli.cognitive.types import ForEachSpec, SubGoal
+
+    tmpl = SubGoal(name="tmpl", description="pick ${item.name}", verify="True", strategy="pick")
+    return SubGoal(
+        name="pick_each", description="pick each", verify="",
+        foreach=ForEachSpec(source_step="detect", source_path="objects", body=(tmpl,)),
+    )
+
+
+def _child(success: bool):  # noqa: ANN202
+    from vector_os_nano.vcli.cognitive.types import StepRecord
+
+    return StepRecord("pick_each[0].tmpl", "pick", success, success, 0.1)
+
+
+def test_evidence_passed_control_grounded_trace_passes() -> None:
+    from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
+
+    assert evidence_passed(_detect_trace(), _DETECT_ONLY) is True
+
+
+@pytest.mark.parametrize(
+    "trace_kwargs",
+    [
+        pytest.param({"success": False}, id="trace-not-success"),
+        pytest.param({"extra_sub_goals": (_pick_each(),)}, id="zero-iteration-foreach"),
+        pytest.param({"extra_steps": (_child(True),)}, id="unmapped-child-verify-True"),
+        pytest.param({"extra_steps": (_child(False),)}, id="unmapped-child-FAILED"),
+        pytest.param(
+            {"extra_sub_goals": (_pick_each(),), "extra_steps": (_child(False),)},
+            id="FG-8-foreach-with-failed-child",
+        ),
+    ],
+)
+def test_evidence_passed_whole_trace_guards(trace_kwargs) -> None:  # noqa: ANN001
+    from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
+
+    assert evidence_passed(_detect_trace(**trace_kwargs), _DETECT_ONLY) is False

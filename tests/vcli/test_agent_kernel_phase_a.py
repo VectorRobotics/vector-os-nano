@@ -224,6 +224,42 @@ class TestRobotRegression:
         # into a robot namespace, so they cannot ground a robot verify.
         assert "file_exists" not in ns and "grep_count" not in ns
 
+    def test_memory_readers_are_callable_but_never_evidence(self) -> None:
+        """The @oracle tag gate (memory-readers-as-oracles / B13 / B24): the actor's own
+        SceneGraph / ObjectMemory / predict readers are in the verify namespace but not
+        in verify_oracle_names, so a verify built on them grades RAN."""
+        from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
+        from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
+
+        eng = _make_engine("{}")
+        eng._object_memory = SimpleNamespace(
+            last_seen=lambda name: {"room": "kitchen"},
+            certainty=lambda name: 1.0,
+            objects_in_room=lambda room: ["mug"],
+            find_object=lambda name: {"room": "kitchen"},
+        )
+        sg = SimpleNamespace(
+            nearest_room=lambda x, y: "kitchen",
+            get_visited_rooms=lambda: ["kitchen"],
+            get_all_rooms=lambda: [],
+            stats=lambda: {},
+            get_room_coverage=lambda room: 1.0,
+        )
+        base = SimpleNamespace(get_position=lambda: (1.0, 2.0, 0.0), get_heading=lambda: 0.5)
+        agent = SimpleNamespace(_base=base, _spatial_memory=sg)
+        memory = {
+            "nearest_room", "get_visited_rooms", "query_rooms", "world_stats", "last_seen",
+            "certainty", "objects_in_room", "find_object", "room_coverage", "predict_navigation",
+        }
+        assert memory <= set(eng._build_verifier_namespace(agent))
+
+        names = verify_oracle_names(agent, eng)
+        assert {"get_position", "get_heading"} <= names
+        assert names.isdisjoint(memory), sorted(names & memory)
+        assert classify_verify_expr("nearest_room() == 'kitchen'", names) == "RAN"
+        assert classify_verify_expr("'mug' in objects_in_room('kitchen')", names) == "RAN"
+        assert classify_verify_expr("get_position()[0] < 5.0", names) == "GROUNDED"
+
     def test_robot_world_uses_decomposer_defaults(self) -> None:
         assert RobotWorld().decompose_vocab() is None
 
