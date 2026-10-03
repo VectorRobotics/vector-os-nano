@@ -21,7 +21,7 @@ cleanup() {
     echo ""
     echo "Stopping nav stack..."
     nav_stop_groups "${PIDS[@]}"
-    rm -f /tmp/vector_nav_active 2>/dev/null
+    rm -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active 2>/dev/null
     echo "Nav stack stopped."
 }
 trap cleanup EXIT INT TERM
@@ -78,7 +78,7 @@ rviz2 -d "$RVIZ_CFG" 2>/dev/null &
 PIDS+=($!)
 
 # Enable bridge path follower
-touch /tmp/vector_nav_active
+touch ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active
 
 echo "[7/7] Seeding planners..."
 sleep 2

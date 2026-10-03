@@ -13,6 +13,7 @@ import os
 import time
 import logging
 from typing import Any, Callable
+from vector_os_nano.core.run_dir import run_path
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +507,7 @@ class Go2ROS2Proxy:
 
         # Enable bridge path follower
         try:
-            with open("/tmp/vector_nav_active", "w") as fh:
+            with open(run_path("vector_nav_active"), "w") as fh:
                 fh.write("1")
         except OSError as exc:
             logger.warning("[NAV] Could not create nav flag: %s", exc)
@@ -528,7 +529,7 @@ class Go2ROS2Proxy:
         # The probe never outlives the caller's timeout (a 3 s probe on a 1 s budget overran it).
         probe_deadline = start_time + min(_FAR_PROBE_S, timeout)
         while time.time() < probe_deadline:
-            if not os.path.exists("/tmp/vector_nav_active"):
+            if not os.path.exists(run_path("vector_nav_active")):
                 logger.info("[NAV] Cancelled by stop command")
                 self._nav_goal = None
                 return False
@@ -563,7 +564,7 @@ class Go2ROS2Proxy:
         _last_progress = time.time()
         while time.time() < deadline:
             # --- Cancel check: stop command removes nav flag ---
-            if not os.path.exists("/tmp/vector_nav_active"):
+            if not os.path.exists(run_path("vector_nav_active")):
                 logger.info("[NAV] Cancelled by stop command")
                 self._nav_goal = None
                 self.set_velocity(0.0, 0.0, 0.0)
@@ -580,8 +581,8 @@ class Go2ROS2Proxy:
                 pass
 
             # --- Stall flag written by bridge _stuck_detector ---
-            if os.path.exists("/tmp/vector_nav_stalled"):
-                os.remove("/tmp/vector_nav_stalled")
+            if os.path.exists(run_path("vector_nav_stalled")):
+                os.remove(run_path("vector_nav_stalled"))
                 logger.warning("[NAV] Stall flag detected — aborting navigate_to")
                 self._nav_goal = None
                 return False
@@ -688,7 +689,7 @@ class Go2ROS2Proxy:
 
         while time.time() < deadline:
             # Cancel check
-            if not os.path.exists("/tmp/vector_nav_active"):
+            if not os.path.exists(run_path("vector_nav_active")):
                 self.set_velocity(0.0, 0.0, 0.0)
                 return False
 
@@ -838,7 +839,7 @@ class Go2ROS2Proxy:
         logic).
         """
         try:
-            os.remove("/tmp/vector_nav_active")
+            os.remove(run_path("vector_nav_active"))
         except FileNotFoundError:
             pass
         except OSError as exc:

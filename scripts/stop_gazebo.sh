@@ -37,9 +37,9 @@ else
 fi
 
 # Cleanup shared state marker
-if [[ -f /tmp/vector_nav_active ]]; then
-    rm -f /tmp/vector_nav_active
-    echo "  [ok] removed /tmp/vector_nav_active"
+if [[ -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active ]]; then
+    rm -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active
+    echo "  [ok] removed ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active"
 fi
 
 echo "[stop_gazebo] Done."

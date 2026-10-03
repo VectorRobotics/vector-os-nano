@@ -33,6 +33,7 @@ from typing import Any
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.perception.object_localizer import localize_objects_3d
+from vector_os_nano.core.run_dir import run_path
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ def stop_tare_only() -> None:
 
     # Remove nav flag — bridge path follower stops acting on TARE paths
     try:
-        os.remove("/tmp/vector_nav_active")
+        os.remove(run_path("vector_nav_active"))
     except FileNotFoundError:
         pass
 
@@ -316,7 +317,7 @@ def _launch_nav_stack() -> bool:
         return False
 
     try:
-        log_fh = open("/tmp/vector_nav_only.log", "w")
+        log_fh = open(run_path("vector_nav_only.log"), "w")
         _nav_stack_proc = subprocess.Popen(
             [script], stdout=log_fh, stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,
@@ -360,7 +361,7 @@ def _launch_nav_explore() -> None:
         logger.error("[EXPLORE] launch_nav_explore.sh not found: %s", script)
         return
 
-    log_fh = open("/tmp/vector_nav_explore.log", "w")
+    log_fh = open(run_path("vector_nav_explore.log"), "w")
     _nav_explore_proc = subprocess.Popen(
         ["bash", script],
         stdout=log_fh, stderr=subprocess.STDOUT,
@@ -476,7 +477,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     # Enable bridge path follower via nav flag
     if has_bridge:
         try:
-            with open("/tmp/vector_nav_active", "w") as f:
+            with open(run_path("vector_nav_active"), "w") as f:
                 f.write("1")
             logger.info("[EXPLORE] Navigation enabled (flag file created)")
         except Exception as exc:
@@ -670,9 +671,9 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                 pass
 
             # Check if TARE declared exploration complete (all frontiers covered)
-            if os.path.exists("/tmp/vector_explore_finished"):
+            if os.path.exists(run_path("vector_explore_finished")):
                 try:
-                    os.remove("/tmp/vector_explore_finished")
+                    os.remove(run_path("vector_explore_finished"))
                 except OSError:
                     pass
                 logger.info("[EXPLORE] TARE exploration complete — all frontiers covered")
@@ -694,7 +695,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
         # Terrain replay fires on ALL exit paths (finish, cancel, crash)
         # so FAR always gets accumulated map data for V-Graph building.
         try:
-            with open("/tmp/vector_terrain_replay", "w") as f:
+            with open(run_path("vector_terrain_replay"), "w") as f:
                 f.write("1")
             logger.info("[EXPLORE] Triggered terrain replay for FAR")
         except OSError:

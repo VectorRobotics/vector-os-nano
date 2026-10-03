@@ -73,6 +73,7 @@ import numpy as np
 
 from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 from vector_os_nano.hardware.sim.sim_clock import sim_tick_dt
+from vector_os_nano.core.run_dir import run_path
 
 # Path-follower nominal tick. Single source: the _follow_path timer period AND
 # the per-tick ramp constants inside it are calibrated against this.
@@ -407,9 +408,9 @@ class Go2VNavBridge(Node):
 
     def _check_reset_flag(self) -> None:
         """Check for reset pose request (1 Hz). Triggered by /tmp/vector_reset_pose."""
-        if os.path.exists("/tmp/vector_reset_pose"):
+        if os.path.exists(run_path("vector_reset_pose")):
             try:
-                os.remove("/tmp/vector_reset_pose")
+                os.remove(run_path("vector_reset_pose"))
             except OSError:
                 pass
             self.get_logger().warn("RESET POSE — standing up at current position")
@@ -421,7 +422,7 @@ class Go2VNavBridge(Node):
 
     def _check_nav_flag(self) -> None:
         """Check file flag to enable/disable path following (1 Hz)."""
-        flag = os.path.exists("/tmp/vector_nav_active")
+        flag = os.path.exists(run_path("vector_nav_active"))
         if flag and not self._nav_enabled:
             self._nav_enabled = True
             self._exploration_finished = False  # reset for new explore/navigate
@@ -438,7 +439,7 @@ class Go2VNavBridge(Node):
             self.get_logger().info("Navigation DISABLED (flag file removed)")
 
         # Check for terrain replay trigger (set by explore.py after exploration)
-        replay_flag = "/tmp/vector_terrain_replay"
+        replay_flag = run_path("vector_terrain_replay")
         if os.path.exists(replay_flag):
             try:
                 os.remove(replay_flag)
@@ -1061,7 +1062,7 @@ class Go2VNavBridge(Node):
             self.get_logger().warn("TARE exploration complete — replaying terrain for FAR")
             # Trigger terrain replay so FAR gets complete V-Graph data
             try:
-                with open("/tmp/vector_terrain_replay", "w") as f:
+                with open(run_path("vector_terrain_replay"), "w") as f:
                     f.write("1")
             except OSError:
                 pass
@@ -1070,7 +1071,7 @@ class Go2VNavBridge(Node):
             self._current_path = []
             # Signal explore skill
             try:
-                with open("/tmp/vector_explore_finished", "w") as f:
+                with open(run_path("vector_explore_finished"), "w") as f:
                     f.write("1")
             except OSError:
                 pass
@@ -1660,7 +1661,7 @@ class Go2VNavBridge(Node):
                     )
                     self._go2.set_velocity(0.0, 0.0, 0.0)
                     try:
-                        with open("/tmp/vector_nav_stalled", "w") as fh:
+                        with open(run_path("vector_nav_stalled"), "w") as fh:
                             fh.write("1")
                     except OSError as exc:
                         self.get_logger().warn(f"[NAV] Could not write stall flag: {exc}")

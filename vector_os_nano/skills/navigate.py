@@ -25,6 +25,7 @@ from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.core.run_dir import run_path
 
 logger = logging.getLogger(__name__)
 
@@ -443,8 +444,8 @@ class NavigateSkill:
         # Ensure nav flag exists so bridge path follower is armed
         try:
             import os
-            if not os.path.exists("/tmp/vector_nav_active"):
-                with open("/tmp/vector_nav_active", "w") as fh:
+            if not os.path.exists(run_path("vector_nav_active")):
+                with open(run_path("vector_nav_active"), "w") as fh:
                     fh.write("1")
         except Exception:
             pass
@@ -517,8 +518,8 @@ class NavigateSkill:
         # Ensure the bridge path follower is armed (same as the room path).
         try:
             import os
-            if not os.path.exists("/tmp/vector_nav_active"):
-                with open("/tmp/vector_nav_active", "w") as fh:
+            if not os.path.exists(run_path("vector_nav_active")):
+                with open(run_path("vector_nav_active"), "w") as fh:
                     fh.write("1")
         except Exception:
             pass
@@ -544,8 +545,8 @@ class NavigateSkill:
         # "no active nav".)
         try:
             import os
-            if os.path.exists("/tmp/vector_nav_active"):
-                os.remove("/tmp/vector_nav_active")
+            if os.path.exists(run_path("vector_nav_active")):
+                os.remove(run_path("vector_nav_active"))
         except Exception:
             pass
         stop = getattr(base, "stop", None) or getattr(base, "set_velocity", None)

@@ -123,6 +123,11 @@ class SimStartTool:
                 self._reexec_under_mjpython_with_sim()
             spec = SimSpec(embodiment=spec.embodiment, gui=False)  # mjpython missing
 
+        try:
+            SimSession.validate(spec)  # before touching the running sim: a typo must not stop it
+        except SimStartError as exc:
+            return ToolResult(content=f"Cannot start {spec.embodiment!r}: {exc}", is_error=True)
+
         prefix = ""
         if current is not None:
             prefix = f"Stopped {current.spec.embodiment} ({current.stop()}). "

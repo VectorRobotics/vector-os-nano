@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, tool
+from vector_os_nano.core.run_dir import run_path
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +79,7 @@ class NavStateTool:
         data: dict[str, Any] = {
             "exploring": _is_exploring(),
             "nav_stack_running": _is_nav_stack_running(),
-            "nav_flag_active": os.path.exists("/tmp/vector_nav_active"),
+            "nav_flag_active": os.path.exists(run_path("vector_nav_active")),
             "explored_rooms": _get_explored_rooms(),
             "tare_running": _is_process_running("tare_planner_node"),
             "far_running": _is_process_running("far_planner"),
@@ -115,7 +116,7 @@ class TerrainStatusTool:
             "file_exists": path.exists(),
             "file_path": str(path),
             "file_size_kb": round(path.stat().st_size / 1024, 1) if path.exists() else 0,
-            "replay_triggered": os.path.exists("/tmp/vector_terrain_replay"),
+            "replay_triggered": os.path.exists(run_path("vector_terrain_replay")),
         }
         if path.exists():
             try:

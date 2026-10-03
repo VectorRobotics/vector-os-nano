@@ -26,7 +26,7 @@ export PYTHONPATH="$VENV_SP:$CMEEL_SP:$CONVEX_SRC:$REPO_DIR:$PYTHONPATH"
 source /opt/ros/jazzy/setup.bash
 
 # Clean stale state
-rm -f /tmp/vector_nav_active 2>/dev/null
+rm -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active 2>/dev/null
 
 echo "Starting Go2 MuJoCo bridge..."
 exec python3 "$SCRIPT_DIR/go2_vnav_bridge.py" $NO_GUI

@@ -10,7 +10,7 @@
 #   --controller CTRL   Controller to use: guide (default) or rl
 #
 # Environment overrides:
-#   VECTOR_LOG_DIR      Host path for logs (default: /tmp/vector_gazebo_logs)
+#   VECTOR_LOG_DIR      Host path for logs (default: ${VECTOR_RUN_DIR:-/tmp}/vector_gazebo_logs)
 
 set -euo pipefail
 
@@ -124,7 +124,7 @@ echo "  [ok] world SDF: ${WORLD_SDF}"
 # ---------------------------------------------------------------------------
 # Log directory
 # ---------------------------------------------------------------------------
-VECTOR_LOG_DIR="${VECTOR_LOG_DIR:-/tmp/vector_gazebo_logs}"
+VECTOR_LOG_DIR="${VECTOR_LOG_DIR:-${VECTOR_RUN_DIR:-/tmp}/vector_gazebo_logs}"
 mkdir -p "${VECTOR_LOG_DIR}"
 
 # ---------------------------------------------------------------------------

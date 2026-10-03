@@ -45,10 +45,10 @@ timeout 3 ros2 topic hz /path --window 5 2>&1 | grep "average" | head -1 || echo
 
 echo ""
 echo "--- Nav Flag ---"
-if [ -f /tmp/vector_nav_active ]; then
-    echo "  /tmp/vector_nav_active: EXISTS (nav ON)"
+if [ -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active ]; then
+    echo "  ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active: EXISTS (nav ON)"
 else
-    echo "  /tmp/vector_nav_active: MISSING (nav OFF)"
+    echo "  ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active: MISSING (nav OFF)"
 fi
 
 echo ""

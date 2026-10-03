@@ -54,6 +54,7 @@ from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.prompt import build_system_prompt
 from vector_os_nano.vcli.turn_status import TurnStatus
 from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_all_tools, discover_categorized_tools
+from vector_os_nano.core.run_dir import run_path
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -1054,7 +1055,7 @@ def _handle_slash_command(
         import os as _os
         # Signal bridge to reset robot pose via file flag
         try:
-            with open("/tmp/vector_reset_pose", "w") as _f:
+            with open(run_path("vector_reset_pose"), "w") as _f:
                 _f.write("1")
             console.print(f"[dim]  Reset signal sent. Robot will stand up at current position.[/dim]")
         except OSError as _exc:

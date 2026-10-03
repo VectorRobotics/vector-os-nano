@@ -52,14 +52,14 @@ cleanup() {
     done
     # Clean stale SHM and nav flag
     rm -f /dev/shm/fastrtps_* 2>/dev/null
-    rm -f /tmp/vector_nav_active 2>/dev/null
+    rm -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active 2>/dev/null
     wait 2>/dev/null
     echo "Done."
 }
 trap cleanup EXIT INT TERM
 
 # Clean stale nav flag from previous session
-rm -f /tmp/vector_nav_active 2>/dev/null
+rm -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active 2>/dev/null
 
 RVIZ_CFG="$REPO_DIR/config/vnav.rviz"
 
@@ -129,7 +129,7 @@ rviz2 -d "$RVIZ_CFG" 2>/dev/null &
 PIDS+=($!)
 
 # Seed FAR planner with initial scan data.
-# Path follower is DISABLED (no /tmp/vector_nav_active flag yet),
+# Path follower is DISABLED (no ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active flag yet),
 # so these velocity commands move the robot directly via _cmd_vel_cb
 # without triggering autonomous path following.
 echo ""

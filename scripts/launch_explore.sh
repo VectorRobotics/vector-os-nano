@@ -37,7 +37,7 @@ cleanup() {
     echo ""
     echo "Stopping all processes..."
     nav_stop_groups "${PIDS[@]}"
-    rm -f /tmp/vector_nav_active 2>/dev/null
+    rm -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active 2>/dev/null
     wait 2>/dev/null
     echo "Done."
 }
@@ -46,7 +46,7 @@ trap cleanup EXIT INT TERM
 RVIZ_CFG="$REPO_DIR/config/vnav.rviz"
 
 # Clean stale nav flag from previous session (prevents unwanted movement on startup)
-rm -f /tmp/vector_nav_active 2>/dev/null
+rm -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active 2>/dev/null
 
 echo "============================================"
 echo "  Go2 + TARE Autonomous Exploration"

@@ -11,7 +11,7 @@
 # Environment overrides (set before calling this script):
 #   ISAAC_PHYSICS_HZ    Physics step rate in Hz (default: 200)
 #   OMNI_SERVER         Nucleus server URL (e.g. omniverse://localhost)
-#   VECTOR_LOG_DIR      Host path for Isaac Sim logs (default: /tmp/vector_isaac_logs)
+#   VECTOR_LOG_DIR      Host path for Isaac Sim logs (default: ${VECTOR_RUN_DIR:-/tmp}/vector_isaac_logs)
 
 set -euo pipefail
 
@@ -112,7 +112,7 @@ if [[ "${ISAAC_HEADLESS}" == "false" ]]; then
 fi
 
 # Log directory
-VECTOR_LOG_DIR="${VECTOR_LOG_DIR:-/tmp/vector_isaac_logs}"
+VECTOR_LOG_DIR="${VECTOR_LOG_DIR:-${VECTOR_RUN_DIR:-/tmp}/vector_isaac_logs}"
 mkdir -p "${VECTOR_LOG_DIR}"
 
 # ---------------------------------------------------------------------------

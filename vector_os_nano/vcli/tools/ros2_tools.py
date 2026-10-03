@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, tool
+from vector_os_nano.core.run_dir import run_path
 
 _TIMEOUT = 10  # seconds for ros2 CLI subprocess
 
@@ -211,10 +212,10 @@ class Ros2LogTool:
     """Read tail of Vector robot log files."""
 
     _LOG_MAP: dict[str, str] = {
-        "bridge": "/tmp/vector_vnav_bridge.log",
-        "tare": "/tmp/vector_tare.log",
-        "nav": "/tmp/vector_nav_only.log",
-        "nav_explore": "/tmp/vector_nav_explore.log",
+        "bridge": run_path("vector_vnav_bridge.log"),
+        "tare": run_path("vector_tare.log"),
+        "nav": run_path("vector_nav_only.log"),
+        "nav_explore": run_path("vector_nav_explore.log"),
     }
 
     input_schema: dict[str, Any] = {

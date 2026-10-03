@@ -262,6 +262,23 @@ def test_switch_stops_the_previous_session_first(monkeypatch) -> None:
     assert SimStopTool().execute({}, _ctx(app)).content == "No simulation is running."
 
 
+def test_switch_to_a_typo_never_stops_the_running_session(monkeypatch) -> None:
+    """A bad embodiment id is rejected BEFORE the live sim is torn down (tools-worlds verifier)."""
+    sessions: list[_FakeSession] = []
+
+    def fake_start(spec: SimSpec, **_: Any) -> _FakeSession:
+        sessions.append(_FakeSession(spec))
+        return sessions[-1]
+
+    monkeypatch.setattr(SimSession, "start", staticmethod(fake_start))
+    app: dict[str, Any] = {}
+    tool = SimStartTool()
+    assert not tool.execute({"embodiment": "go2_piper", "gui": False}, _ctx(app)).is_error
+    res = tool.execute({"embodiment": "go2-pipr", "gui": False}, _ctx(app))
+    assert res.is_error and "go2_piper" in res.content  # names the valid set
+    assert sessions[0].stopped == 0 and app["sim_session"] is sessions[0]
+
+
 # ---------------------------------------------------------------------------
 # rebind_world — the ONE re-init path
 # ---------------------------------------------------------------------------

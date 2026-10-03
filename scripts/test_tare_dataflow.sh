@@ -66,7 +66,7 @@ echo ""
 # Step 4: Seed movement
 echo "Step 4: Seeding planners..."
 # Create nav flag so bridge follows paths
-touch /tmp/vector_nav_active
+touch ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active
 for i in $(seq 1 4); do
     ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{linear: {x: 0.2}}" 2>/dev/null
     sleep 1
@@ -96,6 +96,6 @@ echo ""
 
 # Cleanup
 kill $TARE_PID 2>/dev/null || true
-rm -f /tmp/vector_nav_active
+rm -f ${VECTOR_RUN_DIR:-/tmp}/vector_nav_active
 
 echo "=== Test Complete ==="

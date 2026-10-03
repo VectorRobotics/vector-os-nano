@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+from vector_os_nano.core.run_dir import run_path
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +90,13 @@ class SimSession:
 
     # -- lifecycle ---------------------------------------------------------
 
-    @classmethod
-    def start(
-        cls, spec: SimSpec, *, vlm_api_key: str | None = None, deadline_s: float = 90.0,
-    ) -> "SimSession":
+    @staticmethod
+    def validate(spec: SimSpec):
+        """Resolve the manifest + driver without starting anything (fail loud, valid set).
+
+        Callers that replace a running session validate FIRST, so a typo never
+        tears down the sim that is already up.
+        """
         from vector_os_nano.embodiments import registry
         from vector_os_nano.embodiments.config import EmbodimentConfigError
 
@@ -106,7 +110,13 @@ class SimSession:
                 "bad embodiment manifest",
                 f"{cfg.id}/robot.yaml.driver={cfg.driver!r}; valid: {sorted(_BUILDERS)}",
             )
+        return cfg, builder
 
+    @classmethod
+    def start(
+        cls, spec: SimSpec, *, vlm_api_key: str | None = None, deadline_s: float = 90.0,
+    ) -> "SimSession":
+        cfg, builder = cls.validate(spec)
         session = cls(spec, cfg)
         t0 = time.monotonic()
         try:
@@ -435,7 +445,7 @@ def _launch_ros2_stack(go2: Any, *, gui: bool) -> Callable[[], None]:
     spin_t.start()
 
     argv = [str(_REPO / "scripts" / "launch_nav_only.sh")] + ([] if gui else ["--no-rviz"])
-    log_path = Path("/tmp/vector_nav_only.log")
+    log_path = Path(run_path("vector_nav_only.log"))
     if log_path.exists() and log_path.stat().st_size > 5 * 1024 * 1024:
         log_path.write_text("")  # bound disk use
     log_fh = open(log_path, "a")
