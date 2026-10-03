@@ -26,6 +26,7 @@ default tree has no such wrapper, so the repair is a harmless no-op for it.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import xml.etree.ElementTree as ET
@@ -34,6 +35,37 @@ from typing import Any, Mapping, Sequence
 
 # A weld is (equality_name, body1, body2); created inactive (gripper activates it).
 Weld = tuple[str, str, str]
+
+
+def scene_cache_dir() -> Path:
+    """Where generated scenes live: a user cache dir, never the package tree."""
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "vector_os_nano" / "scenes"
+
+
+def write_scene(stem: str, text: str) -> Path:
+    """Write *text* to ``<cache>/<stem>-<hash>.xml`` atomically and return the path.
+
+    Content-addressed, so processes that build the same scene share one file and
+    one that builds a different scene can never clobber it; ``mkstemp`` +
+    ``os.replace`` means a reader never sees a half-written file.
+    """
+    out = scene_cache_dir() / f"{stem}-{hashlib.sha1(text.encode()).hexdigest()[:12]}.xml"
+    if out.exists():
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=f".{stem}-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.replace(tmp, out)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return out
 
 
 def normalize_attach_defaults(xml: str) -> str:
@@ -79,7 +111,7 @@ def _room_only_spec(
     xml = xml.replace("GO2_ASSETS_DIR", str(room_assets_dir))
     xml = xml.replace("GRASP_WELDS", "")
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".xml", delete=False, dir="/tmp", prefix="room_only_"
+        mode="w", suffix=".xml", delete=False, prefix="room_only_"
     ) as fh:
         fh.write(xml)
         room_tmp = fh.name
@@ -100,7 +132,7 @@ def build_room_scene(
     attach_prefix: str,
     spawn_xy: Sequence[float],
     welds: Sequence[Weld] = (),
-    out_path: Path | str | None = None,
+    cache_stem: str | None = None,
     robot_meshes_dir: Path | str | None = None,
     camera: Mapping[str, Any] | None = None,
 ) -> tuple[Any, Path | None]:
@@ -118,15 +150,16 @@ def build_room_scene(
             standing height via qpos).
         welds: ``(name, body1, body2)`` triples added as inactive WELD equalities
             after attach (grasp welds; bodies must exist post-attach).
-        out_path: if given, the compiled scene is serialized (with the attach-
-            default repair) to this path for cross-process from_xml_path consumers.
+        cache_stem: if given, the compiled scene is serialized (with the attach-
+            default repair) for from_xml_path consumers, content-addressed under
+            this file stem in :func:`scene_cache_dir` (see :func:`write_scene`).
         robot_meshes_dir: base directory for relative robot ``mesh.file`` paths.
             Defaults to the model file's directory + its ``meshdir`` (MuJoCo's rule).
         camera: optional ``{mount_body, name, pos, xyaxes}`` head camera added to
             the named robot body before attach.
 
     Returns:
-        ``(compiled MjModel, out_path or None)``.
+        ``(compiled MjModel, scene file or None)``.
     """
     import mujoco as mj  # noqa: PLC0415
 
@@ -173,9 +206,6 @@ def build_room_scene(
 
     model = room_spec.compile()
 
-    if out_path is None:
+    if cache_stem is None:
         return model, None
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(normalize_attach_defaults(room_spec.to_xml()))
-    return model, out
+    return model, write_scene(cache_stem, normalize_attach_defaults(room_spec.to_xml()))
