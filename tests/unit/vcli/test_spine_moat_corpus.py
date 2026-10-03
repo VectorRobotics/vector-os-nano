@@ -253,6 +253,19 @@ def test_goal_verifier_rejects_sandbox_escape(expr: str) -> None:
     assert ok is False and raw is None, expr
 
 
+def test_goal_verifier_ambiguous_truth_fails_closed() -> None:
+    """bool-outside-try: an oracle value with no truth value (a numpy array) grades
+    False instead of raising out of the verify sandbox."""
+
+    class _NoTruth:
+        def __bool__(self) -> bool:
+            raise ValueError("truth value of an array is ambiguous")
+
+    v = GoalVerifier({"scan": lambda: _NoTruth()})
+    assert v.evaluate("scan()") == (False, None)
+    assert v.verify("scan()") is False
+
+
 def test_goal_verifier_timeout_poisons_then_refuses(monkeypatch) -> None:
     """A thread-path evaluation that outlives its timeout marks the verifier poisoned;
     the next evaluate refuses rather than running concurrently with a runaway
