@@ -1,0 +1,537 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
+"""WP05 regressions: native producer safety and ownership.
+
+Each test names the ledger bug it pins and fails on the pre-WP05 base. Deterministic,
+no MuJoCo, no network: scripted backends drive the REAL ``run_turn_native`` /
+``run_one_turn`` / REPL busy loop.
+"""
+from __future__ import annotations
+
+import os
+import signal
+import sys
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+from tests.unit.vcli.test_native_loop import _make_agent, _make_engine, _session
+from vector_os_nano.vcli import cli
+from vector_os_nano.vcli.cognitive import abort
+from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
+from vector_os_nano.vcli.permissions import PermissionContext
+from vector_os_nano.vcli.tools.base import CategorizedToolRegistry, PermissionResult, ToolResult
+from vector_os_nano.vcli.verdict import VerdictReport
+
+
+def _dev_engine(backend: Any, *tools: Any, permissions: Any = None) -> Any:
+    """A dev-world engine (no agent) whose registry 'code' category holds *tools*."""
+    from vector_os_nano.vcli.engine import VectorEngine
+    from vector_os_nano.vcli.worlds.dev import DevWorld
+
+    reg = CategorizedToolRegistry()
+    for t in tools:
+        reg.register(t, category="code")
+    eng = VectorEngine(backend=backend, registry=reg, permissions=permissions or PermissionContext())
+    eng.init_vgg(agent=None, skill_registry=None, world=DevWorld())
+    eng._vgg_agent = None
+    return eng
+
+
+class _SpyTool:
+    """A side-effecting code tool with a scripted permission decision and a call spy."""
+
+    def __init__(self, name: str, behavior: str) -> None:
+        self.name, self.description = name, f"spy {name}"
+        self.input_schema = {"type": "object", "properties": {"command": {"type": "string"}}}
+        self._behavior = behavior
+        self.calls = 0
+
+    def check_permissions(self, params: dict, ctx: Any) -> PermissionResult:
+        return PermissionResult(self._behavior, "scripted")
+
+    def is_read_only(self, params: dict) -> bool:
+        return False
+
+    def execute(self, params: dict, ctx: Any) -> ToolResult:
+        self.calls += 1
+        return ToolResult(content="ran")
+
+
+def _script(*turns: Any) -> FakeToolScriptBackend:
+    return FakeToolScriptBackend.from_tool_script(list(turns))
+
+
+# ---------------------------------------------------------------------------
+# Permission gate on every native dispatch (producers:native-permission-bypass,
+# cli-entry:native-bypasses-permissions, tools-worlds:native-loop-no-permissions)
+# ---------------------------------------------------------------------------
+
+
+def test_a_denied_tool_is_never_executed() -> None:
+    spy = _SpyTool("bash", "deny")
+    eng = _dev_engine(_script(tool_turn(("bash", {"command": "echo hi"})), tool_turn(end=True)), spy)
+    eng.run_turn_native("run it", session=_session())
+    assert spy.calls == 0
+
+
+def test_rm_rf_root_is_blocked_by_the_bash_deny_list_on_the_native_path(monkeypatch) -> None:
+    from vector_os_nano.vcli.tools import bash_tool
+
+    ran: list[Any] = []
+    monkeypatch.setattr(bash_tool.subprocess, "run", lambda *a, **k: ran.append(a))
+    eng = _dev_engine(
+        _script(tool_turn(("bash", {"command": "rm -rf /"})), tool_turn(end=True)),
+        bash_tool.BashTool(),
+        permissions=PermissionContext(no_permission=True),  # the deny-list beats even this
+    )
+    eng.run_turn_native("clean everything", session=_session())
+    assert ran == []
+
+
+def test_headless_denies_an_ask_tool_unless_granted(tmp_path, monkeypatch) -> None:
+    from vector_os_nano.vcli.tools.file_tools import FileWriteTool
+
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "out.txt"
+
+    def turn(**kw: Any) -> None:
+        eng = _dev_engine(
+            _script(tool_turn(("file_write", {"file_path": str(target), "content": "x"})), tool_turn(end=True)),
+            FileWriteTool(), permissions=kw.pop("permissions", None),
+        )
+        eng.run_turn_native("write it", session=_session(), **kw)
+
+    turn()  # -p / no resolver: an 'ask' is a deny
+    assert not target.exists()
+    turn(ask_permission=lambda n, p: "n")
+    assert not target.exists()
+    turn(ask_permission=lambda n, p: "y")
+    assert target.read_text() == "x"
+    target.unlink()
+    turn(permissions=PermissionContext(no_permission=True))  # --no-permission
+    assert target.read_text() == "x"
+
+
+def test_a_side_effecting_capability_is_surfaced_and_asks_first() -> None:
+    """S6: every registered capability is a native tool; one that acts asks first."""
+    from vector_os_nano.vcli.cognitive.capabilities import CapabilityRegistry
+    from vector_os_nano.vcli.native_loop import _build_motor_tools
+
+    calls: list[dict] = []
+    cap = SimpleNamespace(
+        name="vla_grasp", kind="vla", side_effecting=True, description="grasp with a VLA",
+        input_schema={"type": "object", "properties": {"target": {"type": "string"}}},
+        invoke=lambda payload, ctx: calls.append(payload) or SimpleNamespace(success=True, output={}),
+    )
+    eng = _dev_engine(_script(tool_turn(("vla_grasp", {"target": "can"})), tool_turn(end=True)))
+    eng._capability_registry = CapabilityRegistry()
+    eng._capability_registry.register(cap)
+    assert "vla_grasp" in _build_motor_tools(None, eng)
+    eng.run_turn_native("grab the can", session=_session())
+    assert calls == []  # headless: the ask was denied, the VLA never ran
+
+
+# ---------------------------------------------------------------------------
+# Per-run CancelToken (producers:sticky-abort-native, skills-nav:stale-global-abort-native,
+# spine:native-ignores-abort, legacy-cognitive:B23-abort-cleared, spine:missed1)
+# ---------------------------------------------------------------------------
+
+
+def test_a_stop_mid_turn_records_an_aborted_step_and_calls_the_model_no_more() -> None:
+    agent, base = _make_agent()
+    real_walk = base.walk
+
+    def walk_then_stop(*a: Any) -> bool:
+        ok = real_walk(*a)
+        abort.request_abort()  # the user's stop lands while the skill runs
+        return ok
+
+    base.walk = walk_then_stop
+    backend = _script(
+        tool_turn(("walk", {"distance": 1.0})),
+        tool_turn(("walk", {"distance": 1.0})),  # must never be reached
+        tool_turn(end=True),
+    )
+    trace = _make_engine(agent, backend).run_turn_native("walk", session=_session())
+    assert backend._cursor == 1  # no model call after the stop
+    assert trace.steps[-1].error == "aborted" and trace.steps[-1].success is False
+    assert trace.actions_dispatched == 1
+
+
+def test_a_previous_stop_does_not_abort_the_next_native_turn() -> None:
+    agent, base = _make_agent()
+
+    def navigate_to(x: float, y: float, timeout: float = 60.0) -> bool:
+        if abort.is_abort_requested():  # every real nav loop polls this
+            return False
+        base._x, base._y = x, y
+        return True
+
+    base.navigate_to = navigate_to
+    abort.request_abort()  # a "停" from an earlier turn
+    eng = _make_engine(agent, _script(tool_turn(("navigate", {"x": 2.0, "y": 0.0})), tool_turn(end=True)))
+    eng.run_turn_native("go to (2, 0)", session=_session())
+    assert (base._x, base._y) == (2.0, 0.0)
+
+
+def test_starting_a_new_run_never_clears_another_runs_abort() -> None:
+    seen: list[bool] = []
+    ready, check = threading.Event(), threading.Event()
+
+    def background_run() -> None:
+        abort.clear_abort()  # the background plan's own start
+        ready.set()
+        check.wait(5)
+        seen.append(abort.is_abort_requested())
+
+    t = threading.Thread(target=background_run)
+    t.start()
+    ready.wait(5)
+    abort.request_abort()  # stop
+    abort.clear_abort()    # a chat turn starts on this thread right after
+    check.set()
+    t.join(5)
+    assert seen == [True]
+
+
+def test_the_answer_wrap_never_clears_a_stop_on_a_background_run() -> None:
+    """producers:answer-wrap-clears-abort: chat during a plan must not un-stop it."""
+    from vector_os_nano.vcli.backends.types import LLMResponse
+    from vector_os_nano.vcli.session import TokenUsage
+
+    class _Chat:
+        def call(self, **kw: Any) -> LLMResponse:
+            return LLMResponse(text="hi", tool_calls=[], stop_reason="end_turn", usage=TokenUsage())
+
+    eng = _dev_engine(_Chat())
+    seen: list[bool] = []
+    ready, check = threading.Event(), threading.Event()
+
+    def background_plan() -> None:
+        abort.clear_abort()
+        ready.set()
+        check.wait(5)
+        seen.append(abort.is_abort_requested())
+
+    t = threading.Thread(target=background_plan)
+    t.start()
+    ready.wait(5)
+    eng._emergency_stop("停", _session())
+    eng.run_turn_unified("你好", _session())  # a chat turn while the plan unwinds
+    check.set()
+    t.join(5)
+    assert seen == [True]
+
+
+def test_engine_runs_are_single_flight_and_preempt_the_previous_run() -> None:
+    eng = _dev_engine(_script())
+    first_token: list[Any] = []
+    entered, released = threading.Event(), threading.Event()
+
+    def first() -> None:
+        with eng.actuating_run() as tok:
+            first_token.append(tok)
+            entered.set()
+            tok.wait(5)  # runs until cancelled
+        released.set()
+
+    t = threading.Thread(target=first)
+    t.start()
+    entered.wait(5)
+    assert eng.busy
+    with eng.actuating_run() as second:
+        assert first_token[0].cancelled  # busy -> the previous run was cancelled
+        assert released.is_set()          # ...and had let go before this one ran
+        assert not second.cancelled
+    t.join(5)
+    assert not eng.busy
+
+
+def test_drive_for_ends_the_motion_on_a_stop() -> None:
+    """A stop during a long open-loop walk ends it now, not when the timer runs out."""
+    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+
+    body = SimpleNamespace(_drive_mode="background_daemon")
+    abort.clear_abort()
+    threading.Timer(0.2, abort.request_abort).start()
+    t0 = time.monotonic()
+    MuJoCoGo2._drive_for(body, 5.0)
+    assert time.monotonic() - t0 < 1.5
+
+
+# ---------------------------------------------------------------------------
+# No double execution (cli-entry:native-exception-double-action,
+# legacy-cognitive:B4-native-exception-double-actuation, producers:native-double-execution)
+# ---------------------------------------------------------------------------
+
+
+class _DiesAfter:
+    """A backend that issues *turns*, then raises (an LLM outage mid-turn)."""
+
+    def __init__(self, *turns: Any) -> None:
+        self._turns, self.calls, self._model = list(turns), 0, "fake-model-1"
+
+    def call(self, **kw: Any) -> Any:
+        self.calls += 1
+        if self._turns:
+            return self._turns.pop(0)
+        raise RuntimeError("503 upstream unavailable")
+
+
+def test_an_llm_failure_after_an_action_returns_the_partial_trace() -> None:
+    agent, base = _make_agent()
+    walks: list[float] = []
+    real_walk = base.walk
+    base.walk = lambda *a: walks.append(a[0]) or real_walk(*a)
+    backend = _DiesAfter(tool_turn(("walk", {"distance": 1.0})))
+    trace = _make_engine(agent, backend).run_turn_native("walk 1 m", session=_session())
+
+    assert len(walks) == 1  # the base walked once
+    assert trace.actions_dispatched == 1
+    assert "503" in trace.llm_error and trace.model == "fake-model-1"
+    assert trace.steps[-1].strategy == "walk" and trace.steps[-1].success is False
+    assert cli._native_owns_turn(trace)  # the caller must not re-run it
+    report = VerdictReport.from_trace(trace, verify_oracle_names(agent, None))
+    assert report.llm_unavailable and report.model == "fake-model-1"
+    assert report.exit_code() == 1 and not report.verified
+
+
+def test_p_path_never_hands_an_acted_turn_to_the_legacy_planner(monkeypatch) -> None:
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
+
+    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0, actions_dispatched=1)
+    decomposed: list[str] = []
+    engine = SimpleNamespace(
+        _vgg_agent=None, is_stop=lambda t: False,
+        run_turn_native=lambda *a, **k: acted,
+        vgg_decompose=lambda p: decomposed.append(p),
+    )
+    monkeypatch.setattr(cli, "_build_turn_context", lambda args: SimpleNamespace(engine=engine, session=None))
+    code = cli.run_one_turn(SimpleNamespace(print_prompt="walk 1 m", json=False, native_loop=False, native_first=False))
+    assert decomposed == []  # vgg_decompose never invoked
+    assert code != 0
+
+
+def test_repl_native_attempt_owns_an_unverified_acted_turn(monkeypatch) -> None:
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
+
+    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0, actions_dispatched=1)
+    engine = SimpleNamespace(_vgg_agent=None, run_turn_native=lambda *a, **k: acted)
+    monkeypatch.setattr(cli, "create_session", lambda **k: _session())
+    assert cli._repl_attempt_native(engine, "walk", _session(), {}, cli.Console(file=open(os.devnull, "w")))
+
+
+# ---------------------------------------------------------------------------
+# Step honesty (docs-vs-code:missed2, producers:missed1)
+# ---------------------------------------------------------------------------
+
+
+def test_a_failed_skill_followed_by_a_true_verify_is_not_grounded(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pre.txt").write_text("seed")
+    spy = _SpyTool("deploy", "allow")
+    spy.execute = lambda p, c: ToolResult(content="deploy failed", is_error=True)  # type: ignore[method-assign]
+    eng = _dev_engine(_script(
+        tool_turn(("deploy", {})),
+        tool_turn(("verify", {"expr": "path_contains('pre.txt', 'seed')"})),
+        tool_turn(end=True),
+    ), spy)
+    trace = eng.run_turn_native("deploy", session=_session())
+    assert trace.steps[0].success is False
+    assert VerdictReport.from_trace(trace, verify_oracle_names(None, eng)).evidence != "GROUNDED"
+
+
+def test_a_read_only_call_does_not_ground_a_verify_of_preexisting_state(tmp_path, monkeypatch) -> None:
+    from vector_os_nano.vcli.tools.file_tools import FileReadTool
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pre.txt").write_text("seed")
+    eng = _dev_engine(_script(
+        tool_turn(("file_read", {"file_path": str(tmp_path / "pre.txt")})),
+        tool_turn(("verify", {"expr": "path_contains('pre.txt', 'seed')"})),
+        tool_turn(end=True),
+    ), FileReadTool())
+    trace = eng.run_turn_native("check pre.txt", session=_session())
+    assert trace.actions_dispatched == 0
+    assert VerdictReport.from_trace(trace, verify_oracle_names(None, eng)).evidence == "RAN"
+
+
+# ---------------------------------------------------------------------------
+# LLM infrastructure policy (graft c)
+# ---------------------------------------------------------------------------
+
+
+def test_an_unavailable_llm_falls_back_to_openrouter_when_opted_in(monkeypatch) -> None:
+    from vector_os_nano.vcli import backends
+
+    agent, _base = _make_agent()
+    made: list[tuple] = []
+    fallback = _script(tool_turn(end=True))
+    fallback._model = "anthropic/claude-sonnet-4-6"
+    monkeypatch.setattr(backends, "create_backend", lambda *a, **k: made.append(a) or fallback)
+    monkeypatch.setenv("VECTOR_LLM_FALLBACK", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    trace = _make_engine(agent, _DiesAfter()).run_turn_native("hi", session=_session())
+    assert made and made[0][0] == "openrouter"
+    assert trace.llm_error == "" and trace.model == "anthropic/claude-sonnet-4-6"
+
+
+def test_without_the_opt_in_an_llm_outage_is_an_infrastructure_verdict(monkeypatch) -> None:
+    monkeypatch.delenv("VECTOR_LLM_FALLBACK", raising=False)
+    agent, _base = _make_agent()
+    trace = _make_engine(agent, _DiesAfter()).run_turn_native("hi", session=_session())
+    report = VerdictReport.from_trace(trace, frozenset())
+    assert report.llm_unavailable and report.evidence == "NO_TRACE" and report.exit_code() == 1
+    assert cli._native_owns_turn(trace)  # the legacy producer would hit the same dead model
+
+
+# ---------------------------------------------------------------------------
+# REPL: stop / Ctrl-C mid-turn, permission prompts from the worker
+# (cli-entry:ctrlc-native-exits-repl, producers:ctrl-c-kills-repl-native,
+#  cli-entry:stop-not-p0-in-repl, producers:stop-not-p0, cli-entry:missed1)
+# ---------------------------------------------------------------------------
+
+
+class _ReplEngine:
+    def __init__(self) -> None:
+        self.stops: list[str] = []
+        self.stopped = threading.Event()
+
+    def is_stop(self, text: str) -> bool:
+        return text.strip() in ("停", "stop")
+
+    def _emergency_stop(self, text: str, session: Any, agent: Any = None, app_state: Any = None) -> None:
+        self.stops.append(text)
+        self.stopped.set()
+
+    def _has_live_viewer(self) -> bool:
+        return False
+
+
+@pytest.fixture
+def typed(monkeypatch):
+    """Replace stdin with a pipe; returns a function that 'types' a line."""
+    r, w = os.pipe()
+    monkeypatch.setattr(sys, "stdin", os.fdopen(r, "r"))
+    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
+    yield lambda line: os.write(w, (line + "\n").encode())
+    os.close(w)
+
+
+def test_a_typed_stop_mid_turn_stops_the_robot_without_the_llm(typed) -> None:
+    eng = _ReplEngine()
+    threading.Timer(0.2, typed, args=("停",)).start()
+    t0 = time.monotonic()
+    nxt = cli._run_turn_busy(eng, lambda: eng.stopped.wait(5), {})
+    assert eng.stops == ["停"] and nxt is None
+    assert time.monotonic() - t0 < 2.0
+
+
+def test_another_command_mid_turn_cancels_then_runs_next(typed) -> None:
+    eng = _ReplEngine()
+    threading.Timer(0.2, typed, args=("往后走",)).start()
+    assert cli._run_turn_busy(eng, lambda: eng.stopped.wait(5), {}) == "往后走"
+    assert eng.stops == ["往后走"]  # the running turn was stopped first
+
+
+def test_ctrl_c_mid_turn_stops_and_never_exits(typed) -> None:
+    eng = _ReplEngine()
+    threading.Timer(0.2, os.kill, args=(os.getpid(), signal.SIGINT)).start()
+    assert cli._run_turn_busy(eng, lambda: eng.stopped.wait(5), {}) is None  # no KeyboardInterrupt
+    assert eng.stops == ["interrupt"]
+
+
+def test_a_permission_prompt_from_the_turn_worker_is_answered_by_the_repl_thread(typed, monkeypatch) -> None:
+    eng = _ReplEngine()
+    asked_on: list[str] = []
+    monkeypatch.setattr(cli.Prompt, "ask", lambda *a, **k: asked_on.append(threading.current_thread().name) or "y")
+    answers: list[str] = []
+    cli._run_turn_busy(eng, lambda: answers.append(cli.ask_permission("file_write", {"p": 1})), {})
+    assert answers == ["y"] and asked_on == ["MainThread"]
+    # Off the main thread with no REPL loop to answer, an ask fails closed.
+    out: list[str] = []
+    t = threading.Thread(target=lambda: out.append(cli.ask_permission("bash", {})))
+    t.start()
+    t.join(5)
+    assert out == ["n"]
+
+
+# ---------------------------------------------------------------------------
+# A dangling tool_use never bricks the session (cli-entry/producers:
+# dangling-tool-use-bricks-session)
+# ---------------------------------------------------------------------------
+
+
+def _assert_well_formed(messages: list[dict]) -> None:
+    """Every assistant tool_use is answered by tool_results in the NEXT message."""
+    for i, m in enumerate(messages):
+        if m["role"] != "assistant" or not isinstance(m["content"], list):
+            continue
+        ids = {b["id"] for b in m["content"] if b.get("type") == "tool_use"}
+        if not ids:
+            continue
+        nxt = messages[i + 1] if i + 1 < len(messages) else {"content": []}
+        answered = {b.get("tool_use_id") for b in nxt["content"] if isinstance(nxt["content"], list)}
+        assert ids <= answered, f"tool_use {ids - answered} unanswered in {nxt}"
+
+
+class _StrictBackend:
+    """Like the real APIs: a malformed message list is a hard error (a 400)."""
+
+    def call(self, messages: list[dict], **kw: Any) -> Any:
+        from vector_os_nano.vcli.backends.types import LLMResponse
+        from vector_os_nano.vcli.session import TokenUsage
+
+        _assert_well_formed(messages)
+        return LLMResponse(text="ok", tool_calls=[], stop_reason="end_turn", usage=TokenUsage())
+
+
+def test_a_session_with_a_dangling_tool_use_resumes(tmp_path) -> None:
+    from vector_os_nano.vcli.engine import VectorEngine
+
+    s = _session()
+    s.append_user("walk forward")
+    s.append_assistant("", [{"type": "tool_use", "id": "t1", "name": "walk", "input": {}},
+                            {"type": "tool_use", "id": "t2", "name": "turn", "input": {}}])
+    # Ctrl-C landed mid-dispatch: no tool_result was ever appended.
+    result = VectorEngine(backend=_StrictBackend()).run_turn("what happened?", s)
+    assert result.text == "ok"
+    msgs = s.to_messages()
+    _assert_well_formed(msgs)
+    synthetic = [b for b in msgs[2]["content"] if b.get("tool_use_id") in ("t1", "t2")]
+    assert len(synthetic) == 2 and all(b["is_error"] for b in synthetic)
+
+
+def test_a_partly_answered_tool_use_is_completed_in_the_same_message() -> None:
+    s = _session()
+    s.append_user("go")
+    s.append_assistant("", [{"type": "tool_use", "id": "a", "name": "walk", "input": {}},
+                            {"type": "tool_use", "id": "b", "name": "turn", "input": {}}])
+    s.append_tool_results([{"tool_use_id": "a", "content": "done"}])
+    msgs = s.to_messages()
+    _assert_well_formed(msgs)
+    assert [b["tool_use_id"] for b in msgs[-1]["content"]] == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# Fail loud on verify-fn drift in a robot world (graft h, rule 8)
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_fails_loud_on_a_verify_fn_no_embodiment_provides() -> None:
+    from vector_os_nano.vcli.engine import VectorEngine
+
+    selector = SimpleNamespace(_registered_skill_names=lambda: None, _capability_names=frozenset())
+    eng = VectorEngine(backend=None)
+    lazy = {"verify_functions": frozenset({"nearest_room"})}  # embodiment-conditional
+    eng._preflight_validate_world(lazy, selector, {}, "robot", True, is_robot=True)
+    drift = {"verify_functions": frozenset({"holding_objekt"})}
+    with pytest.raises(ValueError, match="holding_objekt"):
+        eng._preflight_validate_world(drift, selector, {}, "robot", True, is_robot=True)
