@@ -325,6 +325,7 @@ def test_print_path_stops_live_sessions_before_os_exit(monkeypatch) -> None:
     s = _FakeSession(SimSpec("go2"))
     monkeypatch.setattr(sess, "_LIVE", [s])
     monkeypatch.setattr(cli, "run_one_turn", lambda args: 0)
+    monkeypatch.setattr(cli, "_setup_logging", lambda verbose: None)  # no global side effect
 
     def fake_exit(code: int) -> None:
         raise SystemExit(code)
