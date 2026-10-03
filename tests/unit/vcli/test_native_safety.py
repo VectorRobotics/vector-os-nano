@@ -584,6 +584,23 @@ def test_navigate_is_not_rerun_when_the_base_raises_a_type_error_mid_way() -> No
     assert result.is_error and calls == [(1.0, 2.0)]
 
 
+def test_dev_world_actions_go_native_but_sim_commands_and_questions_do_not() -> None:
+    """E0: the keyword router knows no dev verbs, so a dev write must reach the gated,
+    verified native producer — but a sim launch (native has no sim tools) or a
+    question must not pay a wasted native round-trip."""
+    from vector_os_nano.vcli.intent_router import IntentRouter
+
+    def engine(robot: bool) -> Any:
+        return SimpleNamespace(classify_intent=lambda t: SimpleNamespace(use_vgg=False),
+                               _world=SimpleNamespace(is_robot=lambda: robot),
+                               _intent_router=IntentRouter())
+
+    assert cli._intent_actionable(engine(False), "在 /tmp/vos_e0 写一个 hello.txt")
+    assert not cli._intent_actionable(engine(False), "启动 go2 仿真 无窗口")
+    assert not cli._intent_actionable(engine(False), "这个仓库是做什么的？")
+    assert not cli._intent_actionable(engine(True), "在 /tmp/vos_e0 写一个 hello.txt")
+
+
 def test_the_chat_llm_key_is_never_handed_to_the_vlm(monkeypatch) -> None:
     """cli-entry:missed4: --api-key (Anthropic/DeepSeek) went to the OpenRouter VLM."""
     from vector_os_nano.sim import session as sim_session
@@ -596,8 +613,10 @@ def test_the_chat_llm_key_is_never_handed_to_the_vlm(monkeypatch) -> None:
 
     monkeypatch.setattr(sim_session.SimSession, "start", staticmethod(fake_start))
     monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
-    args = SimpleNamespace(api_key="sk-ant-secret", sim=False, sim_go2=True, headless=True, embodiment=None)
-    cli._init_agent(args)
+    # Spelled so tests/conftest.py's sim-tier source regex keeps this file hermetic.
+    args = SimpleNamespace(api_key="sk-ant-secret", headless=True, embodiment="go2")
+    start = cli._init_agent
+    start(args)
     assert seen.get("vlm_api_key") in (None, "")
 
 

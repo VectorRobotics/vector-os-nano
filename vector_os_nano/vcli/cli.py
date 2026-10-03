@@ -74,7 +74,7 @@ EXIT_COMMANDS: frozenset[str] = frozenset({"quit", "exit", "q"})
 _LOGO_PATH = Path(__file__).resolve().parent.parent / "cli" / "logo_braille.txt"
 
 # A stop reports the base speed at these SIM times after the stop command.
-_STOP_SETTLE_SIM_S = (0.2, 0.5)
+_STOP_SETTLE_SIM_S = (0.2, 1.0)
 # After a stop, wait this long for the cancelled turn to unwind before re-prompting.
 _UNWIND_S = 5.0
 
@@ -466,10 +466,16 @@ def _intent_actionable(engine: Any, user_input: str) -> bool:
         if engine.classify_intent(user_input).use_vgg:
             return True
         # A non-robot (dev) world acts only through the code tools, and the keyword
-        # router knows no dev verbs: attempt native there (a turn it cannot act on
-        # costs one round-trip, then falls through unchanged).
+        # router knows no dev verbs: attempt native there unless the turn is a
+        # system command (sim launch: native has no sim tools) or a question — a
+        # turn native cannot act on costs one round-trip, then falls through.
         world = getattr(engine, "_world", None)
-        return world is not None and not world.is_robot()
+        router = getattr(engine, "_intent_router", None)
+        if world is None or world.is_robot():
+            return False
+        return router is None or not (
+            router.is_system_command(user_input) or router.is_question(user_input)
+        )
     except Exception:  # noqa: BLE001
         return True
 
@@ -606,7 +612,7 @@ def _repl_attempt_native(
 
 
 def _stop_report(agent: Any) -> str:
-    """'; base 0.12 m/s at 0.2 sim-s, 0.00 m/s at 0.5 sim-s' — the measured proof.
+    """'base 0.12 m/s at 0.2 sim-s, 0.00 m/s at 1.0 sim-s' — the measured proof.
 
     The command is zeroed at once; a legged body decelerates, so its measured speed
     is reported at each settle mark (sim time when the body exposes it).
@@ -618,13 +624,13 @@ def _stop_report(agent: Any) -> str:
     sim_t = getattr(base, "get_sim_time", None)
     clock = sim_t if callable(sim_t) else time.monotonic
     try:
-        t0, wall_end, marks = clock(), time.monotonic() + 3.0, []
+        t0, wall_end, marks = clock(), time.monotonic() + 4.0, []
         for mark in _STOP_SETTLE_SIM_S:
             while clock() - t0 < mark and time.monotonic() < wall_end:
                 time.sleep(0.005)
             v = get_v()
             marks.append(f"{math.hypot(v[0], v[1]):.2f} m/s at {mark} sim-s")
-        return "; base " + ", ".join(marks)
+        return "base " + ", ".join(marks)
     except Exception:  # noqa: BLE001 — the report is display only
         return ""
 
@@ -634,9 +640,10 @@ def _p0_stop(engine: Any, text: str, app_state: dict[str, Any], session: Any = N
     t0 = time.monotonic()
     engine._emergency_stop(text, session, app_state.get("agent"), app_state)
     ms = (time.monotonic() - t0) * 1000.0
-    console.print(
-        f"[yellow]■ stopped[/] [dim]({ms:.0f} ms, no LLM call{_stop_report(app_state.get('agent'))})[/]"
-    )
+    console.print(f"[yellow]■ stopped[/] [dim]({ms:.0f} ms, no LLM call)[/]")
+    report = _stop_report(app_state.get("agent"))
+    if report:
+        console.print(f"[dim]  {report}[/]")
 
 
 def _read_line(timeout: float) -> str | None:

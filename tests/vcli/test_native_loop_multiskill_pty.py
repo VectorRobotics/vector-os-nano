@@ -112,7 +112,7 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
         ])
         eng = VectorEngine(
             backend=backend, registry=CategorizedToolRegistry(),
-            permissions=PermissionContext(),
+            permissions=PermissionContext(no_permission=True),  # a hand-built rig is no SimSession: grant asks
         )
         eng._world = RobotWorld()
         eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())

@@ -205,6 +205,29 @@ def _residual_has_motor_signal(msg_lower: str) -> bool:
     return False
 
 
+# CLI/infra commands, not robot actions (route to the tool_use path).
+_SYSTEM_BYPASS: tuple[str, ...] = (
+    "可视化", "foxglove", "visualization", "viz ",
+    # Simulation lifecycle — must route to start_simulation /
+    # stop_simulation tools, not to gripper_close_skill (which
+    # greedily matches "close" / "关闭").
+    "仿真", "sim ", " sim", "simulation",
+    "go2sim", "go2 sim", "armsim", "arm sim",
+    # Headless modifier — pass gui=false to start_simulation; not a VGG task.
+    "headless", "无窗口", "不要窗口", "no window",
+)
+# Conversational question markers.
+_ZH_Q: tuple[str, ...] = (
+    "为什么", "为何", "怎么", "怎样", "如何", "是什么", "什么是",
+    "是不是", "能不能", "可不可以", "有没有",
+)
+_EN_Q: tuple[str, ...] = (
+    "why ", "how ", "what ", "what's", "who ", "when ", "where ",
+    "which ", "can you", "could you", "do you", "does ", "is it",
+    "are you",
+)
+
+
 class IntentRouter:
     """Classify user intent to select relevant tool categories.
 
@@ -262,6 +285,22 @@ class IntentRouter:
 
         return False
 
+    @staticmethod
+    def is_system_command(user_message: str) -> bool:
+        """A CLI/infra command (sim lifecycle, visualization, headless) — never a task."""
+        msg_lower = (user_message or "").lower()
+        return any(kw in msg_lower for kw in _SYSTEM_BYPASS)
+
+    @staticmethod
+    def is_question(user_message: str) -> bool:
+        """A conversational question / ask-about (answer it; do not act)."""
+        s = (user_message or "").lower().strip()
+        return (
+            s.endswith(("?", "？", "吗", "呢", "吧"))
+            or any(q in s for q in _ZH_Q)
+            or any(s.startswith(q) for q in _EN_Q)
+        )
+
     def should_use_vgg(self, user_message: str, skill_registry: Any = None) -> bool:
         """Return True if this message should go through VGG pipeline.
 
@@ -284,17 +323,7 @@ class IntentRouter:
         # System tool keywords → tool_use path, not VGG
         # These are CLI/infra commands, not robot actions.
         msg_lower = user_message.lower()
-        _SYSTEM_BYPASS = (
-            "可视化", "foxglove", "visualization", "viz ",
-            # Simulation lifecycle — must route to start_simulation /
-            # stop_simulation tools, not to gripper_close_skill (which
-            # greedily matches "close" / "关闭").
-            "仿真", "sim ", " sim", "simulation",
-            "go2sim", "go2 sim", "armsim", "arm sim",
-            # Headless modifier — pass gui=false to start_simulation; not a VGG task.
-            "headless", "无窗口", "不要窗口", "no window",
-        )
-        if any(kw in msg_lower for kw in _SYSTEM_BYPASS):
+        if self.is_system_command(user_message):
             return False
 
         # Complex tasks → VGG
@@ -306,23 +335,7 @@ class IntentRouter:
         # an action verb appears incidentally as a substring (here "开始" inside the
         # adverb "一开始"). Genuinely multi-step asks were already caught by
         # is_complex above, so this only short-circuits simple, non-actionable Q&A.
-        _stripped = msg_lower.strip()
-        _ZH_Q = (
-            "为什么", "为何", "怎么", "怎样", "如何", "是什么", "什么是",
-            "是不是", "能不能", "可不可以", "有没有",
-        )
-        _EN_Q = (
-            "why ", "how ", "what ", "what's", "who ", "when ", "where ",
-            "which ", "can you", "could you", "do you", "does ", "is it",
-            "are you",
-        )
-        if (
-            _stripped.endswith("?")
-            or _stripped.endswith("？")
-            or _stripped.endswith(("吗", "呢", "吧"))
-            or any(q in _stripped for q in _ZH_Q)
-            or any(_stripped.startswith(q) for q in _EN_Q)
-        ):
+        if self.is_question(user_message):
             return False
 
         # Skill match → VGG (1-step GoalTree, no LLM needed). Checked BEFORE the
