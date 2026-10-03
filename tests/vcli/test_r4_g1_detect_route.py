@@ -14,8 +14,8 @@ SECOND model family on the SECOND embodiment (cross-EMBODIMENT x cross-MODEL):
   2. The native ``_NativeDetectTool`` routes a query to the registered capability,
      stashes the boxes on the agent, and reports them (no second model load). KEPT:
      this is the genuine cross-EMBODIMENT x cross-MODEL route.
-  3. ``_registered_capability`` reaches the live CapabilityRegistry via the engine
-     executor; ``_build_motor_tools`` surfaces ``detect`` only when registered.
+  3. ``_registered_capabilities`` reaches the live CapabilityRegistry the ENGINE owns;
+     ``_build_motor_tools`` surfaces ``detect`` only when registered.
 
 The grounding-dino model is FAKED (a stub capability) — these tests prove the
 WIRING/route, not the model's perception (that is the real-sim REAL-VERIFY).
@@ -27,7 +27,7 @@ from typing import Any
 from vector_os_nano.vcli.native_loop import (
     _NativeDetectTool,
     _build_motor_tools,
-    _registered_capability,
+    _registered_capabilities,
 )
 from vector_os_nano.vcli.worlds.robot import RobotWorld
 
@@ -92,22 +92,13 @@ class _Ctx:
         self.agent = agent
 
 
-class _Registry:
-    def __init__(self, cap):
-        self._cap = cap
-
-    def get(self, name):
-        return self._cap if name == "detect" else None
-
-
-class _Executor:
-    def __init__(self, cap):
-        self._capability_registry = _Registry(cap)
-
-
 class _Engine:
     def __init__(self, cap=None, registry=None):
-        self._goal_executor = _Executor(cap) if cap is not None else None
+        from vector_os_nano.vcli.cognitive.capabilities import CapabilityRegistry
+
+        self._capability_registry = CapabilityRegistry() if cap is not None else None
+        if cap is not None:
+            self._capability_registry.register(cap)
         self._registry = registry  # for code-tool discovery (None -> none)
 
 
@@ -195,11 +186,10 @@ def test_native_detect_tool_nothing_localized_is_honest():
 
 
 # --- 3. registry reach + motor-tool surfacing ------------------------------
-def test_registered_capability_reaches_live_registry():
+def test_registered_capabilities_reach_the_engine_registry():
     cap = _StubDetectCap([])
-    assert _registered_capability(_Engine(cap=cap), "detect") is cap
-    assert _registered_capability(_Engine(cap=cap), "missing") is None
-    assert _registered_capability(_Engine(cap=None), "detect") is None  # no executor
+    assert _registered_capabilities(_Engine(cap=cap)) == [cap]
+    assert _registered_capabilities(_Engine(cap=None)) == []  # no registry
 
 
 def test_build_motor_tools_surfaces_detect_when_registered():

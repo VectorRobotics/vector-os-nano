@@ -788,11 +788,13 @@ class MuJoCoGo2:
         from vector_os_nano.hardware.sim.viewer_mode import (  # noqa: PLC0415
             uses_background_physics,
         )
+        from vector_os_nano.vcli.cognitive.abort import is_abort_requested, wait_or_abort
+
         if uses_background_physics(self._drive_mode):
-            time.sleep(seconds)
+            wait_or_abort(seconds)  # a stop ends the motion now, not after it
             return
         deadline = time.perf_counter() + seconds
-        while time.perf_counter() < deadline:
+        while time.perf_counter() < deadline and not is_abort_requested():
             loop_start = time.perf_counter()
             self.step()
             sleep_t = _SIM_DT - (time.perf_counter() - loop_start)
@@ -1692,10 +1694,13 @@ class MuJoCoGo2:
 
         Returns True on capture, False on timeout/deadline.
         """
+        from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+
         _MAX_WALK_STEPS = 200  # hard upper bound to prevent infinite loops
 
         for _ in range(_MAX_WALK_STEPS):
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= deadline or is_abort_requested():
+                self.stop()
                 return False
 
             pos = self.get_position()

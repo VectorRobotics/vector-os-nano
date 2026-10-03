@@ -101,13 +101,27 @@ class TestAbortModule:
 # 2. P0 stop bypass
 # ---------------------------------------------------------------------------
 
+def _engine_with_stop_skill(backend):
+    """An engine whose agent registers the real StopSkill: the P0 words are its aliases."""
+    from types import SimpleNamespace
+
+    from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.skills.go2.stop import StopSkill
+    from vector_os_nano.vcli.engine import VectorEngine
+
+    reg = SkillRegistry()
+    reg.register(StopSkill())
+    engine = VectorEngine(backend=backend)
+    engine._vgg_agent = SimpleNamespace(_skill_registry=reg)
+    return engine
+
+
 class TestP0StopBypass:
     def test_stop_returns_immediately(self):
         from unittest.mock import MagicMock
-        from vector_os_nano.vcli.engine import VectorEngine
 
         backend = MagicMock()
-        engine = VectorEngine(backend=backend)
+        engine = _engine_with_stop_skill(backend)
         session = MagicMock()
         session.append_user = MagicMock()
         session.append_assistant = MagicMock()
@@ -122,10 +136,9 @@ class TestP0StopBypass:
 
     def test_chinese_stop_bypasses(self):
         from unittest.mock import MagicMock
-        from vector_os_nano.vcli.engine import VectorEngine
 
         backend = MagicMock()
-        engine = VectorEngine(backend=backend)
+        engine = _engine_with_stop_skill(backend)
         session = MagicMock()
         session.append_user = MagicMock()
         session.append_assistant = MagicMock()
@@ -134,6 +147,19 @@ class TestP0StopBypass:
             result = engine.run_turn(word, session)
             assert result.text == "Stopped.", f"Failed for: {word}"
             backend.call.assert_not_called()
+
+    def test_stop_words_are_the_registered_stop_skills_aliases(self):
+        """Single source (producers:stop-not-p0): no hand-written kernel list."""
+        from unittest.mock import MagicMock
+
+        from vector_os_nano.skills.go2.stop import StopSkill
+        from vector_os_nano.vcli.engine import VectorEngine
+
+        engine = _engine_with_stop_skill(MagicMock())
+        assert engine.stop_words() == frozenset(
+            w.lower() for w in ["stop", *StopSkill.__skill_aliases__]
+        )
+        assert VectorEngine(backend=MagicMock()).stop_words() == frozenset()  # no robot
 
     def test_non_stop_goes_to_llm(self):
         from unittest.mock import MagicMock

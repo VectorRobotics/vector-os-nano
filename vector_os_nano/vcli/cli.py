@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import queue
+import select
+import threading
 import logging
 import os
 import shutil
@@ -67,6 +71,11 @@ DIM_TEAL = "#006666"
 EXIT_COMMANDS: frozenset[str] = frozenset({"quit", "exit", "q"})
 
 _LOGO_PATH = Path(__file__).resolve().parent.parent / "cli" / "logo_braille.txt"
+
+# A stop reports the base speed this much SIM time after the stop command.
+_STOP_SETTLE_SIM_S = 0.2
+# After a stop, wait this long for the cancelled turn to unwind before re-prompting.
+_UNWIND_S = 5.0
 
 # Popular models on OpenRouter for /model completion
 KNOWN_MODELS: list[str] = [
@@ -397,17 +406,24 @@ def _print_native_enabled() -> bool:
 
 
 def _native_trace_acted(trace: Any) -> bool:
-    """True iff the native trace DISPATCHED at least one action skill.
+    """True iff the native producer OWNS the turn: it ran any side-effecting tool.
 
-    A native step's ``.strategy`` is the producing skill name and is the EMPTY string
-    when no skill was dispatched (a verify-only step, or a dev world whose
-    ``_build_motor_tools`` returns ``{}`` so nothing can be called). A trace with zero
-    acted steps means the native producer could not route the goal -> the caller falls
-    back to the legacy plan. Pure + defensive: a ``None`` trace, a trace with no
-    ``steps``, or steps missing ``.strategy`` all yield False (empty-safe).
+    ``trace.actions_dispatched`` counts every side-effecting dispatch — verified or
+    not, interrupted or not — so a turn that moved the robot is never handed to the
+    legacy planner to run again (no double execution). A recorded step with a
+    producing ``strategy`` also counts. Only a turn that dispatched nothing (could
+    not route the goal) may fall back. Pure + defensive: ``None`` -> False.
     """
+    if int(getattr(trace, "actions_dispatched", 0) or 0) > 0:
+        return True
     steps = getattr(trace, "steps", None) or ()
     return any((getattr(s, "strategy", "") or "").strip() for s in steps)
+
+
+def _native_owns_turn(trace: Any) -> bool:
+    """The native result is final: it acted, or the LLM itself is unavailable (the
+    legacy producer would only hit the same dead model)."""
+    return trace is not None and (_native_trace_acted(trace) or bool(getattr(trace, "llm_error", "")))
 
 
 def _repl_native_enabled() -> bool:
@@ -441,7 +457,13 @@ def _intent_actionable(engine: Any, user_input: str) -> bool:
     the redesign, never silently skip it; a no-op then falls back to legacy anyway).
     """
     try:
-        return bool(engine.classify_intent(user_input).use_vgg)
+        if engine.classify_intent(user_input).use_vgg:
+            return True
+        # A non-robot (dev) world acts only through the code tools, and the keyword
+        # router knows no dev verbs: attempt native there (a turn it cannot act on
+        # costs one round-trip, then falls through unchanged).
+        world = getattr(engine, "_world", None)
+        return world is not None and not world.is_robot()
     except Exception:  # noqa: BLE001
         return True
 
@@ -496,12 +518,20 @@ def _repl_attempt_native(
                     _status.update(f"[{TEAL}]native[/] {msg}")
                 except Exception:  # noqa: BLE001
                     pass
+
+            def _ask(name: str, params: dict[str, Any]) -> str:
+                _status.stop()  # a live spinner would draw over the prompt
+                try:
+                    return ask_permission(name, params)
+                finally:
+                    _status.start()
             try:
                 trace = engine.run_turn_native(
                     user_input, agent=agent, session=scratch, app_state=app_state,
-                    on_progress=_on_progress,
+                    on_progress=_on_progress, ask_permission=_ask,
                 )
-            except Exception:  # noqa: BLE001 — native errored -> treat as no-action
+            except Exception as exc:  # noqa: BLE001 — raised before any action: safe to fall back
+                logger.debug("native attempt failed before acting: %s", exc)
                 trace = None
     finally:
         if sys.stderr is not _saved_stderr:
@@ -511,7 +541,7 @@ def _repl_attempt_native(
                 pass
         sys.stderr = _saved_stderr
 
-    if trace is None or not _native_trace_acted(trace):
+    if not _native_owns_turn(trace):
         return False  # native could not route -> caller falls back to legacy
 
     sub_goals = list(getattr(trace.goal_tree, "sub_goals", ()) or ())
@@ -522,6 +552,9 @@ def _repl_attempt_native(
         chain = (getattr(s, "strategy", "") or "").strip() or "(no action)"
         ok = bool(getattr(s, "verify_result", False))
         actor = getattr(getattr(s, "actor_caused", None), "value", "?")
+        if not verify_expr and getattr(s, "error", ""):
+            console.print(f"  [{TEAL}]▸[/] {chain} → [yellow]{s.error}[/]", markup=True)
+            continue
         mark = "[green]✓[/]" if ok else "[yellow]·[/]"
         console.print(
             f"  [{TEAL}]▸[/] {chain} → verify {verify_expr} {mark} [dim](actor={actor})[/]"
@@ -538,6 +571,8 @@ def _repl_attempt_native(
             f"[{color}]verified={report.verified}[/] "
             f"[dim]({report.n_grounded}/{report.n_steps} grounded)[/]"
         )
+        if report.llm_unavailable:
+            console.print(f"  [yellow]{report.error}[/] [dim](infrastructure, not an agent failure)[/]")
     except Exception as exc:  # noqa: BLE001 — fail closed (display only)
         console.print(f"  [yellow]verdict unavailable:[/] {exc}")
 
@@ -560,6 +595,124 @@ def _repl_attempt_native(
 # ---------------------------------------------------------------------------
 # Input classification
 # ---------------------------------------------------------------------------
+
+
+def _stop_report(agent: Any) -> str:
+    """'; base 0.02 m/s after 0.2 sim-s' — the measured proof the stop took."""
+    base = getattr(agent, "_base", None)
+    get_v = getattr(base, "get_velocity", None)
+    if not callable(get_v):
+        return ""
+    sim_t = getattr(base, "get_sim_time", None)
+    try:
+        if callable(sim_t):
+            t0, wall_end = sim_t(), time.monotonic() + 2.0
+            while sim_t() - t0 < _STOP_SETTLE_SIM_S and time.monotonic() < wall_end:
+                time.sleep(0.01)
+        else:
+            time.sleep(_STOP_SETTLE_SIM_S)
+        v = get_v()
+        return f"; base {math.hypot(v[0], v[1]):.2f} m/s after {_STOP_SETTLE_SIM_S} sim-s"
+    except Exception:  # noqa: BLE001 — the report is display only
+        return ""
+
+
+def _p0_stop(engine: Any, text: str, app_state: dict[str, Any], session: Any = None) -> None:
+    """Stop NOW: cancel every run + the stop skill, no LLM call (P0, < 100 ms)."""
+    t0 = time.monotonic()
+    engine._emergency_stop(text, session, app_state.get("agent"), app_state)
+    ms = (time.monotonic() - t0) * 1000.0
+    console.print(
+        f"[yellow]■ stopped[/] [dim]({ms:.0f} ms, no LLM call{_stop_report(app_state.get('agent'))})[/]"
+    )
+
+
+def _read_line(timeout: float) -> str | None:
+    """A line typed on stdin within *timeout* s, else None (the busy loop's input)."""
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    except (OSError, ValueError):  # stdin closed / not selectable
+        time.sleep(timeout)
+        return None
+    return sys.stdin.readline() if ready else None
+
+
+def _run_turn_busy(engine: Any, fn: Callable[[], None], app_state: dict[str, Any]) -> str | None:
+    """Run one engine turn on a worker thread while this (main) thread keeps reading input.
+
+    During the turn:
+      * a stop phrase (the registered stop skill's aliases) or Ctrl-C stops the robot
+        and cancels the running turn at once, with no LLM call; Ctrl-C never exits;
+      * a permission prompt the turn raises is answered here (this thread owns stdin);
+      * any OTHER line cancels the running turn (robot stopped) and is returned, so
+        the caller runs it next: cancel-then-run.
+    Under mjpython with a live viewer (GLFW is main-thread-only) the turn runs inline.
+    """
+    from vector_os_nano.hardware.sim.viewer_mode import running_under_mjpython
+
+    if engine._has_live_viewer() and running_under_mjpython():
+        try:
+            fn()
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Interrupted.[/yellow]")
+            _p0_stop(engine, "interrupt", app_state)
+        return None
+
+    global _ASK_Q
+    asks: "queue.Queue[tuple[str, dict[str, Any], queue.Queue[str]]]" = queue.Queue()
+    done = threading.Event()
+
+    def _target() -> None:
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 — the turn's own handler already printed
+            console.print(f"[red]Error:[/] {exc}")
+        finally:
+            done.set()
+
+    _ASK_Q = asks
+    threading.Thread(target=_target, name="vector-turn", daemon=True).start()
+    next_line: str | None = None
+    stopped_at: float | None = None
+    reply: "queue.Queue[str] | None" = None
+    try:
+        while not done.wait(0.02):
+            try:
+                if stopped_at is not None and time.monotonic() - stopped_at > _UNWIND_S:
+                    console.print("[dim]  the stopped task is still unwinding; back to the prompt[/]")
+                    break
+                try:
+                    name, params, reply = asks.get_nowait()
+                except queue.Empty:
+                    reply = None
+                else:
+                    reply.put("n" if stopped_at is not None else ask_permission(name, params))
+                    reply = None
+                    continue
+                line = (_read_line(0.03) or "").strip()
+                if not line or stopped_at is not None:
+                    continue
+                if not engine.is_stop(line):
+                    console.print(f"[dim]  ↳ cancelling the running task for: {line}[/]")
+                    next_line = line
+                _p0_stop(engine, line, app_state)
+                stopped_at = time.monotonic()
+            except KeyboardInterrupt:
+                if reply is not None:
+                    reply.put("n")
+                    reply = None
+                console.print("\n[yellow]Interrupted.[/yellow]")
+                if stopped_at is None:
+                    _p0_stop(engine, "interrupt", app_state)
+                    stopped_at = time.monotonic()
+    finally:
+        _ASK_Q = None
+        while True:  # nobody answers once the loop ends: deny what is still queued
+            try:
+                asks.get_nowait()[2].put("n")
+            except queue.Empty:
+                break
+    return next_line
 
 
 def is_slash_command(text: str) -> bool:
@@ -654,7 +807,19 @@ def print_banner(
     console.print()
 
 
+# While a REPL turn runs on its worker thread the MAIN thread owns stdin: a worker's
+# permission request is queued here and answered by the busy loop (_run_turn_busy).
+_ASK_Q: "queue.Queue[tuple[str, dict[str, Any], queue.Queue[str]]] | None" = None
+
+
 def ask_permission(tool_name: str, params: dict[str, Any]) -> str:
+    if threading.current_thread() is not threading.main_thread():
+        q = _ASK_Q
+        if q is None:
+            return "n"  # nobody can answer this prompt: fail closed
+        reply: "queue.Queue[str]" = queue.Queue(maxsize=1)
+        q.put((tool_name, params, reply))
+        return reply.get()
     console.print(f"\n[yellow bold]Permission required:[/yellow bold]")
     console.print(f"  Tool: [{TEAL}]{tool_name}[/]")
     params_str = json.dumps(params, indent=2, ensure_ascii=False)
@@ -1578,9 +1743,9 @@ def _build_turn_context(
         "scenario": _active_scenario,
         "sim_session": sim_session,
     }
-    app_state["tool_permission_resolver"] = tool_permission_resolver or (
-        lambda n, p: ask_permission(n, p)
-    )
+    # Headless: an ``ask`` is denied unless the caller passes a resolver (or
+    # --no-permission makes the PermissionContext allow) — never a stdin prompt.
+    app_state["tool_permission_resolver"] = tool_permission_resolver
 
     # VGG cognitive layer (optional) — init through the SAME path as the REPL so
     # the verifier namespace / oracle set is identical whether interactive or not.
@@ -1676,23 +1841,29 @@ def run_one_turn(args: Any) -> int:
     # native, no fallback) — defer to block 2 in that case; an explicit --native-first
     # still wins (preserving every prior flag behavior). So block 1 fires on: explicit
     # --native-first, OR the default cutover when --native-loop is NOT explicitly set.
+    # P0 stop: the registered stop skill's words, no LLM call.
+    if engine.is_stop(prompt or ""):
+        _p0_stop(engine, prompt, ctx.app_state, ctx.session)
+        return _emit(VerdictReport.no_trace(goal=prompt, error="stopped (P0, no LLM call)"))
+
     if _native_first_enabled(args) or (
         _print_native_enabled() and not _native_loop_enabled(args)
     ):
+        # ask_permission=None: headless denies every 'ask' (--no-permission allows).
         try:
             trace = engine.run_turn_native(
                 prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session
             )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — raised before any action: safe to fall back
             trace = None
-        if trace is not None and _native_trace_acted(trace):
+        if _native_owns_turn(trace):
             try:
                 oracle_names = verify_oracle_names(getattr(engine, "_vgg_agent", None), engine)
                 report = VerdictReport.from_trace(trace, oracle_names)
             except Exception as exc:  # noqa: BLE001
                 report = VerdictReport.no_trace(goal=prompt or "", error=f"verdict failed: {exc}")
             return _emit(report)
-        # Native took NO action -> fall through to the legacy block (no return here).
+        # Native dispatched NOTHING -> fall through to the legacy block (no return here).
 
     # M1 strangler-fig (flag-gated, default OFF): the frontier-model NATIVE
     # TOOL-USE producer assembles the trace instead of the legacy decompose plan.
@@ -2047,64 +2218,15 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     _tool_start_times: dict[str, float] = {}
-    # Ctrl-C UX (R2-4): one ^C aborts a running task and returns to the prompt;
-    # a second consecutive ^C (at the prompt) exits cleanly. Reset on any input.
+    # Ctrl-C UX (R2-4): a ^C during a turn stops it and returns to the prompt (it
+    # never exits); two consecutive ^C AT THE PROMPT exit cleanly.
     interrupt_pending = False
 
+    # A line typed while a turn ran (cancel-then-run) is the next input.
+    pending_input: list[str] = []
+
     try:
-        while True:
-            # ---- Read input ----
-            try:
-                raw = pt_session.prompt(
-                    HTML(f'<style fg="{TEAL}" bold="true">vector&gt;</style> '),
-                    bottom_toolbar=_get_toolbar,
-                )
-            except EOFError:
-                break
-            except KeyboardInterrupt:
-                if interrupt_pending:
-                    break  # second consecutive Ctrl-C -> exit cleanly
-                interrupt_pending = True
-                console.print("\n[dim]Press Ctrl-C again or type quit to exit.[/dim]")
-                continue
-
-            interrupt_pending = False  # any successful input clears the pending exit
-            user_input = raw.strip()
-            if not user_input:
-                continue
-
-            # ---- Exit ----
-            if is_exit_command(user_input):
-                break
-
-            # ---- Slash commands ----
-            if is_slash_command(user_input):
-                parts = user_input.split()
-                if not _handle_slash_command(parts[0][1:], parts[1:], registry, session, app_state):
-                    break
-                continue
-
-            # ---- ! shell passthrough ----
-            if user_input.startswith("!"):
-                cmd = user_input[1:].strip()
-                if cmd:
-                    try:
-                        proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
-                        if proc.stdout:
-                            console.print(proc.stdout, end="")
-                        if proc.stderr:
-                            console.print(f"[dim]{proc.stderr}[/]", end="")
-                    except subprocess.TimeoutExpired:
-                        console.print("[yellow]Command timed out (30s)[/]")
-                    except Exception as exc:
-                        console.print(f"[red]Error:[/] {exc}")
-                continue
-
-            # ---- Engine turn ----
-            if engine is None:
-                console.print(f"[yellow]No API key. Use /login to authenticate first.[/]")
-                continue
-
+        def _engine_turn(user_input: str) -> None:
             # CUTOVER (2026-06-19, owner-approved): native-attempt-then-fallback is the
             # REPL's DEFAULT turn path, so bare `vector-cli` + natural language runs the
             # redesign's NATIVE TOOL-USE producer (CLAUDE.md North Star "Acceptance
@@ -2122,7 +2244,7 @@ def main(argv: list[str] | None = None) -> None:
             # fall back to legacy.
             if _repl_native_enabled() and _intent_actionable(engine, user_input):
                 if _repl_attempt_native(engine, user_input, session, app_state, console):
-                    continue
+                    return
                 # native took NO action -> fall through to legacy routing (unchanged).
 
             try:
@@ -2409,14 +2531,10 @@ def main(argv: list[str] | None = None) -> None:
                             f"Steps:\n{step_summary}"
                         )
 
-                    # Runs on a background thread (CLI stays responsive) EXCEPT
-                    # when a GUI viewer is live UNDER MJPYTHON (macOS) — only
-                    # there GLFW is main-thread-only, so it executes
-                    # synchronously on this thread and the prompt returns once
-                    # the arm finishes. Linux/Windows keep the background
-                    # thread even with a viewer (REPL stays responsive).
-                    engine.vgg_execute_async(goal_tree, on_complete=_on_vgg_complete)
-                    continue  # next input (immediately when headless)
+                    # Synchronous on the turn worker: the REPL thread keeps reading
+                    # input (stop / Ctrl-C), and only one turn drives the robot.
+                    _on_vgg_complete(engine.vgg_execute(goal_tree))
+                    return
 
                 # --- Normal tool_use path ---
                 # Pause the live region around any interactive permission prompt so
@@ -2491,11 +2609,6 @@ def main(argv: list[str] | None = None) -> None:
                         console.print(f"[dim]  in={u.input_tokens:,} out={u.output_tokens:,}[/]")
                 console.print()
 
-            except KeyboardInterrupt:
-                # One Ctrl-C aborts the running task and returns to the prompt;
-                # arm the pending-exit so an immediate second Ctrl-C quits (R2-4).
-                interrupt_pending = True
-                console.print("\n[yellow]Interrupted.[/yellow] [dim](Ctrl-C again or 'quit' to exit)[/dim]")
             except Exception as exc:
                 err_str = str(exc)
                 if "429" in err_str or "rate_limit" in err_str:
@@ -2512,6 +2625,75 @@ def main(argv: list[str] | None = None) -> None:
                 if args.verbose:
                     import traceback
                     traceback.print_exc()
+
+        while True:
+            # ---- Read input ----
+            try:
+                if pending_input:
+                    raw = pending_input.pop(0)
+                else:
+                    raw = pt_session.prompt(
+                        HTML(f'<style fg="{TEAL}" bold="true">vector&gt;</style> '),
+                        bottom_toolbar=_get_toolbar,
+                    )
+            except EOFError:
+                break
+            except KeyboardInterrupt:
+                if interrupt_pending:
+                    break  # second consecutive Ctrl-C -> exit cleanly
+                interrupt_pending = True
+                console.print("\n[dim]Press Ctrl-C again or type quit to exit.[/dim]")
+                continue
+
+            interrupt_pending = False  # any successful input clears the pending exit
+            user_input = raw.strip()
+            if not user_input:
+                continue
+
+            # ---- Exit ----
+            if is_exit_command(user_input):
+                break
+
+            # ---- Slash commands ----
+            if is_slash_command(user_input):
+                parts = user_input.split()
+                if not _handle_slash_command(parts[0][1:], parts[1:], registry, session, app_state):
+                    break
+                continue
+
+            # ---- ! shell passthrough ----
+            if user_input.startswith("!"):
+                cmd = user_input[1:].strip()
+                if cmd:
+                    try:
+                        proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
+                        if proc.stdout:
+                            console.print(proc.stdout, end="")
+                        if proc.stderr:
+                            console.print(f"[dim]{proc.stderr}[/]", end="")
+                    except subprocess.TimeoutExpired:
+                        console.print("[yellow]Command timed out (30s)[/]")
+                    except Exception as exc:
+                        console.print(f"[red]Error:[/] {exc}")
+                continue
+
+            # ---- Engine turn ----
+            if engine is None:
+                console.print(f"[yellow]No API key. Use /login to authenticate first.[/]")
+                continue
+
+            # P0 stop: the REGISTERED stop skill's own words, before any producer —
+            # zero LLM calls, < 100 ms.
+            if engine.is_stop(user_input):
+                _p0_stop(engine, user_input, app_state, session)
+                continue
+
+            # The turn runs on a worker thread while this thread keeps reading input:
+            # a typed stop / Ctrl-C stops it mid-turn, and another command cancels it
+            # and runs next (cancel-then-run).
+            typed_next = _run_turn_busy(engine, lambda: _engine_turn(user_input), app_state)
+            if typed_next:
+                pending_input.append(typed_next)
 
     finally:
         session.save()

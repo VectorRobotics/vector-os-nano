@@ -39,10 +39,17 @@ between-turn motion folds into the causation grade).
 """
 from __future__ import annotations
 
+import inspect
+import json
 import logging
+import math
+import os
+import threading
+import time
 from typing import Any, Callable
 
 from vector_os_nano.vcli.backends.types import LLMResponse
+from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.cognitive import actor_causation
 from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
 from vector_os_nano.vcli.cognitive.types import (
@@ -51,7 +58,9 @@ from vector_os_nano.vcli.cognitive.types import (
     StepRecord,
     SubGoal,
 )
-from vector_os_nano.vcli.tools.base import ToolContext, ToolResult
+from vector_os_nano.vcli.permissions import PermissionContext
+from vector_os_nano.vcli.tool_execution import execute_resolved_tool, resolve_permission
+from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
 from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
 
 logger = logging.getLogger(__name__)
@@ -150,6 +159,15 @@ class _NativeBaseNavigateTool:
         "required": ["x", "y"],
     }
 
+    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
+        # It drives the base: confirm unless the body is a live in-process sim.
+        from vector_os_nano.sim.session import is_sim_agent
+
+        return PermissionResult("allow" if is_sim_agent(getattr(context, "agent", None)) else "ask")
+
+    def is_read_only(self, params: dict[str, Any]) -> bool:
+        return False
+
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         try:
             x = float(params["x"])
@@ -165,14 +183,15 @@ class _NativeBaseNavigateTool:
                 is_error=True,
             )
 
+        # Pass a timeout only to a base that takes one: retrying on ANY TypeError
+        # would re-run a navigation that raised one mid-way.
         try:
-            ok = bool(navigate_to(x, y, timeout=_NAV_TIMEOUT_S))
-        except TypeError:
-            # A base whose navigate_to does not accept a timeout kwarg.
-            try:
-                ok = bool(navigate_to(x, y))
-            except Exception as exc:  # noqa: BLE001
-                return ToolResult(content=f"navigate({x}, {y}) failed: {exc}", is_error=True)
+            params_ = inspect.signature(navigate_to).parameters.values()
+            takes_timeout = any(p.name == "timeout" or p.kind is p.VAR_KEYWORD for p in params_)
+        except (TypeError, ValueError):
+            takes_timeout = False
+        try:
+            ok = bool(navigate_to(x, y, timeout=_NAV_TIMEOUT_S) if takes_timeout else navigate_to(x, y))
         except Exception as exc:  # noqa: BLE001
             return ToolResult(content=f"navigate({x}, {y}) failed: {exc}", is_error=True)
 
@@ -184,7 +203,12 @@ class _NativeBaseNavigateTool:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("native_loop: navigate get_position failed: %s", exc)
         where = f"({pos[0]:.2f}, {pos[1]:.2f})" if pos else "unknown"
-        status = "arrived" if ok else "did NOT confirm arrival (FAR graph unavailable or timeout)"
+        if ok:
+            status = "arrived"
+        elif getattr(getattr(context, "abort", None), "is_set", lambda: False)():
+            status = "was STOPPED before arrival"
+        else:
+            status = "did NOT confirm arrival (FAR graph unavailable or timeout)"
         return ToolResult(
             content=f"navigate: {status}; now at {where} (target ({x}, {y})). "
             "Call verify(at_position) to confirm."
@@ -239,6 +263,13 @@ class _NativeDetectTool:
         # The SAME registered DetectorCapability the world bound to the agent's live
         # perception — never a fresh instance, never a second model load.
         self._capability = capability
+        self.name = str(getattr(capability, "name", "") or "detect")
+
+    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
+        return PermissionResult("allow")  # perception only
+
+    def is_read_only(self, params: dict[str, Any]) -> bool:
+        return True
 
     @staticmethod
     def _verify_hint(agent: Any, query: str) -> str:
@@ -309,6 +340,43 @@ class _NativeDetectTool:
                 f"top {first}. Call {hint} to confirm."
             )
         )
+
+
+class _NativeCapabilityTool:
+    """Any registered Capability as a native tool (S6): the model routes to it by name.
+
+    A ``side_effecting`` capability (a VLA, a planner that moves the robot) goes
+    through the permission gate as ``ask``; a read-only one is allowed. The
+    capability never self-certifies — its output is tool text, the verify is the moat.
+    """
+
+    def __init__(self, capability: Any) -> None:
+        self._capability = capability
+        self.name = str(capability.name)
+        self.description = str(
+            getattr(capability, "description", "")
+            or f"Routable {getattr(capability, 'kind', 'model')} capability '{self.name}'."
+        )
+        self.input_schema = dict(
+            getattr(capability, "input_schema", None) or {"type": "object", "properties": {}}
+        )
+        self._side_effecting = bool(getattr(capability, "side_effecting", True))
+
+    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
+        return PermissionResult("ask" if self._side_effecting else "allow")
+
+    def is_read_only(self, params: dict[str, Any]) -> bool:
+        return not self._side_effecting
+
+    def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
+        result = self._capability.invoke(dict(params or {}), context)
+        if not getattr(result, "success", False):
+            return ToolResult(
+                content=f"{self.name} failed: {getattr(result, 'error', '') or 'no output'}",
+                is_error=True,
+            )
+        output = json.dumps(getattr(result, "output", {}) or {}, ensure_ascii=False, default=str)
+        return ToolResult(content=f"{self.name}: {output[:2000]}")
 
 
 def _scene_object_names(agent: Any) -> tuple[str, ...]:
@@ -424,18 +492,28 @@ class NativeStepRunner:
         oracle_names: frozenset[str],
         motor_tools: dict[str, Any],
         tool_context: ToolContext,
+        ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
     ) -> None:
         self._agent = agent
         self._verifier = verifier
         self._oracle_names = oracle_names
         self._motor_tools = motor_tools
         self._ctx = tool_context
+        # Resolves an "ask" permission (the REPL's prompt). None denies: the
+        # headless default — only --no-permission (PermissionContext) allows.
+        self._ask = ask_permission
 
         # Per-step accumulator: the producing action chain (skill names) + the
         # capture baseline taken BEFORE the first skill of the current step.
         self._chain: list[str] = []
         self._baseline: Any = None
         self._step_open: bool = False
+        self._step_acted: bool = False  # a side-effecting tool ran this step
+        self._last_ok: bool = True      # the chain's last tool did not report an error
+
+        # Side-effecting tool calls over the whole turn: nonzero means the turn
+        # acted, so no other producer may re-run it (no double execution).
+        self.actions_dispatched: int = 0
 
         # The assembled trace pieces (one SubGoal + one StepRecord per verify pair).
         self._sub_goals: list[SubGoal] = []
@@ -456,7 +534,12 @@ class NativeStepRunner:
     # ------------------------------------------------------------------
 
     def dispatch_skill(self, name: str, params: dict[str, Any]) -> ToolResult:
-        """Run a motor/skill tool via SkillWrapperTool; open a step if needed.
+        """Gate, then run a motor/skill tool; open a step if needed.
+
+        Every dispatch goes through the SAME permission seam the ReAct and VGG tool
+        paths use (``resolve_permission``): an intrinsic deny (the bash deny-list, a
+        protected path) never runs; an ``ask`` runs only on an explicit yes from the
+        resolver (None denies — the headless default). A denied call is not an action.
 
         The actor-causation baseline is captured immediately BEFORE the FIRST skill
         call of the current step (review fix 3), then frozen — advancing the robot
@@ -465,16 +548,34 @@ class NativeStepRunner:
         tool = self._motor_tools.get(name)
         if tool is None:
             return ToolResult(content=f"Unknown tool '{name}'.", is_error=True)
+        decision = resolve_permission(
+            tool, params, self._ctx, self._ctx.permissions or PermissionContext(), self._ask,
+            swallow_check_errors=True, swallow_always_allow_errors=True,
+        )
+        if not decision.allowed:
+            return ToolResult(
+                content=f"Permission denied for {name}: {decision.reason or decision.kind}. "
+                "The tool did NOT run.",
+                is_error=True,
+            )
         if not self._step_open:
             # First skill of a fresh step -> capture the causation baseline NOW.
             self._baseline = actor_causation.capture(self._agent)
             self._step_open = True
         self._chain.append(name)
         try:
-            return tool.execute(params, self._ctx)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("native_loop: skill '%s' raised: %s", name, exc)
-            return ToolResult(content=f"Skill '{name}' raised: {exc}", is_error=True)
+            read_only = bool(tool.is_read_only(params))
+        except Exception:  # noqa: BLE001 — no/broken declaration: fail closed (it acts)
+            read_only = False
+        if not read_only:
+            self.actions_dispatched += 1
+            self._step_acted = True
+        result = execute_resolved_tool(
+            tool, params, self._ctx, error_prefix=f"Skill '{name}' raised",
+            on_error=lambda _n, exc: logger.debug("native_loop: skill %r raised: %s", name, exc),
+        )
+        self._last_ok = not result.is_error
+        return result
 
     # ------------------------------------------------------------------
     # The verify-tool HANDLER — appends EXACTLY ONE StepRecord per pair
@@ -513,26 +614,23 @@ class NativeStepRunner:
             verify=expr,
             strategy=strategy,
         )
-        # The step "ran" (success) iff at least one action skill was dispatched for
-        # it OR it is a pure check; verify_result + actor_caused carry the moat. A
-        # verify-only step (no skill) still records success=True so the gate keys on
-        # GROUNDED/RAN (a NO-OP must reach the verdict as RAN, not FAILED).
+        # The step "ran" (success) iff its producing action — the LAST tool of the
+        # chain — did not report an error; a pure check (no tool) records
+        # success=True so the gate keys on GROUNDED/RAN (a NO-OP reaches the verdict
+        # as RAN, not FAILED). A failed skill followed by a true verify is FAILED,
+        # never GROUNDED: the skill's own failure is not discarded.
         step = StepRecord(
             sub_goal_name=step_name,
             strategy=strategy,
-            success=True,
+            success=self._last_ok if self._chain else True,
             verify_result=verify_result,
             duration_sec=0.0,
+            error="" if (self._last_ok or not self._chain) else f"{strategy} reported an error",
             actor_caused=actor_caused,
         )
         self._sub_goals.append(sub_goal)
         self._steps.append(step)
-
-        # Close the step: reset the action chain + baseline for the next pair. NEVER
-        # carry a baseline across a verify (else the next step's causation folds in).
-        self._chain = []
-        self._baseline = None
-        self._step_open = False
+        self._close_step()
 
         return ToolResult(
             content=(
@@ -540,6 +638,44 @@ class NativeStepRunner:
                 f"(result={verify_result}, actor={actor_caused.value})"
             )
         )
+
+    def _close_step(self) -> None:
+        # Reset the action chain + baseline for the next pair. NEVER carry a baseline
+        # across a verify (else the next step's causation folds in).
+        self._chain = []
+        self._baseline = None
+        self._step_open = False
+        self._step_acted = False
+        self._last_ok = True
+
+    def record_abort(self, reason: str) -> None:
+        """Close the turn with ONE failed step: it was stopped (or its LLM died).
+
+        The unverified action chain (if any) is its producing strategy, so an
+        interrupted action is on the record — never silently dropped — and grades
+        FAILED (success=False), never GROUNDED.
+        """
+        self._record_open(reason, success=False)
+
+    def record_unverified(self) -> None:
+        """Record the open chain as a step the model never verified (grades RAN at best)."""
+        self._record_open("not verified", success=self._last_ok)
+
+    def _record_open(self, reason: str, *, success: bool) -> None:
+        step_name = f"native_step_{self._step_idx}"
+        self._step_idx += 1
+        strategy = self._chain[-1] if self._chain else ""
+        self._sub_goals.append(SubGoal(
+            name=step_name,
+            description=f"native: {' -> '.join(self._chain) or '(no action)'} | {reason}",
+            verify="",
+            strategy=strategy,
+        ))
+        self._steps.append(StepRecord(
+            sub_goal_name=step_name, strategy=strategy, success=success,
+            verify_result=False, duration_sec=0.0, error=reason,
+        ))
+        self._close_step()
 
     def _grade(self, expr: str) -> "actor_causation.ActorCaused":
         """Grade actor-causation for the just-verified step (R2b + step-9 semantics).
@@ -566,8 +702,9 @@ class NativeStepRunner:
         """
         try:
             if not actor_causation.is_robot_predicate(expr, self._oracle_names):
-                # No action dispatched this step -> the actor caused nothing.
-                if not self._chain:
+                # No side-effecting action this step (nothing, or only read-only
+                # tools like file_read) -> the actor caused nothing.
+                if not self._step_acted:
                     return actor_causation.ActorCaused.UNCAUSED
                 return actor_causation.ActorCaused.NOT_GRADED
             post = actor_causation.capture(self._agent)
@@ -580,7 +717,7 @@ class NativeStepRunner:
     # Trace assembly
     # ------------------------------------------------------------------
 
-    def build_trace(self, goal: str) -> ExecutionTrace:
+    def build_trace(self, goal: str, *, llm_error: str = "", model: str = "") -> ExecutionTrace:
         """Assemble the ExecutionTrace from the recorded (chain -> verify) steps.
 
         ``success`` is True iff at least one step was recorded AND none failed —
@@ -596,6 +733,9 @@ class NativeStepRunner:
             steps=steps,
             success=success,
             total_duration_sec=0.0,
+            actions_dispatched=self.actions_dispatched,
+            llm_error=llm_error,
+            model=model,
         )
 
 
@@ -620,6 +760,64 @@ def _progress_args(inp: Any) -> str:
     return "(" + ", ".join(parts) + ")"
 
 
+def _model_id(backend: Any) -> str:
+    return str(getattr(backend, "_model", "") or getattr(backend, "model", "") or type(backend).__name__)
+
+
+def _fallback_backend(backend: Any) -> Any:
+    """The opt-in OpenRouter fallback (VECTOR_LLM_FALLBACK=openrouter + a key), or None."""
+    if os.environ.get("VECTOR_LLM_FALLBACK", "").strip().lower() != "openrouter":
+        return None
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key or getattr(backend, "_is_llm_fallback", False):
+        return None
+    from vector_os_nano.vcli.backends import create_backend
+
+    fallback = create_backend(
+        "openrouter", key, os.environ.get("VECTOR_LLM_FALLBACK_MODEL", "anthropic/claude-sonnet-4-6")
+    )
+    fallback._is_llm_fallback = True
+    return fallback
+
+
+def _call_llm(backend: Any, kwargs: dict[str, Any]) -> tuple[Any, LLMResponse]:
+    """One model round-trip. The backends already retry timeouts / 429 / 5xx with a
+    bounded backoff; if that still fails, try the opt-in fallback provider once.
+    Returns the backend that answered (the turn keeps using it)."""
+    try:
+        return backend, backend.call(**kwargs)
+    except Exception as exc:  # noqa: BLE001
+        fallback = _fallback_backend(backend)
+        if fallback is None:
+            raise
+        logger.warning("native_loop: LLM %s failed (%s); falling back to OpenRouter %s",
+                       _model_id(backend), exc, _model_id(fallback))
+        return fallback, fallback.call(**kwargs)
+
+
+def _base_xy(base: Any) -> tuple[float, float] | None:
+    try:
+        pos = base.get_position()
+        return float(pos[0]), float(pos[1])
+    except Exception:  # noqa: BLE001 — no base / no pose: no distance in the line
+        return None
+
+
+def _progress_line(name: str, params: dict[str, Any], base: Any, start: Any, elapsed: float) -> str:
+    """'navigate 7s · 2.3 m to go' / 'walk 4s · moved 1.2 m' — one live progress line."""
+    line = f"{name} {elapsed:.0f}s"
+    now = _base_xy(base) if base is not None else None
+    if now is None:
+        return line
+    try:
+        return f"{line} · {math.hypot(float(params['x']) - now[0], float(params['y']) - now[1]):.1f} m to go"
+    except (KeyError, TypeError, ValueError):
+        pass
+    if start is not None:
+        return f"{line} · moved {math.hypot(now[0] - start[0], now[1] - start[1]):.1f} m"
+    return line
+
+
 def run_turn_native(
     engine: Any,
     user_message: str,
@@ -629,6 +827,8 @@ def run_turn_native(
     app_state: dict[str, Any] | None = None,
     max_turns: int = _MAX_NATIVE_TURNS,
     on_progress: Callable[[str], None] | None = None,
+    ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
+    cancel: Any = None,
 ) -> ExecutionTrace:
     """Run ONE user turn through the native tool-use loop; return an ExecutionTrace.
 
@@ -639,11 +839,20 @@ def run_turn_native(
     model finishes (``finish`` or end_turn with no tool calls), the runner assembles
     the trace from the recorded (action-chain -> verify) pairs and returns it.
 
+    Safety (WP05): every tool call goes through the permission gate
+    (``ask_permission`` resolves an ``ask``; None denies). ``cancel`` is this run's
+    ``CancelToken`` (a fresh one bound to this thread when None); it is checked
+    before every model round-trip and every tool call, and a cancelled turn ends with
+    ONE recorded ``aborted`` step. A model failure never raises out of here once an
+    action ran — the partial trace comes back with ``llm_error`` set, so no caller
+    re-runs a turn that already moved the robot.
+
     The caller (``cli.run_one_turn``) feeds the returned trace to the EXISTING
     ``VerdictReport.from_trace(trace, verify_oracle_names(agent, engine))`` — this
     function NEVER computes ``verified``.
     """
     agent = agent if agent is not None else getattr(engine, "_vgg_agent", None)
+    token = cancel if cancel is not None else _abort.new_run()
 
     # The live verifier + oracle names — single-sourced from the SAME namespace the
     # spine reads (rule 3). Fail closed on any error (empty oracle set -> every
@@ -657,13 +866,14 @@ def run_turn_native(
     motor_tools = _build_motor_tools(agent, engine)
     tool_schemas = _native_tool_schemas(motor_tools, oracle_names)
 
-    ctx = _build_tool_context(agent, session, app_state, engine)
-    runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx)
+    ctx = _build_tool_context(agent, session, app_state, engine, token)
+    runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx, ask_permission)
 
     backend = getattr(engine, "_backend", None)
     if backend is None:
         # No backend wired -> no native turns -> empty trace (verdict fails closed).
         return runner.build_trace(user_message)
+    model = _model_id(backend)
 
     system_prompt = _native_system_prompt(
         engine, oracle_names, _scene_object_names(agent), has_navigate="navigate" in motor_tools
@@ -691,75 +901,120 @@ def run_turn_native(
         if tail:
             _emit(tail)
 
+    def _dispatch(name: str, params: dict[str, Any]) -> ToolResult:
+        """Run one tool; while it runs, a 1 Hz progress line (elapsed + distance)."""
+        if on_progress is None:
+            return runner.dispatch_skill(name, params)
+        done = threading.Event()
+        base = _agent_base(ctx)
+        start = _base_xy(base) if base is not None else None
+        t0 = time.monotonic()
+
+        def _tick() -> None:
+            while not done.wait(1.0):
+                _emit(_progress_line(name, params, base, start, time.monotonic() - t0))
+
+        threading.Thread(target=_tick, name="native-progress", daemon=True).start()
+        try:
+            return runner.dispatch_skill(name, params)
+        finally:
+            done.set()
+
+    llm_error = ""
     turns = 0
     verify_nudges = 0  # D23: re-prompts spent forcing a verify before a finish/stop
-    while turns < max_turns:
-        messages = _to_messages(session)
-        _narration.clear()  # fresh "thinking" tail per round-trip
-        response: LLMResponse = backend.call(
-            messages=messages,
-            tools=tool_schemas,
-            system=system_prompt,
-            max_tokens=getattr(engine, "_max_tokens", 4096),
-            on_text=_on_text if on_progress is not None else None,
-        )
-        tool_calls = list(response.tool_calls or [])
-        _append_assistant(session, response, tool_calls)
+    try:
+        while turns < max_turns:
+            if token.cancelled:
+                runner.record_abort("aborted")
+                break
+            messages = _to_messages(session)
+            _narration.clear()  # fresh "thinking" tail per round-trip
+            try:
+                backend, response = _call_llm(backend, dict(
+                    messages=messages,
+                    tools=tool_schemas,
+                    system=system_prompt,
+                    max_tokens=getattr(engine, "_max_tokens", 4096),
+                    on_text=_on_text if on_progress is not None else None,
+                ))
+            except Exception as exc:  # noqa: BLE001 — infrastructure, not the agent
+                llm_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("native_loop: LLM unavailable: %s", llm_error)
+                if runner.has_unverified_action:
+                    runner.record_abort(f"LLM unavailable: {llm_error}")
+                break
+            model = _model_id(backend)
+            tool_calls = list(response.tool_calls or [])
+            _append_assistant(session, response, tool_calls)
 
-        if not tool_calls:
-            # D23: the model stopped (narrated, no tools). If it ran an action but
-            # never verified it, force a model-authored verify before accepting the
-            # stop (up to a bounded number of nudges) — else the trace is empty and
-            # nothing is graded. Never invent the predicate; the model must choose it.
-            if runner.has_unverified_action and verify_nudges < _MAX_VERIFY_NUDGES:
-                verify_nudges += 1
-                _emit("re-prompting: verify before finishing")
-                _append_user(
-                    session,
-                    "You ran an action but did NOT verify it. You MUST call "
-                    "verify(<predicate>) to PROVE the goal was achieved before you "
-                    "stop. Pick the deterministic predicate that measures the goal "
-                    "and call verify now.",
-                )
-                continue
-            break  # end_turn, no tools — conversation complete
-
-        finished = False
-        result_dicts: list[dict[str, Any]] = []
-        for tc in tool_calls:
-            if tc.name == FINISH_TOOL:
-                # D23: refuse a finish that rides on an unverified action — re-prompt
-                # for a model-authored verify first (bounded). Honest: a model that
-                # never verifies still terminates, with the action graded RAN/empty.
+            if not tool_calls:
+                # D23: the model stopped (narrated, no tools). If it ran an action but
+                # never verified it, force a model-authored verify before accepting the
+                # stop (up to a bounded number of nudges). Never invent the predicate;
+                # the model must choose it.
                 if runner.has_unverified_action and verify_nudges < _MAX_VERIFY_NUDGES:
                     verify_nudges += 1
-                    _emit("verify required before finish")
-                    result_dicts.append(_tool_result_dict(
-                        tc.id,
-                        "Cannot finish yet: you ran an action but did not verify it. "
-                        "Call verify(<predicate>) to PROVE the goal FIRST, then finish.",
-                        is_error=True,
-                    ))
+                    _emit("re-prompting: verify before finishing")
+                    _append_user(
+                        session,
+                        "You ran an action but did NOT verify it. You MUST call "
+                        "verify(<predicate>) to PROVE the goal was achieved before you "
+                        "stop. Pick the deterministic predicate that measures the goal "
+                        "and call verify now.",
+                    )
                     continue
-                _emit("finishing")
-                finished = True
-                result_dicts.append(_tool_result_dict(tc.id, "Task finished."))
-                continue
-            if tc.name == VERIFY_TOOL:
-                expr = str((tc.input or {}).get("expr", ""))
-                _emit(f"verify {expr[:56]}")
-                res = runner.handle_verify(expr)
-            else:
-                _emit(f"{tc.name} {_progress_args(tc.input)}".strip())
-                res = runner.dispatch_skill(tc.name, dict(tc.input or {}))
-            result_dicts.append(_tool_result_dict(tc.id, res.content, res.is_error))
+                break  # end_turn, no tools — conversation complete
 
-        _append_tool_results(session, result_dicts)
-        turns += 1
-        if finished:
-            break
+            finished = False
+            result_dicts: list[dict[str, Any]] = []
+            for tc in tool_calls:
+                if token.cancelled:
+                    result_dicts.append(_tool_result_dict(tc.id, "Stopped: not run.", is_error=True))
+                    continue
+                if tc.name == FINISH_TOOL:
+                    # D23: refuse a finish that rides on an unverified action — re-prompt
+                    # for a model-authored verify first (bounded).
+                    if runner.has_unverified_action and verify_nudges < _MAX_VERIFY_NUDGES:
+                        verify_nudges += 1
+                        _emit("verify required before finish")
+                        result_dicts.append(_tool_result_dict(
+                            tc.id,
+                            "Cannot finish yet: you ran an action but did not verify it. "
+                            "Call verify(<predicate>) to PROVE the goal FIRST, then finish.",
+                            is_error=True,
+                        ))
+                        continue
+                    _emit("finishing")
+                    finished = True
+                    result_dicts.append(_tool_result_dict(tc.id, "Task finished."))
+                    continue
+                if tc.name == VERIFY_TOOL:
+                    expr = str((tc.input or {}).get("expr", ""))
+                    _emit(f"verify {expr[:56]}")
+                    res = runner.handle_verify(expr)
+                else:
+                    _emit(f"{tc.name} {_progress_args(tc.input)}".strip())
+                    res = _dispatch(tc.name, dict(tc.input or {}))
+                result_dicts.append(_tool_result_dict(tc.id, res.content, res.is_error))
 
-    return runner.build_trace(user_message)
+            _append_tool_results(session, result_dicts)
+            turns += 1
+            if finished:
+                break
+        else:
+            if token.cancelled:
+                runner.record_abort("aborted")
+    except Exception as exc:  # noqa: BLE001 — a producer bug after an action: own the turn
+        if not runner.actions_dispatched:
+            raise
+        logger.warning("native_loop: turn failed after %d action(s): %s", runner.actions_dispatched, exc)
+        runner.record_abort(f"producer error: {type(exc).__name__}: {exc}")
+    if runner.has_unverified_action:
+        # The model never verified its last action (nudges spent / round-trips out):
+        # keep it on the record as an unproven step — never silently dropped.
+        runner.record_unverified()
+    return runner.build_trace(user_message, llm_error=llm_error, model=model)
 
 
 # ---------------------------------------------------------------------------
@@ -834,18 +1089,18 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
 
     if resolve_capability_profile(agent).has_base:
         tools["navigate"] = _NativeBaseNavigateTool()
-    # Source 4 (R4): the learned grounding-dino DETECTOR capability, surfaced into the
-    # native loop so a bare-cli detect command reaches the SECOND model family on
-    # whatever camera-bearing embodiment is connected (go2+arm OR g1). Single-sourced
-    # from the engine's CapabilityRegistry — the SAME instance the world registered
-    # (agent-bound for the live perception), never a second model load. Only present
-    # when a 'detect' capability is registered (camera present + torch importable);
-    # a sensorless/dev path never sees it. Layered before the world skills so this
-    # learned route WINS over the classical DetectSkill if both share the 'detect' name
-    # (R4 intent: the bare-cli 'detect' is the MODEL route, not the keyword skill).
-    detect_cap = _registered_capability(engine, "detect")
-    if detect_cap is not None:
-        tools["detect"] = _NativeDetectTool(detect_cap)
+    # Source 4 (S6): EVERY capability the world registered into the engine's
+    # CapabilityRegistry, as a tool the model routes to by name — the SAME instances
+    # the world bound (agent-bound for live perception), never a second model load.
+    # A detector keeps its verify-hint adapter (R4); any other capability is generic,
+    # and a side-effecting one asks permission first. Layered before the world skills
+    # so a learned route WINS a name clash (the bare-cli 'detect' is the MODEL route,
+    # not the classical DetectSkill).
+    cap_names: set[str] = set()
+    for cap in _registered_capabilities(engine):
+        tool = _NativeDetectTool(cap) if getattr(cap, "kind", "") == "detector" else _NativeCapabilityTool(cap)
+        tools[tool.name] = tool
+        cap_names.add(tool.name)
     # Source 1: the world's skills (robot worlds only; dev world has no agent). The
     # world's own ``navigate`` skill (door-chain walk, NOT lidar avoidance) stays
     # excluded; our coordinate ``navigate`` above is the planner/avoidance route.
@@ -854,8 +1109,8 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
             for skill_tool in wrap_skills(agent):
                 if skill_tool.name == "navigate":
                     continue  # world room-navigate is door-chain walk; ours is the avoidance route
-                if skill_tool.name == "detect" and "detect" in tools:
-                    continue  # the learned grounding-dino route (Source 4) wins over the classical DetectSkill
+                if skill_tool.name in cap_names:
+                    continue  # a registered capability (Source 4) wins over a same-named skill
                 tools[skill_tool.name] = skill_tool
         except Exception as exc:  # noqa: BLE001
             logger.debug("native_loop: wrap_skills failed: %s", exc)
@@ -895,28 +1150,21 @@ def should_attempt_native(user_input: str, *, agent: Any, engine: Any) -> bool:
     return len(tools) >= 1
 
 
-def _registered_capability(engine: Any, name: str) -> Any:
-    """The named Capability the world registered into the engine's CapabilityRegistry.
+def _registered_capabilities(engine: Any) -> list[Any]:
+    """Every Capability in the ENGINE's CapabilityRegistry (``engine._capability_registry``).
 
-    Reaches the LIVE registry through ``engine._goal_executor._capability_registry``
-    (the same registry the producer/StrategySelector route uses) so the native loop
-    surfaces the EXACT capability instance the world bound to the agent — never a fresh
-    construction, never a second model load (rule 3). Defensive: any missing link
-    (no executor, no registry, lookup failure) yields None and the capability simply
-    is not surfaced (the pre-R4 behaviour — native offered no detector).
+    The engine owns the registry the world populated at init (the same one the
+    GoalExecutor routes through), so the native loop surfaces the EXACT instances —
+    never a fresh construction (rule 3). No registry / a lookup failure -> none.
     """
-    executor = getattr(engine, "_goal_executor", None)
-    registry = getattr(executor, "_capability_registry", None) if executor is not None else None
+    registry = getattr(engine, "_capability_registry", None)
     if registry is None:
-        return None
-    getter = getattr(registry, "get", None)
-    if not callable(getter):
-        return None
+        return []
     try:
-        return getter(name)
+        return [c for c in (registry.get(n) for n in sorted(registry.names())) if c is not None]
     except Exception as exc:  # noqa: BLE001
-        logger.debug("native_loop: capability lookup %r failed: %s", name, exc)
-        return None
+        logger.debug("native_loop: capability discovery failed: %s", exc)
+        return []
 
 
 def _code_tools_from_registry(engine: Any) -> dict[str, Any]:
@@ -1070,10 +1318,9 @@ def _native_system_prompt(
 
 
 def _build_tool_context(
-    agent: Any, session: Any, app_state: dict[str, Any] | None, engine: Any
+    agent: Any, session: Any, app_state: dict[str, Any] | None, engine: Any, cancel: Any = None
 ) -> ToolContext:
-    """Build the ToolContext skills run under (no-permission, headless-safe)."""
-    import threading
+    """Build the ToolContext skills run under; ``abort`` is this run's CancelToken."""
     from pathlib import Path
 
     return ToolContext(
@@ -1081,7 +1328,7 @@ def _build_tool_context(
         cwd=Path.cwd(),
         session=session,
         permissions=getattr(engine, "_permissions", None),
-        abort=threading.Event(),
+        abort=cancel if cancel is not None else _abort.new_run(),
         app_state=app_state,
     )
 

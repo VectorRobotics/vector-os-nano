@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
         "describe",
     ],
     direct=False,
+    actuates=False,
 )
 class LookSkill:
     """Look around and describe what the robot sees using VLM."""
@@ -199,6 +200,7 @@ class LookSkill:
         "描述环境",
     ],
     direct=False,
+    actuates=False,
 )
 class DescribeSceneSkill:
     """Get a detailed VLM description of the current scene."""

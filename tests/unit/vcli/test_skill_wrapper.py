@@ -50,8 +50,9 @@ class MockSkillResult:
 
 
 class MockSkill:
-    """Minimal mock skill for read-only operations (no motor keywords)."""
+    """Minimal mock skill for read-only operations (declares it does not actuate)."""
 
+    __skill_actuates__ = False
     name = "read_sensor"
     description = "Read a sensor value"
     parameters: dict = {
@@ -417,6 +418,36 @@ class TestMotorSkillPermission:
         wrapper = SkillWrapperTool(skill, agent)
 
         assert wrapper.check_permissions({}, _make_context()).behavior == "ask"
+
+
+class TestDeclaredActuation:
+    """Motor-ness is the skill's declared ``@skill(actuates=...)``, never a keyword
+    scan (tools-worlds:motor-keyword-misclassify, skills-nav:motor-misclassified)."""
+
+    def test_go2_locomotion_skills_actuate(self) -> None:
+        from vector_os_nano.skills.go2 import get_go2_skills
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        skills = {s.name: s for s in get_go2_skills()}
+        # The keyword scan called these four non-motor: concurrent, auto-allowed on
+        # real hardware, no post-state.
+        for name in ("walk", "turn", "explore", "patrol", "navigate"):
+            wrapper = SkillWrapperTool(skills[name], _make_agent([skills[name]]))
+            assert wrapper._is_motor, name
+            assert wrapper.is_concurrency_safe({}) is False, name
+            assert wrapper.check_permissions({}, _make_context()).behavior == "ask", name
+        for name in ("look", "where_am_i", "describe_scene"):
+            assert SkillWrapperTool(skills[name], None)._is_motor is False, name
+
+    def test_undeclared_skill_fails_closed_to_actuating(self) -> None:
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        class Undeclared:  # no @skill, no keywords anywhere
+            name = "mystery"
+            description = "Does a thing"
+            parameters: dict = {}
+
+        assert SkillWrapperTool(Undeclared(), None)._is_motor is True
 
 
 # ---------------------------------------------------------------------------

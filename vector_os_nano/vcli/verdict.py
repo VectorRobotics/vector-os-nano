@@ -85,6 +85,10 @@ class VerdictReport:
     oracle_names: tuple[str, ...]
     per_step: tuple[StepVerdict, ...] = ()
     error: str = ""
+    # The LLM backend failed (after its own bounded retries): an INFRASTRUCTURE
+    # outcome, not an agent failure — a bench excludes it, and exit_code() says error.
+    llm_unavailable: bool = False
+    model: str = ""  # backend model id that drove the turn ("" when unknown)
 
     # ------------------------------------------------------------------
     # Construction — the ONLY supported way to build a verdict from a run.
@@ -131,8 +135,11 @@ class VerdictReport:
                 )
             )
 
+        llm_error = str(getattr(trace, "llm_error", "") or "")
         if verified:
             top_evidence = EVIDENCE_GROUNDED
+        elif llm_error and not trace.steps:
+            top_evidence = EVIDENCE_NO_TRACE  # the LLM never got the turn going
         elif not trace.success:
             top_evidence = EVIDENCE_FAILED
         else:
@@ -147,6 +154,9 @@ class VerdictReport:
             n_grounded=n_grounded,
             oracle_names=tuple(sorted(oracle_names)),
             per_step=tuple(per_step),
+            error=f"LLM unavailable: {llm_error}" if llm_error else "",
+            llm_unavailable=bool(llm_error),
+            model=str(getattr(trace, "model", "") or ""),
         )
 
     @classmethod
@@ -184,13 +194,13 @@ class VerdictReport:
         return f"{VERDICT_SENTINEL} {json.dumps(self.to_dict(), ensure_ascii=False)}"
 
     def exit_code(self) -> int:
-        """0 = verified, 2 = ran-not-verified, 1 = error / no trace.
+        """0 = verified, 2 = ran-not-verified, 1 = error / no trace / LLM unavailable.
 
         ``verified == (exit_code() == 0)`` is the harness's invariant; this method
         is the single source of that mapping.
         """
         if self.verified:
             return EXIT_VERIFIED
-        if self.evidence == EVIDENCE_NO_TRACE:
+        if self.evidence == EVIDENCE_NO_TRACE or self.llm_unavailable:
             return EXIT_ERROR
         return EXIT_RAN_NOT_VERIFIED
