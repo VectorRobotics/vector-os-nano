@@ -348,7 +348,7 @@ class TestTimingMismatchBug:
     def test_mismatched_pose_causes_large_error(self, go2_room_fn):
         """Verify that timing mismatch causes > 1.0m position error.
 
-        Capture depth at position A. Move robot forward. Capture camera pose
+        Capture depth at position A. Move the robot. Capture camera pose
         at position B. Project using depth from A but pose from B — the result
         should be wrong by the distance the robot moved.
         """
@@ -382,9 +382,9 @@ class TestTimingMismatchBug:
             float(heading_a), cam_xpos=cam_xpos_a, cam_xmat=cam_xmat_a,
         )
 
-        # --- Move robot forward 1.5m ---
+        # --- Move the robot 1.5 m BACK (the pick table stops a forward walk at ~0.47 m) ---
         try:
-            robot.walk(vx=0.5, vy=0.0, vyaw=0.0, duration=3.0)
+            robot.walk(vx=-0.5, vy=0.0, vyaw=0.0, duration=3.0)
         except Exception as exc:  # noqa: BLE001 — a failed precondition is a FAIL
             pytest.fail(f"walk() raised {exc!r} — cannot test timing mismatch")
 
