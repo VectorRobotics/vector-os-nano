@@ -773,7 +773,7 @@ def _init_agent(args: argparse.Namespace) -> Any:
     try:
         session = SimSession.start(
             SimSpec(embodiment=embodiment, gui=not getattr(args, "headless", False)),
-            vlm_api_key=args.api_key,
+            vlm_api_key=getattr(args, "api_key", None),
         )
     except SimStartError as exc:
         console.print(f"[red]Simulation failed to start:[/] {exc}")
@@ -1027,12 +1027,15 @@ def _handle_slash_command(
                     base._scene_graph = new_sg
                 cleared = True
 
-        # Always delete the persist file (works even without agent)
-        try:
-            _os.remove(_sg_path)
-            cleared = True
-        except FileNotFoundError:
-            pass
+        # Always delete the persist file(s) (works even without agent); a running
+        # sim's world-keyed file is deleted too.
+        _live = getattr(getattr(agent_obj, "_spatial_memory", None), "_persist_path", None)
+        for _p in {_sg_path, _live} - {None}:
+            try:
+                _os.remove(_p)
+                cleared = True
+            except FileNotFoundError:
+                pass
 
         # Delete terrain map if present
         _terrain_path = _os.path.expanduser("~/.vector_os_nano/terrain_map.npz")

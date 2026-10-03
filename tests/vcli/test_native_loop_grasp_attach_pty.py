@@ -122,14 +122,10 @@ class _Repl:
         os.close(self._master)
 
 
-@pytest.mark.sim
-@pytest.mark.cli_main
-@pytest.mark.capability
-def test_bare_cli_nl_launch_go2_piper_then_grasp_grounds(tmp_path) -> None:
-    script = tmp_path / "script.json"
-    script.write_text(json.dumps(_SCRIPT, ensure_ascii=False))
+def _env(tmp_path: Path, script: dict | None) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items()
-           if k not in ("VECTOR_NATIVE_LOOP", "VECTOR_NATIVE_FIRST", "VECTOR_REPL_NATIVE")}
+           if k not in ("VECTOR_NATIVE_LOOP", "VECTOR_NATIVE_FIRST", "VECTOR_REPL_NATIVE",
+                        "VECTOR_FAKE_LLM", "VECTOR_FAKE_LLM_TOOLS")}
     env.update(
         # Explicitly empty (not absent): the CLI's load_dotenv would otherwise pull it
         # from a repo .env and start the optional TARE stack, which E1/E3a must not
@@ -139,25 +135,64 @@ def test_bare_cli_nl_launch_go2_piper_then_grasp_grounds(tmp_path) -> None:
         HOME=tempfile.mkdtemp(prefix="vector_e1_home_", dir=tmp_path),
         TERM="xterm-256color", COLUMNS="220", PROMPT_TOOLKIT_NO_CPR="1",
         MUJOCO_GL=env.get("MUJOCO_GL", "egl"),
-        VECTOR_FAKE_LLM_TOOLS=str(script),
     )
-    env.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
+    if script is not None:  # scripted: only the network LLM is replaced
+        path = tmp_path / "script.json"
+        path.write_text(json.dumps(script, ensure_ascii=False))
+        env["VECTOR_FAKE_LLM_TOOLS"] = str(path)
+        env.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
+    return env
 
-    repl = _Repl(env)
+
+def _launch_then_grasp(repl: _Repl, grasp_line: str, grasp_timeout: float) -> tuple[str, str]:
+    """E1 launch line -> ready line (<90 s), then the grasp line -> (evidence, verified)."""
+    repl.expect(r"vector>", 90)
+    repl.send("启动 go2 仿真 带机械臂 无窗口")
+    t0 = time.monotonic()
+    ready = repl.expect(r"Started go2_piper simulation, ready in [0-9.]+s: MuJoCoGo2 \+ MuJoCoPiper", 90)
+    assert time.monotonic() - t0 < 90, "E1: the ready line must arrive within 90 s"
+    line = repl.text()[ready.start():ready.start() + 300]
+    assert "gait=" in line and "explore: unavailable (VECTOR_NAV_STACK unset)" in line
+    repl.expect(r"vector>", 120)
+    repl.send(grasp_line)
+    verdict = repl.expect(r"verdict (\w+) verified=(\w+)", grasp_timeout)
+    return verdict.group(1), verdict.group(2)
+
+
+@pytest.mark.sim
+@pytest.mark.cli_main
+@pytest.mark.capability
+def test_bare_cli_nl_launch_go2_piper_then_grasp_grounds(tmp_path) -> None:
+    repl = _Repl(_env(tmp_path, _SCRIPT))
     try:
-        repl.expect(r"vector>", 90)
-        repl.send("启动 go2 仿真 带机械臂 无窗口")
-        t0 = time.monotonic()
-        repl.expect(r"sim start go2_piper ok", 90)
-        ready = repl.expect(r"Started go2_piper simulation, ready in [0-9.]+s: MuJoCoGo2 \+ MuJoCoPiper", 30)
-        assert time.monotonic() - t0 < 90, "E1: the ready line must arrive within 90 s"
-        line = repl.text()[ready.start():ready.start() + 300]
-        assert "gait=" in line and "explore: unavailable (VECTOR_NAV_STACK unset)" in line
-
-        repl.expect(r"vector>", 60)
-        repl.send("拿起绿色的瓶子")
-        repl.expect(r"perception_grasp → verify holding_object\('pickable_bottle_green'\)", 300)
-        verdict = repl.expect(r"verdict (\w+) verified=(\w+)", 60)
-        assert verdict.group(1, 2) == ("GROUNDED", "True"), repl.text()[-3000:]
+        evidence, verified = _launch_then_grasp(repl, "拿起绿色的瓶子", 300)
+        t = repl.text()
+        assert "sim start go2_piper ok" in t
+        assert "perception_grasp → verify holding_object('pickable_bottle_green')" in t
+        assert (evidence, verified) == ("GROUNDED", "True"), t[-3000:]
     finally:
         repl.close()
+
+
+@pytest.mark.sim
+@pytest.mark.cli_main
+@pytest.mark.capability
+@pytest.mark.live_llm
+@pytest.mark.skipif(os.environ.get("VECTOR_LIVE_LLM") != "1",
+                    reason="live DeepSeek (billed): set VECTOR_LIVE_LLM=1")
+def test_live_bare_cli_launch_and_grasp_two_of_three(tmp_path) -> None:
+    """The owner's exact lines on the real .env model, N=3 fresh REPLs: >= 2/3 GROUNDED."""
+    results: list[tuple[str, str]] = []
+    for i in range(int(os.environ.get("VECTOR_LIVE_N", "3"))):
+        trial_dir = tmp_path / f"t{i}"
+        trial_dir.mkdir()
+        repl = _Repl(_env(trial_dir, None))
+        try:
+            results.append(_launch_then_grasp(repl, "把绿色瓶子拿起来", 420))
+        except AssertionError as exc:
+            results.append(("NO_VERDICT", str(exc)[-1500:]))
+        finally:
+            repl.close()
+        print(f"[live trial {i}] {results[-1][0]} verified={results[-1][1][:200]}")
+    grounded = sum(1 for e, v in results if (e, v) == ("GROUNDED", "True"))
+    assert grounded * 3 >= 2 * len(results), results

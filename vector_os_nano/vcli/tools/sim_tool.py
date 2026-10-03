@@ -125,7 +125,7 @@ class SimStartTool:
             prefix = f"Stopped {current.spec.embodiment} ({current.stop()}). "
             rebind_world(app, None)
         try:
-            session = SimSession.start(spec, vlm_api_key=app.get("vlm_api_key"))
+            session = SimSession.start(spec)
         except SimStartError as exc:
             return ToolResult(
                 content=f"{prefix}Failed to start {spec.embodiment} simulation: {exc}",

@@ -58,8 +58,19 @@ def _start(app: dict[str, Any], eid: str) -> Any:
 
 
 def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> None:
+    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
+
     monkeypatch.delenv("VECTOR_NAV_STACK", raising=False)
     monkeypatch.setenv("VECTOR_SIM_WITH_ARM", "1")  # must NOT pick the arm any more
+    spawned: list[Any] = []
+    real_popen = subprocess.Popen
+
+    def _spy(argv: Any, *a: Any, **k: Any) -> Any:
+        spawned.append(argv)
+        return real_popen(argv, *a, **k)
+
+    monkeypatch.setattr(subprocess, "Popen", _spy)
     app: dict[str, Any] = {"registry": CategorizedToolRegistry()}
     threads0, kids0 = threading.active_count(), _children()
 
@@ -68,7 +79,9 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
         assert not res.is_error and f"Started {eid} simulation, ready in" in res.content, res.content
         agent = app["sim_session"].agent
         if eid == "go2_piper":
-            assert agent._arm is not None and agent._base._mj.model.nu == 19
+            # In-process rig, never the ROS2 proxies / launch_explore.sh subprocess.
+            assert type(agent._base) is MuJoCoGo2 and type(agent._arm) is MuJoCoPiper
+            assert agent._base._mj.model.nu == 19
             # One perception at the manifest size; a 640x480 render of the same
             # camera by another caller (look) must not change what it gets.
             agent._base.get_camera_frame()
@@ -84,6 +97,7 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
     assert "Simulation stopped" in stop.content and app["sim_session"] is None
     assert threading.active_count() == threads0
     assert _children() == kids0
+    assert spawned == [], f"the in-process sim spawned subprocesses: {spawned}"
 
 
 def test_dead_physics_thread_is_an_error_never_started(monkeypatch) -> None:
