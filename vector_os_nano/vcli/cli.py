@@ -396,6 +396,11 @@ def _print_native_enabled() -> bool:
     )
 
 
+def _gait_backend(agent: Any) -> str:
+    """The sim body's active locomotion backend ('mpc' / 'sinusoidal'), else ''."""
+    return str(getattr(getattr(agent, "_base", None), "gait_backend", "") or "")
+
+
 def _native_trace_acted(trace: Any) -> bool:
     """True iff the native trace DISPATCHED at least one action skill.
 
@@ -530,13 +535,14 @@ def _repl_attempt_native(
     verified = False
     try:
         oracle_names = verify_oracle_names(agent, engine)
-        report = VerdictReport.from_trace(trace, oracle_names)
+        report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
         verified = bool(report.verified)
         color = "green" if verified else "yellow"
+        gait = f" gait={report.gait_backend}" if report.gait_backend else ""
         console.print(
             f"  [{TEAL}]verdict[/] {report.evidence} "
             f"[{color}]verified={report.verified}[/] "
-            f"[dim]({report.n_grounded}/{report.n_steps} grounded)[/]"
+            f"[dim]({report.n_grounded}/{report.n_steps} grounded){gait}[/]"
         )
     except Exception as exc:  # noqa: BLE001 — fail closed (display only)
         console.print(f"  [yellow]verdict unavailable:[/] {exc}")
@@ -1687,8 +1693,9 @@ def run_one_turn(args: Any) -> int:
             trace = None
         if trace is not None and _native_trace_acted(trace):
             try:
-                oracle_names = verify_oracle_names(getattr(engine, "_vgg_agent", None), engine)
-                report = VerdictReport.from_trace(trace, oracle_names)
+                agent = getattr(engine, "_vgg_agent", None)
+                oracle_names = verify_oracle_names(agent, engine)
+                report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
             except Exception as exc:  # noqa: BLE001
                 report = VerdictReport.no_trace(goal=prompt or "", error=f"verdict failed: {exc}")
             return _emit(report)
@@ -1706,8 +1713,9 @@ def run_one_turn(args: Any) -> int:
         except Exception as exc:  # noqa: BLE001
             return _emit(VerdictReport.no_trace(goal=prompt or "", error=f"native loop failed: {exc}"))
         try:
-            oracle_names = verify_oracle_names(getattr(engine, "_vgg_agent", None), engine)
-            report = VerdictReport.from_trace(trace, oracle_names)
+            agent = getattr(engine, "_vgg_agent", None)
+            oracle_names = verify_oracle_names(agent, engine)
+            report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
         except Exception as exc:  # noqa: BLE001
             report = VerdictReport.no_trace(goal=prompt or "", error=f"verdict failed: {exc}")
         return _emit(report)
@@ -1730,8 +1738,9 @@ def run_one_turn(args: Any) -> int:
     # Build the verdict from the EXISTING gate, single-sourced from the SAME
     # namespace GoalVerifier uses. Fail CLOSED on any error reading the gate.
     try:
-        oracle_names = verify_oracle_names(getattr(engine, "_vgg_agent", None), engine)
-        report = VerdictReport.from_trace(trace, oracle_names)
+        agent = getattr(engine, "_vgg_agent", None)
+        oracle_names = verify_oracle_names(agent, engine)
+        report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
     except Exception as exc:  # noqa: BLE001
         report = VerdictReport.no_trace(goal=goal_tree.goal, error=f"verdict failed: {exc}")
 

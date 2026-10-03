@@ -21,9 +21,11 @@ Architecture:
                                 get_lidar_scan(), get_camera_frame(),
                                 get_camera_pose()
 
-Policy control loop (50 Hz, single-threaded / synchronous):
-  - _step_batch() advances 10 physics steps (0.002 s each = 0.02 s) and runs
-    one policy inference.  The probe drives it step-by-step — no daemon/threads.
+Policy control loop (50 Hz, caller-stepped):
+  - _step_batch() advances 10 physics steps (0.002 s each = 0.02 s) through the
+    SimRuntime on the caller's thread (no stepper thread), then runs one policy
+    inference at that step boundary. Renders go through the runtime's ONE render
+    thread from a step-boundary copy.
   - Obs layout (47): [3 ang_vel, 3 gravity, 3 cmd, 12 q, 12 dq, 12 prev_act, 2 gait_phase].
     Exact match to spike_12dof_walk.py (proven correct).
 
@@ -52,6 +54,7 @@ import numpy as np
 from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.embodiments.dof_layout import DofLayout
 from vector_os_nano.hardware.sim.sensors.g1_lidar import g1_lidar_scan
+from vector_os_nano.sim.runtime import SimRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +71,6 @@ _GO2_ASSETS_DIR = _HERE / "mjcf" / "go2" / "assets"
 _ASSET_DIR = _REPO_ROOT / "assets" / "g1_gait"
 _G1_12DOF_XML = _ASSET_DIR / "g1_12dof.xml"
 _G1_MESHES_DIR = _ASSET_DIR / "meshes"
-
-# Output scene (new 12dof scene — replaces the R1 29dof scene)
-_G1_SCENE_XML = _HERE / "mjcf" / "g1" / "scene_g1_12dof_room.xml"
 
 # G1 spawn position in the room
 _G1_SPAWN_X: float = 10.0
@@ -333,7 +333,7 @@ def _build_g1_room_scene_xml() -> Path:
         attach_prefix="g1_",
         spawn_xy=(_G1_SPAWN_X, _G1_SPAWN_Y),
         welds=(),
-        out_path=_G1_SCENE_XML,
+        cache_stem="scene_g1_12dof_room",
         robot_meshes_dir=_G1_MESHES_DIR,
         camera={
             "mount_body": "pelvis",
@@ -453,7 +453,10 @@ class MuJoCoG1:
         self._policy: Any = None
         self._offsets: _G1Offsets | None = None
         self._viewer: Any = None
-        self._cam_renderer: Any = None
+        # The ONE owner of MjData: steps on the caller's thread, renders on its
+        # own render thread. None while disconnected.
+        self.runtime: SimRuntime | None = None
+        self._cam_name: str = _SCENE_CAM_NAME
         # Embodiment manifest (Rule 11): spawn pose + nominal stance read from
         # embodiments/g1/robot.yaml instead of the _G1_SPAWN_*/_DEFAULT_ANGLES
         # constants. Loaded once at connect(); stance vector built in the model's
@@ -501,10 +504,7 @@ class MuJoCoG1:
         mj = _get_mujoco()
         torch = _get_torch()
 
-        if not _G1_SCENE_XML.exists():
-            _build_g1_room_scene_xml()
-
-        self._model = mj.MjModel.from_xml_path(str(_G1_SCENE_XML))
+        self._model = mj.MjModel.from_xml_path(str(_build_g1_room_scene_xml()))
         self._model.opt.timestep = _SIM_DT
         self._data = mj.MjData(self._model)
         self._offsets = _G1Offsets(self._model)
@@ -531,6 +531,11 @@ class MuJoCoG1:
         self._cmd = np.zeros(3, dtype=np.float32)
 
         self._reset_to_stance()
+        self._cam_name = self._resolve_camera()
+        self.runtime = SimRuntime(
+            self._model, self._data, controller=self._pd_control, substeps=1,
+            threaded=False, paced=False, name="mujoco_g1",
+        )
 
         if self._gui:
             try:
@@ -578,13 +583,10 @@ class MuJoCoG1:
         mj.mj_forward(m, d)
 
     def close(self) -> None:
-        """Release renderer and MuJoCo resources."""
-        if self._cam_renderer is not None:
-            try:
-                self._cam_renderer.close()
-            except Exception:
-                pass
-            self._cam_renderer = None
+        """Release the runtime (and its renderers) and the MuJoCo resources."""
+        rt, self.runtime = self.runtime, None
+        if rt is not None:
+            rt.close()
         if self._viewer is not None:
             try:
                 self._viewer.close()
@@ -616,27 +618,29 @@ class MuJoCoG1:
     # Policy step (core control loop — single-threaded)
     # ------------------------------------------------------------------
 
+    def _pd_control(self, _model: Any, data: Any) -> None:
+        """Runtime controller (every physics step): PD toward the policy target."""
+        off = self._offsets
+        lq, ld = off.leg_qpos_start, off.leg_dof_start
+        tau = (self._target - data.qpos[lq : lq + _NUM_ACTIONS]) * _KPS - (
+            data.qvel[ld : ld + _NUM_ACTIONS] * _KDS
+        )
+        data.ctrl[off.ctrl_start : off.ctrl_end] = tau
+        self._counter += 1
+
     def _step_batch(self) -> None:
         """Advance one policy batch: _DECIMATION physics steps + one policy inference."""
-        mj = _get_mujoco()
-        torch = _get_torch()
-        d = self._data
-        m = self._model
-        off = self._offsets
-        assert d is not None and m is not None and off is not None and self._policy is not None
+        assert self.runtime is not None and self._policy is not None
+        self.runtime.step(_DECIMATION)
+        self.runtime.call(self._policy_tick)
 
+    def _policy_tick(self, _model: Any, d: Any) -> None:
+        """Observation -> policy -> next PD target (at a step boundary); viewer sync."""
+        torch = _get_torch()
+        off = self._offsets
         lq = off.leg_qpos_start
         ld = off.leg_dof_start
         cmd = self._cmd.copy()
-
-        # PD torque + physics advance
-        for _ in range(_DECIMATION):
-            tau = (self._target - d.qpos[lq : lq + _NUM_ACTIONS]) * _KPS - (
-                d.qvel[ld : ld + _NUM_ACTIONS] * _KDS
-            )
-            d.ctrl[off.ctrl_start : off.ctrl_end] = tau
-            mj.mj_step(m, d)
-            self._counter += 1
 
         # Build observation vector (47 elements)
         obs = self._obs
@@ -815,9 +819,9 @@ class MuJoCoG1:
         assert off is not None
         qa = off.pelvis_qpos_adr
 
-        # ---- Step 1: plan the path ----------------------------------------
+        # ---- Step 1: plan the path (forward kinematics at a step boundary) --
         mj = _get_mujoco()
-        mj.mj_forward(self._model, self._data)
+        self.runtime.call(mj.mj_forward)
 
         start_x = float(self._data.qpos[qa])
         start_y = float(self._data.qpos[qa + 1])
@@ -1053,40 +1057,25 @@ class MuJoCoG1:
     # Camera
     # ------------------------------------------------------------------
 
-    def get_camera_frame(self, width: int = 640, height: int = 480) -> "np.ndarray":
-        """Render RGB from the g1_head_rgb camera.
-
-        Returns (H, W, 3) uint8 numpy array in RGB order.
-        """
-        self._require_connection()
+    def _resolve_camera(self) -> str:
+        """The head camera's name in the loaded scene ('g1_head_rgb' or any '*head_rgb')."""
         mj = _get_mujoco()
         m = self._model
-        d = self._data
-        assert m is not None and d is not None
+        names = [mj.mj_id2name(m, mj.mjtObj.mjOBJ_CAMERA, i) or "" for i in range(m.ncam)]
+        if _SCENE_CAM_NAME in names:
+            return _SCENE_CAM_NAME
+        for nm in names:
+            if "head_rgb" in nm:
+                return nm
+        raise RuntimeError(f"Camera '{_SCENE_CAM_NAME}' not found. Available: {names}")
 
-        if self._cam_renderer is None:
-            self._cam_renderer = mj.Renderer(m, height, width)
+    def get_camera_frame(self, width: int = 640, height: int = 480) -> "np.ndarray":
+        """Render RGB from the g1_head_rgb camera (runtime render thread, any caller).
 
-        try:
-            cam_id = m.cam(_SCENE_CAM_NAME).id
-        except Exception:
-            cam_id = -1
-            for ci in range(m.ncam):
-                nm = mj.mj_id2name(m, mj.mjtObj.mjOBJ_CAMERA, ci) or ""
-                if "head_rgb" in nm:
-                    cam_id = ci
-                    break
-            if cam_id < 0:
-                available = [
-                    mj.mj_id2name(m, mj.mjtObj.mjOBJ_CAMERA, i)
-                    for i in range(m.ncam)
-                ]
-                raise RuntimeError(
-                    f"Camera '{_SCENE_CAM_NAME}' not found. Available: {available}"
-                )
-
-        self._cam_renderer.update_scene(d, camera=cam_id)
-        return self._cam_renderer.render().copy()
+        Returns (H, W, 3) uint8 numpy array in RGB order, at the requested size.
+        """
+        self._require_connection()
+        return self.runtime.render(self._cam_name, width, height, ("rgb",)).rgb
 
     def get_camera_pose(self) -> tuple[np.ndarray, np.ndarray]:
         """Return (cam_xpos, cam_xmat) for the g1_head_rgb camera.
@@ -1095,17 +1084,9 @@ class MuJoCoG1:
         cam_xmat: (9,) row-major rotation matrix; -Z column is optical axis.
         """
         self._require_connection()
-        mj = _get_mujoco()
-        m = self._model
-        d = self._data
-        assert m is not None and d is not None
-        try:
-            cam_id = m.cam(_SCENE_CAM_NAME).id
-        except Exception:
-            cam_id = 0
-        return (
-            d.cam_xpos[cam_id].copy(),
-            d.cam_xmat[cam_id].copy(),
+        cam_id = self._model.cam(self._cam_name).id
+        return self.runtime.call(
+            lambda _m, d: (d.cam_xpos[cam_id].copy(), d.cam_xmat[cam_id].copy())
         )
 
     # ------------------------------------------------------------------

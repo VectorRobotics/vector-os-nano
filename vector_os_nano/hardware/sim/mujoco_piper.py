@@ -10,12 +10,13 @@ the arm; Phase C is the PickTopDownSkill that drives this).
 
 Thread model
 ------------
-The MuJoCoGo2 physics thread runs at 1 kHz and owns stepping. This class:
-- reads data.qpos[...] directly (atomic, safe)
-- writes data.ctrl[...] (atomic, safe — physics thread reads on next tick)
-- performs fk/ik on a scratch MjData clone (no race with live qpos)
+The parent MuJoCoGo2's SimRuntime owns MjData and stepping. This class:
+- reads joint state from runtime.snapshot() (one instant, a copy)
+- writes ctrl through runtime.submit (applied at a step boundary)
+- performs fk/ik on an isolated MjModel + MjData (seeded from a snapshot copy)
+- times move_joints in SIM seconds (runtime.wait_sim)
 
-We never call mj_step from here.
+We never step physics from here.
 
 Usage:
     go2 = MuJoCoGo2(..., room=True)
@@ -30,8 +31,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import threading
-import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -163,8 +162,7 @@ class MuJoCoPiper:
         self._ik_arm_joint_ids: list[int] = []
         self._ik_ee_site_id: int = -1
 
-        # Lock for ctrl writes against concurrent stop() / skill interleaving
-        self._ctrl_lock = threading.Lock()
+        self._gt: Any = None  # GroundTruth of the parent's runtime (set on connect)
 
         # R2b actor-causation instrumentation. ``move_joints`` bumps these as it
         # drives the ctrl set-points toward the target. ``_ctrl_writes`` counts the
@@ -242,6 +240,9 @@ class MuJoCoPiper:
         # isolated model is never touched by the physics thread, so IK and
         # mj_step cannot race on shared MuJoCo internals.
         self._allocate_ik_model(mj)
+        from vector_os_nano.sim.ground_truth import GroundTruth
+
+        self._gt = GroundTruth(self._go2.runtime)
 
         self._connected = True
         logger.info(
@@ -295,8 +296,8 @@ class MuJoCoPiper:
     def get_joint_positions(self) -> list[float]:
         """Read the 6 arm joint positions in radians."""
         self._require_connection()
-        data = self._go2._mj.data
-        return [float(data.qpos[adr]) for adr in self._arm_joint_qpos_adr]
+        q = self._go2.runtime.snapshot().qpos
+        return [float(q[adr]) for adr in self._arm_joint_qpos_adr]
 
     def get_object_positions(self) -> dict[str, list[float]]:
         """Free-body object world positions {body_name: [x, y, z]} from the live go2
@@ -304,20 +305,7 @@ class MuJoCoPiper:
         the gripper's weld _try_grasp see the SAME duck-typed surface on the go2 path.
         """
         self._require_connection()
-        mj = _get_mujoco()
-        model = self._go2._mj.model
-        data = self._go2._mj.data
-        result: dict[str, list[float]] = {}
-        for i in range(model.nbody):
-            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
-            if name is None:
-                continue
-            jadr = int(model.body_jntadr[i])
-            if jadr < 0:
-                continue
-            if model.jnt_type[jadr] == mj.mjtJoint.mjJNT_FREE:
-                result[name] = list(data.body(name).xpos)
-        return result
+        return self._gt.free_body_positions()
 
     # ------------------------------------------------------------------
     # Motion
@@ -326,11 +314,12 @@ class MuJoCoPiper:
     def move_joints(self, positions: list[float], duration: float = 3.0) -> bool:
         """Interpolate ctrl targets from current to positions over duration.
 
-        The MuJoCoGo2 physics thread (1 kHz) runs the position-PD actuators
-        at their usual rate; we just update their set-points at ~50 Hz wall
-        time. Returns True once interpolation ends (does not verify the arm
-        actually reached the target — position PD can have steady-state error
-        near joint limits; use get_joint_positions() to verify).
+        The position-PD actuators run inside the physics; we update their
+        set-points at 50 Hz of SIM time (each write applied at a step boundary),
+        so the move takes *duration* sim seconds at any real-time ratio. Returns
+        True once interpolation ends (does not verify the arm actually reached
+        the target — position PD can have steady-state error near joint limits;
+        use get_joint_positions() to verify).
         """
         self._require_connection()
         if len(positions) != self.dof:
@@ -339,8 +328,9 @@ class MuJoCoPiper:
                 f"got {len(positions)}"
             )
 
-        data = self._go2._mj.data
-        start = [float(data.ctrl[aid]) for aid in self._arm_actuator_ids]
+        rt = self._go2.runtime
+        ids = list(self._arm_actuator_ids)
+        start = rt.call(lambda _m, d: [float(d.ctrl[aid]) for aid in ids])
 
         # R2b: the total commanded ctrl displacement (sum of |target - start| over
         # the actuators). A no-op move_joints(current_pose) has zero magnitude, so
@@ -352,10 +342,9 @@ class MuJoCoPiper:
 
         for i in range(1, steps + 1):
             t = i / steps
-            with self._ctrl_lock:
-                for aid, s, g in zip(self._arm_actuator_ids, start, positions):
-                    data.ctrl[aid] = s + t * (g - s)
-            time.sleep(dt)
+            targets = [s + t * (float(g) - s) for s, g in zip(start, positions)]
+            rt.submit(lambda _m, d, v=targets: d.ctrl.__setitem__(ids, v))
+            rt.wait_sim(dt)
 
         # Record the commanded motion ONCE (after the interpolation completes), so
         # the grader sees the full step's commanded ctrl delta.
@@ -390,10 +379,8 @@ class MuJoCoPiper:
     def stop(self) -> None:
         """Hold current positions (freeze motion quickly)."""
         self._require_connection()
-        data = self._go2._mj.data
-        with self._ctrl_lock:
-            for adr, aid in zip(self._arm_joint_qpos_adr, self._arm_actuator_ids):
-                data.ctrl[aid] = float(data.qpos[adr])
+        qadr, ids = list(self._arm_joint_qpos_adr), list(self._arm_actuator_ids)
+        self._go2.runtime.call(lambda _m, d: d.ctrl.__setitem__(ids, d.qpos[qadr]))
 
     def home(self, duration: float = 3.0) -> bool:
         """Move to the URDF zero configuration."""
@@ -471,28 +458,14 @@ class MuJoCoPiper:
     # ------------------------------------------------------------------
 
     def _sync_ik_base_from_live(self, arm_joints: list[float] | None) -> None:
-        """Copy the live floating-base qpos into the isolated IK data.
+        """Copy the floating-base qpos of one instant into the isolated IK data.
 
-        We pause the parent physics thread briefly during the read. Even
-        though the IK model is separate, the snapshot of live qpos was
-        observed (intermittently) to segfault under extended test runs —
-        likely a MuJoCo-Python binding issue where Python numpy views share
-        state with MuJoCo-allocated buffers. Pausing physics for ~1 ms makes
-        the snapshot deterministic.
+        The source is the runtime snapshot — a copy, so no physics pause and no
+        controller reset (the old pause/resume restarted the 1 kHz thread and
+        zeroed the gait state on every fk/IK call).
         """
         go2 = self._go2
-        pause_fn = getattr(go2, "_pause_physics", None)
-        resume_fn = getattr(go2, "_resume_physics", None)
-        was_running = bool(getattr(go2, "_running", False))
-        paused = False
-        if callable(pause_fn) and was_running:
-            pause_fn()
-            paused = True
-        try:
-            live_qpos = np.asarray(self._go2._mj.data.qpos, dtype=np.float64).copy()
-        finally:
-            if paused and callable(resume_fn):
-                resume_fn()
+        live_qpos = go2.runtime.snapshot().qpos
         # Sync the robot's freejoint(7) + legs(12) from the live model by its
         # ACTUAL qpos slice (DofLayout-derived), NOT a literal [0:19]: under the
         # MjSpec.attach scene (S3b) the go2 freejoint sits at qpos[21] — the
