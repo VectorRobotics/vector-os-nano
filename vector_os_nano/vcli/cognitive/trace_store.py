@@ -508,7 +508,7 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
         ev[id(s)] = evidence
         if evidence == "FAILED":
             return f"{s.sub_goal_name}: {why}"
-        if trace.contract and getattr(s, "housekeeping", False):
+        if trace.contract and getattr(s, "housekeeping", False) is True:
             if sg.verify and not s.verify_result:
                 return f"{s.sub_goal_name}: {why}"
         elif evidence != "GROUNDED":
