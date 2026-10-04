@@ -369,9 +369,7 @@ class TestTimingMismatchBug:
         # Ground-truth world point (correct: depth A + pose A)
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
         wx_correct, wy_correct, _ = camera_to_world(
-            x_cam, y_cam, z_cam,
-            float(pos_a[0]), float(pos_a[1]), float(pos_a[2]),
-            float(heading_a), cam_xpos=cam_xpos_a, cam_xmat=cam_xmat_a,
+            x_cam, y_cam, z_cam, cam_xpos=cam_xpos_a, cam_xmat=cam_xmat_a,
         )
 
         # --- Move the robot 1.5 m BACK (the pick table stops a forward walk at ~0.47 m) ---
@@ -395,9 +393,7 @@ class TestTimingMismatchBug:
 
         # --- Buggy projection: depth from A, pose from B ---
         wx_wrong, wy_wrong, _ = camera_to_world(
-            x_cam, y_cam, z_cam,
-            float(pos_b[0]), float(pos_b[1]), float(pos_b[2]),
-            float(heading_b), cam_xpos=cam_xpos_b, cam_xmat=cam_xmat_b,
+            x_cam, y_cam, z_cam, cam_xpos=cam_xpos_b, cam_xmat=cam_xmat_b,
         )
 
         # Error should be large — at least half the distance moved.
@@ -510,8 +506,6 @@ class TestAtomicCapturePattern:
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
-            float(pos_cached[0]), float(pos_cached[1]), float(pos_cached[2]),
-            float(heading_cached),
             cam_xpos=cam_xpos_cached, cam_xmat=cam_xmat_cached,
         )
 

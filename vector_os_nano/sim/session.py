@@ -366,12 +366,15 @@ def _perception_note(agent: Any) -> str:
     from vector_os_nano.perception.rynnbrain import RynnBrainDetector
     from vector_os_nano.perception.tracker import EdgeTAMTracker
 
-    try:
-        import torch
+    import importlib.util
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    except ImportError:
+    # ponytail: the device the detector WILL use, without importing torch at sim start
+    # (that inits CUDA and spawns ldconfig); the load logs the real one ("[GDINO] loaded on").
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES") not in ("", "-1")
+    if importlib.util.find_spec("torch") is None:
         device = "unavailable (no torch)"
+    else:
+        device = "cuda" if visible and Path("/proc/driver/nvidia/version").exists() else "cpu"
     perception, vlm = getattr(agent, "_perception", None), getattr(agent, "_vlm", None)
     vlm_s = "none" if vlm is None else f"{'local' if vlm._local else 'openrouter'}:{vlm._model}"
     return (
@@ -449,7 +452,6 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     agent._spatial_memory.load()
     if world is not None:
         agent._spatial_memory.load_layout(str(world.path))
-    session.notes.append(_perception_note(agent))
 
     if cfg.nav.get("explorer") == "tare":
         if not os.environ.get("VECTOR_NAV_STACK"):
@@ -460,6 +462,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
+    session.notes.append(_perception_note(agent))  # last: the explore note stays up front
     return agent
 
 
