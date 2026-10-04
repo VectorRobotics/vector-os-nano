@@ -190,7 +190,7 @@ def build_namespace(
             text = f"{(getattr(o, 'attributes', {}) or {}).get('color', '')} {o.category}"
             if seen < t_wall or world.resolve(text) != name:
                 continue
-            if (o.x, o.y) == (0.0, 0.0):  # never-localized sentinel
+            if o.x is None or o.y is None or (o.x, o.y) == (0.0, 0.0):  # never localized
                 continue
             if math.dist((o.x, o.y), (tx, ty)) <= _clamp(tol, _MAX_LOCALIZED_M):
                 return True

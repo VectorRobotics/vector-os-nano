@@ -7,10 +7,17 @@ Replaces flat SpatialMemory with a hierarchical representation:
 
     RoomNode  →  ViewpointNode  →  ObjectNode
 
-Room nodes represent semantically meaningful spaces (kitchen, bedroom, etc.).
-Viewpoint nodes are discrete camera positions within a room, each with a VLM
-scene description and coverage area.  Object nodes are individual items
-detected by the VLM, with category, position, and on-demand attributes.
+Room nodes represent semantically meaningful spaces (kitchen, bedroom, etc.);
+rooms seeded from a world manifest are FIXED (their centre never drifts) and carry
+a floor box, so "which room is (x, y) in" is a membership test. Viewpoint nodes
+are camera positions within a room. Object nodes are INSTANCES: two observations
+of the same kind merge only within ``_MERGE_RADIUS_M`` of each other, so two
+bottles a metre apart stay two. An object's position is ``None`` until it is
+localized (never a (0, 0) sentinel); ``last_seen``/``n_obs`` track observations.
+
+Persistence is atomic (temp file + ``os.replace``, ``yaml.safe_dump`` of plain
+floats) and debounced after every mutation, and a file that cannot be read is
+moved aside (``.bad-<time>``) with a warning, never silently overwritten.
 
 Backward-compatible: implements the same public API as SpatialMemory
 (visit, observe, get_visited_rooms, get_room_summary, etc.) so existing
@@ -25,10 +32,13 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import re
+import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 import yaml
@@ -69,7 +79,20 @@ _VIEWPOINT_MIN_DISTANCE: float = 1.5   # meters — minimum distance between vie
 _VIEWPOINT_FOV_DEG: float = 60.0       # camera horizontal FOV (degrees)
 _VIEWPOINT_RANGE: float = 3.0          # meters — max observation range
 _ROOM_AREA_DEFAULT: float = 15.0       # m² — fallback room area for coverage calc
-_MAX_EVENTS: int = 200
+_MERGE_RADIUS_M: float = 0.4           # same-kind observations closer than this are one instance
+_SAVE_MIN_INTERVAL_S: float = 1.0      # debounce: at most one autosave per second
+
+
+def _f(v: Any) -> float | None:
+    """A plain float (numpy scalars too), or None for an unknown coordinate."""
+    return None if v is None else float(v)
+
+
+def _has_word(text: str, word: str) -> bool:
+    """*word* in *text*: on word boundaries for ASCII, as a substring for CJK."""
+    if word.isascii():
+        return re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", text) is not None
+    return word in text
 
 
 # ---------------------------------------------------------------------------
@@ -86,12 +109,18 @@ class ObjectNode:
     description: str = ""               # VLM description
     confidence: float = 0.8
     room_id: str = ""
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
+    x: float | None = None              # None = not localized (never a 0.0 sentinel)
+    y: float | None = None
+    z: float | None = None
     attributes: dict = field(default_factory=dict)  # {"color": "red"} — queried on demand
     viewpoint_ids: tuple[str, ...] = ()
     first_seen: float = field(default_factory=time.time)
+    last_seen: float = 0.0              # wall time of the latest observation (0 = first_seen)
+    n_obs: int = 1
+
+    @property
+    def localized(self) -> bool:
+        return self.x is not None and self.y is not None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +133,8 @@ class ObjectNode:
             "attributes": dict(self.attributes),
             "viewpoint_ids": list(self.viewpoint_ids),
             "first_seen": self.first_seen,
+            "last_seen": self.last_seen or self.first_seen,
+            "n_obs": self.n_obs,
         }
 
 
@@ -151,6 +182,8 @@ class RoomNode:
     last_visited: float = 0.0
     representative_description: str = ""
     connected_rooms: tuple[str, ...] = ()
+    fixed: bool = False                 # seeded from a world manifest: the centre never moves
+    box: tuple[float, float, float, float] | None = None  # floor box [x0, y0, x1, y1]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -162,6 +195,8 @@ class RoomNode:
             "last_visited": self.last_visited,
             "representative_description": self.representative_description,
             "connected_rooms": list(self.connected_rooms),
+            "fixed": self.fixed,
+            "box": list(self.box) if self.box else None,
         }
 
 
@@ -184,16 +219,37 @@ class SceneGraph:
     Thread-safe: all mutations guarded by a single Lock.
     """
 
-    def __init__(self, persist_path: str | None = None) -> None:
+    def __init__(
+        self, persist_path: str | None = None, *, resolve: Any = None,
+    ) -> None:
         self._rooms: dict[str, RoomNode] = {}
         self._viewpoints: dict[str, ViewpointNode] = {}
         self._objects: dict[str, ObjectNode] = {}
         # key = tuple(sorted([room_a, room_b])) — bidirectional
         # value = (x, y, count) — running average position + observation count
         self._doors: dict[tuple[str, str], tuple[float, float, int]] = {}
-        self._events: list[dict] = []
         self._lock = threading.RLock()
         self._persist_path = persist_path
+        # resolve(text) -> canonical object id or None (the world manifest's name
+        # resolver): "绿色的瓶子" and "green bottle" are then one kind of object.
+        self._resolve = resolve
+        self._layout_path: str | None = None
+        self._last_save = 0.0
+        self._save_timer: threading.Timer | None = None
+        # Never autosave over a persisted file this graph has not loaded yet.
+        self._may_autosave = not (persist_path and os.path.exists(persist_path))
+
+    def clear(self) -> None:
+        """Forget everything observed, IN PLACE (every holder keeps this instance).
+
+        The rooms and doors of a loaded world layout are the world, not memory:
+        they are re-seeded.
+        """
+        with self._lock:
+            for d in (self._rooms, self._viewpoints, self._objects, self._doors):
+                d.clear()
+            if self._layout_path:
+                self.load_layout(self._layout_path)
 
     # ------------------------------------------------------------------
     # Room operations
@@ -222,6 +278,7 @@ class SceneGraph:
         observations.  Also updates both rooms' connected_rooms tuples.
         """
         key: tuple[str, str] = tuple(sorted([room_a, room_b]))  # type: ignore[assignment]
+        x, y = float(x), float(y)
         with self._lock:
             existing = self._doors.get(key)
             if existing is not None:
@@ -241,16 +298,8 @@ class SceneGraph:
                         connected_rooms=(dst,),
                     )
                 elif dst not in room.connected_rooms:
-                    self._rooms[src] = RoomNode(
-                        room_id=room.room_id,
-                        center_x=room.center_x,
-                        center_y=room.center_y,
-                        area=room.area,
-                        visit_count=room.visit_count,
-                        last_visited=room.last_visited,
-                        representative_description=room.representative_description,
-                        connected_rooms=room.connected_rooms + (dst,),
-                    )
+                    self._rooms[src] = replace(room, connected_rooms=room.connected_rooms + (dst,))
+        self._autosave()
 
     def get_door(self, room_a: str, room_b: str) -> tuple[float, float] | None:
         """Return (x, y) of the door between room_a and room_b, or None."""
@@ -356,17 +405,9 @@ class SceneGraph:
             # Update room's visit info
             room = self._rooms.get(vp.room_id)
             if room is not None:
-                self._rooms[vp.room_id] = RoomNode(
-                    room_id=room.room_id,
-                    center_x=room.center_x,
-                    center_y=room.center_y,
-                    area=room.area,
-                    visit_count=room.visit_count,
-                    last_visited=room.last_visited,
-                    representative_description=(
-                        vp.scene_summary or room.representative_description
-                    ),
-                    connected_rooms=room.connected_rooms,
+                self._rooms[vp.room_id] = replace(
+                    room,
+                    representative_description=vp.scene_summary or room.representative_description,
                 )
 
     def get_viewpoints_in_room(self, room_id: str) -> list[ViewpointNode]:
@@ -401,13 +442,62 @@ class SceneGraph:
         with self._lock:
             self._objects[obj.object_id] = obj
 
+    def _kind(self, text: str) -> str | None:
+        """The canonical object id *text* names (the world resolver), or None."""
+        if self._resolve is None:
+            return None
+        try:
+            return self._resolve(text)
+        except Exception:  # noqa: BLE001 — an unresolvable name is just unknown
+            return None
+
+    def _obj_text(self, o: ObjectNode) -> str:
+        return f"{(o.attributes or {}).get('color', '')} {o.category}".strip()
+
+    def _same_kind(self, o: ObjectNode, category: str) -> bool:
+        if o.category.lower() == category.lower():
+            return True
+        k = self._kind(category)
+        return k is not None and k == self._kind(self._obj_text(o))
+
     def find_objects_by_category(self, category: str) -> list[ObjectNode]:
-        cat = category.lower().strip()
+        """Every instance *category* names ("" = all of them).
+
+        A name the world resolves ("绿色的瓶子", "green bottle", the body name) matches
+        the instances that resolve to the same object; otherwise every word of the
+        query must appear as a word of the category ("bottle" matches "green
+        bottle", "can" never matches "candle").
+        """
+        q = category.lower().strip()
         with self._lock:
-            return [
-                o for o in self._objects.values()
-                if cat in o.category.lower()
-            ]
+            objs = list(self._objects.values())
+        if not q:
+            return objs
+        k = self._kind(q)
+        if k is not None:
+            return [o for o in objs if self._kind(self._obj_text(o)) == k]
+        words = re.findall(r"[a-z0-9]+|[^\x00-\x7f]+", q)
+        return [o for o in objs if all(_has_word(o.category.lower(), w) for w in words)]
+
+    def update_object(
+        self, object_id: str, *, state: str | None = None,
+        x: Any = None, y: Any = None, z: Any = None,
+    ) -> ObjectNode | None:
+        """Record an event on an instance (``state`` "held"/"placed", a new position)."""
+        with self._lock:
+            o = self._objects.get(object_id)
+            if o is None:
+                return None
+            attrs = dict(o.attributes)
+            if state is not None:
+                attrs["state"] = state
+            pos = {} if x is None or y is None else {"x": _f(x), "y": _f(y), "z": _f(z)}
+            if pos:
+                pos["room_id"] = self.room_at(pos["x"], pos["y"]) or o.room_id
+            o = replace(o, attributes=attrs, last_seen=time.time(), **pos)
+            self._objects[object_id] = o
+        self._autosave()
+        return o
 
     def find_objects_in_room(self, room_id: str) -> list[ObjectNode]:
         with self._lock:
@@ -423,56 +513,53 @@ class SceneGraph:
         viewpoint_id: str,
         description: str = "",
         confidence: float = 0.8,
-        x: float = 0.0,
-        y: float = 0.0,
+        x: Any = None,
+        y: Any = None,
+        z: Any = None,
     ) -> ObjectNode:
-        """Add or merge an object in a room.
+        """Add an observation of *category*: merge it into its instance, or a new one.
 
-        If an object with the same category already exists in this room,
-        update it (add viewpoint, update description if confidence is higher).
-        Otherwise create a new ObjectNode.
-
-        Returns the resulting ObjectNode.
+        A localized observation (x, y given) merges into the nearest instance of the
+        same kind within ``_MERGE_RADIUS_M`` (else into an unlocalized one of that
+        kind in the room, which it localizes); its position replaces the old one as
+        a whole (x, y and z together). An unlocalized observation only merges into
+        an instance of that kind in the room and never moves it. Otherwise a new
+        instance. The object's room is the room box it stands in, when known.
         """
+        x, y, z, confidence = _f(x), _f(y), _f(z), float(confidence)
+        if (x is None) != (y is None):
+            x = y = None  # half a position is no position
+        now = time.time()
         with self._lock:
-            # Check for existing object with same category in same room
-            for oid, existing in self._objects.items():
-                if (existing.category.lower() == category.lower()
-                        and existing.room_id == room_id):
-                    # Merge: add viewpoint, keep higher confidence
-                    vp_ids = set(existing.viewpoint_ids)
-                    vp_ids.add(viewpoint_id)
-                    merged = ObjectNode(
-                        object_id=existing.object_id,
-                        category=existing.category,
-                        description=(
-                            description if confidence > existing.confidence
-                            else existing.description
-                        ),
-                        confidence=max(confidence, existing.confidence),
-                        room_id=room_id,
-                        x=x if x != 0.0 else existing.x,
-                        y=y if y != 0.0 else existing.y,
-                        z=existing.z,
-                        attributes=existing.attributes,
-                        viewpoint_ids=tuple(sorted(vp_ids)),
-                        first_seen=existing.first_seen,
-                    )
-                    self._objects[oid] = merged
-                    return merged
-
-            # New object
-            obj = ObjectNode(
-                object_id=f"obj_{uuid.uuid4().hex[:8]}",
-                category=category,
-                description=description,
-                confidence=confidence,
-                room_id=room_id,
-                x=x, y=y,
-                viewpoint_ids=(viewpoint_id,),
+            if x is not None:
+                room_id = self.room_at(x, y) or room_id
+            same = [o for o in self._objects.values() if self._same_kind(o, category)]
+            near = [o for o in same if o.localized and x is not None
+                    and math.dist((o.x, o.y), (x, y)) <= _MERGE_RADIUS_M]
+            match = (
+                min(near, key=lambda o: math.dist((o.x, o.y), (x, y))) if near
+                else next((o for o in same if o.room_id == room_id
+                           and (x is None or not o.localized)), None)
             )
+            vp = (viewpoint_id,) if viewpoint_id else ()
+            if match is None:
+                obj = ObjectNode(
+                    object_id=f"obj_{uuid.uuid4().hex[:8]}", category=category,
+                    description=description, confidence=confidence, room_id=room_id,
+                    x=x, y=y, z=z, viewpoint_ids=vp, first_seen=now, last_seen=now,
+                )
+            else:
+                pos = {"x": x, "y": y, "z": z, "room_id": room_id} if x is not None else {}
+                obj = replace(
+                    match,
+                    description=description if confidence > match.confidence else match.description,
+                    confidence=max(confidence, match.confidence),
+                    viewpoint_ids=tuple(sorted(set(match.viewpoint_ids) | set(vp))),
+                    last_seen=now, n_obs=match.n_obs + 1, **pos,
+                )
             self._objects[obj.object_id] = obj
-            return obj
+        self._autosave()
+        return obj
 
     # ------------------------------------------------------------------
     # Coverage tracking
@@ -568,26 +655,22 @@ class SceneGraph:
     def visit(self, room: str, x: float, y: float) -> None:
         """Record visiting a room. Creates RoomNode if needed.
 
-        Room center is computed as running average of all visit positions.
-        This gives a more accurate center than a single detection point
-        (which is often at the doorway).
+        A discovered room's centre is the running average of its visit positions;
+        a FIXED (manifest-seeded) room's centre never moves.
         """
+        x, y = float(x), float(y)
         with self._lock:
             existing = self._rooms.get(room)
             if existing:
                 n = existing.visit_count
                 # Running average: new_center = (old_center * n + new_pos) / (n + 1)
-                new_cx = (existing.center_x * n + x) / (n + 1)
-                new_cy = (existing.center_y * n + y) / (n + 1)
-                self._rooms[room] = RoomNode(
-                    room_id=room,
-                    center_x=new_cx,
-                    center_y=new_cy,
-                    area=existing.area,
-                    visit_count=n + 1,
+                cx, cy = (
+                    (existing.center_x, existing.center_y) if existing.fixed
+                    else ((existing.center_x * n + x) / (n + 1), (existing.center_y * n + y) / (n + 1))
+                )
+                self._rooms[room] = replace(
+                    existing, center_x=cx, center_y=cy, visit_count=n + 1,
                     last_visited=time.time(),
-                    representative_description=existing.representative_description,
-                    connected_rooms=existing.connected_rooms,
                 )
             else:
                 self._rooms[room] = RoomNode(
@@ -597,10 +680,7 @@ class SceneGraph:
                     visit_count=1,
                     last_visited=time.time(),
                 )
-            self._append_event({
-                "type": "visit", "room": room, "x": x, "y": y,
-                "timestamp": time.time(),
-            })
+        self._autosave()
 
     def observe(
         self,
@@ -608,9 +688,10 @@ class SceneGraph:
         objects: list[str],
         description: str = "",
     ) -> None:
-        """Record VLM observation. Creates viewpoint + objects.
+        """Record a names-only observation at the room centre (SpatialMemory compat).
 
-        Compatible with SpatialMemory.observe() signature.
+        The names carry no position, so they are stored unlocalized (``x is None``);
+        nothing downstream mistakes them for a known place.
         """
         with self._lock:
             # Ensure room exists
@@ -618,44 +699,16 @@ class SceneGraph:
                 self._rooms[room] = RoomNode(
                     room_id=room, visit_count=0, last_visited=time.time(),
                 )
-
-            # Create viewpoint
             room_node = self._rooms[room]
             vp_id = f"vp_{uuid.uuid4().hex[:8]}"
-            vp = ViewpointNode(
-                viewpoint_id=vp_id,
-                room_id=room,
-                x=room_node.center_x,
-                y=room_node.center_y,
-                scene_summary=description,
+            self._viewpoints[vp_id] = ViewpointNode(
+                viewpoint_id=vp_id, room_id=room,
+                x=room_node.center_x, y=room_node.center_y, scene_summary=description,
             )
-            self._viewpoints[vp_id] = vp
-
-            # Update room description
             if description:
-                self._rooms[room] = RoomNode(
-                    room_id=room_node.room_id,
-                    center_x=room_node.center_x,
-                    center_y=room_node.center_y,
-                    area=room_node.area,
-                    visit_count=room_node.visit_count,
-                    last_visited=room_node.last_visited,
-                    representative_description=description,
-                    connected_rooms=room_node.connected_rooms,
-                )
-
-            # Create/merge objects
+                self._rooms[room] = replace(room_node, representative_description=description)
             for obj_name in objects:
-                self.merge_object(
-                    category=obj_name,
-                    room_id=room,
-                    viewpoint_id=vp_id,
-                )
-
-            self._append_event({
-                "type": "observe", "room": room,
-                "objects": objects, "timestamp": time.time(),
-            })
+                self.merge_object(category=obj_name, room_id=room, viewpoint_id=vp_id)
 
     def observe_with_viewpoint(
         self,
@@ -665,87 +718,40 @@ class SceneGraph:
         heading: float,
         objects: list[str],
         description: str = "",
-        detected_objects: list[tuple[str, float, float]] | None = None,
+        detected_objects: list[tuple] | None = None,
     ) -> ViewpointNode | None:
-        """Full viewpoint-aware observation (new API).
+        """Record what the camera saw from (x, y, heading).
 
-        Only adds a viewpoint if position is far enough from existing ones.
-        Returns the ViewpointNode if created, None if skipped.
-
-        Args:
-            room: Room identifier.
-            x: Robot x position (world frame).
-            y: Robot y position (world frame).
-            heading: Robot heading in radians.
-            objects: Plain list of object name strings (used when
-                detected_objects is None or empty).
-            description: VLM scene description.
-            detected_objects: Optional list of (category, obj_x, obj_y)
-                tuples carrying per-object world coordinates.
-                When non-empty this overrides the plain ``objects`` list.
+        Adds a viewpoint only if it is far enough from the room's existing ones
+        (returns it, else None; the objects are recorded either way, against the
+        nearest viewpoint). ``detected_objects`` are ``(category, x, y[, z])``
+        LOCALIZED objects; when given they replace the names-only ``objects``
+        (stored unlocalized). It never visits the room: looking is not arriving.
         """
-        # Determine which object source to use.
-        use_detected = bool(detected_objects)
-
-        if not self.should_add_viewpoint(room, x, y):
-            # Still record objects even if viewpoint not added.
-            with self._lock:
-                nearest_vp = ""
-                for vp in self._viewpoints.values():
-                    if vp.room_id == room:
-                        nearest_vp = vp.viewpoint_id
-                        break
-                if nearest_vp:
-                    if use_detected:
-                        for category, obj_x, obj_y in detected_objects:  # type: ignore[union-attr]
-                            self.merge_object(
-                                category=category, room_id=room,
-                                viewpoint_id=nearest_vp,
-                                x=obj_x, y=obj_y,
-                            )
-                    else:
-                        for obj_name in objects:
-                            self.merge_object(
-                                category=obj_name, room_id=room,
-                                viewpoint_id=nearest_vp,
-                            )
-            return None
-
-        # Build object_ids tuple for the ViewpointNode record.
-        if use_detected:
-            vp_object_ids = tuple(cat for cat, _, _ in detected_objects)  # type: ignore[union-attr]
-        else:
-            vp_object_ids = tuple(objects)
-
-        vp_id = f"vp_{uuid.uuid4().hex[:8]}"
-        vp = ViewpointNode(
-            viewpoint_id=vp_id,
-            room_id=room,
-            x=x, y=y,
-            heading=heading,
-            scene_summary=description,
-            object_ids=vp_object_ids,
-        )
-        self.add_viewpoint(vp)
-
-        # Visit room if not yet visited.
-        self.visit(room, x, y)
-
-        # Merge objects with or without per-object world coordinates.
+        x, y, heading = float(x), float(y), float(heading)
+        detected = [tuple(d) for d in (detected_objects or [])]
+        for d in detected:
+            if not 3 <= len(d) <= 4:
+                raise ValueError(f"detected_objects entries are (category, x, y[, z]), got {d!r}")
         with self._lock:
-            if use_detected:
-                for category, obj_x, obj_y in detected_objects:  # type: ignore[union-attr]
-                    self.merge_object(
-                        category=category, room_id=room,
-                        viewpoint_id=vp_id, x=obj_x, y=obj_y,
-                    )
+            vp: ViewpointNode | None = None
+            if self.should_add_viewpoint(room, x, y):
+                vp = ViewpointNode(
+                    viewpoint_id=f"vp_{uuid.uuid4().hex[:8]}", room_id=room, x=x, y=y,
+                    heading=heading, scene_summary=description,
+                    object_ids=tuple(d[0] for d in detected) or tuple(objects),
+                )
+                self.add_viewpoint(vp)
+                vp_id = vp.viewpoint_id
+            else:
+                in_room = [v for v in self._viewpoints.values() if v.room_id == room]
+                vp_id = min(in_room, key=lambda v: math.dist((v.x, v.y), (x, y))).viewpoint_id
+            if detected:
+                for cat, ox, oy, *oz in detected:
+                    self.merge_object(cat, room, vp_id, x=ox, y=oy, z=oz[0] if oz else None)
             else:
                 for obj_name in objects:
-                    self.merge_object(
-                        category=obj_name, room_id=room,
-                        viewpoint_id=vp_id,
-                    )
-
+                    self.merge_object(category=obj_name, room_id=room, viewpoint_id=vp_id)
         return vp
 
     def get_location(self, name: str) -> Any:
@@ -781,12 +787,24 @@ class SceneGraph:
                 if r.visit_count > 0
             ]
 
-    def nearest_room(self, x: float, y: float) -> str | None:
-        """Return room_id of the nearest room center, or None if no rooms exist.
+    def room_at(self, x: Any, y: Any) -> str | None:
+        """The room whose floor box contains (x, y) (the smallest on a shared edge)."""
+        if x is None or y is None:
+            return None
+        with self._lock:
+            inside = [
+                ((r.box[2] - r.box[0]) * (r.box[3] - r.box[1]), r.room_id)
+                for r in self._rooms.values()
+                if r.box and r.box[0] <= x <= r.box[2] and r.box[1] <= y <= r.box[3]
+            ]
+        return min(inside)[1] if inside else None
 
-        Only considers rooms with visit_count > 0 (actually explored).
-        Used to replace the hardcoded _detect_current_room() throughout the codebase.
-        """
+    def nearest_room(self, x: float, y: float) -> str | None:
+        """The room (x, y) is in: its floor box when rooms have boxes, else the
+        nearest explored room centre (visit_count > 0); None without rooms."""
+        inside = self.room_at(x, y)
+        if inside is not None:
+            return inside
         with self._lock:
             best_id: str | None = None
             best_dist = float("inf")
@@ -867,15 +885,12 @@ class SceneGraph:
     # ------------------------------------------------------------------
 
     def load_layout(self, layout_path: str) -> int:
-        """Seed SceneGraph from a room layout config file.
+        """Seed the world's rooms and doors from a world manifest (SIM ONLY).
 
-        Loads room centers and door positions from a YAML file. Each room
-        gets visit_count=10 so nearest_room() and navigate work immediately.
-
-        SIM ONLY — for real-world, rooms are discovered via exploration.
-
-        Args:
-            layout_path: Path to config/worlds/apartment.yaml.
+        Each room is FIXED at its manifest centre (visits never move it) with its
+        floor box, and gets visit_count=10 so nearest_room() and navigate trust it;
+        a room already in memory keeps its description and connections. A door
+        key "room_a-room_b" is split where both halves are rooms.
 
         Returns:
             Number of rooms loaded, or 0 on failure.
@@ -885,30 +900,27 @@ class SceneGraph:
                 data = yaml.safe_load(f)
             if not isinstance(data, dict):
                 return 0
-
-            count = 0
-            for room_name, coords in data.get("rooms", {}).items():
-                if isinstance(coords, list) and len(coords) == 2:
-                    x, y = float(coords[0]), float(coords[1])
-                    # High visit_count so nearest_room trusts these positions
-                    with self._lock:
-                        self._rooms[room_name] = RoomNode(
-                            room_id=room_name,
-                            center_x=x,
-                            center_y=y,
-                            visit_count=10,
-                            last_visited=time.time(),
-                        )
-                    count += 1
-
-            for door_key, coords in data.get("doors", {}).items():
-                if isinstance(coords, list) and len(coords) == 2:
-                    parts = door_key.split("-")
-                    if len(parts) == 2:
-                        self.add_door(parts[0], parts[1], float(coords[0]), float(coords[1]))
-
-            logger.info("[SceneGraph] Loaded layout: %d rooms from %s", count, layout_path)
-            return count
+            rooms = data.get("rooms") or {}
+            boxes = data.get("boxes") or {}
+            with self._lock:
+                for name, coords in rooms.items():
+                    x, y = (float(c) for c in coords)
+                    box = tuple(float(c) for c in boxes[name]) if name in boxes else None
+                    old = self._rooms.get(name) or RoomNode(room_id=name)
+                    self._rooms[name] = replace(
+                        old, center_x=x, center_y=y, visit_count=max(old.visit_count, 10),
+                        last_visited=time.time(), fixed=True, box=box,
+                    )
+                for key, coords in (data.get("doors") or {}).items():
+                    pair = next(((key[:i], key[i + 1:]) for i, ch in enumerate(key)
+                                 if ch == "-" and key[:i] in rooms and key[i + 1:] in rooms), None)
+                    if pair is None:
+                        logger.warning("[SceneGraph] door %r names no two layout rooms", key)
+                        continue
+                    self.add_door(pair[0], pair[1], float(coords[0]), float(coords[1]))
+                self._layout_path = layout_path
+            logger.info("[SceneGraph] Loaded layout: %d rooms from %s", len(rooms), layout_path)
+            return len(rooms)
         except FileNotFoundError:
             return 0
         except Exception as exc:
@@ -920,34 +932,74 @@ class SceneGraph:
     # ------------------------------------------------------------------
 
     def save(self) -> None:
+        """Write the graph atomically (temp file in the same dir + os.replace)."""
         if not self._persist_path:
             return
         with self._lock:
-            # Serialize doors: convert tuple keys to "room_a|room_b" strings
-            doors_serialized = {
-                f"{k[0]}|{k[1]}": {"x": v[0], "y": v[1], "count": v[2]}
-                for k, v in self._doors.items()
-            }
             data = {
                 "rooms": {k: v.to_dict() for k, v in self._rooms.items()},
                 "viewpoints": {k: v.to_dict() for k, v in self._viewpoints.items()},
                 "objects": {k: v.to_dict() for k, v in self._objects.items()},
-                "doors": doors_serialized,
+                "doors": [
+                    {"a": k[0], "b": k[1], "x": v[0], "y": v[1], "count": v[2]}
+                    for k, v in self._doors.items()
+                ],
             }
-        with open(self._persist_path, "w") as f:
-            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+            self._last_save = time.monotonic()
+        d = os.path.dirname(os.path.abspath(self._persist_path))
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".scene_graph.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                yaml.safe_dump(data, f, default_flow_style=False, allow_unicode=True)
+            os.replace(tmp, self._persist_path)
+        except BaseException:
+            os.unlink(tmp)
+            raise
+
+    def _autosave(self) -> None:
+        """Save after a mutation, at most once per ``_SAVE_MIN_INTERVAL_S`` (the last
+        change of a burst is saved by a timer)."""
+        if not self._persist_path or not self._may_autosave:
+            return
+        with self._lock:
+            wait = self._last_save + _SAVE_MIN_INTERVAL_S - time.monotonic()
+            if wait > 0:
+                if self._save_timer is None or not self._save_timer.is_alive():
+                    self._save_timer = threading.Timer(wait, self._timed_save)
+                    self._save_timer.daemon = True
+                    self._save_timer.start()
+                return
+        self._timed_save()
+
+    def _timed_save(self) -> None:
+        try:
+            self.save()
+        except Exception as exc:  # noqa: BLE001 — the next save retries; never crash a skill
+            logger.warning("[SceneGraph] autosave to %s failed: %s", self._persist_path, exc)
 
     def load(self) -> None:
+        """Replace this graph's contents with the persisted file (in place).
+
+        A missing file leaves an empty graph. A file that does not parse is moved
+        aside to ``<path>.bad-<time>`` with a warning (never overwritten silently).
+        """
         if not self._persist_path:
             return
+        self._may_autosave = True
         try:
-            with open(self._persist_path) as f:
+            with open(self._persist_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-            if not isinstance(data, dict):
-                return
-            # Rooms
-            for rid, rd in data.get("rooms", {}).items():
-                self._rooms[rid] = RoomNode(
+        except FileNotFoundError:
+            return
+        except Exception as exc:  # noqa: BLE001
+            return self._quarantine(f"unreadable ({exc})")
+        if data is None:
+            return
+        if not isinstance(data, dict):
+            return self._quarantine(f"not a mapping ({type(data).__name__})")
+        try:
+            rooms = {
+                rid: RoomNode(
                     room_id=rd["room_id"],
                     center_x=float(rd.get("center_x", 0)),
                     center_y=float(rd.get("center_y", 0)),
@@ -956,10 +1008,13 @@ class SceneGraph:
                     last_visited=float(rd.get("last_visited", 0)),
                     representative_description=rd.get("representative_description", ""),
                     connected_rooms=tuple(rd.get("connected_rooms", ())),
+                    fixed=bool(rd.get("fixed", False)),
+                    box=tuple(float(c) for c in rd["box"]) if rd.get("box") else None,
                 )
-            # Viewpoints
-            for vid, vd in data.get("viewpoints", {}).items():
-                self._viewpoints[vid] = ViewpointNode(
+                for rid, rd in (data.get("rooms") or {}).items()
+            }
+            viewpoints = {
+                vid: ViewpointNode(
                     viewpoint_id=vd["viewpoint_id"],
                     room_id=vd["room_id"],
                     x=float(vd.get("x", 0)),
@@ -969,43 +1024,41 @@ class SceneGraph:
                     scene_summary=vd.get("scene_summary", ""),
                     object_ids=tuple(vd.get("object_ids", ())),
                 )
-            # Objects
-            for oid, od in data.get("objects", {}).items():
-                self._objects[oid] = ObjectNode(
+                for vid, vd in (data.get("viewpoints") or {}).items()
+            }
+            objects = {
+                oid: ObjectNode(
                     object_id=od["object_id"],
                     category=od.get("category", ""),
                     description=od.get("description", ""),
                     confidence=float(od.get("confidence", 0.8)),
                     room_id=od.get("room_id", ""),
-                    x=float(od.get("x", 0)),
-                    y=float(od.get("y", 0)),
-                    z=float(od.get("z", 0)),
-                    attributes=od.get("attributes", {}),
+                    x=_f(od.get("x")), y=_f(od.get("y")), z=_f(od.get("z")),
+                    attributes=od.get("attributes") or {},
                     viewpoint_ids=tuple(od.get("viewpoint_ids", ())),
                     first_seen=float(od.get("first_seen", 0)),
+                    last_seen=float(od.get("last_seen", 0)),
+                    n_obs=int(od.get("n_obs", 1)),
                 )
-            # Doors — key stored as "room_a|room_b" string
-            for door_key, dv in data.get("doors", {}).items():
-                parts = door_key.split("|", 1)
-                if len(parts) != 2:
-                    continue
-                key: tuple[str, str] = (parts[0], parts[1])
-                self._doors[key] = (
-                    float(dv.get("x", 0)),
-                    float(dv.get("y", 0)),
-                    int(dv.get("count", 1)),
-                )
-        except FileNotFoundError:
-            pass
-        except Exception as exc:
-            logger.warning("[SceneGraph] load failed: %s", exc)
+                for oid, od in (data.get("objects") or {}).items()
+            }
+            doors = {
+                (str(dv["a"]), str(dv["b"])): (float(dv["x"]), float(dv["y"]), int(dv.get("count", 1)))
+                for dv in (data.get("doors") or [])
+            }
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            return self._quarantine(f"malformed ({exc!r})")
+        with self._lock:
+            for mine, theirs in ((self._rooms, rooms), (self._viewpoints, viewpoints),
+                                 (self._objects, objects), (self._doors, doors)):
+                mine.clear()
+                mine.update(theirs)  # type: ignore[attr-defined]
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _append_event(self, event: dict) -> None:
-        """Append event to log, trimming if over limit. Caller holds lock."""
-        self._events.append(event)
-        if len(self._events) > _MAX_EVENTS:
-            del self._events[:len(self._events) - _MAX_EVENTS]
+    def _quarantine(self, why: str) -> None:
+        bad = f"{self._persist_path}.bad-{int(time.time())}"
+        try:
+            os.replace(self._persist_path, bad)  # type: ignore[arg-type]
+        except OSError:
+            bad = "(could not move it aside)"
+        logger.warning("[SceneGraph] %s is %s; starting empty, kept it as %s",
+                       self._persist_path, why, bad)

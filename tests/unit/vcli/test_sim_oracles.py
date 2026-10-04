@@ -9,6 +9,7 @@ Piper fingers, weld on) rather than driven, so each case isolates one oracle inp
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import time
 
@@ -268,11 +269,17 @@ def test_localized_judges_the_scene_graph_against_gt(ns, rig: Rig) -> None:
     assert not ns["localized"]("green bottle", 99)  # tol clamped to 0.2 m
     rig.sg.add_object(_instance("green bottle", 10.90, 2.78, now))  # where the BLUE one is
     assert not ns["localized"]("green bottle", 0.2)
+    rig.sg.add_object(_instance("green bottle", None, None, now))  # seen, never localized
+    assert not ns["localized"]("green bottle")
     rig.sg.add_object(_instance("green bottle", 10.9, 3.05, now))
-    assert ns["localized"]("green bottle")
+    assert ns["localized"]("green bottle")  # an unlocalized instance never hides it
     assert ns["localized"]("绿色的瓶子")
     rig.turn = (rig.gt.sim_time, now + 10.0)  # seen before this turn started: stale
     assert not ns["localized"]("green bottle")
+    old = next(o for o in rig.sg.find_objects_by_category("") if (o.x, o.y) == (10.9, 3.05))
+    # re-observed during this turn: its last_seen (not first_seen) is what counts
+    rig.sg.add_object(dataclasses.replace(old, last_seen=now + 11.0))
+    assert ns["localized"]("green bottle")
     rig.sg = None
     assert not ns["localized"]("green bottle")
 
