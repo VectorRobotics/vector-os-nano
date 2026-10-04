@@ -49,6 +49,9 @@ class _Go2:
         self.runtime = _Runtime(model)
         self._scene_xml_path = scene
 
+    def wait_settled(self) -> bool:  # the stub body never moves
+        return True
+
     def place(self, x: float, y: float, yaw: float, arm=None) -> None:
         L = self._mj.layout
         q = self.runtime.qpos
