@@ -144,11 +144,15 @@ class TestSO101ArmConnected:
     def test_a_failed_servo_read_is_retried_never_faked(self):
         from vector_os_nano.hardware.so101.joint_config import ARM_JOINT_NAMES, JOINT_CONFIG, enc_to_rad
 
-        mids = [(JOINT_CONFIG[n]["enc_min"] + JOINT_CONFIG[n]["enc_max"]) // 2 for n in ARM_JOINT_NAMES]
+        # a quarter of each range: far from the 0.0 rad a fake read would report
+        encs = [JOINT_CONFIG[n]["enc_min"] + (JOINT_CONFIG[n]["enc_max"] - JOINT_CONFIG[n]["enc_min"]) // 4
+                for n in ARM_JOINT_NAMES]
         arm = SO101Arm()
-        arm._bus = self._make_mock_bus([-1] + mids)  # the first read of joint 0 fails once
+        arm._bus = self._make_mock_bus([-1] + encs)  # the first read of joint 0 fails once
         arm._connected = True
-        assert arm.get_joint_positions()[0] == pytest.approx(enc_to_rad(ARM_JOINT_NAMES[0], mids[0]))
+        want = enc_to_rad(ARM_JOINT_NAMES[0], encs[0])
+        assert abs(want) > 0.1
+        assert arm.get_joint_positions()[0] == pytest.approx(want)
 
     def test_a_persistent_read_failure_never_moves(self):
         arm = SO101Arm()
