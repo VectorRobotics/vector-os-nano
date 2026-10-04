@@ -172,7 +172,7 @@ class _SpyEngine:
         self.native_calls = 0
         self.last_decompose_prompt: str | None = None
 
-    def run_turn_native(self, prompt, agent=None, session=None):  # noqa: ANN001
+    def run_turn_native(self, prompt, agent=None, session=None, app_state=None):  # noqa: ANN001
         self.native_calls += 1
         return self._native_trace
 
@@ -195,7 +195,7 @@ def _wire_stub_engine(monkeypatch, engine: _SpyEngine) -> None:
     runs deterministically without a real agent/world (the GROUNDED classification
     only needs at_position to be a known oracle for the acted-native case).
     """
-    ctx = SimpleNamespace(engine=engine, session=None)
+    ctx = SimpleNamespace(engine=engine, session=None, app_state={})
     monkeypatch.setattr(cli, "_build_turn_context", lambda args: ctx)
     monkeypatch.setattr(
         "vector_os_nano.vcli.cognitive.trace_store.verify_oracle_names",
