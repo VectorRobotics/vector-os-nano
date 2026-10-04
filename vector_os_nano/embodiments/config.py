@@ -91,6 +91,42 @@ class GraspSpec:
 
 
 @dataclass(frozen=True)
+class GripperSpec:
+    """A position-controlled jaw: its actuator/joint, range, and the bodies that touch.
+
+    ``finger_bodies``: the bodies whose collision geoms must ALL touch an object
+    before a grasp counts (the contact gate). ``weld_body``: the body a grasped
+    object is welded to. ``min_opening``: the jaws must be held at least this
+    far open by the object (fully closed jaws grip nothing).
+    """
+
+    actuator: str
+    joint: str
+    open: float
+    closed: float = 0.0
+    finger_bodies: tuple[str, ...] = ()
+    weld_body: str = ""
+    # A grasp needs the jaws held at least this far open (m) by the object.
+    min_opening: float = 0.005
+
+
+@dataclass(frozen=True)
+class ArmSpec:
+    """An arm mounted on the body: names in the compiled model, home, IK seeds."""
+
+    name: str
+    dof: int
+    ee_site: str
+    joints: tuple[str, ...]
+    actuators: tuple[str, ...]
+    home: tuple[float, ...]
+    ik_seeds: tuple[tuple[float, ...], ...] = ()
+    # move_joints succeeds when every joint settles within this (rad) of its target.
+    track_tol: float = 0.05
+    gripper: GripperSpec | None = None
+
+
+@dataclass(frozen=True)
 class CapabilityProfile:
     """Uniform capability flags — what this body can do (Rule 11: no method drift)."""
 
@@ -123,7 +159,7 @@ class EmbodimentConfig:
     # manifest (WP17).
     driver: str = ""
     # Arm mounted on the body (e.g. the Piper on go2_piper), or None.
-    arm: dict[str, Any] | None = None
+    arm: ArmSpec | None = None
     # Navigation capabilities the body asks for, e.g. {"explorer": "tare"}.
     nav: dict[str, Any] = field(default_factory=dict)
 
@@ -223,6 +259,52 @@ def _parse_grasp(raw: dict[str, Any], ctx: str) -> GraspSpec | None:
     )
 
 
+def _floats(value: Any, n: int, ctx: str) -> tuple[float, ...]:
+    out = tuple(float(v) for v in _as_tuple(value))
+    if len(out) != n:
+        raise EmbodimentConfigError(f"{ctx} must have {n} values, got {len(out)}: {value!r}")
+    return out
+
+
+def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
+    a = _optional_mapping(raw, "arm", ctx)
+    if a is None:
+        return None
+    actx = f"{ctx}.arm"
+    dof = int(_require(a, "dof", actx))
+    joints = tuple(str(v) for v in _as_tuple(_require(a, "joints", actx)))
+    actuators = tuple(str(v) for v in _as_tuple(a.get("actuators", joints)))
+    for key, names in (("joints", joints), ("actuators", actuators)):
+        if len(names) != dof:
+            raise EmbodimentConfigError(f"{actx}.{key} must name {dof} joints (dof), got {names!r}")
+    g = a.get("gripper")
+    gripper = None
+    if g is not None:
+        gctx = f"{actx}.gripper"
+        gripper = GripperSpec(
+            actuator=str(_require(g, "actuator", gctx)),
+            joint=str(_require(g, "joint", gctx)),
+            open=float(_require(g, "open", gctx)),
+            closed=float(g.get("closed", 0.0)),
+            finger_bodies=tuple(str(v) for v in _as_tuple(g.get("finger_bodies"))),
+            weld_body=str(g.get("weld_body", "") or ""),
+            min_opening=float(g.get("min_opening", 0.005)),
+        )
+    return ArmSpec(
+        name=str(_require(a, "name", actx)),
+        dof=dof,
+        ee_site=str(_require(a, "ee_site", actx)),
+        joints=joints,
+        actuators=actuators,
+        home=_floats(_require(a, "home", actx), dof, f"{actx}.home"),
+        ik_seeds=tuple(
+            _floats(s, dof, f"{actx}.ik_seeds[{i}]") for i, s in enumerate(a.get("ik_seeds") or ())
+        ),
+        track_tol=float(a.get("track_tol", 0.05)),
+        gripper=gripper,
+    )
+
+
 def _optional_mapping(raw: dict[str, Any], key: str, ctx: str) -> dict[str, Any] | None:
     value = raw.get(key)
     if value is None:
@@ -250,7 +332,7 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> Emb
         capabilities=_parse_capabilities(raw, ctx),
         grasp=_parse_grasp(raw, ctx),
         driver=str(raw.get("driver", "") or ""),
-        arm=_optional_mapping(raw, "arm", ctx),
+        arm=_parse_arm(raw, ctx),
         nav=_optional_mapping(raw, "nav", ctx) or {},
     )
 

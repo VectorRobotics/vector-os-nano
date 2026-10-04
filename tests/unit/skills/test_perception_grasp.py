@@ -103,6 +103,9 @@ class FakeArm:
         self.move_calls += 1
         return True
 
+    def get_joint_positions(self):
+        return [0.0] * 6
+
     def fk(self, q):
         return ([0.0, 0.0, 0.0], np.eye(3))
 

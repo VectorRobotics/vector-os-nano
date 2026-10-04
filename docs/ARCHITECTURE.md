@@ -188,6 +188,11 @@ The architectural form of the CLAUDE.md Rules. Anything that violates them is a 
 - **Embodiment as config.** A morphology is a `robot.yaml` + assets read by one generic
   driver, never a bespoke per-robot class; every body conforms uniformly to `BaseProtocol`.
   If adding a robot needs a kernel/driver edit, the difference belongs in config.
+- **Arm motion reports what happened.** `move_joints` returns True only when the joints
+  settled within the manifest `track_tol` (a blocked arm returns False); `stop()` and an
+  abort preempt it within one set-point period. Arm IK/FK always use the LIVE base pose.
+  A sim grasp is physical first: the gripper welds an object only when every finger body
+  touches it while it holds the jaws open, and `is_holding(name)` reads that live weld.
 
 ---
 
@@ -216,7 +221,9 @@ One terse line per package. No line numbers (they rot — read the file). Paths 
   modules (`arm_sim_oracle` / `go2_sim_oracle` / `g1_perception_oracle`).
 - `embodiments/` — **embodiment-as-config**: `config.py` (`EmbodimentConfig` +
   `CapabilityProfile` schema + fail-loud loader), per-robot `<id>/robot.yaml` manifests
-  (`go2`, `g1`), and `capability_profile.py` — the ONE resolver (`resolve_capability_profile(agent)`)
+  (`go2`, `g1`, `so101`, and `go2_piper` whose typed `arm` block — joint/actuator/site
+  names, home, IK seeds, track tolerance, gripper finger/weld bodies — drives
+  MuJoCoPiper + MuJoCoPiperGripper), and `capability_profile.py` — the ONE resolver (`resolve_capability_profile(agent)`)
   every "what can this body do" gate consults (Rule 11, no capability-by-code drift): the
   native producer's navigate gate, `worlds/robot._agent_has_camera`, and `engine._has_base`
   all single-source through it (gated flags runtime-authoritative; enrichment flags reconcile

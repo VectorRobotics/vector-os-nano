@@ -192,3 +192,38 @@ def test_both_embodiments_distinct() -> None:
     # g1 spawn height clearly higher than go2 (biped vs quadruped).
     assert g1.spawn.base_height > go2.spawn.base_height
     assert not math.isnan(g1.spawn.base_height)
+
+
+# ---------------------------------------------------------------------------
+# Arm block (go2_piper): typed, every morphology name + the gripper contact gate
+# ---------------------------------------------------------------------------
+
+
+def _with_arm(arm: dict) -> dict:
+    return {
+        "id": "a", "display_name": "A", "model": {"path": "x.xml", "root_body": "b"},
+        "spawn": {"xy": [0, 0], "base_height": 0.1}, "stance": {"j": 0.0},
+        "policy": {"ref": "p"}, "capabilities": {}, "arm": arm,
+    }
+
+
+def test_go2_piper_arm_block_is_typed() -> None:
+    arm = load_embodiment_config("go2_piper").arm
+    assert arm.dof == 6 and arm.joints == tuple(f"piper_joint{i}" for i in range(1, 7))
+    assert arm.actuators == arm.joints and arm.home == (0.0,) * 6
+    assert arm.ee_site == "piper_ee_site" and len(arm.ik_seeds) == 3
+    g = arm.gripper
+    assert (g.actuator, g.joint, g.open, g.closed) == ("piper_gripper", "piper_joint7", 0.035, 0.0)
+    assert g.finger_bodies == ("piper_link7", "piper_link8") and g.weld_body == "piper_link6"
+
+
+@pytest.mark.parametrize("bad, field", [
+    ({"joints": ["j1"]}, "joints"),
+    ({"home": [0.0]}, "home"),
+    ({"ik_seeds": [[0.0, 0.0, 0.0]]}, "ik_seeds[0]"),
+])
+def test_arm_block_dof_mismatch_fails_loud(bad: dict, field: str) -> None:
+    arm = {"name": "x", "dof": 2, "ee_site": "s", "joints": ["j1", "j2"], "home": [0.0, 0.0], **bad}
+    with pytest.raises(EmbodimentConfigError) as exc:
+        parse_embodiment_config(_with_arm(arm), ctx="a/robot.yaml")
+    assert f"arm.{field}" in str(exc.value)

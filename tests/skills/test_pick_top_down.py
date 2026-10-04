@@ -203,16 +203,20 @@ def test_pick_sequence_opens_then_moves_then_closes():
     r = PickTopDownSkill().execute({"object_id": "o1"}, ctx)
 
     assert r.success is True
-    assert r.result_data["grasped_heuristic"] is True
+    assert r.result_data["grasped"] is True
     assert r.result_data["object_id"] == "o1"
 
     # Gripper: open before motion, close after descent — exactly once each
     assert gripper.calls == ["open", "close"]
 
-    # Arm: two IK solves (pre + grasp), three moves (pre, grasp, lift)
+    # Arm: pre + grasp solved up front, then the descent and the lift re-solved
+    # against the live base right before they run (seeded from the live joints).
     ik_calls = [c for c in arm.calls if c[0] == "ik_top_down"]
     move_calls = [c for c in arm.calls if c[0] == "move_joints"]
-    assert len(ik_calls) == 2
+    assert len(ik_calls) == 4
+    kinds = [c[0] for c in arm.calls]
+    assert kinds.index("move_joints") < [i for i, k in enumerate(kinds) if k == "ik_top_down"][2]
+    assert ik_calls[2][1][1] == arm.calls[kinds.index("move_joints")][1][0], "descent IK not seeded live"
     assert len(move_calls) == 3, f"expected 3 moves (pre/grasp/lift), got {len(move_calls)}"
 
 
@@ -239,16 +243,48 @@ def test_pick_target_xyz_override():
     assert r.success is True
 
 
-def test_grasp_heuristic_false_reports_possibly_missed():
+def test_a_missed_grasp_is_a_failure():
+    """The gripper closed on nothing: the skill must NOT report success (it used to
+    return success=True / 'possibly_missed', leaving only the verify to catch it)."""
     arm = _MockArm()
     gripper = _MockGripper(holding_after_close=False)
     wm = _mkworld(ObjectState(object_id="o1", label="thing", x=0.5, y=0, z=0.2))
     ctx = _mkctx(arm=arm, gripper=gripper, world_model=wm)
 
     r = PickTopDownSkill().execute({"object_id": "o1"}, ctx)
-    assert r.success is True  # motion sequence completed
-    assert r.result_data["diagnosis"] == "possibly_missed"
-    assert r.result_data["grasped_heuristic"] is False
+    assert r.success is False
+    assert r.result_data["diagnosis"] == "grasp_missed"
+    assert r.result_data["grasped"] is False
+
+
+def test_with_a_base_the_jaws_approach_short_of_the_object_then_slide_in():
+    """The long swing from stow ends 10 cm short of the pre-grasp (toward the base),
+    so it cannot sweep the object aside; then a short level slide to the pre-grasp."""
+    arm = _MockArm()
+    base = SimpleNamespace(get_position=lambda: [0.0, 0.0, 0.3])
+    wm = _mkworld(ObjectState(object_id="o1", label="thing", x=0.5, y=0, z=0.2))
+    ctx = SkillContext(arm=arm, gripper=_MockGripper(), base=base, world_model=wm, config={})
+    r = PickTopDownSkill().execute({"object_id": "o1"}, ctx)
+    assert r.success, r.error_message
+    targets = [c[1][0] for c in arm.calls if c[0] == "ik_top_down"]
+    pre = (0.5, 0.0, 0.25)
+    assert targets[2] == pytest.approx((0.4, 0.0, 0.25))  # the approach point
+    assert targets[3] == pytest.approx(pre)  # re-solved live before the slide
+    assert len([c for c in arm.calls if c[0] == "move_joints"]) == 4  # approach, slide, descent, lift
+
+
+def test_a_blocked_move_fails_the_pick():
+    class _BlockedArm(_MockArm):
+        def move_joints(self, positions, duration=3.0):
+            super().move_joints(positions, duration)
+            return len(self.calls) < 4  # the pre-grasp move reaches, the descent is blocked
+
+    gripper = _MockGripper()
+    wm = _mkworld(ObjectState(object_id="o1", label="thing", x=0.5, y=0, z=0.2))
+    r = PickTopDownSkill().execute({"object_id": "o1"}, _mkctx(arm=_BlockedArm(), gripper=gripper, world_model=wm))
+    assert r.success is False
+    assert r.result_data == {"diagnosis": "move_failed", "phase": "descent"}
+    assert gripper.calls == ["open"]  # never closed on a pose it did not reach
 
 
 # ---------------------------------------------------------------------------

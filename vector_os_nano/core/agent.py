@@ -152,12 +152,11 @@ class Agent:
             try:
                 joints = self._arm.get_joint_positions()
                 ee_pos = (0.0, 0.0, 0.0)
-                if self._ik_solver is not None:
-                    try:
-                        pos, _ = self._ik_solver.fk(joints)
-                        ee_pos = tuple(pos)
-                    except Exception:
-                        pass
+                try:  # the arm's OWN kinematics, never another arm's solver
+                    pos, _ = self._arm.fk(joints)
+                    ee_pos = tuple(pos)
+                except Exception:
+                    pass
                 self._world_model.update_robot_state(
                     joint_positions=tuple(joints),
                     ee_position=ee_pos,
@@ -344,15 +343,17 @@ class Agent:
         Returns:
             SkillContext bundling all resources skills need during execution.
         """
-        # Lazy-init IK solver
-        if self._ik_solver is None and self._arm is not None:
+        # Lazy-init the SO-101 IK solver, ONLY for an arm that takes an external
+        # solver (SO101Arm); every other arm carries its own ik/fk. A failure is
+        # cached (False) so it is not retried on every call.
+        if self._ik_solver is None and hasattr(self._arm, "set_ik_solver"):
             try:
                 from vector_os_nano.hardware.so101.ik_solver import IKSolver  # lazy
 
                 self._ik_solver = IKSolver()
-                if hasattr(self._arm, "set_ik_solver"):
-                    self._arm.set_ik_solver(self._ik_solver)
+                self._arm.set_ik_solver(self._ik_solver)
             except Exception as exc:
+                self._ik_solver = False
                 logger.debug("IK solver not available: %s", exc)
 
         # Lazy-init calibration

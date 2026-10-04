@@ -280,9 +280,9 @@ def _build_room_scene_xml(with_arm: bool = False) -> Path:
         # Grasp welds (name, body1, body2) — only with the arm (the no-arm model
         # has no piper_link6; a weld to a missing body fails to compile).
         # body1=piper_link6 (wrist carrying piper_ee_site + fingers), body2=each
-        # pickable; created INACTIVE — the gripper's _try_grasp activates one on
-        # close. This is what lets a grasp grade GROUNDED (the object physically
-        # attaches + lifts; mirrors so101_mujoco.xml).
+        # pickable; created INACTIVE — the gripper's close() activates one only
+        # when both fingers grip that object, so a held object stays held under
+        # the soft position-controlled jaws (mirrors so101_mujoco.xml).
         welds: tuple[tuple[str, str, str], ...] = (
             ("grasp_pickable_bottle_blue", "piper_link6", "pickable_bottle_blue"),
             ("grasp_pickable_bottle_green", "piper_link6", "pickable_bottle_green"),

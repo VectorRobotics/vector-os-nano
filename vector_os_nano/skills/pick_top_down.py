@@ -9,7 +9,8 @@ a LOT; see docs/pick_top_down_spec.md for the full assumption list. Summary:
 * Gripper always approaches straight down (world -Z). No angled approach.
 * Object world pose is known a priori from ``context.world_model`` (populated
   from MJCF body names prefixed with ``pickable_``). No perception.
-* Dog stands still during grasp. No base-arm coordination.
+* Dog stands still during grasp; every arm segment is re-solved against the
+  live base pose right before it runs.
 * No collision checking against dog body, furniture, or other objects.
 * Single-object only, no clutter reasoning.
 * The arm must be an ``ArmProtocol`` implementation that exposes an
@@ -20,12 +21,12 @@ Flow:
     2. IK top-down for pre-grasp (PRE_GRASP_HEIGHT above object)
     3. IK top-down for grasp (object z + GRASP_Z_ABOVE)
     4. Open gripper
-    5. Move to pre-grasp pose (PREGRASP_DURATION)
-    6. Descend to grasp pose (DESCENT_DURATION)
-    7. Close gripper; wait SETTLE_AFTER_CLOSE
-    8. Lift back to pre-grasp pose (LIFT_DURATION)
-    9. Return home (HOME_DURATION)
-    10. Report success + grasp heuristic (gripper.is_holding())
+    5. Move to the approach point short of the pre-grasp (along the jaws' open
+       side, base side), then slide in level (no base: straight to the pre-grasp)
+    6. Re-solve the grasp IK, descend (DESCENT_DURATION)
+    7. Close gripper (settles; welds only an object both fingers grip)
+    8. Lift back to the pre-grasp point (LIFT_DURATION)
+    9. success iff gripper.is_holding(); a miss is a failure (grasp_missed)
 
 No ROS2 imports. No perception imports.
 """
@@ -33,7 +34,6 @@ from __future__ import annotations
 
 import logging
 import math
-import time
 from typing import Optional
 
 from vector_os_nano.core.skill import SkillContext, skill
@@ -61,17 +61,18 @@ _DEFAULT_PRE_GRASP_HEIGHT: float = 0.05
 # 20 cm table.
 _DEFAULT_GRASP_Z_ABOVE: float = 0.01
 
+# With a base, the open jaws first go to a point this far (m) short of the
+# pre-grasp along their open side, then slide in level: the long swing from stow
+# happens clear of the object, which the fingers would otherwise sweep aside
+# (measured: a direct swing pushed the bottle 2 cm and left a finger on its rim).
+_DEFAULT_APPROACH_BACK: float = 0.10
+
 # Motion durations (seconds). Piper PD gains are moderate (kp=80 on the big
 # joints, kp=10 on wrist) so large motions need multi-second interpolation.
 _PREGRASP_DURATION: float = 4.0
+_SLIDE_DURATION: float = 1.5
 _DESCENT_DURATION: float = 2.0
-_CLOSE_SETTLE: float = 0.8
 _LIFT_DURATION: float = 2.0
-_HOME_DURATION: float = 4.0
-
-# Home joints = Piper URDF zero configuration (matches the stow pose set by
-# MuJoCoGo2 on connect/stand).
-_HOME_JOINTS: list[float] = [0.0] * 6
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +162,7 @@ class PickTopDownSkill:
         "object_not_found",
         "ik_unreachable",
         "move_failed",
+        "grasp_missed",
     ]
 
     # ------------------------------------------------------------------
@@ -249,58 +251,53 @@ class PickTopDownSkill:
         grasp = (obj_xyz[0], obj_xyz[1], obj_xyz[2] + grasp_dz)
         logger.info("[PICK-TD] pre_grasp=%s  grasp=%s", pre_grasp, grasp)
 
-        # IK — solve pre-grasp first, seed grasp from it for minimal joint change
+        # IK — both poses up front (never start a motion that cannot finish), the
+        # grasp seeded from the pre-grasp for minimal joint change. Every segment is
+        # re-solved against the LIVE base right before it runs: the dog sways under
+        # the moving arm, and a stale solution lands centimetres off.
         q_pre = arm.ik_top_down(pre_grasp)
         logger.info("[PICK-TD] pre-grasp IK %s", "OK" if q_pre is not None else "FAIL")
         if q_pre is None:
-            return SkillResult(
-                success=False,
-                error_message=f"IK unreachable for pre-grasp {pre_grasp}",
-                result_data={
-                    "diagnosis": "ik_unreachable",
-                    "phase": "pre_grasp",
-                    "target": list(pre_grasp),
-                },
-            )
+            return _ik_fail("pre_grasp", pre_grasp)
         q_grasp = arm.ik_top_down(grasp, current_joints=q_pre)
         if q_grasp is None:
-            return SkillResult(
-                success=False,
-                error_message=f"IK unreachable for grasp {grasp}",
-                result_data={
-                    "diagnosis": "ik_unreachable",
-                    "phase": "grasp",
-                    "target": list(grasp),
-                },
-            )
+            return _ik_fail("grasp", grasp)
 
         # --- Execute motion sequence ----------------------------------
         logger.info("[PICK-TD] opening gripper")
-        gripper.open()
-        time.sleep(0.3)
+        if not gripper.open():
+            return _move_fail("open")
 
-        logger.info("[PICK-TD] pre-grasp move (%.1fs)", _PREGRASP_DURATION)
-        if not arm.move_joints(q_pre, duration=_PREGRASP_DURATION):
-            return SkillResult(
-                success=False,
-                error_message="Pre-grasp move returned False",
-                result_data={"diagnosis": "move_failed", "phase": "pre_grasp"},
-            )
+        back = _approach_point(context.base, arm, q_pre, pre_grasp,
+                               float(cfg.get("approach_back", _DEFAULT_APPROACH_BACK)))
+        q_back = arm.ik_top_down(back, current_joints=q_pre) if back else None
+        if q_back is not None:
+            logger.info("[PICK-TD] approach %s (%.1fs), slide in", back, _PREGRASP_DURATION)
+            if not arm.move_joints(q_back, duration=_PREGRASP_DURATION):
+                return _move_fail("approach")
+            q_pre = arm.ik_top_down(pre_grasp, current_joints=arm.get_joint_positions()) or q_pre
+            if not arm.move_joints(q_pre, duration=_SLIDE_DURATION):
+                return _move_fail("pre_grasp")
+        else:
+            logger.info("[PICK-TD] pre-grasp move (%.1fs)", _PREGRASP_DURATION)
+            if not arm.move_joints(q_pre, duration=_PREGRASP_DURATION):
+                return _move_fail("pre_grasp")
 
+        q_grasp = arm.ik_top_down(grasp, current_joints=arm.get_joint_positions())
+        if q_grasp is None:
+            return _ik_fail("grasp", grasp)
         logger.info("[PICK-TD] descent (%.1fs)", _DESCENT_DURATION)
         if not arm.move_joints(q_grasp, duration=_DESCENT_DURATION):
-            return SkillResult(
-                success=False,
-                error_message="Descent move returned False",
-                result_data={"diagnosis": "move_failed", "phase": "descent"},
-            )
+            return _move_fail("descent")
 
+        # close() settles the jaws and welds only an object both fingers grip.
         logger.info("[PICK-TD] closing gripper at grasp=%s obj_xyz=%s", grasp, obj_xyz)
         gripper.close()
-        time.sleep(_CLOSE_SETTLE)
 
         logger.info("[PICK-TD] lift (%.1fs)", _LIFT_DURATION)
-        arm.move_joints(q_pre, duration=_LIFT_DURATION)
+        cur = arm.get_joint_positions()
+        arm.move_joints(arm.ik_top_down(pre_grasp, current_joints=cur) or q_pre,
+                        duration=_LIFT_DURATION)
         # IMPORTANT: we do NOT return to the URDF-zero "home" pose after a
         # successful grasp. Moving from the top-down grasp pose to zero-joints
         # rotates the wrist 90° and the object tips out of the jaws (Piper
@@ -308,21 +305,19 @@ class PickTopDownSkill:
         # pre-grasp pose keeps the gripper top-down, so the object stays
         # gripped until a follow-up place/drop skill.
 
-        # Grasp heuristic: if gripper reports cmd=closed but jaws held open
-        # by an object, we consider it a grasp. No force sensor in sim, so
-        # this is position-only.
-        grasped = False
-        try:
-            grasped = bool(gripper.is_holding())
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[PICK-TD] is_holding() raised: %s", exc)
-
+        grasped = bool(gripper.is_holding())
         result_data = {
-            "diagnosis": "ok" if grasped else "possibly_missed",
+            "diagnosis": "ok" if grasped else "grasp_missed",
             "object_id": obj_id,
             "grasp_world": list(obj_xyz),
-            "grasped_heuristic": grasped,
+            "grasped": grasped,
         }
+        if not grasped:
+            return SkillResult(
+                success=False,
+                error_message=f"Grasp missed: the gripper closed on nothing at {list(grasp)}",
+                result_data=result_data,
+            )
         return SkillResult(success=True, result_data=result_data)
 
     # ------------------------------------------------------------------
@@ -394,6 +389,40 @@ class PickTopDownSkill:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _approach_point(base, arm, q_pre, pre_grasp, back: float) -> tuple[float, float, float] | None:
+    """*back* metres from *pre_grasp* along the jaws' open side (tool x, on the base's
+    side), same height: sliding in along it no finger leads into the object. None
+    without a base."""
+    try:
+        bx, by = (float(v) for v in base.get_position()[:2])
+        _pos, rot = arm.fk(q_pre)
+    except Exception:  # noqa: BLE001 — no base (tabletop arm): approach directly
+        return None
+    ax, ay = float(rot[0][0]), float(rot[1][0])
+    n = math.hypot(ax, ay)
+    if back <= 0.0 or n < 1e-6:
+        return None
+    if ax * (bx - pre_grasp[0]) + ay * (by - pre_grasp[1]) < 0.0:
+        ax, ay = -ax, -ay
+    return (pre_grasp[0] + back * ax / n, pre_grasp[1] + back * ay / n, pre_grasp[2])
+
+
+def _ik_fail(phase: str, target: tuple[float, float, float]) -> SkillResult:
+    return SkillResult(
+        success=False,
+        error_message=f"IK unreachable for {phase} {target}",
+        result_data={"diagnosis": "ik_unreachable", "phase": phase, "target": list(target)},
+    )
+
+
+def _move_fail(phase: str) -> SkillResult:
+    return SkillResult(
+        success=False,
+        error_message=f"{phase} move did not reach its target (blocked or stopped)",
+        result_data={"diagnosis": "move_failed", "phase": phase},
+    )
 
 
 def _xyz_of(obj: ObjectState) -> tuple[float, float, float]:
