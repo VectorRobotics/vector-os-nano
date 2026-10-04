@@ -77,8 +77,8 @@ def task_policy(agent: Any) -> str:
                 "- A known object more than about 1.5 m away: navigate_to_object first, then grasp."
             )
         lines.append(
-            f"- An object in view and within reach: grasp it with {grasp}, naming it as the user did, "
-            "then verify holding_object('<object>')."
+            f"- An object in view and within reach: grasp it with {grasp} (no other pick skill), naming "
+            "it as the user did, then verify holding_object('<object>')."
         )
         if caps.has_base and world is not None and world.user is not None:
             ux, uy = world.user
@@ -100,7 +100,13 @@ def task_policy(agent: Any) -> str:
             "- Name an object in a verify the way the user did, e.g. holding_object('绿色瓶子') or "
             "holding_object('green bottle'); 'it' / '它' is the object of the earlier turn."
         )
-    return "\n".join(lines) if len(lines) > 1 else ""
+    if len(lines) == 1:
+        return ""
+    lines.append(
+        "- A skill that fails twice for the same reason will not succeed a third time: stop and "
+        "report why. Do not read or debug code in the middle of a physical task."
+    )
+    return "\n".join(lines)
 
 
 class RobotWorld:

@@ -1264,8 +1264,9 @@ _KERNEL_RULES = (
     "recover, say why and stop.\n"
     "- A read-only tool (status, memory, perception) changes nothing: answer from it, no "
     "verify needed.\n"
-    "- After start_simulation or stop_simulation succeeds, your tools and verify "
-    "predicates belong to the new body from your next call on.\n"
+    "- start_simulation / stop_simulation need no verify (they return only once the sim "
+    "is ready or gone). After one succeeds, your tools and verify predicates belong to "
+    "the new body from your next call on.\n"
 )
 
 
