@@ -31,7 +31,8 @@ class StopSkill:
     effects: dict = {"is_moving": False}
     failure_modes: list[str] = ["no_base"]
     # Housekeeping: halting changes no task state, so under a met task contract an
-    # unproven stop row does not fail the turn (trace_store.turn_reject_reason).
+    # unproven stop row does not fail the turn — unless it re-verifies (supersedes) an
+    # actuating attempt, which it must then prove (trace_store.turn_reject_reason).
     housekeeping: bool = True
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:

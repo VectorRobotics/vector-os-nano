@@ -216,7 +216,8 @@ class StepRecord:
     channels: tuple[str, ...] = ()
     # The producer recorded that every tool of the step's chain was read-only or a
     # declared housekeeping action (``stop``). Only such a row may stay un-GROUNDED
-    # under a met task contract; the default (False) is an actuating row (fail closed).
+    # under a met task contract, and only when its whole attempt group is housekeeping;
+    # the default (False) is an actuating row (fail closed).
     housekeeping: bool = False
 
 
