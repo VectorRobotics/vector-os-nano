@@ -24,6 +24,7 @@ and the body's manifest ``nav`` block (radius, speed, yaw rate, fall height).
 """
 from __future__ import annotations
 
+import collections
 import functools
 import math
 from pathlib import Path
@@ -169,6 +170,11 @@ def follow(
     i = 1
     seg_start = (x0, y0)  # the segment the robot tracks: seg_start -> path[i] (clear)
     lookahead = float(cfg["lookahead_m"])
+    # Gait slip: a legged body walks a few degrees off its heading (the MPC go2
+    # held a steady 0.12 m off a wall-side line). Estimate the course-vs-heading
+    # offset from the last second of straight walking and steer the course.
+    hist: collections.deque = collections.deque(maxlen=max(2, round(float(cfg["slip_window_s"]) / tick)))
+    slip, straight = 0.0, False
     best, best_t = _remaining((x0, y0), path, i), t0
     next_progress = t0
     try:
@@ -212,8 +218,18 @@ def follow(
             # pure pursuit on the tracked segment (pulls a drifting gait back onto the
             # clear line), streamed: no settle between ticks
             wx, wy = _pursuit_point((x, y), seg_start, path[i], lookahead)
-            err = _wrap(math.atan2(wy - y, wx - x) - base.get_heading())
+            heading = base.get_heading()
+            hist.append((x, y, heading))
+            if not straight:
+                hist.clear()
+                hist.append((x, y, heading))
+            elif len(hist) == hist.maxlen and math.dist(hist[0][:2], (x, y)) > 0.15:
+                course = math.atan2(y - hist[0][1], x - hist[0][0])
+                slip += float(cfg["slip_gain"]) * (_wrap(course - heading) - slip)
+                slip = max(-float(cfg["slip_max_rad"]), min(float(cfg["slip_max_rad"]), slip))
+            err = _wrap(math.atan2(wy - y, wx - x) - heading - slip)
             vyaw = max(-vyaw_max, min(vyaw_max, float(cfg["k_yaw"]) * err))
+            straight = abs(err) < 0.15
             if abs(err) > float(cfg["face_tol_rad"]):
                 vx = 0.0
                 best_t = now  # a pivot in place is progress the distance cannot see

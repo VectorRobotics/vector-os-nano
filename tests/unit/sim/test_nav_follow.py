@@ -193,3 +193,26 @@ def test_pure_pursuit_pulls_a_drifting_gait_back_onto_the_line():
     res = follow(base, (8.0, 0.0), [wall], body=GO2, cancel=Never())
     assert res
     assert min(vg.distance_to_polygon(p, wall) for p in base.trace) >= 0.19 + 0.05
+
+
+class Crab(KinBase):
+    """A gait that walks 10 deg to the right of its heading (a steady slip)."""
+
+    def wait_sim(self, seconds, cancel=None):
+        vx, vy, vyaw = self.cmd
+        a = math.radians(-10.0)
+        self.cmd = (vx * math.cos(a) - vy * math.sin(a), vx * math.sin(a) + vy * math.cos(a), vyaw)
+        try:
+            return super().wait_sim(seconds, cancel)
+        finally:
+            self.cmd = (vx, vy, vyaw)
+
+
+def test_steady_gait_slip_is_estimated_and_steered_out():
+    # Pure pursuit alone settles where its heading correction balances the slip
+    # (L x tan(10 deg) ~ 0.11 m off the line); the slip estimate removes that offset.
+    base = Crab()
+    res = follow(base, (10.0, 0.0), [], body=GO2, cancel=Never())
+    assert res
+    late = [p for p in base.trace if 5.0 <= p[0] <= 9.0]
+    assert late and max(abs(p[1]) for p in late) < 0.04
