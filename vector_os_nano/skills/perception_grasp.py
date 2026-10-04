@@ -71,30 +71,16 @@ def _is_deictic(query: str) -> bool:
     return any(tok in q for tok in _DEICTIC_TOKENS)
 
 
-# Concrete object NOUNS that name a thing — the trigger for the learned-DETECTOR
-# route (grounding-dino), with or without a colour ("罐子"/"红色的罐子"/"the can").
-# A query with NO such noun is either deictic ("前面的东西") or pure-colour
-# ("抓红色的") — both stay on the classical front_object resolver (the right cheap
-# tool). zh + en; substring match on the lowercased query.
-_OBJECT_NOUN_TOKENS = (
-    "罐子", "罐", "瓶子", "瓶", "杯子", "杯", "盒子", "盒", "球", "碗", "盘子", "盘",
-    "can", "bottle", "cup", "box", "ball", "bowl", "plate", "mug", "cylinder",
-    "banana", "apple", "object",
-)
-
-
 def _names_object(query: str) -> bool:
-    """True when *query* names a concrete object noun (-> the learned detector route).
+    """True when *query* names a concrete object (-> the learned detector route).
 
-    Distinguishes a NAMED object ("罐子"/"red can") from a pure-colour ("抓红色的")
-    or deictic ("前面的东西") query. A deictic query (a spatial reference) never
-    counts as naming an object, even if a generic noun like "东西"/"object" appears —
-    those resolve by space, not by name.
+    Distinguishes a NAMED object ("罐子"/"red can", the shared world vocabulary) from
+    a pure-colour ("抓红色的") or deictic ("前面的东西") query; those resolve on the
+    classical front_object resolver (by colour or by space), never by name.
     """
-    if _is_deictic(query):
-        return False
-    q = (query or "").strip().lower()
-    return any(tok in q for tok in _OBJECT_NOUN_TOKENS)
+    from vector_os_nano.perception.vocab import vocab
+
+    return not _is_deictic(query) and vocab().names_object(query)
 
 
 

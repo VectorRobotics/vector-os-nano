@@ -83,14 +83,12 @@ class WorldManifest:
         for name in self.pickables:
             if q == name.lower():
                 return name
-        hits = sorted(
-            ((len(a), n) for n, p in self.pickables.items() for a in p.aliases if _has(q, a)),
-            reverse=True,
-        )
-        if hits and (len(hits) == 1 or hits[0][0] > hits[1][0] or hits[0][1] == hits[1][1]):
-            return hits[0][1]
+        hits = [(a.lower(), n) for n, p in self.pickables.items() for a in p.aliases if _has(q, a)]
         if hits:
-            return None  # two different objects' aliases of equal length: ambiguous
+            best_alias, best = max(hits, key=lambda h: len(h[0]))
+            # Two objects named ("the red can, not the green bottle"): ambiguous,
+            # unless the other name is only part of the longer one ("cup" in "yellow cup").
+            return best if all(n == best or a in best_alias for a, n in hits) else None
         colours = {c for c, ws in self.colours.items() if any(_has(q, w) for w in ws)}
         cats = {c for c, ws in self.categories.items() if any(_has(q, w) for w in ws)}
         if not colours or any(_has(q, w) for w in self.scenery):

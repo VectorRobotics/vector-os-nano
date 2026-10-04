@@ -11,20 +11,18 @@ honestly perception-driven and the verify spine stays the sole grader.
 
 Backend: ``IDEA-Research/grounding-dino-tiny`` via transformers'
 ``AutoModelForZeroShotObjectDetection`` + ``AutoProcessor``, loaded with
-``local_files_only=True`` (HF_HUB_OFFLINE pinned in-process) so it never reaches
-the network. torch/transformers are imported LAZILY on first ``detect`` — importing
+``local_files_only=True`` (the HF cache only), so it never reaches the network. torch/transformers are imported LAZILY on first ``detect`` — importing
 this module must never pull GPU libs (keeps dev / go2-only worlds and fast unit
 runs torch-free). CUDA is used when present, else CPU (the tiny model is fine on CPU).
 
 Prompt format that WORKED in the go/no-go probe: lowercase, period-separated noun
 phrases ("a can. a bottle. a cylinder."). ``query_to_prompt`` maps an NL query to
-that form. Boxes are returned as ``core.types.Detection`` (label, bbox xyxy in
+that form through the shared world vocabulary. Boxes are returned as ``core.types.Detection`` (label, bbox xyxy in
 pixels, confidence=score), sorted by score descending, above a score threshold.
 """
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from typing import Any
 
@@ -47,85 +45,31 @@ _TEXT_THRESHOLD = 0.20
 # period-separated — the form grounding-dino expects.
 _GENERIC_PROMPT = "a can. a bottle. a cylinder."
 
-# zh → en object-noun map so a Chinese named query becomes an English phrase the
-# model grounds well (the model is English-text grounded). Substring match.
-_ZH_NOUN_EN: dict[str, str] = {
-    "罐子": "can",
-    "罐": "can",
-    "瓶子": "bottle",
-    "瓶": "bottle",
-    "杯子": "cup",
-    "杯": "cup",
-    "盒子": "box",
-    "盒": "box",
-    "球": "ball",
-    "碗": "bowl",
-}
 
-# zh → en colour-adjective map. grounding-dino IS colour-conditioned (the probe
-# boxed "a red can./a green bottle./a blue bottle." with distinct scores), so a
-# zh colour word must be PRESERVED into the prompt — dropping it (the old
-# behaviour) collapsed all three cylinders to "a bottle." and made colour
-# selection staging-dependent. Substring match on the lowercased query; longest
-# alias first so "红色" beats the bare "红" prefix. Mirrors front_object's
-# _COLOR_ALIASES (the HSV path) so both routes speak the same colour vocabulary.
-_ZH_COLOR_EN: tuple[tuple[str, str], ...] = (
-    ("红色", "red"), ("红", "red"),
-    ("绿色", "green"), ("绿", "green"),
-    ("蓝色", "blue"), ("蓝", "blue"),
-)
-# English colour adjectives kept as-is when an English query already names one
-# (we never re-translate; this is only used by the colour-only fallback below).
-_EN_COLORS: tuple[str, ...] = ("red", "green", "blue")
-
-
-def _zh_color(q: str) -> str | None:
-    """Return the English colour named in zh in *q* (lowercased), else None."""
-    for zh, en in _ZH_COLOR_EN:
-        if zh in q:
-            return en
-    return None
+class UngroundableQuery(ValueError):
+    """The query names something the world vocabulary cannot put into English."""
 
 
 def query_to_prompt(query: str | None) -> str:
     """Map an NL query to a lowercase, period-terminated grounding-dino prompt.
 
-    grounding-dino is colour-conditioned, so the colour adjective is PRESERVED:
-
-    - A zh colour+noun query → "a <colour> <english-noun>." (绿色的瓶子→"a green
-      bottle.", 红色的罐子→"a red can.", 蓝色的瓶子→"a blue bottle.").
-    - A zh noun without a colour → "a <english-noun>." (罐子→"a can.").
-    - A query that already names a thing in English keeps its adjective verbatim →
-      "a <thing>." (lowercased, punctuation stripped; trailing period guaranteed;
-      "red cup"→"a red cup.").
-    - A colour-WITHOUT-a-noun (zh "红色的" or en "red") → "a <colour> object."
-      rather than dropping the colour. (The SKILL routes a pure-colour query to the
-      classical HSV resolver, NOT here — this is only a best-effort fallback so the
-      detector is still colour-aware if ever handed a colour-only query directly.)
-    - A deictic / empty query → the generic graspable-shapes prompt.
+    The noun phrase comes from the shared world vocabulary (perception/vocab.py):
+    "绿色的瓶子" -> "a green bottle.", "pick up the red can" -> "a red can.", "红色的" ->
+    "a red object." (grounding-dino is colour-conditioned, so the colour is kept;
+    articles and request verbs are dropped). An empty, deictic or generic query gets
+    the generic graspable-shapes prompt. CJK text the vocabulary cannot translate
+    raises :class:`UngroundableQuery`: the model is English-text grounded and turns
+    untranslated CJK into ``[UNK]`` tokens that still return confident boxes.
     """
-    q = (query or "").strip().lower()
-    if not q:
-        return _GENERIC_PROMPT
-    color = _zh_color(q)
-    for zh, en in _ZH_NOUN_EN.items():
-        if zh in q:
-            return f"a {color} {en}." if color else f"a {en}."
-    # No zh noun matched. If a zh colour was named with no recognised noun, build a
-    # colour-only prompt rather than dropping the colour.
-    if color:
-        return f"a {color} object."
-    # English (or already-romanized) query: strip to a bare noun phrase, adjective
-    # (incl. colour) preserved verbatim.
-    cleaned = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in q)
-    cleaned = " ".join(cleaned.split())
-    if not cleaned:
-        return _GENERIC_PROMPT
-    # A bare English colour word with no noun → "a <colour> object." (parallel to
-    # the zh colour-only case above) so the colour is never dropped.
-    if cleaned in _EN_COLORS:
-        return f"a {cleaned} object."
-    return f"a {cleaned}."
+    from vector_os_nano.perception.vocab import vocab
+
+    phrase = vocab().english(query)
+    if phrase is None:
+        raise UngroundableQuery(
+            f"cannot ground {query!r}: no English name for it in the world vocabulary; "
+            "name the object in English (e.g. 'green bottle')"
+        )
+    return f"a {phrase}." if phrase else _GENERIC_PROMPT
 
 
 class GroundingDinoDetector:
@@ -154,9 +98,6 @@ class GroundingDinoDetector:
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        # Pin offline BEFORE importing transformers so the hub never tries the net.
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
-        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         try:
             import torch
             from transformers import (
@@ -211,10 +152,10 @@ class GroundingDinoDetector:
         """
         if rgb is None or not isinstance(rgb, np.ndarray) or rgb.ndim != 3:
             raise ValueError("GroundingDinoDetector.detect needs an (H,W,3) RGB array")
+        prompt = query_to_prompt(query)  # an ungroundable query fails before any load
         self._ensure_loaded()
         from PIL import Image as PILImage  # lazy
 
-        prompt = query_to_prompt(query)
         height, width = int(rgb.shape[0]), int(rgb.shape[1])
         pil = PILImage.fromarray(rgb.astype(np.uint8))
 
@@ -248,6 +189,8 @@ class GroundingDinoDetector:
             if score < self._box_threshold:
                 continue
             label = self._coerce_label(labels[i] if labels is not None else query, query)
+            if "[UNK]" in label:
+                continue  # the text tokens it grounded were unknown to the model
             x1, y1, x2, y2 = box
             detections.append(
                 Detection(
