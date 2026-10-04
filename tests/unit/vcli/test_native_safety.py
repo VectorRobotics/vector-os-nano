@@ -295,7 +295,10 @@ def test_drive_for_ends_the_motion_on_a_stop() -> None:
     """A stop during a long open-loop walk ends it now, not when the timer runs out."""
     from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 
-    body = SimpleNamespace(_drive_mode="background_daemon")
+    def wait_sim(seconds: float, cancel: Any = None) -> bool:  # a wall-clock stand-in
+        return not (cancel or threading.Event()).wait(seconds)
+
+    body = SimpleNamespace(runtime=SimpleNamespace(wait_sim=wait_sim))
     abort.clear_abort()
     threading.Timer(0.2, abort.request_abort).start()
     t0 = time.monotonic()

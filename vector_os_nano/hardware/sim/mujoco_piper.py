@@ -438,6 +438,7 @@ class MuJoCoPiper:
         positions if converged within _IK_POS_TOL, else None.
         """
         self._require_connection()
+        self._go2.wait_settled()  # never solve against a body still braking from a stop
         with self._ik_lock:
             live = self._sync_ik_base_from_live()
             seed = current_joints or [float(live[a]) for a in self._arm_joint_qpos_adr]
@@ -456,6 +457,7 @@ class MuJoCoPiper:
         converges in position (_IK_POS_TOL) and rotation angle (_IK_ROT_TOL).
         """
         self._require_connection()
+        self._go2.wait_settled()  # never solve against a body still braking from a stop
         with self._ik_lock:
             live = self._sync_ik_base_from_live()
             lo = self._go2._mj.layout.quat_start

@@ -718,6 +718,20 @@ class MuJoCoGo2:
         self._require_connection()
         return self.runtime.wait_sim(seconds, cancel=cancel)
 
+    def wait_settled(self, timeout: float = 3.0) -> bool:
+        """Wait (sim time) until a stop has braked out: the body stands in its stance.
+
+        A zero command keeps the trunk moving ~1.4 sim-s (the brake's MPC trot, then
+        the stance ramp: ~3 cm lower, ~1.5 deg less pitch), so anything planned
+        against the live body pose (the arm's IK) waits for it. False on the timeout.
+        """
+        deadline = self.get_sim_time() + timeout
+        # a zero command the controller has not seen yet is a brake about to start
+        while self._brake_t is not None or (self._was_moving and self._cmd_vel == (0.0, 0.0, 0.0)):
+            if self.get_sim_time() >= deadline or not self.wait_sim(0.05):
+                return False
+        return True
+
     def _drive_for(self, seconds: float) -> bool:
         """Let *seconds* of SIM time pass while a blocking motion runs.
 
@@ -725,8 +739,11 @@ class MuJoCoGo2:
         (macOS pump, VECTOR_SIM_LOCKSTEP) it steps the physics here, so the gait
         animates and the viewer syncs on this thread. Sim time, not wall time:
         a walk of N seconds covers the same ground at any real-time ratio.
+        A stop (the calling run's CancelToken) ends the motion now, not after it.
         """
-        return self.runtime.wait_sim(seconds)
+        from vector_os_nano.vcli.cognitive.abort import current_token  # noqa: PLC0415
+
+        return self.runtime.wait_sim(seconds, cancel=current_token())
 
     def _init_mpc_stack(self) -> None:
         """Initialize convex_mpc control stack. Raises ImportError if unavailable.

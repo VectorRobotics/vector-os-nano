@@ -237,3 +237,15 @@ def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
     )
     assert r.returncode != 0, r.stdout[-2000:] + r.stderr[-2000:]
     assert "RED rc=2 collection" in r.stdout, r.stdout[-2000:]
+
+
+def test_every_known_red_row_names_an_existing_test_file() -> None:
+    """A merge resurrected 88 known_reds rows WP04 had deleted (with the files they
+    pinned), and with them a strict xfail whose test WP04 had fixed. A row for a file
+    that no longer exists is dead weight a merge can carry back unseen."""
+    rows = [
+        line.split("|", 1)[0].strip()
+        for line in (_TESTS / "known_reds.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert not [r for r in rows if not (_REPO / r.split("::", 1)[0]).is_file()]

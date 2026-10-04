@@ -75,7 +75,12 @@ def test_ctrl_c_mid_walk_stops_the_dog(go2) -> None:
 
 def test_stop_skill_from_another_thread_aborts_the_navigate(go2) -> None:
     out: dict = {}
-    th = threading.Thread(target=lambda: out.update(r=go2.navigate_to(*_STUDY)))
+
+    def run() -> None:  # a navigate runs inside a run (the turn worker binds one), and
+        abort.new_run()  # StopSkill spares only the stopper's own run (WP05)
+        out["r"] = go2.navigate_to(*_STUDY)
+
+    th = threading.Thread(target=run)
     th.start()
     time.sleep(3.0)
     try:

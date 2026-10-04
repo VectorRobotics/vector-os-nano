@@ -185,3 +185,28 @@ def test_an_abort_preempts_a_move(seated) -> None:
     abort.request_abort()
     t.join(timeout=10.0)
     assert out["ok"] is False and out["t"] - t_abort <= 0.05
+
+
+def test_ik_right_after_a_walk_solves_for_the_stopped_body(seated) -> None:
+    """A walk returns while its stop still brakes the trunk (MPC trot to zero, then the
+    stance ramp: ~3 cm lower, ~1.5 deg less pitch, ~1.4 sim-s). IK solved in that
+    transient planned for a body that was gone when the arm arrived: E3a's approach
+    move dragged the fingers into the trunk, 0/3 (INT1)."""
+    go2, arm, _grip = seated
+    if not go2._use_mpc:
+        pytest.skip("the stop brake is the MPC gait's")
+    try:
+        go2.walk(0.0, 0.0, 0.4, 0.6)  # turn in place a little, then stop
+        x, y, _ = go2.get_position()
+        h = go2.get_heading()
+        target = (x + 0.38 * math.cos(h), y + 0.38 * math.sin(h), 0.34)
+        q = arm.ik_top_down(target)
+        assert q is not None
+        go2.wait_sim(2.0)  # whatever is left of the brake
+        pos, _ = arm.fk(q)
+        assert math.dist(pos, target) < 0.01, pos
+    finally:  # back to the seat for the module's other tests
+        rq = go2._mj.layout.root_qpos_adr
+        go2.runtime.call(lambda _m, d: d.qpos.__setitem__(slice(rq, rq + 7), [*_SEAT, 0.3, 1.0, 0.0, 0.0, 0.0]))
+        go2.reset_pose()
+        go2.wait_sim(1.5)
