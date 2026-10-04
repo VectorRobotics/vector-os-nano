@@ -160,7 +160,7 @@ def test_ik_seeds_include_the_live_arm_and_respect_the_limits(rig, monkeypatch) 
     monkeypatch.setattr(piper, "_ik_iterate", lambda t, r, s: seen.append(list(s)))
     assert piper.ik_top_down((10.5, 3.0, 0.3)) is None
     assert seen[0] == pytest.approx(live)  # the explicit live seed, not IK residue
-    assert len(seen) == 2 * (1 + len(piper._spec.ik_seeds))  # heading 0: world X and +pi
+    assert len(seen) == 2 * (1 + len(piper._spec.ik_seeds))  # heading 0 = world X: two jaw yaws
     lo, hi = piper._ik_range[:, 0], piper._ik_range[:, 1]
     for s in piper._spec.ik_seeds:
         assert np.all(np.asarray(s) >= lo) and np.all(np.asarray(s) <= hi), s

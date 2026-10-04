@@ -21,8 +21,8 @@ Flow:
     2. IK top-down for pre-grasp (PRE_GRASP_HEIGHT above object)
     3. IK top-down for grasp (object z + GRASP_Z_ABOVE)
     4. Open gripper
-    5. Move to the approach point short of the pre-grasp (toward the base), then
-       slide in level to the pre-grasp (no base: straight to the pre-grasp)
+    5. Move to the approach point short of the pre-grasp (along the jaws' open
+       side, base side), then slide in level (no base: straight to the pre-grasp)
     6. Re-solve the grasp IK, descend (DESCENT_DURATION)
     7. Close gripper (settles; welds only an object both fingers grip)
     8. Lift back to the pre-grasp point (LIFT_DURATION)
@@ -62,8 +62,8 @@ _DEFAULT_PRE_GRASP_HEIGHT: float = 0.05
 _DEFAULT_GRASP_Z_ABOVE: float = 0.01
 
 # With a base, the open jaws first go to a point this far (m) short of the
-# pre-grasp, on the line from the base, then slide in level: the long swing from
-# stow happens clear of the object, which the fingers would otherwise sweep aside
+# pre-grasp along their open side, then slide in level: the long swing from stow
+# happens clear of the object, which the fingers would otherwise sweep aside
 # (measured: a direct swing pushed the bottle 2 cm and left a finger on its rim).
 _DEFAULT_APPROACH_BACK: float = 0.10
 
@@ -268,7 +268,7 @@ class PickTopDownSkill:
         if not gripper.open():
             return _move_fail("open")
 
-        back = _approach_point(context.base, pre_grasp,
+        back = _approach_point(context.base, arm, q_pre, pre_grasp,
                                float(cfg.get("approach_back", _DEFAULT_APPROACH_BACK)))
         q_back = arm.ik_top_down(back, current_joints=q_pre) if back else None
         if q_back is not None:
@@ -391,17 +391,22 @@ class PickTopDownSkill:
 # ---------------------------------------------------------------------------
 
 
-def _approach_point(base, pre_grasp, back: float) -> tuple[float, float, float] | None:
-    """*back* metres from *pre_grasp* toward the base, same height; None without a base."""
+def _approach_point(base, arm, q_pre, pre_grasp, back: float) -> tuple[float, float, float] | None:
+    """*back* metres from *pre_grasp* along the jaws' open side (tool x, on the base's
+    side), same height: sliding in along it no finger leads into the object. None
+    without a base."""
     try:
         bx, by = (float(v) for v in base.get_position()[:2])
+        _pos, rot = arm.fk(q_pre)
     except Exception:  # noqa: BLE001 — no base (tabletop arm): approach directly
         return None
-    dx, dy = pre_grasp[0] - bx, pre_grasp[1] - by
-    d = math.hypot(dx, dy)
-    if back <= 0.0 or d <= back:
+    ax, ay = float(rot[0][0]), float(rot[1][0])
+    n = math.hypot(ax, ay)
+    if back <= 0.0 or n < 1e-6:
         return None
-    return (pre_grasp[0] - back * dx / d, pre_grasp[1] - back * dy / d, pre_grasp[2])
+    if ax * (bx - pre_grasp[0]) + ay * (by - pre_grasp[1]) < 0.0:
+        ax, ay = -ax, -ay
+    return (pre_grasp[0] + back * ax / n, pre_grasp[1] + back * ay / n, pre_grasp[2])
 
 
 def _ik_fail(phase: str, target: tuple[float, float, float]) -> SkillResult:

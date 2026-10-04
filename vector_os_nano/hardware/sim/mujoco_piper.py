@@ -94,9 +94,13 @@ def _rot_z(yaw: float) -> np.ndarray:
 
 
 def _jaw_yaws(heading: float) -> list[float]:
-    """World X, +pi (the parallel jaw is symmetric), then the body heading and +pi."""
+    """The body heading, +pi (the parallel jaw is symmetric), then world X and +pi.
+
+    Heading first: the jaws then open across the dog's forward direction, the way
+    it approaches an object it faces.
+    """
     out: list[float] = []
-    for y in (0.0, math.pi, heading, heading + math.pi):
+    for y in (heading, heading + math.pi, 0.0, math.pi):
         if all(abs(math.remainder(y - o, 2 * math.pi)) > 1e-3 for o in out):
             out.append(y)
     return out
@@ -446,7 +450,7 @@ class MuJoCoPiper:
     ) -> list[float] | None:
         """6-DoF IK with the tool z-axis = world -Z (top-down), against the LIVE base.
 
-        Tries the jaw yaws {world X, +pi, body heading, +pi} and, for each, the
+        Tries the jaw yaws {body heading, +pi, world X, +pi} and, for each, the
         seeds *current_joints*, the live arm joints, then the manifest's
         ``ik_seeds`` (clipped to the joint limits). Returns the first solution that
         converges in position (_IK_POS_TOL) and rotation angle (_IK_ROT_TOL).
