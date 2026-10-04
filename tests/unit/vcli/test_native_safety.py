@@ -601,6 +601,18 @@ def test_dev_world_actions_go_native_but_sim_commands_and_questions_do_not() -> 
     assert not cli._intent_actionable(engine(True), "在 /tmp/vos_e0 写一个 hello.txt")
 
 
+def test_headless_turn_context_never_resolves_permissions_on_stdin(monkeypatch, tmp_path) -> None:
+    """cli-entry:missed3: -p defaulted the legacy tool resolver to an stdin prompt."""
+    from vector_os_nano.vcli import config
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config, "resolve_credentials", lambda **k: ("", "anthropic", "m", None))
+    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
+    args = cli.parse_args(["-p", "hi", "--json"])
+    ctx = cli._build_turn_context(args)
+    assert ctx.app_state["tool_permission_resolver"] is None
+
+
 def test_the_chat_llm_key_is_never_handed_to_the_vlm(monkeypatch) -> None:
     """cli-entry:missed4: --api-key (Anthropic/DeepSeek) went to the OpenRouter VLM."""
     from vector_os_nano.sim import session as sim_session
