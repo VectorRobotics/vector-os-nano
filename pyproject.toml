@@ -76,8 +76,6 @@ gpu = [
 # painful or unavailable on macOS arm64. Kept out of [all].
 real = [
     "pyrealsense2>=2.50",
-    "open3d>=0.17",
-    "pybullet>=3.2",
 ]
 
 # IK: Inverse kinematics solver

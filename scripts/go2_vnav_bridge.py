@@ -12,10 +12,8 @@ Publishes the topics the CMU/Ji Zhang nav stack expects:
   - TF: map→sensor, map→vehicle
   - Subscribes: /cmd_vel (TwistStamped) → go2.set_velocity()
 
-Usage:
-    source /opt/ros/jazzy/setup.bash
-    cd ~/Desktop/vector_os_nano
-    ./scripts/launch_vnav.sh
+Usage: started in-process by the go2 SimSession's optional TARE capability
+(vector_os_nano/sim/session.py _launch_ros2_stack, with scripts/launch_nav_only.sh).
 """
 from __future__ import annotations
 
@@ -1457,7 +1455,7 @@ class Go2VNavBridge(Node):
         if self._marker_pub is None:
             return
         try:
-            from vector_os_nano.ros2.nodes.scene_graph_viz import (
+            from vector_os_nano.hardware.ros2.viz import (
                 build_scene_graph_markers,
             )
             odom = self._go2.get_odometry()

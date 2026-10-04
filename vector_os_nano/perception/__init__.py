@@ -4,7 +4,6 @@
 """Perception stack — camera drivers, VLM detection, tracking, pointcloud.
 
 No ROS2 imports anywhere in this subpackage.
-ROS2 perception bridge lives in vector_os_nano.ros2.nodes.perception_node.
 
 Public API
 ----------

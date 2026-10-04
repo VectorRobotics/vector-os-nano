@@ -38,7 +38,6 @@ def discover_all_tools() -> list:
     from vector_os_nano.vcli.tools.robot import RobotStatusTool, WorldQueryTool
     from vector_os_nano.vcli.tools.search_tools import GlobTool, GrepTool
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
-    # SysNav sim integration PAUSED — v2.4 T6 bridge-wiring + G5 launch not delivered; module + tests retained, re-register when v2.4 resumes (see progress.md).
     from vector_os_nano.vcli.tools.web_tool import WebFetchTool
     from vector_os_nano.vcli.tools.scene_graph_tool import SceneGraphQueryTool
     from vector_os_nano.vcli.tools.ros2_tools import Ros2TopicsTool, Ros2NodesTool, Ros2LogTool

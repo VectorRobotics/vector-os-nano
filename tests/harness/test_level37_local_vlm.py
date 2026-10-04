@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import os
 import textwrap
 
 import httpx
@@ -185,23 +184,3 @@ class TestLocalVLMInference:
         elapsed = time.monotonic() - t0
         # Second call should complete within 30s (typically 2-5s after warmup)
         assert elapsed < 30.0, f"Second call took {elapsed:.1f}s — too slow"
-
-
-# ── Launch script env var tests ────────────────────────────────────────
-
-
-class TestLaunchScriptConfig:
-    """Verify launch scripts propagate VLM env vars."""
-
-    def test_launch_explore_has_vlm_env(self):
-        """launch_explore.sh should export VECTOR_VLM_URL."""
-        script = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "scripts", "launch_explore.sh",
-        )
-        if not os.path.isfile(script):
-            pytest.skip("launch_explore.sh not found")
-        with open(script) as f:
-            content = f.read()
-        assert "VECTOR_VLM_URL" in content
-        assert "VECTOR_VLM_MODEL" in content

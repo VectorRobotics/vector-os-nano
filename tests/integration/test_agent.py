@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from vector_os_nano.core.types import ExecutionResult, TaskPlan, TaskStep, SkillResult
+from vector_os_nano.core.types import TaskPlan, TaskStep, SkillResult
 from vector_os_nano.core.skill import Skill, SkillContext, SkillRegistry
 from vector_os_nano.core.world_model import WorldModel
 
@@ -113,48 +113,6 @@ class MockLLM:
         return "Task complete."
 
 
-class MockLLMClarification:
-    """Mock LLM that always returns a clarification request."""
-
-    def plan(
-        self,
-        goal: str,
-        world_state: dict,
-        skill_schemas: list,
-        history=None,
-        model_override: str | None = None,
-    ) -> TaskPlan:
-        return TaskPlan(
-            goal=goal,
-            steps=[],
-            requires_clarification=True,
-            clarification_question="Which object should I pick?",
-        )
-
-    def query(self, prompt: str, image=None, model_override: str | None = None) -> str:
-        return ""
-
-    def classify(self, user_message: str, model_override: str | None = None) -> str:
-        return "task"
-
-    def chat(
-        self,
-        user_message: str,
-        system_prompt: str,
-        history=None,
-        model_override: str | None = None,
-    ) -> str:
-        return ""
-
-    def summarize(
-        self,
-        original_request: str,
-        execution_trace: str,
-        model_override: str | None = None,
-    ) -> str:
-        return ""
-
-
 class MockLLMFail:
     """Mock LLM that always returns a plan that will fail (unknown skill)."""
 
@@ -239,14 +197,6 @@ class TestAgentCreation:
         agent = Agent(arm=MockArm(), llm=MockLLM())
         assert agent is not None
 
-    def test_agent_creation_with_api_key(self):
-        """Agent(llm_api_key='test') should create a ClaudeProvider internally."""
-        from vector_os_nano.core.agent import Agent
-        from vector_os_nano.llm.claude import ClaudeProvider
-
-        agent = Agent(arm=MockArm(), llm_api_key="test-api-key")
-        assert isinstance(agent._llm, ClaudeProvider)
-
     def test_agent_creation_with_gripper(self):
         """Explicit gripper should be stored on the agent."""
         from vector_os_nano.core.agent import Agent
@@ -264,127 +214,12 @@ class TestAgentCreation:
         agent = Agent(arm=MockArm(), config=cfg)
         assert agent is not None
 
-    def test_agent_creation_llm_overrides_api_key(self):
-        """If both llm= and llm_api_key= are passed, llm= wins."""
-        from vector_os_nano.core.agent import Agent
-
-        mock_llm = MockLLM()
-        agent = Agent(arm=MockArm(), llm=mock_llm, llm_api_key="ignored")
-        assert agent._llm is mock_llm
-
     def test_agent_creation_no_arm(self):
         """Agent with no arm should set _arm to None."""
         from vector_os_nano.core.agent import Agent
 
         agent = Agent()
         assert agent._arm is None
-
-
-# ---------------------------------------------------------------------------
-# Test: execute() — direct mode (no LLM)
-# ---------------------------------------------------------------------------
-
-
-class TestAgentExecuteDirect:
-    """Tests for _execute_direct() path — used when no LLM is configured."""
-
-    def test_agent_execute_direct_home(self):
-        """'home' command without LLM should succeed via HomeSkill."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm(), gripper=MockGripper())
-        result = agent.execute("home")
-        assert isinstance(result, ExecutionResult)
-        assert result.success is True
-
-    def test_agent_execute_direct_scan(self):
-        """'scan' command without LLM should succeed via ScanSkill."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm(), gripper=MockGripper())
-        result = agent.execute("scan")
-        assert isinstance(result, ExecutionResult)
-        assert result.success is True
-
-    def test_agent_execute_direct_unknown(self):
-        """Unknown command without LLM should return a failure result."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm())
-        result = agent.execute("fly to the moon")
-        assert isinstance(result, ExecutionResult)
-        assert result.success is False
-        assert result.failure_reason is not None
-        assert "No LLM" in result.failure_reason or "Unknown command" in result.failure_reason
-
-    def test_agent_execute_direct_pick_with_arg(self):
-        """'pick red_cup' should pass object_label to PickSkill params."""
-        from vector_os_nano.core.agent import Agent
-
-        arm = MockArm()
-        gripper = MockGripper()
-        agent = Agent(arm=arm, gripper=gripper)
-        # PickSkill may fail (no perception), but it should attempt with correct param
-        result = agent.execute("pick red_cup")
-        assert isinstance(result, ExecutionResult)
-        # Success or failure — not crashing is the key assertion here
-
-    def test_agent_execute_direct_empty_string(self):
-        """Empty instruction should return failure gracefully."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm())
-        result = agent.execute("")
-        assert isinstance(result, ExecutionResult)
-        assert result.success is False
-
-
-# ---------------------------------------------------------------------------
-# Test: execute() — LLM planning mode
-# ---------------------------------------------------------------------------
-
-
-class TestAgentExecuteWithLLM:
-    """Tests for execute() path with an LLM configured."""
-
-    def test_agent_execute_with_llm(self):
-        """With MockLLM, execute() should complete a 'home' plan."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm(), gripper=MockGripper(), llm=MockLLM())
-        result = agent.execute("go home")
-        assert isinstance(result, ExecutionResult)
-        assert result.success is True
-
-    def test_agent_execute_with_llm_clarification(self):
-        """When LLM requests clarification, result should have clarification_question."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm(), llm=MockLLMClarification())
-        # Use an instruction that has no alias match so the LLM classify/plan path runs
-        result = agent.execute("do something ambiguous please")
-        assert isinstance(result, ExecutionResult)
-        assert result.success is False
-        assert result.status == "clarification_needed"
-        assert result.clarification_question is not None
-        assert len(result.clarification_question) > 0
-
-    def test_agent_execute_with_llm_failure(self):
-        """Failed execution (unknown skill from LLM) should return failure result."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm(), llm=MockLLMFail())
-        result = agent.execute("do something impossible")
-        assert isinstance(result, ExecutionResult)
-        assert result.success is False
-
-    def test_agent_execute_returns_execution_result(self):
-        """execute() always returns an ExecutionResult, never raises."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm(), gripper=MockGripper(), llm=MockLLM())
-        result = agent.execute("any instruction")
-        assert isinstance(result, ExecutionResult)
 
 
 # ---------------------------------------------------------------------------
@@ -423,16 +258,6 @@ class TestAgentRegisterSkill:
         agent.register_skill(AlwaysSucceedSkill())
         agent.register_skill(AlwaysSucceedSkill())  # second register
         assert agent.skills.count("always_succeed") == 1
-
-    def test_agent_execute_custom_skill_direct(self):
-        """Custom skill registered before execute should be callable via direct mode."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm())
-        agent.register_skill(AlwaysSucceedSkill())
-        result = agent.execute("always_succeed")
-        assert result.success is True
-
 
 # ---------------------------------------------------------------------------
 # Test: world property
@@ -621,113 +446,3 @@ class TestAgentContextManager:
         except RuntimeError:
             pass
         assert arm._connected is False
-
-
-# ---------------------------------------------------------------------------
-# Test: cross-task memory (SessionMemory integration)
-# ---------------------------------------------------------------------------
-
-
-class MockLLMWithChat:
-    """Mock LLM that routes 'hello' to chat, everything else to task planning."""
-
-    def plan(
-        self,
-        goal: str,
-        world_state: dict,
-        skill_schemas: list,
-        history=None,
-        model_override: str | None = None,
-    ) -> TaskPlan:
-        return TaskPlan(
-            goal=goal,
-            steps=[TaskStep(step_id="s1", skill_name="home", parameters={})],
-        )
-
-    def query(self, prompt: str, image=None, model_override: str | None = None) -> str:
-        return "I see a robot arm."
-
-    def classify(self, user_message: str, model_override: str | None = None) -> str:
-        """Return 'chat' for greetings, 'task' for everything else."""
-        if user_message.lower().startswith("hello"):
-            return "chat"
-        return "task"
-
-    def chat(
-        self,
-        user_message: str,
-        system_prompt: str,
-        history=None,
-        model_override: str | None = None,
-    ) -> str:
-        return f"Hi! Ready to help. You said: {user_message}"
-
-    def summarize(
-        self,
-        original_request: str,
-        execution_trace: str,
-        model_override: str | None = None,
-    ) -> str:
-        return f"Completed: {original_request}"
-
-
-class TestCrossTaskMemory:
-    """Test that conversation context persists across task executions."""
-
-    @pytest.fixture
-    def agent(self):
-        """Agent with MockArm, MockGripper, and MockLLMWithChat."""
-        from vector_os_nano.core.agent import Agent
-
-        return Agent(
-            arm=MockArm(),
-            gripper=MockGripper(),
-            llm=MockLLMWithChat(),
-        )
-
-    def test_task_result_in_memory(self, agent):
-        """After executing a task via LLM path, the result should be in session memory."""
-        # Use an instruction that bypasses direct-skill alias matching
-        agent.execute("execute a custom task")
-        ctx = agent._memory.get_last_task_context()
-        assert ctx is not None
-
-    def test_task_result_metadata_contains_success(self, agent):
-        """Task result metadata should record success status."""
-        agent.execute("execute a custom task")
-        ctx = agent._memory.get_last_task_context()
-        assert ctx is not None
-        assert "success" in ctx
-        assert ctx["success"] is True
-
-    def test_cross_task_history_available(self, agent):
-        """After two tasks, both should appear in LLM history."""
-        agent.execute("execute first task")
-        agent.execute("execute second task")
-        history = agent._memory.get_llm_history()
-        # Should have entries from both tasks:
-        # task1: user message + task_result = 2 entries
-        # task2: user message + task_result = 2 entries
-        assert len(history) >= 4
-
-    def test_chat_then_task_continuity(self, agent):
-        """Chat messages should persist in memory when switching to task mode."""
-        # First a chat (classify returns "chat" for "hello...")
-        agent.execute("hello there")
-        # Then a task
-        agent.execute("execute a custom task")
-        history = agent._memory.get_llm_history()
-        # The chat user message should still be in history
-        assert any("hello there" in h["content"] for h in history)
-
-    def test_memory_attribute_exists(self, agent):
-        """Agent should expose _memory as a SessionMemory instance."""
-        from vector_os_nano.core.memory import SessionMemory
-
-        assert hasattr(agent, "_memory")
-        assert isinstance(agent._memory, SessionMemory)
-
-    def test_memory_empty_before_execute(self, agent):
-        """Fresh agent should have an empty memory."""
-        history = agent._memory.get_llm_history()
-        assert history == []

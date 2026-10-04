@@ -528,17 +528,6 @@ def create_hardware_stack() -> Agent:
     return agent
 
 
-# Keep old names as aliases for backward compatibility with any external callers
-def create_sim_agent(headless: bool = True) -> Agent:
-    """Deprecated alias for create_sim_stack(). Use create_sim_stack() instead."""
-    return create_sim_stack(headless=headless)
-
-
-def create_hardware_agent() -> Agent:
-    """Deprecated alias for create_hardware_stack(). Use create_hardware_stack() instead."""
-    return create_hardware_stack()
-
-
 def _load_config_with_fallback() -> dict:
     """Load config, trying user.yaml then defaults."""
     from vector_os_nano.core.config import load_config  # noqa: PLC0415

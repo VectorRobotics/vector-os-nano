@@ -5,7 +5,7 @@
 
 Scripts that launch terrainAnalysis / terrainAnalysisExt via `ros2 run`
 must pass Go2-tuned params (maxRelZ=1.5 etc.) instead of inheriting
-C++ defaults (maxRelZ=0.2). Matches the pattern in launch_explore.sh.
+C++ defaults (maxRelZ=0.2).
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import pytest
 
 
 _REPO = Path(__file__).resolve().parent.parent.parent
-_SCRIPTS = ["launch_nav_only.sh", "launch_nav_explore.sh", "test_integration.sh"]
+_SCRIPTS = ["launch_nav_only.sh"]
 
 
 def _content(script: str) -> str:

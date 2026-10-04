@@ -3,7 +3,7 @@
 
 """ArmProtocol — abstract interface for any robot arm.
 
-All arm implementations (SO101Arm, SimulatedArm, etc.) must satisfy
+All arm implementations (SO101Arm, MuJoCoArm, etc.) must satisfy
 this Protocol. The agent engine and skills depend only on ArmProtocol,
 never on concrete implementations.
 

@@ -4,11 +4,10 @@
 """Shared lidar polar-grid ray cast (STAGE 3a de-triplication; one mj_multiRay call).
 
 ONE impl per capability (CLAUDE.md Rule 11). The identical multi-elevation
-``mj_ray`` polar-grid loop previously lived in THREE places:
+``mj_ray`` polar-grid loop previously lived in two drivers:
 
 * ``sensors/g1_lidar.py`` :func:`g1_lidar_scan`        (g1 driver — live)
 * ``mujoco_go2.py`` ``MuJoCoGo2._cast_lidar``          (go2 driver — live)
-* ``sensors/lidar360.py`` ``MuJoCoLivox360``           (PAUSED SysNav abstraction)
 
 This module extracts the per-ray math VERBATIM from the two live copies so both
 drivers share it.  Only the ray loop is shared — the LaserScan / diagnostics /
