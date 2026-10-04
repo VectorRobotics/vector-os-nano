@@ -64,10 +64,13 @@ def test_reset_pose_under_load_leaves_the_dog_still(flat_go2) -> None:
         go2.set_velocity(0.4, 0.0, 0.6)  # walking and turning when the reset lands
         assert go2.wait_sim(1.0)
         yaw = go2.get_heading()
-        go2.reset_pose()
-        p0 = go2.get_position()
+        # Read the reset instant itself: the free-running stepper ticks on right after
+        # the mutation resolves, so an unpaused read raced one tick (dz 1.5e-4, ~1/20).
+        with go2.runtime.paused():
+            go2.reset_pose()
+            p0, yaw0 = go2.get_position(), go2.get_heading()
         assert abs(p0[2] - 0.35) < 1e-6  # manifest standing height
-        assert abs(math.remainder(go2.get_heading() - yaw, 2 * math.pi)) < 0.05  # heading kept
+        assert abs(math.remainder(yaw0 - yaw, 2 * math.pi)) < 0.05  # heading kept
         assert go2.wait_sim(1.5)
         p1 = go2.get_position()
     finally:

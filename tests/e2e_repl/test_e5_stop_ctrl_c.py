@@ -90,7 +90,9 @@ def e5():
         ["启动 go2 仿真 无窗口",
          "停下", (0.3, "\x03"),
          "往前走一米",
-         "导航到厨房 (15, 3)", (4.0, "\x03"),
+         # Ctrl-C keyed on the navigate's own progress line (3 s into the drive),
+         # not a clock started when the line was typed.
+         "导航到厨房 (15, 3)", ("navigate 3s ·", "\x03"),
          "往前走五米", (3.0, "停"),
          "向左走一米", (0.8, "停"),
          "后退半米"],

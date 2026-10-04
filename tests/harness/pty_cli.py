@@ -415,7 +415,7 @@ class _Pty:
 
 
 def run_repl_session(
-    lines: list[str | tuple[float, str]],
+    lines: list[str | tuple[float | str, str]],
     *,
     tool_script: dict[str, Any] | None = None,
     answers: list[str] | None = None,
@@ -439,7 +439,9 @@ def run_repl_session(
     Args:
         lines:   a ``str`` is typed once the REPL is idle at its prompt; a
                  ``(delay_sec, text)`` tuple is typed ``delay_sec`` after the previous
-                 line WITHOUT waiting (mid-turn input; ``"\x03"`` is a Ctrl-C).
+                 line WITHOUT waiting (mid-turn input; ``"\x03"`` is a Ctrl-C);
+                 a ``(str, text)`` tuple is typed once that str shows in the output
+                 after the previous line (keyed on observed progress, not a clock).
                  ``quit`` is appended unless the last line already exits.
         answers: replies to permission prompts, in order; a prompt with no answer
                  left is refused with ``n`` (the safe default a user would pick).
@@ -483,9 +485,13 @@ def run_repl_session(
         for step in steps:
             if isinstance(step, tuple):
                 delay, text = step
-                until = min(_now() + delay, deadline)
-                while _now() < until and not tty.eof:
-                    tty.pump(until - _now())
+                if isinstance(delay, str):  # keyed on progress: wait for this output
+                    while delay not in tty.text()[tty.mark:] and _now() < deadline and not tty.eof:
+                        tty.pump(0.1)
+                else:
+                    until = min(_now() + delay, deadline)
+                    while _now() < until and not tty.eof:
+                        tty.pump(until - _now())
                 tty.send(text)
                 typed = text
                 continue
