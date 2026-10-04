@@ -187,6 +187,13 @@ _MPC_TAU_LIMITS: np.ndarray = _MPC_SAFETY * np.array(
     [23.7, 23.7, 45.43] * 4, dtype=np.float64
 )
 _MPC_LEG_NAMES: list[str] = ["FL", "FR", "RL", "RR"]
+# Every stop BRAKES (WP05 E5): dropping a trotting body straight onto the PD stance
+# mid-stride kicks it (a 0.4 m/s walk read 0.35-0.53 m/s 0.2 sim-s after its zero
+# command). Instead, when the command goes to zero, the MPC keeps trotting toward
+# zero velocity for _BRAKE_S, hands over to the PD stance once all four feet are
+# down (holding that pose), then ramps to the stand pose over _BRAKE_RAMP_S.
+_BRAKE_S: float = 0.35
+_BRAKE_RAMP_S: float = 1.0
 
 # ---------------------------------------------------------------------------
 # Constants — lidar
@@ -503,6 +510,11 @@ class MuJoCoGo2:
         self._mpc_ctrl_i: int = 0
         self._mpc_steps_per_mpc: int = 1
         self._mpc_dt: float = 0.0
+        # The stop brake (physics-thread state, sim times; see _BRAKE_S).
+        self._was_moving: bool = False
+        self._brake_t: float | None = None     # when the command went to zero
+        self._brake_q: np.ndarray | None = None  # the four-foot pose at the hand-over
+        self._brake_ho_t: float = 0.0
 
         # Skill-level exclusive control gate. walk()/turn() set this
         # to acquire control for the duration of a motion. During that
@@ -752,6 +764,7 @@ class MuJoCoGo2:
         self._scan_counter = 0
         self._mpc_U_opt = None
         self._mpc_ctrl_i = 0
+        self._was_moving, self._brake_t, self._brake_q = False, None, None
         if self._use_mpc and self._gait is not None:
             gait_period = self._gait.gait_period
             self._mpc_dt = gait_period / _MPC_DT_FACTOR
@@ -946,8 +959,18 @@ class MuJoCoGo2:
         if self._sim_step % _CTRL_DECIM == 0:
             # Update Pinocchio model from MuJoCo state
             self._mj_update_pin()
-
             if is_moving:
+                self._brake_t = self._brake_q = None
+            elif self._was_moving and self._use_mpc:
+                self._brake_t = time_now
+            self._was_moving = is_moving
+            # Braking: the MPC tracks zero velocity, until all four feet are down.
+            braking = self._brake_t is not None and self._brake_q is None and (
+                time_now - self._brake_t < _BRAKE_S
+                or not self._gait.compute_current_mask(time_now).all()
+            )
+
+            if is_moving or braking:
                 # MPC locomotion — with solver failure protection
                 if self._mpc_ctrl_i % self._mpc_steps_per_mpc == 0:
                     try:
@@ -989,6 +1012,14 @@ class MuJoCoGo2:
                 q_cur = np.array(self._mj.data.qpos[jq : jq + 12], dtype=np.float64)
                 dq_cur = np.array(self._mj.data.qvel[jd : jd + 12], dtype=np.float64)
                 q_stand = np.array(_STAND_JOINTS, dtype=np.float64)
+                if self._brake_t is not None:
+                    # The brake's hand-over: hold the four-foot pose, ramp to the stance.
+                    if self._brake_q is None:
+                        self._brake_q, self._brake_ho_t = q_cur, time_now
+                    a = min(1.0, (time_now - self._brake_ho_t) / _BRAKE_RAMP_S)
+                    q_stand = self._brake_q + a * a * (3.0 - 2.0 * a) * (q_stand - self._brake_q)
+                    if a >= 1.0:
+                        self._brake_t = self._brake_q = None
                 tau = _KP * (q_stand - q_cur) - _KD * dq_cur
                 tau = np.clip(tau, -_TAU_LIMITS, _TAU_LIMITS)
                 self._tau_hold = tau.copy()
@@ -1467,6 +1498,7 @@ class MuJoCoGo2:
         was_running = self._running
         if was_running:
             self._pause_physics()
+        self._was_moving, self._brake_t, self._brake_q = False, None, None  # the posture owns the joints
 
         mj = _get_mujoco()
         model = self._mj.model

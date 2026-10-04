@@ -414,8 +414,10 @@ def _native_trace_acted(trace: Any) -> bool:
     ``trace.actions_dispatched`` counts every side-effecting dispatch — verified or
     not, interrupted or not — so a turn that moved the robot is never handed to the
     legacy planner to run again (no double execution). A recorded step with a
-    producing ``strategy`` also counts. Only a turn that dispatched nothing (could
-    not route the goal) may fall back. Pure + defensive: ``None`` -> False.
+    producing ``strategy`` also counts: a verified chain, or a read the model
+    answered from (the REPL prints that answer; the read never runs twice). Only a
+    turn that called no tool (could not route the goal) may fall back. Pure +
+    defensive: ``None`` -> False.
     """
     if int(getattr(trace, "actions_dispatched", 0) or 0) > 0:
         return True

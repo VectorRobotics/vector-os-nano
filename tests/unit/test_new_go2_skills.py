@@ -49,11 +49,20 @@ class TestStopSkill:
         assert "停" in s.__skill_aliases__
         assert "halt" in s.__skill_aliases__
 
-    def test_stop_calls_set_velocity_zero(self):
+    def test_stop_calls_the_ungated_base_stop(self):
+        # skills-nav:inprocess-nav-no-abort-stall: set_velocity from the stop's thread
+        # is IGNORED while a walk/navigate on another thread holds the skill token.
         base = _make_base()
         ctx = _make_context(base)
         result = StopSkill().execute({}, ctx)
 
+        assert result.success
+        base.stop.assert_called_once_with()
+        base.set_velocity.assert_not_called()
+
+    def test_stop_falls_back_to_set_velocity_without_stop(self):
+        base = MagicMock(spec=["set_velocity", "get_position"])
+        result = StopSkill().execute({}, _make_context(base))
         assert result.success
         base.set_velocity.assert_called_once_with(0.0, 0.0, 0.0)
 
@@ -72,11 +81,10 @@ class TestStopSkill:
         assert result.result_data == {"stopped": True}
 
     def test_stop_tolerates_set_velocity_exception(self):
-        """If set_velocity raises, stop should still return success=False or
-        at least not propagate the exception unhandled.  Current impl logs and
-        continues, so success=True is the expected outcome."""
+        """If the base stop raises, stop logs it and does not propagate the
+        exception unhandled, so success=True is the expected outcome."""
         base = _make_base()
-        base.set_velocity.side_effect = RuntimeError("motor fault")
+        base.stop.side_effect = RuntimeError("motor fault")
         ctx = _make_context(base)
 
         # Should not raise; set_velocity failure is logged and swallowed
