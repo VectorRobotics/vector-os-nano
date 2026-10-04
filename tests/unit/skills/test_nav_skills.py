@@ -19,6 +19,12 @@ from vector_os_nano.sim.nav.coverage import _LAYOUT_YAML, room_layout
 from vector_os_nano.sim.nav.follow import NavResult, arrival_radius
 
 
+@pytest.fixture(autouse=True)
+def _own_run_dir(tmp_path, monkeypatch):
+    """The coverage tour logs to the run dir: never the machine-global /tmp."""
+    monkeypatch.setenv("VECTOR_RUN_DIR", str(tmp_path))
+
+
 def _sg() -> SceneGraph:
     sg = SceneGraph()
     sg.load_layout(str(_LAYOUT_YAML))
@@ -318,3 +324,22 @@ def test_at_position_default_tol_is_the_arrival_radius():
     from vector_os_nano.vcli.worlds.go2_sim_oracle import _AT_POSITION_TOL_M
 
     assert _AT_POSITION_TOL_M == arrival_radius() <= 0.5
+
+
+def test_nav_stack_detection_ignores_processes_that_are_not_ours(monkeypatch):
+    # periphery:missed2: `pgrep -f localPlanner` took another project's nav node on the
+    # shared stack for ours. Detection now walks only this process's descendants.
+    import subprocess
+    import sys
+
+    from vector_os_nano.skills.go2 import explore
+
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "localPlanner"])
+    try:
+        assert explore.is_nav_stack_running()  # our child: ours
+        monkeypatch.setattr(explore.os, "getpid", lambda: other.pid)  # seen from a process
+        assert not explore.is_nav_stack_running()  # with no such child: not ours
+        assert not explore._tare_running()
+    finally:
+        other.kill()
+        other.wait()
