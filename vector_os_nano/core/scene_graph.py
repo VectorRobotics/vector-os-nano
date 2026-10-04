@@ -875,7 +875,7 @@ class SceneGraph:
         SIM ONLY — for real-world, rooms are discovered via exploration.
 
         Args:
-            layout_path: Path to room_layout.yaml.
+            layout_path: Path to config/worlds/apartment.yaml.
 
         Returns:
             Number of rooms loaded, or 0 on failure.

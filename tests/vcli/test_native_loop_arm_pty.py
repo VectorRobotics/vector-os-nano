@@ -109,8 +109,8 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
 
         # The arm must START not holding anything — that is what makes a successful
         # grasp a genuine, actor-CAUSED 0->1 weld transition (never a NO-OP).
-        from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
-        assert make_holding_object(agent)() is False, (
+        from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
+        assert rig_namespace(agent._arm.runtime, "so101")["holding_object"]() is False, (
             "arm must boot NOT holding so the pick is genuinely caused"
         )
 

@@ -76,6 +76,11 @@ class GroundTruth:
         return self._rt
 
     @property
+    def has_base(self) -> bool:
+        """The robot root is a free (mobile) body."""
+        return self._root_qadr >= 0
+
+    @property
     def sim_time(self) -> float:
         return float(self._rt.call(lambda _m, d: float(d.time)))
 

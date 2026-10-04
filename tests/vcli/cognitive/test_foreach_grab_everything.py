@@ -11,7 +11,7 @@ on the tabletop playground scenario, through the REAL kernel pieces:
      -> GoalVerifier (real AST sandbox)
      over the MERGED PlaygroundWorld sim-oracle verify namespace
      against a DETERMINISTIC stub arm that advances state so each per-step
-     verify (holding_object() / placed_count(...)) flips False->True as the
+     verify (holding_object() / object_on(item, 'tray')) flips False->True as the
      chain progresses.
 
 The decomposed chain is:
@@ -61,10 +61,10 @@ from vector_os_nano.vcli.cognitive.strategy_selector import StrategyResult
 # This stub advances that ground truth as pick/place primitives run, so the same
 # predicates flip False->True step by step. No MuJoCo, fully deterministic.
 
-# Resting (table) height is below the predicate's lift threshold (0.10);
-# lifted height is above it. The tray region (TABLETOP_TRAY) is
-# (0.20, 0.0, 0.50, 0.25); a placed object lands at its centre, resting.
-_TABLE_Z = 0.02
+# Object centres resting on the table top (z 0.02); lifted is well clear of it.
+# The tray (tabletop world manifest) is (0.20, 0.0, 0.50, 0.25) on the table; a
+# placed object lands at its centre, resting.
+_TABLE_Z = 0.04
 _LIFT_Z = 0.20
 _TRAY_CENTRE = (0.35, 0.12)
 
@@ -102,7 +102,7 @@ class _StubArm:
         return {k: list(v) for k, v in self._objects.items()}
 
     def get_joint_positions(self) -> list[float]:
-        # Joint values are irrelevant to holding_object()/placed_count(); a
+        # Joint values are irrelevant to holding_object()/object_on(); a
         # fixed 5-vector keeps fk() well-formed.
         return [0.0, 0.0, 0.0, 0.0, 0.0]
 
@@ -127,6 +127,9 @@ class _StubAgent:
     def __init__(self, object_names: tuple[str, ...]) -> None:
         self._arm = _StubArm(object_names)
         self._gripper = _StubGripper()
+        from tests.harness.fake_gt import bind_fake_sim
+
+        bind_fake_sim(self, "so101")  # the live sim session's GT oracles
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +212,7 @@ class _MockBackend:
 _ARM_STRATEGIES = frozenset(
     {"scan_skill", PlaygroundWorld.DETECT_STRATEGY, "pick_skill", "place_skill"}
 )
-_ARM_VERIFY_FNS = frozenset(
-    {"detect_objects", "describe_scene", "holding_object", "placed_count", "arm_at_home"}
-)
+_ARM_VERIFY_FNS = frozenset({"holding_object", "object_on", "released", "arm_at_home"})
 
 
 def _grab_everything_plan() -> dict[str, Any]:
@@ -222,7 +223,7 @@ def _grab_everything_plan() -> dict[str, Any]:
             {
                 "name": "scan",
                 "description": "look over the whole tabletop",
-                "verify": "len(describe_scene()) > 0",
+                "verify": "True",
                 "strategy": "scan_skill",
                 "depends_on": [],
                 "strategy_params": {},
@@ -230,7 +231,7 @@ def _grab_everything_plan() -> dict[str, Any]:
             {
                 "name": "detect_all",
                 "description": "detect every object on the table",
-                "verify": "len(detect_objects()) > 0",
+                "verify": "True",
                 "strategy": PlaygroundWorld.DETECT_STRATEGY,
                 "depends_on": ["scan"],
                 "strategy_params": {},
@@ -258,7 +259,7 @@ def _grab_everything_plan() -> dict[str, Any]:
                         {
                             "name": "place_obj",
                             "description": "place the current object in the tray",
-                            "verify": "placed_count() >= 1",
+                            "verify": "object_on('${obj.name}', 'tray')",
                             "strategy": "place_skill",
                             "depends_on": ["pick_obj"],
                             "strategy_params": {"object_label": "${obj.name}"},
@@ -400,7 +401,7 @@ def test_grab_everything_runs_end_to_end_verified() -> None:
 
 def test_grab_everything_oracle_state_advances_per_item() -> None:
     # The sim-oracle predicates must FLIP per item as the chain progresses: at the
-    # end every object is resting in the tray, so placed_count() == n.
+    # end every object is resting in the tray.
     object_names = TABLETOP_TRAY.object_names
     n = len(object_names)
     agent = _StubAgent(object_names)
@@ -408,7 +409,7 @@ def test_grab_everything_oracle_state_advances_per_item() -> None:
     # Before the run nothing is placed in the tray and nothing is held.
     world = PlaygroundWorld(TABLETOP_TRAY)
     ns = world.build_verify_namespace(agent)
-    assert ns["placed_count"]() == 0
+    assert not any(ns["object_on"](o, "tray") for o in object_names)
     assert ns["holding_object"]() is False
 
     tree = _decompose_grab_everything(_grab_everything_plan())
@@ -417,7 +418,7 @@ def test_grab_everything_oracle_state_advances_per_item() -> None:
 
     assert trace.success is True
     # All n objects ended resting inside the tray drop-zone.
-    assert ns["placed_count"]() == n
+    assert sum(ns["object_on"](o, "tray") for o in object_names) == n
     # The gripper released the last object after placing it.
     assert ns["holding_object"]() is False
 
@@ -469,8 +470,8 @@ def test_grab_everything_snapshot_json_safe_and_reflects_expansion() -> None:
 # (DETECT_STRATEGY). It runs the deterministic sim-oracle detection and writes
 # {"objects": [...]} as its result_data; the executor captures that to the
 # Blackboard so the foreach's source_step.objects resolves the REAL list. These
-# pin that the produced list is exactly what the detect_objects() oracle reports
-# and that it drives the loop's leaf count.
+# pin that the produced list is exactly the scene's objects and that it drives
+# the loop's leaf count.
 # ---------------------------------------------------------------------------
 
 
@@ -479,16 +480,15 @@ def test_detect_producer_output_matches_oracle_predicate() -> None:
     agent = _StubAgent(object_names)
     world = PlaygroundWorld(TABLETOP_TRAY)
 
-    # The producing primitive and the verify predicate read the SAME sim oracle.
+    # The producing primitive lists the scene's objects; no verify oracle is a
+    # listing (WP10: a GT object count is vacuous evidence).
     producer = world.build_step_primitives(agent)[PlaygroundWorld.DETECT_STRATEGY]
-    detect_predicate = world.build_verify_namespace(agent)["detect_objects"]
+    assert "detect_objects" not in world.build_verify_namespace(agent)
 
     produced = producer()
     assert isinstance(produced, dict)
     assert produced["count"] == len(object_names)
-    produced_names = sorted(o["name"] for o in produced["objects"])
-    predicate_names = sorted(o["name"] for o in detect_predicate())
-    assert produced_names == predicate_names == sorted(object_names)
+    assert sorted(o["name"] for o in produced["objects"]) == sorted(object_names)
 
 
 def test_foreach_iterates_real_produced_list_via_blackboard() -> None:

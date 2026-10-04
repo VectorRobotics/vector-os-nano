@@ -36,8 +36,12 @@ from vector_os_nano.vcli.cognitive.types import StepRecord, SubGoal
 from vector_os_nano.vcli.engine import VectorEngine
 from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
-from vector_os_nano.vcli.worlds.arm_sim_oracle import _HOME_JOINTS, make_arm_at_home
+from tests.harness.fake_gt import bind_fake_sim, fake_namespace
+from vector_os_nano.embodiments import registry
 from vector_os_nano.vcli.worlds.robot import RobotWorld
+
+# The SO-101 home pose (its manifest stance; the arm_at_home oracle reads it there).
+_HOME_JOINTS = tuple(registry.load("so101").stance.values())
 
 # Robot verify-namespace oracle names (the sim arm/base subset). Mirrors what
 # verify_oracle_names(agent, engine) single-sources from the live namespace.
@@ -115,7 +119,7 @@ def _sub_goal(verify: str, strategy: str = "home_skill") -> SubGoal:
 def test_arm_off_home_predicate_is_false() -> None:
     off_home = [j + 0.5 for j in _HOME_JOINTS]  # well beyond _HOME_TOL_RAD (0.10)
     arm = _FakeArm(joints=off_home)
-    arm_at_home = make_arm_at_home(_arm_agent(arm))
+    arm_at_home = fake_namespace(_arm_agent(arm), "so101")["arm_at_home"]
     assert arm_at_home() is False
 
 
@@ -126,7 +130,7 @@ def test_arm_off_home_step_is_not_grounded() -> None:
     # old ``if is_robot: return True`` bypass used to pass — it now fails closed.
     off_home = [j + 0.5 for j in _HOME_JOINTS]
     arm = _FakeArm(joints=off_home)
-    arm_at_home = make_arm_at_home(_arm_agent(arm))
+    arm_at_home = fake_namespace(_arm_agent(arm), "so101")["arm_at_home"]
     # Predicate is the ground truth the verifier would compute.
     real_verify_result = arm_at_home()
     assert real_verify_result is False
@@ -177,6 +181,7 @@ def test_arm_at_home_in_live_verify_oracle_names() -> None:
     # A connected sim arm exposing get_object_positions -> RobotWorld adds the arm
     # predicates (arm_at_home / holding_object / ...) on top of the engine bindings.
     agent = _arm_agent(_FakeArm(joints=list(_HOME_JOINTS), objects={"mug": [0.2, 0.1, 0.06]}))
+    bind_fake_sim(agent, "so101")  # the live sim session's GT oracles
     names = verify_oracle_names(agent, engine)
     assert "arm_at_home" in names
     # Single-sourcing sanity: it is the SAME namespace the verifier uses.
@@ -219,7 +224,8 @@ def test_robot_base_step_reaches_grounded() -> None:
 def test_robot_base_at_position_predicate_is_grounded_against_live_oracle() -> None:
     # End-to-end on the live base oracle: a base AT (2.0, 0.0) makes at_position
     # True, OFF it makes it False — the predicate is real, not a tautology.
-    from vector_os_nano.vcli.worlds.go2_sim_oracle import make_at_position
+    def make_at_position(agent):
+        return fake_namespace(agent, "go2")["at_position"]
 
     at_target = SimpleNamespace(_base=_FakeBase(2.0, 0.0), _arm=None, _gripper=None)
     off_target = SimpleNamespace(_base=_FakeBase(0.0, 0.0), _arm=None, _gripper=None)

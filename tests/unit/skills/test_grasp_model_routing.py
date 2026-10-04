@@ -118,7 +118,7 @@ class _Gripper:
 def _ctx(perc):
     return SkillContext(
         arm=_Arm(), gripper=_Gripper(), world_model=WorldModel(),
-        perception=perc, config={},
+        perception=perc, config={"world": "apartment"},
     )
 
 

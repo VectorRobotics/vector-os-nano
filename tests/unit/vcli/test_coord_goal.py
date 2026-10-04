@@ -18,7 +18,7 @@ from vector_os_nano.vcli.cognitive.coord_goal import (
 )
 
 _ORACLES = frozenset(
-    {"at_position", "facing", "visited", "holding_object", "arm_at_home",
+    {"at_position", "facing", "in_room", "holding_object", "arm_at_home",
      "file_exists", "path_contains"}
 )
 
@@ -59,7 +59,7 @@ def test_parse_goal_coord(goal, expected) -> None:
         ("at_position(11, 3, 99)", False),              # TOL-INFLATION (positional) -> rejected
         ("at_position(11, 3, tol=99)", False),          # TOL-INFLATION (kwarg) -> rejected
         ("at_position(11, 3, get_tol())", False),       # non-literal tol -> rejected
-        ("at_position(11, 3) or visited('x')", False),  # non-necessary (OR decoy)
+        ("at_position(11, 3) or in_room('x')", False),  # non-necessary (OR decoy)
     ],
 )
 def test_has_necessary_at_position(expr, present) -> None:
@@ -151,21 +151,21 @@ def test_spine_non_coordinate_fails_open_stays_grounded(verify, goal) -> None:
         # STEP-16 BOOLEAN-NECESSITY: the matching at_position must be a NECESSARY
         # conjunct, not merely PRESENT. A disjunction / negation / arithmetic burial
         # lets the verify be True while the robot is NOT at the coord -> not honest.
-        ("at_position(11, 3) or visited(99, 99)", (11.0, 3.0), False),
+        ("at_position(11, 3) or in_room(99, 99)", (11.0, 3.0), False),
         ("at_position(11, 3) or facing(0, 0)", (11.0, 3.0), False),
         ("at_position(11, 3) or arm_at_home()", (11.0, 3.0), False),
-        ("visited(99, 99) or at_position(11, 3)", (11.0, 3.0), False),  # decoy first
+        ("in_room(99, 99) or at_position(11, 3)", (11.0, 3.0), False),  # decoy first
         ("at_position(11, 3) or at_position(99, 99)", (11.0, 3.0), False),
-        ("not at_position(11, 3) or visited(99, 99)", (11.0, 3.0), False),
-        ("(at_position(11, 3) or visited(0, 0)) and facing(1, 0)", (11.0, 3.0), False),
+        ("not at_position(11, 3) or in_room(99, 99)", (11.0, 3.0), False),
+        ("(at_position(11, 3) or in_room(0, 0)) and facing(1, 0)", (11.0, 3.0), False),
         ("at_position(11, 3) == False or facing(9, 9)", (11.0, 3.0), False),
         ("at_position(11, 3) + at_position(99, 99) >= 1", (11.0, 3.0), False),
-        ("at_position(11, 3) * 1 + visited(99, 99) >= 1", (11.0, 3.0), False),
+        ("at_position(11, 3) * 1 + in_room(99, 99) >= 1", (11.0, 3.0), False),
         # HONEST conjunctions: the matching at_position IS necessary -> stay True.
         ("at_position(11, 3) and facing(1, 0)", (11.0, 3.0), True),
         ("at_position(11, 3) and at_position(99, 99)", (11.0, 3.0), True),
-        ("at_position(11, 3) and visited('kitchen')", (11.0, 3.0), True),
-        ("at_position(11, 3) and (visited(0, 0) or facing(1, 0))", (11.0, 3.0), True),
+        ("at_position(11, 3) and in_room('kitchen')", (11.0, 3.0), True),
+        ("at_position(11, 3) and (in_room(0, 0) or facing(1, 0))", (11.0, 3.0), True),
     ],
 )
 def test_at_position_const_matches(expr, goal_xy, expected) -> None:
@@ -202,7 +202,7 @@ def test_goal_has_coordinate_intent(goal, expected) -> None:
 # keeping every honest case + all non-go2 worlds green. Stricter-only (rule 5).
 # ---------------------------------------------------------------------------
 
-_GO2 = frozenset({"at_position", "facing", "visited", "get_position", "get_heading"})
+_GO2 = frozenset({"at_position", "facing", "in_room", "get_position", "get_heading"})
 _DEV = frozenset({"file_exists", "path_contains"})
 _ARM = frozenset({"holding_object", "arm_at_home"})
 
@@ -282,7 +282,7 @@ def test_turn_gate_non_coordinate_go2_turns_fail_open() -> None:
 
     # A coordinate-less go2 turn (turn / explore) is untouched.
     assert evidence_passed(_trace("转向看桌子", [("facing(0.5,0.5)", "turn", True, _CA())]), _GO2) is True
-    assert evidence_passed(_trace("探索房间", [("visited('kitchen')", "explore", True, _CA())]), _GO2) is True
+    assert evidence_passed(_trace("探索房间", [("in_room('kitchen')", "explore", True, _CA())]), _GO2) is True
 
 
 def test_turn_gate_world_blind_non_go2_worlds_untouched() -> None:
@@ -322,16 +322,16 @@ def test_turn_gate_dummy_at_position_must_be_grounded() -> None:
 # ---------------------------------------------------------------------------
 
 _NECESSITY_FALSE_GREENS = [
-    "at_position(11,3) or visited(99,99)",
-    "at_position(11,3) or facing(0,0) or visited(99,99)",
+    "at_position(11,3) or in_room(99,99)",
+    "at_position(11,3) or facing(0,0) or in_room(99,99)",
     "at_position(11,3) or arm_at_home()",
-    "visited(99,99) or at_position(11,3)",
+    "in_room(99,99) or at_position(11,3)",
     "at_position(11,3) or at_position(99,99)",
-    "not at_position(11,3) or visited(99,99)",
-    "(at_position(11,3) or visited(0,0)) and facing(1,0)",
+    "not at_position(11,3) or in_room(99,99)",
+    "(at_position(11,3) or in_room(0,0)) and facing(1,0)",
     "at_position(11,3) == False or facing(9,9)",
     "at_position(11,3) + at_position(99,99) >= 1",
-    "at_position(11,3) * 1 + visited(99,99) >= 1",
+    "at_position(11,3) * 1 + in_room(99,99) >= 1",
 ]
 
 
@@ -353,8 +353,8 @@ def test_turn_gate_keeps_honest_necessary_conjunctions() -> None:
         "at_position(11,3)",
         "at_position(11,3) and facing(1,0)",
         "at_position(11,3) and at_position(99,99)",
-        "at_position(11,3) and visited('kitchen')",
-        "at_position(11,3) and (visited(0,0) or facing(1,0))",
+        "at_position(11,3) and in_room('kitchen')",
+        "at_position(11,3) and (in_room(0,0) or facing(1,0))",
         "at_position(x=11, y=3)",
     ):
         assert evidence_passed(_trace("走到坐标 (11,3)", [(verify, "walk", True, _CA())]), _GO2) is True, verify

@@ -4,7 +4,7 @@
 """L38: Room layout loading + position-based room detection (sim mode).
 
 Tests that SceneGraph.load_layout() properly seeds rooms and doors from
-config/room_layout.yaml, enabling instant nearest_room() without VLM.
+config/worlds/apartment.yaml, enabling instant nearest_room() without VLM.
 """
 from __future__ import annotations
 
@@ -39,14 +39,14 @@ def full_layout_file(tmp_path):
     """Full 8-room layout matching go2_room.xml."""
     src = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-        "config", "room_layout.yaml",
+        "config", "worlds", "apartment.yaml",
     )
     if os.path.isfile(src):
         import shutil
         dst = tmp_path / "room_layout.yaml"
         shutil.copy(src, dst)
         return str(dst)
-    pytest.skip("config/room_layout.yaml not found")
+    pytest.skip("config/worlds/apartment.yaml not found")
 
 
 class TestLoadLayout:
@@ -141,20 +141,20 @@ class TestExploreWithLayout:
 
 
 class TestConfigFileExists:
-    """Verify config/room_layout.yaml is present and valid."""
+    """Verify config/worlds/apartment.yaml is present and valid."""
 
     def test_config_exists(self):
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "config", "room_layout.yaml",
+            "config", "worlds", "apartment.yaml",
         )
-        assert os.path.isfile(path), "config/room_layout.yaml must exist for sim"
+        assert os.path.isfile(path), "config/worlds/apartment.yaml must exist for sim"
 
     def test_config_has_8_rooms(self):
         import yaml
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "config", "room_layout.yaml",
+            "config", "worlds", "apartment.yaml",
         )
         with open(path) as f:
             data = yaml.safe_load(f)
@@ -164,7 +164,7 @@ class TestConfigFileExists:
         import yaml
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "config", "room_layout.yaml",
+            "config", "worlds", "apartment.yaml",
         )
         with open(path) as f:
             data = yaml.safe_load(f)

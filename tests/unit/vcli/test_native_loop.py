@@ -126,6 +126,9 @@ def _make_agent(x: float = 0.0, y: float = 0.0):
 
     agent._build_context = _build_context
     agent._sync_robot_state = _sync_robot_state
+    from tests.harness.fake_gt import bind_fake_sim
+
+    bind_fake_sim(agent, "go2")  # the GT oracles read the fake base
     return agent, base
 
 
@@ -397,40 +400,6 @@ def test_system_prompt_omits_object_vocab_when_empty() -> None:
     default = _native_system_prompt(None, frozenset({"holding_object"}))
     assert default[0]["text"] == without[0]["text"]
     assert with_names[0]["text"] != without[0]["text"]
-
-
-def test_oracle_stays_strict_wrong_canonical_name_is_false() -> None:
-    """STEP 7 moat guard: the fix did NOT loosen the oracle's exact match.
-
-    While genuinely holding the banana, a WRONG canonical name (apple / mug) still
-    returns False — verifying that the vocab-expose approach left ``make_holding_object``
-    strictly canonical (case-insensitive EXACT on the scene name, no fuzzy/loose match).
-    """
-    from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
-
-    class _Arm:
-        _connected = True
-
-        def get_object_positions(self):
-            # banana lifted at the EE; mug resting far away.
-            return {"banana": [0.0, 0.0, 0.26], "mug": [0.5, 0.5, 0.0]}
-
-        def get_joint_positions(self):
-            return [0.0]
-
-        def fk(self, _joints):
-            return ([0.0, 0.0, 0.26], None)
-
-    class _Gripper:
-        def is_holding(self):
-            return True
-
-    agent = SimpleNamespace(_arm=_Arm(), _gripper=_Gripper())
-    holding_object = make_holding_object(agent)
-    assert holding_object("banana") is True  # the real, canonical match
-    assert holding_object("apple") is False  # wrong name -> NOT loosened
-    assert holding_object("mug") is False    # present but resting, not held
-    assert holding_object("香蕉") is False    # localized name is NOT a canonical key
 
 
 # ---------------------------------------------------------------------------

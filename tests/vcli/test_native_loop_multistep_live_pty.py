@@ -66,7 +66,7 @@ _ENV_PATH = _REPO_ROOT / ".env"
 # when its coordinate args are within this tol of the target. A safe literal fallback
 # keeps the gate parse-only (it never imports the sim) if the const ever moves.
 try:
-    from vector_os_nano.vcli.worlds.go2_sim_oracle import _AT_POSITION_TOL_M as _TOL_M
+    from vector_os_nano.vcli.worlds.sim_oracles import _AT_POSITION_TOL_M as _TOL_M
 except Exception:  # noqa: BLE001
     _TOL_M = 0.5
 _NEAR_TOL: float = float(_TOL_M)

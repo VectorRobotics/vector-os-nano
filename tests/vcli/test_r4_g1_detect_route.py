@@ -112,16 +112,28 @@ class _Engine:
 
 
 # --- 1. verify oracle: NO self-read detect_objects for g1 (R5 CORRECTION) ---
+def _g1_namespace():
+    from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
+
+    agent = _G1Agent()
+    sim = bind_fake_sim(agent, "g1")
+    try:
+        return RobotWorld().build_verify_namespace(agent)
+    finally:
+        unbind_fake_sim(sim)
+
+
 def test_g1_verify_namespace_has_no_self_read_detect_objects():
     """R5/D61: a camera-only (no-arm) g1 gets NO detect_objects oracle.
 
     Grounding the verify on the detector's own stashed output is a self-read
-    tautology (the FALSE GREEN red-team caught in R4). The g1 detect step must
-    grade RAN-honest, so no such oracle is bound. Base predicates remain.
+    tautology (the FALSE GREEN red-team caught in R4). WP10: detection is graded by
+    the GT ``in_view`` (segmentation of the robot's own camera) instead; base
+    predicates remain.
     """
-    ns = RobotWorld().build_verify_namespace(_G1Agent())
+    ns = _g1_namespace()
     assert "detect_objects" not in ns  # self-read oracle removed
-    assert "at_position" in ns  # base predicates still present (independent GT)
+    assert "in_view" in ns and "at_position" in ns  # independent GT
 
 
 def test_g1_detect_verify_classifies_RAN_not_grounded():
@@ -130,16 +142,18 @@ def test_g1_detect_verify_classifies_RAN_not_grounded():
     D50 grade, NEVER a GROUNDED on a self-read."""
     from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
 
-    ns = RobotWorld().build_verify_namespace(_G1Agent())
-    oracle_names = frozenset(ns)  # single-sourced from the live verify-namespace
+    oracle_names = frozenset(_g1_namespace())  # single-sourced from the live verify-namespace
     assert classify_verify_expr("len(detect_objects()) > 0", oracle_names) == "RAN"
-    # An INDEPENDENT base oracle (live GT, not the means) still grades GROUNDED.
+    # INDEPENDENT oracles (live GT, not the means) still grade GROUNDED.
     assert classify_verify_expr("at_position(10.0, 3.0)", oracle_names) == "GROUNDED"
+    assert classify_verify_expr("in_view('red can')", oracle_names) == "GROUNDED"
 
 
-def test_arm_agent_keeps_ground_truth_detect_objects():
-    """An agent with an arm must keep its GROUND-TRUTH detect_objects (the moat anchor),
-    NOT be overwritten by the perception-fed means output."""
+def test_no_agent_gets_a_vacuous_detect_objects():
+    """WP10 (detect-objects-vacuous-oracle): the old GT ``detect_objects`` listed every
+    free body (incl. the robot's own base_link), so ``len(detect_objects()) > 0`` was
+    always GROUNDED. No world binds it any more — an arm agent gets in_view instead."""
+    from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
 
     class _Arm:
         def get_object_positions(self):
@@ -148,14 +162,17 @@ def test_arm_agent_keeps_ground_truth_detect_objects():
     class _ArmAgent:
         def __init__(self):
             self._arm = _Arm()
-            self._base = None
+            self._base = _G1Base()
             self._perception = None
 
-    ns = RobotWorld().build_verify_namespace(_ArmAgent())
-    # arm path bound it; the no-arm camera branch must not have run.
-    assert "detect_objects" in ns
-    got = ns["detect_objects"]()
-    assert got and got[0]["name"] == "pickable_can_red"  # ground truth, not _last_detection
+    agent = _ArmAgent()
+    sim = bind_fake_sim(agent, "go2_piper")
+    try:
+        ns = RobotWorld().build_verify_namespace(agent)
+    finally:
+        unbind_fake_sim(sim)
+    assert "detect_objects" not in ns and "describe_scene" not in ns
+    assert "in_view" in ns and "localized" in ns
 
 
 # --- 2. native detect tool routes to the capability ------------------------

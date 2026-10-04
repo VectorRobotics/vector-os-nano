@@ -22,7 +22,9 @@ from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 ROBOT_ORACLES = frozenset({
     "at_position", "facing", "visited", "holding_object", "arm_at_home",
     "placed_count", "detect_objects", "describe_scene", "get_position", "get_heading",
-    "detection_matches_gt",  # g1 perception bool oracle
+    # the WP10 GT bool oracles (vcli/worlds/sim_oracles)
+    "in_room", "near_object", "in_view", "lifted", "kept_holding", "released",
+    "object_at", "object_on", "localized",
 })
 
 # ---------------------------------------------------------------------------
@@ -65,11 +67,18 @@ CORPUS_RAN: list[str] = [
     "len(get_position()) == len(get_position())",
     # a bool oracle ordered / negated / used as a state term (detection_matches_gt
     # used to get the state rules, so `< 2` and `== False` graded GROUNDED)
-    "detection_matches_gt('red') < 2",
-    "detection_matches_gt('red') >= 0",
-    "detection_matches_gt('red') == False",
-    "not detection_matches_gt('red')",
-    "len(detection_matches_gt('red')) == 0",
+    "object_on('green bottle', 'pick_table') < 2",
+    "in_view('red can') >= 0",
+    "localized('red can') == False",
+    "not released('red can')",
+    "len(kept_holding('red can')) == 0",
+    # an over-cap radius is vacuous (FG-3) for the object-distance oracles too
+    "near_object('red can', 99)",
+    "near_object('user', r=5)",
+    "object_at('red can', 10.9, 3.2, 9)",
+    "object_at('red can', 10.9, 3.2, r=1e6)",
+    "localized('red can', 99)",
+    "localized('red can', tol=1.0)",
     # an empty container is no goal: `detect_objects() == []` holds on the arm oracle's
     # fail-safe value (RAN on base, which demanded a Constant in the compare)
     "detect_objects() == []",
@@ -127,7 +136,16 @@ HONEST_GROUNDED: list[str] = [
     "at_position(2.0, 0.0)",
     "facing(1.5708)",                               # go2 turn
     "facing(0.0)",
-    "visited('kitchen')",
+    "in_room('kitchen')",
+    "near_object('green bottle', 1.5)",
+    "near_object('user')",
+    "in_view('green bottle')",
+    "lifted('green bottle', 0.05)",
+    "kept_holding('green bottle') and near_object('user', 0.8)",
+    "released('green bottle')",
+    "object_at('green bottle', 10.9, 3.0, 0.5)",
+    "object_on('green bottle', 'dining_table')",
+    "localized('green bottle')",
     "at_position(11, 3) and facing(0.0)",
     "at_position(11, 3) or at_position(12, 3)",     # every disjunct oracle-gated
     "holding_object('banana')",                     # arm grasp
@@ -146,7 +164,7 @@ HONEST_GROUNDED: list[str] = [
     "facing(0.52, 0.78)",                           # just under 45 deg
     "facing(0.0, tol=0.5)",
     "detect_objects() == ['banana']",
-    "detection_matches_gt('red') == True",  # g1 (R7); its bare call stays RAN
+    "object_on('green bottle', 'pick_table') == True",
 ]
 
 
@@ -252,7 +270,7 @@ def test_every_capped_tol_oracle_is_capped_in_the_classifier() -> None:
     from pathlib import Path
     from types import SimpleNamespace
 
-    from vector_os_nano.vcli.worlds import go2_sim_oracle as g
+    from tests.harness.fake_gt import FakeGT, fake_namespace
 
     capped = {
         node.name
@@ -266,8 +284,9 @@ def test_every_capped_tol_oracle_is_capped_in_the_classifier() -> None:
         )
     }
     assert capped == set(ec._TOL_ARG), sorted(capped ^ set(ec._TOL_ARG))
-    agent = SimpleNamespace(_base=None)
-    tagged = {f.__name__: f.__oracle__.max_tol for f in (g.make_at_position(agent), g.make_facing(agent))}
+    agent = SimpleNamespace(_base=SimpleNamespace(get_position=lambda: (0.0, 0.0, 0.0), get_heading=lambda: 0.0))
+    ns = fake_namespace(agent, gt=FakeGT(agent, objects={"pickable_bottle_green": [10.9, 3.0, 0.32]}))
+    tagged = {n: f.__oracle__.max_tol for n, f in ns.items() if f.__oracle__.max_tol is not None}
     assert tagged == {name: cap for name, (_i, cap) in ec._TOL_ARG.items()}
 
 
@@ -275,7 +294,7 @@ def test_every_bool_oracle_gets_the_bool_rules() -> None:
     """A tagged bool oracle missing from _BOOL_ORACLES falls under the state rules,
     where ``pred(...) < 2`` / ``== False`` ground (always true / a negation)."""
     found = _tagged_bool_oracles()
-    assert {"at_position", "holding_object", "file_exists", "detection_matches_gt"} <= found
+    assert {"at_position", "holding_object", "file_exists", "object_on", "localized"} <= found
     assert found <= ec._BOOL_ORACLES, sorted(found - ec._BOOL_ORACLES)
 
 
@@ -359,21 +378,13 @@ def test_tolerance_is_clamped_in_oracle() -> None:
     import math
     from types import SimpleNamespace
 
-    from vector_os_nano.vcli.worlds.go2_sim_oracle import (
-        _MAX_ARRIVAL_TOL_M,
-        make_at_position,
-        make_facing,
-    )
+    from tests.harness.fake_gt import fake_namespace
+    from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M
 
     # A base parked far from the origin and facing +x.
-    base = SimpleNamespace(
-        get_position=lambda: (100.0, 100.0, 0.0),
-        get_heading=lambda: 0.0,
-        _connected=True,
-    )
-    agent = SimpleNamespace(_base=base)
-    at_position = make_at_position(agent)
-    facing = make_facing(agent)
+    base = SimpleNamespace(get_position=lambda: (100.0, 100.0, 0.0), get_heading=lambda: 0.0)
+    ns = fake_namespace(SimpleNamespace(_base=base), "go2")
+    at_position, facing = ns["at_position"], ns["facing"]
 
     # An inflated tol is clamped to the cap -> cannot span 140 m to the origin.
     assert at_position(0.0, 0.0, 1e6) is False
@@ -450,17 +461,16 @@ def test_evidence_passed_whole_trace_guards(trace_kwargs) -> None:  # noqa: ANN0
 # Harvested (WP04 dead-track sweep): the deleted ROS2-proxy tests pinned a base
 # whose pose was a PLACEHOLDER — Go2ROS2Proxy started at (0, 0, 0.28), on the
 # living_room box's corner, before any odometry arrived — so visited('living_room')
-# and at_position(0, 0) graded True with no sim running (periphery B-5). A base
-# that cannot vouch for its pose must fail every base oracle closed, wherever the
-# placeholder happens to sit.
+# and at_position(0, 0) graded True with no sim running (periphery B-5). With the
+# WP10 GT oracles a pose comes only from a live session's ground truth: no session
+# binds no oracle, and a GT read that fails or is not finite fails closed.
 # ---------------------------------------------------------------------------
 
 
 class _UnvouchedBase:
-    """A base parked exactly on the goal — vouched for only when connected + readable."""
+    """A base parked exactly on the goal — readable, or raising / None / NaN."""
 
-    def __init__(self, *, connected=True, pose=(0.0, 0.0, 0.28), heading=0.0, raises=False):  # noqa: ANN001
-        self._connected = connected
+    def __init__(self, *, pose=(0.0, 0.0, 0.28), heading=0.0, raises=False):  # noqa: ANN001
         self._pose, self._heading, self._raises = pose, heading, raises
 
     def get_position(self):  # noqa: ANN201
@@ -477,21 +487,25 @@ class _UnvouchedBase:
 def _base_oracle_verdicts(base) -> tuple[bool, bool, bool]:  # noqa: ANN001
     from types import SimpleNamespace
 
-    from vector_os_nano.vcli.worlds.go2_sim_oracle import make_at_position, make_facing, make_visited
+    from tests.harness.fake_gt import fake_namespace
 
-    agent = SimpleNamespace(_base=base)
-    return (
-        make_at_position(agent)(0.0, 0.0),
-        make_facing(agent)(0.0),
-        make_visited(agent, {"living_room": (0.0, 0.0, 6.0, 5.0)})("living_room"),
-    )
+    ns = fake_namespace(SimpleNamespace(_base=base), "go2")
+    return ns["at_position"](0.0, 0.0), ns["facing"](0.0), ns["in_room"]("living_room")
+
+
+def test_no_live_sim_session_binds_no_oracle() -> None:
+    """A base on the goal but no live sim session behind it: nothing grounds."""
+    from types import SimpleNamespace
+
+    from vector_os_nano.vcli.worlds.robot import RobotWorld
+
+    assert RobotWorld().build_verify_namespace(SimpleNamespace(_base=_UnvouchedBase())) == {}
 
 
 @pytest.mark.parametrize(
     "base",
     [
-        pytest.param(_UnvouchedBase(connected=False), id="disconnected-at-placeholder"),
-        pytest.param(_UnvouchedBase(raises=True), id="no-odom-yet-raises"),
+        pytest.param(_UnvouchedBase(raises=True), id="gt-read-raises"),
         pytest.param(_UnvouchedBase(pose=None, heading=None), id="pose-none"),
         pytest.param(_UnvouchedBase(pose=(float("nan"),) * 3, heading=float("nan")), id="pose-nan"),
     ],
@@ -501,6 +515,6 @@ def test_base_oracles_fail_closed_on_an_unvouched_pose(base) -> None:  # noqa: A
 
 
 def test_base_oracles_ground_the_same_pose_when_vouched() -> None:
-    """Control: the identical pose on a connected, readable base DOES ground, so the
-    fail-closed cases above fail for the right reason."""
+    """Control: the identical pose on a readable GT DOES ground, so the fail-closed
+    cases above fail for the right reason."""
     assert _base_oracle_verdicts(_UnvouchedBase()) == (True, True, True)

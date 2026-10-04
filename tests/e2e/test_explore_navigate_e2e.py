@@ -61,7 +61,8 @@ def scene_graph():
     layout_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         "config",
-        "room_layout.yaml",
+        "worlds",
+        "apartment.yaml",
     )
     if os.path.isfile(layout_path):
         sg.load_layout(layout_path)

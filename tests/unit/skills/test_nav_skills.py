@@ -321,7 +321,7 @@ def test_robot_context_compass_matches_where_am_i(yaw_deg, label):
 
 def test_at_position_default_tol_is_the_arrival_radius():
     # producers:arrival-radius-vs-tol-drift: navigate 'arrived' at 0.8 m, verify at 0.5 m
-    from vector_os_nano.vcli.worlds.go2_sim_oracle import _AT_POSITION_TOL_M
+    from vector_os_nano.vcli.worlds.sim_oracles import _AT_POSITION_TOL_M
 
     assert _AT_POSITION_TOL_M == arrival_radius() <= 0.5
 

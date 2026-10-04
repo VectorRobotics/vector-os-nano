@@ -111,7 +111,7 @@ def build_namespace(
         return name
 
     # ---------------------------------------------------------------- base
-    if gt.base_pose() is not None:
+    if gt.has_base:
 
         @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_ARRIVAL_TOL_M)
         @_safe(False)

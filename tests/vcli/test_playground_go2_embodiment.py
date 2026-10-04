@@ -4,7 +4,7 @@
 """Playground E-1 — a SECOND embodiment: the Go2 quadruped (mobile base).
 
 Proves the playground/seam generalizes beyond the arm. Covers:
-- the base predicates (at_position / facing / visited) against a FAKE base
+- the GT base oracles (at_position / facing / in_room) over a FAKE base
   exposing get_position / get_heading,
 - fail-safe behaviour when the base is absent / not connected (never raises),
 - the world registry wiring (resolve_world_named("go2_room") -> a has_base
@@ -31,7 +31,7 @@ import pytest
 from vector_os_nano.hardware.sim.mujoco_go2 import _ROOM_XML
 from vector_os_nano.playground import PlaygroundWorld, register_scenarios
 from vector_os_nano.playground.catalog import GO2_ROOM, get_scenario
-from vector_os_nano.playground.verify.base_predicates import _FACING_TOL_RAD
+from tests.harness.fake_gt import bind_fake_sim
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +73,10 @@ def _go2_world() -> PlaygroundWorld:
 
 
 def _base_agent(base: Any = None) -> SimpleNamespace:
-    return SimpleNamespace(_base=base)
+    agent = SimpleNamespace(_base=base)
+    if base is not None:
+        bind_fake_sim(agent, "go2")  # the live sim session's GT oracles
+    return agent
 
 
 # ---------------------------------------------------------------------------
@@ -115,76 +118,9 @@ class TestGo2Scenario:
 # ---------------------------------------------------------------------------
 
 
-class TestAtPosition:
-    # Targets use REAL scene_room.xml coordinates: the kitchen centre is
-    # (17, 2.5) (f_kitchen pos="17 2.5"); the Go2 spawns at (10, 3) in the hallway.
-    def test_true_at_target(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[17.0, 2.5, 0.3], heading=0.0))
-        )
-        assert ns["at_position"](17.0, 2.5) is True
-
-    def test_true_within_tolerance(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[17.2, 2.5, 0.3], heading=0.0))
-        )
-        # 0.2 m off, default tol is 0.5 m -> within.
-        assert ns["at_position"](17.0, 2.5) is True
-
-    def test_false_outside_tolerance(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[10.0, 3.0, 0.3], heading=0.0))
-        )
-        # Spawn (10, 3) is far from the kitchen centre (17, 2.5).
-        assert ns["at_position"](17.0, 2.5) is False
-
-    def test_explicit_tol_respected(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[17.4, 2.5, 0.3], heading=0.0))
-        )
-        # 0.4 m off: outside a tight 0.1 m tol, inside a loose 1.0 m tol.
-        assert ns["at_position"](17.0, 2.5, 0.1) is False
-        assert ns["at_position"](17.0, 2.5, 1.0) is True
-
-    def test_bad_args_fail_safe(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[17.0, 2.5, 0.3], heading=0.0))
-        )
-        assert ns["at_position"]("x", None) is False
-
-
 # ---------------------------------------------------------------------------
 # Base predicates: facing
 # ---------------------------------------------------------------------------
-
-
-class TestFacing:
-    def test_true_at_heading(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[0.0, 0.0, 0.3], heading=math.pi / 2))
-        )
-        assert ns["facing"](math.pi / 2) is True
-
-    def test_wraps_across_pi_seam(self) -> None:
-        # Heading just past +pi vs target just past -pi: ~0 actual delta.
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[0.0, 0.0, 0.3], heading=math.pi - 0.05))
-        )
-        assert ns["facing"](-math.pi + 0.05) is True
-
-    def test_false_when_off_heading(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[0.0, 0.0, 0.3], heading=0.0))
-        )
-        assert ns["facing"](math.pi) is False
-
-    def test_default_tol(self) -> None:
-        # A small offset under the 20-deg default tol passes.
-        off = _FACING_TOL_RAD * 0.5
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[0.0, 0.0, 0.3], heading=off))
-        )
-        assert ns["facing"](0.0) is True
 
 
 # ---------------------------------------------------------------------------
@@ -192,73 +128,9 @@ class TestFacing:
 # ---------------------------------------------------------------------------
 
 
-class TestVisited:
-    # Boxes are the REAL scene_room.xml floor extents: kitchen=(14,0,20,5),
-    # hallway=(6,0,14,10), guest_bedroom=(12,10,20,14). (17, 2.5) is the kitchen
-    # centre; (10, 3) is the Go2 spawn in the hallway.
-    def test_true_inside_named_room(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[17.0, 2.5, 0.3], heading=0.0))
-        )
-        assert ns["visited"]("kitchen") is True
-
-    def test_false_outside_named_room(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[17.0, 2.5, 0.3], heading=0.0))
-        )
-        # guest_bedroom box is (12, 10, 20, 14); the kitchen centre is NOT inside.
-        assert ns["visited"]("guest_bedroom") is False
-
-    def test_spawn_is_in_hallway_not_kitchen(self) -> None:
-        # The Go2 spawn (10, 3) lies in the central hallway box, not the kitchen.
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[10.0, 3.0, 0.3], heading=0.0))
-        )
-        assert ns["visited"]("hallway") is True
-        assert ns["visited"]("kitchen") is False
-
-    def test_unknown_room_fails_safe(self) -> None:
-        ns = _go2_world().build_verify_namespace(
-            _base_agent(FakeBase(position=[17.0, 2.5, 0.3], heading=0.0))
-        )
-        # An unknown room name is NOT silently treated as "anywhere".
-        assert ns["visited"]("atlantis") is False
-
-
 # ---------------------------------------------------------------------------
 # Fail-safe: no base / not connected / raising oracle => never raises
 # ---------------------------------------------------------------------------
-
-
-class TestFailSafe:
-    @pytest.mark.parametrize("agent", [None, SimpleNamespace(_base=None)])
-    def test_predicates_fail_safe_without_base(self, agent: Any) -> None:
-        ns = _go2_world().build_verify_namespace(agent)
-        assert ns["at_position"](0.0, 0.0) is False
-        assert ns["facing"](0.0) is False
-        assert ns["visited"]("kitchen") is False
-
-    def test_predicates_fail_safe_when_disconnected(self) -> None:
-        base = FakeBase(position=[2.0, 0.0, 0.3], heading=0.0, connected=False)
-        ns = _go2_world().build_verify_namespace(_base_agent(base))
-        assert ns["at_position"](2.0, 0.0) is False
-        assert ns["facing"](0.0) is False
-        assert ns["visited"]("kitchen") is False
-
-    def test_predicates_fail_safe_when_oracle_raises(self) -> None:
-        class BoomBase:
-            _connected = True
-
-            def get_position(self):
-                raise RuntimeError("sim exploded")
-
-            def get_heading(self):
-                raise RuntimeError("sim exploded")
-
-        ns = _go2_world().build_verify_namespace(_base_agent(BoomBase()))
-        assert ns["at_position"](0.0, 0.0) is False
-        assert ns["facing"](0.0) is False
-        assert ns["visited"]("kitchen") is False
 
 
 # ---------------------------------------------------------------------------
@@ -300,13 +172,13 @@ class TestKernelIntegration:
         ns = eng._build_verifier_namespace(agent)
         # Base predicates are present (and the arm-only stubs were not injected
         # by the go2 world).
-        assert {"at_position", "facing", "visited"} <= set(ns)
+        assert {"at_position", "facing", "in_room"} <= set(ns)
 
         gv = GoalVerifier(ns)
         assert gv.verify("at_position(17.0, 2.5)") is True
         assert gv.verify("facing(0.0)") is True
-        assert gv.verify("visited('kitchen')") is True
-        assert gv.verify("visited('guest_bedroom')") is False
+        assert gv.verify("in_room('kitchen')") is True
+        assert gv.verify("in_room('guest_bedroom')") is False
 
     def test_resolved_via_scenario_flag(self) -> None:
         """The --scenario launch path resolves the go2 playground world."""
@@ -381,16 +253,16 @@ class TestDecomposeVocabRouting:
 
 class TestArmUnaffected:
     def test_arm_scenario_predicate_set_unchanged(self) -> None:
-        ns = PlaygroundWorld().build_verify_namespace(SimpleNamespace(_arm=None))
-        assert {
-            "detect_objects",
-            "describe_scene",
-            "holding_object",
-            "arm_at_home",
-            "placed_count",
-        } <= set(ns)
-        # No base predicates leak into an arm scenario.
-        assert not ({"at_position", "facing", "visited"} & set(ns))
+        class _Arm:
+            def get_object_positions(self):
+                return {"mug": [0.22, 0.05, 0.06]}
+
+        agent = SimpleNamespace(_arm=_Arm(), _base=None)
+        bind_fake_sim(agent, "so101")
+        ns = PlaygroundWorld().build_verify_namespace(agent)
+        assert {"holding_object", "arm_at_home", "object_on", "released"} <= set(ns)
+        # No base predicates leak into an arm scenario (a fixed-base arm).
+        assert not ({"at_position", "facing", "in_room"} & set(ns))
 
 
 # ---------------------------------------------------------------------------
@@ -482,13 +354,13 @@ class TestGo2GeometryReconciledWithScene:
         ns = _go2_world().build_verify_namespace(
             _base_agent(FakeBase(position=[*self._SPAWN_XY, 0.3], heading=0.0))
         )
-        assert ns["visited"]("hallway") is True
+        assert ns["in_room"]("hallway") is True
         for other in ("kitchen", "living_room", "guest_bedroom", "study"):
-            assert ns["visited"](other) is False, other
+            assert ns["in_room"](other) is False, other
 
     def test_rooms_producer_emits_real_room_centres(self) -> None:
         # The foreach source step ("locate the rooms") emits the SAME room set the
-        # visited() predicate reads, each carrying its real (x, y) centre.
+        # in_room() predicate reads, each carrying its real (x, y) centre.
         scen = get_scenario("go2_room")
         producer = _go2_world().build_step_primitives(_base_agent(None))[
             PlaygroundWorld.ROOMS_STRATEGY

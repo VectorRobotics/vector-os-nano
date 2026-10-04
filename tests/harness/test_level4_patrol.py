@@ -132,7 +132,7 @@ class TestLevel4Patrol:
         sg = SceneGraph()
         layout = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "config", "room_layout.yaml",
+            "config", "worlds", "apartment.yaml",
         )
         if os.path.exists(layout):
             sg.load_layout(layout)
