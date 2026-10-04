@@ -247,12 +247,15 @@ class _NativeDetectTool:
 
     name = "detect"
     description = (
-        "Localize a named or coloured object in the robot's CAMERA view using the "
-        "learned open-vocabulary detector (grounding-dino). Pass the target as 'query' "
-        "(e.g. 'red object', 'a red stool', '红色的东西'). Returns bounding box(es) + "
-        "label(s) + score(s). This is PERCEPTION only (read-only). After it returns, "
-        "call the verify expression the tool result tells you to use to confirm the "
-        "model localized the object (the exact verify depends on the embodiment)."
+        "Localize a named or coloured object in the robot's CAMERA view with a learned "
+        "detector. Pass the target as 'query' (e.g. 'red object', 'a red stool', "
+        "'红色的东西'). 'backend' picks the model: 'grounding-dino' (default: local, "
+        "~0.1 s, scored boxes, best with an English noun phrase) or 'rynnbrain' (an "
+        "external embodied VLM: ~1 s, one unscored box, reads Chinese and relations like "
+        "'the bottle left of the red can'; use it when the user asks for RynnBrain or "
+        "the target is described by relation). Returns box(es) + label(s) + score(s). "
+        "PERCEPTION only (read-only). After it returns, call the verify expression the "
+        "tool result tells you to use."
     )
     input_schema: dict[str, Any] = {
         "type": "object",
@@ -260,6 +263,11 @@ class _NativeDetectTool:
             "query": {
                 "type": "string",
                 "description": "Natural-language target to localize (named or coloured).",
+            },
+            "backend": {
+                "type": "string",
+                "enum": ["grounding-dino", "rynnbrain"],
+                "description": "Detector model (default grounding-dino).",
             },
         },
         "required": ["query"],
@@ -287,8 +295,11 @@ class _NativeDetectTool:
         if not query:
             return ToolResult(content="detect requires a non-empty 'query'.", is_error=True)
         hint = self._verify_hint(getattr(context, "agent", None), query)
+        payload = {"query": query}
+        if (params or {}).get("backend"):
+            payload["backend"] = str(params["backend"])
         try:
-            result = self._capability.invoke({"query": query}, context)
+            result = self._capability.invoke(payload, context)
         except Exception as exc:  # noqa: BLE001
             return ToolResult(content=f"detect({query!r}) raised: {exc}", is_error=True)
 
@@ -296,15 +307,18 @@ class _NativeDetectTool:
         boxes = output.get("boxes") or []
         labels = output.get("labels") or []
         scores = output.get("scores") or []
+        model = output.get("backend") or payload.get("backend") or "grounding-dino"
 
         # MOAT DISCIPLINE (R6 audit): the detector's OWN output is never stashed on
         # the agent for a verify to read back (the D61 self-certifying tautology); it
         # flows only to the human-readable tool output below.
         if not getattr(result, "success", False) and not boxes:
-            err = getattr(result, "error", "") or "no detections"
+            err = getattr(result, "error", "")
+            if err:  # the model did not run on this query (down, ungroundable, bad backend)
+                return ToolResult(content=f"detect({query!r}) via {model} failed: {err}", is_error=True)
             return ToolResult(
                 content=(
-                    f"detect({query!r}): the detector RAN but localized nothing ({err}). "
+                    f"detect({query!r}): {model} RAN but localized nothing. "
                     f"{hint} checks whether it is in the camera view at all."
                 )
             )
@@ -316,7 +330,7 @@ class _NativeDetectTool:
         )
         return ToolResult(
             content=(
-                f"detect({query!r}): grounding-dino localized {len(boxes)} object(s); "
+                f"detect({query!r}): {model} localized {len(boxes)} object(s); "
                 f"top {first}. Call {hint} to confirm."
             )
         )

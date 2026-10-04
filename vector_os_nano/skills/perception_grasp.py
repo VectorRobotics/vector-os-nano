@@ -42,11 +42,10 @@ from vector_os_nano.skills.utils.terminal_dock import dock_converged, terminal_d
 logger = logging.getLogger(__name__)
 
 # Perception-backend surface this skill consumes (a Go2GraspPerception or any
-# RGB-D + VLM + segmenter adapter exposing these).
-_REQUIRED_PERCEPTION = (
-    "detect", "segment", "get_color_frame", "get_depth_frame",
-    "get_intrinsics", "get_camera_pose",
-)
+# adapter giving ONE RGB-D snapshot, detection on a given frame, and a segmenter).
+_REQUIRED_PERCEPTION = ("capture", "detect_in", "segment")
+# A producer-passed box is stale once the camera moved this far since its frame.
+_STALE_BOX_M, _STALE_BOX_RAD = 0.02, 0.035
 
 
 def _fail(diagnosis: str, message: str, **extra: Any) -> SkillResult:
@@ -665,6 +664,7 @@ class PerceptionGraspSkill:
         # only the box SOURCE differs (passed vs self-detected). FAIL LOUD if the
         # passed box yields no depth points (never a GT fallback).
         passed_box = self._resolve_passed_box(params, color)
+        box_frame = self._passed_box_frame(params)
         consumed_bbox = passed_box is not None
         if consumed_bbox:
             logger.info(
@@ -672,7 +672,7 @@ class PerceptionGraspSkill:
                 passed_box, color,
             )
             gp, resolved, fail = self._grasp_point_from_passed_box(
-                perception, query, passed_box, color=color, scene=scene
+                perception, query, passed_box, color=color, scene=scene, box_frame=box_frame,
             )
         else:
             # --- perceive the target's 3D grasp point (real depth + mask, never GT).
@@ -817,6 +817,8 @@ class PerceptionGraspSkill:
             # ran its own detect/front_object resolve.
             "consumed_bbox": consumed_bbox,
             "reperceived": not consumed_bbox,
+            # which segmenter made the mask the grasp point came from
+            "segmenter": getattr(perception, "last_segmenter", None),
         })
         if not res.success and "diagnosis" not in rd:
             rd["diagnosis"] = "grasp_failed"
@@ -894,6 +896,34 @@ class PerceptionGraspSkill:
         return None
 
     @staticmethod
+    def _passed_box_frame(params: dict) -> dict | None:
+        """The ``frame`` provenance (size, camera pose) a producer's detect output carries."""
+        dets = params.get("detections")
+        frame = params.get("frame") or (dets[0].get("frame") if isinstance(dets, list) and dets
+                                         and isinstance(dets[0], dict) else None)
+        return frame if isinstance(frame, dict) else None
+
+    @staticmethod
+    def _box_is_stale(box_frame: dict | None, rgb: Any, cam_xpos: Any, cam_xmat: Any) -> str | None:
+        """Why a producer box no longer belongs to the current frame, or None."""
+        import numpy as np
+
+        if not box_frame:
+            return None
+        try:
+            if [int(v) for v in box_frame["size"]] != [int(rgb.shape[1]), int(rgb.shape[0])]:
+                return f"frame size {box_frame['size']} != {[rgb.shape[1], rgb.shape[0]]}"
+            moved = float(np.linalg.norm(np.asarray(box_frame["cam_pos"], float) - np.asarray(cam_xpos, float)))
+            Ra = np.asarray(box_frame["cam_mat"], float).reshape(3, 3)
+            Rb = np.asarray(cam_xmat, float).reshape(3, 3)
+            turned = float(np.arccos(np.clip((np.trace(Ra.T @ Rb) - 1.0) / 2.0, -1.0, 1.0)))
+        except (KeyError, TypeError, ValueError) as exc:
+            return f"unreadable box provenance ({exc})"
+        if moved > _STALE_BOX_M or turned > _STALE_BOX_RAD:
+            return f"camera moved {moved:.3f} m / {math.degrees(turned):.1f} deg since the box"
+        return None
+
+    @staticmethod
     def _select_detection_dict(detections: list[dict], color: str | None) -> dict:
         """_select_detection (D49) on detection DICTS instead of Detection objects.
 
@@ -918,7 +948,7 @@ class PerceptionGraspSkill:
 
     def _grasp_point_from_passed_box(
         self, perception: Any, query: str, box: tuple, *, color: str | None = None,
-        scene: str | None = None,
+        scene: str | None = None, box_frame: dict | None = None,
     ):
         """Back-project a PRODUCER-passed pixel box to a WORLD grasp point.
 
@@ -941,6 +971,24 @@ class PerceptionGraspSkill:
         # Verify LABEL convention matches the self-detect route: the world manifest's
         # body name when the query names one; otherwise the query text.
         resolved = scene or (query or "front object")
+
+        # A box from an earlier frame (the camera moved since: a navigate, the arm
+        # stow) is re-detected on THIS frame rather than segmented where it no longer is.
+        stale = self._box_is_stale(box_frame, rgb, cam_xpos, cam_xmat)
+        if stale:
+            logger.info("[PGRASP] producer box %s is stale (%s) — re-detecting %r", box, stale, query)
+            try:
+                from vector_os_nano.perception.object_localizer import detect_on
+                dets = detect_on(perception, rgb, query)
+            except Exception as exc:  # noqa: BLE001
+                dets, stale = [], f"{stale}; re-detect raised {exc}"
+            if not dets:
+                return None, resolved, _fail(
+                    "stale_box", f"The producer box for {resolved!r} is stale ({stale}) and "
+                    "re-detecting on the current frame found nothing.",
+                    detection_label=resolved, query=query, consumed_bbox=True,
+                )
+            box = tuple(float(v) for v in self._select_detection(dets, color).bbox)
 
         # Segment the PASSED box — reuse the perception segmenter (EdgeTAM, box-rect
         # fallback). NO perception.detect / front_object_mask call here (that is the
