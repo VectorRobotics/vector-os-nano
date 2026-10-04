@@ -290,10 +290,10 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
         from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
         from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
 
-        arm = MuJoCoPiper(base)
+        arm = MuJoCoPiper(base, cfg.arm)
         session.own(f"{arm.name} disconnected", arm.disconnect)
         arm.connect()
-        gripper = MuJoCoPiperGripper(base)
+        gripper = MuJoCoPiperGripper(base, cfg.arm.gripper)
         session.own("gripper disconnected", gripper.disconnect)
         gripper.connect()
 

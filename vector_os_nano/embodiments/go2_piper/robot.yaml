@@ -87,6 +87,27 @@ arm:
   name: piper
   dof: 6
   ee_site: piper_ee_site
+  joints: [piper_joint1, piper_joint2, piper_joint3, piper_joint4, piper_joint5, piper_joint6]
+  # actuators default to the joint names (one position servo per joint)
+  home: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # URDF zero = the stow pose MuJoCoGo2 sets
+  # Top-down IK starts: shoulder up, elbow back, wrist pitched down (joint5 at its
+  # 1.22 limit), with both wrist rolls; the live arm joints are always tried too.
+  ik_seeds:
+    - [0.0, 1.57, -1.57, 0.0, 1.22, 0.0]
+    - [0.0, 2.48, -1.75, 0.0, 1.00, 3.13]
+    - [0.0, 1.57, -1.57, 0.0, 1.22, 3.14]
+  # Settled |q - target| bound (rad) for a successful move: above the 0.03 rad
+  # frictionloss deadband of the kp=10 wrist servos (0.048 seen settling), far
+  # below an arm blocked by the table.
+  track_tol: 0.08
+  gripper:
+    actuator: piper_gripper
+    joint: piper_joint7             # joint8 mirrors it (equality in the MJCF)
+    open: 0.035                     # per-finger travel (m): 70 mm jaw opening
+    closed: 0.0
+    finger_bodies: [piper_link7, piper_link8]
+    weld_body: piper_link6
+    min_opening: 0.005              # jaws held >= 10 mm apart by the object
 
 capabilities:
   has_base: true

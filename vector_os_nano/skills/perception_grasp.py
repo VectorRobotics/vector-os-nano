@@ -160,7 +160,7 @@ _POST_APPROACH_NUDGE_VY = 0.2    # m/s lateral cap (correct y-drift toward the o
 # forward only at z~0.32 and cannot also hover 5 cm higher there), so a SHALLOW
 # pre-grasp hover keeps both the pre-grasp and the grasp inside the reachable band
 # (a tall hover IK-fails -> the whole grasp bails). The EE extends straight to the
-# object's reachable height; the weld fires within _GRASP_RADIUS from there.
+# object's reachable height and the jaws close around the object from there.
 _GO2_PRE_GRASP_H = 0.02
 _GO2_GRASP_Z_ABOVE = 0.0
 # Post-grasp lift: after the weld fires, raise the Piper shoulder (joint2) by this
@@ -657,10 +657,8 @@ class PerceptionGraspSkill:
         # --- stow the arm OUT of the camera FOV before perceiving (the arm at rest
         # occludes the forward head camera and corrupts the front-object mask) -----
         if hasattr(arm, "move_joints"):
-            try:
-                import time as _time
+            try:  # move_joints returns once the arm has settled at stow
                 arm.move_joints(_STOW_FOR_VIEW, duration=1.2)
-                _time.sleep(0.4)  # let the arm physically reach stow before looking
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[PGRASP] stow-for-view move failed: %s", exc)
 
@@ -785,8 +783,8 @@ class PerceptionGraspSkill:
         # /tmp/param_probe.py: pre-grasp at obj_z+0.05 IK-fails while the grasp at
         # obj_z IK-succeeds). So we tell PickTopDownSkill to use a SHALLOW pre-grasp
         # hover (obj_z + _GO2_PRE_GRASP_H) that stays inside that band — the EE
-        # extends straight to the object's reachable height and the weld fires from
-        # there (within _GRASP_RADIUS), rather than first reaching an unreachable
+        # extends straight to the object's reachable height and the jaws close from
+        # there, rather than first reaching an unreachable
         # high hover and bailing ik_unreachable. World-specific config injection (the
         # perception skill owns the Go2+Piper reach knowledge), not a kernel change.
         ctx_cfg = dict(context.config or {})
@@ -813,12 +811,10 @@ class PerceptionGraspSkill:
         # weld, and the object moves because it is physically attached to link6.
         try:
             if gripper.is_holding() and hasattr(arm, "get_joint_positions") and hasattr(arm, "move_joints"):
-                import time as _t
                 cur = list(arm.get_joint_positions())
                 lift_q = list(cur)
                 lift_q[1] = max(0.0, cur[1] - _LIFT_SHOULDER_DELTA)  # raise shoulder -> EE up
                 arm.move_joints(lift_q, duration=_LIFT_DURATION)
-                _t.sleep(0.3)
         except Exception as exc:  # noqa: BLE001
             logger.debug("[PGRASP] post-grasp lift failed: %s", exc)
 

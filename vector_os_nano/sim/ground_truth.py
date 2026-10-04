@@ -14,10 +14,23 @@ from typing import Any
 import numpy as np
 
 
-class GroundTruth:
-    """Free-body poses and weld states of one runtime (names resolved once)."""
+def in_subtree(model: Any, bid: int, root_bid: int) -> bool:
+    """True iff body *bid* is *root_bid* or one of its descendants."""
+    while bid > 0:
+        if bid == root_bid:
+            return True
+        bid = int(model.body_parentid[bid])
+    return False
 
-    def __init__(self, runtime: Any) -> None:
+
+class GroundTruth:
+    """Free-body poses and weld states of one runtime (names resolved once).
+
+    ``robot_root_bid``: the robot's root body; it and every body in its kinematic
+    tree are left out, so the robot is never one of the scene's objects.
+    """
+
+    def __init__(self, runtime: Any, robot_root_bid: int = -1) -> None:
         import mujoco as mj
 
         self._rt = runtime
@@ -27,6 +40,8 @@ class GroundTruth:
         for b in range(m.nbody):
             j = int(m.body_jntadr[b])
             name = mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, b)
+            if robot_root_bid > 0 and in_subtree(m, b, robot_root_bid):
+                continue
             if j >= 0 and name and m.jnt_type[j] == mj.mjtJoint.mjJNT_FREE:
                 self._free[name] = int(m.jnt_qposadr[j])
         self._welds: dict[str, int] = {}

@@ -5,8 +5,14 @@
 
 Implements GripperProtocol. Piper's gripper is a single-actuator parallel
 jaw: one position actuator on joint7 (piper_gripper), and joint8 follows via
-an equality constraint defined in the Menagerie MJCF. Range is 0 (fully
-closed) to 0.035m (fully open, ~35 mm jaw separation).
+an equality constraint defined in the Menagerie MJCF. Names and range come
+from the manifest arm block's ``gripper`` (``embodiments/go2_piper/robot.yaml``).
+
+A grasp is physical first: ``close()`` drives the jaws shut, waits (sim time)
+for them to settle, and welds an object ONLY if it is in contact with EVERY
+finger body while the jaws are held open by it. The weld then keeps the soft
+position-controlled grip from slipping; it never attracts an object that is
+merely near the gripper.
 
 Shares MjModel/MjData with the parent MuJoCoGo2; every write (jaw ctrl, weld
 on/off) goes through the parent's SimRuntime at a step boundary.
@@ -16,33 +22,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 if TYPE_CHECKING:  # pragma: no cover
+    from vector_os_nano.embodiments.config import GripperSpec
     from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-_ACTUATOR_NAME: str = "piper_gripper"
-_JOINT_NAME: str = "piper_joint7"
-
-# joint7 range per piper.xml is [0, 0.035]; ctrl uses the same units (meters
-# of jaw half-opening). Fully closed commands exactly zero; fully open is
-# the upper joint limit.
-_CLOSED_POS: float = 0.0
-_OPEN_POS: float = 0.035
-
-# Heuristic: jaws considered "holding something" when commanded closed but
-# the physics-driven joint position is kept open by the gripped object.
-_HOLDING_THRESHOLD: float = 0.005  # 5 mm jaw separation while cmd=closed
-
-# Max distance (m) from the EE site to an object centre for the weld grasp to
-# fire (mirrors MuJoCoGripper._GRASP_RADIUS). The perceived grasp point is ~2cm
-# accurate and the IK drives the EE site to it, so 6cm comfortably covers IK
-# residual without grabbing a neighbour (cylinders are 15cm apart).
-_GRASP_RADIUS: float = 0.06
+# The jaws get up to _SETTLE_S sim seconds to close; they are settled once they
+# move less than _SETTLE_EPS (m) over one _SETTLE_POLL_S poll.
+_SETTLE_S: float = 1.0
+_SETTLE_POLL_S: float = 0.02
+_SETTLE_EPS: float = 2e-4
 
 # Lazy MuJoCo import (same pattern as the other sim modules)
 _mujoco: Any = None
@@ -57,27 +49,27 @@ def _get_mujoco() -> Any:
     return _mujoco
 
 
-# ---------------------------------------------------------------------------
-# MuJoCoPiperGripper
-# ---------------------------------------------------------------------------
-
-
 class MuJoCoPiperGripper:
     """Piper parallel-jaw gripper in MuJoCo.
 
     Args:
-        go2: A connected MuJoCoGo2 instance. Must have been launched with
-            with_arm=True so the piper_gripper actuator exists.
+        go2: A connected MuJoCoGo2 instance launched with the arm.
+        spec: The manifest gripper block; default: the go2_piper manifest's.
     """
 
-    def __init__(self, go2: "MuJoCoGo2") -> None:
+    def __init__(self, go2: "MuJoCoGo2", spec: "GripperSpec | None" = None) -> None:
+        if spec is None:
+            from vector_os_nano.embodiments import registry
+
+            spec = registry.load("go2_piper").arm.gripper
         self._go2 = go2
+        self._spec = spec
         self._connected: bool = False
         self._actuator_id: int = -1
         self._joint_qpos_adr: int = -1
-        self._ee_site_id: int = -1
-        self._held_object: str | None = None  # weld-backed grasp state (the honest signal)
-        self._free_bodies: dict[str, int] = {}
+        self._finger_geoms: list[frozenset[int]] = []  # collision geoms, one set per finger
+        self._welds: dict[int, int] = {}  # object body id -> its weld equality index
+        self._held_object: str | None = None  # body welded by the last close()
         self._gt: Any = None
 
     # ------------------------------------------------------------------
@@ -91,40 +83,45 @@ class MuJoCoPiperGripper:
             )
         mj = _get_mujoco()
         model = self._go2._mj.model
+        spec = self._spec
 
-        aid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, _ACTUATOR_NAME)
+        aid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, spec.actuator)
         if aid < 0:
             raise RuntimeError(
-                f"MuJoCoPiperGripper: actuator {_ACTUATOR_NAME!r} not in loaded "
+                f"MuJoCoPiperGripper: actuator {spec.actuator!r} not in loaded "
                 "MJCF. Ensure sim was launched with with_arm=True."
             )
         self._actuator_id = aid
-
-        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, _JOINT_NAME)
+        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, spec.joint)
         if jid < 0:
-            raise RuntimeError(
-                f"MuJoCoPiperGripper: joint {_JOINT_NAME!r} not in loaded MJCF."
-            )
+            raise RuntimeError(f"MuJoCoPiperGripper: joint {spec.joint!r} not in loaded MJCF.")
         self._joint_qpos_adr = int(model.jnt_qposadr[jid])
 
-        # EE site for the weld grasp (nearest-object pick). Mirrors MuJoCoGripper's
-        # use of the arm EE site; absent -> grasp degrades to a no-op (logged).
-        self._ee_site_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, "piper_ee_site")
-        # Free bodies (grasp candidates) by id, resolved once.
-        self._free_bodies = {}
-        for b in range(model.nbody):
-            j = int(model.body_jntadr[b])
-            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, b)
-            if j >= 0 and name and model.jnt_type[j] == mj.mjtJoint.mjJNT_FREE:
-                self._free_bodies[name] = b
+        self._finger_geoms = []
+        for body in spec.finger_bodies:
+            bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body)
+            geoms = frozenset(
+                g for g in range(model.ngeom)
+                if model.geom_bodyid[g] == bid and (model.geom_contype[g] or model.geom_conaffinity[g])
+            )
+            if bid < 0 or not geoms:
+                raise RuntimeError(f"MuJoCoPiperGripper: finger body {body!r} has no collision geom")
+            self._finger_geoms.append(geoms)
+        if not self._finger_geoms:
+            raise RuntimeError("MuJoCoPiperGripper: the manifest names no finger_bodies")
+
+        weld_bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, spec.weld_body)
+        self._welds = {
+            int(model.eq_obj2id[i]): i for i in range(model.neq)
+            if model.eq_type[i] == mj.mjtEq.mjEQ_WELD and int(model.eq_obj1id[i]) == weld_bid
+        }
         from vector_os_nano.sim.ground_truth import GroundTruth
 
-        self._gt = GroundTruth(self._go2.runtime)
-
+        self._gt = GroundTruth(self._go2.runtime, robot_root_bid=self._go2._mj.layout.root_bid)
         self._connected = True
         logger.info(
-            "MuJoCoPiperGripper connected (actuator=%s, closed=%.3f, open=%.3f)",
-            _ACTUATOR_NAME, _CLOSED_POS, _OPEN_POS,
+            "MuJoCoPiperGripper connected (actuator=%s, closed=%.3f, open=%.3f, %d weldable objects)",
+            spec.actuator, spec.closed, spec.open, len(self._welds),
         )
 
     def disconnect(self) -> None:
@@ -141,44 +138,60 @@ class MuJoCoPiperGripper:
     # ------------------------------------------------------------------
 
     def open(self) -> bool:
-        """Open the jaws fully (35 mm) and RELEASE any welded object (one step boundary)."""
+        """Open the jaws and release every grasp weld (one step boundary), verified.
+
+        Returns False (and keeps the held state) if a weld is still active after
+        the release or the write failed.
+        """
         self._require_connection()
-        aid = self._actuator_id
+        aid, eqs = self._actuator_id, list(self._welds.values())
 
-        def _open(model: Any, data: Any) -> None:
-            data.ctrl[aid] = _OPEN_POS
-            self._release_all(model, data)
+        def _open(_model: Any, data: Any) -> list[int]:
+            data.ctrl[aid] = self._spec.open
+            data.eq_active[eqs] = 0
+            return [i for i in eqs if int(data.eq_active[i]) != 0]
 
-        self._go2.runtime.call(_open)
+        try:
+            still = self._go2.runtime.call(_open)
+        except Exception as exc:  # noqa: BLE001 — reported, never a silent success
+            logger.error("MuJoCoPiperGripper: open/release failed: %s", exc)
+            return False
+        if still:
+            logger.error("MuJoCoPiperGripper: welds %s still active after release", still)
+            return False
         self._held_object = None
         return True
 
     def close(self) -> bool:
-        """Command jaws closed AND, if an object is within grasp range of the EE,
-        activate its weld so it physically attaches + lifts with the arm (mirrors
-        the proven SO-101 MuJoCoGripper). The weld is what makes holding_object
-        grade GROUNDED — the object actually moves with the gripper. Both writes
-        happen at one step boundary.
+        """Close the jaws; weld the object they actually grip (see module docstring).
+
+        Returns True once the jaws were commanded and settled (whether or not they
+        gripped anything — is_holding() says that); False if the sim refused.
         """
         self._require_connection()
         aid = self._actuator_id
-
-        def _close(model: Any, data: Any) -> None:
-            data.ctrl[aid] = _CLOSED_POS
-            self._try_grasp(model, data)
-
+        rt = self._go2.runtime
         try:
-            self._go2.runtime.call(_close)
+            rt.call(lambda _m, d: d.ctrl.__setitem__(aid, self._spec.closed))
+            self._wait_jaws_settled()
+            held = rt.call(self._weld_if_gripped)
         except Exception as exc:  # noqa: BLE001 — a failed grasp is a no-hold, never a crash
-            logger.warning("MuJoCoPiperGripper: grasp failed: %s", exc)
+            logger.warning("MuJoCoPiperGripper: close failed: %s", exc)
+            return False
+        if held is not None:
+            self._held_object = held
         return True
 
-    def is_holding(self) -> bool:
-        """True iff an object is WELDED to the gripper (the honest, weld-backed
-        signal). No more position heuristic — a weld is the real physical grasp the
-        oracle's lift+near-EE test corroborates and actor-causation reads as a 0->1.
+    def is_holding(self, name: str | None = None) -> bool:
+        """True iff a grasp weld is ACTIVE in the sim for the gripped object.
+
+        ``name`` makes it target-aware: only that object (case-insensitive scene
+        body name) counts.
         """
-        return self._held_object is not None
+        held = self._held_object
+        if held is None or (name is not None and str(name).strip().lower() != held.lower()):
+            return False
+        return bool(self.weld_is_active().get(held, False))
 
     def weld_is_active(self) -> dict[str, bool]:
         """``{welded-body-name -> data.eq_active[i] != 0}`` over the live weld eqs —
@@ -193,75 +206,70 @@ class MuJoCoPiperGripper:
             logger.debug("MuJoCoPiperGripper: weld_is_active read failed: %s", exc)
             return {}
 
-    # ------------------------------------------------------------------
-    # Internal: weld-constraint grasping (runs at a step boundary)
-    # ------------------------------------------------------------------
-
-    def _try_grasp(self, model: Any, data: Any) -> None:
-        """Find the nearest free object within _GRASP_RADIUS of the EE and activate
-        its weld (anchor pinned to the live relative pose so it does not snap).
-        Runs inside runtime.call, i.e. between two physics steps.
-        """
-        if self._ee_site_id < 0:
-            logger.warning("MuJoCoPiperGripper: no piper_ee_site — cannot grasp")
-            return
-        mj = _get_mujoco()
-        import numpy as np  # noqa: PLC0415
-
-        ee_pos = np.array(data.site_xpos[self._ee_site_id], dtype=float).copy()
-        best_name, best_dist = None, _GRASP_RADIUS
-        # Track the TRUE nearest free body (regardless of radius) for the
-        # miss diagnostic — a miss otherwise only logs the radius, hiding the
-        # actual EE-to-object gap a grasp-reliability hypothesis loop needs.
-        near_name, near_dist = None, float("inf")
-        for name, bid in self._free_bodies.items():
-            d = float(np.linalg.norm(np.array(data.xpos[bid]) - ee_pos))
-            if d < near_dist:
-                near_dist, near_name = d, name
-            if d < best_dist:
-                best_dist, best_name = d, name
-        if best_name is None:
-            logger.info(
-                "MuJoCoPiperGripper: no object within %.0fmm of EE "
-                "(nearest '%s' at %.0fmm)",
-                _GRASP_RADIUS * 1000, near_name, near_dist * 1000)
-            return
-        for i in range(model.neq):
-            if model.eq_type[i] != mj.mjtEq.mjEQ_WELD:
-                continue
-            b2 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.eq_obj2id[i]))
-            if b2 != best_name:
-                continue
-            b1 = int(model.eq_obj1id[i])
-            b2id = int(model.eq_obj2id[i])
-            p1 = data.xpos[b1]; R1 = data.xmat[b1].reshape(3, 3)
-            p2 = data.xpos[b2id]; R2 = data.xmat[b2id].reshape(3, 3)
-            rel_pos = R1.T @ (p2 - p1)
-            rel_quat = np.zeros(4)
-            mj.mju_mat2Quat(rel_quat, (R1.T @ R2).flatten())
-            model.eq_data[i, :3] = 0.0
-            model.eq_data[i, 3:6] = rel_pos
-            model.eq_data[i, 6:10] = rel_quat
-            data.eq_active[i] = 1
-            self._held_object = best_name
-            logger.info("MuJoCoPiperGripper: grasped '%s' (%.0fmm)", best_name, best_dist * 1000)
-            return
-        logger.warning("MuJoCoPiperGripper: no weld constraint for '%s'", best_name)
-
-    @staticmethod
-    def _release_all(model: Any, data: Any) -> None:
-        """Disable all weld constraints (release any held object)."""
-        mj = _get_mujoco()
-        for i in range(model.neq):
-            if model.eq_type[i] == mj.mjtEq.mjEQ_WELD:
-                data.eq_active[i] = 0
-
     def get_position(self) -> float:
         """Normalized jaw position: 0.0 closed, 1.0 fully open."""
         self._require_connection()
         pos = float(self._go2.runtime.snapshot().qpos[self._joint_qpos_adr])
-        return max(0.0, min(1.0, pos / _OPEN_POS))
+        return max(0.0, min(1.0, pos / self._spec.open))
 
     def get_force(self) -> float | None:
         """Piper has no force sensor in the Menagerie MJCF — return None."""
         return None
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _wait_jaws_settled(self) -> None:
+        rt = self._go2.runtime
+        deadline = rt.sim_time + _SETTLE_S
+        last = float(rt.snapshot().qpos[self._joint_qpos_adr])
+        rt.wait_sim(5 * _SETTLE_POLL_S)  # let the servo start moving
+        while rt.sim_time < deadline:
+            now = float(rt.snapshot().qpos[self._joint_qpos_adr])
+            if abs(now - last) < _SETTLE_EPS:
+                return
+            last = now
+            if not rt.wait_sim(_SETTLE_POLL_S):
+                return
+
+    def _weld_if_gripped(self, model: Any, data: Any) -> str | None:
+        """At a step boundary: weld the object every finger touches while the jaws
+        are held open by it (anchor = the live relative pose, so nothing snaps)."""
+        mj = _get_mujoco()
+        opening = float(data.qpos[self._joint_qpos_adr]) - self._spec.closed
+        n = int(data.ncon)
+        g1 = np.asarray(data.contact.geom1[:n])
+        g2 = np.asarray(data.contact.geom2[:n])
+        touching: list[set[int]] = []
+        for geoms in self._finger_geoms:
+            bodies: set[int] = set()
+            for a, b in zip(g1, g2):
+                if a in geoms:
+                    bodies.add(int(model.geom_bodyid[b]))
+                elif b in geoms:
+                    bodies.add(int(model.geom_bodyid[a]))
+            touching.append(bodies)
+        gripped = sorted(set.intersection(*touching) & set(self._welds))
+        names = {
+            b: mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, b)
+            for b in set().union(*touching)
+        }
+        if not gripped or opening < self._spec.min_opening:
+            logger.info(
+                "MuJoCoPiperGripper: no grasp — jaw opening %.1f mm, finger contacts %s",
+                opening * 1000, [sorted(names[b] or "?" for b in t) for t in touching])
+            return None
+        bid = gripped[0]
+        i = self._welds[bid]
+        b1 = int(model.eq_obj1id[i])
+        p1, R1 = data.xpos[b1], data.xmat[b1].reshape(3, 3)
+        p2, R2 = data.xpos[bid], data.xmat[bid].reshape(3, 3)
+        rel_quat = np.zeros(4)
+        mj.mju_mat2Quat(rel_quat, (R1.T @ R2).flatten())
+        model.eq_data[i, :3] = 0.0
+        model.eq_data[i, 3:6] = R1.T @ (p2 - p1)
+        model.eq_data[i, 6:10] = rel_quat
+        data.eq_active[i] = 1
+        logger.info("MuJoCoPiperGripper: grasped '%s' (jaw opening %.1f mm)", names[bid], opening * 1000)
+        return names[bid]
