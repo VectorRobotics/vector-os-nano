@@ -190,6 +190,9 @@ def test_native_detect_tool_routes_and_does_not_self_stash():
     assert not res.is_error
     assert cap.last_query == "找前面的红色的东西"  # genuinely routed to the learned model
     assert "grounding-dino localized 1 object" in res.content  # output flows to the human
+    # WP10: the suggested verify is the GT in_view (segmentation), never a detection count.
+    assert "verify(in_view('找前面的红色的东西'))" in res.content
+    assert "detect_objects" not in res.content and "detection_matches_gt" not in res.content
     # MOAT: the means' own output is NOT stashed anywhere a verify oracle can read it.
     assert not hasattr(agent, "_last_detection")
 
@@ -207,6 +210,9 @@ def test_native_detect_tool_nothing_localized_is_honest():
     res = tool.execute({"query": "red object"}, _Ctx(agent))
     assert not res.is_error
     assert "localized nothing" in res.content  # honest empty, never fabricated
+    # WP10: no false promise about the GT ('it will be False'): the object may well be
+    # in view even when the detector missed it.
+    assert "it will be False" not in res.content and "verify(in_view('red object'))" in res.content
     # MOAT: even on an empty detection, nothing is stashed for a verify oracle.
     assert not hasattr(agent, "_last_detection")
 
