@@ -92,6 +92,9 @@ class _Arm:
     def move_joints(self, q, duration=1.0):
         return True
 
+    def get_joint_positions(self):
+        return [0.0] * 6
+
     def fk(self, q):
         return ([0.0, 0.0, 0.0], np.eye(3))
 

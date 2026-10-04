@@ -112,8 +112,7 @@ _COLOR_TO_SCENE: dict[str, str] = {
 # object. MEASURED R17: the top-down EE reaches only ~0.22m forward of the dog centre
 # the dog's SENSOR (0.3 m forward of body origin) must sit within this distance
 # of the grasp point so that the body origin is ≥ 0.40 m behind the target —
-# the Piper's IK feasibility boundary measured with the corrected body-frame
-# sync in piper_ros2_proxy._sync_ik_base (sensor offset subtracted).
+# the Piper's IK feasibility boundary (measured against the live body pose).
 # 0.18 m → sensor at (target.x − 0.18), body at (target.x − 0.48), EE within
 # 20-22 mm of the bottle (< 60 mm weld radius) across all tested body_z values.
 _GRASP_REACH_M = 0.05

@@ -120,6 +120,22 @@ def test_an_object_between_the_jaws_is_gripped_lifted_and_released(seated) -> No
     assert grip.is_holding() is False and not any(grip.weld_is_active().values())
 
 
+def test_a_failed_release_is_reported_and_keeps_the_hold(seated, monkeypatch) -> None:
+    go2, arm, grip = seated
+    g = arm.get_object_positions()[_GREEN]
+    assert _top_down_to(arm, (g[0], g[1], g[2] + 0.02), 4.0) and _top_down_to(arm, tuple(g), 2.0)
+    assert grip.close() and grip.is_holding(_GREEN)
+
+    def _refuse(_fn):
+        raise RuntimeError("sim: runtime closed")
+
+    monkeypatch.setattr(go2.runtime, "call", _refuse)
+    assert grip.open() is False  # reported, and the held state is not dropped
+    monkeypatch.undo()
+    assert grip.is_holding(_GREEN)  # still welded, still known
+    assert grip.open() and not grip.is_holding()
+
+
 def test_a_move_blocked_by_the_table_returns_false(seated) -> None:
     _go2, arm, _grip = seated
     gap = (10.85, 3.11)  # table top between the green bottle and the red can
