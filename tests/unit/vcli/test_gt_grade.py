@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+"""tools/gt_grade.py — the independent per-turn GT grader, and the session's
+VECTOR_GT_DUMP lines it reads (written at every turn start / end)."""
+from __future__ import annotations
+
+import ast
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+_TOOL = Path(__file__).resolve().parents[3] / "tools" / "gt_grade.py"
+sys.path.insert(0, str(_TOOL.parent))
+import gt_grade  # noqa: E402
+
+sys.path.remove(str(_TOOL.parent))
+
+
+def test_the_grader_shares_no_code_with_the_oracles() -> None:
+    mods = set()
+    for node in ast.walk(ast.parse(_TOOL.read_text())):
+        if isinstance(node, ast.Import):
+            mods |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            mods.add((node.module or "").split(".")[0])
+    assert mods <= {"__future__", "argparse", "json", "math", "sys", "typing"}, mods
+
+
+def _line(phase: str, turn: int, pos, welded=False, user=(8.0, 3.0)) -> dict:
+    return {
+        "phase": phase, "turn": turn, "goal": "把绿色瓶子拿过来",
+        "objects": {"b": {"pos": list(pos), "welded": welded}},
+        "surfaces": {"t": {"box": [0.0, 0.0, 1.0, 1.0], "height": 0.5}},
+        "user": list(user),
+    }
+
+
+def test_grade_rederives_delivered_and_object_on(tmp_path) -> None:
+    dump = tmp_path / "gt.jsonl"
+    lines = [
+        _line("start", 1, (10.9, 3.0, 0.32)), _line("end", 1, (8.2, 3.1, 0.6), welded=True),  # carried to the user
+        _line("start", 2, (8.2, 3.1, 0.6)), _line("end", 2, (8.3, 3.1, 0.6)),  # already there: no delivery
+        _line("start", 3, (5, 5, 0.3)), _line("end", 3, (0.5, 0.5, 0.56)),  # placed on t
+        _line("start", 4, (0.5, 0.5, 0.56)),  # unfinished turn: dropped
+    ]
+    dump.write_text("\n".join(json.dumps(x) for x in lines) + "\n")
+    rows = gt_grade.grade(str(dump), "b", "t")
+    assert [r["turn"] for r in rows] == [1, 2, 3]
+    assert [r["delivered"] for r in rows] == [True, False, False]
+    assert [r["object_on"] for r in rows] == [False, False, True]  # turn 1 still welded
+    assert rows[0]["moved_m"] == pytest.approx(2.70, abs=0.01)
+
+
+def test_object_on_rejects_beside_and_above_the_surface() -> None:
+    end = _line("end", 1, (1.5, 0.5, 0.56))
+    assert not gt_grade.object_on(end, "b", "t")  # outside the footprint
+    end = _line("end", 1, (0.5, 0.5, 0.9))
+    assert not gt_grade.object_on(end, "b", "t")  # floating well above it
+    end = _line("end", 1, (0.5, 0.5, 0.3))
+    assert not gt_grade.object_on(end, "b", "t")  # under the top (on the floor below)
+
+
+def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypatch) -> None:
+    mj = pytest.importorskip("mujoco")
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+    from vector_os_nano.sim.runtime import SimRuntime
+    from vector_os_nano.sim.session import SimSession, SimSpec
+
+    m = mj.MjModel.from_xml_path(str(_build_room_scene_xml(with_arm=True)))
+    d = mj.MjData(m)
+    rt = SimRuntime(m, d, threaded=False, paced=False, name="dump_test")
+    try:
+        rt.call(lambda mm, dd: mj.mj_forward(mm, dd))
+        s = SimSession(SimSpec("go2_piper", gui=False), registry.load("go2_piper"))
+        s.agent = SimpleNamespace(_base=SimpleNamespace(runtime=rt), _arm=None, _config={})
+        s._bind_ground_truth()
+        assert s.agent._config["world"] == "apartment"  # skills resolve names by world id
+        assert not any(v is s.gt for v in vars(s.agent).values())  # GT never rides on the agent
+
+        dump = tmp_path / "gt.jsonl"
+        monkeypatch.setenv("VECTOR_GT_DUMP", str(dump))
+        s.mark_turn("start", "把绿色瓶子拿过来")
+        a = int(m.jnt_qposadr[m.body("pickable_bottle_green").jntadr[0]])
+        rt.call(lambda mm, dd: (dd.qpos.__setitem__(slice(a, a + 3), [8.2, 3.0, 0.4]), mj.mj_forward(mm, dd)))
+        s.mark_turn("end", "把绿色瓶子拿过来")
+
+        lines = gt_grade.load(str(dump))
+        assert [ln["phase"] for ln in lines] == ["start", "end"]
+        assert "base_link" not in lines[0]["objects"]
+        assert lines[0]["user"] == [8.0, 3.0] and "pick_table" in lines[0]["surfaces"]
+        (row,) = gt_grade.grade(str(dump), "pickable_bottle_green")
+        assert row["delivered"] is True and row["turn"] == 1
+        # the oracles see the same turn start (kept_holding / localized freshness)
+        assert s._turn[0] == lines[0]["sim_time"]
+        assert "kept_holding" in s.oracles() and "localized" in s.oracles()
+    finally:
+        rt.close()
