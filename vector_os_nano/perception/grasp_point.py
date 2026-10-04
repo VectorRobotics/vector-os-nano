@@ -100,4 +100,40 @@ def grasp_point_from_rgbd(
         0.0, 0.0, 0.0, 0.0,
         cam_xpos=cam_xpos, cam_xmat=cam_xmat,
     )
+    # The visible surface of an upright cylinder sits ~2/pi r in front of its axis:
+    # the axis comes from a circle fit of that surface when it is one.
+    R = np.asarray(cam_xmat, dtype=np.float64).reshape(3, 3)
+    world_pts = np.asarray(cam_xpos, dtype=np.float64) + points @ (R * [1.0, -1.0, -1.0]).T
+    axis = upright_cylinder_axis(world_pts, np.asarray(cam_xpos, dtype=np.float64)[:2])
+    if axis is not None:
+        wx, wy = axis
     return Pose3D(x=float(wx), y=float(wy), z=float(wz))
+
+
+# Points within this of the highest one are the top cap, not the side surface.
+_CAP_BAND_M = 0.01
+
+
+def upright_cylinder_axis(world_pts: np.ndarray, cam_xy: np.ndarray) -> tuple[float, float] | None:
+    """(x, y) of the axis of an upright cylinder from its visible side surface, or None.
+
+    A least-squares circle fit of the side points' xy (the top cap dropped). None
+    unless the fit is a cylinder seen from *cam_xy*: its radius within 30% of half
+    the visible width, its centre behind the visible surface by at most a radius.
+    """
+    side = world_pts[world_pts[:, 2] < world_pts[:, 2].max() - _CAP_BAND_M][:, :2]
+    if len(side) < 20:
+        return None
+    (d, e, f), *_ = np.linalg.lstsq(np.c_[side, np.ones(len(side))], -(side ** 2).sum(1), rcond=None)
+    centre = np.array([-d / 2.0, -e / 2.0])
+    r2 = float(centre @ centre - f)
+    mean = side.mean(0)
+    view = mean - cam_xy
+    if r2 <= 0.0 or not np.linalg.norm(view):
+        return None
+    r, view = r2 ** 0.5, view / np.linalg.norm(view)
+    half_width = float(np.ptp(side @ np.array([-view[1], view[0]]))) / 2.0
+    behind = float((centre - mean) @ view)
+    if not (0.7 * half_width <= r <= 1.3 * half_width and 0.0 < behind <= r):
+        return None
+    return float(centre[0]), float(centre[1])

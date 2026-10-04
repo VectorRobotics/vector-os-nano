@@ -141,6 +141,25 @@ class TestSO101ArmConnected:
         for p in positions:
             assert isinstance(p, float)
 
+    def test_a_failed_servo_read_is_retried_never_faked(self):
+        from vector_os_nano.hardware.so101.joint_config import ARM_JOINT_NAMES, JOINT_CONFIG, enc_to_rad
+
+        mids = [(JOINT_CONFIG[n]["enc_min"] + JOINT_CONFIG[n]["enc_max"]) // 2 for n in ARM_JOINT_NAMES]
+        arm = SO101Arm()
+        arm._bus = self._make_mock_bus([-1] + mids)  # the first read of joint 0 fails once
+        arm._connected = True
+        assert arm.get_joint_positions()[0] == pytest.approx(enc_to_rad(ARM_JOINT_NAMES[0], mids[0]))
+
+    def test_a_persistent_read_failure_never_moves(self):
+        arm = SO101Arm()
+        mock_bus = self._make_mock_bus([-1])
+        arm._bus = mock_bus
+        arm._connected = True
+        with pytest.raises(RuntimeError, match="read_position failed"):
+            arm.get_joint_positions()
+        assert arm.move_joints([0.0] * 5, duration=0.01) is False
+        assert not mock_bus.write_position.called
+
     def test_move_joints_returns_bool(self):
         arm = SO101Arm()
         mock_bus = self._make_mock_bus()

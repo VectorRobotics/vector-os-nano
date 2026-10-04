@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # Default trajectory interpolation parameters
 _DEFAULT_WAYPOINTS = 50   # number of linear interpolation steps
 _SETTLE_DELAY = 0.5       # seconds to wait after final waypoint
+_READ_ATTEMPTS = 3        # servo position reads per joint before giving up
 
 
 class SO101Arm:
@@ -140,25 +141,25 @@ class SO101Arm:
         """Read all arm joint positions from servos.
 
         Returns a list of 5 floats in radians, one per arm joint in
-        ARM_JOINT_NAMES order. On read error for a joint, the corresponding
-        value is 0.0 and a warning is logged.
+        ARM_JOINT_NAMES order. A failed servo read is retried; it is never
+        replaced by a made-up value (a fake 0.0 start makes move_joints jump).
 
         Raises:
-            RuntimeError: if not connected.
+            RuntimeError: if not connected, or a servo read keeps failing.
         """
         self._require_connection()
         positions: list[float] = []
         for name in ARM_JOINT_NAMES:
             motor_id = JOINT_CONFIG[name]["id"]
-            enc = self._bus.read_position(motor_id)
-            if enc < 0:
-                logger.warning(
-                    "SO101Arm: read_position failed for %s (id=%d), using 0.0",
-                    name, motor_id
-                )
-                positions.append(0.0)
+            for _ in range(_READ_ATTEMPTS):
+                enc = self._bus.read_position(motor_id)
+                if enc >= 0:
+                    break
             else:
-                positions.append(enc_to_rad(name, enc))
+                raise RuntimeError(
+                    f"SO101Arm: read_position failed {_READ_ATTEMPTS}x for {name} (id={motor_id})"
+                )
+            positions.append(enc_to_rad(name, enc))
         return positions
 
     # ------------------------------------------------------------------
@@ -191,7 +192,11 @@ class SO101Arm:
                 f"got {len(positions)}"
             )
 
-        current = self.get_joint_positions()
+        try:
+            current = self.get_joint_positions()
+        except RuntimeError as exc:
+            logger.error("%s — not moving", exc)
+            return False
         n_waypoints = _DEFAULT_WAYPOINTS
         delay = duration / n_waypoints if n_waypoints > 0 else 0.0
 

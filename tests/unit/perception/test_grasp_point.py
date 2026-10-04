@@ -166,3 +166,35 @@ def test_grasp_point_without_gating_is_pulled_to_midpoint():
     # Without gating the bimodal cloud's centroid sits between 1 m and 3 m.
     assert p_raw is not None
     assert p_raw.z < -1.5  # demonstrably worse — proves the gating is load-bearing
+
+
+# ---------------------------------------------------------------------------
+# Upright cylinder: the axis, not the visible-surface centroid
+# ---------------------------------------------------------------------------
+
+from vector_os_nano.perception.grasp_point import upright_cylinder_axis  # noqa: E402
+
+
+def _visible_cylinder(axis=(1.0, 0.1), r=0.028, cam=(0.0, 0.0)):
+    """The side surface a camera at *cam* sees of an upright cylinder (+ its top cap)."""
+    view = np.arctan2(cam[1] - axis[1], cam[0] - axis[0])
+    th = view + np.linspace(-1.3, 1.3, 40)
+    side = [(axis[0] + r * np.cos(t), axis[1] + r * np.sin(t), z)
+            for t in th for z in np.linspace(0.28, 0.36, 12)]
+    cap = [(axis[0] + a * np.cos(t), axis[1] + a * np.sin(t), 0.36) for t in th for a in (0.0, r / 2)]
+    return np.array(side + cap)
+
+
+def test_cylinder_axis_removes_the_visible_surface_bias():
+    pts = _visible_cylinder()
+    assert np.linalg.norm(pts[:, :2].mean(0) - (1.0, 0.1)) > 0.012  # the centroid's bias
+    x, y = upright_cylinder_axis(pts, np.zeros(2))
+    assert math.dist((x, y), (1.0, 0.1)) < 1e-3
+
+
+def test_cylinder_axis_rejects_what_is_not_a_cylinder():
+    rng = np.random.default_rng(0)
+    wall = np.c_[np.full(200, 1.0), rng.uniform(-0.1, 0.1, 200), rng.uniform(0.2, 0.4, 200)]
+    assert upright_cylinder_axis(wall, np.zeros(2)) is None  # a flat face: no plausible circle
+    flat = np.c_[rng.uniform(0.9, 1.1, 200), rng.uniform(-0.1, 0.1, 200), np.full(200, 0.3)]
+    assert upright_cylinder_axis(flat, np.zeros(2)) is None  # a horizontal patch: no side surface
