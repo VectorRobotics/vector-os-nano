@@ -11,6 +11,7 @@ adversarial case the suite would then pass, so a regression cannot slip through.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -41,9 +42,9 @@ C, U = ActorCaused.CAUSED, ActorCaused.UNCAUSED
 
 
 def _row(verify: str, *, ok: bool = True, vr: bool = True, caused=C, attempt: str = "native",
-         channels: tuple[str, ...] = ()):
+         channels: tuple[str, ...] = (), housekeeping: bool = False):
     return verify, StepRecord("", "skill", ok, vr, 0.0, actor_caused=caused, attempt_of=attempt,
-                              channels=channels)
+                              channels=channels, housekeeping=housekeeping)
 
 
 def _trace(goal: str, *rows, contract=(), start=(), end=(), intents=(), success=True) -> ExecutionTrace:
@@ -53,7 +54,7 @@ def _trace(goal: str, *rows, contract=(), start=(), end=(), intents=(), success=
         sub_goals.append(SubGoal(name=name, description=name, verify=verify))
         steps.append(StepRecord(name, rec.strategy, rec.success, rec.verify_result, 0.0,
                                 actor_caused=rec.actor_caused, attempt_of=rec.attempt_of,
-                                channels=rec.channels))
+                                channels=rec.channels, housekeeping=rec.housekeeping))
     return ExecutionTrace(GoalTree(goal, tuple(sub_goals)), tuple(steps), success, 0.0,
                           contract=tuple(contract), contract_start=tuple(start),
                           contract_end=tuple(end), intents=tuple(intents))
@@ -277,6 +278,8 @@ def test_facing_already_met_at_the_baseline_is_uncaused() -> None:
     ("把绿色瓶子拿过来", MANIP, ("kept_holding()", "near_object('user')")),
     ("bring me the red can", MANIP, ("kept_holding()", "near_object('user')")),
     ("go to (2,3) and grab the can", MANIP, ("holding_object()",)),  # the coord is a waypoint
+    ("go to (3,0) and grab the red can", GO2, ()),   # no grasp proof here: never a nav contract
+    ("走到 (3,0) 把罐子拿过来", GO2, ()),
     ("把香蕉放到盒子里", MANIP, ()),                                    # place: needs object_on
     ("去厨房", MANIP, ()),
     ("bring me the README", frozenset({"file_exists"}), ()),           # dev world: no contract
@@ -305,7 +308,8 @@ def test_a_fetch_is_unprovable_until_the_world_binds_delivery() -> None:
 
 
 def test_a_met_contract_needs_a_caused_step_that_asserts_it() -> None:
-    t = _trace("拿起瓶子", _row("holding_object('b')", caused=U),
+    t = _trace("拿起瓶子", _row("at_position(1.0, 1.0)"),
+               _row("holding_object('b')", caused=U, housekeeping=True),
                contract=("holding_object()",), start=(False,), end=(True,))
     assert turn_reject_reason(t, MANIP) == "no actor-caused step proves holding_object()"
 
@@ -316,11 +320,37 @@ def test_the_wp03_explore_grasp_stop_trace_verifies_under_its_contract() -> None
     graded RAN and the turn RAN (1/3). The contract decides: the grasp is GROUNDED and
     the RAN housekeeping row neither FAILed nor contradicted it."""
     rows = (_row("holding_object('pickable_bottle_green')", attempt=""),
-            _row("holding_object('pickable_bottle_green')", caused=U, attempt=""))
+            _row("holding_object('pickable_bottle_green')", caused=U, attempt="", housekeeping=True))
     old = _trace("拿起绿色的瓶子", *rows)
     assert not evidence_passed(old, MANIP)  # without a contract: every step must ground
     t = _trace("拿起绿色的瓶子", *rows, contract=("holding_object()",), start=(False,), end=(True,))
     assert evidence_passed(t, MANIP), turn_reject_reason(t, MANIP)
+
+
+@pytest.mark.parametrize("goal, contract, last", [
+    # an unproven actuating step the contract does not cover ("... then turn left")
+    ("走到坐标 (3,0) 然后左转90度", ("at_position(3.0, 0.0)",), _row("")),
+    ("go to (2,3)", ("at_position(2.0, 3.0)",), _row("", ok=True, vr=False)),
+    ("拿起瓶子", ("holding_object()",), _row("facing(0.5, 0.5)", caused=U)),
+])
+def test_an_unproven_actuating_step_fails_a_met_contract(goal, contract, last) -> None:
+    """Only a housekeeping row (read-only chain, or a declared stop) is exempt under a
+    met contract; an actuating row that did not GROUND still rejects the turn."""
+    first = _row(contract[0] if contract[0] != "holding_object()" else "holding_object('b')")
+    t = _trace(goal, first, last, contract=contract, start=(False,), end=(True,))
+    assert turn_reject_reason(t, GO2 | MANIP) == "native_step_1: " + ts.step_reject_reason(
+        t.steps[1], t.goal_tree.sub_goals[1], GO2 | MANIP, goal)
+    verify, rec = last
+    exempt = _trace(goal, first, (verify, replace(rec, housekeeping=True)),
+                    contract=contract, start=(False,), end=(True,))
+    assert evidence_passed(exempt, GO2 | MANIP), turn_reject_reason(exempt, GO2 | MANIP)
+
+
+def test_a_housekeeping_row_is_exempt_only_under_a_contract() -> None:
+    rows = (_row("at_position(3.0, 0.0)"), _row("", housekeeping=True))
+    assert not evidence_passed(_trace("走到坐标 (3,0)", *rows), GO2)
+    assert evidence_passed(_trace("走到坐标 (3,0)", *rows, contract=("at_position(3.0, 0.0)",),
+                                  start=(False,), end=(True,)), GO2)
 
 
 def test_a_failing_non_contract_step_still_fails_the_turn() -> None:
@@ -427,3 +457,20 @@ def test_verdict_reports_actor_caused_and_reasons() -> None:
     assert step["reject_reason"] == "UNCAUSED (base:at_position:UNCAUSED)"
     assert r.reject_reason.endswith("UNCAUSED (base:at_position:UNCAUSED)")
     assert SimpleNamespace(**r.to_dict()).acted is False
+
+
+def test_the_legacy_room_navigate_verify_never_reaches_the_next_room() -> None:
+    """A robot in the master bedroom must not ground 'go to the dining room': every
+    room's arrival disc lies inside that room's floor box."""
+    import ast
+
+    from vector_os_nano.sim.nav.coverage import room_layout
+    from vector_os_nano.vcli.engine import VectorEngine
+
+    layout = room_layout()
+    for room, (x, y) in layout["rooms"].items():
+        verify = VectorEngine._verify_for_skill("navigate", room)
+        cx, cy, tol = (a.value for a in ast.parse(verify, mode="eval").body.args)
+        x0, y0, x1, y1 = layout["boxes"][room]
+        assert (cx, cy) == (x, y) and 0 < tol <= 2.0, verify
+        assert x0 <= x - tol and x + tol <= x1 and y0 <= y - tol and y + tol <= y1, (room, verify)

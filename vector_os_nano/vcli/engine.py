@@ -1196,11 +1196,17 @@ class VectorEngine:
         """Generate a verify expression for a known skill."""
         if skill_name == "navigate" and arg:
             # A GT arrival at the room's layout point (nearest_room is the actor's own
-            # memory: never evidence). Room-sized tol, at the oracle's cap.
+            # memory: never evidence). The tol keeps the arrival disc inside the
+            # room's floor box (a robot in the next room never passes), at the cap.
             from vector_os_nano.sim.nav.coverage import room_layout
+            from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M
 
-            xy = room_layout()["rooms"].get(arg)
-            return f"at_position({xy[0]}, {xy[1]}, 2.0)" if xy else "True"
+            layout = room_layout()
+            xy, box = layout["rooms"].get(arg), layout["boxes"].get(arg)
+            if not xy or not box:
+                return "True"
+            inset = min(xy[0] - box[0], box[2] - xy[0], xy[1] - box[1], box[3] - xy[1])
+            return f"at_position({xy[0]}, {xy[1]}, {math.floor(min(inset, _MAX_ARRIVAL_TOL_M) * 100) / 100})"
         _VERIFY_MAP: dict[str, str] = {
             "navigate": "True",
             "explore": "True",  # async skill — launched = success, progress via events

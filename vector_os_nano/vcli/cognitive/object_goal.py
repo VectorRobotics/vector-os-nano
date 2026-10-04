@@ -154,16 +154,20 @@ def task_contract(goal_text: str | None, oracle_names: frozenset[str]) -> tuple[
     - place: none yet (``object_on(obj, surface)`` needs the manifest's surfaces).
 
     Scoped to the world's oracles (rule 3): a world without ``holding_object`` /
-    ``at_position`` gets no manipulation / coordinate contract (dev, g1-detect).
+    ``at_position`` gets no manipulation / coordinate contract (dev, g1-detect). A
+    manipulation goal never falls back to its coordinate (a go2-only "go to (3,0) and
+    grab the can" is not a navigation contract): no contract, so every graded step
+    must ground.
     """
     intents = goal_intents(goal_text)
-    if "holding_object" in oracle_names:
+    if intents:
+        if "holding_object" not in oracle_names:
+            return ()
         if "fetch" in intents:
             return ("kept_holding()", "near_object('user')")
         if "grasp" in intents and "place" not in intents:
             return ("holding_object()",)
-        if intents:
-            return ()
+        return ()
     xy = parse_goal_coord(goal_text)
     if xy is not None and "at_position" in oracle_names:
         return (f"at_position({xy[0]}, {xy[1]})",)

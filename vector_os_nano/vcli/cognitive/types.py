@@ -214,6 +214,10 @@ class StepRecord:
     attempt_of: str = ""
     superseded: bool = False
     channels: tuple[str, ...] = ()
+    # The producer recorded that every tool of the step's chain was read-only or a
+    # declared housekeeping action (``stop``). Only such a row may stay un-GROUNDED
+    # under a met task contract; the default (False) is an actuating row (fail closed).
+    housekeeping: bool = False
 
 
 @dataclass(frozen=True)

@@ -70,6 +70,7 @@ def test_namespace_exposes_sim_oracle_predicates(sim_agent) -> None:
         "holding_object",
         "arm_at_home",
         "placed_count",
+        "released",  # WP07: the gripper fall-transition oracle (place's verify_hint)
     }
     # Every contributed binding must be callable (drops straight into verify ns).
     assert all(callable(fn) for fn in ns.values())

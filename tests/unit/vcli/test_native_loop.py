@@ -720,3 +720,70 @@ def test_an_aborted_navigate_is_one_failed_row_without_its_auto_verify() -> None
     (step,) = trace.steps
     assert (step.strategy, step.success, step.error) == ("navigate", False, "aborted")
     assert trace.cancelled and _verdict(agent, eng, trace).evidence == "FAILED"
+
+
+# ---------------------------------------------------------------------------
+# A met contract exempts only housekeeping rows (verifier repros, through the producer)
+# ---------------------------------------------------------------------------
+
+
+def _nav_agent(*skills):
+    agent, _base = _make_agent(0.0, 0.0)
+    agent._base = _NavBase(0.0, 0.0)
+    for sk in skills:
+        agent._skill_registry.register(sk)
+    return agent
+
+
+@pytest.mark.parametrize("goal, script, contract", [
+    # go2-only: nothing here can prove the grab, so no navigation contract stands in
+    ("go to (3,0) and grab the red can", [("navigate", {"x": 3.0, "y": 0.0}), ("stop_fake", {})], ()),
+    # the turn the coordinate contract does not cover was never proven
+    ("走到坐标 (3,0) 然后左转90度", [("navigate", {"x": 3.0, "y": 0.0}), ("turn_fake", {})],
+     ("at_position(3.0, 0.0)",)),
+])
+def test_an_unproven_actuating_step_is_not_verified(goal, script, contract) -> None:
+    agent = _nav_agent(_Skill("stop_fake", lambda: None), _Skill("turn_fake", lambda: None))
+    backend = FakeToolScriptBackend.from_tool_script(
+        [*(tool_turn(call) for call in script), tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native(goal, session=_session())
+    assert trace.contract == contract
+    assert [s.housekeeping for s in trace.steps] == [False, False]
+    report = _verdict(agent, eng, trace)
+    assert report.verified is False and report.reject_reason.startswith("native_step_1:")
+
+
+def test_a_declared_housekeeping_stop_does_not_fail_a_met_contract() -> None:
+    """Graft (i), narrowly: a trailing stop changes no task state; the contract decides."""
+    from vector_os_nano.skills.go2.stop import StopSkill
+    from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+    assert SkillWrapperTool(StopSkill(), None).housekeeping is True
+    stop = _Skill("stop", lambda: None)
+    stop.housekeeping = True
+    agent = _nav_agent(stop)
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("navigate", {"x": 3.0, "y": 0.0})),
+        tool_turn(("stop", {})),
+        tool_turn(("finish", {})),
+    ])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("走到坐标 (3.0,0.0)", session=_session())
+    assert [(s.strategy, s.housekeeping) for s in trace.steps] == [("navigate", False), ("stop", True)]
+    assert _verdict(agent, eng, trace).verified is True
+
+
+def test_the_contract_start_fails_closed_on_an_unevaluable_predicate() -> None:
+    """A predicate the verifier cannot evaluate at turn start reads as already
+    satisfied, never as 'not yet', so it can never be the turn's F->T."""
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("grasp_fake", {"object": "can"})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _arm = _make_arm_agent(_grasp)
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("把那个罐子拿过来", session=_session())
+    assert trace.contract == ("kept_holding()", "near_object('user')")
+    assert trace.contract_start == (True, True)
+    assert _verdict(agent, eng, trace).verified is False

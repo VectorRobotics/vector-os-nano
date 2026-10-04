@@ -258,6 +258,7 @@ def _trace_to_dict(trace: ExecutionTrace) -> dict[str, Any]:
                 "attempt_of": getattr(s, "attempt_of", ""),
                 "superseded": getattr(s, "superseded", False),
                 "channels": list(getattr(s, "channels", ()) or ()),
+                "housekeeping": getattr(s, "housekeeping", False),
             }
             for s in trace.steps
         ],
@@ -307,6 +308,7 @@ def _dict_to_trace(data: dict[str, Any]) -> ExecutionTrace:
             attempt_of=str(s.get("attempt_of", "") or ""),
             superseded=bool(s.get("superseded", False)),
             channels=tuple(str(c) for c in s.get("channels", []) or ()),
+            housekeeping=bool(s.get("housekeeping", False)),
         )
         for s in data.get("steps", []) or []
     )
@@ -476,12 +478,14 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
     node, and at least one graded step. Graded = the latest attempt of each attempt
     group (``graded_indices``); every graded action succeeded.
 
-    - With a task contract (the producer compiled one from the goal): the contract
-      decides — each predicate False at turn start, True at turn end, asserted by a
-      GROUNDED graded step — and any other graded step may only fail the turn by
-      FAILING (its verify False). A RAN housekeeping step (a trailing stop / home /
-      where_am_i re-verify) never poisons a met contract.
-    - Without one: every graded step must classify GROUNDED.
+    - Every graded step must classify GROUNDED, with ONE exception: under a task
+      contract (the producer compiled one from the goal), a row the producer marked
+      ``housekeeping`` (its whole chain read-only or a declared housekeeping action:
+      a trailing stop, where_am_i) may stay RAN unless its verify FAILED. An
+      actuating row is never exempt, so a sub-goal the contract does not cover
+      ("... then turn left") still needs its own GROUNDED step.
+    - With a contract, each predicate must also be False at turn start, True at turn
+      end, and asserted by a GROUNDED graded step.
 
     Then the coordinate and the manipulation gates run INDEPENDENTLY (both apply
     when both intents are present). Every rule only rejects (rule 5).
@@ -504,7 +508,7 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
         ev[id(s)] = evidence
         if evidence == "FAILED":
             return f"{s.sub_goal_name}: {why}"
-        if trace.contract:
+        if trace.contract and getattr(s, "housekeeping", False):
             if sg.verify and not s.verify_result:
                 return f"{s.sub_goal_name}: {why}"
         elif evidence != "GROUNDED":

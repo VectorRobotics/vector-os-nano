@@ -507,6 +507,9 @@ class NativeStepRunner:
         self._baseline: Any = None
         self._step_open: bool = False
         self._step_acted: bool = False  # a side-effecting tool ran this step
+        # Every tool of the step's chain is read-only or a declared housekeeping
+        # action (stop): the row may stay un-GROUNDED under a met task contract.
+        self._housekeeping: bool = True
         self._last_ok: bool = True      # the chain's last tool did not report an error
         self._last_result: ToolResult | None = None
         # The auto post-verify of the last actuating tool, until the step closes.
@@ -582,6 +585,8 @@ class NativeStepRunner:
             self._step_open = True
         self._chain.append(name)
         hint = None
+        if not read_only and getattr(tool, "housekeeping", False) is not True:
+            self._housekeeping = False
         if not read_only:
             self.actions_dispatched += 1
             self._step_acted = True
@@ -709,6 +714,7 @@ class NativeStepRunner:
             actor_caused=actor_caused,
             attempt_of=goal_id or "native",
             channels=channels,
+            housekeeping=self._housekeeping,
         ))
         self._close_step()
 
@@ -739,6 +745,7 @@ class NativeStepRunner:
         self._baseline = None
         self._step_open = False
         self._step_acted = False
+        self._housekeeping = True
         self._last_ok = True
         self._last_result = None
 
@@ -773,6 +780,7 @@ class NativeStepRunner:
         self._steps.append(StepRecord(
             sub_goal_name=step_name, strategy=strategy, success=success,
             verify_result=False, duration_sec=0.0, error=reason, result_data=self._result_data(),
+            housekeeping=self._housekeeping,
         ))
         self._close_step()
 
@@ -988,7 +996,9 @@ def run_turn_native(
     # The turn-level task contract (WP07): GT end-state predicates compiled from the
     # goal, read now (each must be False) and again at turn end (each must be True).
     contract = task_contract(user_message, oracle_names)
-    contract_start = tuple(runner._check(c) for c in contract)
+    # Fail closed: the verifier maps an oracle error to False, so ask for ``not``
+    # — an error at the start then reads as "already satisfied", never as "not yet".
+    contract_start = tuple(not runner._check(f"not ({c})") for c in contract)
 
     # Progress feedback (D9 #2 perceived latency): the user's "load 好几秒" is the
     # opaque wait during the synchronous LLM round-trips. Stream the model's text

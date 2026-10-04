@@ -51,6 +51,8 @@ class SkillWrapperTool:
         self._is_motor: bool = self._detect_motor(skill)
         # The skill's GT post-condition template; the native runner auto-verifies it.
         self.verify_hint: str = str(getattr(skill, "verify_hint", "") or "")
+        # A declared housekeeping action (stop): it changes no task state.
+        self.housekeeping: bool = getattr(skill, "housekeeping", False) is True
 
     # ------------------------------------------------------------------
     # Internal helpers
