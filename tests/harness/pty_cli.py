@@ -121,6 +121,9 @@ def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
         env["VECTOR_NAV_STACK"] = ""
     # Per-run HOME: a compiled template / session / history from a prior run must
     # never leak into this one, and the developer's real ~/.vector stays untouched.
+    # Model weights are a read-only shared cache, not run state: keep finding them
+    # (the detector loads offline from the HF cache, never the network).
+    env.setdefault("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
     home = tempfile.mkdtemp(prefix=home_prefix)
     env["HOME"] = home
     return env, home
