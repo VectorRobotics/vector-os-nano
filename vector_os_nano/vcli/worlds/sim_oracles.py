@@ -228,8 +228,8 @@ def build_namespace(
             # no finger bodies declared) is graded on the weld + the lift alone.
             return not fingers or set(fingers) <= gt.contacts(name)
 
-        def held(name: str, dz: float = LIFT_M) -> bool:
-            return welded(name) and gripped(name) and gt.clearance(name) >= dz
+        def held(name: str) -> bool:
+            return welded(name) and gripped(name) and gt.clearance(name) >= LIFT_M
 
         def resting(name: str) -> bool:
             return (not welded(name) and not (gt.contacts(name) & gt.robot_bodies)
