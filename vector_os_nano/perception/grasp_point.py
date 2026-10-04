@@ -21,6 +21,7 @@ grasp. Always pass metres + depth_scale=1.0 (or raw mm + depth_scale=1000.0).
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -33,6 +34,8 @@ from vector_os_nano.perception._centroid import (
 )
 from vector_os_nano.perception.depth_projection import camera_to_world
 from vector_os_nano.perception.pointcloud import rgbd_to_pointcloud_fast
+
+logger = logging.getLogger(__name__)
 
 _MIN_POINTS = 4
 
@@ -72,8 +75,16 @@ def grasp_point_from_rgbd(
         depth_trunc: Max depth in metres; farther points discarded.
 
     Returns:
-        Pose3D world-frame grasp point, or None if the object was not localizable.
+        Pose3D world-frame grasp point, or None if the object was not localizable
+        (or the mask, depth and intrinsics disagree on the frame size).
     """
+    h, w = depth.shape[:2]
+    if mask.shape[:2] != (h, w) or (int(intrinsics.height), int(intrinsics.width)) != (h, w):
+        logger.error(
+            "[GRASP-PT] frame mismatch: mask %s, depth %s, K %sx%s — not projecting",
+            mask.shape[:2], (h, w), intrinsics.width, intrinsics.height,
+        )
+        return None
     points, _colors = rgbd_to_pointcloud_fast(
         depth, color, intrinsics,
         depth_scale=depth_scale, depth_trunc=depth_trunc, mask=mask,
@@ -93,11 +104,11 @@ def grasp_point_from_rgbd(
 
     centroid_cam = robust_centroid(points)  # camera frame (OpenCV: x=right,y=down,z=fwd)
 
-    # Transforming the single centroid is affine-equivalent to transforming all
-    # points then reducing — and far cheaper. Reuses the ground-truth-tested flip.
+    # The per-axis trimmed mean is taken in the camera frame and then transformed
+    # (close to, not exactly, reducing the world points). It is the centroid of the
+    # VISIBLE surface: an upright cylinder's axis is fitted below.
     wx, wy, wz = camera_to_world(
         centroid_cam.x, centroid_cam.y, centroid_cam.z,
-        0.0, 0.0, 0.0, 0.0,
         cam_xpos=cam_xpos, cam_xmat=cam_xmat,
     )
     # The visible surface of an upright cylinder sits ~2/pi r in front of its axis:

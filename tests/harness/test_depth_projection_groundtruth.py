@@ -144,8 +144,6 @@ class TestDepthProjectionGroundTruth:
         heading = go2_room.get_heading()
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
-            robot_x=float(pos[0]), robot_y=float(pos[1]), robot_z=float(pos[2]),
-            robot_heading=float(heading),
             cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
 
@@ -195,8 +193,7 @@ class TestDepthProjectionGroundTruth:
         heading = go2_room.get_heading()
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
-            float(pos[0]), float(pos[1]), float(pos[2]),
-            float(heading), cam_xpos=cam_xpos, cam_xmat=cam_xmat,
+            cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
 
         error = math.sqrt((wx - gt_world[0])**2 + (wy - gt_world[1])**2)
@@ -236,8 +233,7 @@ class TestDepthProjectionGroundTruth:
 
         wxc, wyc, _ = camera_to_world(
             xc_cam, yc_cam, zc_cam,
-            float(pos[0]), float(pos[1]), float(pos[2]),
-            float(heading), cam_xpos=cam_xpos, cam_xmat=cam_xmat,
+            cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
 
         # 40px to the right of center, same depth
@@ -245,8 +241,7 @@ class TestDepthProjectionGroundTruth:
         xr_cam, yr_cam, zr_cam = pixel_to_camera(u_right, cy, d, intrinsics)
         wxr, wyr, _ = camera_to_world(
             xr_cam, yr_cam, zr_cam,
-            float(pos[0]), float(pos[1]), float(pos[2]),
-            float(heading), cam_xpos=cam_xpos, cam_xmat=cam_xmat,
+            cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
 
         # camera_to_world is a rigid transform (rotation + translation).
@@ -260,13 +255,11 @@ class TestDepthProjectionGroundTruth:
         # Need world z to compute full 3D distance — call camera_to_world for z too
         _, _, wzc = camera_to_world(
             xc_cam, yc_cam, zc_cam,
-            float(pos[0]), float(pos[1]), float(pos[2]),
-            float(heading), cam_xpos=cam_xpos, cam_xmat=cam_xmat,
+            cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
         _, _, wzr = camera_to_world(
             xr_cam, yr_cam, zr_cam,
-            float(pos[0]), float(pos[1]), float(pos[2]),
-            float(heading), cam_xpos=cam_xpos, cam_xmat=cam_xmat,
+            cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
 
         actual_3d_dist = math.sqrt((wxr - wxc)**2 + (wyr - wyc)**2 + (wzr - wzc)**2)
@@ -320,8 +313,7 @@ class TestDepthProjectionGroundTruth:
         heading = go2_room.get_heading()
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
-            float(pos[0]), float(pos[1]), float(pos[2]),
-            float(heading), cam_xpos=cam_xpos, cam_xmat=cam_xmat,
+            cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
 
         # House bounds: x in [−0.5, 20.5], y in [−0.5, 14.5], z in [−0.2, 3.0]
@@ -450,8 +442,7 @@ class TestTimingMismatchBug:
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
-            float(pos[0]), float(pos[1]), float(pos[2]),
-            float(heading), cam_xpos=cam_xpos, cam_xmat=cam_xmat,
+            cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
 
         # Ground truth: cam_pos + d * cam_forward
@@ -572,8 +563,7 @@ class TestAtomicCapturePattern:
         x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
-            float(pos[0]), float(pos[1]), float(pos[2]),
-            float(heading), cam_xpos=cam_xpos, cam_xmat=cam_xmat,
+            cam_xpos=cam_xpos, cam_xmat=cam_xmat,
         )
 
         # Sanity: world point is within the house

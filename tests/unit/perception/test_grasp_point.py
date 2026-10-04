@@ -63,7 +63,7 @@ def test_grasp_point_centroid_metres():
     p = grasp_point_from_rgbd(depth, color, mask, _INTR, _CAM_XPOS, _CAM_XMAT)
     assert isinstance(p, Pose3D)
     # Cross-check against the proven transform applied to the camera-frame centroid.
-    wx, wy, wz = camera_to_world(0.0, 0.0, 1.0, 0, 0, 0, 0,
+    wx, wy, wz = camera_to_world(0.0, 0.0, 1.0,
                                  cam_xpos=_CAM_XPOS, cam_xmat=_CAM_XMAT)
     assert (p.x, p.y, p.z) == pytest.approx((wx, wy, wz), abs=0.03)
     assert p.z == pytest.approx(-1.0, abs=0.03)
@@ -198,3 +198,15 @@ def test_cylinder_axis_rejects_what_is_not_a_cylinder():
     assert upright_cylinder_axis(wall, np.zeros(2)) is None  # a flat face: no plausible circle
     flat = np.c_[rng.uniform(0.9, 1.1, 200), rng.uniform(-0.1, 0.1, 200), np.full(200, 0.3)]
     assert upright_cylinder_axis(flat, np.zeros(2)) is None  # a horizontal patch: no side surface
+
+
+def test_frame_size_mismatch_never_projects(caplog):
+    """perception:no-shape-validation — a smaller mask silently sampled the top-left
+    of a larger depth image; K from another size back-projected to a wrong point."""
+    depth, color, mask = _scene()
+    assert grasp_point_from_rgbd(depth, color, mask, _INTR, _CAM_XPOS, _CAM_XMAT) is not None
+    small = mask[: _H // 2, : _W // 2]
+    assert grasp_point_from_rgbd(depth, color, small, _INTR, _CAM_XPOS, _CAM_XMAT) is None
+    big_k = mujoco_intrinsics(2 * _W, 2 * _H)
+    assert grasp_point_from_rgbd(depth, color, mask, big_k, _CAM_XPOS, _CAM_XMAT) is None
+    assert "frame mismatch" in caplog.text

@@ -225,7 +225,7 @@ def test_localize_one_object_returns_correct_world_point():
 
     # Cross-check with the proven camera_to_world transform.
     expected_wx, expected_wy, expected_wz = camera_to_world(
-        0.0, 0.0, _DEPTH_VAL, 0, 0, 0, 0,
+        0.0, 0.0, _DEPTH_VAL,
         cam_xpos=_CAM_XPOS, cam_xmat=_CAM_XMAT,
     )
     assert x == pytest.approx(expected_wx, abs=0.03)

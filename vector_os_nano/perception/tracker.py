@@ -23,7 +23,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -37,9 +36,9 @@ DEFAULT_EDGETAM_REPO = "yonigozlan/EdgeTAM-hf"
 class EdgeTAMTracker:
     """EdgeTAM video segmentation tracker.
 
-    Loads from a PRE-CACHED local copy and is pinned OFFLINE (never reaches the
-    network) — mirrors ``GroundingDinoDetector``. The weights must already live in
-    the HF/vector_os cache; if absent the load fails loud (no silent download).
+    Loads OFFLINE (``local_files_only=True``, never the network) — mirrors
+    ``GroundingDinoDetector``: a local model dir, else ``~/.cache/vector_os/models/
+    <name>``, else the repo id from the Hugging Face cache. Absent weights fail loud.
 
     Args:
         model_name: HuggingFace repo ID or local path to model directory.
@@ -76,16 +75,11 @@ class EdgeTAMTracker:
     def _load_model(self) -> None:
         """Load EdgeTAM model and processor (lazy — imports torch/transformers).
 
-        Pinned OFFLINE: env flags are set BEFORE transformers is imported and both
-        ``from_pretrained`` calls pass ``local_files_only=True``, so the load never
+        Both ``from_pretrained`` calls pass ``local_files_only=True``: the load never
         reaches the network (identical posture to ``GroundingDinoDetector``).
         """
         if self._loaded:
             return
-
-        # Pin offline BEFORE importing transformers so the hub never tries the net.
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
-        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
         try:
             import torch
@@ -119,28 +113,12 @@ class EdgeTAMTracker:
 
     @staticmethod
     def _resolve_model_source(model_name: str) -> str:
-        """Resolve a LOCAL model path — OFFLINE, never downloads.
-
-        Resolution order (no network reached):
-          1. ``model_name`` is itself a local model dir (has ``config.json``) → use it.
-          2. the pre-populated cache ``~/.cache/vector_os/models/<name>`` → use it.
-
-        Raises ``FileNotFoundError`` if neither exists. The weights must be
-        pre-cached once (the tracker is pinned offline, mirroring the detector);
-        callers such as ``go2_grasp_perception.segment`` catch this and fall back
-        to a coarse box-rect mask rather than hard-failing the grasp.
-        """
-        p = Path(model_name)
-        if p.exists() and (p / "config.json").exists():
-            return str(p)
-        model_dir = Path.home() / ".cache" / "vector_os" / "models" / p.name
-        if (model_dir / "config.json").exists():
-            return str(model_dir)
-        raise FileNotFoundError(
-            f"EdgeTAM weights for '{model_name}' are not cached at {model_dir} and "
-            "the tracker is pinned OFFLINE (no download). Pre-cache once via "
-            "huggingface_hub.snapshot_download(repo_id=..., local_dir=...), then re-run."
-        )
+        """A local model dir (*model_name* itself or ``~/.cache/vector_os/models/<name>``),
+        else *model_name* as a repo id for the Hugging Face cache."""
+        for d in (Path(model_name), Path.home() / ".cache" / "vector_os" / "models" / Path(model_name).name):
+            if (d / "config.json").exists():
+                return str(d)
+        return model_name
 
     @staticmethod
     def _select_dtype(device, torch) -> object:

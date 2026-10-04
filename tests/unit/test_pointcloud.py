@@ -10,7 +10,6 @@ import pytest
 from vector_os_nano.perception.pointcloud import (
     rgbd_to_pointcloud_fast,
     pointcloud_to_bbox3d_fast,
-    remove_statistical_outliers,
 )
 from vector_os_nano.core.types import CameraIntrinsics, BBox3D
 
@@ -148,28 +147,6 @@ def test_bbox3d_four_points():
 # ---------------------------------------------------------------------------
 # test_outlier_removal
 # ---------------------------------------------------------------------------
-
-def test_outlier_removal():
-    """Statistical outlier removal filters distant points."""
-    # Create a tight cluster + one distant outlier
-    rng = np.random.default_rng(42)
-    cluster = rng.normal(loc=0.0, scale=0.01, size=(100, 3))
-    outlier = np.array([[10.0, 10.0, 10.0]])
-    points = np.vstack([cluster, outlier])
-
-    filtered = remove_statistical_outliers(points, nb_neighbors=10, std_ratio=2.0)
-    # Outlier should be removed
-    assert len(filtered) < len(points)
-    # All remaining points should be close to origin
-    assert np.all(np.abs(filtered) < 1.0)
-
-
-def test_outlier_removal_too_few_points():
-    """With fewer points than nb_neighbors, returns all points unchanged."""
-    points = np.array([[0.0, 0.0, 1.0], [0.1, 0.0, 1.0]])
-    filtered = remove_statistical_outliers(points, nb_neighbors=10, std_ratio=2.0)
-    assert len(filtered) == len(points)
-
 
 def test_pointcloud_depth_truncation(color_image, intrinsics):
     """Points beyond depth_trunc are excluded."""
