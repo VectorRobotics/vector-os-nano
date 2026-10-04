@@ -1113,6 +1113,8 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
     # not the classical DetectSkill).
     cap_names: set[str] = set()
     for cap in _registered_capabilities(engine):
+        if getattr(cap, "kind", "") == "chat":
+            continue  # the model driving this loop IS the chat route: no nested LLM call
         tool = _NativeDetectTool(cap) if getattr(cap, "kind", "") == "detector" else _NativeCapabilityTool(cap)
         tools[tool.name] = tool
         cap_names.add(tool.name)

@@ -133,6 +133,8 @@ def test_a_side_effecting_capability_is_surfaced_and_asks_first() -> None:
         invoke=lambda payload, ctx: calls.append(payload) or SimpleNamespace(success=True, output={}),
     )
     eng = _dev_engine(_script(tool_turn(("vla_grasp", {"target": "can"})), tool_turn(end=True)))
+    assert "chat" in eng._capability_registry.names()  # the dev world's chat LLM...
+    assert "chat" not in _build_motor_tools(None, eng)  # ...is the model itself: no nested call
     eng._capability_registry = CapabilityRegistry()
     eng._capability_registry.register(cap)
     assert "vla_grasp" in _build_motor_tools(None, eng)

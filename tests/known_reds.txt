@@ -178,3 +178,6 @@ tests/unit/test_mujoco_go2.py::TestMuJoCoGo2ResetPose::test_reset_restores_heigh
 tests/unit/test_mujoco_go2.py::TestMuJoCoGo2ResetPose::test_reset_zeros_velocity | crash | sim-locomotion:reset-pose-race (reset_pose writes qpos and calls mj_forward while the MPC physics thread steps; test_reset_preserves_xy segfaulted the file in 1 of 4 gate runs; WP06)
 tests/unit/test_mujoco_go2.py::TestMuJoCoGo2SpeedCommand::test_set_velocity_stop | flaky | 0.104 m/s (> 0.1) after stop; green in the pre-c188658 baseline, when backend=auto fell back to the sinusoidal gait (WP06/WP08)
 tests/e2e/test_explore_navigate_e2e.py::TestNavigate::test_walk_toward_kitchen | flaky | sinusoidal walk 4 s at vx=0.5 moves ~0 m on this box; red with --noconftest too, so not suite hygiene (WP06/WP08)
+
+# WP05: the stop command is instant; the legged body's stop is not (lead decision, WP06/WP08)
+tests/e2e_repl/test_e5_stop_ctrl_c.py::test_e5_the_base_is_still_within_0_2_sim_s_of_a_stop | xfail | WP05 E5 acceptance 'base velocity 0 within 0.2 sim-s': a zero command drops the MPC backend to the PD stand hold mid-stride (lurch, settles in 0.3-1.0 sim-s); a braking stop is locomotion work (WP06/WP08)
