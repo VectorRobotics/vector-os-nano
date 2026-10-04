@@ -65,7 +65,10 @@ class LookSkill:
             )
 
         vlm = context.services.get("vlm")
-        if vlm is None:
+        # Without a VLM, look for the world's own objects by name: the detector
+        # localizes each one it finds (the VLM only adds a caption and a room guess).
+        vocab = _world_vocabulary(context)
+        if vlm is None and not vocab:
             logger.error("[LOOK] VLM service not available")
             return SkillResult(
                 success=False,
@@ -89,8 +92,8 @@ class LookSkill:
 
         # Run VLM
         try:
-            scene = vlm.describe_scene(frame)
-            room_id = vlm.identify_room(frame)
+            scene = vlm.describe_scene(frame) if vlm is not None else None
+            room_id = vlm.identify_room(frame) if vlm is not None else None
         except Exception as exc:
             logger.error("[LOOK] VLM call failed: %s", exc)
             return SkillResult(
@@ -99,13 +102,16 @@ class LookSkill:
                 diagnosis_code="vlm_failed",
             )
 
-        room: str = room_id.room if room_id.room != "unknown" else _fallback_room(context)
+        room: str = (
+            room_id.room if room_id is not None and room_id.room != "unknown"
+            else _fallback_room(context)
+        )
 
         # Record room visit to spatial memory with detected objects.
         # observe_with_viewpoint expects `objects: list[str]` (names), NOT
         # DetectedObject instances — the latter trips a `.lower()` call deep
         # in the scene-graph merge pipeline.
-        object_names: list[str] = [obj.name for obj in scene.objects]
+        object_names: list[str] = [obj.name for obj in scene.objects] if scene else list(vocab)
 
         # Attempt to lift each object to its accurate world position via the
         # depth→world pipeline.  Falls back gracefully to names-only when
@@ -117,6 +123,8 @@ class LookSkill:
                 world_positions = {label: (x, y, z) for label, x, y, z in loc_results}
             except Exception as exc:
                 logger.debug("[LOOK] object localization failed: %s", exc)
+        if scene is None:  # no VLM: only what the detector actually localized was seen
+            object_names = [n for n in object_names if n in world_positions]
 
         spatial_memory = context.services.get("spatial_memory")
         if spatial_memory is not None:
@@ -140,7 +148,7 @@ class LookSkill:
                         ]
                     spatial_memory.observe_with_viewpoint(
                         room, float(pos[0]), float(pos[1]),
-                        float(heading), object_names, scene.summary,
+                        float(heading), object_names, scene.summary if scene else "",
                         detected_objects=detected_objects,
                     )
                 else:
@@ -148,6 +156,15 @@ class LookSkill:
             except Exception as exc:
                 logger.warning("[LOOK] spatial_memory update failed: %s", exc)
 
+        if scene is None:
+            from types import SimpleNamespace
+
+            scene = SimpleNamespace(
+                summary=f"Seen (detector, no VLM): {', '.join(object_names) or 'nothing known'}.",
+                details="", objects=[SimpleNamespace(name=n, description="", confidence=1.0)
+                                     for n in object_names],
+            )
+            room_id = SimpleNamespace(room=room, confidence=0.0)
         logger.info(
             "[LOOK] room=%s confidence=%.2f objects=%d summary=%s",
             room, room_id.confidence, len(scene.objects), scene.summary,
@@ -354,7 +371,7 @@ class DescribeSceneSkill:
         # Record to SpatialMemory if available.
         spatial_memory = context.services.get("spatial_memory")
         if spatial_memory is not None:
-            object_names: list[str] = [obj.name for obj in scene.objects]
+            object_names: list[str] = [obj.name for obj in scene.objects] if scene else list(vocab)
             try:
                 spatial_memory.observe(room, object_names, scene.summary)
             except Exception as exc:
@@ -394,6 +411,16 @@ class DescribeSceneSkill:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+def _world_vocabulary(context: SkillContext) -> list[str]:
+    """The names of the objects in this world (its manifest), or [] outside a sim world."""
+    world_id = (context.config or {}).get("world")
+    if not world_id:
+        return []
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+    return load_world(world_id).vocabulary()
 
 
 def _fallback_room(context: SkillContext) -> str:
