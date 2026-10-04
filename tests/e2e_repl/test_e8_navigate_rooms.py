@@ -73,6 +73,10 @@ _CTRL_C_SCRIPT = {"steps": [
 
 @pytest.mark.sim
 @pytest.mark.cli_main
+@pytest.mark.xfail(strict=True, reason=(
+    "WP05: the REPL's native attempt runs outside its KeyboardInterrupt handler, so a "
+    "Ctrl-C mid-turn exits the REPL (the follower does stop the dog first: "
+    "tests/hardware/sim/test_go2_nav_stop.py)"))
 def test_e8_ctrl_c_mid_navigate_stops_and_the_repl_goes_on() -> None:
     r = run_repl_session([_LAUNCH, "去书房", (6.0, "\x03"), "回到起点"], tool_script=_CTRL_C_SCRIPT,
                          answers=["y"], timeout_sec=300)

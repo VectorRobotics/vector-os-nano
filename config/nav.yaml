@@ -25,6 +25,8 @@ follower:
   slip_window_s: 1.0             # gait slip (course vs heading) estimated over this much straight walking
   slip_gain: 0.2                 # low-pass gain per tick of the slip estimate
   slip_max_rad: 0.35
+  cross_track_gain: 1.0          # holonomic bodies strafe back onto the line (m/s per m)
+  cross_track_max: 0.2           # m/s
   tick_s: 0.1                    # control period (velocity streamed, never stop-and-go)
   k_yaw: 2.0                     # heading gain (rad/s per rad)
   face_tol_rad: 0.4              # pivot in place while the heading error exceeds this

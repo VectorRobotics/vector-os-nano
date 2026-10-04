@@ -105,6 +105,16 @@ def _pursuit_point(p, a, b, lookahead: float) -> "tuple[float, float]":
     return (a[0] + s * ex, a[1] + s * ey)
 
 
+def _cross_track(p, a, b) -> "tuple[float, tuple[float, float]]":
+    """(signed distance of p left of line a->b, the line's unit left normal)."""
+    ex, ey = b[0] - a[0], b[1] - a[1]
+    le = math.hypot(ex, ey)
+    if le < 1e-6:
+        return 0.0, (0.0, 0.0)
+    nx, ny = -ey / le, ex / le
+    return (p[0] - a[0]) * nx + (p[1] - a[1]) * ny, (nx, ny)
+
+
 def _remaining(pos: tuple[float, float], path: list, i: int) -> float:
     return math.dist(pos, path[i]) + sum(math.dist(a, b) for a, b in zip(path[i:], path[i + 1:]))
 
@@ -177,6 +187,7 @@ def follow(
     slip, straight = 0.0, False
     best, best_t = _remaining((x0, y0), path, i), t0
     next_progress = t0
+    holonomic = bool(getattr(base, "supports_holonomic", False))
     try:
         while True:
             if cancel.is_set():
@@ -237,7 +248,13 @@ def follow(
                 d_goal = math.dist((x, y), target)
                 taper = min(1.0, d_goal / float(cfg["slow_radius"])) if i == len(path) - 1 else 1.0
                 vx = max(float(cfg["min_speed"]), v_max * taper) * math.cos(err)
-            base.set_velocity(vx, 0.0, vyaw)
+            vy = 0.0
+            if vx > 0.0 and holonomic:  # strafe back onto the tracked line
+                e, (nx, ny) = _cross_track((x, y), seg_start, path[i])
+                lim = float(cfg["cross_track_max"])
+                corr = max(-lim, min(lim, -float(cfg["cross_track_gain"]) * e))
+                vy = corr * (nx * -math.sin(heading) + ny * math.cos(heading))
+            base.set_velocity(vx, vy, vyaw)
             base.wait_sim(tick, cancel)
     finally:
         base.stop()
