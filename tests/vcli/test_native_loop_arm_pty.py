@@ -120,6 +120,9 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
             tool_turn(("verify", {"expr": f"holding_object('{_PICK_TARGET}')"})),
             tool_turn(end=True),
         ])
+        from tests.harness.fake_gt import bind_real_sim, unbind_fake_sim
+
+        sim = bind_real_sim(agent, "so101")  # the GT oracles of a live session
         eng = VectorEngine(
             backend=backend, registry=CategorizedToolRegistry(),
             permissions=PermissionContext(),
@@ -166,6 +169,7 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
         assert report.verified is True, f"a grounded grasp must verify; {report.evidence}"
         assert report.evidence == "GROUNDED"
         assert report.exit_code() == 0
+        unbind_fake_sim(sim)
     finally:
         try:
             arm.disconnect()

@@ -169,6 +169,7 @@ def test_go2_piper_scene_compiles_from_a_relocated_checkout(tmp_path) -> None:
     pkg = tmp_path / "vector_os_nano"
     shutil.copytree(_REPO / "vector_os_nano", pkg,
                     ignore=shutil.ignore_patterns("__pycache__", "scene_*.xml"))
+    shutil.copytree(_REPO / "config", tmp_path / "config")  # world manifests (grasp welds)
     code = (
         "import mujoco, vector_os_nano as v\n"
         "from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml as b\n"
