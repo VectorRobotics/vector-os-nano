@@ -21,7 +21,8 @@ Flow:
     2. IK top-down for pre-grasp (PRE_GRASP_HEIGHT above object)
     3. IK top-down for grasp (object z + GRASP_Z_ABOVE)
     4. Open gripper
-    5. Move to pre-grasp pose (PREGRASP_DURATION)
+    5. Move to the approach point short of the pre-grasp (toward the base), then
+       slide in level to the pre-grasp (no base: straight to the pre-grasp)
     6. Re-solve the grasp IK, descend (DESCENT_DURATION)
     7. Close gripper (settles; welds only an object both fingers grip)
     8. Lift back to the pre-grasp point (LIFT_DURATION)
@@ -60,9 +61,16 @@ _DEFAULT_PRE_GRASP_HEIGHT: float = 0.05
 # 20 cm table.
 _DEFAULT_GRASP_Z_ABOVE: float = 0.01
 
+# With a base, the open jaws first go to a point this far (m) short of the
+# pre-grasp, on the line from the base, then slide in level: the long swing from
+# stow happens clear of the object, which the fingers would otherwise sweep aside
+# (measured: a direct swing pushed the bottle 2 cm and left a finger on its rim).
+_DEFAULT_APPROACH_BACK: float = 0.10
+
 # Motion durations (seconds). Piper PD gains are moderate (kp=80 on the big
 # joints, kp=10 on wrist) so large motions need multi-second interpolation.
 _PREGRASP_DURATION: float = 4.0
+_SLIDE_DURATION: float = 1.5
 _DESCENT_DURATION: float = 2.0
 _LIFT_DURATION: float = 2.0
 
@@ -260,9 +268,20 @@ class PickTopDownSkill:
         if not gripper.open():
             return _move_fail("open")
 
-        logger.info("[PICK-TD] pre-grasp move (%.1fs)", _PREGRASP_DURATION)
-        if not arm.move_joints(q_pre, duration=_PREGRASP_DURATION):
-            return _move_fail("pre_grasp")
+        back = _approach_point(context.base, pre_grasp,
+                               float(cfg.get("approach_back", _DEFAULT_APPROACH_BACK)))
+        q_back = arm.ik_top_down(back, current_joints=q_pre) if back else None
+        if q_back is not None:
+            logger.info("[PICK-TD] approach %s (%.1fs), slide in", back, _PREGRASP_DURATION)
+            if not arm.move_joints(q_back, duration=_PREGRASP_DURATION):
+                return _move_fail("approach")
+            q_pre = arm.ik_top_down(pre_grasp, current_joints=arm.get_joint_positions()) or q_pre
+            if not arm.move_joints(q_pre, duration=_SLIDE_DURATION):
+                return _move_fail("pre_grasp")
+        else:
+            logger.info("[PICK-TD] pre-grasp move (%.1fs)", _PREGRASP_DURATION)
+            if not arm.move_joints(q_pre, duration=_PREGRASP_DURATION):
+                return _move_fail("pre_grasp")
 
         q_grasp = arm.ik_top_down(grasp, current_joints=arm.get_joint_positions())
         if q_grasp is None:
@@ -370,6 +389,19 @@ class PickTopDownSkill:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _approach_point(base, pre_grasp, back: float) -> tuple[float, float, float] | None:
+    """*back* metres from *pre_grasp* toward the base, same height; None without a base."""
+    try:
+        bx, by = (float(v) for v in base.get_position()[:2])
+    except Exception:  # noqa: BLE001 — no base (tabletop arm): approach directly
+        return None
+    dx, dy = pre_grasp[0] - bx, pre_grasp[1] - by
+    d = math.hypot(dx, dy)
+    if back <= 0.0 or d <= back:
+        return None
+    return (pre_grasp[0] - back * dx / d, pre_grasp[1] - back * dy / d, pre_grasp[2])
 
 
 def _ik_fail(phase: str, target: tuple[float, float, float]) -> SkillResult:

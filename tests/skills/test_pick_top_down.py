@@ -257,6 +257,22 @@ def test_a_missed_grasp_is_a_failure():
     assert r.result_data["grasped"] is False
 
 
+def test_with_a_base_the_jaws_approach_short_of_the_object_then_slide_in():
+    """The long swing from stow ends 10 cm short of the pre-grasp (toward the base),
+    so it cannot sweep the object aside; then a short level slide to the pre-grasp."""
+    arm = _MockArm()
+    base = SimpleNamespace(get_position=lambda: [0.0, 0.0, 0.3])
+    wm = _mkworld(ObjectState(object_id="o1", label="thing", x=0.5, y=0, z=0.2))
+    ctx = SkillContext(arm=arm, gripper=_MockGripper(), base=base, world_model=wm, config={})
+    r = PickTopDownSkill().execute({"object_id": "o1"}, ctx)
+    assert r.success, r.error_message
+    targets = [c[1][0] for c in arm.calls if c[0] == "ik_top_down"]
+    pre = (0.5, 0.0, 0.25)
+    assert targets[2] == pytest.approx((0.4, 0.0, 0.25))  # the approach point
+    assert targets[3] == pytest.approx(pre)  # re-solved live before the slide
+    assert len([c for c in arm.calls if c[0] == "move_joints"]) == 4  # approach, slide, descent, lift
+
+
 def test_a_blocked_move_fails_the_pick():
     class _BlockedArm(_MockArm):
         def move_joints(self, positions, duration=3.0):
