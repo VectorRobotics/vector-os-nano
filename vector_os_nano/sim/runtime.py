@@ -169,11 +169,7 @@ class SimRuntime:
                 logger.error("%s: physics thread did not stop within 5 s", self.name)
                 return
             self._thread = None
-        with self.lock:
-            while self._queue:
-                _fn, fut = self._queue.popleft()
-                if fut.set_running_or_notify_cancel():
-                    fut.set_exception(RuntimeError(f"{self.name}: runtime closed"))
+        self._fail_pending()
         pool, self._render_pool = self._render_pool, None
         if pool is not None:
             try:  # queued behind any in-flight render; closes each context on its thread
@@ -232,7 +228,18 @@ class SimRuntime:
             return fut
         self._queue.append((fn, fut))
         self._wake.set()
+        if self._stop.is_set():  # close() raced this append: never leave it hanging
+            self._fail_pending()
         return fut
+
+    def _fail_pending(self) -> None:
+        while True:
+            try:
+                _fn, fut = self._queue.popleft()  # atomic: each job is failed exactly once
+            except IndexError:
+                return
+            if fut.set_running_or_notify_cancel():
+                fut.set_exception(RuntimeError(f"{self.name}: runtime closed"))
 
     def call(self, fn: Callable[[Any, Any], Any]) -> Any:
         """``submit(fn).result()``: a read or mutation at a step boundary."""
@@ -479,6 +486,9 @@ class SimRuntime:
                 except BaseException:  # fail loud: a dead stepper must never be silent
                     logger.exception("%s: physics stepper died at sim_time=%.3f",
                                      self.name, self.sim_time)
+                    # ponytail: a submit racing this exact instant can still wait
+                    # forever; later submits see daemon_alive False and run inline.
+                    self._fail_pending()
                     raise
             if not stepped:
                 self._wake.wait(_PARKED_POLL_S)
