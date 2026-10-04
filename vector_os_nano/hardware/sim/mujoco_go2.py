@@ -278,15 +278,17 @@ def _build_room_scene_xml(with_arm: bool = False) -> Path:
         # build_room_scene resolves them (meshes_dir=None = model-file dir).
         robot_meshes_dir = None
         # Grasp welds (name, body1, body2) — only with the arm (the no-arm model
-        # has no piper_link6; a weld to a missing body fails to compile).
-        # body1=piper_link6 (wrist carrying piper_ee_site + fingers), body2=each
-        # pickable; created INACTIVE — the gripper's close() activates one only
-        # when both fingers grip that object, so a held object stays held under
-        # the soft position-controlled jaws (mirrors so101_mujoco.xml).
-        welds: tuple[tuple[str, str, str], ...] = (
-            ("grasp_pickable_bottle_blue", "piper_link6", "pickable_bottle_blue"),
-            ("grasp_pickable_bottle_green", "piper_link6", "pickable_bottle_green"),
-            ("grasp_pickable_can_red", "piper_link6", "pickable_can_red"),
+        # has no weld body; a weld to a missing body fails to compile). body1 =
+        # the manifest gripper's weld_body (the wrist carrying the EE site +
+        # fingers), body2 = EVERY pickable the world manifest lists; created
+        # INACTIVE — the gripper's close() activates one only when both fingers
+        # grip that object (mirrors so101_mujoco.xml).
+        from vector_os_nano.embodiments import registry
+        from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+        weld_body = registry.load("go2_piper").arm.gripper.weld_body
+        welds: tuple[tuple[str, str, str], ...] = tuple(
+            (f"grasp_{p}", weld_body, p) for p in load_world("apartment").pickables
         )
     else:
         go2_xml = _MJCF_DIR / "go2.xml"

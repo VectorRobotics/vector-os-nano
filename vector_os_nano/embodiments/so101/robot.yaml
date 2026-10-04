@@ -7,6 +7,7 @@
 id: so101
 display_name: "SO-101 (5-DoF tabletop arm)"
 driver: mujoco_arm                # transitional (WP17: one generic driver)
+world: tabletop           # config/worlds/tabletop.yaml
 
 model:
   path: vector_os_nano/hardware/sim/so101_mujoco.xml
@@ -17,7 +18,7 @@ spawn:
   xy: [0.0, 0.0]
   base_height: 0.02
 
-# Home pose (arm_sim_oracle._HOME_JOINTS), by joint name.
+# Home pose, by joint name (the arm_at_home oracle reads it from here).
 stance:
   shoulder_pan:  -0.014
   shoulder_lift: -1.238

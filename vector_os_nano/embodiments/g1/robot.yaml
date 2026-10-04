@@ -9,6 +9,7 @@
 id: g1
 display_name: "Unitree G1 (humanoid, 12-DoF)"
 driver: mujoco_g1                 # transitional (WP17: one generic driver)
+world: apartment          # config/worlds/apartment.yaml
 
 model:
   # 12-DoF G1 model + meshes from assets/g1_gait/ (attached into the go2 room
