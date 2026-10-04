@@ -28,7 +28,6 @@ from typing import Any
 from vector_os_nano.core.run_dir import run_path
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.perception.object_localizer import localize_objects_3d
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +44,7 @@ _on_event: Any = None  # callback(event_type: str, data: dict) — set by CLI
 _spatial_memory: Any = None  # SceneGraph — set by ExploreSkill.execute()
 _perception: Any = None  # Go2GraspPerception-like — set by ExploreSkill.execute()
 _vlm: Any = None  # VLM service — set by ExploreSkill.execute()
+_vocab: list[str] = []  # the world's object names (discovery without a VLM)
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +190,21 @@ class _Cancelled:
         return _explore_cancel.is_set() or is_abort_requested()
 
 
+def _discover(base: Any) -> None:
+    """One look on the way: localize the world's objects (and the VLM's) and map
+    them (look.observe_scene); never raises into the exploration."""
+    if _spatial_memory is None or (_vlm is None and not (_vocab and _perception is not None)):
+        return
+    from vector_os_nano.skills.go2.look import observe_scene
+
+    try:
+        data = observe_scene(getattr(base, "_base", base), _perception, _spatial_memory, _vlm, _vocab)
+        if data["objects"]:
+            _emit("objects_seen", {"room": data["room"], "objects": [o["name"] for o in data["objects"]]})
+    except Exception as exc:  # noqa: BLE001 — discovery is best-effort during exploration
+        logger.debug("[EXPLORE] discovery failed (non-blocking): %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # TARE background monitor
 # ---------------------------------------------------------------------------
@@ -294,89 +309,11 @@ def _exploration_loop(base: Any) -> None:
                     except Exception:
                         pass
 
-                    # Auto-observe hook: capture VLM scene description at new viewpoints.
-                    # Only triggers when VLM is available and position is a novel viewpoint.
-                    # VLM failures are non-blocking — exploration continues regardless.
-                    if _vlm is not None:
-                        try:
-                            if _spatial_memory.should_add_viewpoint(room, x, y):
-                                _base_hook = getattr(base, "_base", base)
-                                frame = None
-                                if hasattr(_base_hook, "get_camera_frame"):
-                                    frame = _base_hook.get_camera_frame()
-                                if frame is not None:
-                                    desc_result = _vlm.describe_scene(frame)
-                                    obj_result = _vlm.find_objects(frame)
-                                    scene_summary = str(
-                                        getattr(desc_result, "summary", "")
-                                    )
-                                    object_names = [
-                                        str(getattr(o, "name", ""))
-                                        for o in (obj_result or [])
-                                        if str(getattr(o, "name", ""))
-                                    ]
-                                    # Depth-localize the VLM-named objects to real
-                                    # world (x, y) -- same pipeline LookSkill uses.
-                                    # Falls back gracefully to [] when perception is
-                                    # unavailable / no usable depth points.
-                                    world_positions: dict[
-                                        str, tuple[float, float, float]
-                                    ] = {}
-                                    if object_names:
-                                        try:
-                                            loc_results = localize_objects_3d(
-                                                _perception, object_names
-                                            )
-                                            world_positions = {
-                                                label: (lx, ly, lz)
-                                                for label, lx, ly, lz in loc_results
-                                            }
-                                        except Exception as loc_exc:
-                                            logger.debug(
-                                                "[EXPLORE] localize failed: %s",
-                                                loc_exc,
-                                            )
-                                    # Build (category, x, y) tuples ONLY for objects
-                                    # that localized. NEVER store un-localized
-                                    # objects at (0, 0) -- skip them so the graph is
-                                    # not polluted with fake zeros. When none
-                                    # localize, pass detected_objects=None so
-                                    # observe_with_viewpoint uses the names-only path.
-                                    detected_objects: (
-                                        list[tuple[str, float, float]] | None
-                                    ) = None
-                                    if world_positions:
-                                        detected_objects = [
-                                            (
-                                                name,
-                                                world_positions[name][0],
-                                                world_positions[name][1],
-                                            )
-                                            for name in object_names
-                                            if name in world_positions
-                                        ]
-                                    heading = float(base.get_heading())
-                                    _spatial_memory.observe_with_viewpoint(
-                                        room=room,
-                                        x=x,
-                                        y=y,
-                                        heading=heading,
-                                        objects=object_names,
-                                        description=scene_summary,
-                                        detected_objects=detected_objects,
-                                    )
-                                    logger.debug(
-                                        "[EXPLORE] Auto-observe: %d/%d objects "
-                                        "localized in %s",
-                                        len(detected_objects or []),
-                                        len(object_names),
-                                        room,
-                                    )
-                        except Exception as exc:
-                            logger.debug(
-                                "[EXPLORE] Auto-observe VLM failed (non-blocking): %s",
-                                exc,
-                            )
+                    # Discovery at each new viewpoint: the detector over the world
+                    # vocabulary (+ the VLM's names) on one snapshot; only what
+                    # localizes is stored. Failures never stop the exploration.
+                    if _spatial_memory.should_add_viewpoint(room, x, y):
+                        _discover(base)
 
                 # Door learning: detect room transitions (uses nearest_room, not _in_room,
                 # because door detection should work at the boundary between rooms).
@@ -477,7 +414,7 @@ class ExploreSkill:
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         global _explore_thread, _explore_running, _explore_backend
-        global _spatial_memory, _perception, _vlm
+        global _spatial_memory, _perception, _vlm, _vocab
 
         if context.base is None:
             return SkillResult(
@@ -504,16 +441,14 @@ class ExploreSkill:
             )
         base = context.base
 
-        # Wire spatial memory / perception / VLM (the TARE monitor reads them).
+        # Wire spatial memory / perception / VLM / vocabulary (discovery and the
+        # TARE monitor read them). The world's rooms are seeded at sim start.
+        from vector_os_nano.skills.go2.look import _world_vocabulary
+
         _spatial_memory = context.services.get("spatial_memory")
         _perception = context.perception
         _vlm = context.services.get("vlm")
-        if _spatial_memory is not None and hasattr(_spatial_memory, "load_layout"):
-            if not _spatial_memory.get_all_rooms():
-                from vector_os_nano.sim.nav.coverage import _LAYOUT_YAML
-                n = _spatial_memory.load_layout(str(_LAYOUT_YAML))
-                if n > 0:
-                    logger.info("[EXPLORE] Re-loaded room layout: %d rooms", n)
+        _vocab = _world_vocabulary(context)
 
         if backend == "tare":
             if not _tare_running():
@@ -564,7 +499,8 @@ class ExploreSkill:
         _explore_visited.clear()
         _explore_backend, _explore_running = "coverage", True
         try:
-            out = CoverageExplorer(base, cancel=_Cancelled(), on_event=on_event).run()
+            out = CoverageExplorer(base, cancel=_Cancelled(), on_event=on_event,
+                                   observe=lambda: _discover(base)).run()
         finally:
             _explore_running = False
         visited, total = out["visited"], out["total"]

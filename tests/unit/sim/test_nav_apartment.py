@@ -93,10 +93,12 @@ def test_coverage_tour_enters_every_room_by_ground_truth(obstacles, tmp_path):
 
     base = Body(*_SPAWN)
     events = []
+    looks = []  # explore's discovery runs after every look turn (skills-nav:explore-auto-observe)
     log = tmp_path / "cov.jsonl"
     out = CoverageExplorer(base, cancel=Never(), on_event=lambda e, d: events.append(e),
-                           log_path=str(log)).run()
+                           log_path=str(log), observe=lambda: looks.append(base.get_heading())).run()
     assert sorted(out["visited"]) == sorted(room_layout()["rooms"]) and not out["failed"]
+    assert len(looks) >= len(out["visited"]) and len(set(round(h, 1) for h in looks)) > 1
     rows = [json.loads(line) for line in log.read_text().splitlines()]
     boxes = room_layout()["boxes"]
     assert all(room_at(*r["gt_pos"], boxes) == r["room"] and r["looked"] for r in rows)

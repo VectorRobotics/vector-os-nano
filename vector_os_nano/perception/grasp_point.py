@@ -78,6 +78,32 @@ def grasp_point_from_rgbd(
         Pose3D world-frame grasp point, or None if the object was not localizable
         (or the mask, depth and intrinsics disagree on the frame size).
     """
+    pts = object_points(
+        depth, color, mask, intrinsics, cam_xpos, cam_xmat,
+        depth_scale=depth_scale, depth_trunc=depth_trunc, foreground_only=foreground_only,
+    )
+    return None if pts is None else grasp_point_from_points(*pts, cam_xpos, cam_xmat)
+
+
+def object_points(
+    depth: np.ndarray,
+    color: np.ndarray,
+    mask: np.ndarray,
+    intrinsics: Any,
+    cam_xpos: Any,
+    cam_xmat: Any,
+    *,
+    depth_scale: float = 1.0,
+    depth_trunc: float = 10.0,
+    foreground_only: bool = True,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """(camera-frame, world-frame) points of the masked object, or None.
+
+    The masked depth pixels, gated to the nearest coherent depth cluster (a mask
+    leaking onto same-appearance background localizes the FRONT object) and
+    IQR-filtered. None when fewer than 4 points survive or the mask, depth and
+    intrinsics disagree on the frame size.
+    """
     h, w = depth.shape[:2]
     if mask.shape[:2] != (h, w) or (int(intrinsics.height), int(intrinsics.width)) != (h, w):
         logger.error(
@@ -91,19 +117,21 @@ def grasp_point_from_rgbd(
     )
     if len(points) < _MIN_POINTS:
         return None
-
-    # Foreground gating: keep only the nearest coherent depth cluster so a mask
-    # that leaks onto same-appearance background (loose bbox / edge-bleed / a
-    # same-colored object behind) localizes the FRONT object, not a midpoint.
     if foreground_only:
         points = select_nearest_cluster(points)
-
     points = remove_depth_outliers(points)
     if len(points) < _MIN_POINTS:
         return None
+    R = np.asarray(cam_xmat, dtype=np.float64).reshape(3, 3)
+    world_pts = np.asarray(cam_xpos, dtype=np.float64) + points @ (R * [1.0, -1.0, -1.0]).T
+    return points, world_pts
 
+
+def grasp_point_from_points(
+    points: np.ndarray, world_pts: np.ndarray, cam_xpos: Any, cam_xmat: Any,
+) -> Pose3D:
+    """The world grasp point of an object's points (see :func:`object_points`)."""
     centroid_cam = robust_centroid(points)  # camera frame (OpenCV: x=right,y=down,z=fwd)
-
     # The per-axis trimmed mean is taken in the camera frame and then transformed
     # (close to, not exactly, reducing the world points). It is the centroid of the
     # VISIBLE surface: an upright cylinder's axis is fitted below.
@@ -113,8 +141,6 @@ def grasp_point_from_rgbd(
     )
     # The visible surface of an upright cylinder sits ~2/pi r in front of its axis:
     # the axis comes from a circle fit of that surface when it is one.
-    R = np.asarray(cam_xmat, dtype=np.float64).reshape(3, 3)
-    world_pts = np.asarray(cam_xpos, dtype=np.float64) + points @ (R * [1.0, -1.0, -1.0]).T
     axis = upright_cylinder_axis(world_pts, np.asarray(cam_xpos, dtype=np.float64)[:2])
     if axis is not None:
         wx, wy = axis
