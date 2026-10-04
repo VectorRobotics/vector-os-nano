@@ -195,6 +195,7 @@ class NavigateToObjectSkill:
         final_pos = context.base.get_position()
         rd.update({
             "object": obj_name,
+            "object_id": getattr(target_obj, "object_id", ""),  # the scene-graph instance
             "matched_category": target_obj.category,
             "object_world": [round(ox, 3), round(oy, 3)],
             "standoff": [round(sx, 3), round(sy, 3)],
