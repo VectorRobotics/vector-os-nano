@@ -72,6 +72,10 @@ def task_policy(agent: Any) -> str:
                 "- Know where an object is before you grasp it. The [Robot State] block lists the objects "
                 f"you have localized; a target that is not there is unknown: find it with {search}."
             )
+            lines.append(
+                "- Perception names things in its own words: a green bottle may be listed as a 'green "
+                "cylinder'. Match by colour and shape, and query a detector with the user's words."
+            )
         if caps.has_base and "navigate_to_object" in skills:
             lines.append(
                 "- A known object more than about 1.5 m away: navigate_to_object first, then grasp."
