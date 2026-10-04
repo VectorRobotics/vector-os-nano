@@ -774,6 +774,95 @@ def test_a_declared_housekeeping_stop_does_not_fail_a_met_contract() -> None:
     assert _verdict(agent, eng, trace).verified is True
 
 
+@pytest.mark.parametrize("expr", ["True", "len(get_position()) == 3", "facing(0.0)"])
+def test_a_stop_never_launders_a_failed_turn(expr) -> None:
+    """Verifier P8 through the real producer: the turn skill FAILS ('Unknown turn
+    direction'), then stop and the same re-verify. The stop row supersedes the turn
+    row but its group is not all housekeeping, so it must GROUND on its own."""
+    stop = _Skill("stop", lambda: None)
+    stop.housekeeping = True
+    agent = _nav_agent(_Skill("turn_fake", lambda: None, fail="Unknown turn direction"), stop)
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("navigate", {"x": 9.0, "y": 3.0})),
+        tool_turn(("verify", {"expr": "at_position(9.0, 3.0)"})),
+        tool_turn(("turn_fake", {})),
+        tool_turn(("verify", {"expr": expr})),
+        tool_turn(("stop", {})),
+        tool_turn(("verify", {"expr": expr})),
+        tool_turn(("finish", {})),
+    ])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("走到坐标 (9.0,3.0) 然后左转90度", session=_session())
+    assert trace.contract == ("at_position(9.0, 3.0)",)
+    assert [(s.strategy, s.success, s.housekeeping, s.superseded) for s in trace.steps] == [
+        ("navigate", True, False, False), ("turn_fake", False, False, True), ("stop", True, True, False)]
+    report = _verdict(agent, eng, trace)
+    assert report.verified is False and report.reject_reason.startswith("native_step_2:")
+
+
+def test_navigating_twice_to_the_same_target_still_verifies() -> None:
+    """Verifier P2: the second auto-verify is an attempt of the first's group, graded
+    against the group baseline; 'already true before THIS action' is no false red."""
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("navigate", {"x": 3.0, "y": 0.0})),
+        tool_turn(("navigate", {"x": 3.0, "y": 0.0})),
+        tool_turn(("finish", {})),
+    ])
+    agent = _nav_agent()
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("走到坐标 (3.0,0.0)", session=_session())
+    assert [s.superseded for s in trace.steps] == [True, False]
+    assert trace.steps[1].actor_caused is ActorCaused.CAUSED
+    assert _verdict(agent, eng, trace).verified is True
+
+
+def test_a_failed_auto_verify_is_kept_when_the_model_verifies_something_else() -> None:
+    """Verifier P3: navigate(3,0) lands at (1,0); the model may ADD a verify of its
+    landing, never replace the FAILED auto-verify, which stays its own graded row."""
+    class _ShortNav(_NavBase):
+        def navigate_to(self, x, y, timeout=None):  # noqa: ANN001, ANN202
+            return super().navigate_to(1.0, 0.0)
+
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("navigate", {"x": 3.0, "y": 0.0})),
+        tool_turn(("verify", {"expr": "at_position(1.0, 0.0)"})),
+        tool_turn(("finish", {})),
+    ])
+    agent = _nav_agent()
+    agent._base = _ShortNav(0.0, 0.0)
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("go to the kitchen", session=_session())
+    assert [(sg.verify, s.verify_result) for sg, s in zip(trace.goal_tree.sub_goals, trace.steps)] == [
+        ("at_position(3.0, 0.0)", False), ("at_position(1.0, 0.0)", True)]
+    report = _verdict(agent, eng, trace)
+    assert report.verified is False and report.reject_reason == "native_step_0: verify FAIL"
+
+
+def test_a_dispatched_release_skill_is_a_place_intent() -> None:
+    """gripper_open / handover declare no gripper verify_hint, but their spec releases
+    what is held (``effects['held_object'] = None``): dispatching one is a place, so
+    an unrelated walk verify cannot stand in for the release."""
+    from vector_os_nano.skills.gripper import GripperOpenSkill
+    from vector_os_nano.skills.handover import HandoverSkill
+    from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+    for cls in (GripperOpenSkill, HandoverSkill):
+        assert SkillWrapperTool(cls(), None).effects["held_object"] is None
+    release = _Skill("gripper_open_fake", lambda: None)
+    release.effects = {"gripper_state": "open", "held_object": None}
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("gripper_open_fake", {})),
+        tool_turn(("walk", {"distance": 1.0, "speed": 0.5})),
+        tool_turn(("verify", {"expr": "at_position(1.0, 0.0, 0.5)"})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _arm = _make_arm_agent(lambda arm: release)
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("松开它", session=_session())
+    assert trace.intents == ("place",)
+    assert _verdict(agent, eng, trace).verified is False
+
+
 def test_the_contract_start_fails_closed_on_an_unevaluable_predicate() -> None:
     """A predicate the verifier cannot evaluate at turn start reads as already
     satisfied, never as 'not yet', so it can never be the turn's F->T."""

@@ -70,7 +70,9 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
 # ``detection_matches_gt`` grounds only as ``== True`` (R7); its bare call stays RAN.
 # Every ``@oracle``-tagged ``-> bool`` callable MUST be here, else it gets the looser
 # state rules; test_spine_moat_corpus scans the tags and fails on drift.
-# ponytail: kernel lists until the @oracle tag grows a return kind.
+# ponytail: these lists copy the @oracle(domain=...) tags because the classifier gets
+# only names, not the live OracleTags; test_spine_moat_corpus pins tag == list. Read
+# the tags directly once classify_verify_expr takes the oracle dict.
 _BOOL_ORACLES: frozenset[str] = _PREDICATE_ORACLES | {"detection_matches_gt"}
 # Return domains of the non-bool oracles (``@oracle(domain=...)``; test_spine_moat_corpus
 # pins tag == table). A count is >= 0 and 0 is its fail-safe value; a range is closed.

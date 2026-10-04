@@ -473,7 +473,8 @@ class NativeStepRunner:
       (the spine grades the latest only — ``trace_store.graded_indices``);
     - auto post-verify: an actuating tool whose ``verify_hint`` binds from its call
       params is checked right after it runs; that check closes the step unless the
-      model verifies first (then the model's predicate is the step's);
+      model verifies first (then the model's predicate is the step's — but a FAILED
+      auto-verify of another predicate stays its own row);
     - probe refusal: a model verify with no action since its last verify is refused
       unevaluated (no GT bit leak);
     - every dispatch runs inside ``ACTOR_EPOCH.tool()``, so only the actor's own
@@ -604,7 +605,9 @@ class NativeStepRunner:
         if hint and self._last_ok:
             ok = self._check(hint)
             caused, channels = self._grade(hint)
-            if before:
+            # F->T for THIS action — unless it re-attempts a group whose earlier attempt
+            # made it true: then the group baseline (in _grade) is the judge.
+            if before and ("native", attempt_key(hint)) not in self._group_baselines:
                 caused, channels = actor_causation.ActorCaused.UNCAUSED, ("already true before the action",)
             # The auto check belongs to THIS tool: keep its own result for the record
             # (a later read in the same step must not stand in for it).
@@ -632,7 +635,12 @@ class NativeStepRunner:
 
     def _note_intents(self, tool: Any) -> None:
         """A dispatched skill whose hint names a gripper oracle is a manipulation:
-        a rising one (holding) a grasp, a falling / level one (release, placement) a place."""
+        a rising one (holding) a grasp, a falling / level one (release, placement) a place.
+        A skill whose spec releases what is held (``effects['held_object'] = None``:
+        gripper_open, handover) is a place even without a hint."""
+        effects = getattr(tool, "effects", None)
+        if isinstance(effects, dict) and "held_object" in effects and effects["held_object"] is None:
+            self.intents.add("place")
         for _name, _call, channel, want in actor_causation.robot_calls(
             str(getattr(tool, "verify_hint", "") or ""), self._oracles
         ):
@@ -667,6 +675,11 @@ class NativeStepRunner:
             )
         self._acted_since_verify = False
         auto = self._pending
+        if auto is not None and not auto["ok"] and attempt_key(auto["expr"]) != attempt_key(expr):
+            # The model may ADD a verify, never replace a FAILED auto-verify of a
+            # different predicate: that FAIL is its own graded row.
+            self._flush_pending()
+            auto = None
         self._pending = None  # the model's own predicate is this step's verify
         verify_result = self._check(expr)
         actor_caused, channels = self._grade(expr, goal_id)

@@ -26,7 +26,7 @@ subsumes a distinct (skill, predicate) the first acceptance never exercised:
     goal — ``at_position`` for a position, ``facing`` for a heading;
   - CAUSATION: a real forward walk grades the ``at_position`` step CAUSED (planar
     channel); a real yaw command + yaw displacement grades the ``facing`` step CAUSED
-    (R2b's ``_BASE_PREDICATES`` includes ``facing``, graded PER-CHANNEL on the heading
+    (``facing`` carries the ``@oracle(channel="base")`` tag, graded PER-CHANNEL on the heading
     delta — a forward walk's planar move does NOT count for facing). [STEP-12 fix]
 
 GAIT UNDER-ROTATION: the MPC gait achieves only about two thirds of a commanded

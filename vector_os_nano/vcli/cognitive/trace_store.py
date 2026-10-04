@@ -373,23 +373,29 @@ def attempt_key(expr: str | None) -> str:
     return ast.dump(tree.body)
 
 
-def graded_indices(trace: ExecutionTrace) -> list[int]:
-    """Indices of the steps the gate grades: the LATEST attempt of every group.
+def attempt_groups(trace: ExecutionTrace) -> list[list[int]]:
+    """The trace's attempt groups (step indices, in order), sorted by their latest.
 
     A step joins a group only when the producer opted it in (``attempt_of``) AND
     the group's verify normalizes the same (``attempt_key``), so a producer can never
     merge two predicates and a PASS of a different, easier predicate never supersedes
-    a FAIL. Every other step is its own group. Superseded rows stay in the trace as
-    the audit of the attempts (FAIL -> retry -> PASS).
+    a FAIL. Every other step is its own group.
     """
     verify_of = {sg.name: sg.verify for sg in trace.goal_tree.sub_goals}
-    latest: dict[tuple[str, ...], int] = {}
+    groups: dict[tuple[str, ...], list[int]] = {}
     for i, s in enumerate(trace.steps):
         verify = verify_of.get(s.sub_goal_name, "")
         attempt = getattr(s, "attempt_of", "")
         key = ("attempt", attempt, attempt_key(verify)) if attempt and verify else ("own", str(i))
-        latest[key] = i
-    return sorted(latest.values())
+        groups.setdefault(key, []).append(i)
+    return sorted(groups.values(), key=lambda g: g[-1])
+
+
+def graded_indices(trace: ExecutionTrace) -> list[int]:
+    """Indices of the steps the gate grades: the LATEST attempt of every group.
+    Superseded rows stay in the trace as the audit of the attempts (FAIL -> retry ->
+    PASS)."""
+    return [g[-1] for g in attempt_groups(trace)]
 
 
 def _contract_reason(
@@ -399,9 +405,12 @@ def _contract_reason(
     """Why the turn's task contract is not met ("" when it is): every predicate must
     be GT-provable here, False at turn start, True at turn end, and asserted by a
     GROUNDED (actor-caused) graded step."""
-    from vector_os_nano.vcli.cognitive.object_goal import backs_contract
+    from vector_os_nano.vcli.cognitive.object_goal import backs_contract, task_contract
 
     contract = tuple(trace.contract)
+    # The spine recompiles the contract: a producer can never swap in a weaker one.
+    if contract != task_contract(trace.goal_tree.goal, oracle_names):
+        return "the task contract does not match the goal"
     if len(trace.contract_start) != len(contract) or len(trace.contract_end) != len(contract):
         return "task contract was not evaluated at turn start and end"
     for item, was, now in zip(contract, trace.contract_start, trace.contract_end):
@@ -481,9 +490,11 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
     - Every graded step must classify GROUNDED, with ONE exception: under a task
       contract (the producer compiled one from the goal), a row the producer marked
       ``housekeeping`` (its whole chain read-only or a declared housekeeping action:
-      a trailing stop, where_am_i) may stay RAN unless its verify FAILED. An
-      actuating row is never exempt, so a sub-goal the contract does not cover
-      ("... then turn left") still needs its own GROUNDED step.
+      a trailing stop, where_am_i) may stay RAN unless its verify FAILED — and only
+      when EVERY row of its attempt group is housekeeping and succeeded. An
+      actuating row is never exempt, and a housekeeping row that superseded one
+      (stop -> the same re-verify) must GROUND on its own, so a sub-goal the
+      contract does not cover ("... then turn left") needs its own GROUNDED step.
     - With a contract, each predicate must also be False at turn start, True at turn
       end, and asserted by a GROUNDED graded step.
 
@@ -497,18 +508,25 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
         return "a foreach plan cannot be graded step by step"
     if any(s.sub_goal_name not in sg_by_name for s in trace.steps):
         return "a step has no sub-goal to grade it against"
-    graded = [trace.steps[i] for i in graded_indices(trace)]
+    groups = attempt_groups(trace)
+    graded = [trace.steps[g[-1]] for g in groups]
     if not graded:
         return "no checked step"
     goal_text = trace.goal_tree.goal
     ev: dict[int, StepEvidence] = {}
-    for s in graded:
+    for s, group in zip(graded, groups):
         sg = sg_by_name[s.sub_goal_name]
         evidence, why = _classify(s, sg, oracle_names, goal_text)
         ev[id(s)] = evidence
         if evidence == "FAILED":
             return f"{s.sub_goal_name}: {why}"
-        if trace.contract and getattr(s, "housekeeping", False) is True:
+        # A housekeeping row never stands in for an attempt it superseded: exempt
+        # only when EVERY row of its group is housekeeping and succeeded.
+        exempt = bool(trace.contract) and all(
+            getattr(trace.steps[j], "housekeeping", False) is True and trace.steps[j].success
+            for j in group
+        )
+        if exempt:
             if sg.verify and not s.verify_result:
                 return f"{s.sub_goal_name}: {why}"
         elif evidence != "GROUNDED":

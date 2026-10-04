@@ -51,6 +51,8 @@ class SkillWrapperTool:
         self._is_motor: bool = self._detect_motor(skill)
         # The skill's GT post-condition template; the native runner auto-verifies it.
         self.verify_hint: str = str(getattr(skill, "verify_hint", "") or "")
+        # The skill's declared world-model effects (the runner reads its manipulation intent).
+        self.effects: dict[str, Any] = dict(getattr(skill, "effects", None) or {})
         # A declared housekeeping action (stop): it changes no task state.
         self.housekeeping: bool = getattr(skill, "housekeeping", False) is True
 

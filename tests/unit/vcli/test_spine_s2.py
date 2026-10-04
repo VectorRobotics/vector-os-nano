@@ -346,6 +346,47 @@ def test_an_unproven_actuating_step_fails_a_met_contract(goal, contract, last) -
     assert evidence_passed(exempt, GO2 | MANIP), turn_reject_reason(exempt, GO2 | MANIP)
 
 
+_P8 = "走到坐标 (9.0,3.0) 然后左转90度"
+
+
+@pytest.mark.parametrize("turn, stop", [
+    # verifier P8: the turn skill FAILS, then stop and the same vacuous re-verify
+    (_row("True", ok=False), _row("True", housekeeping=True)),
+    # verifier P1: an UNCAUSED (teleported) facing PASS on the stop row
+    (_row("facing(0.0)", vr=False), _row("facing(0.0)", caused=U, housekeeping=True)),
+    # an unproven turn re-verified after the stop
+    (_row("facing(0.0)", caused=U), _row("facing(0.0)", caused=U, housekeeping=True)),
+    # an all-housekeeping group with a FAILED attempt is not exempt either
+    (_row("True", ok=False, housekeeping=True), _row("True", housekeeping=True)),
+])
+def test_a_housekeeping_row_never_launders_an_earlier_attempt(turn, stop) -> None:
+    """A stop row joins the attempt group of the same verify text and supersedes
+    it; it is exempt only when its WHOLE group is housekeeping and succeeded, so it
+    can never stand in for a FAILED or unproven actuating attempt."""
+    t = _trace(_P8, _row("at_position(9.0, 3.0)"), turn, stop,
+               contract=("at_position(9.0, 3.0)",), start=(False,), end=(True,))
+    assert ts.graded_indices(t) == [0, 2]
+    assert turn_reject_reason(t, GO2).startswith("native_step_2: ")
+
+
+def test_a_stop_reverify_caused_against_the_group_baseline_still_verifies() -> None:
+    """The legit shape the rule keeps: the turn's verify FAILs mid-motion, the stop's
+    re-verify PASSes CAUSED against the group baseline, so it GROUNDs on its own."""
+    t = _trace(_P8, _row("at_position(9.0, 3.0)"), _row("facing(1.57)", vr=False),
+               _row("facing(1.57)", housekeeping=True),
+               contract=("at_position(9.0, 3.0)",), start=(False,), end=(True,))
+    assert evidence_passed(t, GO2), turn_reject_reason(t, GO2)
+
+
+def test_the_spine_recompiles_the_contract_a_producer_supplies() -> None:
+    """A producer bug that hands the spine a weaker contract (the go2-only grab as a
+    navigation contract, which would also unlock the housekeeping exemption) rejects."""
+    t = _trace("go to (3,0) and grab the red can", _row("at_position(3.0, 0.0)"),
+               _row("", housekeeping=True),
+               contract=("at_position(3.0, 0.0)",), start=(False,), end=(True,))
+    assert turn_reject_reason(t, GO2) == "the task contract does not match the goal"
+
+
 def test_a_housekeeping_row_is_exempt_only_under_a_contract() -> None:
     rows = (_row("at_position(3.0, 0.0)"), _row("", housekeeping=True))
     assert not evidence_passed(_trace("走到坐标 (3,0)", *rows), GO2)
