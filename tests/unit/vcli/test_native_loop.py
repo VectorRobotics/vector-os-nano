@@ -697,3 +697,26 @@ def test_an_auto_verified_step_keeps_its_own_result_after_a_failed_read() -> Non
     assert step.success is True and step.result_data["tool"] == "grasp_fake"
     assert step.strategy == "grasp_fake"
     assert _verdict(agent, eng, trace).verified is True
+
+
+def test_an_aborted_navigate_is_one_failed_row_without_its_auto_verify() -> None:
+    """A stop mid-navigate: the interrupted action is its own FAILED 'aborted' row
+    (the REPL shows 'navigate → aborted'), never an auto-verify row."""
+    from vector_os_nano.vcli.cognitive.abort import CancelToken
+    from vector_os_nano.vcli.native_loop import run_turn_native
+
+    token = CancelToken()
+
+    class _StoppedNav(_NavBase):
+        def navigate_to(self, x, y, timeout=None):  # noqa: ANN001, ANN202
+            token.cancel()  # the owner's stop lands mid-navigate
+            return False
+
+    backend = FakeToolScriptBackend.from_tool_script([tool_turn(("navigate", {"x": 3.0, "y": 0.0}))])
+    agent, _base = _make_agent(0.0, 0.0)
+    agent._base = _StoppedNav(0.0, 0.0)
+    eng = _make_engine(agent, backend)
+    trace = run_turn_native(eng, "走到坐标 (3.0,0.0)", agent=agent, session=_session(), cancel=token)
+    (step,) = trace.steps
+    assert (step.strategy, step.success, step.error) == ("navigate", False, "aborted")
+    assert trace.cancelled and _verdict(agent, eng, trace).evidence == "FAILED"

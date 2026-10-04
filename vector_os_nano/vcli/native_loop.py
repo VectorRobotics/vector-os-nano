@@ -747,9 +747,10 @@ class NativeStepRunner:
 
         The unverified action chain (if any) is its producing strategy, so an
         interrupted action is on the record — never silently dropped — and grades
-        FAILED (success=False), never GROUNDED.
+        FAILED (success=False), never GROUNDED. Its auto post-verify is dropped: the
+        aborted row is that action's record.
         """
-        self._flush_pending()
+        self._pending = None
         self._record_open(reason, success=False)
 
     def close_turn(self) -> None:
