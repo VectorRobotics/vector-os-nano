@@ -231,7 +231,7 @@ class DevWorld:
     def is_robot(self) -> bool:
         return False
 
-    def persona_blocks(self) -> tuple[str, str]:
+    def persona_blocks(self, agent: Any = None) -> tuple[str, str]:
         return DEV_ROLE_PROMPT, DEV_TOOL_INSTRUCTIONS
 
     def register_tools(self, registry: Any, agent: Any) -> None:

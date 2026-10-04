@@ -87,6 +87,14 @@ _MAX_VERIFY_NUDGES = 2
 # tools. World-agnostic BY CONSTRUCTION: native asks the ENGINE'S registry for its
 # registered action tools; there is NO "if dev" branch.
 _CODE_TOOL_CATEGORY = "code"
+_SIM_TOOL_CATEGORY = "sim"
+_ROBOT_TOOL_CATEGORY = "robot"
+
+# The sim lifecycle tools: they change WHICH body the turn drives. They count as an
+# action (the turn is owned; nothing re-runs them) but prove nothing themselves, so
+# they never open a graded step; after one succeeds the runner rebinds the turn to
+# the new body (tools, verifier, oracle names, causation baseline).
+LIFECYCLE_TOOLS: frozenset[str] = frozenset({"start_simulation", "stop_simulation"})
 
 # The MUTATING code tools — the ones whose effect is a file/shell WRITE the model can
 # author at will (so it can "accomplish" a task by writing a marker file or running a
@@ -132,15 +140,11 @@ def _agent_base(context: ToolContext) -> Any:
 class _NativeBaseNavigateTool:
     """Coordinate navigation through the nav-stack AVOIDANCE route (D9 #1).
 
-    ``execute`` calls the connected base's ``navigate_to(x, y)`` — the go2 ROS2 proxy
-    method that sets the nav flag, publishes ``/goal_point`` to the FAR planner (which
-    routes over the lidar terrain map and AVOIDS obstacles), and blocks until arrival or
-    timeout. This is the obstacle avoidance the open-loop ``walk`` lacks. The planner
-    drives the base over ``cmd_vel``, which is GATED OUT of the actor-causation counter
-    (it runs on the bridge thread, never setting ``_skill_ctrl_tid``) — so a ``navigate``
-    step's ``at_position`` verify grades UNCAUSED and the spine downgrades GROUNDED -> RAN:
-    an HONEST "ran, cannot prove the actor caused it" until actor-causation is extended to
-    cmd_vel. The moat is never loosened (rule 5). Duck-typed like a ``Tool`` so
+    ``execute`` calls the connected base's ``navigate_to(x, y)``: the in-process
+    planner (vgraph + pure-pursuit follower) routes around the scene's obstacles and
+    streams velocity while holding skill control, so its commands are counted by
+    actor-causation and an ``at_position`` verify can grade CAUSED. This is the
+    obstacle avoidance the open-loop ``walk`` lacks. Duck-typed like a ``Tool`` so
     ``dispatch_skill`` runs it uniformly.
     """
 
@@ -359,47 +363,6 @@ class _NativeCapabilityTool:
         return ToolResult(content=f"{self.name}: {output[:2000]}")
 
 
-def _scene_object_names(agent: Any) -> tuple[str, ...]:
-    """Return the world's graspable object NAMES, the canonical names the oracle matches.
-
-    Single-sourced from the SAME ground truth the ``holding_object`` oracle reads:
-    the connected arm's ``get_object_positions()`` keys ARE the scene's canonical
-    object names (the MuJoCo body names, e.g. "banana"). Reaching the arm via the
-    duck-typed ``getattr(agent, "_arm", None)`` accessor (the oracle's own accessor)
-    keeps this WORLD-AGNOSTIC — native asks whatever world is connected for its
-    object vocab; no embodiment is hardcoded.
-
-    Why this closes the cross-language gap: ``holding_object(target)`` matches
-    ``target`` case-insensitively-EXACT against these keys. A model commanded in a
-    NON-English language (e.g. "把香蕉抓起来") cannot guess the canonical English
-    scene name on its own. Listing these names in the verify vocab lets the MODEL
-    translate the user's wording to the matching scene name (LLMs do 香蕉->banana
-    trivially) while the oracle stays untouched-strict.
-
-    Fail-safe / defensive: a None agent, no arm, no ``get_object_positions``, or any
-    read failure -> an EMPTY tuple. The prompt then simply omits the object list,
-    which is the exact pre-step-7 behaviour. Sorted for a stable, deterministic prompt.
-    """
-    if agent is None:
-        return ()
-    arm = getattr(agent, "_arm", None)
-    if arm is None:
-        return ()
-    getter = getattr(arm, "get_object_positions", None)
-    if not callable(getter):
-        return ()
-    try:
-        objects = getter()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("native_loop: get_object_positions failed: %s", exc)
-        return ()
-    try:
-        return tuple(sorted(str(name) for name in objects))
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("native_loop: object-name extraction failed: %s", exc)
-        return ()
-
-
 # ---------------------------------------------------------------------------
 # Synthetic tool schemas (the verify/finish/motor tool-set the model is offered)
 # ---------------------------------------------------------------------------
@@ -545,6 +508,15 @@ class NativeStepRunner:
             self.refused.append(f"{name}: {why}")
             return ToolResult(content=f"Permission denied for {name}: {why}. The tool did NOT run.",
                               is_error=True)
+        if name in LIFECYCLE_TOOLS:
+            # The body is about to change: a chain on the old one is never verified now.
+            if self._step_open:
+                self.record_unverified()
+            self.actions_dispatched += 1
+            return execute_resolved_tool(
+                tool, params, self._ctx, error_prefix=f"Tool '{name}' raised",
+                on_error=lambda _n, exc: logger.debug("native_loop: %r raised: %s", name, exc),
+            )
         if not self._step_open:
             # First skill of a fresh step -> capture the causation baseline NOW.
             self._baseline = actor_causation.capture(self._agent)
@@ -625,6 +597,12 @@ class NativeStepRunner:
                 f"(result={verify_result}, actor={actor_caused.value})"
             )
         )
+
+    def rebind(self, agent: Any, verifier: Any, oracle_names: frozenset[str], motor_tools: dict[str, Any]) -> None:
+        """A lifecycle tool switched the body: later steps run, verify and grade on *agent*."""
+        self._agent, self._verifier, self._oracle_names = agent, verifier, oracle_names
+        self._motor_tools = motor_tools
+        self._ctx.agent = agent
 
     def _close_step(self) -> None:
         # Reset the action chain + baseline for the next pair. NEVER carry a baseline
@@ -851,22 +829,37 @@ def run_turn_native(
     from vector_os_nano.sim.session import mark_turn
 
     agent = agent if agent is not None else getattr(engine, "_vgg_agent", None)
+    body = [agent]  # the body the turn drives now: a lifecycle tool rebinds it
     mark_turn(agent, "start", user_message)
     try:
         return _run_turn_native(
-            engine, user_message, agent=agent, session=session, app_state=app_state,
+            engine, user_message, body=body, session=session, app_state=app_state,
             max_turns=max_turns, on_progress=on_progress,
             ask_permission=ask_permission, cancel=cancel,
         )
     finally:
-        mark_turn(agent, "end", user_message)
+        mark_turn(body[0], "end", user_message)
+
+
+def _bind_body(engine: Any, agent: Any) -> tuple[Any, frozenset[str], dict[str, Any], list[dict[str, Any]]]:
+    """Everything a turn derives from its body: (verifier, oracle names, tools, schemas).
+
+    The verifier + oracle names are single-sourced from the SAME namespace the spine
+    reads (rule 3); fail closed on any error (an empty oracle set classifies every
+    predicate RAN). The motor tool-set is the world's skills + the registry's tools;
+    the synthetic verify/finish are handled in-loop, never dispatched.
+    """
+    verifier = _build_verifier(engine, agent)
+    oracle_names = verify_oracle_names(agent, engine)
+    motor_tools = _build_motor_tools(agent, engine)
+    return verifier, oracle_names, motor_tools, _native_tool_schemas(motor_tools, oracle_names)
 
 
 def _run_turn_native(
     engine: Any,
     user_message: str,
     *,
-    agent: Any,
+    body: list[Any],
     session: Any,
     app_state: dict[str, Any] | None,
     max_turns: int,
@@ -874,32 +867,32 @@ def _run_turn_native(
     ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
     cancel: Any = None,
 ) -> ExecutionTrace:
+    from vector_os_nano.sim.session import mark_turn
+
     token = cancel if cancel is not None else _abort.new_run()
-
-    # The live verifier + oracle names — single-sourced from the SAME namespace the
-    # spine reads (rule 3). Fail closed on any error (empty oracle set -> every
-    # predicate classifies RAN downstream).
-    verifier = _build_verifier(engine, agent)
-    oracle_names = verify_oracle_names(agent, engine)
-
-    # The motor tool-set: the world's skills + the engine registry's code tools
-    # (file_write/bash/...), wrapped as tools. The synthetic verify/finish tools are
-    # handled in-loop, never dispatched as skills.
-    motor_tools = _build_motor_tools(agent, engine)
-    tool_schemas = _native_tool_schemas(motor_tools, oracle_names)
-
+    agent = body[0]
+    verifier, oracle_names, motor_tools, tool_schemas = _bind_body(engine, agent)
     ctx = _build_tool_context(agent, session, app_state, engine, token)
     runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx, ask_permission)
+
+    def _rebind() -> None:
+        """A lifecycle tool succeeded: the next round-trip sees the new body's tools,
+        verifier and oracle names, and the sim's turn marks move to it."""
+        nonlocal oracle_names, tool_schemas
+        app = ctx.app_state
+        new = app.get("agent") if app is not None and "agent" in app else getattr(engine, "_vgg_agent", None)
+        verifier, oracle_names, motor_tools, tool_schemas = _bind_body(engine, new)
+        runner.rebind(new, verifier, oracle_names, motor_tools)
+        if new is not body[0]:
+            mark_turn(body[0], "end", user_message)
+            body[0] = new
+            mark_turn(new, "start", user_message)
 
     backend = getattr(engine, "_backend", None)
     if backend is None:
         # No backend wired -> no native turns -> empty trace (verdict fails closed).
         return runner.build_trace(user_message)
     model = _model_id(backend)
-
-    system_prompt = _native_system_prompt(
-        engine, oracle_names, _scene_object_names(agent), has_navigate="navigate" in motor_tools
-    )
     _append_user(session, user_message)
 
     # Progress feedback (D9 #2 perceived latency): the user's "load 好几秒" is the
@@ -956,7 +949,8 @@ def _run_turn_native(
                 backend, response = _call_llm(backend, dict(
                     messages=messages,
                     tools=tool_schemas,
-                    system=system_prompt,
+                    # Rebuilt per round-trip: the [Robot State] block follows the body.
+                    system=_native_system_prompt(engine, oracle_names, body[0]),
                     max_tokens=getattr(engine, "_max_tokens", 4096),
                     on_text=_on_text if on_progress is not None else None,
                 ))
@@ -969,6 +963,8 @@ def _run_turn_native(
                     runner.record_abort(f"LLM unavailable: {llm_error}")
                 break
             model = _model_id(backend)
+            if session is not None and hasattr(session, "add_usage") and getattr(response, "usage", None):
+                session.add_usage(response.usage)
             tool_calls = list(response.tool_calls or [])
             _append_assistant(session, response, tool_calls)
 
@@ -1020,6 +1016,8 @@ def _run_turn_native(
                 else:
                     _emit(f"{tc.name} {_progress_args(tc.input)}".strip())
                     res = _dispatch(tc.name, dict(tc.input or {}))
+                    if tc.name in LIFECYCLE_TOOLS and not res.is_error:
+                        _rebind()
                 result_dicts.append(_tool_result_dict(tc.id, res.content, res.is_error))
 
             _append_tool_results(session, result_dicts)
@@ -1100,18 +1098,22 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
     # (file_read/glob/grep) are kept so the persona can still inspect code. The dev world
     # (no robot agent) keeps the full set unchanged.
     is_robot_world = agent is not None
-    for name, code_tool in _code_tools_from_registry(engine).items():
+    for name, code_tool in _registry_tools(engine, _CODE_TOOL_CATEGORY).items():
         if is_robot_world and name in _MUTATING_CODE_TOOLS:
             continue  # Prong 1: no file/shell WRITE as a path to a physical robot task
         tools[name] = code_tool
+    # The sim lifecycle (start/stop_simulation) in every world: a dev-world turn can
+    # bring a body up and use it in the same turn (the runner rebinds after it).
+    tools.update(_registry_tools(engine, _SIM_TOOL_CATEGORY))
+    # A robot world's registry tools that are not skill wrappers: scene_graph_query
+    # (read-only memory), go_to_room. Skills come fresh from wrap_skills below.
+    if is_robot_world:
+        tools.update({n: t for n, t in _registry_tools(engine, _ROBOT_TOOL_CATEGORY).items()
+                      if not getattr(t, "_is_skill_wrapper", False)})
     # Source 3 (D9 #1): the avoidance NAVIGATION route, only for a world with a mobile
-    # base (go2). ``publish_goal`` -> FAR/local planner/lidar, so "go to a place/
-    # coordinate" AVOIDS obstacles instead of blind-walking into them. cmd_vel is gated
-    # out of actor-causation -> a navigate step honestly grades RAN (the moat never
-    # loosens). The arm/dev worlds (no base) do not get it. The base gate is single-
-    # sourced (Rule 11) onto the capability resolver — byte-identical to the prior
-    # ``agent is not None and agent._base is not None`` (resolver -> has_base False for
-    # a None agent), so the navigate/base/camera gates can never drift apart.
+    # base: the base's planner routes around obstacles, holding skill control, so the
+    # move is counted for actor-causation. The arm/dev worlds (no base) do not get it.
+    # The base gate is single-sourced (Rule 11) onto the capability resolver.
     from vector_os_nano.embodiments.capability_profile import resolve_capability_profile
 
     if resolve_capability_profile(agent).has_base:
@@ -1196,17 +1198,16 @@ def _registered_capabilities(engine: Any) -> list[Any]:
         return []
 
 
-def _code_tools_from_registry(engine: Any) -> dict[str, Any]:
-    """Return the engine registry's ``code``-category Tool objects, keyed by name.
+def _registry_tools(engine: Any, category: str) -> dict[str, Any]:
+    """Return the engine registry's *category* Tool objects, keyed by name.
 
     Pulls the live, instantiated tools out of the engine's ``CategorizedToolRegistry``
     so the native loop offers the EXACT action surface the kernel registered (no
     duplicate construction, no hand-authored allowlist here — single-sourced from the
     registry, rule 3). Defensive: a registry without the categorized API, a missing
-    ``code`` category, or any lookup failure yields an empty set (the dev world then
-    falls back to offering only verify/finish, the pre-fix behaviour). Disabled
-    categories are still surfaced here on purpose — ``code`` is never disabled in any
-    world, and the loop's tool-set is independent of the chat-path category gating.
+    category, or any lookup failure yields an empty set. Disabled categories are
+    still surfaced on purpose: the loop's tool-set is independent of the chat-path
+    category gating (the caller gates robot tools on a connected agent).
     """
     registry = getattr(engine, "_registry", None)
     if registry is None:
@@ -1217,13 +1218,13 @@ def _code_tools_from_registry(engine: Any) -> dict[str, Any]:
         return {}  # a plain ToolRegistry (no categories) -> no code tools to surface
     tools: dict[str, Any] = {}
     try:
-        names = list_categories().get(_CODE_TOOL_CATEGORY, [])
+        names = list_categories().get(category, [])
         for name in names:
             code_tool = get(name)
             if code_tool is not None:
                 tools[name] = code_tool
     except Exception as exc:  # noqa: BLE001
-        logger.debug("native_loop: code-tool discovery failed: %s", exc)
+        logger.debug("native_loop: %s-tool discovery failed: %s", category, exc)
     return tools
 
 
@@ -1245,105 +1246,53 @@ def _native_tool_schemas(
     return schemas
 
 
-def _native_system_prompt(
-    engine: Any,
-    oracle_names: frozenset[str],
-    object_names: tuple[str, ...] = (),
-    has_navigate: bool = False,
-) -> list[dict[str, Any]]:
-    """A minimal native system prompt, single-sourcing the verify vocab.
+# The KERNEL loop rules: how any turn acts and proves, in every world. How a body
+# does a task (find -> approach -> grasp -> carry -> place) is the world's persona
+# (RobotWorld.persona_blocks, composed from the manifests), never written here.
+_KERNEL_RULES = (
+    "You act through tools. For each goal: call the action that achieves it, then call "
+    "verify(expr) with the deterministic predicate that MEASURES that goal, then finish. "
+    "verify reads the real world (ground truth you cannot write), so it is the only proof: "
+    "your own words, a tool's message, a file or a shell command never are. A physical "
+    "action is done only by the robot skill for it; never stand in for one by writing a "
+    "file or running a command. If no tool can do it, say so and stop.\n"
+    "- The action that should achieve a goal is the last tool call before its verify; a "
+    "task with several goals verifies each after its own action.\n"
+    "- A FAIL means the goal is not met: recover (repeat the action or take a better one), "
+    "then verify again. Never finish while a goal's latest verify is FAIL; if you cannot "
+    "recover, say why and stop.\n"
+    "- A read-only tool (status, memory, perception) changes nothing: answer from it, no "
+    "verify needed.\n"
+    "- After start_simulation or stop_simulation succeeds, your tools and verify "
+    "predicates belong to the new body from your next call on.\n"
+)
 
-    Anthropic 'system' is a list of text blocks; the verify-vocab (oracle names +
-    at_position tol) is taken from the SAME source ``verify_oracle_names`` reads, so
-    the model's verify expr is grounded in the live namespace (review fix 6).
 
-    ``object_names`` (step 7) is the connected world's graspable object vocab — the
-    canonical scene names the ``holding_object`` oracle matches against, single-
-    sourced from the world via ``_scene_object_names``. When non-empty, the prompt
-    lists them so a model commanded in ANY language passes the CANONICAL scene name
-    to ``holding_object('<name>')`` (it translates the user's wording, e.g.
-    香蕉->banana) and the strictly-canonical oracle still matches. An EMPTY tuple
-    (no world objects exposed) omits the list — the exact pre-step-7 prompt.
+def _native_system_prompt(engine: Any, oracle_names: frozenset[str], agent: Any = None) -> list[dict[str, Any]]:
+    """The native system prompt: kernel loop rules + the world's persona + world state.
+
+    The verify vocab is the SAME live oracle set ``verify_oracle_names`` reads (review
+    fix 6). The world persona (``engine._world.persona_blocks(agent)``) carries the
+    body's task policy; the ``[Robot State]`` block is the actor's belief right now
+    (pose, room, gripper, localized objects, nav/explore backend), rebuilt for every
+    round-trip. Nothing here names a ground-truth object.
     """
     names = ", ".join(sorted(oracle_names)) if oracle_names else "(none)"
-    tol = _at_position_tol()
-    # Step 7: when the world exposes graspable object names, teach them so the model
-    # verifies with the CANONICAL scene name regardless of the command's language.
-    if object_names:
-        object_vocab = (
-            f"The scene's graspable objects are: {', '.join(object_names)}. "
-            "Always pass one of these EXACT scene names (English) as the QUOTED argument "
-            "to holding_object, translating the user's wording (in any language) to the "
-            "matching scene name — e.g. a request to grasp 香蕉 / the banana is verified "
-            "with holding_object('banana'). "
-        )
-    else:
-        object_vocab = ""
-    # Locomotion guidance: when the avoidance NAVIGATION route is available (a world
-    # with a mobile base, D9 #1) the model REACHES a place/coordinate via navigate(x, y)
-    # — the planner avoids obstacles — and uses walk only for an explicit relative step.
-    # Without it, fall back to the open-loop walk-toward-coordinate guidance.
-    if has_navigate:
-        locomotion_guidance = (
-            f"at_position(x, y, tol={tol}) is True when the robot is within tol metres "
-            "of (x, y). To REACH a place or coordinate (x, y), call navigate(x, y): it "
-            "routes through the planner and AVOIDS obstacles (lidar + local planner). Do "
-            "NOT walk toward a far target — walk is OPEN-LOOP and collides with anything "
-            "in the way; use walk ONLY for an explicit short relative step the user asked "
-            "for (e.g. 'walk forward 2m'). After navigate, verify at_position(x, y). "
-            "CRITICAL — RECOVER on failure: if a verify returns FAIL, call navigate(x, y) "
-            "AGAIN and re-verify, repeating until at_position PASSES. NEVER call finish "
-            "while the latest verify is FAIL. Only finish once a verify has PASSED."
-        )
-    else:
-        locomotion_guidance = (
-            f"at_position(x, y, tol={tol}) is True when the robot is within tol metres of "
-            "(x, y). To reach a target coordinate, walk toward it (a forward walk "
-            "advances along the robot's heading) and verify with at_position(x, y) for "
-            "that target. The legged gait UNDER-SHOOTS the commanded distance "
-            "substantially, so command a walk distance well LARGER than the straight-line "
-            "gap to the target (about 2x, and never less than ~1.5m even for a short hop) "
-            "so a single move lands within tolerance. CRITICAL — RECOVER on failure: if a "
-            "verify returns FAIL the robot fell SHORT, so you MUST immediately issue "
-            "ANOTHER walk covering the remaining gap and verify again, repeating "
-            "(walk -> verify) until at_position returns PASS. NEVER call finish while the "
-            "latest verify is FAIL, and NEVER stop after a single failed verify — always "
-            "walk again and re-verify. Only finish once a verify has PASSED."
-        )
-    text = (
-        "You control a robot through tools. For each goal: call the MOTION skill or "
-        "navigate that achieves it, then IMMEDIATELY call verify(expr) with a "
-        "deterministic predicate to PROVE the goal was achieved, then call finish. "
-        "A PHYSICAL action (grasp / pick / 抓 / 拿 / walk / navigate / place) is performed "
-        "ONLY by the robot SKILL for it and proven ONLY by a ground-truth oracle. NEVER "
-        "simulate or stand in for a physical action by writing a file, creating a marker, "
-        "or running a shell command — a grasp is real only when the GRIPPER holds the "
-        "object (holding_object), never when a file says so. If no skill can do it, say so "
-        "and stop; do NOT fake it. "
-        "verify reads the real world state itself, so do NOT call a read-only "
-        "status/query skill (e.g. where_am_i, look) before verify — the motion "
-        "action must be the LAST action call before each verify. "
-        f"Available verify predicate oracles: {names}. "
-        "Choose the predicate that MEASURES the goal quantity: a goal of reaching a "
-        "place/coordinate is proven by at_position (a position check), NOT by a "
-        "scene/description oracle. "
-        "A goal of picking up / grasping an object is proven by the holding_object(...) "
-        "gripper oracle: call holding_object('<name>') with the object's scene name as a "
-        "QUOTED string, e.g. holding_object('banana'), to prove you grasped THAT specific "
-        "object (a bare word without quotes is not a valid argument). "
-        "To DO the grasp, call the grasp / pick skill DIRECTLY and as your FIRST action — it "
-        "is the COMPLETE grasp: in ONE call it PERCEIVES the target from the robot's camera, "
-        "WALKS the robot to it on its own (obstacle-aware), AND grasps. Because it does all "
-        "of that itself, you must NOT take any separate step before it: do NOT navigate / "
-        "walk toward the object, do NOT detect it, do NOT scan, do NOT look or describe the "
-        "scene first — every one of those is unnecessary and is the #1 way the goal stays "
-        "UNMET (you burn your turns moving/looking and never actually grasp). The single "
-        "biggest mistake here is calling navigate or detect instead of the grasp skill: "
-        "don't. Commit to the grasp skill on the FIRST action, then verify holding_object(...). "
-        + object_vocab
-        + locomotion_guidance
-    )
-    return [{"type": "text", "text": text}]
+    text = _KERNEL_RULES + f"Available verify predicate oracles: {names}."
+    if "at_position" in oracle_names:
+        text += f" at_position(x, y, tol={_at_position_tol()}) is True within tol metres of (x, y)."
+    blocks = [{"type": "text", "text": text}]
+    world = getattr(engine, "_world", None)
+    if world is not None:
+        try:
+            blocks += [{"type": "text", "text": t.strip()} for t in world.persona_blocks(agent) if t]
+        except Exception as exc:  # noqa: BLE001 — the kernel rules still stand
+            logger.warning("native_loop: world persona unavailable: %s", exc)
+    if agent is not None:
+        from vector_os_nano.vcli.robot_context import RobotContextProvider
+
+        blocks.append(RobotContextProvider.for_agent(agent).get_context_block())
+    return blocks
 
 
 def _build_tool_context(

@@ -16,7 +16,7 @@ import json
 import math
 from typing import Any
 
-from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
+from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, live_agent
 
 # JSON Schema type mapping from Python / skill type names.
 _TYPE_MAP: dict[str, str] = {
@@ -113,13 +113,11 @@ class SkillWrapperTool:
         The skill is the agent's registered instance, so a ``skill_reload`` takes
         effect at once.
         """
-        app = context.app_state or {}
-        if "agent" in app:
-            agent = app["agent"]
-            if agent is None:
+        agent = live_agent(context)
+        if agent is None:
+            if "agent" in (context.app_state or {}):
                 return "No robot is connected (the simulation was stopped). Use start_simulation first."
-        else:
-            agent = context.agent if context.agent is not None else self._agent
+            agent = self._agent
         registry = getattr(agent, "_skill_registry", None)
         skill = registry.get(self.name) if registry is not None else None
         if skill is None and agent is self._agent:
