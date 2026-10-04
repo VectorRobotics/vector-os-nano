@@ -3,6 +3,8 @@ import numpy as np
 import scipy.sparse as sp
 from .com_trajectory import ComTraj
 from .go2_robot_data import PinGo2Model
+import os
+import signal
 import time
 
 # --------------------------------------------------------------------------------
@@ -95,7 +97,14 @@ class CentroidalMPC:
             qp_args['lam_a0'] = self.lam_a_prev    # Dual guess (linear constraints)
 
         # 4) Solve the QP
-        sol = self.solver(**qp_args)
+        try:
+            sol = self.solver(**qp_args)
+        except RuntimeError:
+            # OSQP traps SIGINT for the length of a solve and eats it ("Solver
+            # interrupted"): a Ctrl-C landing mid-solve never reached the REPL. Re-raise it.
+            if self.solver.stats().get("return_status") == "interrupted":
+                os.kill(os.getpid(), signal.SIGINT)
+            raise
         t2 = time.perf_counter()
 
         # 5) Document time spent
