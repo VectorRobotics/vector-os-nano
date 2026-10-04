@@ -505,3 +505,48 @@ def test_in_view_is_caused_by_a_turn_or_a_walk_not_by_looking() -> None:
     base.command(0.3)
     base._yaw = 1.0  # turned in place
     assert grade(before, capture(_agent(base=base)), "in_view('red can')", _WP10) == ActorCaused.CAUSED
+
+
+# INT2: localized is graded on the perception channel. A look is read-only (it never
+# actuates), so the no-action rule graded every look -> localized UNCAUSED (E10 RAN),
+# while an unrelated walk let a map entry from an earlier step ground (NOT_GRADED).
+
+def _sg_agent(*objs):
+    from vector_os_nano.core.scene_graph import SceneGraph
+
+    sg = SceneGraph()
+    for o in objs:
+        sg.add_object(o)
+    return SimpleNamespace(_base=None, _arm=None, _gripper=None, _spatial_memory=sg), sg
+
+
+def _bottle(x: float = 10.9, seen: float = 1.0):
+    from vector_os_nano.core.scene_graph import ObjectNode
+
+    return ObjectNode(object_id="obj_g", category="bottle", x=x, y=3.0,
+                      attributes={"color": "green"}, first_seen=seen)
+
+
+def test_localized_is_graded_on_the_perception_channel() -> None:
+    assert is_robot_predicate("localized('green bottle')", _WP10)
+    assert not is_robot_predicate("localized('green bottle')", ROBOT_ORACLES)  # not bound
+
+
+def test_localized_caused_only_by_a_belief_write_this_step() -> None:
+    agent, sg = _sg_agent()
+    before = capture(agent)
+    sg.add_object(_bottle())  # the look observed it this step
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.CAUSED
+    agent, sg = _sg_agent(_bottle())
+    before = capture(agent)
+    sg.add_object(_bottle(x=10.95))  # re-observed: the instance moved
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.CAUSED
+
+
+def test_localized_from_memory_is_uncaused() -> None:
+    agent, sg = _sg_agent(_bottle())  # on the map before the step began
+    before = capture(agent)
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+    assert grade(None, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+    no_map = SimpleNamespace(_base=None, _arm=None, _gripper=None, _spatial_memory=None)
+    assert grade(capture(no_map), capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED

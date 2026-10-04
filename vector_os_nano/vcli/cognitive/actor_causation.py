@@ -137,6 +137,25 @@ class ActorBaseline:
     # transition that signals a fresh grasp.
     gripper_welds: dict[str, bool] | None = None
 
+    # Perception — the actor's belief (``agent._spatial_memory``, the SceneGraph the
+    # ``localized`` oracle judges): one (id, x, y, seen stamps) row per instance, so a
+    # perception skill that adds, moves or re-observes an instance shows as a new row.
+    belief: frozenset | None = None
+
+
+def _capture_belief(sg: Any) -> frozenset | None:
+    """Snapshot every SceneGraph instance as a hashable row (fail-safe to None)."""
+    if sg is None:
+        return None
+    try:
+        return frozenset(
+            (o.object_id, o.x, o.y, getattr(o, "last_seen", None), getattr(o, "first_seen", None))
+            for o in sg.find_objects_by_category("")
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("actor_causation: belief read failed: %s", exc)
+        return None
+
 
 def _read_float(fn: Any) -> float | None:
     """Call *fn* and coerce to float, fail-safe to None."""
@@ -226,6 +245,7 @@ def capture(agent: Any) -> ActorBaseline:
         arm_ctrl_motion=arm_ctrl_motion,
         arm_joints=arm_joints,
         gripper_welds=gripper_welds,
+        belief=_capture_belief(getattr(agent, "_spatial_memory", None)),
     )
 
 
@@ -246,6 +266,10 @@ _GRIPPER_PREDICATES: frozenset[str] = frozenset(
 # Placement predicates: the actor caused them only by RELEASING an object this step
 # (a weld 1->0), so an object that was already resting there grades UNCAUSED.
 _RELEASE_PREDICATES: frozenset[str] = frozenset({"released", "object_at", "object_on"})
+# Perception predicates: the actor caused them only by PERCEIVING this step (a skill
+# wrote the belief since the baseline), so a map entry from an earlier step or turn —
+# however right — grades UNCAUSED.
+_PERCEPTION_PREDICATES: frozenset[str] = frozenset({"localized"})
 
 
 def _names_in_expr(verify: str, names: frozenset[str]) -> bool:
@@ -352,6 +376,9 @@ def grade(
         advanced AND a joint moved.
     - The verify names a GRIPPER predicate (holding_object): CAUSED iff a weld
         transitioned 0->1 this step (a fresh grasp). [holding grading — see fix 6.]
+    - The verify names a PERCEPTION predicate (localized): CAUSED iff the belief
+        (SceneGraph) gained or changed an instance this step — a look that observed
+        it, never a map entry already there at the baseline.
     - Any other / ungradable case -> UNCAUSED (fail closed). The executor only
         downgrades on UNCAUSED, and only consults this for GROUNDED-capable robot
         steps, so a non-robot predicate never reaches here as UNCAUSED in practice.
@@ -392,6 +419,13 @@ def grade(
         fresh = _gripper_fresh_release(baseline, post)
         return ActorCaused.CAUSED if fresh else ActorCaused.UNCAUSED
 
+    if _names_in_expr(verify, _PERCEPTION_PREDICATES):
+        # ponytail: any belief write this step counts, not the target's own row (the
+        # oracle already demands a row for the target seen this turn, matching GT).
+        if baseline.belief is None or post.belief is None:
+            return ActorCaused.UNCAUSED
+        return ActorCaused.CAUSED if post.belief - baseline.belief else ActorCaused.UNCAUSED
+
     return ActorCaused.UNCAUSED
 
 
@@ -405,5 +439,6 @@ def is_robot_predicate(verify: str, oracle_names: frozenset[str]) -> bool:
     """
     graded = (
         _BASE_PREDICATES | _ARM_PREDICATES | _GRIPPER_PREDICATES | _RELEASE_PREDICATES
+        | _PERCEPTION_PREDICATES
     ) & oracle_names
     return _names_in_expr(verify, frozenset(graded))

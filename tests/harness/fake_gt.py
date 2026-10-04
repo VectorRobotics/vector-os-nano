@@ -143,7 +143,8 @@ def bind_fake_sim(agent: Any, embodiment: str = "so101", **gt_kwargs: Any) -> Si
     gt = FakeGT(agent, **gt_kwargs)
     turn = [(-math.inf, -math.inf)]
     s = SimpleNamespace(agent=agent, gt=gt)
-    s.oracles = lambda: fake_namespace(agent, embodiment, gt=gt, turn_start=lambda: turn[0])
+    s.oracles = lambda: fake_namespace(agent, embodiment, gt=gt, turn_start=lambda: turn[0],
+                                       belief=lambda: getattr(agent, "_spatial_memory", None))
     s.mark_turn = lambda phase, goal="": turn.__setitem__(0, (gt.sim_time, time.time())) if phase == "start" else None
     s.close = s.stop = lambda: unbind_fake_sim(s)
     sim_session._LIVE.append(s)

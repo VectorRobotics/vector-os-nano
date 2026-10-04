@@ -21,6 +21,7 @@ Pinned here (the RED-0 tripwire + the review fixes):
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -103,7 +104,7 @@ class _FakeWalkSkill:
         return SkillResult(success=True, result_data={"distance": distance})
 
 
-def _make_agent(x: float = 0.0, y: float = 0.0):
+def _make_agent(x: float = 0.0, y: float = 0.0, **gt_kwargs):
     """A duck-typed agent: a fake base + a real SkillRegistry with the walk skill."""
     from vector_os_nano.core.skill import SkillRegistry
 
@@ -128,7 +129,7 @@ def _make_agent(x: float = 0.0, y: float = 0.0):
     agent._sync_robot_state = _sync_robot_state
     from tests.harness.fake_gt import bind_fake_sim
 
-    bind_fake_sim(agent, "go2")  # the GT oracles read the fake base
+    bind_fake_sim(agent, "go2", **gt_kwargs)  # the GT oracles read the fake base
     return agent, base
 
 
@@ -326,6 +327,74 @@ def test_empty_script_yields_unverified_empty_trace() -> None:
     report = VerdictReport.from_trace(trace, oracle_names)
     assert len(trace.steps) == 0
     assert report.verified is False
+
+
+# ---------------------------------------------------------------------------
+# INT2 — localized is caused by the look that observed it this step (the look is
+# read-only: it never actuates, so the no-action rule alone graded it UNCAUSED);
+# a right map entry the step did not write never grounds, whatever tool ran.
+# ---------------------------------------------------------------------------
+
+_BOTTLE_XY = (10.9, 3.0)
+
+
+class _FakeLookSkill:
+    """A read-only look that maps the green bottle (or maps nothing)."""
+
+    name = "look"
+    description = "Look around and record what the camera sees on the map."
+    parameters: dict = {}
+    preconditions: list = []
+    effects: dict = {}
+
+    def __init__(self, sg, sees: bool) -> None:
+        self._sg, self._sees = sg, sees
+
+    def execute(self, params, context):
+        from vector_os_nano.core.scene_graph import ObjectNode
+        from vector_os_nano.core.types import SkillResult
+
+        if self._sees:
+            self._sg.add_object(ObjectNode(object_id="obj_g", category="bottle", x=_BOTTLE_XY[0],
+                                           y=_BOTTLE_XY[1], attributes={"color": "green"}))
+        return SkillResult(success=True)
+
+
+def _localize_turn(first_tool: str, *, sees: bool, on_map: bool):
+    from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph
+    from vector_os_nano.core.skill import skill
+
+    agent, _base = _make_agent(10.0, 3.0, objects={"pickable_bottle_green": [*_BOTTLE_XY, 0.8]})
+    agent._spatial_memory = sg = SceneGraph()
+    if on_map:  # mapped by an earlier step of this turn (stamped after the turn start)
+        sg.add_object(ObjectNode(object_id="obj_old", category="bottle", x=_BOTTLE_XY[0],
+                                 y=_BOTTLE_XY[1], attributes={"color": "green"},
+                                 first_seen=time.time() + 3600))
+    agent._skill_registry.register(skill(actuates=False)(_FakeLookSkill)(sg, sees))
+    params = {"distance": 0.3, "speed": 0.3} if first_tool == "walk" else {}
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn((first_tool, params)),
+        tool_turn(("verify", {"expr": "localized('green bottle')"})),
+        tool_turn(("finish", {})),
+    ])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("找到绿色瓶子", session=_session())
+    return trace, VerdictReport.from_trace(trace, verify_oracle_names(agent, eng))
+
+
+def test_a_look_that_maps_the_object_localizes_it_grounded() -> None:
+    trace, report = _localize_turn("look", sees=True, on_map=False)
+    assert trace.steps[0].verify_result is True
+    assert trace.steps[0].actor_caused is ActorCaused.CAUSED
+    assert report.verified is True and report.evidence == "GROUNDED"
+
+
+@pytest.mark.parametrize("tool", ["look", "walk"])
+def test_a_map_entry_the_step_did_not_write_never_grounds(tool) -> None:
+    trace, report = _localize_turn(tool, sees=False, on_map=True)
+    assert trace.steps[0].verify_result is True  # the map IS right...
+    assert trace.steps[0].actor_caused is ActorCaused.UNCAUSED  # ...but not this step's work
+    assert report.verified is False and report.evidence == "RAN"
 
 
 # ---------------------------------------------------------------------------
