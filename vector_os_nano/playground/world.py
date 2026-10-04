@@ -31,6 +31,7 @@ from vector_os_nano.playground.verify.arm_predicates import (
     make_holding_object,
     make_placed_count,
 )
+from vector_os_nano.vcli.worlds.arm_sim_oracle import make_released
 from vector_os_nano.playground.verify.base_predicates import (
     make_at_position,
     make_facing,
@@ -125,6 +126,7 @@ class PlaygroundWorld:
             "placed_count": make_placed_count(
                 agent, default_region=self._scenario.place_region
             ),
+            "released": make_released(agent),  # place's verify_hint (WP07)
         }
 
     def _base_verify_namespace(self, agent: Any) -> dict[str, Any]:
