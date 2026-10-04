@@ -45,10 +45,11 @@ _MAX_ARRIVAL_TOL_M: float = 2.0
 # no longer names a direction.
 _MAX_FACING_TOL_RAD: float = math.radians(45.0)
 # The same line for the object-distance radii: "near" an object within 1.5 m, an
-# object "at" a point / "localized" within 0.5 m. Above these the claim is vacuous.
+# object "at" a point within 0.5 m, "localized" within 0.2 m (the apartment's pick
+# table holds bottles 0.22 m apart: a looser match would credit the neighbour).
 _MAX_NEAR_M: float = 1.5
 _MAX_OBJECT_AT_M: float = 0.5
-_MAX_LOCALIZED_M: float = 0.5
+_MAX_LOCALIZED_M: float = 0.2
 
 
 def _at_position_tol() -> float:

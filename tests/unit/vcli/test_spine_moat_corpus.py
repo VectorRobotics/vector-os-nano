@@ -79,6 +79,7 @@ CORPUS_RAN: list[str] = [
     "object_at('red can', 10.9, 3.2, r=1e6)",
     "localized('red can', 99)",
     "localized('red can', tol=1.0)",
+    "localized('red can', 0.25)",
     # an empty container is no goal: `detect_objects() == []` holds on the arm oracle's
     # fail-safe value (RAN on base, which demanded a Constant in the compare)
     "detect_objects() == []",

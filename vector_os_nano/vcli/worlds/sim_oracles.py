@@ -41,7 +41,7 @@ _AT_POSITION_TOL_M: float = min(0.5, arrival_radius())
 _FACING_TOL_RAD: float = math.radians(20.0)
 _NEAR_OBJECT_M: float = 0.8
 _OBJECT_AT_M: float = 0.3
-_LOCALIZED_M: float = 0.3
+_LOCALIZED_M: float = 0.15
 # A grasped object counts as lifted once its lowest point clears the support below
 # it by this much (the object's rest height + 3 cm, wherever it rests).
 LIFT_M: float = 0.03

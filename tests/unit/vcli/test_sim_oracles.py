@@ -265,7 +265,9 @@ def test_localized_judges_the_scene_graph_against_gt(ns, rig: Rig) -> None:
     rig.sg.add_object(_instance("bottle", 10.88, 3.0, now))  # ambiguous
     rig.sg.add_object(_instance("green bottle", 11.9, 3.0, now))  # 1 m off
     assert not ns["localized"]("green bottle")
-    assert not ns["localized"]("green bottle", 99)  # tol clamped to 0.5 m
+    assert not ns["localized"]("green bottle", 99)  # tol clamped to 0.2 m
+    rig.sg.add_object(_instance("green bottle", 10.90, 2.78, now))  # where the BLUE one is
+    assert not ns["localized"]("green bottle", 0.2)
     rig.sg.add_object(_instance("green bottle", 10.9, 3.05, now))
     assert ns["localized"]("green bottle")
     assert ns["localized"]("绿色的瓶子")
