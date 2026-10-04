@@ -6,109 +6,16 @@
 # Never deselect a genuine bug: link it to its ledger key as an xfail instead.
 # xfail is strict: once its cause is fixed the test XPASSes, which is red until the
 # row is deleted. Use flaky only for a test that really alternates.
-tests/unit/test_suite_hygiene.py::test_no_absolute_home_paths_in_committed_assets[vector_os_nano/hardware/sim/mjcf/g1/g1.xml] | xfail | docs-vs-code:go2piper-abs-mesh-paths (g1 meshes live in an unshipped menagerie checkout; WP03/WP17)
 
 # ---- hermetic-tier baseline (scripts/gate.sh hermetic, 2026-10-04): every red on base c188658 that
 # is NOT a WP01 bug. Rows below are xfail (never deselected); each names its ledger key or owner WP.
-
-# tests:hardcoded-machine-paths (reads ~/Desktop/vector_navigation_stack and ~/Desktop/vector_os_nano; WP04)
-tests/harness/test_level17_tare_warmup.py::TestInitialWaypoint::test_initial_waypoint_under_5m | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestInitialWaypoint::test_initial_waypoint_not_12m | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestSensorScanGenQoS::test_qos_not_best_effort | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestSensorScanGenQoS::test_qos_depth_at_least_5 | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestSensorScanGenQoS::test_sync_queue_at_least_50 | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestSeedWalk::test_exploration_loop_has_seed_walk | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestSeedWalk::test_seed_walk_short_distance | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestSeedWalk::test_nav_flag_not_created_immediately | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestBridgeDiagnostics::test_bridge_has_publish_counters | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestBridgeDiagnostics::test_bridge_logs_diagnostics | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestTareConfig::test_extend_waypoint_distances_safe | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level17_tare_warmup.py::TestTareConfig::test_auto_start_disabled | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestGo2Config::test_vehicle_width_realistic | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestGo2Config::test_vehicle_length_realistic | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestGo2Config::test_obstacle_height_threshold | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestGo2Config::test_path_scale_provides_clearance | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestGo2Config::test_check_rot_obstacle_default | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestGo2Config::test_goal_clear_range_adequate | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestSearchRadius::test_search_radius_at_least_0_40 | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestSearchRadius::test_search_radius_not_excessive | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestSearchRadius::test_effective_clearance_adequate | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestBridgeObstacleCheck::test_follow_path_has_obstacle_check | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestBridgeObstacleCheck::test_obstacle_slowdown_threshold | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestBridgeObstacleCheck::test_obstacle_stop_threshold | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestBridgeObstacleCheck::test_pointcloud_cached_for_obstacle_check | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestTareCollisionMargins::test_viewpoint_collision_margin_adequate | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestTareCollisionMargins::test_keypose_collision_radius_adequate | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestTareCollisionMargins::test_tare_margin_matches_search_radius | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestClearanceMath::test_minimum_wall_clearance | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level18_wall_clearance.py::TestClearanceMath::test_rotation_diameter_realistic | xfail | tests:hardcoded-machine-paths
-
-# tests:hardcoded-machine-paths (asserts on files under ~/Desktop/vector_os_nano, the wrong clone; WP04)
-tests/harness/test_level19_detector_cleanup.py::TestDetectorRemovedFromCli::test_no_detector_ref_in_cli | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level19_detector_cleanup.py::TestDetectorRemovedFromSimTool::test_no_detector_ref_in_sim_tool | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level19_detector_cleanup.py::TestDetectorRemovedFromAgent::test_no_detector_service_injection | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level19_detector_cleanup.py::TestDetectorModuleDeleted::test_detector_test_files_gone | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level19_detector_cleanup.py::TestNoDetectorInActiveSkills::test_no_detector_in_skills | xfail | tests:hardcoded-machine-paths
-
-# tests:hardcoded-machine-paths (reads ~/Desktop/vector_navigation_stack; WP04)
-tests/harness/test_level21_terrain_classification.py::TestObstacleThresholdCoordination::test_local_planner_threshold | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level21_terrain_classification.py::TestObstacleThresholdCoordination::test_thresholds_match | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level21_terrain_classification.py::TestObstacleThresholdCoordination::test_tare_terrain_collision_threshold | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level21_terrain_classification.py::TestObstacleThresholdCoordination::test_threshold_above_go2_foot_height | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level21_terrain_classification.py::TestObstacleThresholdCoordination::test_threshold_below_furniture | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level22_path_planning.py::TestGo2VehicleDimensions::test_config_file_exists | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level22_path_planning.py::TestGo2VehicleDimensions::test_vehicle_width_go2 | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level22_path_planning.py::TestGo2VehicleDimensions::test_vehicle_length_go2 | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level22_path_planning.py::TestGo2VehicleDimensions::test_vehicle_width_reasonable | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level22_path_planning.py::TestGo2VehicleDimensions::test_vehicle_length_reasonable | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level22_path_planning.py::TestPathPlanningParams::test_obstacle_height_threshold | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level22_path_planning.py::TestPathPlanningParams::test_path_scale | xfail | tests:hardcoded-machine-paths
-tests/harness/test_level22_path_planning.py::TestPathPlanningParams::test_max_speed | xfail | tests:hardcoded-machine-paths
-
-# stale source-text test: scripts/go2_vnav_bridge.py no longer has _wall_escape_until (legacy bridge; WP04 dead-track sweep)
-tests/harness/test_level31_wall_escape.py::TestWallEscapeAttributes::test_wall_escape_until_exists | xfail | stale source-text test: scripts/go2_vnav_bridge.py no longer has _wall_escape_until (legacy bridge; WP04 dead-track sweep)
-tests/harness/test_level31_wall_escape.py::TestWallEscapeAttributes::test_wall_escape_until_initialized_to_zero | xfail | stale source-text test: scripts/go2_vnav_bridge.py no longer has _wall_escape_until (legacy bridge; WP04 dead-track sweep)
-tests/harness/test_level31_wall_escape.py::TestWallEscapeTriggerConditions::test_escape_duration_reasonable | xfail | stale source-text test: scripts/go2_vnav_bridge.py no longer has _wall_escape_until (legacy bridge; WP04 dead-track sweep)
-tests/harness/test_level31_wall_escape.py::TestWallEscapeTriggerConditions::test_contact_time_increment_matches_20hz | xfail | stale source-text test: scripts/go2_vnav_bridge.py no longer has _wall_escape_until (legacy bridge; WP04 dead-track sweep)
-tests/harness/test_level31_wall_escape.py::TestWallEscapeSideEffects::test_escape_clears_path | xfail | stale source-text test: scripts/go2_vnav_bridge.py no longer has _wall_escape_until (legacy bridge; WP04 dead-track sweep)
-tests/harness/test_level31_wall_escape.py::TestWallEscapeSideEffects::test_escape_resets_stuck_count | xfail | stale source-text test: scripts/go2_vnav_bridge.py no longer has _wall_escape_until (legacy bridge; WP04 dead-track sweep)
-tests/harness/test_level31_wall_escape.py::TestWallEscapeSideEffects::test_escape_resets_contact_time | xfail | stale source-text test: scripts/go2_vnav_bridge.py no longer has _wall_escape_until (legacy bridge; WP04 dead-track sweep)
 
 # legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
 tests/harness/test_level50_phase2_integration.py::TestGoalExecutorStatsRecording::test_executor_records_success_true | xfail | legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
 tests/harness/test_level56_vgg_harness.py::TestHarnessEdgeCases::test_harness_stats_recording_called_per_step | xfail | legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
 
-# stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentCreation::test_agent_creation_with_api_key | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentCreation::test_agent_creation_llm_overrides_api_key | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteDirect::test_agent_execute_direct_home | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteDirect::test_agent_execute_direct_scan | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteDirect::test_agent_execute_direct_unknown | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteDirect::test_agent_execute_direct_pick_with_arg | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteDirect::test_agent_execute_direct_empty_string | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteWithLLM::test_agent_execute_with_llm | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteWithLLM::test_agent_execute_with_llm_clarification | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteWithLLM::test_agent_execute_with_llm_failure | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentExecuteWithLLM::test_agent_execute_returns_execution_result | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestAgentRegisterSkill::test_agent_execute_custom_skill_direct | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestCrossTaskMemory::test_task_result_in_memory | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestCrossTaskMemory::test_task_result_metadata_contains_success | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestCrossTaskMemory::test_cross_task_history_available | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestCrossTaskMemory::test_chat_then_task_continuity | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestCrossTaskMemory::test_memory_attribute_exists | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-tests/integration/test_agent.py::TestCrossTaskMemory::test_memory_empty_before_execute | xfail | stale: pins the removed Agent.execute/_llm/_memory API (periphery:examples-all-broken / periphery:ros2-agentnode-skillserver-dead-api; WP04)
-
-# stale: pins isaac as the sim default and a 2-backend enum (isaac/gazebo dead tracks; WP04)
-tests/unit/test_backend_switch.py::TestSimStartToolSchema::test_backend_default_is_isaac | xfail | stale: pins isaac as the sim default and a 2-backend enum (isaac/gazebo dead tracks; WP04)
-tests/unit/test_backend_switch.py::TestSimStartToolSchema::test_backend_enum_has_exactly_two_values | xfail | stale: pins isaac as the sim default and a 2-backend enum (isaac/gazebo dead tracks; WP04)
-tests/unit/test_backend_switch.py::TestIsaacBackendRouting::test_no_backend_param_uses_isaac_default | xfail | stale: pins isaac as the sim default and a 2-backend enum (isaac/gazebo dead tracks; WP04)
-tests/unit/test_backend_switch.py::TestBackwardCompatibility::test_no_app_state_returns_error | xfail | stale: pins isaac as the sim default and a 2-backend enum (isaac/gazebo dead tracks; WP04)
-
 # stale skill-count pin (13 go2 skills now); docs-vs-code:tool-menu-noise decides the menu (WP12)
 tests/unit/test_go2_skills.py::TestSkillRegistration::test_get_go2_skills | xfail | stale skill-count pin (13 go2 skills now); docs-vs-code:tool-menu-noise decides the menu (WP12)
-
-# stale: isaac proxy camera-mount source-text pin (isaac dead track; WP04)
-tests/unit/test_isaac_e2e_chain.py::TestSensorMountConfig::test_proxy_camera_mount_fwd_matches_constant | xfail | stale: isaac proxy camera-mount source-text pin (isaac dead track; WP04)
 
 # MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_server_creation | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
@@ -129,13 +36,8 @@ tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_no
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_overhead | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_unknown_uri | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 
-
-
 # stale: PerceptionProtocol grew members the hand-written mock lacks (runtime_checkable isinstance; WP11)
 tests/unit/test_perception_base.py::test_protocol_defined | xfail | stale: PerceptionProtocol grew members the hand-written mock lacks (runtime_checkable isinstance; WP11)
-
-# stale: a bare MagicMock no longer satisfies the Skill protocol isinstance check (WP04)
-tests/unit/test_skill.py::TestSkillProtocol::test_mock_skill_satisfies_protocol | xfail | stale: a bare MagicMock no longer satisfies the Skill protocol isinstance check (WP04)
 
 # stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
 tests/unit/test_skill_diagnostics.py::TestScanSkillDiagnosticsMoveFailed::test_scan_move_failed_returns_diagnosis | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
