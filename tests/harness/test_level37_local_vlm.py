@@ -47,14 +47,16 @@ _SKIP_REASON = "Ollama not running or gemma4:e4b not pulled"
 class TestVLMBackendSelection:
     """Verify backend selection logic in vlm_go2.py."""
 
-    def test_local_vlm_env_vars_read(self):
-        """_USE_LOCAL_VLM should be True when VECTOR_VLM_URL is set."""
-        source = inspect.getsource(
-            __import__("vector_os_nano.perception.vlm_go2", fromlist=["_USE_LOCAL_VLM"])
-        )
-        assert "_LOCAL_VLM_URL" in source
-        assert "_LOCAL_VLM_MODEL" in source
-        assert "_USE_LOCAL_VLM" in source
+    def test_local_vlm_env_vars_read_at_construction(self, monkeypatch):
+        """VECTOR_VLM_URL / VECTOR_VLM_MODEL are read when the VLM is built, not at
+        import (perception:vlm-cost-prompt-drift), and need no API key."""
+        from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
+
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("VECTOR_VLM_URL", "http://localhost:11434/v1")
+        monkeypatch.setenv("VECTOR_VLM_MODEL", "llava:7b")
+        vlm = Go2VLMPerception()
+        assert vlm._local and vlm._model == "llava:7b" and vlm._base_url.endswith("/v1")
 
     def test_local_backend_no_auth_header(self):
         """When local, Authorization header should not be sent."""
@@ -85,37 +87,28 @@ class TestVLMBackendSelection:
         to cover at least one full model-load cycle.
         """
         from vector_os_nano.perception import vlm_go2
-        # Simulate local backend
-        orig_use = vlm_go2._USE_LOCAL_VLM
-        orig_url = vlm_go2._LOCAL_VLM_URL
-        try:
-            vlm_go2._USE_LOCAL_VLM = True
-            vlm_go2._LOCAL_VLM_URL = "http://localhost:11434/v1"
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("VECTOR_VLM_URL", "http://localhost:11434/v1")
             vlm = vlm_go2.Go2VLMPerception()
-            assert vlm._timeout >= 30.0, (
-                f"Local timeout should be >= 30s (model load time), got {vlm._timeout}"
-            )
-            assert vlm._timeout > vlm_go2._TIMEOUT_S, (
-                f"Local timeout {vlm._timeout}s must exceed remote default "
-                f"{vlm_go2._TIMEOUT_S}s"
-            )
-            assert vlm._local is True
-        finally:
-            vlm_go2._USE_LOCAL_VLM = orig_use
-            vlm_go2._LOCAL_VLM_URL = orig_url
+        assert vlm._timeout >= 30.0, (
+            f"Local timeout should be >= 30s (model load time), got {vlm._timeout}"
+        )
+        assert vlm._timeout > vlm_go2._TIMEOUT_S, (
+            f"Local timeout {vlm._timeout}s must exceed remote default "
+            f"{vlm_go2._TIMEOUT_S}s"
+        )
+        assert vlm._local is True
 
     def test_remote_backend_default(self):
         """Without env vars, should use OpenRouter."""
         from vector_os_nano.perception import vlm_go2
-        orig_use = vlm_go2._USE_LOCAL_VLM
-        try:
-            vlm_go2._USE_LOCAL_VLM = False
-            # Need API key for remote
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.delenv("VECTOR_VLM_URL", raising=False)
             vlm = vlm_go2.Go2VLMPerception(config={"api_key": "test-key"})
-            assert vlm._local is False
-            assert "openrouter" in vlm._base_url
-        finally:
-            vlm_go2._USE_LOCAL_VLM = orig_use
+        assert vlm._local is False
+        assert "openrouter" in vlm._base_url
 
 
 # ── Integration tests (need running Ollama) ────────────────────────────
@@ -128,10 +121,8 @@ class TestLocalVLMInference:
     @pytest.fixture(autouse=True)
     def _setup_local_env(self, monkeypatch):
         """Force local VLM backend for all tests in this class."""
-        from vector_os_nano.perception import vlm_go2
-        monkeypatch.setattr(vlm_go2, "_USE_LOCAL_VLM", True)
-        monkeypatch.setattr(vlm_go2, "_LOCAL_VLM_URL", "http://localhost:11434/v1")
-        monkeypatch.setattr(vlm_go2, "_LOCAL_VLM_MODEL", "gemma4:e4b")
+        monkeypatch.setenv("VECTOR_VLM_URL", "http://localhost:11434/v1")
+        monkeypatch.setenv("VECTOR_VLM_MODEL", "gemma4:e4b")
 
     def _make_frame(self) -> np.ndarray:
         """Create a simple test frame (gray image)."""

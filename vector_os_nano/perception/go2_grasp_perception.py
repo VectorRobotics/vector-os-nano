@@ -132,7 +132,7 @@ class Go2GraspPerception:
             why = f"EdgeTAM unavailable ({exc})"
         if not _warned_box_rect:
             _warned_box_rect = True
-            logger.warning("[GO2-PERCEPT] %s — segmenting with the box rectangle", why)
+            logger.warning("[GO2-PERCEPT] %s — box-rect fallback (a coarse mask)", why)
         self.last_segmenter = "box_rect"
         return self._box_rect_mask(image, (x1, y1, x2, y2))
 

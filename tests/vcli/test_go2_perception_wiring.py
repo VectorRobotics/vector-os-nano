@@ -7,8 +7,8 @@ The go2 SimSession (behind NL start_simulation and --sim-go2) must wire a REAL R
 onto agent._perception so look/explore can depth-localize VLM-named objects to
 accurate world (x, y, z) via localize_objects_3d.
 
-Guard contract: only wire perception when the base exposes the full RGB-D frame
-source (get_camera_frame / get_depth_frame / get_camera_pose).  A base without a
+Guard contract: only wire perception when the base exposes the atomic RGB-D frame
+source (get_rgbd_frame: pixels, depth and pose of one instant).  A base without a
 camera (or any construction failure) leaves perception None so a launch never
 crashes and non-perception embodiments stay unaffected.
 
@@ -26,16 +26,10 @@ def _build_go2_perception(base: Any) -> Any:
 
 
 class _FullCameraBase:
-    """Stub base exposing the complete RGB-D frame source."""
+    """Stub base exposing the atomic RGB-D frame source."""
 
-    def get_camera_frame(self, width: int = 320, height: int = 240) -> Any:
+    def get_rgbd_frame(self, width: int = 320, height: int = 240, kinds=("rgb", "depth")) -> Any:
         return None
-
-    def get_depth_frame(self, width: int = 320, height: int = 240) -> Any:
-        return None
-
-    def get_camera_pose(self) -> tuple:
-        return ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0))
 
 
 class _NoCameraBase:
@@ -46,7 +40,7 @@ class _NoCameraBase:
 
 
 class _MissingDepthBase:
-    """Has camera + pose but no depth frame — must NOT wire perception."""
+    """Has separate RGB + pose getters but no atomic RGB-D frame — must NOT wire."""
 
     def get_camera_frame(self, width: int = 320, height: int = 240) -> Any:
         return None
@@ -78,7 +72,7 @@ def test_build_perception_none_when_no_camera():
 
 
 def test_build_perception_none_when_missing_depth():
-    """A base missing get_depth_frame -> perception None (guard rejects it)."""
+    """A base without get_rgbd_frame -> perception None (guard rejects it)."""
     assert _build_go2_perception(_MissingDepthBase()) is None
 
 

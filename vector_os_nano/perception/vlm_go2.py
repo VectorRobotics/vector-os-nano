@@ -1,17 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""GPT-4o Vision-Language Model perception for the Go2 quadruped robot.
+"""Vision-language model scene perception for a camera-bearing base (optional).
 
-Calls the OpenRouter API (https://openrouter.ai/api/v1) with model
-openai/gpt-4o to analyze camera frames.  No ROS2 dependency — pure Python.
+An OpenAI-compatible chat endpoint: OpenRouter (``config["model"]``, default
+``google/gemma-4-31b-it``) with an API key, or a local server such as Ollama when
+``VECTOR_VLM_URL`` is set (``VECTOR_VLM_MODEL``, default ``gemma4:e4b``; no key).
+It captions the scene, suggests the room and names objects; it is never required
+(the detector over the world vocabulary discovers objects on its own). Frames go
+out at up to 640 px, so small objects stay visible. No ROS2 dependency.
 
 Typical usage::
 
     from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
 
-    vlm = Go2VLMPerception()                       # key from env
-    vlm = Go2VLMPerception(config={"api_key": ".."})  # key from config
+    vlm = Go2VLMPerception()                          # key / VECTOR_VLM_URL from env
+    vlm = Go2VLMPerception(config={"api_key": "..", "rooms": ["kitchen", "hallway"]})
 
     scene = vlm.describe_scene(rgb_frame)
     room  = vlm.identify_room(rgb_frame)
@@ -23,7 +27,6 @@ import base64
 import json
 import logging
 import os
-import re
 import threading
 import time
 from dataclasses import dataclass
@@ -36,28 +39,13 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Cost model — GPT-4o via OpenRouter (as of 2026-04)
-# ---------------------------------------------------------------------------
-_COST_PER_INPUT_TOKEN: float = 2.50 / 1_000_000   # USD per input token
-_COST_PER_OUTPUT_TOKEN: float = 10.00 / 1_000_000  # USD per output token
-
 _OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
 _MODEL: str = "google/gemma-4-31b-it"
+_LOCAL_MODEL: str = "gemma4:e4b"
 _TIMEOUT_S: float = 30.0
 _MAX_RETRIES: int = 2
-_JPEG_QUALITY: int = 50
-_VLM_IMAGE_MAX_DIM: int = 160  # resize before encoding to keep base64 < 10KB (remote)
-_VLM_IMAGE_MAX_DIM_LOCAL: int = 512  # local models can handle larger images
-
-# ---------------------------------------------------------------------------
-# Local VLM backend (Ollama) — env var overrides
-# Set VECTOR_VLM_URL=http://localhost:11434/v1 to use local Ollama
-# Set VECTOR_VLM_MODEL=gemma4:e4b to select the local model
-# ---------------------------------------------------------------------------
-_LOCAL_VLM_URL: str | None = os.environ.get("VECTOR_VLM_URL")
-_LOCAL_VLM_MODEL: str | None = os.environ.get("VECTOR_VLM_MODEL")
-_USE_LOCAL_VLM: bool = _LOCAL_VLM_URL is not None
+_JPEG_QUALITY: int = 80
+_VLM_IMAGE_MAX_DIM: int = 640  # >= 512 px: a 6 cm can at 2 m is ~20 px, not ~5
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +86,7 @@ class RoomIdentification:
 # ---------------------------------------------------------------------------
 
 _DESCRIBE_SCENE_PROMPT: str = (
-    "You are a robot dog's vision system (camera at 30cm height). "
+    "You are a mobile robot's vision system (a low, forward-facing head camera). "
     "Describe what you see in this first-person camera view from inside a house. "
     "Focus on: furniture (sofas, tables, beds, desks), appliances, floor type, "
     "wall colors, and any distinctive objects. These help identify which room this is. "
@@ -107,19 +95,10 @@ _DESCRIBE_SCENE_PROMPT: str = (
 )
 
 _IDENTIFY_ROOM_PROMPT: str = (
-    "You are a robot dog (30cm tall) navigating a house. "
-    "Based on this first-person camera view, identify which room you are in. "
-    "Room features to look for:\n"
-    "- living_room: blue sofa, coffee table, TV, rug, bookshelves\n"
-    "- dining_room: dining table with chairs, pendant light\n"
-    "- kitchen: counter, island, fridge (steel), range hood\n"
-    "- study: desk with monitor, office chair, bookshelf\n"
-    "- master_bedroom: large bed with frame, wardrobe, nightstands\n"
-    "- guest_bedroom: bed, dresser\n"
-    "- bathroom: bathtub, vanity, small tiles on floor\n"
-    "- hallway: open corridor, no major furniture, connecting space\n\n"
-    "Look at furniture, floor texture, colors, and objects to decide. "
-    'Respond ONLY in JSON: {"room": "...", "confidence": 0.9, "reasoning": "..."}'
+    "You are a mobile robot navigating a house. Based on this first-person camera "
+    "view, identify which room you are in{rooms}. Look at furniture, floor texture, "
+    "colors, and objects to decide. "
+    'Respond ONLY in JSON: {{"room": "...", "confidence": 0.9, "reasoning": "..."}}'
 )
 
 _FIND_OBJECTS_PROMPT_BASE: str = (
@@ -143,21 +122,28 @@ class Go2VLMPerception:
     find_objects concurrently.  Cumulative cost is tracked under a lock.
 
     Args:
-        config: Optional dict with keys ``api_key`` (str).
-                Falls back to environment variable OPENROUTER_API_KEY.
+        config: Optional dict: ``api_key`` (else OPENROUTER_API_KEY), ``model``,
+            ``rooms`` (the room names the room question may answer), and
+            ``price_in``/``price_out`` (USD per 1M tokens; cost tracking is 0
+            unless they are given). ``VECTOR_VLM_URL`` selects a local server.
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         cfg = config or {}
+        local_url = os.environ.get("VECTOR_VLM_URL")
+        rooms = [str(r) for r in cfg.get("rooms") or ()]
+        self._room_prompt = _IDENTIFY_ROOM_PROMPT.format(
+            rooms=f" (one of: {', '.join(rooms)}; else \"unknown\")" if rooms else "")
+        self._price = (float(cfg.get("price_in", 0.0)) / 1e6, float(cfg.get("price_out", 0.0)) / 1e6)
 
         # Local VLM (Ollama) — no API key needed
-        if _USE_LOCAL_VLM:
+        if local_url:
             self._api_key: str = "ollama"  # dummy, not sent
-            self._base_url: str = _LOCAL_VLM_URL  # type: ignore[assignment]
-            self._model: str = _LOCAL_VLM_MODEL or "gemma4:e4b"
+            self._base_url: str = local_url
+            self._model: str = os.environ.get("VECTOR_VLM_MODEL") or _LOCAL_MODEL
             self._local: bool = True
             self._timeout: float = 45.0  # local: first call loads model (~30s), retry handles it
-            logger.info("VLM: local Ollama at %s model=%s", self._base_url, self._model)
+            logger.info("VLM: local server at %s model=%s", self._base_url, self._model)
         else:
             api_key: str | None = cfg.get("api_key") or os.environ.get(
                 "OPENROUTER_API_KEY"
@@ -169,7 +155,7 @@ class Go2VLMPerception:
                 )
             self._api_key = api_key
             self._base_url = _OPENROUTER_BASE_URL
-            self._model = _MODEL
+            self._model = str(cfg.get("model") or _MODEL)
             self._local = False
             self._timeout: float = _TIMEOUT_S
 
@@ -192,8 +178,7 @@ class Go2VLMPerception:
         raw = self._call_vlm(frame, _DESCRIBE_SCENE_PROMPT)
         data = _parse_json_response(raw)
 
-        raw_objects: list[dict[str, Any]] = data.get("objects") or []
-        objects = [_parse_detected_object(o) for o in raw_objects]
+        objects = _parse_objects(data.get("objects"))
 
         return SceneDescription(
             summary=str(data.get("summary", "")),
@@ -211,13 +196,13 @@ class Go2VLMPerception:
         Returns:
             RoomIdentification with room name, confidence, and reasoning.
         """
-        raw = self._call_vlm(frame, _IDENTIFY_ROOM_PROMPT)
+        raw = self._call_vlm(frame, self._room_prompt)
         data = _parse_json_response(raw)
 
         return RoomIdentification(
-            room=str(data.get("room", "unknown")),
-            confidence=float(data.get("confidence", 0.0)),
-            reasoning=str(data.get("reasoning", "")),
+            room=str(data.get("room") or "unknown"),
+            confidence=_confidence(data.get("confidence")),
+            reasoning=str(data.get("reasoning") or ""),
         )
 
     def find_objects(
@@ -244,8 +229,7 @@ class Go2VLMPerception:
         raw = self._call_vlm(frame, prompt)
         data = _parse_json_response(raw)
 
-        raw_objects: list[dict[str, Any]] = data.get("objects") or []
-        objects = [_parse_detected_object(o) for o in raw_objects]
+        objects = _parse_objects(data.get("objects"))
         return sorted(objects, key=lambda o: o.confidence, reverse=True)
 
     # ------------------------------------------------------------------
@@ -265,9 +249,7 @@ class Go2VLMPerception:
     def _encode_frame(self, frame: np.ndarray) -> str:
         """Encode a numpy RGB frame as a base64 JPEG string.
 
-        Resizes to at most _VLM_IMAGE_MAX_DIM on the longest side to keep
-        the base64 payload small (< 10KB). OpenRouter has issues with large
-        base64 inline images — smaller payloads are reliably fast (~1-2s).
+        Resizes to at most _VLM_IMAGE_MAX_DIM (640 px) on the longest side.
 
         Args:
             frame: (H, W, 3) uint8 RGB array.
@@ -277,7 +259,7 @@ class Go2VLMPerception:
         """
         pil_image = Image.fromarray(frame)
         # Resize if larger than max dimension
-        max_dim = _VLM_IMAGE_MAX_DIM_LOCAL if self._local else _VLM_IMAGE_MAX_DIM
+        max_dim = _VLM_IMAGE_MAX_DIM
         w, h = pil_image.size
         if max(w, h) > max_dim:
             scale = max_dim / max(w, h)
@@ -289,7 +271,7 @@ class Go2VLMPerception:
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
     def _call_vlm(self, frame: np.ndarray, prompt: str) -> str:
-        """Send a vision request to GPT-4o via OpenRouter.
+        """Send a vision request to the configured chat endpoint.
 
         Retries up to _MAX_RETRIES times on transient failures (network errors,
         5xx status codes).  4xx errors (bad auth, rate limit) are not retried.
@@ -354,10 +336,7 @@ class Go2VLMPerception:
                 usage: dict[str, int] = data.get("usage") or {}
                 input_tokens: int = int(usage.get("prompt_tokens", 0))
                 output_tokens: int = int(usage.get("completion_tokens", 0))
-                call_cost = (
-                    input_tokens * _COST_PER_INPUT_TOKEN
-                    + output_tokens * _COST_PER_OUTPUT_TOKEN
-                )
+                call_cost = input_tokens * self._price[0] + output_tokens * self._price[1]
 
                 with self._cost_lock:
                     self._cost_usd += call_cost
@@ -423,56 +402,49 @@ class Go2VLMPerception:
 
 
 def _parse_json_response(text: str) -> dict[str, Any]:
-    """Parse a JSON object from the model response.
+    """The first JSON object in a model reply ({} when there is none).
 
-    Tries direct json.loads first.  Falls back to extracting a ```json
-    fenced block if the model wrapped the JSON in Markdown.
-
-    Args:
-        text: Raw model output string.
-
-    Returns:
-        Parsed dict.  Returns empty dict on any parse failure.
+    Accepts a bare object, a fenced block, or an object inside prose ("Here is the
+    JSON: {...}"): the first balanced ``{...}`` that parses. A non-object root (a
+    list, a string) gives {}.
     """
-    stripped = text.strip()
+    stripped = (text or "").strip()
     try:
-        return json.loads(stripped)  # type: ignore[return-value]
+        data = json.loads(stripped)
+        return data if isinstance(data, dict) else {}
     except json.JSONDecodeError:
         pass
-
-    # Try ```json ... ``` block
-    match = re.search(r"```json\s*(.*?)\s*```", stripped, re.DOTALL)
-    if match:
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(stripped):
+        if ch != "{":
+            continue
         try:
-            return json.loads(match.group(1))  # type: ignore[return-value]
+            data, _end = decoder.raw_decode(stripped, i)
         except json.JSONDecodeError:
-            pass
-
-    # Try any ``` ... ``` block
-    match = re.search(r"```\s*(.*?)\s*```", stripped, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(1))  # type: ignore[return-value]
-        except json.JSONDecodeError:
-            pass
-
+            continue
+        if isinstance(data, dict):
+            return data
     logger.error("Failed to parse JSON from VLM response: %.200s", text)
     return {}
 
 
+def _confidence(v: Any) -> float:
+    """A confidence clamped to [0, 1]; null, words ("high") and junk are 0.0."""
+    try:
+        return max(0.0, min(1.0, float(v)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _parse_objects(raw: Any) -> list[DetectedObject]:
+    """DetectedObjects from a reply's ``objects`` list; entries that are not dicts are skipped."""
+    return [_parse_detected_object(o) for o in (raw if isinstance(raw, list) else []) if isinstance(o, dict)]
+
+
 def _parse_detected_object(raw: dict[str, Any]) -> DetectedObject:
-    """Construct a DetectedObject from a raw dict, clamping confidence.
-
-    Args:
-        raw: Dict with keys ``name``, ``description``, ``confidence``.
-
-    Returns:
-        DetectedObject with confidence clamped to [0.0, 1.0].
-    """
-    confidence = float(raw.get("confidence", 0.0))
-    confidence = max(0.0, min(1.0, confidence))
+    """Construct a DetectedObject from a raw dict, clamping confidence."""
     return DetectedObject(
-        name=str(raw.get("name", "")),
-        description=str(raw.get("description", "")),
-        confidence=confidence,
+        name=str(raw.get("name") or ""),
+        description=str(raw.get("description") or ""),
+        confidence=_confidence(raw.get("confidence")),
     )

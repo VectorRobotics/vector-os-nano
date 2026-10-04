@@ -60,7 +60,7 @@ sim = [
 # These were previously undeclared despite being imported by perception/.
 perception = [
     "torch>=2.2",
-    "transformers>=4.40",
+    "transformers>=4.57",  # EdgeTamVideoModel/Sam2VideoProcessor; GDINO post-process threshold=
     "timm>=1.0",          # EdgeTAM vision backbone (TimmWrapper) — transitive, was undeclared
     "pillow>=10",
     "huggingface_hub>=0.23",

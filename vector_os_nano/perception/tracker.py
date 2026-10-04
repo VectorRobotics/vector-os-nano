@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -37,8 +38,9 @@ class EdgeTAMTracker:
     """EdgeTAM video segmentation tracker.
 
     Loads OFFLINE (``local_files_only=True``, never the network) — mirrors
-    ``GroundingDinoDetector``: a local model dir, else ``~/.cache/vector_os/models/
-    <name>``, else the repo id from the Hugging Face cache. Absent weights fail loud.
+    ``GroundingDinoDetector``: a local model dir, else ``$VECTOR_MODEL_DIR/<name>``
+    (default ``~/.cache/vector_os/models``), else the repo id from the Hugging Face
+    cache. Absent weights fail loud.
 
     Args:
         model_name: HuggingFace repo ID or local path to model directory.
@@ -113,12 +115,27 @@ class EdgeTAMTracker:
 
     @staticmethod
     def _resolve_model_source(model_name: str) -> str:
-        """A local model dir (*model_name* itself or ``~/.cache/vector_os/models/<name>``),
+        """A local model dir (*model_name* itself or ``$VECTOR_MODEL_DIR/<name>``),
         else *model_name* as a repo id for the Hugging Face cache."""
-        for d in (Path(model_name), Path.home() / ".cache" / "vector_os" / "models" / Path(model_name).name):
+        models = Path(os.environ.get("VECTOR_MODEL_DIR") or Path.home() / ".cache" / "vector_os" / "models")
+        for d in (Path(model_name), models / Path(model_name).name):
             if (d / "config.json").exists():
                 return str(d)
         return model_name
+
+    @classmethod
+    def weights_available(cls, model_name: str = DEFAULT_EDGETAM_REPO) -> bool:
+        """True when the weights load offline (a local dir, or a complete HF cache)."""
+        src = cls._resolve_model_source(model_name)
+        if Path(src).is_dir():
+            return True
+        try:
+            from huggingface_hub import try_to_load_from_cache
+
+            return all(isinstance(try_to_load_from_cache(src, f), str)
+                       for f in ("config.json", "model.safetensors"))
+        except Exception:  # noqa: BLE001 — no hub client: only a local dir counts
+            return False
 
     @staticmethod
     def _select_dtype(device, torch) -> object:
