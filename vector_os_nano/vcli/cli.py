@@ -729,13 +729,17 @@ def _run_turn_busy(engine: Any, fn: Callable[[], None], app_state: dict[str, Any
                     reply = None
                     continue
                 line = (_read_line(0.03) or "").strip()
-                if not line or stopped_at is not None:
+                if not line:
                     continue
-                if not engine.is_stop(line):
+                if engine.is_stop(line):
+                    next_line = None  # a stop also drops a command queued behind the turn
+                else:
                     console.print(f"[dim]  ↳ cancelling the running task for: {line}[/]")
-                    next_line = line
+                    next_line = line  # the latest command wins
+                    if stopped_at is not None:
+                        continue  # already stopped: just queue it
                 _p0_stop(engine, line, app_state)
-                stopped_at = time.monotonic()
+                stopped_at = stopped_at or time.monotonic()
             except KeyboardInterrupt:
                 if reply is not None:
                     reply.put("n")

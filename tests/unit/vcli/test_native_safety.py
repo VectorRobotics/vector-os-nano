@@ -544,6 +544,16 @@ def test_another_command_mid_turn_cancels_then_runs_next(typed) -> None:
     assert eng.stops == ["往后走"]  # the running turn was stopped first
 
 
+def test_a_stop_typed_after_another_command_drops_that_command(typed) -> None:
+    """'往后走' then '停' while the turn unwinds: the robot stays stopped — the queued
+    command never runs after the owner's later stop."""
+    eng = _ReplEngine()
+    threading.Timer(0.1, typed, args=("往后走",)).start()
+    threading.Timer(0.3, typed, args=("停",)).start()
+    assert cli._run_turn_busy(eng, lambda: time.sleep(0.6), {}) is None
+    assert eng.stops == ["往后走", "停"]
+
+
 @pytest.mark.parametrize("stdin_idle", [False, True])
 def test_ctrl_c_mid_turn_stops_and_never_exits(typed, monkeypatch, stdin_idle) -> None:
     """A Ctrl-C lands wherever the REPL thread is — reading stdin, or waiting on the
