@@ -102,6 +102,10 @@ vocab:
     can:    [can, 罐]
     cup:    [cup, mug, 杯]
     box:    [box, 盒]
+  # Things in the house that are not pickables: a colour plus one of these names
+  # furniture, never an object ("红色的凳子" / "red stool" is not the red can).
+  scenery: [stool, chair, table, desk, sofa, couch, bed, shelf, cabinet, counter, fridge,
+            door, wall, floor, lamp, rug, 凳, 椅, 桌, 台子, 沙发, 床, 柜, 架, 冰箱, 门, 墙, 地板, 灯, 毯]
 
 # Where "bring it to me" delivers: a free hallway floor point west of the spawn.
 user:

@@ -65,6 +65,8 @@ class WorldManifest:
     categories: dict[str, tuple[str, ...]]
     user: tuple[float, float] | None
     path: Path
+    # Words naming things that are NOT pickables (furniture): "red stool" is no red can.
+    scenery: tuple[str, ...] = ()
 
     def resolve(self, text: Any) -> str | None:
         """The pickable body *text* names, or None (unknown or ambiguous).
@@ -72,7 +74,8 @@ class WorldManifest:
         A body name, else the longest alias inside the text, else a colour (plus
         optional category) that fits exactly one pickable ("绿瓶" -> green bottle,
         "红色的" -> the only red object). A category alone never picks one ("罐子",
-        the verb "can"), nor does a description that fits two ("瓶子").
+        the verb "can"), nor does a description that fits two ("瓶子") or one that
+        names scenery ("红色的凳子" is not the red can).
         """
         q = str(text or "").strip().lower()
         if not q:
@@ -90,7 +93,7 @@ class WorldManifest:
             return None  # two different objects' aliases of equal length: ambiguous
         colours = {c for c, ws in self.colours.items() if any(_has(q, w) for w in ws)}
         cats = {c for c, ws in self.categories.items() if any(_has(q, w) for w in ws)}
-        if not colours:
+        if not colours or any(_has(q, w) for w in self.scenery):
             return None
         cands = [
             n for n, p in self.pickables.items()
@@ -160,6 +163,7 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
         categories={str(k): tuple(str(w) for w in v) for k, v in (vocab.get("categories") or {}).items()},
         user=_xy(user["xy"], f"{ctx}: user.xy") if user else None,
         path=path,
+        scenery=tuple(str(w) for w in (vocab.get("scenery") or ())),
     )
 
 

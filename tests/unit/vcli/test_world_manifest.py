@@ -39,6 +39,9 @@ def apt():
     ("green can", None),                         # no such object
     ("can you see anything", None),              # a category word alone never picks one
     ("罐子", None),
+    ("a red stool", None),                       # a colour + scenery names furniture
+    ("红色的凳子", None),
+    ("红色的东西", "pickable_can_red"),
     ("unicorn", None),
     ("", None),
 ])
