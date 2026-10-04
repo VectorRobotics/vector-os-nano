@@ -139,7 +139,7 @@ def _make_engine(agent, backend):
     eng = VectorEngine(
         backend=backend,
         registry=CategorizedToolRegistry(),
-        permissions=PermissionContext(),
+        permissions=PermissionContext(no_permission=True),  # harness grants asks (the gate: test_native_safety)
     )
     eng._world = RobotWorld()
     eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())

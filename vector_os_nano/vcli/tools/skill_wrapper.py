@@ -17,19 +17,6 @@ from typing import Any
 
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
 
-# Keywords that indicate a skill actuates motors / moves the robot.
-# If any of these appear in the skill's preconditions or effects text,
-# the skill is treated as a motor skill (requires permission, not concurrency-safe).
-MOTOR_KEYWORDS: frozenset[str] = frozenset(
-    {"arm", "gripper", "base", "motor", "joint", "move", "navigate"}
-)
-
-# The package all SIMULATED hardware adapters live under. A connected component
-# whose module is this package (or a sub-module of it) is a simulation; anything
-# else is real hardware. Precise package match (exact, or prefix + ".") so a name
-# like "vector_os_nano.hardware.simulated_real" never false-matches "...sim".
-_SIM_HW_PKG: str = "vector_os_nano.hardware.sim"
-
 # JSON Schema type mapping from Python / skill type names.
 _TYPE_MAP: dict[str, str] = {
     "str": "string",
@@ -69,15 +56,11 @@ class SkillWrapperTool:
 
     @staticmethod
     def _detect_motor(skill: Any) -> bool:
-        """Return True if skill involves motor/actuator operations.
+        """True if the skill moves the robot: its declared ``@skill(actuates=...)``.
 
-        Scans both preconditions (list) and effects (dict) for motor keywords.
+        Fail closed: a skill that declares nothing actuates.
         """
-        preconditions_text = " ".join(str(p) for p in getattr(skill, "preconditions", []))
-        effects_text = str(getattr(skill, "effects", {}))
-        description_text = str(getattr(skill, "description", ""))
-        combined = (preconditions_text + " " + effects_text + " " + description_text).lower()
-        return any(kw in combined for kw in MOTOR_KEYWORDS)
+        return bool(getattr(skill, "__skill_actuates__", True))
 
     @staticmethod
     def _build_schema(parameters: dict[str, Any]) -> dict[str, Any]:
@@ -187,42 +170,24 @@ class SkillWrapperTool:
             return None
 
     def _robot_is_simulated(self) -> bool:
-        """Return True when every connected hardware module is a simulated adapter.
+        """True iff the agent is the body of a live in-process SimSession.
 
-        R2-5 (auto-allow motor skills in sim): a sim robot has no real-world
-        consequence, so motor skills are safe to auto-allow. Real-hardware adapters
-        live outside ``vector_os_nano.hardware.sim.*`` — if any connected component
-        resolves to a non-sim module path, we return False and motor skills keep
-        their confirmation requirement. World-agnostic: duck-types the agent's arm,
-        base, and gripper attributes without importing any concrete class.
+        A sim action has no real-world consequence, so motor skills are auto-allowed
+        there (R2-5). Anything else — a ROS proxy that may drive a real robot, a bare
+        agent, real hardware — keeps the confirmation.
         """
-        agent = self._agent
-        if agent is None:
-            return False
-        # SAFETY: require ALL present hardware to be simulated — return False on the
-        # FIRST real (non-sim) component. ANY-semantics would auto-allow a motor skill
-        # on a mixed agent (e.g. sim arm + real base), actuating real hardware without
-        # confirmation. Also require >=1 component present (a bare agent is not "sim").
-        found_sim = False
-        for attr in ("_arm", "_base", "_gripper"):
-            hw = getattr(agent, attr, None)
-            if hw is None:
-                continue
-            mod = type(hw).__module__
-            if not (mod == _SIM_HW_PKG or mod.startswith(_SIM_HW_PKG + ".")):
-                return False  # any real component -> require confirmation
-            found_sim = True
-        return found_sim
+        from vector_os_nano.sim.session import is_sim_agent
+
+        return is_sim_agent(self._agent)
 
     def check_permissions(
         self, params: dict[str, Any], context: ToolContext
     ) -> PermissionResult:
         """Motor skills require confirmation on real hardware; read-only are always allowed.
 
-        R2-5: when the connected robot is simulated (all hardware paths start with
-        ``vector_os_nano.hardware.sim``), motor skills are auto-allowed — a sim action
-        has no real-world consequence. On real hardware the confirmation requirement
-        is preserved.
+        R2-5: when the agent is a live SimSession's body, motor skills are
+        auto-allowed — a sim action has no real-world consequence. Otherwise the
+        confirmation requirement is preserved.
         """
         if self._is_motor and not self._robot_is_simulated():
             return PermissionResult("ask")

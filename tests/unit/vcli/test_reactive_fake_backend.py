@@ -57,7 +57,7 @@ def test_native_loop_feeds_verify_fail_back_with_matching_tool_use_id(tmp_path, 
     agent = Agent(config={})
     agent._skill_registry.register(_WriteFileSkill())
     backend = ReactiveFakeBackend(_STEPS)
-    eng = VectorEngine(backend=backend, registry=CategorizedToolRegistry(), permissions=PermissionContext())
+    eng = VectorEngine(backend=backend, registry=CategorizedToolRegistry(), permissions=PermissionContext(no_permission=True))
     eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=DevWorld())
     eng._vgg_agent = agent
     session = Session(session_id="reactive", created_at="t", updated_at="t", path=tmp_path / "s.jsonl")

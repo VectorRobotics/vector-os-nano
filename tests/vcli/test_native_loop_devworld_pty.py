@@ -180,7 +180,7 @@ def test_native_devworld_grounds_when_dev_action_skill_is_wrapped() -> None:
         ])
         eng = VectorEngine(
             backend=backend, registry=CategorizedToolRegistry(),
-            permissions=PermissionContext(),
+            permissions=PermissionContext(no_permission=True),
         )
         eng._world = DevWorld()
         eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=DevWorld())

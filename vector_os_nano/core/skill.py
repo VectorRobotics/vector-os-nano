@@ -34,6 +34,7 @@ def skill(
     aliases: list[str] | None = None,
     direct: bool = False,
     auto_steps: list[str] | None = None,
+    actuates: bool = True,
 ):
     """Decorator that marks a class as a skill with routing metadata.
 
@@ -44,6 +45,10 @@ def skill(
                 For simple commands like "home", "open", "close".
         auto_steps: Default skill chain. E.g. ["scan", "detect", "pick"]
                     means this skill auto-expands to that sequence.
+        actuates: Whether the skill moves the robot (base, arm, gripper). Fail
+                  closed: an undeclared skill actuates. A read-only perception /
+                  status skill declares ``actuates=False``. Actuating skills are
+                  serialized, confirmed on real hardware, and report post-state.
 
     Example::
 
@@ -62,6 +67,7 @@ def skill(
         cls.__skill_aliases__ = aliases or []
         cls.__skill_direct__ = direct
         cls.__skill_auto_steps__ = auto_steps or []
+        cls.__skill_actuates__ = bool(actuates)
         return cls
 
     if cls is not None:
@@ -69,6 +75,7 @@ def skill(
         cls.__skill_aliases__ = []
         cls.__skill_direct__ = False
         cls.__skill_auto_steps__ = []
+        cls.__skill_actuates__ = True
         return cls
 
     return wrapper

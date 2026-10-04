@@ -27,7 +27,7 @@ stricter; embodiments are config (Rule 11); every capability has a sim e2e (Rule
 - **A3 recover** — injected faults (perception offset, object nudged, nav blocked, grasp
   miss) end GROUNDED via the attempt semantics or as an honest failure with a reason;
   ≥ 60% recovered.
-- **A4 control** — "停" stops the base within 0.5 s while a long skill runs; Ctrl-C never
+- **A4 control** — "停" (or Ctrl-C) zeroes the base command within 0.1 s and the body is < 0.05 m/s by 1.0 sim-s while a long skill runs; Ctrl-C never
   exits the REPL; embodiment switch go2 ↔ go2_piper ↔ so101 leaks no threads/pgids.
 - **A5 gate** — one sanitized, memory-capped regression command: hermetic tier 100%
   green (documented deselects only), scripted bare-REPL e2e 3/3 consecutive passes.

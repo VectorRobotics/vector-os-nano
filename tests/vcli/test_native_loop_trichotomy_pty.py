@@ -171,7 +171,7 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         ])
         eng = VectorEngine(
             backend=backend, registry=CategorizedToolRegistry(),
-            permissions=PermissionContext(),
+            permissions=PermissionContext(no_permission=True),  # a hand-built rig is no SimSession: grant asks
         )
         eng._world = RobotWorld()
         eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())

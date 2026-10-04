@@ -156,6 +156,13 @@ _MPC_LEG_NAMES: list[str] = ["FL", "FR", "RL", "RR"]
 # tick must never silently hold a stale force plan). One warning per interval.
 _MPC_MAX_FAILS: int = 5
 _MPC_WARN_EVERY_S: float = 5.0
+# Every stop BRAKES (WP05 E5): dropping a trotting body straight onto the PD stance
+# mid-stride kicks it (a 0.4 m/s walk read 0.35-0.53 m/s 0.2 sim-s after its zero
+# command). Instead, when the command goes to zero, the MPC keeps trotting toward
+# zero velocity for _BRAKE_S, hands over to the PD stance once all four feet are
+# down (holding that pose), then ramps to the stand pose over _BRAKE_RAMP_S.
+_BRAKE_S: float = 0.35
+_BRAKE_RAMP_S: float = 1.0
 
 # ---------------------------------------------------------------------------
 # Constants — lidar
@@ -451,6 +458,11 @@ class MuJoCoGo2:
         self._mpc_dt: float = 0.0
         self._mpc_fails: int = 0
         self._mpc_warned_at: float = -1e9
+        # The stop brake (controller state, sim times; see _BRAKE_S).
+        self._was_moving: bool = False
+        self._brake_t: float | None = None     # when the command went to zero
+        self._brake_q: np.ndarray | None = None  # the four-foot pose at the hand-over
+        self._brake_ho_t: float = 0.0
 
         # Skill-level exclusive control gate. walk()/turn() set this
         # to acquire control for the duration of a motion. During that
@@ -679,6 +691,7 @@ class MuJoCoGo2:
         self._mpc_U_opt = None
         self._mpc_ctrl_i = 0
         self._mpc_fails = 0
+        self._was_moving, self._brake_t, self._brake_q = False, None, None
         if self._use_mpc and self._gait is not None:
             gait_period = self._gait.gait_period
             self._mpc_dt = gait_period / _MPC_DT_FACTOR
@@ -761,22 +774,45 @@ class MuJoCoGo2:
             vx, vy, vyaw = self._cmd_vel
         t = float(data.time)
         moving = vx != 0.0 or vy != 0.0 or vyaw != 0.0
-        tau = self._mpc_torque(vx, vy, vyaw, t) if (self._use_mpc and moving) else None
-        if self._use_mpc and not moving:
+        if moving:
+            self._brake_t = self._brake_q = None
+        elif self._was_moving and self._use_mpc:
+            self._brake_t = t
+        self._was_moving = moving
+        # Braking: the MPC tracks zero velocity, until all four feet are down.
+        braking = self._brake_t is not None and self._brake_q is None and (
+            t - self._brake_t < _BRAKE_S or not self._gait.compute_current_mask(t).all())
+        mpc = self._use_mpc and (moving or braking)
+        tau = self._mpc_torque(vx, vy, vyaw, t) if mpc else None
+        if self._use_mpc and not mpc:
             # A new motion must solve a fresh plan, never replay an old horizon.
             self._mpc_U_opt = None
             self._mpc_ctrl_i = 0
         if tau is None:
             if moving and not self._use_mpc:
                 tau = self._pd_torque(_compute_gait_targets(t, vx, vy, vyaw), data)
-            elif moving and self._mpc_fails < _MPC_MAX_FAILS:
+            elif mpc and self._mpc_fails < _MPC_MAX_FAILS:
                 tau = self._tau_hold  # one bad tick: keep the last good torque
             else:
-                tau = self._pd_torque(self._stand_q, data)
+                tau = self._pd_torque(self._stance_q(data, t), data)
         self._tau_hold = np.array(tau, dtype=float)
         self._mj.set_joint_torque(self._tau_hold)
         self._sync_viewer()
         self._sim_step += _CTRL_DECIM
+
+    def _stance_q(self, data: Any, t: float) -> np.ndarray:
+        """The PD stance target; after a brake, ramped from the four-foot hand-over pose."""
+        if self._brake_t is None:
+            return self._stand_q
+        if self._brake_q is None:
+            jq = self._mj.layout.joint_qpos_start
+            self._brake_q = np.array(data.qpos[jq : jq + 12], dtype=np.float64)
+            self._brake_ho_t = t
+        a = min(1.0, (t - self._brake_ho_t) / _BRAKE_RAMP_S)
+        q = self._brake_q + a * a * (3.0 - 2.0 * a) * (self._stand_q - self._brake_q)
+        if a >= 1.0:
+            self._brake_t = self._brake_q = None
+        return q
 
     def _mpc_torque(self, vx: float, vy: float, vyaw: float, t: float) -> np.ndarray | None:
         """Leg torques from the convex MPC, or None when the plan failed.
@@ -1201,6 +1237,7 @@ class MuJoCoGo2:
     ) -> None:
         """Drive joints to target using PD torque control with a tanh ramp, then hold 0.5 s."""
         self._require_connection()
+        self._was_moving, self._brake_t, self._brake_q = False, None, None  # the posture owns the joints
         rt = self.runtime
         jq = self._mj.layout.joint_qpos_start
         q_start = np.array(rt.snapshot().qpos[jq : jq + 12], dtype=np.float64)

@@ -101,13 +101,27 @@ class TestAbortModule:
 # 2. P0 stop bypass
 # ---------------------------------------------------------------------------
 
+def _engine_with_stop_skill(backend):
+    """An engine whose agent registers the real StopSkill: the P0 words are its aliases."""
+    from types import SimpleNamespace
+
+    from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.skills.go2.stop import StopSkill
+    from vector_os_nano.vcli.engine import VectorEngine
+
+    reg = SkillRegistry()
+    reg.register(StopSkill())
+    engine = VectorEngine(backend=backend)
+    engine._vgg_agent = SimpleNamespace(_skill_registry=reg)
+    return engine
+
+
 class TestP0StopBypass:
     def test_stop_returns_immediately(self):
         from unittest.mock import MagicMock
-        from vector_os_nano.vcli.engine import VectorEngine
 
         backend = MagicMock()
-        engine = VectorEngine(backend=backend)
+        engine = _engine_with_stop_skill(backend)
         session = MagicMock()
         session.append_user = MagicMock()
         session.append_assistant = MagicMock()
@@ -122,18 +136,31 @@ class TestP0StopBypass:
 
     def test_chinese_stop_bypasses(self):
         from unittest.mock import MagicMock
-        from vector_os_nano.vcli.engine import VectorEngine
 
         backend = MagicMock()
-        engine = VectorEngine(backend=backend)
+        engine = _engine_with_stop_skill(backend)
         session = MagicMock()
         session.append_user = MagicMock()
         session.append_assistant = MagicMock()
 
-        for word in ["停", "停下", "halt", "freeze", "别动", "停止"]:
+        for word in ["停", "停下", "halt", "freeze", "别动", "停止", "停！", "Stop!", "停下。"]:
             result = engine.run_turn(word, session)
             assert result.text == "Stopped.", f"Failed for: {word}"
             backend.call.assert_not_called()
+        assert not engine.is_stop("停？")  # a question about stopping is not a stop
+
+    def test_stop_words_are_the_registered_stop_skills_aliases(self):
+        """Single source (producers:stop-not-p0): no hand-written kernel list."""
+        from unittest.mock import MagicMock
+
+        from vector_os_nano.skills.go2.stop import StopSkill
+        from vector_os_nano.vcli.engine import VectorEngine
+
+        engine = _engine_with_stop_skill(MagicMock())
+        assert engine.stop_words() == frozenset(
+            w.lower() for w in ["stop", *StopSkill.__skill_aliases__]
+        )
+        assert VectorEngine(backend=MagicMock()).stop_words() == frozenset()  # no robot
 
     def test_non_stop_goes_to_llm(self):
         from unittest.mock import MagicMock
@@ -274,16 +301,30 @@ class TestVGGHarnessAbort:
 # ---------------------------------------------------------------------------
 
 class TestStopSkillAbort:
-    def test_stop_skill_calls_request_abort(self):
-        from unittest.mock import MagicMock, patch
+    def test_stop_skill_stops_every_other_run_but_not_its_own(self):
+        """A stop STEP ("walk two steps, then stop") stops background runs (a plan, a
+        navigate), never the run it is a step of."""
+        import threading
+        from unittest.mock import MagicMock
         from vector_os_nano.vcli.cognitive.abort import clear_abort, is_abort_requested
         from vector_os_nano.skills.go2.stop import StopSkill
         from vector_os_nano.core.skill import SkillContext
 
-        clear_abort()
-        base = MagicMock()
-        ctx = SkillContext(bases={"go2": base})
-        skill = StopSkill()
-        skill.execute({}, ctx)
-        assert is_abort_requested()
-        clear_abort()
+        other: list[bool] = []
+        ready, check = threading.Event(), threading.Event()
+
+        def background_run() -> None:
+            clear_abort()
+            ready.set()
+            check.wait(5)
+            other.append(is_abort_requested())
+
+        t = threading.Thread(target=background_run)
+        t.start()
+        ready.wait(5)
+        clear_abort()  # the run this stop is a step of
+        StopSkill().execute({}, SkillContext(bases={"go2": MagicMock()}))
+        check.set()
+        t.join(5)
+        assert other == [True]
+        assert not is_abort_requested()

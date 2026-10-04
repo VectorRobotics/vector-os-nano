@@ -50,10 +50,11 @@ class StopSkill:
                 diagnosis_code="no_base",
             )
 
-        # Signal global abort — stops VGG, GoalExecutor, navigate, explore
+        # Stop every other run (VGG, GoalExecutor, navigate, explore) — never the run
+        # this stop is a step of; the owner's P0 stop has cancelled every run already.
         try:
             from vector_os_nano.vcli.cognitive.abort import request_abort
-            request_abort()
+            request_abort(spare_caller=True)
             logger.info("[STOP] Global abort signal sent")
         except Exception:
             pass
@@ -94,12 +95,13 @@ def _try_publish_zero_cmdvel() -> None:
     Errors are swallowed -- stop must succeed even if ROS2 is absent.
     """
     try:
-        import rclpy
+        import sys
+
+        rclpy = sys.modules.get("rclpy")  # never pay a cold rclpy import on the P0 path
+        if rclpy is None or not rclpy.ok():
+            return
         from rclpy.node import Node
         from geometry_msgs.msg import Twist
-
-        if not rclpy.ok():
-            return
 
         # Use a temporary one-shot publisher on an anonymous node
         node = Node("_stop_skill_oneshot")

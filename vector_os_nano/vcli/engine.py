@@ -18,12 +18,14 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from vector_os_nano.vcli.backends import LLMBackend
 from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
+from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.session import Session, TokenUsage
 from vector_os_nano.vcli.tool_execution import (
@@ -233,6 +235,10 @@ class ToolBatch:
 # ---------------------------------------------------------------------------
 
 
+# How long a new actuating run waits for the cancelled previous one to let go.
+_PREEMPT_WAIT_S = 30.0
+
+
 class VectorEngine:
     """Core agent loop: user message -> backend call -> tool execution -> repeat.
 
@@ -265,6 +271,14 @@ class VectorEngine:
         self._vgg_enabled: bool = False
         self._goal_decomposer: Any = None
         self._goal_executor: Any = None
+        # The world's routable capabilities (detectors / planners / VLA); the engine
+        # owns it (built in init_vgg), the GoalExecutor and the native loop read it.
+        self._capability_registry: Any = None
+
+        # Single-flight for runs that may move the robot (actuating_run).
+        self._run_lock = threading.Lock()
+        self._run_token: Any = None
+        self._run_owner: int | None = None
 
         # Experience-compilation tier (wired only when init_vgg is given a
         # persist_dir; in-memory / off otherwise so tests don't touch ~/.vector).
@@ -402,6 +416,7 @@ class VectorEngine:
         except Exception as exc:  # noqa: BLE001
             logger.debug("VGG: capability registry unavailable: %s", exc)
             capability_registry = None
+        self._capability_registry = capability_registry
         _capability_names = (
             capability_registry.names() if capability_registry is not None else frozenset()
         )
@@ -834,16 +849,19 @@ class VectorEngine:
 
         # --- validate verify-function names ---
         # A name is "documented-lazy" (opt-in, conditionally bound) when its
-        # signature string contains "opt-in" or "may be disabled", OR the world is a
-        # robot world (every robot verify oracle binds only when the embodiment
-        # connects, which can follow init_vgg). Lazy names absent from verify_ns
-        # generate a WARNING only, not a hard fail — their absence is a designed
-        # pre-boot posture, not registration drift.
+        # signature string contains "opt-in" or "may be disabled", OR it is one of
+        # the robot oracles an embodiment binds when it connects (which can follow
+        # init_vgg) — the class-default robot verify set the vocab falls back to
+        # before a body is up. Lazy names absent from verify_ns are logged only;
+        # ANY other missing name is registration drift and fails loud (rule 8).
+        from vector_os_nano.vcli.cognitive.goal_decomposer import GoalDecomposer as _GD
+
+        _embodiment_conditional = frozenset(_GD._VERIFY_FN_SIGNATURES) if is_robot else frozenset()
         verify_fn_signatures: dict[str, str] = vocab_kwargs.get("verify_fn_signatures", {})
         for fn_name in sorted(verify_fn_names):
             if fn_name not in verify_ns:
                 sig = verify_fn_signatures.get(fn_name, "")
-                if "opt-in" in sig or "may be disabled" in sig or is_robot:
+                if "opt-in" in sig or "may be disabled" in sig or fn_name in _embodiment_conditional:
                     # A robot world's verify oracles bind only when the embodiment
                     # connects (sim start can follow init_vgg), so their absence at
                     # pre-boot is a designed lazy posture, not registration drift —
@@ -1067,15 +1085,6 @@ class VectorEngine:
 
         Returns None when VGG is not ready (no agent/base connected).
         """
-        # Clear abort flag at the start of every new VGG task.
-        # Without this, a prior "stop" command leaves the flag set and
-        # all subsequent VGG tasks are immediately aborted.
-        try:
-            from vector_os_nano.vcli.cognitive.abort import clear_abort
-            clear_abort()
-        except ImportError:
-            pass
-
         # Single-source the routing decision (Stage 5 scout): classify_intent is a
         # pure read of the same gate conditions, returned as an inspectable
         # IntentDecision. Behaviour is unchanged — a non-vgg route here is exactly
@@ -1215,14 +1224,15 @@ class VectorEngine:
         return _resolve_room(room_input, sg=sg) or ""
 
     def vgg_execute(self, goal_tree: "GoalTree") -> "ExecutionTrace":
-        """Execute GoalTree with feedback harness (retry + re-plan on failure)."""
-        # Clear abort flag before every execute. Direct callers (e.g. tests) that
-        # skip vgg_decompose() would otherwise inherit a stale abort from a prior stop.
-        try:
-            from vector_os_nano.vcli.cognitive.abort import clear_abort
-            clear_abort()
-        except ImportError:
-            pass
+        """Execute GoalTree with feedback harness (retry + re-plan on failure).
+
+        Runs as ONE actuating run (single-flight, its own CancelToken): a stop cancels
+        it, and starting it never clears another run's abort.
+        """
+        with self.actuating_run():
+            return self._vgg_execute_run(goal_tree)
+
+    def _vgg_execute_run(self, goal_tree: "GoalTree") -> "ExecutionTrace":
         if hasattr(self, "_vgg_harness") and self._vgg_harness is not None:
             world_context = self._build_world_context()
             trace = self._vgg_harness.run(
@@ -1269,70 +1279,6 @@ class VectorEngine:
             lib.save()
         except Exception as exc:  # noqa: BLE001
             logger.debug("VGG: experience compilation skipped: %s", exc)
-
-    def vgg_execute_async(
-        self,
-        goal_tree: "GoalTree",
-        on_complete: "Callable[[ExecutionTrace], None] | None" = None,
-    ) -> None:
-        """Execute a GoalTree, off the caller's thread WHEN that is safe.
-
-        Uses VGGHarness (with retry logic) when available, otherwise falls
-        back to raw GoalExecutor.
-
-        Threading: by default this runs on a background daemon thread so the
-        CLI stays responsive. BUT when a GUI MuJoCo viewer is live
-        (``_has_live_viewer()``) AND we are running under mjpython (macOS),
-        it runs SYNCHRONOUSLY on the caller's thread instead — there GLFW is
-        main-thread-only and the caller's thread owns the viewer, so it must
-        be the only thread touching the sim; the caller blocks until execution
-        finishes (acceptable: the user is watching the arm move, not typing).
-        On Linux/Windows the viewer+physics run on their own daemon threads,
-        so even with a live viewer execution stays on the background thread
-        (the REPL keeps accepting input, e.g. "stop").
-
-        Args:
-            goal_tree: The goal tree to execute.
-            on_complete: Called when execution finishes (on the background
-                thread, or inline on the caller's thread in the
-                viewer-live-under-mjpython case).
-        """
-        import threading
-
-        self._vgg_cancel = threading.Event()
-
-        def _run() -> None:
-            # Catch Exception (not BaseException) so KeyboardInterrupt still
-            # propagates to the REPL's try/except KeyboardInterrupt (cli.py),
-            # preserving Ctrl-C abort of an in-flight goal.
-            try:
-                trace = self.vgg_execute(goal_tree)
-                if on_complete:
-                    on_complete(trace)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("VGG async execution failed: %s", exc)
-
-        # WHY: GLFW is main-thread-ONLY on macOS/mjpython, where the viewer is
-        # driven by the caller's (main) thread pump — there a background skill
-        # thread touching mjData/GLFW concurrently with the main-thread render
-        # would segfault, so skills MUST run synchronously on the viewer-owning
-        # thread. On Linux/Windows the viewer runs in MuJoCo's own background
-        # render thread and physics+viewer.sync() run on the mujoco_*_physics
-        # daemon (viewer_mode.BACKGROUND_DAEMON); the skill thread never touches
-        # the viewer, so forcing sync-on-main there only freezes the REPL during
-        # a motion (laggy Ctrl-C / "stop") with no safety benefit. Gate the
-        # synchronous path on mjpython, mirroring viewer_mode's platform seam.
-        from vector_os_nano.hardware.sim.viewer_mode import (  # noqa: PLC0415
-            running_under_mjpython,
-        )
-        if self._has_live_viewer() and running_under_mjpython():
-            self._vgg_thread = None
-            _run()
-            return
-
-        t = threading.Thread(target=_run, name="vgg-executor", daemon=True)
-        t.start()
-        self._vgg_thread = t
 
     def _has_live_viewer(self) -> bool:
         """True when a connected sim has an OPEN GUI viewer.
@@ -1422,29 +1368,88 @@ class VectorEngine:
         agent: Any = None,
         app_state: dict[str, Any] | None = None,
     ) -> TurnResult:
-        """P0 stop bypass — execute StopSkill directly, no LLM call."""
-        from vector_os_nano.vcli.cognitive.abort import request_abort
-        request_abort()
+        """P0 stop bypass — cancel every run and execute StopSkill directly, no LLM call.
+
+        ``session`` None (a stop typed while a turn runs on another thread) skips the
+        session record, so the stop never races the running turn's session writes.
+        """
+        _agent = agent or getattr(self, "_vgg_agent", None)
+        # The motors first: no skill context to build, no run to wake (BaseProtocol.stop
+        # is ungated and lets a moving body brake while its walk still holds the token).
+        try:
+            stop_base = getattr(getattr(_agent, "_base", None), "stop", None)
+            if callable(stop_base):
+                stop_base()
+        except Exception as exc:  # noqa: BLE001 — the stop skill below stops it again
+            logger.warning("P0 stop: base.stop failed: %s", exc)
+        _abort.request_abort()  # every live run's CancelToken (background ones too)
 
         # Invalidate world context cache — robot state changes after a stop
         self._world_context_cache = None
 
-        # Kill any running VGG thread
-        cancel_ev = getattr(self, "_vgg_cancel", None)
-        if cancel_ev is not None:
-            cancel_ev.set()
-
-        # Execute stop skill if available
-        _agent = agent or getattr(self, "_vgg_agent", None)
-        if _agent is not None:
+        # The stop skill itself — never via agent.execute_skill, whose plan appends a
+        # 'home' step (moving the arm and opening the gripper is not a stop).
+        reg = getattr(_agent, "_skill_registry", None)
+        stop = reg.get("stop") if reg is not None else None
+        if stop is not None:
             try:
-                _agent.execute_skill("stop", {})
-            except Exception:
-                pass
+                stop.execute({}, _agent._build_context())
+            except Exception as exc:  # noqa: BLE001 — the run tokens are cancelled already
+                logger.warning("P0 stop: the stop skill failed: %s", exc)
 
-        session.append_user(user_message)
-        session.append_assistant("Stopped.", None)
+        if session is not None:
+            session.append_user(user_message)
+            session.append_assistant("Stopped.", None)
         return TurnResult(text="Stopped.", tool_calls=[], stop_reason="end_turn", usage=TokenUsage())
+
+    def stop_words(self) -> frozenset[str]:
+        """The P0 stop phrases: the REGISTERED stop skill's name + aliases (lowercase).
+
+        Single-sourced from the skill (never a second hand-written list); no stop
+        skill registered (no robot) -> none.
+        """
+        reg = getattr(getattr(self, "_vgg_agent", None), "_skill_registry", None)
+        stop = reg.get("stop") if reg is not None else None
+        if stop is None:
+            return frozenset()
+        words = [getattr(stop, "name", "stop"), *getattr(stop, "__skill_aliases__", [])]
+        return frozenset(str(w).strip().lower() for w in words if str(w).strip())
+
+    def is_stop(self, text: str) -> bool:
+        # '停！' / 'stop!' are the same stop (a panicked owner punctuates); '停?' is not.
+        return text.strip().lower().rstrip("!！。.~～ ") in self.stop_words()
+
+    @contextmanager
+    def actuating_run(self):
+        """Single-flight for a run that may move the robot; yields its CancelToken.
+
+        Busy -> the previous run is CANCELLED, then this one waits for it to finish
+        (bounded) before taking over. Re-entry from the run's own thread (a native
+        turn whose tool starts a nested execute) shares the outer run's token.
+        """
+        tid = threading.get_ident()
+        if self._run_owner == tid and self._run_token is not None:
+            yield self._run_token
+            return
+        prev = self._run_token
+        if prev is not None:
+            prev.cancel()
+        if not self._run_lock.acquire(timeout=_PREEMPT_WAIT_S):
+            raise RuntimeError(
+                f"the previous robot task did not stop within {_PREEMPT_WAIT_S:.0f}s"
+            )
+        token = _abort.new_run()
+        self._run_token, self._run_owner = token, tid
+        try:
+            yield token
+        finally:
+            self._run_token, self._run_owner = None, None
+            self._run_lock.release()
+
+    @property
+    def busy(self) -> bool:
+        """True while an actuating run holds the robot."""
+        return self._run_token is not None
 
     def _on_vgg_step(self, step: Any) -> None:
         """Callback invoked by GoalExecutor after each sub-goal completes.
@@ -1519,18 +1524,31 @@ class VectorEngine:
             TurnResult with the final assistant text, all tool calls, stop reason, and
             cumulative token usage across all API round-trips in this turn.
         """
-        # --- P0 stop bypass: hardcoded match, no LLM, <100ms ---
-        _stop_words = {"stop", "停", "停下", "halt", "freeze", "别动", "停止"}
-        if user_message.strip().lower() in _stop_words:
+        # --- P0 stop bypass: the stop skill's own aliases, no LLM, <100ms ---
+        if self.is_stop(user_message):
             return self._emergency_stop(user_message, session, agent, app_state)
 
-        # --- Clear abort flag at start of each new task ---
-        try:
-            from vector_os_nano.vcli.cognitive.abort import clear_abort
-            clear_abort()
-        except ImportError:
-            pass
+        # One actuating run (single-flight, its own CancelToken): the ReAct loop can
+        # dispatch robot skills too.
+        with self.actuating_run() as abort_event:
+            return self._run_turn_body(
+                user_message, session, agent, on_text, on_tool_start, on_tool_end,
+                ask_permission, app_state, on_reasoning, abort_event,
+            )
 
+    def _run_turn_body(
+        self,
+        user_message: str,
+        session: Session,
+        agent: Any,
+        on_text: Callable[[str], None] | None,
+        on_tool_start: Callable[[str, dict[str, Any]], None] | None,
+        on_tool_end: Callable[[str, ToolResult], None] | None,
+        ask_permission: Callable[[str, dict[str, Any]], str] | None,
+        app_state: dict[str, Any] | None,
+        on_reasoning: Callable[[str], None] | None,
+        abort_event: Any,
+    ) -> TurnResult:
         session.append_user(user_message)
 
         all_tool_calls: list[ToolCall] = []
@@ -1538,7 +1556,6 @@ class VectorEngine:
         final_text = ""
         stop_reason = "end_turn"
         turns = 0
-        abort_event = threading.Event()
 
         tool_context = ToolContext(
             agent=agent,
@@ -1592,8 +1609,10 @@ class VectorEngine:
                 ]
             session.append_assistant(response.text, tool_use_dicts)
 
-            if not response.tool_calls:
-                break  # end_turn — no tools called, conversation complete
+            if not response.tool_calls or abort_event.is_set():
+                # end_turn — or a stop landed during the LLM call: its tool calls never
+                # run (to_messages answers them 'interrupted' next turn).
+                break
 
             # Execute tools and collect results
             raw_results = self._dispatch_tools(
@@ -1629,8 +1648,12 @@ class VectorEngine:
         session: Session | None = None,
         app_state: dict[str, Any] | None = None,
         on_progress: "Callable[[str], None] | None" = None,
+        ask_permission: "Callable[[str, dict[str, Any]], str] | None" = None,
     ) -> "ExecutionTrace":
         """THIN delegate to ``native_loop.run_turn_native`` — the DEFAULT producer.
+
+        Runs as ONE actuating run (single-flight + its CancelToken). ``ask_permission``
+        resolves ``ask``-level tool permissions; None denies (the headless default).
 
         The frontier-model NATIVE TOOL-USE producer: the MODEL drives a ReAct loop
         (skills-as-tools + a synthetic ``verify``/``finish``) and the loop assembles
@@ -1648,14 +1671,17 @@ class VectorEngine:
         """
         from vector_os_nano.vcli.native_loop import run_turn_native as _run
 
-        return _run(
-            self,
-            user_message,
-            agent=agent if agent is not None else getattr(self, "_vgg_agent", None),
-            session=session,
-            app_state=app_state,
-            on_progress=on_progress,
-        )
+        with self.actuating_run() as token:
+            return _run(
+                self,
+                user_message,
+                agent=agent if agent is not None else getattr(self, "_vgg_agent", None),
+                session=session,
+                app_state=app_state,
+                on_progress=on_progress,
+                ask_permission=ask_permission,
+                cancel=token,
+            )
 
     # ------------------------------------------------------------------
     # Stage 5 (S5.3) — unified closed-loop controller (LIVE on the REPL tool_use route)
@@ -1754,16 +1780,34 @@ class VectorEngine:
             on_reasoning=on_reasoning,
         )
 
-        trace, snapshot, verified = self._verify_answer_plan(user_message, turn.text)
+        if self.is_stop(user_message) or self.busy:
+            # A P0 stop must stay stopped, and a running plan's executor must not be
+            # touched: no answer-only harness run here.
+            trace, snapshot, verified = None, {}, False
+        else:
+            trace, snapshot, verified = self._verify_answer_plan(user_message, turn.text)
+        # An answer-only trace vouches for the TEXT, never for side effects the ReAct
+        # loop ran (a motor skill, bash, file_write): those are unverified.
+        acted = any(
+            tc.permission_action in ("allowed", "asked_allowed") and not self._read_only_call(tc)
+            for tc in turn.tool_calls
+        )
         return UnifiedTurnResult(
             text=turn.text,
             trace=trace,
             snapshot=snapshot,
             intent=intent,
             tool_calls=list(turn.tool_calls),
-            verified=verified,
+            verified=verified and not acted,
             usage=turn.usage,
         )
+
+    def _read_only_call(self, tc: ToolCall) -> bool:
+        tool = self._registry.get(tc.tool_name)
+        try:
+            return bool(tool.is_read_only(tc.params))
+        except Exception:  # noqa: BLE001 — unknown tool / no declaration: it acted
+            return False
 
     def _verify_answer_plan(
         self, user_message: str, answer_text: str
@@ -1931,6 +1975,15 @@ class VectorEngine:
         tool_name = tc.name
         params = tc.input
         tool = self._registry.get(tool_name)
+
+        abort = getattr(tool_context, "abort", None)
+        if abort is not None and abort.is_set():
+            # A stop landed earlier in this batch: nothing after it runs.
+            result = ToolResult(content="Stopped: not run.", is_error=True)
+            return (
+                {"tool_use_id": tc.id, "content": result.content, "is_error": True},
+                ToolCall(tool_name=tool_name, params=params, result=result, duration_sec=0.0, permission_action="denied"),
+            )
 
         if tool is None:
             result = ToolResult(content=f"Unknown tool: {tool_name}", is_error=True)

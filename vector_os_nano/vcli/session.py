@@ -217,15 +217,32 @@ class Session:
         no preceding ``tool_use`` / ``tool_calls``, which 400s and bricks the
         REPL; R2-8). Both backends consume this list, so the guard protects
         Anthropic and the OpenAI-compatible path alike.
+
+        The mirror case — a tool_use whose result never arrived (Ctrl-C or an
+        exception mid-dispatch) — gets a synthetic ``is_error`` "interrupted"
+        tool_result right where the next entry (or the end) closes its window, so
+        the session never bricks on a dangling tool_use either.
         """
         messages: list[dict[str, Any]] = []
-        open_tool_use_ids: set[str] = set()
+        open_tool_use_ids: list[str] = []
+
+        def _interrupted(ids: list[str]) -> list[dict[str, Any]]:
+            return [{"type": "tool_result", "tool_use_id": tid,
+                     "content": "interrupted: this tool call did not complete",
+                     "is_error": True} for tid in ids]
+
+        def _close_dangling() -> None:
+            if open_tool_use_ids:
+                messages.append({"role": "user", "content": _interrupted(open_tool_use_ids)})
+                open_tool_use_ids.clear()
+
         for entry in self._entries:
             etype = entry.get("type")
             if etype == "user":
+                _close_dangling()  # plain user text closes the tool window
                 messages.append({"role": "user", "content": entry["content"]})
-                open_tool_use_ids = set()  # plain user text closes the tool window
             elif etype == "assistant":
+                _close_dangling()
                 content: list[dict[str, Any]] = []
                 # Only include text block if non-empty (Anthropic rejects empty text)
                 if entry.get("text"):
@@ -234,9 +251,9 @@ class Session:
                 content.extend(tool_use)
                 if content:
                     messages.append({"role": "assistant", "content": content})
-                open_tool_use_ids = {
+                open_tool_use_ids.extend(
                     b["id"] for b in tool_use if isinstance(b, dict) and "id" in b
-                }
+                )
             elif etype == "tool_result":
                 tool_result_blocks = [
                     {
@@ -249,12 +266,16 @@ class Session:
                     if r.get("tool_use_id") in open_tool_use_ids
                 ]
                 if tool_result_blocks:
+                    # Every tool_use of the turn is answered in THIS message.
+                    answered = {b["tool_use_id"] for b in tool_result_blocks}
+                    tool_result_blocks += _interrupted(
+                        [t for t in open_tool_use_ids if t not in answered]
+                    )
+                    open_tool_use_ids.clear()
                     messages.append({"role": "user", "content": tool_result_blocks})
-                    open_tool_use_ids -= {
-                        b["tool_use_id"] for b in tool_result_blocks
-                    }
                 # else: fully orphaned -> skip (no preceding tool_use)
             # type == "meta" is skipped (internal tracking)
+        _close_dangling()
         return messages
 
     # ------------------------------------------------------------------

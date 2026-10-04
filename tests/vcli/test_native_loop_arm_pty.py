@@ -122,7 +122,7 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
         ])
         eng = VectorEngine(
             backend=backend, registry=CategorizedToolRegistry(),
-            permissions=PermissionContext(),
+            permissions=PermissionContext(no_permission=True),  # a hand-built rig is no SimSession: grant asks
         )
         eng._world = RobotWorld()
         eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())

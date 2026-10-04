@@ -119,7 +119,7 @@ def test_mpc_plan_is_dropped_when_idle_and_failures_fall_back_loudly(monkeypatch
         go2.wait_sim(0.2)
         assert go2._mpc_U_opt is not None
         go2.set_velocity(0.0, 0.0, 0.0)
-        go2.wait_sim(0.01)
+        go2.wait_sim(0.6)  # the stop brake (MPC to zero velocity, then all four feet down)
         assert go2._mpc_U_opt is None and go2._mpc_ctrl_i == 0  # no stale horizon
 
         class _Broken:

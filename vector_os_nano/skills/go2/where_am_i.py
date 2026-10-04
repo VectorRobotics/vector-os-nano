@@ -48,6 +48,7 @@ def _heading_label(radians: float) -> str:
 @skill(
     aliases=["where am i", "where", "我在哪", "在哪", "我在哪里", "位置", "location"],
     direct=False,
+    actuates=False,
 )
 class WhereAmISkill:
     """Report the robot's current position and which room it is in."""

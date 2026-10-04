@@ -75,6 +75,11 @@ def stop_all() -> int:
     return len(live)
 
 
+def is_sim_agent(agent: Any) -> bool:
+    """True iff *agent* is the body of a live SimSession (no real-world consequence)."""
+    return agent is not None and any(s.agent is agent for s in _LIVE)
+
+
 class SimSession:
     """One running simulation: the Agent plus everything it owns."""
 

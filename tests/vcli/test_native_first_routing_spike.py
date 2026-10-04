@@ -176,6 +176,9 @@ class _SpyEngine:
         self.native_calls += 1
         return self._native_trace
 
+    def is_stop(self, text):  # noqa: ANN001 — no stop skill registered
+        return False
+
     def vgg_decompose(self, prompt):  # noqa: ANN001
         self.decompose_calls += 1
         self.last_decompose_prompt = prompt
