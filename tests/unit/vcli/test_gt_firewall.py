@@ -53,3 +53,13 @@ def test_skill_context_has_no_ground_truth() -> None:
     assert not any("ground" in k.lower() or k == "gt" for k in built.services)
     for value in [*vars(built).values(), *built.services.values()]:
         assert type(value).__name__ not in ("GroundTruth", "SimSession"), type(value)
+
+
+def test_oracles_never_run_the_actors_models() -> None:
+    """g1-oracle-reruns-detector: an oracle that re-ran the detector at verify time
+    graded a fresh detection, not the step's output. The GT oracles import no
+    perception / detector module at all (in_view is a segmentation render)."""
+    for mod in ("vcli/worlds/sim_oracles.py", "sim/ground_truth.py"):
+        bad = [m for m in _imports(_PKG / mod)
+               if m.startswith(("vector_os_nano.perception", "vector_os_nano.skills"))]
+        assert not bad, (mod, bad)

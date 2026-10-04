@@ -725,46 +725,6 @@ class MuJoCoG1:
         )
 
     # ------------------------------------------------------------------
-    # Ground truth (SIM-side; INVISIBLE to the detector)
-    # ------------------------------------------------------------------
-
-    def get_object_positions(self) -> dict[str, list[float]]:
-        """Free-body object world positions ``{body_name: [x, y, z]}`` from the live
-        g1 scene. Mirrors :meth:`MuJoCoPiper.get_object_positions` /
-        :meth:`MuJoCoArm.get_object_positions` so the SAME duck-typed GT surface is
-        available on the g1 path.
-
-        MOAT ROLE (R7): this is INDEPENDENT SIM GROUND TRUTH — the physics body xpos
-        of the room's pickables (e.g. ``pickable_can_red``). It is read ONLY by the
-        verify oracle (``detection_matches_gt``), NEVER passed to the detector: the
-        detector's whole input stays the rendered RGB (the firewall in
-        :class:`G1HeadPerception`, which exposes only ``get_color_frame`` /
-        ``get_camera_pose`` — never this). So the oracle judges the detector's box
-        (the CLAIM) against a truth the detector cannot author — a real, non-tautological
-        anchor, not a self-read (D61/D62 lesson).
-
-        Scans for free-joint bodies exactly as the arm/piper accessors do, so the
-        room's freejoint cylinders (can/bottles) are reported and the static furniture
-        (no freejoint) is skipped. Fail-safe: requires a live connection.
-        """
-        self._require_connection()
-        mj = _get_mujoco()
-        model = self._model
-        data = self._data
-        assert model is not None and data is not None
-        result: dict[str, list[float]] = {}
-        for i in range(model.nbody):
-            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
-            if name is None:
-                continue
-            jadr = int(model.body_jntadr[i])
-            if jadr < 0:
-                continue
-            if model.jnt_type[jadr] == mj.mjtJoint.mjJNT_FREE:
-                result[name] = [float(c) for c in data.body(name).xpos]
-        return result
-
-    # ------------------------------------------------------------------
     # Scene builder (external callers / tests)
     # ------------------------------------------------------------------
 
