@@ -601,7 +601,10 @@ class NativeStepRunner:
             caused, channels = self._grade(hint)
             if before:
                 caused, channels = actor_causation.ActorCaused.UNCAUSED, ("already true before the action",)
-            self._pending = {"expr": hint, "ok": ok, "caused": caused, "channels": channels}
+            # The auto check belongs to THIS tool: keep its own result for the record
+            # (a later read in the same step must not stand in for it).
+            self._pending = {"expr": hint, "ok": ok, "caused": caused, "channels": channels,
+                             "data": self._result_data(), "chain": len(self._chain)}
             result = ToolResult(
                 content=f"{result.content}\nauto-verify {hint} -> {verify_word(ok)}",
                 is_error=result.is_error, metadata=result.metadata,
@@ -675,7 +678,7 @@ class NativeStepRunner:
 
     def _record(
         self, expr: str, verify_result: bool, actor_caused: Any, channels: tuple[str, ...],
-        goal_id: str, data: dict[str, Any], note: str = "verify",
+        goal_id: str, data: dict[str, Any], note: str = "verify", failed: bool | None = None,
     ) -> None:
         strategy = self._chain[-1] if self._chain else ""
         step_name = f"native_step_{self._step_idx}"
@@ -691,7 +694,8 @@ class NativeStepRunner:
         # success=True so the gate keys on GROUNDED/RAN. A failed skill followed by a
         # true verify is FAILED, never GROUNDED: the skill's own failure is kept,
         # with its message, in error / result_data (rule 4).
-        failed = bool(self._chain) and not self._last_ok
+        if failed is None:
+            failed = bool(self._chain) and not self._last_ok
         if self._baseline is not None:  # the group's baseline: its FIRST recorded action
             self._group_baselines.setdefault((goal_id or "native", attempt_key(expr)), self._baseline)
         self._steps.append(StepRecord(
@@ -724,8 +728,9 @@ class NativeStepRunner:
         verify the action itself)."""
         auto, self._pending = self._pending, None
         if auto is not None:
+            del self._chain[auto["chain"]:]  # reads after the action are not its producer
             self._record(auto["expr"], auto["ok"], auto["caused"], ("auto-verify", *auto["channels"]),
-                         "", self._result_data(), note="auto-verify")
+                         "", auto["data"], note="auto-verify", failed=False)
 
     def _close_step(self) -> None:
         # Reset the action chain + baseline for the next pair. NEVER carry a baseline

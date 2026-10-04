@@ -676,3 +676,24 @@ def test_navigate_auto_verifies_its_bound_target() -> None:
     assert trace.goal_tree.sub_goals[0].verify == "at_position(3.0, 0.0)"
     assert trace.steps[0].actor_caused is ActorCaused.CAUSED
     assert _verdict(agent, eng, trace).verified is True
+
+
+def test_an_auto_verified_step_keeps_its_own_result_after_a_failed_read() -> None:
+    """A read that errors after an auto-verified action does not fail that action's row."""
+    def _broken_read(arm):
+        read = _Skill("look_fake", lambda: None, fail="camera offline")
+        read.__skill_actuates__ = False
+        return read
+
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("grasp_fake", {"object": "can"})),
+        tool_turn(("look_fake", {})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _arm = _make_arm_agent(_grasp, _broken_read)
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("拿起那个罐子", session=_session())
+    (step,) = trace.steps
+    assert step.success is True and step.result_data["tool"] == "grasp_fake"
+    assert step.strategy == "grasp_fake"
+    assert _verdict(agent, eng, trace).verified is True
