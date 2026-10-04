@@ -22,14 +22,14 @@ import re
 
 import pytest
 
-# go2 starts at (10, 3); a generous forward walk reaches within at_position tol of
-# (11, 3) (the same honest-walk script the trichotomy / native-first -p tests use).
+# go2 starts at (10, 3); a 1.0 m backward walk reaches within at_position tol of
+# (9, 3) (the same honest-walk script the trichotomy / native-first -p tests use).
 _WALK_SCRIPT = {
     "turns": [
         {"tool_calls": [
-            {"name": "walk", "input": {"direction": "forward", "distance": 2.5, "speed": 0.3}}
+            {"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}
         ]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0)"}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(9.0, 3.0)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -38,12 +38,12 @@ _WALK_SCRIPT = {
 @pytest.mark.cli_main
 @pytest.mark.capability
 def test_repl_native_walk_routes_to_native_on_go2_sim(sim_cleanup) -> None:
-    """`vector-cli` + "走到坐标 (11,3)" routes to native on the real go2 sim, verifies honestly."""
+    """`vector-cli` + "走到坐标 (9,3)" routes to native on the real go2 sim, verifies honestly."""
     pytest.importorskip("mujoco")
     from tests.harness.pty_cli import run_repl_session
 
     result = run_repl_session(
-        ["走到坐标 (11.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT, native=True,
+        ["走到坐标 (9.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT, native=True,
         timeout_sec=240,
     )
     text = result.text
@@ -52,7 +52,11 @@ def test_repl_native_walk_routes_to_native_on_go2_sim(sim_cleanup) -> None:
     # The NL command reached the REPL.
     assert "走到坐标" in text, f"command not echoed; transcript:\n{result.transcript[:2000]}"
     # The CUTOVER engaged: native (not the legacy planner) handled the turn.
-    assert "native" in text and "working" in text, "native producer was not attempted in the REPL"
+    # (The first spinner frame, "native working…", is only drawn if the fake LLM's
+    # first tool call takes longer than Rich's 80 ms refresh; the per-call progress
+    # lines "native <tool> …" / "native finishing" always are.)
+    assert re.search(r"native (working|walk|finishing)", text), (
+        "native producer was not attempted in the REPL")
     # Native dispatched the WALK skill (routing contract: walk, not navigate) and the
     # deterministic verify read real sim state.
     assert "walk" in text and "verify at_position" in text, (
@@ -80,7 +84,7 @@ def test_repl_legacy_env_does_not_attempt_native(sim_cleanup) -> None:
     from tests.harness.pty_cli import run_repl_session
 
     result = run_repl_session(
-        ["走到坐标 (11.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT,
+        ["走到坐标 (9.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT,
         native=False,  # VECTOR_REPL_NATIVE=0
         timeout_sec=240,
     )

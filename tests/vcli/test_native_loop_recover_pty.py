@@ -37,7 +37,7 @@ let the test set over-claim the recover pillar):
   that is LOOSER, and rule 5 (verify only ever gets stricter) forbids it. The spine
   stays BYTE-UNCHANGED. Recover-to-verified-True is therefore demonstrated ONLY where
   the LIVE model verifies ONCE after recovering: ``test_native_loop_multistep_live_pty``.
-  Goal-authenticity of the verify constant (does (11,3) match the real task goal)
+  Goal-authenticity of the verify constant (does (9,3) match the real task goal)
   remains the documented deferred residual — STEP 11 does not close it.
 
 SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after each
@@ -55,18 +55,17 @@ from tests.harness.pty_cli import run_cli_turn  # noqa: E402
 
 _SIM_TIMEOUT_SEC = 360.0
 
-# go2 starts at (10, 3); target (11, 3) is a 1.0 m gap, at_position tol = 0.5 m.
-# The MPC gait undershoots ~2.5x (2.5 m commanded reaches the 1.0 m gap — the proven
-# distance reused from the honest trichotomy test). So:
-#   - a 0.6 m "short" walk lands ~0.24 m (~x=10.24) -> 0.76 m from target -> FAIL,
-#     with comfortable margin (even ~80% tracking lands outside the 0.5 m tol);
-#   - a 2.5 m "recovery" walk closes the remaining gap -> PASS.
+# go2 starts at (10, 3); target (9, 3) is a 1.0 m gap BEHIND it (the pick table
+# blocks the way forward at x~10.47), at_position tol = 0.5 m. Walks count SIM time
+# and the MPC gait tracks backward walks to a few cm. So:
+#   - a 0.3 m "short" walk lands ~x=9.7 -> 0.7 m from target -> FAIL;
+#   - a 0.7 m "recovery" walk closes the remaining gap -> PASS.
 
 # (b) FINISH-ON-FAIL: one short walk that lands outside tol, then a lying finish().
 _FINISH_AFTER_FAIL_SCRIPT = {
     "turns": [
-        {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 0.6, "speed": 0.3}}]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0)"}}]},
+        {"tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": 0.3, "speed": 0.3}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(9.0, 3.0)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -75,9 +74,9 @@ _FINISH_AFTER_FAIL_SCRIPT = {
 # NO finish -> backend exhausts -> terminal end_turn -> the loop breaks (no hang).
 _NEVER_SUCCEEDS_SCRIPT = {
     "turns": [
-        {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 1.0, "speed": 0.3}}]},
+        {"tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}]},
         {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(50.0, 3.0)"}}]},
-        {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 1.0, "speed": 0.3}}]},
+        {"tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}]},
         {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(50.0, 3.0)"}}]},
         # (no finish — exhaustion terminates the loop)
     ]
@@ -86,10 +85,10 @@ _NEVER_SUCCEEDS_SCRIPT = {
 # (d) GENUINE IN-TURN RECOVERY: short walk FAILs, recovery walk REACHES -> [RAN, GROUNDED].
 _GENUINE_RECOVERY_SCRIPT = {
     "turns": [
-        {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 0.6, "speed": 0.3}}]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0)"}}]},   # FAIL (short)
-        {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 2.5, "speed": 0.3}}]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0)"}}]},   # PASS (reached)
+        {"tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": 0.3, "speed": 0.3}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(9.0, 3.0)"}}]},   # FAIL (short)
+        {"tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": 0.7, "speed": 0.3}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(9.0, 3.0)"}}]},   # PASS (reached)
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -108,7 +107,7 @@ def test_native_finish_after_fail_is_not_verified(sim_cleanup) -> None:
     honors finish (no guard), but the recorded last step is RAN (verify_result False),
     so the spine grades verified False / exit 2 — recover cannot be claimed by lying."""
     r = run_cli_turn(
-        "走到坐标 (11.0,3.0)",
+        "走到坐标 (9.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
         extra_args=["--headless", "--native-loop"],
@@ -176,7 +175,7 @@ def test_native_inturn_recovery_is_fail_closed_not_verified(sim_cleanup) -> None
     (test_native_loop_multistep_live_pty), where the model verifies once after recovering.
     """
     r = run_cli_turn(
-        "走到坐标 (11.0,3.0)",
+        "走到坐标 (9.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
         extra_args=["--headless", "--native-loop"],

@@ -947,11 +947,9 @@ class PerceptionGraspSkill:
         Returns ``(gp | None, resolved_label, fail_result | None)``.
         """
         import numpy as np
+        from vector_os_nano.perception.object_localizer import capture_rgbd
         try:
-            rgb = perception.get_color_frame()
-            depth = perception.get_depth_frame()
-            intrinsics = perception.get_intrinsics()
-            cam_xpos, cam_xmat = perception.get_camera_pose()
+            rgb, depth, intrinsics, cam_xpos, cam_xmat = capture_rgbd(perception)
         except Exception as exc:  # noqa: BLE001
             return None, (query or "front object"), _fail(
                 "no_camera", f"Failed to read RGB-D frame: {exc}")
@@ -1129,11 +1127,9 @@ class PerceptionGraspSkill:
         colour's scene name (verify oracle key) — the grasp POINT remains from depth+mask.
         """
         import numpy as np
+        from vector_os_nano.perception.object_localizer import capture_rgbd
         try:
-            rgb = perception.get_color_frame()
-            depth = perception.get_depth_frame()
-            intrinsics = perception.get_intrinsics()
-            cam_xpos, cam_xmat = perception.get_camera_pose()
+            rgb, depth, intrinsics, cam_xpos, cam_xmat = capture_rgbd(perception)
         except Exception as exc:  # noqa: BLE001
             return None, (query or "front object"), _fail("no_camera", f"Failed to read RGB-D frame: {exc}")
 
@@ -1195,7 +1191,8 @@ class PerceptionGraspSkill:
                 logger.warning("[PGRASP] front_object_mask raised: %s", exc)
         else:
             try:
-                detections = perception.detect(query)
+                from vector_os_nano.perception.object_localizer import detect_on
+                detections = detect_on(perception, rgb, query)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[PGRASP] detect raised: %s", exc)
                 detections = []

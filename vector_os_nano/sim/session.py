@@ -180,7 +180,14 @@ def _probe_ready(agent: Any, cfg: Any, *, deadline: float) -> dict[str, Any]:
     report: dict[str, Any] = {}
 
     clock = getattr(base, "get_sim_time", None)
-    if callable(clock) and getattr(base, "_drive_mode", "") != "main_thread_pump":
+    runtime = getattr(base, "runtime", None)
+    if callable(clock) and runtime is not None and not runtime.threaded:
+        # Caller-stepped (VECTOR_SIM_LOCKSTEP / macOS pump): advance it here.
+        t0 = clock()
+        if not base.wait_sim(_READY_SIM_S) or clock() - t0 < _READY_SIM_S - 1e-6:
+            raise SimStartError("not ready", "caller-stepped physics did not advance")
+        report["sim_time"] = f"{clock():.1f}s"
+    elif callable(clock):
         t0 = last = clock()
         moved_at = time.monotonic()
         while (now := clock()) - t0 < _READY_SIM_S:
@@ -193,8 +200,8 @@ def _probe_ready(agent: Any, cfg: Any, *, deadline: float) -> dict[str, Any]:
                 )
             time.sleep(0.05)
         report["sim_time"] = f"{clock():.1f}s"
-    if hasattr(base, "_use_mpc"):
-        report["gait"] = "mpc" if base._use_mpc else "sinusoidal"
+    if getattr(base, "gait_backend", ""):
+        report["gait"] = base.gait_backend
 
     if cfg.capabilities.camera:
         perception = getattr(agent, "_perception", None)

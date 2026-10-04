@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Shared lidar polar-grid ray-casting loop (STAGE 3a de-triplication).
+"""Shared lidar polar-grid ray cast (STAGE 3a de-triplication; one mj_multiRay call).
 
 ONE impl per capability (CLAUDE.md Rule 11). The identical multi-elevation
 ``mj_ray`` polar-grid loop previously lived in THREE places:
 
 * ``sensors/g1_lidar.py`` :func:`g1_lidar_scan`        (g1 driver — live)
-* ``mujoco_go2.py`` ``MuJoCoGo2._update_lidar``        (go2 driver — live)
+* ``mujoco_go2.py`` ``MuJoCoGo2._cast_lidar``          (go2 driver — live)
 * ``sensors/lidar360.py`` ``MuJoCoLivox360``           (PAUSED SysNav abstraction)
 
 This module extracts the per-ray math VERBATIM from the two live copies so both
@@ -70,11 +70,13 @@ def raycast_lidar(
     max_range: float,
     mid_ring_apply_max_range: bool = True,
 ) -> RaycastResult:
-    """Run the multi-elevation polar-grid ``mj_ray`` loop, return raw results.
+    """Cast the multi-elevation polar grid in ONE ``mj_multiRay`` call; raw results.
 
-    The loop body is copied VERBATIM from the two live drivers; only the
-    diverging knobs (``max_range``, ``mid_ring_apply_max_range``) are
-    parameterised.  No LaserScan / diagnostics assembly happens here.
+    Same rays, same per-ray rules as the original per-ray ``mj_ray`` loop of the
+    two live drivers (golden-tested), vectorised: the directions are built with
+    numpy and every ray is cast by one C call that releases the GIL, so a scan no
+    longer holds the interpreter for ~35 ms. Only the diverging knobs
+    (``max_range``, ``mid_ring_apply_max_range``) are parameterised.
 
     Args:
         model: ``mujoco.MjModel`` for the compiled scene.
@@ -82,7 +84,7 @@ def raycast_lidar(
         pos_lidar: ``(3,)`` float64 world position of the virtual lidar origin.
         heading: Robot yaw (radians); index 0 of the azimuth sweep is behind the
             robot (``heading - 180 deg``).
-        exclude_bid: Body id passed to ``mj_ray`` as *bodyexclude*.
+        exclude_bid: Body id passed to ``mj_multiRay`` as *bodyexclude*.
         robot_geom_ids: Geom ids that count as self-hits (filtered out).
         tilt_deg: Beam pitch tilt in degrees (g1 = -10, go2 = -20).
         elevations: Elevation rings in degrees (must include 0 for the mid ring).
@@ -99,83 +101,40 @@ def raycast_lidar(
     """
     import mujoco as _mj  # noqa: PLC0415
 
-    tilt_rad = math.radians(tilt_deg)
-    cos_tilt = math.cos(tilt_rad)
-    sin_tilt = math.sin(tilt_rad)
+    tilt = math.radians(tilt_deg)
+    cos_h, sin_h = math.cos(heading), math.sin(heading)
+    elev = np.radians(np.repeat(np.asarray(elevations, dtype=np.float64), n_azimuth))
+    az_idx = np.tile(np.arange(n_azimuth, dtype=np.float64), len(elevations))
+    azimuth = heading + np.radians(az_idx * (360.0 / n_azimuth) - 180.0)
 
-    cos_h = math.cos(heading)
-    sin_h = math.sin(heading)
+    # Ray direction in world frame (no tilt yet) -> body frame (rotate by
+    # -heading) -> pitch tilt about body Y -> back to world (rotate by +heading).
+    dx_w = np.cos(elev) * np.cos(azimuth)
+    dy_w = np.cos(elev) * np.sin(azimuth)
+    dz_w = np.sin(elev)
+    dx_b = dx_w * cos_h + dy_w * sin_h
+    dy_b = -dx_w * sin_h + dy_w * cos_h
+    dx_bt = dx_b * math.cos(tilt) - dz_w * math.sin(tilt)
+    dz_bt = dx_b * math.sin(tilt) + dz_w * math.cos(tilt)
+    vec = np.stack([dx_bt * cos_h - dy_b * sin_h, dx_bt * sin_h + dy_b * cos_h, dz_bt], axis=1)
 
-    mid_ring_ranges: list[float] = []
-    points_3d: list[tuple[float, float, float, float]] = []
-    near_zero_hits: int = 0
+    n = vec.shape[0]
+    geom_id = np.full(n, -1, dtype=np.int32)
+    dist = np.full(n, -1.0, dtype=np.float64)
+    pnt = np.asarray(pos_lidar, dtype=np.float64)
+    _mj.mj_multiRay(model, data, pnt, vec.reshape(-1), None, 1, int(exclude_bid),
+                    geom_id, dist, None, n, _mj.mjMAXVAL)
 
-    for elev_deg in elevations:
-        elev_rad = math.radians(elev_deg)
-        cos_elev = math.cos(elev_rad)
-        sin_elev = math.sin(elev_rad)
-        azimuth_step = 360.0 / n_azimuth
-        for i in range(n_azimuth):
-            azimuth = heading + math.radians(i * azimuth_step - 180.0)
+    is_self = np.isin(geom_id, np.fromiter(robot_geom_ids, dtype=np.int32, count=len(robot_geom_ids)))
+    hit = (dist > 0) & ~is_self
+    valid = hit & (dist < max_range)
+    pts = pnt + dist[valid, None] * vec[valid]
+    points_3d = [(float(x), float(y), float(z), 0.0) for x, y, z in pts]
 
-            # Ray direction in world frame (no tilt yet)
-            dx_w = cos_elev * math.cos(azimuth)
-            dy_w = cos_elev * math.sin(azimuth)
-            dz_w = sin_elev
-
-            # World -> body frame (rotate by -heading around Z)
-            dx_b = dx_w * cos_h + dy_w * sin_h    # forward
-            dy_b = -dx_w * sin_h + dy_w * cos_h   # left
-            dz_b = dz_w                            # up
-
-            # Apply pitch tilt in body frame (rotate around body Y axis)
-            dx_bt = dx_b * cos_tilt - dz_b * sin_tilt
-            dz_bt = dx_b * sin_tilt + dz_b * cos_tilt
-
-            # Body -> world frame (rotate by +heading)
-            direction = np.array(
-                [
-                    dx_bt * cos_h - dy_b * sin_h,
-                    dx_bt * sin_h + dy_b * cos_h,
-                    dz_bt,
-                ],
-                dtype=np.float64,
-            )
-
-            geom_id = np.zeros(1, dtype=np.int32)
-            dist = _mj.mj_ray(
-                model,
-                data,
-                pos_lidar,
-                direction,
-                None,
-                1,
-                exclude_bid,
-                geom_id,
-            )
-
-            is_self = int(geom_id[0]) in robot_geom_ids
-            hit_valid = dist > 0 and dist < max_range and not is_self
-
-            if hit_valid:
-                px = pos_lidar[0] + dist * direction[0]
-                py = pos_lidar[1] + dist * direction[1]
-                pz = pos_lidar[2] + dist * direction[2]
-                points_3d.append((float(px), float(py), float(pz), 0.0))
-
-            if elev_deg == 0:
-                if is_self and dist > 0 and dist < 0.1:
-                    near_zero_hits += 1
-                if mid_ring_apply_max_range:
-                    if hit_valid:
-                        mid_ring_ranges.append(float(dist))
-                    else:
-                        mid_ring_ranges.append(float("inf"))
-                else:
-                    if dist > 0 and not is_self:
-                        mid_ring_ranges.append(float(dist))
-                    else:
-                        mid_ring_ranges.append(float("inf"))
+    mid = elev == 0.0
+    mid_hit = valid[mid] if mid_ring_apply_max_range else hit[mid]
+    mid_ring_ranges = np.where(mid_hit, dist[mid], np.inf).tolist()
+    near_zero_hits = int(np.count_nonzero(mid & is_self & (dist > 0) & (dist < 0.1)))
 
     return RaycastResult(
         mid_ring_ranges=mid_ring_ranges,

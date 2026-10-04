@@ -7,10 +7,10 @@ The perception backend PerceptionGraspSkill consumes on the go2+piper sim. Unlik
 the legacy MuJoCoPerception (which returns ground-truth poses + a zero depth
 stub), this backend uses ONLY what a real robot has:
 
-  - RGB + metric depth rendered from the on-robot d435_rgb / d435_depth MuJoCo
-    cameras (MuJoCoGo2.get_camera_frame / get_depth_frame — float32 metres);
-  - intrinsics from the MJCF camera fovy (depth_projection.mujoco_intrinsics);
-  - the exact camera->world pose (MuJoCoGo2.get_camera_pose -> cam_xpos/cam_xmat);
+  - ONE head-camera instant (MuJoCoGo2.get_rgbd_frame -> RGBDFrame): RGB, metric
+    depth (float32 metres), the self-segmentation and the exact camera->world
+    pose (cam_xpos/cam_xmat), all rendered from one step-boundary copy of the sim;
+  - intrinsics from the MJCF camera fovy and the frame's ACTUAL shape;
   - grounding-dino-tiny (a learned open-vocab DETECTOR, the shared singleton) for
     NAMED-object detection, EdgeTAM for segmentation with a box-rect fallback.
 
@@ -21,6 +21,7 @@ loaded LAZILY on first use so importing this module needs no GPU/torch.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 import numpy as np
@@ -56,8 +57,29 @@ class Go2GraspPerception:
         self._tracker = tracker
         self._w = int(width)
         self._h = int(height)
+        # One detector/segmenter call at a time: the EdgeTAM session and the lazy
+        # model loads are not thread-safe (explore auto-observe vs skill threads).
+        self._lock = threading.Lock()
 
     # --- frames / geometry ---------------------------------------------------
+
+    def capture(self) -> Any:
+        """ONE camera instant as an RGBDFrame: rgb, self-filtered depth, K, pose.
+
+        Every field shares the frame's ``sim_time`` (a single render of a
+        step-boundary copy); ``K`` is derived from the frame's actual shape. The
+        robot's own arm pixels are zeroed in depth (see :meth:`get_depth_frame`).
+        """
+        import dataclasses
+
+        has_mask = callable(getattr(self._base, "self_mask", None))
+        kinds = ("rgb", "depth", "seg") if has_mask else ("rgb", "depth")
+        f = self._base.get_rgbd_frame(self._w, self._h, kinds)
+        depth = f.depth
+        if has_mask and f.seg is not None:
+            depth = depth.copy()
+            depth[self._base.self_mask(f.seg)] = 0.0
+        return dataclasses.replace(f, depth=depth)
 
     def get_color_frame(self) -> np.ndarray:
         return self._base.get_camera_frame(self._w, self._h)
@@ -112,8 +134,13 @@ class Go2GraspPerception:
         perception_grasp consumes ``list[Detection]`` unchanged). It reads ONLY the
         rendered RGB + the text query — never a ground-truth pose.
         """
-        self._ensure_detector()
-        return self._vlm.detect(self.get_color_frame(), query)
+        return self.detect_in(self.get_color_frame(), query)
+
+    def detect_in(self, rgb: np.ndarray, query: str) -> list[Detection]:
+        """:meth:`detect` on a GIVEN frame (the box then belongs to that frame's pose)."""
+        with self._lock:
+            self._ensure_detector()
+            return self._vlm.detect(rgb, query)
 
     def segment(self, image: np.ndarray, bbox: Any) -> np.ndarray | None:
         """Binary mask for a single bbox on *image*, or None.
@@ -126,8 +153,9 @@ class Go2GraspPerception:
         """
         x1, y1, x2, y2 = (int(round(float(v))) for v in bbox)
         try:
-            self._ensure_tracker()
-            results = self._tracker.init_track(image, bboxes=[(x1, y1, x2, y2)])
+            with self._lock:
+                self._ensure_tracker()
+                results = self._tracker.init_track(image, bboxes=[(x1, y1, x2, y2)])
             mask = results[0].get("mask") if results else None
             if mask is not None and int(np.count_nonzero(mask)) > 0:
                 return mask

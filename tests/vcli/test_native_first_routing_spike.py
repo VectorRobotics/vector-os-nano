@@ -98,7 +98,7 @@ def _empty_trace(goal: str) -> ExecutionTrace:
 
 
 def test_native_trace_acted_true_for_walk_step() -> None:
-    trace = _acted_trace("g", strategy="walk", verify="at_position(11.0, 3.0)", verified_pose=True)
+    trace = _acted_trace("g", strategy="walk", verify="at_position(9.0, 3.0)", verified_pose=True)
     assert cli._native_trace_acted(trace) is True
 
 
@@ -225,11 +225,11 @@ def test_native_first_falls_back_to_legacy_when_native_no_action(monkeypatch) ->
 def test_native_first_uses_native_when_native_acted(monkeypatch) -> None:
     monkeypatch.delenv("VECTOR_NATIVE_LOOP", raising=False)
     native = _acted_trace(
-        "covered goal", strategy="walk", verify="at_position(11.0, 3.0)", verified_pose=True
+        "covered goal", strategy="walk", verify="at_position(9.0, 3.0)", verified_pose=True
     )
     # A legacy trace that, if (wrongly) used, would FAIL — so a mis-route is caught.
     legacy = _acted_trace(
-        "covered goal", strategy="walk", verify="at_position(11.0, 3.0)", verified_pose=False
+        "covered goal", strategy="walk", verify="at_position(9.0, 3.0)", verified_pose=False
     )
     engine = _SpyEngine(native_trace=native, legacy_trace=legacy)
     _wire_stub_engine(monkeypatch, engine)
@@ -291,7 +291,7 @@ def test_print_native_default_does_not_preempt_explicit_native_loop(monkeypatch)
     monkeypatch.delenv("VECTOR_NATIVE_LOOP", raising=False)
     monkeypatch.delenv("VECTOR_NATIVE_FIRST", raising=False)
     monkeypatch.delenv("VECTOR_PRINT_NATIVE", raising=False)
-    native = _acted_trace("g", strategy="walk", verify="at_position(11.0, 3.0)", verified_pose=True)
+    native = _acted_trace("g", strategy="walk", verify="at_position(9.0, 3.0)", verified_pose=True)
     legacy = _acted_trace("g", strategy="walk", verify="at_position(2.0, 0.0)", verified_pose=False)
     engine = _SpyEngine(native_trace=native, legacy_trace=legacy)
     _wire_stub_engine(monkeypatch, engine)
@@ -311,14 +311,14 @@ def test_print_native_default_does_not_preempt_explicit_native_loop(monkeypatch)
 
 _SIM_TIMEOUT_SEC = 240.0
 
-# go2 starts at (10, 3); a generous forward walk reaches within at_position tol of
-# (11, 3) (mirrors the trichotomy honest-walk script).
+# go2 starts at (10, 3); a 1.0 m backward walk reaches within at_position tol of
+# (9, 3) (mirrors the trichotomy honest-walk script).
 _HONEST_SCRIPT = {
     "turns": [
         {"tool_calls": [
-            {"name": "walk", "input": {"direction": "forward", "distance": 2.5, "speed": 0.3}}
+            {"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}
         ]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0)"}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(9.0, 3.0)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -338,7 +338,7 @@ def test_native_first_covered_go2_routes_to_native(sim_cleanup) -> None:
     from tests.harness.pty_cli import run_cli_turn
 
     r = run_cli_turn(
-        "走到坐标 (11.0,3.0)",
+        "走到坐标 (9.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
         extra_args=["--headless", "--native-first"],

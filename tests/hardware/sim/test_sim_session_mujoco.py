@@ -153,9 +153,9 @@ def test_interpreter_exit_stops_the_session_cleanly() -> None:
 
 
 def test_dead_physics_thread_is_an_error_never_started(monkeypatch) -> None:
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from vector_os_nano.sim.runtime import SimRuntime
 
-    monkeypatch.setattr(MuJoCoGo2, "_physics_loop", lambda self: None)  # thread dies at once
+    monkeypatch.setattr(SimRuntime, "_loop", lambda self: None)  # thread dies at once
     app: dict[str, Any] = {"registry": CategorizedToolRegistry()}
     threads0 = threading.active_count()
     res = _start(app, "go2")
@@ -176,12 +176,18 @@ def test_go2_piper_scene_compiles_from_a_relocated_checkout(tmp_path) -> None:
         "m = mujoco.MjModel.from_xml_path(str(p))\n"
         "print(v.__file__, p, m.nu)\n"
     )
+    cache = tmp_path / "cache"
     out = subprocess.run(
         [sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True,
-        env={**os.environ, "PYTHONPATH": str(tmp_path)}, timeout=120,
+        env={**os.environ, "PYTHONPATH": str(tmp_path), "XDG_CACHE_HOME": str(cache)},
+        timeout=120,
     )
     assert out.returncode == 0, out.stderr[-2000:]
     mod_file, scene, nu = out.stdout.split()
-    assert mod_file.startswith(str(tmp_path)) and scene.startswith(str(tmp_path))
+    # the package is the relocated copy; the generated scene lives in the user
+    # cache (never the package) and points at the relocated meshes
+    assert mod_file.startswith(str(pkg)) and scene.startswith(str(cache))
     assert nu == "19"
-    assert str(_REPO) not in Path(scene).read_text(), "scene still points into the original checkout"
+    text = Path(scene).read_text()
+    assert str(_REPO) not in text, "scene still points into the original checkout"
+    assert str(pkg) in text

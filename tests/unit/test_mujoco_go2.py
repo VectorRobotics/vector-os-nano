@@ -222,7 +222,7 @@ class TestMuJoCoGo2SpeedCommand:
             go2.stand()
             start = go2.get_position()
             go2.set_velocity(0.3, 0, 0)
-            time.sleep(2.0)
+            go2.wait_sim(2.0)
             go2.set_velocity(0, 0, 0)
             end = go2.get_position()
             displacement = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
@@ -238,7 +238,7 @@ class TestMuJoCoGo2SpeedCommand:
         try:
             go2.stand()
             go2.set_velocity(0, 0.2, 0)
-            time.sleep(2.0)
+            go2.wait_sim(2.0)
             go2.set_velocity(0, 0, 0)
             pos = go2.get_position()
             assert pos[2] > 0.15, f"Robot fell during lateral walk: z={pos[2]:.3f}"
@@ -252,7 +252,7 @@ class TestMuJoCoGo2SpeedCommand:
             go2.stand()
             start_heading = go2.get_heading()
             go2.set_velocity(0, 0, 0.5)
-            time.sleep(2.0)
+            go2.wait_sim(2.0)
             go2.set_velocity(0, 0, 0)
             end_heading = go2.get_heading()
             # Heading change can wrap; use absolute difference or angle distance
@@ -270,9 +270,12 @@ class TestMuJoCoGo2SpeedCommand:
         try:
             go2.stand()
             go2.set_velocity(0.3, 0, 0)
-            time.sleep(1.0)
+            go2.wait_sim(1.0)
             go2.set_velocity(0, 0, 0)
-            time.sleep(0.5)
+            # SIM seconds: the MPC->PD-stance switch rings ~0.35 sim-s (peak ~0.3 m/s);
+            # a 0.5 s WALL sleep landed inside it whenever the sim ran < ~0.8x
+            # real time (4/4 red on the loaded gate box).
+            go2.wait_sim(0.5)
             vel = go2.get_velocity()
             speed = (vel[0] ** 2 + vel[1] ** 2 + vel[2] ** 2) ** 0.5
             assert speed < 0.1, f"Robot still moving after stop: speed={speed:.3f} m/s"

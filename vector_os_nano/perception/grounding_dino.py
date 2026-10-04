@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 import numpy as np
@@ -144,6 +145,9 @@ class GroundingDinoDetector:
         self._model: Any = None
         self._device: str = "cpu"
         self._torch: Any = None
+        # The shared instance serves the detect capability AND the grasp/explore
+        # perception from different threads: one load + inference at a time.
+        self._lock = threading.Lock()
 
     # --- lazy load -----------------------------------------------------------
 
@@ -185,6 +189,14 @@ class GroundingDinoDetector:
     # --- detection -----------------------------------------------------------
 
     def detect(self, rgb: np.ndarray, query: str) -> list[Detection]:
+        """Detect objects matching *query* in *rgb*; pixel-space xyxy boxes.
+
+        Serialized (thread-safe lazy load + inference); see :meth:`_detect`.
+        """
+        with self._lock:
+            return self._detect(rgb, query)
+
+    def _detect(self, rgb: np.ndarray, query: str) -> list[Detection]:
         """Detect objects matching *query* in *rgb*; pixel-space xyxy boxes.
 
         Args:
@@ -260,6 +272,7 @@ class GroundingDinoDetector:
 # route's Go2GraspPerception.detect, so the model loads at most once per process.
 
 _SHARED: GroundingDinoDetector | None = None
+_SHARED_LOCK = threading.Lock()
 
 
 def get_shared_detector() -> GroundingDinoDetector:
@@ -269,6 +282,7 @@ def get_shared_detector() -> GroundingDinoDetector:
     importing/constructing here never pulls torch.
     """
     global _SHARED
-    if _SHARED is None:
-        _SHARED = GroundingDinoDetector()
-    return _SHARED
+    with _SHARED_LOCK:
+        if _SHARED is None:
+            _SHARED = GroundingDinoDetector()
+        return _SHARED

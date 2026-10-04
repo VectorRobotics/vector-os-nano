@@ -85,6 +85,9 @@ class VerdictReport:
     oracle_names: tuple[str, ...]
     per_step: tuple[StepVerdict, ...] = ()
     error: str = ""
+    # Display metadata (never part of the gate): the locomotion backend the sim
+    # body actually ran ('mpc' / 'sinusoidal'), '' when there is no sim base.
+    gait_backend: str = ""
 
     # ------------------------------------------------------------------
     # Construction — the ONLY supported way to build a verdict from a run.
@@ -92,7 +95,7 @@ class VerdictReport:
 
     @classmethod
     def from_trace(
-        cls, trace: Any, oracle_names: frozenset[str]
+        cls, trace: Any, oracle_names: frozenset[str], *, gait_backend: str = ""
     ) -> "VerdictReport":
         """Build a verdict from an ExecutionTrace using the EXISTING gate.
 
@@ -147,6 +150,7 @@ class VerdictReport:
             n_grounded=n_grounded,
             oracle_names=tuple(sorted(oracle_names)),
             per_step=tuple(per_step),
+            gait_backend=str(gait_backend or ""),
         )
 
     @classmethod

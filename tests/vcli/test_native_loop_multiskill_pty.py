@@ -9,7 +9,7 @@ planner's job is broader: it routes MANY distinct skills to MANY distinct verify
 predicates. Before any legacy deletion we must show the native producer covers more
 of that surface. This module is the multi-skill proof on the REAL go2 sim:
 
-    [walk forward ~2m]  -> verify(at_position(11.0, 3.0))   -> GROUNDED + CAUSED
+    [walk forward ~2m]  -> verify(at_position(9.0, 3.0))   -> GROUNDED + CAUSED
     [turn left]         -> verify(facing(<start+90deg>))     -> GROUNDED + CAUSED
     finish
 
@@ -30,11 +30,9 @@ subsumes a distinct (skill, predicate) the first acceptance never exercised:
     delta — a forward walk's planar move does NOT count for facing). [STEP-12 fix]
 
 GAIT UNDER-ROTATION (empirical, documented honestly): the MPC gait achieves only
-about HALF its commanded yaw within the step's wall-clock (a commanded 180deg turn
-lands ~85deg of real yaw) — the rotational analogue of the walk skill under-shooting
-its commanded distance. So to actually FACE start+90deg (within ``facing``'s 20deg
-tol) the script COMMANDS a 180deg left turn, exactly as the walk command over-shoots
-distance to land within ``at_position``'s tol. The verify target is a clean
+about TWO THIRDS of its commanded yaw even in sim time (a commanded 90deg turn lands
+~61deg, 180deg ~123deg). So to actually FACE start+90deg (within ``facing``'s 20deg
+tol) the script COMMANDS a 135deg left turn. The verify target is a clean
 start+90deg heading (NOT the achieved heading — we never author the goal to match the
 outcome); the over-command is the honest way the gait reaches it. The target heading
 is computed from the base's ACTUAL heading read BEFORE the run, so the test is
@@ -54,9 +52,9 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-# Left turn (counter-clockwise) -> positive yaw. The gait achieves ~half the
-# commanded rotation within the step, so command 180deg to actually reach +90deg.
-_COMMANDED_TURN_DEG: float = 180.0
+# Left turn (counter-clockwise) -> positive yaw. The gait achieves ~2/3 of the
+# commanded rotation, so command 135deg to actually reach +90deg.
+_COMMANDED_TURN_DEG: float = 135.0
 _TARGET_TURN_RAD: float = math.radians(90.0)  # the heading the step must PROVE
 
 
@@ -102,9 +100,9 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
         target_rad = start_heading + _TARGET_TURN_RAD
 
         backend = FakeToolScriptBackend.from_tool_script([
-            # PAIR 1: walk forward (over-command distance so the gait lands in tol).
-            tool_turn(("walk", {"direction": "forward", "distance": 2.5, "speed": 0.3})),
-            tool_turn(("verify", {"expr": "at_position(11.0, 3.0)"})),
+            # PAIR 1: walk 1 m back to (9, 3) (forward is blocked by the pick table).
+            tool_turn(("walk", {"direction": "backward", "distance": 1.0, "speed": 0.3})),
+            tool_turn(("verify", {"expr": "at_position(9.0, 3.0)"})),
             # PAIR 2: turn left (over-command angle so the gait lands in tol).
             tool_turn(("turn", {"direction": "left", "angle": _COMMANDED_TURN_DEG})),
             tool_turn(("verify", {"expr": f"facing({target_rad:.5f})"})),
@@ -124,7 +122,7 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
             path=_Path("/tmp/native_multiskill.jsonl"),
         )
         trace = eng.run_turn_native(
-            "走到坐标 (11.0,3.0)，然后向左转 90 度", session=session
+            "走到坐标 (9.0,3.0)，然后向左转 90 度", session=session
         )
 
         # EXACTLY two StepRecords — one per (action-chain -> verify) pair.

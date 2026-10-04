@@ -199,13 +199,10 @@ def test_scan_freshness_no_duplicates() -> None:
     mujoco_src = _mujoco_source()
     bridge_src = _bridge_source()
 
-    m = re.search(r"_LIDAR_UPDATE_INTERVAL\s*:\s*int\s*=\s*(\d+)", mujoco_src)
-    assert m is not None, "_LIDAR_UPDATE_INTERVAL constant not found in mujoco_go2.py"
-    lidar_steps = int(m.group(1))
-
-    physics_hz = 1000  # MuJoCo physics rate (1 kHz)
-    lidar_hz = physics_hz / lidar_steps  # expected 5.0 Hz
-    expected_interval = 1.0 / lidar_hz   # expected 0.2 s
+    m = re.search(r"_LIDAR_PERIOD_S\s*:\s*float\s*=\s*([0-9.]+)", mujoco_src)
+    assert m is not None, "_LIDAR_PERIOD_S constant not found in mujoco_go2.py"
+    expected_interval = float(m.group(1))  # sim seconds between scans: 0.2 s
+    lidar_hz = 1.0 / expected_interval     # expected 5.0 Hz
 
     pc_interval = _find_timer_interval(bridge_src, "_publish_pointcloud")
     scan_interval = _find_timer_interval(bridge_src, "_publish_scan")

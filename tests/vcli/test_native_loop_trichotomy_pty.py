@@ -30,7 +30,6 @@ each case via fixtures (the generated scene xml is untracked).
 """
 from __future__ import annotations
 
-import time
 
 import pytest
 
@@ -40,15 +39,14 @@ from tests.harness.pty_cli import run_cli_turn  # noqa: E402
 
 _SIM_TIMEOUT_SEC = 240.0
 
-# go2 starts at (10, 3). A forward walk_skill should reach within at_position's tol
-# of ~(11, 3). The native tool-script issues a generous distance so the MPC gait
-# (slower than wall-clock) actually displaces ~1m within the verify tol.
+# go2 starts at (10, 3). A 1.0 m backward walk (SIM-timed) reaches within
+# at_position's tol of (9, 3); forward is blocked by the pick table at x~10.47.
 _HONEST_SCRIPT = {
     "turns": [
         {"tool_calls": [
-            {"name": "walk", "input": {"direction": "forward", "distance": 2.5, "speed": 0.3}}
+            {"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}
         ]},
-        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0)"}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": "at_position(9.0, 3.0)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
@@ -73,7 +71,7 @@ _NOOP_SCRIPT = {
 @pytest.mark.capability
 def test_native_honest_walk_is_caused_and_verified(sim_cleanup) -> None:
     r = run_cli_turn(
-        "走到坐标 (11.0,3.0)",
+        "走到坐标 (9.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
         extra_args=["--headless", "--native-loop"],
@@ -149,9 +147,10 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         effects = {"is_moving": False}
 
         def execute(self, params, context):
-            mj = context.base._mj  # the root freejoint is NOT qpos[0] once pickables precede it
-            mj.data.qpos[mj.layout.root_qpos_adr] = float(params.get("x", 11.0))
-            time.sleep(0.15)
+            base = context.base  # the root freejoint is NOT qpos[0] once pickables precede it
+            adr, x = base._mj.layout.root_qpos_adr, float(params.get("x", 9.0))
+            base.runtime.call(lambda _m, d: d.qpos.__setitem__(adr, x))  # at a step boundary
+            base.wait_sim(0.15)
             return SkillResult(success=True, result_data={"x": params.get("x")})
 
     from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
@@ -166,8 +165,8 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         agent._skill_registry.register(_TeleportSkill())
 
         backend = FakeToolScriptBackend.from_tool_script([
-            tool_turn(("teleport", {"x": 11.0})),
-            tool_turn(("verify", {"expr": "at_position(11.0, 3.0)"})),
+            tool_turn(("teleport", {"x": 9.0})),
+            tool_turn(("verify", {"expr": "at_position(9.0, 3.0)"})),
             tool_turn(end=True),
         ])
         eng = VectorEngine(
@@ -184,16 +183,16 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
             path=_Path("/tmp/native_teleport.jsonl"),
         )
         start = list(base.get_position()[:2])
-        trace = eng.run_turn_native("走到坐标 (11.0,3.0)", session=session)
+        trace = eng.run_turn_native("走到坐标 (9.0,3.0)", session=session)
         step = trace.steps[0]
 
-        # The teleport "succeeded" and the predicate is TRUE (pose jumped to ~11),
+        # The teleport "succeeded" and the predicate is TRUE (pose jumped to ~9),
         # but no command was issued — the native producer's grader catches it.
         assert step.success is True
         assert step.verify_result is True
         assert step.actor_caused is ActorCaused.UNCAUSED
         assert abs(base.cmd_motion()) < 1e-9, "teleport issued zero commanded motion"
-        assert base.get_position()[0] > start[0] + 0.5, "qpos actually jumped"
+        assert base.get_position()[0] < start[0] - 0.5, "qpos actually jumped"
         # The per-step strategy is the teleport skill (NOT navigate) — routing held.
         assert step.strategy == "teleport"
 

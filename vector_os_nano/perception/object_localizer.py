@@ -49,6 +49,28 @@ def _perception_is_usable(perception: Any) -> bool:
     return True
 
 
+def capture_rgbd(perception: Any) -> tuple[Any, Any, Any, Any, Any]:
+    """``(rgb, depth, intrinsics, cam_xpos, cam_xmat)`` of ONE camera instant.
+
+    Uses the backend's atomic ``capture()`` (an RGBDFrame: pixels, depth and pose
+    of one sim time, intrinsics from the actual shape) when it has one; else the
+    four separate getters.
+    """
+    cap = getattr(perception, "capture", None)
+    if callable(cap):
+        f = cap()
+        return f.rgb, f.depth, f.K, f.cam_pos, f.cam_mat
+    cam_xpos, cam_xmat = perception.get_camera_pose()[:2]
+    return (perception.get_color_frame(), perception.get_depth_frame(),
+            perception.get_intrinsics(), cam_xpos, cam_xmat)
+
+
+def detect_on(perception: Any, rgb: Any, query: str) -> Any:
+    """Detections on *rgb* itself when the backend can, so box and depth share a frame."""
+    fn = getattr(perception, "detect_in", None)
+    return fn(rgb, query) if callable(fn) else perception.detect(query)
+
+
 def localize_objects_3d(
     perception: Any,
     queries: list[str],
@@ -87,13 +109,10 @@ def localize_objects_3d(
 
     from vector_os_nano.perception.grasp_point import grasp_point_from_rgbd
 
-    # Capture frames + camera geometry once (reuse across all queries).
+    # Capture ONE camera instant (reused across all queries): the boxes, depth and
+    # pose all come from it, so the back-projection uses the pose of its pixels.
     try:
-        color = perception.get_color_frame()
-        depth = perception.get_depth_frame()
-        intrinsics = perception.get_intrinsics()
-        cam_pose = perception.get_camera_pose()
-        cam_xpos, cam_xmat = cam_pose[0], cam_pose[1]
+        color, depth, intrinsics, cam_xpos, cam_xmat = capture_rgbd(perception)
     except Exception as exc:
         logger.debug("[OBJ-LOC] failed to capture frames/pose: %s", exc)
         return []
@@ -110,7 +129,7 @@ def localize_objects_3d(
         if query in results:
             continue
         try:
-            detections = perception.detect(query)
+            detections = detect_on(perception, color, query)
         except Exception as exc:
             logger.debug("[OBJ-LOC] detect(%r) failed: %s", query, exc)
             continue
