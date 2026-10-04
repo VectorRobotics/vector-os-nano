@@ -1170,7 +1170,8 @@ def should_attempt_native(user_input: str, *, agent: Any, engine: Any) -> bool:
     trivial-input threshold MATCHES ``should_use_vgg`` exactly (``len(user_input) < 2`` on the
     RAW input — NOT stripped — so a 1-char-after-strip command like "去 " that ``should_use_vgg``
     accepts is not silently dropped; the earlier ``len(strip())`` was an off-by-strip MISS,
-    D79). A toolset-build error fails OPEN to native. SHADOW for now: not wired into live routing.
+    D79). A toolset-build error fails OPEN to native. The REPL gates on this (WP14): every
+    world now offers the sim lifecycle, so in practice every non-trivial turn attempts native.
     """
     if not user_input or len(user_input) < 2:
         return False

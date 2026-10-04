@@ -1744,10 +1744,7 @@ def _build_turn_context(
     robot_ctx_provider = None
     try:
         from vector_os_nano.vcli.robot_context import RobotContextProvider
-        base = getattr(agent, "_base", None) if agent else None
-        sg = getattr(agent, "_spatial_memory", None) if agent else None
-        arm = getattr(agent, "_arm", None) if agent else None
-        robot_ctx_provider = RobotContextProvider(base=base, scene_graph=sg, arm=arm)
+        robot_ctx_provider = RobotContextProvider.for_agent(agent)
     except ImportError:
         pass
     system_prompt = build_system_prompt(
@@ -2092,10 +2089,7 @@ def main(argv: list[str] | None = None) -> None:
     robot_ctx_provider = None
     try:
         from vector_os_nano.vcli.robot_context import RobotContextProvider
-        base = getattr(agent, "_base", None) if agent else None
-        sg = getattr(agent, "_spatial_memory", None) if agent else None
-        arm = getattr(agent, "_arm", None) if agent else None
-        robot_ctx_provider = RobotContextProvider(base=base, scene_graph=sg, arm=arm)
+        robot_ctx_provider = RobotContextProvider.for_agent(agent)
     except ImportError:
         pass
     system_prompt = build_system_prompt(
