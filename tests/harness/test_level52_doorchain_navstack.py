@@ -25,10 +25,7 @@ sys.path.insert(0, str(_REPO))
 
 import vector_os_nano.skills.navigate as navigate_module
 from vector_os_nano.core.scene_graph import SceneGraph
-from vector_os_nano.skills.navigate import (
-    NavigateSkill,
-    _navigate_to_waypoint,
-)
+from vector_os_nano.skills.navigate import NavigateSkill
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -126,12 +123,6 @@ class TestDoorChainSourceAudit:
         assert "base.walk(" not in source, (
             "_dead_reckoning still calls base.walk() directly — "
             "locomotion should go through base.navigate_to()"
-        )
-
-    def test_navigate_to_waypoint_function_still_exists(self) -> None:
-        """_navigate_to_waypoint() must still exist (may be used by other callers)."""
-        assert callable(_navigate_to_waypoint), (
-            "_navigate_to_waypoint helper was deleted — it must be kept for other callers"
         )
 
     def test_dead_reckoning_has_timeout_constant(self) -> None:
@@ -243,7 +234,8 @@ class TestDoorChainCallsNavigateTo:
 
 
 class TestModesUnchanged:
-    """Verify Mode 0 (proxy) and Mode 1 (NavStackClient) still work correctly."""
+    """Mode 0 (the base's planner) and the door-chain fallback (Mode 1, the
+    NavStackClient service, was dead code and is deleted, WP08)."""
 
     def test_mode0_proxy_not_dead_reckoning(self) -> None:
         """Mode 0: if base has navigate_to, skill uses _navigate_with_proxy, not _dead_reckoning."""
@@ -262,26 +254,6 @@ class TestModesUnchanged:
 
         assert result.success is True
         assert result.result_data["mode"] == "proxy_nav_stack"
-
-    def test_mode1_nav_stack_client_not_dead_reckoning(self) -> None:
-        """Mode 1: NavStackClient available -> _dead_reckoning not called."""
-        sg = _make_sg_with_doors()
-        # base WITHOUT navigate_to -> skips Mode 0
-        base = _make_base_no_navigate_to(x=3.0, y=2.5)
-        ctx = _make_ctx(base, sg)
-        # Add nav service
-        nav = MagicMock()
-        nav.is_available = True
-        nav.navigate_to.return_value = True
-        nav.get_state_estimation.return_value = None
-        ctx.services["nav"] = nav
-
-        skill = NavigateSkill()
-        with patch.object(skill, "_dead_reckoning", wraps=skill._dead_reckoning) as mock_dr:
-            result = skill.execute({"room": "kitchen"}, ctx)
-            mock_dr.assert_not_called()
-
-        assert result.success is True
 
     def test_mode2_triggered_when_no_proxy_and_no_nav_stack(self) -> None:
         """Mode 2 (door-chain) triggered when base has no navigate_to AND nav stack absent."""

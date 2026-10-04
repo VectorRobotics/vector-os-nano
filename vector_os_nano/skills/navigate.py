@@ -1,19 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""NavigateSkill -- hardware-agnostic room-to-room navigation.
+"""NavigateSkill -- hardware-agnostic room / coordinate navigation.
 
-Supports two navigation modes:
-1. NavStackClient (real navigation): when context.services.get("nav") is available
-   and nav.is_available is True, publishes a waypoint goal and waits for
-   goal_reached feedback from the navigation stack.
-2. Dead-reckoning fallback: when no nav stack is present, uses SceneGraph door
-   chain to navigate between named rooms via turn+walk sequences.
+A room name resolves (aliases, SceneGraph) to its learned centre; a coordinate
+goal ({x, y} / target) goes straight to the base's planner. Both drive
+``base.navigate_to``:
 
-Room positions and door coordinates come entirely from the SceneGraph
-(populated during exploration).  No hardcoded coordinates are used.
+- an in-process base returns a ``NavResult`` from the ONE global planner
+  (sim/nav): its ``reason`` is reported and there is no door-chain retry (it would
+  re-run the same plan);
+- a bool-returning base (a ROS2 proxy over FAR) keeps the SceneGraph door-chain
+  fallback when its planner gives up.
 
-This module has no ROS2 imports at the top level.
+A room visit is recorded only after a verified arrival (never on failure: the
+SceneGraph centres feed the legacy verify). Room positions and door coordinates
+come from the SceneGraph; no hardcoded coordinates. No ROS2 imports.
 """
 from __future__ import annotations
 
@@ -26,48 +28,9 @@ from typing import Any
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.core.run_dir import run_path
+from vector_os_nano.sim.nav.follow import NavResult, arrival_radius
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Nav config loader (lazy, module-level cache)
-# ---------------------------------------------------------------------------
-
-_NAV_CFG: dict | None = None
-
-
-def _load_nav_config() -> dict:
-    """Load nav.yaml with defaults. Searches relative paths then falls back."""
-    import os
-    import yaml
-
-    global _NAV_CFG
-    if _NAV_CFG is not None:
-        return _NAV_CFG
-
-    _search = [
-        "config/nav.yaml",
-        os.path.join(os.path.dirname(__file__), "..", "..", "config", "nav.yaml"),
-    ]
-    for path in _search:
-        if os.path.exists(path):
-            try:
-                with open(path) as f:
-                    data = yaml.safe_load(f) or {}
-                _NAV_CFG = data
-                return _NAV_CFG
-            except Exception as exc:
-                logger.warning("nav.yaml load failed (%s), using defaults", exc)
-    _NAV_CFG = {}
-    return _NAV_CFG
-
-
-def _nav(key: str, default: float) -> float:
-    """Look up a navigation parameter by key, return default if absent."""
-    cfg = _load_nav_config()
-    nav_section = cfg.get("navigation", {})
-    return float(nav_section.get(key, default))
-
 
 # ---------------------------------------------------------------------------
 # Aliases -> canonical room name (Chinese + English + shortcuts)
@@ -122,12 +85,7 @@ _ROOM_ALIASES: dict[str, str] = {
     "洗衣房": "hallway",
 }
 
-_WALK_SPEED: float = 0.6     # m/s
-_TURN_SPEED: float = 0.8     # rad/s
-_ARRIVAL_RADIUS: float = 0.5  # meters -- close enough to target (dead-reckoning helper)
 _DOORCHAIN_ARRIVAL_RADIUS: float = 0.8  # meters -- arrival threshold for nav stack door-chain
-# Loaded from config/nav.yaml at first use; fallback keeps original behaviour
-_DOORCHAIN_WAYPOINT_TIMEOUT: float = _nav("waypoint_timeout", 30.0)
 
 _MIN_VISIT_COUNT: int = 1  # trust SceneGraph position after first visit
 
@@ -236,6 +194,17 @@ def _normalize_angle(a: float) -> float:
     return a
 
 
+def _cancel_exploration() -> None:
+    """A navigation takes priority over a running exploration: stop it first."""
+    try:
+        from vector_os_nano.skills.go2.explore import cancel_exploration, is_exploring
+        if is_exploring():
+            cancel_exploration()
+            logger.info("[NAV] Cancelled background exploration for navigation")
+    except Exception:  # noqa: BLE001 — explore is an optional go2 skill
+        pass
+
+
 def _detect_current_room(x: float, y: float, sg: Any = None) -> str:
     """Guess which room the robot is in based on SceneGraph nearest_room.
 
@@ -283,49 +252,6 @@ def _get_room_center_from_memory(
     return None
 
 
-def _navigate_to_waypoint(
-    base: Any,
-    target_x: float,
-    target_y: float,
-    label: str,
-) -> bool:
-    """Turn toward waypoint and walk to it via dead-reckoning.
-
-    Returns True if arrived upright, False if robot fell.
-    """
-    pos = base.get_position()
-    cx, cy = pos[0], pos[1]
-    heading = base.get_heading()
-
-    dist = _distance(cx, cy, target_x, target_y)
-    if dist < _ARRIVAL_RADIUS:
-        logger.info("[NAV] Already at %s (%.1fm away)", label, dist)
-        return True
-
-    # Calculate required heading change
-    target_angle = _angle_between(cx, cy, target_x, target_y)
-    turn_needed = _normalize_angle(target_angle - heading)
-
-    # Turn in place if heading delta > ~5.7 degrees
-    if abs(turn_needed) > 0.1:
-        vyaw = _TURN_SPEED if turn_needed > 0 else -_TURN_SPEED
-        turn_dur = abs(turn_needed) / _TURN_SPEED
-        logger.info("[NAV] Turn %.0f deg toward %s", math.degrees(turn_needed), label)
-        base.walk(0.0, 0.0, vyaw, turn_dur)
-
-    # Walk forward to waypoint
-    walk_dur = dist / _WALK_SPEED
-    logger.info("[NAV] Walk %.1fm to %s", dist, label)
-    base.walk(_WALK_SPEED, 0.0, 0.0, walk_dur)
-
-    # Upright check (z < 0.12 means robot has fallen)
-    pos = base.get_position()
-    if pos[2] < 0.12:
-        logger.error("[NAV] Robot fell during navigation to %s", label)
-        return False
-    return True
-
-
 # ---------------------------------------------------------------------------
 # NavigateSkill
 # ---------------------------------------------------------------------------
@@ -338,17 +264,10 @@ def _navigate_to_waypoint(
     direct=True,
 )
 class NavigateSkill:
-    """Navigate the robot to a room discovered during exploration.
+    """Navigate the robot to a named room (or a world coordinate).
 
-    Mode selection (in priority order):
-    1. NavStackClient (context.services["nav"]) -- full navigation stack,
-       publishes waypoint goal and waits for goal_reached confirmation.
-    2. Dead-reckoning -- turns toward waypoints and walks using SceneGraph
-       door chain data.
-
-    Room coordinates come exclusively from the SceneGraph populated
-    during explore.  No hardcoded room positions are used.
-
+    The base's own planner (``navigate_to``) drives; a base without one walks the
+    SceneGraph door chain. Room coordinates come exclusively from the SceneGraph.
     Works with ANY BaseProtocol implementation (not Go2-specific).
     """
 
@@ -432,14 +351,7 @@ class NavigateSkill:
         logger.info("[NAV] Using learned position for %s: (%.1f, %.1f)",
                     room_key, target[0], target[1])
 
-        # Cancel background exploration if running (navigate takes priority)
-        try:
-            from vector_os_nano.skills.go2.explore import cancel_exploration, is_exploring
-            if is_exploring():
-                cancel_exploration()
-                logger.info("[NAV] Cancelled background exploration for navigation")
-        except Exception:
-            pass
+        _cancel_exploration()
 
         # Ensure nav flag exists so bridge path follower is armed
         try:
@@ -450,20 +362,9 @@ class NavigateSkill:
         except Exception:
             pass
 
-        # --- Mode 0: Direct nav stack via proxy ---
         if hasattr(context.base, "navigate_to"):
-            result = self._navigate_with_proxy(room_key, target, context)
-            return result
-
-        # --- Mode 1: NavStackClient ---
-        nav = context.services.get("nav")
-        if nav is not None and nav.is_available:
-            result = self._navigate_with_nav_stack(nav, room_key, target, context)
-        else:
-            # --- Mode 2: Dead-reckoning fallback ---
-            result = self._dead_reckoning(room_key, context)
-
-        return result
+            return self._navigate_with_proxy(room_key, target, context)
+        return self._dead_reckoning(room_key, context)
 
     # ------------------------------------------------------------------
     # Navigation modes (private)
@@ -515,6 +416,10 @@ class NavigateSkill:
                 diagnosis_code="navigation_failed",
             )
 
+        # A running exploration would otherwise freeze (its nav flag is removed
+        # below) while is_exploring() stays True (skills-nav:missed2).
+        _cancel_exploration()
+
         # Ensure the bridge path follower is armed (same as the room path).
         try:
             import os
@@ -531,10 +436,11 @@ class NavigateSkill:
                   file=sys.stderr, flush=True)
 
         try:
-            ok = bool(navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress))
+            nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress)
         except TypeError:
             # A base whose navigate_to does not accept the extra kwargs.
-            ok = bool(navigate_to(tx, ty))
+            nav = navigate_to(tx, ty)
+        ok = bool(nav)
 
         # HOLD at the goal. navigate_to leaves the dog under the planner/TARE,
         # which keeps publishing /way_point and DRIFTS the dog away from the goal
@@ -549,15 +455,13 @@ class NavigateSkill:
                 os.remove(run_path("vector_nav_active"))
         except Exception:
             pass
-        stop = getattr(base, "stop", None) or getattr(base, "set_velocity", None)
-        if callable(stop):
-            try:
-                if stop is getattr(base, "set_velocity", None):
-                    stop(0.0, 0.0, 0.0)
-                else:
-                    stop()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("[NAV] coord-nav stop failed: %s", exc)
+        try:
+            if callable(getattr(base, "stop", None)):
+                base.stop()
+            else:
+                base.set_velocity(0.0, 0.0, 0.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[NAV] coord-nav stop failed: %s", exc)
 
         pos = base.get_position()
         dist = _distance(pos[0], pos[1], tx, ty)
@@ -581,7 +485,9 @@ class NavigateSkill:
                 "position": [round(pos[0], 1), round(pos[1], 1)],
                 "distance_to_target": round(dist, 1),
                 "far_confirmed": ok,
-                "mode": "proxy_coord",
+                "mode": "planner_coord" if isinstance(nav, NavResult) else "proxy_coord",
+                **({"reason": nav.reason, "target_planned": nav["target"]}
+                   if isinstance(nav, NavResult) else {}),
             },
         )
 
@@ -591,14 +497,14 @@ class NavigateSkill:
         target: tuple[float, float],
         context: SkillContext,
     ) -> SkillResult:
-        """Mode 0: Navigate via Go2ROS2Proxy.navigate_to() — FAR planner path.
+        """Drive to the room centre through the base's own planner (navigate_to).
 
-        Called when context.base exposes navigate_to() (i.e. the proxy is
-        connected to the live nav stack).  Falls back to dead-reckoning if
-        the proxy call returns False.
+        A ``NavResult`` (the in-process global planner) is final: its reason is
+        reported and no door chain is retried. A bool base (the ROS2 proxy over
+        FAR) falls back to the SceneGraph door chain when its planner gives up.
         """
         logger.info(
-            "[NAV] Proxy mode -> room=%s target=(%.1f, %.1f)",
+            "[NAV] Planner -> room=%s target=(%.1f, %.1f)",
             room_key, target[0], target[1],
         )
 
@@ -609,90 +515,40 @@ class NavigateSkill:
                 flush=True,
             )
 
-        nav_result = context.base.navigate_to(
-            target[0], target[1], timeout=45.0, on_progress=_progress
-        )
-
+        nav_result = context.base.navigate_to(target[0], target[1], on_progress=_progress)
         pos = context.base.get_position()
         dist = _distance(pos[0], pos[1], target[0], target[1])
+        planner = isinstance(nav_result, NavResult)
+        data = {
+            "room": room_key,
+            "target": [round(target[0], 1), round(target[1], 1)],
+            "position": [round(pos[0], 1), round(pos[1], 1)],
+            "distance_to_target": round(dist, 1),
+            "mode": "planner" if planner else "proxy_nav_stack",
+        }
+        if planner:
+            data["reason"] = nav_result.reason
 
-        # Update spatial memory if available
-        memory = context.services.get("spatial_memory")
-        if memory is not None:
-            memory.visit(room_key, pos[0], pos[1])
+        if nav_result:
+            # Record the visit only after a verified arrival (skills-nav:
+            # navigate-authors-own-oracle): a failed attempt never moves a centre.
+            memory = context.services.get("spatial_memory")
+            if memory is not None and dist <= arrival_radius():
+                memory.visit(room_key, pos[0], pos[1])
+            return SkillResult(success=True, result_data=data)
 
-        if not nav_result:
-            logger.warning(
-                "[NAV] Proxy navigate_to timed out; falling back to dead-reckoning"
-            )
-            return self._dead_reckoning(room_key, context)
-
-        return SkillResult(
-            success=True,
-            result_data={
-                "room": room_key,
-                "target": [round(target[0], 1), round(target[1], 1)],
-                "position": [round(pos[0], 1), round(pos[1], 1)],
-                "distance_to_target": round(dist, 1),
-                "mode": "proxy_nav_stack",
-            },
-        )
-
-    def _navigate_with_nav_stack(
-        self,
-        nav: Any,
-        room_key: str,
-        target: tuple[float, float],
-        context: SkillContext,
-    ) -> SkillResult:
-        """Delegate navigation to NavStackClient.
-
-        Sends /way_point and monitors position. Does not rely on /goal_reached
-        since the nav stack doesn't always publish it reliably.
-        """
-        logger.info("[NAV] Using nav stack -> room=%s target=(%.1f, %.1f)",
-                    room_key, target[0], target[1])
-
-        # Send the waypoint and wait for result
-        nav_result = nav.navigate_to(target[0], target[1], timeout=30.0)
-
-        # Check actual position after navigation
-        pos = context.base.get_position() if context.base else None
-        if pos is None:
-            odom = nav.get_state_estimation()
-            pos = [odom.x, odom.y, odom.z] if odom else [0, 0, 0]
-
-        dist = _distance(pos[0], pos[1], target[0], target[1])
-
-        # Update spatial memory
-        memory = context.services.get("spatial_memory")
-        if memory is not None:
-            memory.visit(room_key, pos[0], pos[1])
-
-        if not nav_result:
+        if planner:
             return SkillResult(
                 success=False,
-                error_message=f"Navigation to {room_key} failed (timeout or rejected)",
+                error_message=(
+                    f"Navigation to {room_key} failed: {nav_result.reason} "
+                    f"(ended {dist:.1f} m from the target)"
+                ),
                 diagnosis_code="navigation_failed",
-                result_data={
-                    "room": room_key,
-                    "target": [round(target[0], 1), round(target[1], 1)],
-                    "position": [round(pos[0], 1), round(pos[1], 1)],
-                    "distance_to_target": round(dist, 1),
-                    "mode": "nav_stack",
-                },
+                result_data=data,
             )
-
-        return SkillResult(
-            success=True,
-            result_data={
-                "room": room_key,
-                "target": [round(target[0], 1), round(target[1], 1)],
-                "position": [round(pos[0], 1), round(pos[1], 1)],
-                "distance_to_target": round(dist, 1),
-                "mode": "nav_stack",
-            },
-        )
+        logger.warning("[NAV] Proxy navigate_to failed; falling back to the door chain")
+        return self._dead_reckoning(room_key, context)
 
     def _dead_reckoning(
         self,

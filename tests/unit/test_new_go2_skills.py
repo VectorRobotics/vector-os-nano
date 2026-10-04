@@ -49,11 +49,20 @@ class TestStopSkill:
         assert "停" in s.__skill_aliases__
         assert "halt" in s.__skill_aliases__
 
-    def test_stop_calls_set_velocity_zero(self):
+    def test_stop_calls_the_ungated_base_stop(self):
+        # skills-nav:inprocess-nav-no-abort-stall: set_velocity from the stop's thread
+        # is IGNORED while a walk/navigate on another thread holds the skill token.
         base = _make_base()
         ctx = _make_context(base)
         result = StopSkill().execute({}, ctx)
 
+        assert result.success
+        base.stop.assert_called_once_with()
+        base.set_velocity.assert_not_called()
+
+    def test_stop_falls_back_to_set_velocity_without_stop(self):
+        base = MagicMock(spec=["set_velocity", "get_position"])
+        result = StopSkill().execute({}, _make_context(base))
         assert result.success
         base.set_velocity.assert_called_once_with(0.0, 0.0, 0.0)
 
@@ -72,11 +81,10 @@ class TestStopSkill:
         assert result.result_data == {"stopped": True}
 
     def test_stop_tolerates_set_velocity_exception(self):
-        """If set_velocity raises, stop should still return success=False or
-        at least not propagate the exception unhandled.  Current impl logs and
-        continues, so success=True is the expected outcome."""
+        """If the base stop raises, stop logs it and does not propagate the
+        exception unhandled, so success=True is the expected outcome."""
         base = _make_base()
-        base.set_velocity.side_effect = RuntimeError("motor fault")
+        base.stop.side_effect = RuntimeError("motor fault")
         ctx = _make_context(base)
 
         # Should not raise; set_velocity failure is logged and swallowed
@@ -196,10 +204,10 @@ class TestExploreSkillMetadata:
     def test_not_direct(self):
         assert ExploreSkill.__skill_direct__ is False
 
-    def test_no_duration_parameter(self):
-        """Non-blocking explore has no duration — runs until stopped."""
+    def test_only_parameter_is_the_backend(self):
         params = ExploreSkill().parameters
-        assert params == {}
+        assert list(params) == ["backend"]
+        assert params["backend"]["enum"] == ["coverage", "tare"]
 
 
 class TestExploreSkillNoBase:
@@ -214,19 +222,23 @@ class TestExploreSkillNoBase:
 class TestExploreNonBlocking:
     """Non-blocking explore — starts background thread, returns immediately."""
 
-    def test_returns_started_status(self):
-        """explore() returns immediately with status=exploration_started."""
-        base = _make_base(x=10.0, y=5.0)
-        ctx = _make_context(base)
-        with patch(
-            "vector_os_nano.skills.go2.explore._start_bridge_on_go2",
-            return_value=False,
-        ):
-            result = ExploreSkill().execute({}, ctx)
-        assert result.success
-        # Clean up background thread
-        from vector_os_nano.skills.go2.explore import cancel_exploration
-        cancel_exploration()
+    def test_no_backend_fails_loud_instead_of_a_false_green(self):
+        # skills-nav:explore-false-green-no-tare: with no TARE it returned
+        # success 'exploration_started' and did nothing.
+        base = MagicMock(spec=["get_position", "get_heading", "walk", "set_velocity", "stop"])
+        base.get_position.return_value = [10.0, 5.0, 0.3]
+        result = ExploreSkill().execute({}, _make_context(base))
+        assert not result.success and result.diagnosis_code == "no_backend"
+        from vector_os_nano.skills.go2.explore import is_exploring
+        assert not is_exploring()
+
+    def test_tare_requested_but_not_ours_fails_loud(self):
+        result = ExploreSkill().execute({"backend": "tare"}, _make_context(_make_base()))
+        assert not result.success and result.diagnosis_code == "no_backend"
+
+    def test_unknown_backend_fails_with_the_valid_set(self):
+        result = ExploreSkill().execute({"backend": "frontier"}, _make_context(_make_base()))
+        assert not result.success and "coverage" in result.error_message
 
     def test_already_exploring_returns_status(self):
         """Second call while exploring reports current status."""

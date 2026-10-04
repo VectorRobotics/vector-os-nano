@@ -3,8 +3,10 @@
 
 """WhereAmISkill -- report the robot's current position and room.
 
-Reads position and heading from context.base and uses the room map from
-vector_os_nano.skills.navigate to determine which room the robot is in.
+Reads position and heading from context.base. The room is the world layout's
+floor box that contains the position (geometry, config/room_layout.yaml), else
+the SceneGraph's nearest room. Heading labels use the world convention the
+whole agent shares: yaw 0 = +x = east, counter-clockwise positive.
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.sim.nav.coverage import room_at, room_layout
 from vector_os_nano.skills.navigate import _detect_current_room
 
 logger = logging.getLogger(__name__)
@@ -98,9 +101,13 @@ class WhereAmISkill:
         z = float(pos[2]) if len(pos) > 2 else 0.0
 
         sg = context.services.get("spatial_memory") if context.services else None
-        room = _detect_current_room(x, y, sg=sg)
+        layout = room_layout()
+        room = room_at(x, y, layout["boxes"]) or _detect_current_room(x, y, sg=sg)
         room_node = sg.get_room(room) if (sg is not None and room != "unknown") else None
-        room_center = (room_node.center_x, room_node.center_y) if room_node is not None else None
+        room_center = (
+            (room_node.center_x, room_node.center_y) if room_node is not None
+            else layout["rooms"].get(room)
+        )
         compass = _heading_label(heading_rad)
 
         logger.info(

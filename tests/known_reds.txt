@@ -129,13 +129,7 @@ tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_no
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_overhead | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_unknown_uri | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 
-# stale: nav2 dead-reckoning fallback pin (nav2 dead track; WP04)
-tests/unit/test_navigate_skill_nav2.py::TestNavigateSkillNav2Mode::test_fallback_uses_dead_reckoning_when_no_nav | xfail | stale: nav2 dead-reckoning fallback pin (nav2 dead track; WP04)
 
-# where_am_i reports room 'unknown' for the mocked base (skills-nav:compass-mismatch family; WP08)
-tests/unit/test_new_go2_skills.py::TestWhereAmISkill::test_reports_room_living_room | xfail | where_am_i reports room 'unknown' for the mocked base (skills-nav:compass-mismatch family; WP08)
-tests/unit/test_new_go2_skills.py::TestWhereAmISkill::test_reports_room_kitchen | xfail | where_am_i reports room 'unknown' for the mocked base (skills-nav:compass-mismatch family; WP08)
-tests/unit/test_new_go2_skills.py::TestWhereAmISkill::test_room_center_in_result | xfail | where_am_i reports room 'unknown' for the mocked base (skills-nav:compass-mismatch family; WP08)
 
 # stale: PerceptionProtocol grew members the hand-written mock lacks (runtime_checkable isinstance; WP11)
 tests/unit/test_perception_base.py::test_protocol_defined | xfail | stale: PerceptionProtocol grew members the hand-written mock lacks (runtime_checkable isinstance; WP11)
