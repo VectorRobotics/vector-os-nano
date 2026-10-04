@@ -371,7 +371,7 @@ class DescribeSceneSkill:
         # Record to SpatialMemory if available.
         spatial_memory = context.services.get("spatial_memory")
         if spatial_memory is not None:
-            object_names: list[str] = [obj.name for obj in scene.objects] if scene else list(vocab)
+            object_names: list[str] = [obj.name for obj in scene.objects]
             try:
                 spatial_memory.observe(room, object_names, scene.summary)
             except Exception as exc:
