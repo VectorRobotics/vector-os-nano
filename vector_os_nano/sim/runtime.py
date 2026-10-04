@@ -471,10 +471,15 @@ class SimRuntime:
         while not self._stop.is_set():
             with self.lock:
                 stepped = self._pauses == 0
-                if stepped:
-                    self._tick(None)
-                else:
-                    self._drain()
+                try:
+                    if stepped:
+                        self._tick(None)
+                    else:
+                        self._drain()
+                except BaseException:  # fail loud: a dead stepper must never be silent
+                    logger.exception("%s: physics stepper died at sim_time=%.3f",
+                                     self.name, self.sim_time)
+                    raise
             if not stepped:
                 self._wake.wait(_PARKED_POLL_S)
                 self._wake.clear()
