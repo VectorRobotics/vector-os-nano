@@ -101,12 +101,11 @@ class RobotContextProvider:
 
 
 def _heading_to_compass(degrees: float) -> str:
-    """Convert heading in degrees to compass direction."""
-    # Normalize to 0-360
-    d = degrees % 360
-    if d < 0:
-        d += 360
-    directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-                   "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
-    idx = round(d / 22.5) % 16
-    return directions[idx]
+    """Compass label of a world yaw in degrees (0 = +x = east, CCW positive).
+
+    The same convention as where_am_i (skills-nav:compass-mismatch: this used to
+    call yaw 0 "N" while where_am_i called it "east").
+    """
+    from vector_os_nano.skills.go2.where_am_i import _heading_label
+
+    return _heading_label(math.radians(degrees))

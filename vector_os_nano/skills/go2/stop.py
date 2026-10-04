@@ -3,7 +3,7 @@
 
 """StopSkill -- emergency stop, immediately halts all movement.
 
-Calls set_velocity(0, 0, 0) on the base and publishes a zero-velocity
+Calls the base's ungated stop() (else set_velocity(0, 0, 0)) and publishes a zero-velocity
 Twist to /cmd_vel_nav via ROS2 (best-effort, lazy import).
 """
 from __future__ import annotations
@@ -67,12 +67,16 @@ class StopSkill:
         except Exception:
             pass
 
-        # Hard stop via base interface
+        # Hard stop via base interface. stop() is ungated: set_velocity from this
+        # thread is IGNORED while another thread's walk/navigate holds the skill token.
         try:
-            context.base.set_velocity(0.0, 0.0, 0.0)
-            logger.info("[STOP] set_velocity(0, 0, 0) issued")
+            if callable(getattr(context.base, "stop", None)):
+                context.base.stop()
+            else:
+                context.base.set_velocity(0.0, 0.0, 0.0)
+            logger.info("[STOP] base stopped")
         except Exception as exc:
-            logger.warning("[STOP] set_velocity failed: %s", exc)
+            logger.warning("[STOP] base stop failed: %s", exc)
 
         # Best-effort: publish zero Twist to /cmd_vel_nav via ROS2
         _try_publish_zero_cmdvel()

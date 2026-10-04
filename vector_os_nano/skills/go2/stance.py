@@ -144,8 +144,15 @@ class LieDownSkill:
                 diagnosis_code="no_base",
             )
 
+        lie_down = getattr(context.base, "lie_down", None)
+        if not callable(lie_down):  # e.g. the ROS2 proxy base (skills-nav:missed5)
+            return SkillResult(
+                success=False,
+                error_message=f"{type(context.base).__name__} cannot lie down (no lie_down)",
+                diagnosis_code="lie_down_failed",
+            )
         logger.info("[LIE_DOWN] Commanding lie down")
-        ok = context.base.lie_down()
+        ok = lie_down()
 
         if not ok:
             return SkillResult(

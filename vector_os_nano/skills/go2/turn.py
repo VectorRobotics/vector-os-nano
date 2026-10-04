@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""TurnSkill — rotate the Go2 quadruped by a given angle.
+"""TurnSkill — rotate the base in place by a given angle, closed-loop on heading.
 
-Maps direction + angle to a timed yaw velocity command via
-context.base.walk(0, 0, vyaw, duration).
+The direction is normalised from its aliases (左/逆时针/ccw -> left, 右/顺时针/cw ->
+right); anything else fails loud with the valid set (it used to turn RIGHT). The
+turn is one timed yaw walk plus short corrections on the measured heading.
 """
 from __future__ import annotations
 
@@ -13,13 +14,29 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.sim.nav.follow import turn_by
 
 logger = logging.getLogger(__name__)
 
 _VYAW_SPEED: float = 0.5  # rad/s
+_HEADING_TOL_RAD: float = math.radians(5.0)
 
 _DEFAULT_DIRECTION: str = "left"
 _DEFAULT_ANGLE: float = 90.0  # degrees
+
+# alias -> canonical direction (lower-cased lookup)
+DIRECTION_ALIASES: dict[str, str] = {
+    **dict.fromkeys(("left", "l", "ccw", "counterclockwise", "counter-clockwise",
+                     "anticlockwise", "左", "左转", "向左", "向左转", "往左", "往左转",
+                     "逆时针"), "left"),
+    **dict.fromkeys(("right", "r", "cw", "clockwise", "右", "右转", "向右", "向右转",
+                     "往右", "往右转", "顺时针"), "right"),
+}
+
+
+def normalize_direction(value: object, aliases: dict[str, str]) -> str | None:
+    """The canonical direction for *value* (case/whitespace-insensitive), or None."""
+    return aliases.get(str(value).strip().lower())
 
 
 @skill(
@@ -53,19 +70,10 @@ class TurnSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"is_moving": False}
-    failure_modes: list[str] = ["no_base", "turn_failed"]
+    failure_modes: list[str] = ["no_base", "turn_failed", "bad_direction", "bad_angle"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Execute the turn command.
-
-        Args:
-            params: direction, angle.
-            context: SkillContext with base (Go2) attached.
-
-        Returns:
-            SkillResult(success=True) when rotation completes.
-            SkillResult(success=False, diagnosis_code="no_base") if base missing.
-        """
+        """Turn by *angle* degrees toward *direction*; success = heading within 5 deg."""
         if context.base is None:
             logger.error("[TURN] No base connected")
             return SkillResult(
@@ -74,34 +82,41 @@ class TurnSkill:
                 diagnosis_code="no_base",
             )
 
-        direction: str = params.get("direction", _DEFAULT_DIRECTION)
-        angle_deg: float = float(params.get("angle", _DEFAULT_ANGLE))
-        angle_rad: float = math.radians(abs(angle_deg))
-
+        direction = normalize_direction(params.get("direction", _DEFAULT_DIRECTION),
+                                        DIRECTION_ALIASES)
+        if direction is None:
+            return SkillResult(
+                success=False, diagnosis_code="bad_direction",
+                error_message=(
+                    f"Unknown turn direction {params.get('direction')!r}; valid: left, right "
+                    "(or 左/右, 逆时针/顺时针, ccw/cw)"
+                ),
+            )
+        try:
+            angle_deg = float(params.get("angle", _DEFAULT_ANGLE))
+        except (TypeError, ValueError):
+            return SkillResult(success=False, diagnosis_code="bad_angle",
+                               error_message=f"Turn angle must be a number, got {params.get('angle')!r}")
+        if not math.isfinite(angle_deg):
+            return SkillResult(success=False, diagnosis_code="bad_angle",
+                               error_message=f"Turn angle must be finite, got {angle_deg}")
+        angle_rad = math.radians(abs(angle_deg))
         # Left = positive yaw (counter-clockwise), right = negative yaw (clockwise)
-        sign: float = 1.0 if direction == "left" else -1.0
-        vyaw: float = sign * _VYAW_SPEED
-        duration: float = angle_rad / _VYAW_SPEED
+        signed = angle_rad if direction == "left" else -angle_rad
 
-        logger.info(
-            "[TURN] direction=%s angle=%.1fdeg vyaw=%.2f duration=%.2fs",
-            direction, angle_deg, vyaw, duration,
-        )
-
-        ok = context.base.walk(0.0, 0.0, vyaw, duration)
-
+        logger.info("[TURN] direction=%s angle=%.1fdeg", direction, angle_deg)
+        ok, residual = turn_by(context.base, signed, vyaw=_VYAW_SPEED, tol=_HEADING_TOL_RAD)
+        data = {
+            "direction": direction,
+            "angle_deg": abs(angle_deg),
+            "angle_rad": round(angle_rad, 4),
+            "heading_error_deg": round(math.degrees(residual), 1),
+        }
         if not ok:
             return SkillResult(
                 success=False,
-                error_message="Turn command failed",
+                error_message=f"Turn ended {abs(math.degrees(residual)):.0f} deg off the target heading",
                 diagnosis_code="turn_failed",
+                result_data=data,
             )
-
-        return SkillResult(
-            success=True,
-            result_data={
-                "direction": direction,
-                "angle_deg": angle_deg,
-                "angle_rad": round(angle_rad, 4),
-            },
-        )
+        return SkillResult(success=True, result_data=data)

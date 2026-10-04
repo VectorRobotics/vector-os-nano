@@ -147,7 +147,7 @@ def test_g1_policy_and_capabilities() -> None:
     assert cfg.policy.spec["decimation"] == 10
     assert cfg.policy.spec["sim_dt"] == pytest.approx(0.002)
     assert cfg.policy.spec["gait_period"] == pytest.approx(0.8)
-    assert cfg.policy.spec["body_radius"] == pytest.approx(0.30)
+    assert cfg.nav["body_radius"] == pytest.approx(0.30)
     assert cfg.policy.spec["holonomic"] is False
     cap = cfg.capabilities
     assert cap.has_base is True

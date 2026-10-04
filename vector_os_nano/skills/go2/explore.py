@@ -1,96 +1,47 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""ExploreSkill -- non-blocking autonomous exploration.
+"""ExploreSkill -- explore the house with a real backend, or fail loud.
 
-Launches exploration in a background thread and returns IMMEDIATELY so the
-CLI remains responsive.  The user can issue new commands (stop, navigate,
-look) while exploration is running.  Any new movement command or stop()
-cancels the exploration thread.
+Two backends:
 
-Architecture (like Claude Code background tasks):
-    explore() → starts _explore_thread → returns instantly
-    stop()    → sets _explore_cancel event → thread exits
-    navigate()→ sets _explore_cancel event → then navigates
+- ``coverage`` (the default when no nav stack runs): the in-process room tour
+  (sim/nav/coverage.py). It BLOCKS until the tour ends and reports the rooms the
+  base's ground-truth position actually entered; a stop, a navigate or Ctrl-C
+  cancels it between and inside legs.
+- ``tare``: the CMU TARE planner this session launched (VECTOR_NAV_STACK). The
+  stack drives; a background monitor tracks rooms and returns at once.
 
-The exploration thread:
-    1. Ensures bridge + nav stack are running
-    2. Seeds FAR planner with initial movement
-    3. Monitors position indefinitely, tracking rooms visited
-    4. Checks _explore_cancel every 2 seconds
+No backend (no planner on the base, no TARE of ours) is a failure, never a
+started-and-did-nothing success. ``is_exploring()`` is True from before the run
+starts until it has ended, so a waiter can never miss a run that is starting.
 """
 from __future__ import annotations
 
 import logging
 import os
-import shutil
 import signal
-import subprocess
 import threading
 import time
 from typing import Any
 
+from vector_os_nano.core.run_dir import run_path
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.perception.object_localizer import localize_objects_3d
-from vector_os_nano.core.run_dir import run_path
 
 logger = logging.getLogger(__name__)
 
 _POSITION_SAMPLE_INTERVAL: float = 2.0
+BACKENDS: tuple[str, ...] = ("coverage", "tare")
 
-# Module-level singletons
-_nav_stack_proc: subprocess.Popen | None = None
-_bridge_thread: threading.Thread | None = None
-
-def _start_tare() -> bool:
-    """Check that TARE autonomous exploration planner is already running.
-
-    TARE must be launched by _launch_ros2_stack() (via launch_nav_only.sh) before
-    exploration starts.  This function only detects a running TARE process — it
-    does NOT start one.  Launching TARE here would create a second process group
-    with broken DDS connectivity.
-
-    """
-
-    # Check if TARE is already running (launched by _launch_ros2_stack / launch_nav_only.sh)
-    if shutil.which("pgrep"):
-        result = subprocess.run(["pgrep", "-f", "tare_planner_node"], capture_output=True)
-        if result.returncode == 0:
-            logger.info("[EXPLORE] TARE already running — reusing")
-            return True
-
-    logger.warning(
-        "[EXPLORE] TARE not running. Launch the nav stack first via "
-        "sim/hardware stack startup (launch_nav_only.sh). Exploration cannot start."
-    )
-    return False
-
-
-def _stop_tare() -> None:
-    """Stop TARE planner."""
-    global _tare_proc
-    if _tare_proc is not None and _tare_proc.poll() is None:
-        try:
-            os.killpg(os.getpgid(_tare_proc.pid), signal.SIGTERM)
-            _tare_proc.wait(timeout=3)
-        except Exception:
-            try:
-                os.killpg(os.getpgid(_tare_proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
-        _tare_proc = None
-        logger.info("[EXPLORE] TARE planner stopped")
-
-
-# Background exploration state (shared across skills)
+# Exploration state (one exploration per process)
 _explore_thread: threading.Thread | None = None
 _explore_cancel: threading.Event = threading.Event()
 _explore_visited: set[str] = set()
 _explore_running: bool = False
-_tare_proc: subprocess.Popen | None = None
+_explore_backend: str = ""
 _on_event: Any = None  # callback(event_type: str, data: dict) — set by CLI
-_auto_look: Any = None  # callback(room: str) -> dict | None — VLM look on new room
 _spatial_memory: Any = None  # SceneGraph — set by ExploreSkill.execute()
 _perception: Any = None  # Go2GraspPerception-like — set by ExploreSkill.execute()
 _vlm: Any = None  # VLM service — set by ExploreSkill.execute()
@@ -131,10 +82,9 @@ def get_explore_status() -> dict:
 def _own_descendants_named(name: str, root: int | None = None) -> list[int]:
     """PIDs anywhere below *root* (default: this process) whose command line contains *name*.
 
-    TARE runs inside the nav-stack launch (launch_nav_only.sh) this CLI started, a
-    descendant in another process group, so its group cannot be killed without
-    FAR + localPlanner. Matching by name only among OUR descendants never touches
-    another project's planner on a shared machine (a bare pkill -f did).
+    TARE runs inside the nav-stack launch this CLI started, a descendant in another
+    process group. Matching by name only among OUR descendants never touches (or
+    mistakes for ours) another project's planner on a shared machine.
     """
     children: dict[int, list[int]] = {}
     for entry in os.listdir("/proc"):
@@ -157,6 +107,11 @@ def _own_descendants_named(name: str, root: int | None = None) -> list[int]:
             except OSError:
                 pass
     return found
+
+
+def _tare_running() -> bool:
+    """True when a TARE planner WE launched is alive (never another project's)."""
+    return bool(_own_descendants_named("tare_planner_node"))
 
 
 def stop_tare_only() -> None:
@@ -184,31 +139,21 @@ def stop_tare_only() -> None:
 
 
 def is_nav_stack_running() -> bool:
-    """Check if localPlanner is still alive (FAR + localPlanner nav stack).
-
-    Returns True if the localPlanner process is found via pgrep, False otherwise.
-    Does not require the nav stack to have been launched by this module.
-    """
-    if not shutil.which("pgrep"):
-        return False
-    result = subprocess.run(
-        ["pgrep", "-f", "localPlanner"],
-        capture_output=True, timeout=5,
-    )
-    return result.returncode == 0
+    """True when a localPlanner WE launched is alive (periphery:missed2: a bare
+    ``pgrep -f`` took another project's nav nodes on the shared stack for ours)."""
+    return bool(_own_descendants_named("localPlanner"))
 
 
 def cancel_exploration() -> None:
-    """Request cancellation of the background exploration thread.
+    """Cancel the running exploration (coverage: between/inside legs; TARE: stop TARE).
 
-    Stops TARE only — FAR + localPlanner remain running for point-to-point nav.
-    Does NOT kill the nav stack process group.
+    FAR + localPlanner remain running for point-to-point nav.
     """
-    global _explore_running
     if _explore_running:
         _explore_cancel.set()
-        stop_tare_only()
-        _emit("stopped", {"reason": "cancelled", "rooms": sorted(_explore_visited)})
+        if _explore_backend == "tare":
+            stop_tare_only()
+            _emit("stopped", {"reason": "cancelled", "rooms": sorted(_explore_visited)})
 
 
 def get_explored_rooms() -> list[str]:
@@ -220,21 +165,10 @@ def set_event_callback(callback: Any) -> None:
     """Set a callback for exploration events. Called from CLI.
 
     callback(event_type: str, data: dict) where event_type is one of:
-        "started", "room_entered", "progress", "stopped", "completed"
+        "started", "room_entered", "progress", "status", "stopped", "completed"
     """
     global _on_event
     _on_event = callback
-
-
-def set_auto_look(callback: Any) -> None:
-    """Set auto-look callback, invoked when exploration enters a new room.
-
-    callback(room: str) -> dict | None
-        Returns VLM observation data dict or None on failure.
-        Called from the background exploration thread — must be thread-safe.
-    """
-    global _auto_look
-    _auto_look = callback
 
 
 def _emit(event_type: str, data: dict | None = None) -> None:
@@ -246,159 +180,27 @@ def _emit(event_type: str, data: dict | None = None) -> None:
             pass
 
 
+class _Cancelled:
+    """Coverage cancel signal: cancel_exploration() or the run's stop."""
+
+    @staticmethod
+    def is_set() -> bool:
+        from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+
+        return _explore_cancel.is_set() or is_abort_requested()
+
+
 # ---------------------------------------------------------------------------
-# Bridge / nav stack launchers (same dedup logic as before)
+# TARE background monitor
 # ---------------------------------------------------------------------------
 
-def _start_bridge_on_go2(go2: Any) -> bool:
-    global _bridge_thread
-    if _bridge_thread is not None and _bridge_thread.is_alive():
-        return True
+def _exploration_loop(base: Any) -> None:
+    """Background thread: seed TARE, start it, then monitor rooms until cancelled.
 
-    try:
-        import rclpy
-
-        if not rclpy.ok():
-            rclpy.init()
-
-        # Check if bridge already running
-        temp_node = rclpy.create_node("_bridge_check")
-        try:
-            topics = temp_node.get_topic_names_and_types()
-            has_odom = any(name == "/state_estimation" for name, _ in topics)
-        finally:
-            temp_node.destroy_node()
-
-        if has_odom:
-            logger.info("[EXPLORE] Bridge already running")
-            _bridge_thread = threading.Thread(target=lambda: None, daemon=True)
-            _bridge_thread.start()
-            return True
-
-        import sys
-        import importlib.util
-        _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)
-        ))))
-        bridge_path = os.path.join(_repo, "scripts", "go2_vnav_bridge.py")
-        spec = importlib.util.spec_from_file_location("_vnav_bridge", bridge_path)
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["_vnav_bridge"] = mod
-        spec.loader.exec_module(mod)
-
-        node = mod.Go2VNavBridge(go2, quiet=True)
-        _bridge_thread = threading.Thread(
-            target=lambda: rclpy.spin(node), daemon=True,
-        )
-        _bridge_thread.start()
-        return True
-
-    except Exception as exc:
-        logger.warning("[EXPLORE] Bridge start failed: %s", exc)
-        return False
-
-
-def _launch_nav_stack() -> bool:
-    global _nav_stack_proc
-    if _nav_stack_proc is not None and _nav_stack_proc.poll() is None:
-        return True
-
-    if shutil.which("pgrep"):
-        result = subprocess.run(["pgrep", "-f", "localPlanner"], capture_output=True)
-        if result.returncode == 0:
-            logger.info("[EXPLORE] Nav stack already running")
-            return True
-
-    _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)
-    ))))
-    script = os.path.join(_repo, "scripts", "launch_nav_only.sh")
-    if not os.path.isfile(script):
-        return False
-
-    try:
-        log_fh = open(run_path("vector_nav_only.log"), "w")
-        _nav_stack_proc = subprocess.Popen(
-            [script], stdout=log_fh, stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
-        )
-        import atexit
-
-        def _cleanup():
-            try:
-                os.killpg(os.getpgid(_nav_stack_proc.pid), signal.SIGTERM)
-                _nav_stack_proc.wait(timeout=5)
-            except Exception:
-                try:
-                    os.killpg(os.getpgid(_nav_stack_proc.pid), signal.SIGKILL)
-                except Exception:
-                    pass
-            log_fh.close()
-
-        atexit.register(_cleanup)
-        return True
-    except Exception as exc:
-        logger.error("[EXPLORE] Nav stack launch failed: %s", exc)
-        return False
-
-
-def _verify_nav_stack() -> None:
-    """Check that critical nav stack topics are active before starting TARE.
-
-    Logs warnings for missing topics. Does NOT block — exploration proceeds
-    regardless, but the log helps diagnose issues.
+    Started by ExploreSkill.execute() only after it checked that our TARE runs and
+    set the running flag (so no waiter sees a not-yet-started run as finished).
     """
-    try:
-        import rclpy
-        node = rclpy.create_node("_nav_verify_tmp")
-        topics = node.get_topic_names_and_types()
-        topic_names = {name for name, _ in topics}
-
-        required = [
-            "/state_estimation",
-            "/registered_scan",
-            "/terrain_map",
-            "/state_estimation_at_scan",
-            "/path",
-        ]
-        for topic in required:
-            status = "OK" if topic in topic_names else "MISSING"
-            logger.info("[EXPLORE] Topic check: %-30s %s", topic, status)
-
-        node.destroy_node()
-    except Exception as exc:
-        logger.warning("[EXPLORE] Topic verification failed: %s", exc)
-
-
-# ---------------------------------------------------------------------------
-# Background exploration loop
-# ---------------------------------------------------------------------------
-
-def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
-    """Background thread: verify TARE is running, seed planner, then monitor rooms.
-
-    Everything runs here — execute() returns immediately.
-    Runs indefinitely until _explore_cancel is set.
-
-    TARE must already be running (started by _launch_ros2_stack via launch_nav_only.sh).
-    If TARE is not detected, emits an error event and exits immediately.
-    """
-    global _explore_running, _explore_visited
-
-    # Guard: TARE must be pre-launched by the nav stack startup.
-    if not _start_tare():
-        _emit("error", {
-            "reason": "tare_not_running",
-            "message": (
-                "TARE planner is not running. Start the nav stack first "
-                "(launch_nav_only.sh or sim stack startup)."
-            ),
-        })
-        return
-
-    _explore_visited.clear()
-    _explore_running = True
-    _explore_cancel.clear()
+    global _explore_running
 
     _total = len(_spatial_memory.get_all_rooms()) if _spatial_memory else 0
     _emit("started", {"total_rooms": _total})
@@ -409,16 +211,15 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     # so TARE prints "Cannot get candidate viewpoints" for 10-20 rounds until it
     # happens to drift into a new position. A short forward walk guarantees the
     # first keypose is created before we hand off to autonomous nav.
-    if has_bridge:
-        try:
-            logger.info("[EXPLORE] Seed walk: 0.3 m/s forward for 2s")
-            base.walk(0.3, 0.0, 0.0, 2.0)
-            # Extra 1s for scan buffer: 10 Hz lidar x 1s = 10 scans, well above
-            # the 5-scan threshold TARE needs per keypose.
-            time.sleep(1.0)
-            logger.info("[EXPLORE] Seed walk complete")
-        except Exception as exc:
-            logger.warning("[EXPLORE] Seed walk failed (non-fatal): %s", exc)
+    try:
+        logger.info("[EXPLORE] Seed walk: 0.3 m/s forward for 2s")
+        base.walk(0.3, 0.0, 0.0, 2.0)
+        # Extra 1s for scan buffer: 10 Hz lidar x 1s = 10 scans, well above
+        # the 5-scan threshold TARE needs per keypose.
+        time.sleep(1.0)
+        logger.info("[EXPLORE] Seed walk complete")
+    except Exception as exc:
+        logger.warning("[EXPLORE] Seed walk failed (non-fatal): %s", exc)
 
     # Start TARE exploration (kAutoStart=false, waits for this signal)
     try:
@@ -432,20 +233,19 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
         logger.warning("[EXPLORE] Failed to send /start_exploration: %s", exc)
 
     # Enable bridge path follower via nav flag
-    if has_bridge:
-        try:
-            with open(run_path("vector_nav_active"), "w") as f:
-                f.write("1")
-            logger.info("[EXPLORE] Navigation enabled (flag file created)")
-        except Exception as exc:
-            logger.warning("[EXPLORE] Failed to create nav flag: %s", exc)
+    try:
+        with open(run_path("vector_nav_active"), "w") as f:
+            f.write("1")
+        logger.info("[EXPLORE] Navigation enabled (flag file created)")
+    except Exception as exc:
+        logger.warning("[EXPLORE] Failed to create nav flag: %s", exc)
 
     # NO WANDER. TARE + FAR + localPlanner handle all movement autonomously.
     # The initial seed above gives TARE enough scan data to start planning.
     # Any /cmd_vel_nav we send would CLEAR the bridge's _current_path and
     # override the nav stack's path follower — causing the dog to circle.
     #
-    # Reference: launch_nav_only.sh does the same: seed once, then hands off
+    # Reference: launch_explore.sh does the same: seed once, then hands off
     # to TARE entirely. The nav stack drives at up to 0.8 m/s on its own.
 
     _prev_room: str | None = None
@@ -555,7 +355,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                                             for name in object_names
                                             if name in world_positions
                                         ]
-                                    heading = float(pos[3]) if len(pos) > 3 else 0.0
+                                    heading = float(base.get_heading())
                                     _spatial_memory.observe_with_viewpoint(
                                         room=room,
                                         x=x,
@@ -599,31 +399,6 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                         "all_rooms": sorted(_explore_visited),
                     })
 
-                    # Auto-look: VLM scene capture in a SEPARATE thread.
-                    if _auto_look is not None:
-                        def _run_auto_look(r: str = room) -> None:
-                            try:
-                                obs = _auto_look(r)
-                                if obs:
-                                    _emit("room_observed", {
-                                        "room": r,
-                                        "summary": obs.get("summary", ""),
-                                        "objects": obs.get("objects", []),
-                                    })
-                                    logger.info(
-                                        "[EXPLORE] Auto-look %s: %s",
-                                        r, obs.get("summary", "")[:80],
-                                    )
-                            except Exception as exc:
-                                logger.warning(
-                                    "[EXPLORE] Auto-look failed for %s: %s",
-                                    r, exc,
-                                )
-
-                        threading.Thread(
-                            target=_run_auto_look, daemon=True,
-                        ).start()
-
             except Exception:
                 pass
 
@@ -661,7 +436,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ExploreSkill (non-blocking)
+# ExploreSkill
 # ---------------------------------------------------------------------------
 
 @skill(
@@ -672,32 +447,37 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     direct=False,
 )
 class ExploreSkill:
-    """Non-blocking autonomous exploration.
-
-    Starts exploration in a background thread and returns immediately.
-    The CLI remains responsive — user can stop, navigate, or look at any time.
-    """
+    """Explore the house (coverage tour by default; TARE when our stack runs)."""
 
     name: str = "explore"
     description: str = (
-        "Start autonomous exploration of the house. "
-        "Runs in the BACKGROUND — you can give other commands while exploring. "
-        "Use stop() to halt exploration."
+        "Explore the house: visit every room and look around. Without a nav stack "
+        "this is a room tour that returns the rooms actually visited (it blocks "
+        "until done; stop() cancels it). With the TARE stack it runs in the "
+        "background until stop()."
     )
-    # Typical REAL-TIME startup duration (non-blocking launch + initial movement):
-    # the skill returns immediately (exploration is a background thread), but the
-    # executor waits via _wait_for_async_skill which polls until is_exploring()
-    # returns False; 150s is a conservative floor for open-ended exploration.
-    # GoalExecutor floors the step timeout at this value (R2-2).
-    typical_duration_sec: float = 150.0
-    parameters: dict = {}
+    # A full 8-room coverage tour is ~6-7 sim-minutes on the go2 gait. GoalExecutor
+    # floors the step timeout at this value (R2-2).
+    typical_duration_sec: float = 600.0
+    parameters: dict = {
+        "backend": {
+            "type": "string",
+            "required": False,
+            "enum": list(BACKENDS),
+            "description": (
+                "coverage (in-process room tour) or tare (the CMU TARE planner). "
+                "Default: tare when this session runs it, else coverage."
+            ),
+        },
+    }
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"explored": True}
-    failure_modes: list[str] = ["no_base", "exploration_failed"]
+    failure_modes: list[str] = ["no_base", "exploration_failed", "no_backend", "aborted"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        global _explore_thread
+        global _explore_thread, _explore_running, _explore_backend
+        global _spatial_memory, _perception, _vlm
 
         if context.base is None:
             return SkillResult(
@@ -716,53 +496,93 @@ class ExploreSkill:
                 },
             )
 
+        backend = str(params.get("backend") or ("tare" if _tare_running() else "coverage"))
+        if backend not in BACKENDS:
+            return SkillResult(
+                success=False, diagnosis_code="no_backend",
+                error_message=f"Unknown explore backend {backend!r}; valid: {', '.join(BACKENDS)}",
+            )
         base = context.base
 
-        # Wire spatial memory for position recording during exploration
-        global _spatial_memory, _perception, _vlm
+        # Wire spatial memory / perception / VLM (the TARE monitor reads them).
         _spatial_memory = context.services.get("spatial_memory")
-        # Capture perception + VLM from the context here (execute() is the only
-        # scope with the correct accessors -- the exploration thread receives
-        # only `base`, the locomotion driver, which carries neither). Mirrors
-        # LookSkill, which depth-localizes via context.perception.
         _perception = context.perception
         _vlm = context.services.get("vlm")
-
-        # Ensure room layout is loaded (handles /clear_memory wiping the data)
-        if _spatial_memory is not None and hasattr(_spatial_memory, 'load_layout'):
+        if _spatial_memory is not None and hasattr(_spatial_memory, "load_layout"):
             if not _spatial_memory.get_all_rooms():
-                _layout = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(
-                        os.path.dirname(os.path.abspath(__file__))
-                    ))),
-                    "config", "room_layout.yaml",
+                from vector_os_nano.sim.nav.coverage import _LAYOUT_YAML
+                n = _spatial_memory.load_layout(str(_LAYOUT_YAML))
+                if n > 0:
+                    logger.info("[EXPLORE] Re-loaded room layout: %d rooms", n)
+
+        if backend == "tare":
+            if not _tare_running():
+                return SkillResult(
+                    success=False, diagnosis_code="no_backend",
+                    error_message=(
+                        "TARE is not running in this session (it needs VECTOR_NAV_STACK); "
+                        "explore with backend='coverage' instead."
+                    ),
                 )
-                if os.path.isfile(_layout):
-                    n = _spatial_memory.load_layout(_layout)
-                    if n > 0:
-                        logger.info("[EXPLORE] Re-loaded room layout: %d rooms", n)
+            _explore_cancel.clear()
+            _explore_visited.clear()
+            _explore_backend, _explore_running = "tare", True  # before the thread starts
+            _explore_thread = threading.Thread(target=_exploration_loop, args=(base,), daemon=True)
+            _explore_thread.start()
+            return SkillResult(
+                success=True,
+                result_data={
+                    "status": "exploration_started", "backend": "tare",
+                    "note": "TARE runs in the background. Use stop() to halt.",
+                },
+            )
 
-        # VLM auto-look DISABLED for sim — room detection is config-based.
-        # Re-enable for real-world deployment where VLM scene descriptions
-        # provide spatial understanding.
-        # set_auto_look(None) — explicitly not wiring VLM
+        if not callable(getattr(base, "navigate_to", None)):
+            return SkillResult(
+                success=False, diagnosis_code="no_backend",
+                error_message=(
+                    "No exploration backend: the base has no planner (navigate_to) "
+                    "and TARE is not running."
+                ),
+            )
+        return self._coverage(base)
 
-        # Bridge + nav stack are already running (started by launch_nav_only.sh
-        # via sim_tool). Do NOT call _start_bridge_on_go2 — it creates a
-        # conflicting rclpy context that crashes the bridge process.
-        bridge_ok = True
+    @staticmethod
+    def _coverage(base: Any) -> SkillResult:
+        global _explore_running, _explore_backend
+        from vector_os_nano.sim.nav.coverage import CoverageExplorer
 
-        # Start background thread that handles seeding + monitoring
-        _explore_thread = threading.Thread(
-            target=_exploration_loop, args=(base, bridge_ok), daemon=True,
-        )
-        _explore_thread.start()
+        def on_event(kind: str, data: dict) -> None:
+            if kind == "room_entered":
+                _explore_visited.add(data["room"])
+                if _spatial_memory is not None:
+                    pos = base.get_position()
+                    _spatial_memory.visit(data["room"], float(pos[0]), float(pos[1]))
+            _emit(kind, data)
 
-        return SkillResult(
-            success=True,
-            result_data={
-                "status": "exploration_started",
-                "note": "Running in background. Use stop() to halt. "
-                        "You can navigate or look while exploring.",
-            },
-        )
+        _explore_cancel.clear()
+        _explore_visited.clear()
+        _explore_backend, _explore_running = "coverage", True
+        try:
+            out = CoverageExplorer(base, cancel=_Cancelled(), on_event=on_event).run()
+        finally:
+            _explore_running = False
+        visited, total = out["visited"], out["total"]
+        data = {
+            "backend": "coverage",
+            "rooms_visited": visited,
+            "rooms_failed": out["failed"],
+            "coverage": f"{len(visited)}/{total} rooms",
+            "elapsed_s": out["elapsed_s"],
+        }
+        if out["cancelled"]:
+            return SkillResult(
+                success=False, diagnosis_code="aborted", result_data=data,
+                error_message=f"Exploration stopped after {len(visited)}/{total} rooms",
+            )
+        if not visited:
+            return SkillResult(
+                success=False, diagnosis_code="exploration_failed", result_data=data,
+                error_message=f"Exploration reached no room ({out['failed']})",
+            )
+        return SkillResult(success=True, result_data=data)

@@ -12,7 +12,7 @@ Key invariants tested:
      (bridge grants 0.5 s; wander must re-send within that window + margin)
   3. The exploration loop keeps running and does NOT stop after the seed phase
   4. Wander direction alternates based on rooms visited (prevents spiralling)
-  5. A bridge-less explore (has_bridge=False) skips wander entirely
+  5. (deleted with the bridge-less explore mode, WP08)
 
 No MuJoCo, no ROS2, no network calls — all mocked.
 """
@@ -124,7 +124,7 @@ class TestWanderBehavior:
         _reset_explore_globals()
 
     def test_seed_walk_called_with_bridge(self):
-        """_exploration_loop calls base.walk() for seed when has_bridge=True."""
+        """_exploration_loop calls base.walk() for the seed."""
         base = _make_base()
 
         def _cancel_after_delay():
@@ -134,11 +134,10 @@ class TestWanderBehavior:
         stopper = threading.Thread(target=_cancel_after_delay, daemon=True)
         stopper.start()
 
-        # _start_tare must return True (TARE running) to get past the guard
-        # clause. Patching subprocess.run makes pgrep return 0 → tare found.
+        # subprocess.run is the /start_exploration publish (no ROS here).
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
+                _explore._exploration_loop(base)
 
         # Seed walk should have called base.walk()
         assert base.walk.call_count >= 1, "Seed walk should call base.walk()"
@@ -154,37 +153,14 @@ class TestWanderBehavior:
         stopper = threading.Thread(target=_cancel_after, daemon=True)
         stopper.start()
 
-        # Must get past _start_tare guard to verify main loop behavior.
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
+                _explore._exploration_loop(base)
 
         # No set_velocity calls — TARE + bridge path follower handle movement
         assert base.set_velocity.call_count == 0, (
             "Main loop should NOT call set_velocity — TARE handles movement"
         )
-
-    def test_wander_skipped_when_no_bridge(self):
-        """has_bridge=False: wander block is not entered, no set_velocity calls in main loop.
-
-        The seed phase is also skipped (guarded by has_bridge), so set_velocity
-        should only be called zero times in a very short run.
-        """
-        base = _make_base()
-
-        def _cancel_immediately():
-            # Cancel before the first poll iteration
-            time.sleep(0.05)
-            _explore._explore_cancel.set()
-
-        stopper = threading.Thread(target=_cancel_immediately, daemon=True)
-        stopper.start()
-
-        with patch.object(_explore, "_start_tare", return_value=False):
-            _explore._exploration_loop(base, has_bridge=False)
-
-        # No velocity commands in no-bridge mode during main loop
-        assert base.set_velocity.call_count == 0
 
     def test_loop_runs_past_seed_phase(self):
         """Loop does NOT stop after seed — continues until _explore_cancel."""
@@ -220,7 +196,7 @@ class TestWanderBehavior:
         # patch time.sleep to instant so seed phase (2s walk + 1s buffer) finishes fast.
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
+                _explore._exploration_loop(base)
 
         # Loop entered the while block and ran at least one position check
         assert pos_calls[0] >= 1, (
@@ -280,9 +256,9 @@ class TestWanderDirection:
         stopper = threading.Thread(target=_cancel_immediately, daemon=True)
         stopper.start()
 
-        with patch.object(_explore, "_start_tare", return_value=False):
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
+                _explore._exploration_loop(base)
 
         # If any wander calls happened, they should have non-zero vyaw
         wander_calls = [v for v in vyaw_calls if v != 0.0]
@@ -308,9 +284,11 @@ class TestExploreLoopContinuity:
         _reset_explore_globals()
 
     def test_explore_running_flag_set_during_loop(self):
-        """_explore_running is True while loop executes."""
+        """_explore_running stays True while the loop executes (ExploreSkill sets it
+        before the thread starts, WP08 B14 race fix)."""
         base = _make_base()
         running_states: list[bool] = []
+        _explore._explore_running = True
 
         def _pos():
             running_states.append(_explore._explore_running)
@@ -321,7 +299,7 @@ class TestExploreLoopContinuity:
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
+                _explore._exploration_loop(base)
 
         assert True in running_states, "_explore_running never became True"
 
@@ -337,7 +315,7 @@ class TestExploreLoopContinuity:
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
+                _explore._exploration_loop(base)
 
         assert not _explore._explore_running
 
@@ -354,7 +332,7 @@ class TestExploreLoopContinuity:
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
+                _explore._exploration_loop(base)
 
         assert "stopped" in events
         assert events.count("stopped") >= 1
@@ -397,7 +375,7 @@ class TestExploreLoopContinuity:
 
         with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
+                _explore._exploration_loop(base)
 
         # Restore module state
         _explore._spatial_memory = None
@@ -408,22 +386,16 @@ class TestExploreLoopContinuity:
         assert "living_room" in rooms or "kitchen" in rooms
 
     def test_explore_visited_cleared_on_restart(self):
-        """_explore_visited is cleared when loop starts fresh."""
+        """A fresh explore clears the visited set before its monitor starts (WP08: the
+        reset moved into ExploreSkill.execute, ahead of the thread)."""
+        from vector_os_nano.core.skill import SkillContext
+
         _explore._explore_visited.add("some_old_room")
-
-        base = _make_base()
-
-        def _pos():
-            _explore._explore_cancel.set()
-            return (0.0, 0.0, 0.28)
-
-        base.get_position = _pos
-
-        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with fake_clock():
-                _explore._exploration_loop(base, has_bridge=True)
-
-        assert "some_old_room" not in _explore._explore_visited
+        with patch.object(_explore, "_tare_running", return_value=True), \
+                patch.object(_explore, "_exploration_loop"):
+            res = _explore.ExploreSkill().execute({}, SkillContext(base=_make_base()))
+            _explore._explore_thread.join(5)
+        assert res.success and "some_old_room" not in _explore._explore_visited
 
 
 # ---------------------------------------------------------------------------

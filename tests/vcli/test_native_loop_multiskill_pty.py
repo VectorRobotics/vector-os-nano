@@ -29,14 +29,11 @@ subsumes a distinct (skill, predicate) the first acceptance never exercised:
     (R2b's ``_BASE_PREDICATES`` includes ``facing``, graded PER-CHANNEL on the heading
     delta — a forward walk's planar move does NOT count for facing). [STEP-12 fix]
 
-GAIT UNDER-ROTATION (empirical, documented honestly): the MPC gait achieves only
-about TWO THIRDS of its commanded yaw even in sim time (a commanded 90deg turn lands
-~61deg, 180deg ~123deg). So to actually FACE start+90deg (within ``facing``'s 20deg
-tol) the script COMMANDS a 135deg left turn. The verify target is a clean
-start+90deg heading (NOT the achieved heading — we never author the goal to match the
-outcome); the over-command is the honest way the gait reaches it. The target heading
-is computed from the base's ACTUAL heading read BEFORE the run, so the test is
-self-calibrating to whatever pose ``stand()`` settles into.
+GAIT UNDER-ROTATION: the MPC gait achieves only about two thirds of a commanded
+open-loop yaw, so this script used to command 135deg to land +90deg. TurnSkill now
+closes the loop on the measured heading (WP08), so the script commands exactly the
+90deg it verifies. The verify target is a clean start+90deg heading computed from
+the base's ACTUAL heading read BEFORE the run (never the achieved heading).
 
 SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after the
 case via fixtures (the generated scene xml is untracked). Reproduce::
@@ -52,9 +49,8 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-# Left turn (counter-clockwise) -> positive yaw. The gait achieves ~2/3 of the
-# commanded rotation, so command 135deg to actually reach +90deg.
-_COMMANDED_TURN_DEG: float = 135.0
+# Left turn (counter-clockwise) -> positive yaw; closed-loop, so command what is verified.
+_COMMANDED_TURN_DEG: float = 90.0
 _TARGET_TURN_RAD: float = math.radians(90.0)  # the heading the step must PROVE
 
 

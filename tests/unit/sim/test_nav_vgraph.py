@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Campaign #7 R1 — visibility-graph planner (PURE geometry, no MuJoCo).
+"""Visibility-graph planner (PURE geometry, no MuJoCo import).
 
-The R1 gate: a deterministic pure function. Hand-built polygon fixtures —
-shortest path around a wall, +inf when the goal is inside an obstacle,
-+inf when boxed in, a too-narrow gap routes the long way, straight-shot
-when unobstructed. plan_path and path_length share one computation (the
-verify/execution single-source invariant).
+Hand-built polygon fixtures: shortest path around a wall, +inf when the goal is
+inside an obstacle (unless snapped), +inf when boxed in, a too-narrow gap routes
+the long way, straight-shot when unobstructed, an exact Minkowski inflation, goal
+snapping and start-in-collision escape. plan_path and path_length share one
+computation.
 """
 from __future__ import annotations
 
 import math
 
-from vector_os_nano.hardware.sim import g1_vgraph as vg
+from vector_os_nano.sim.nav import vgraph as vg
 
 
 def test_no_mujoco_import():
-    import vector_os_nano.hardware.sim.g1_vgraph as m
+    import vector_os_nano.sim.nav.vgraph as m
     # the module must never import mujoco (pure geometry, offline-testable)
     assert "mujoco" not in dir(m)
     src = (__import__("pathlib").Path(m.__file__)).read_text()
@@ -34,12 +34,28 @@ class TestShapes:
         # every vertex is OUTSIDE the true radius (circumscribed, conservative)
         assert all(math.hypot(x, y) >= 1.0 - 1e-9 for x, y in poly)
 
-    def test_inflate_pushes_outward(self):
-        poly = vg.box_polygon(0, 0, 1, 1)
-        inf = vg.inflate_polygon(poly, 0.5)
-        # corners move further from centre
-        for (x, y) in inf:
-            assert math.hypot(x, y) > math.hypot(1, 1)
+    def test_inflated_box_is_the_box_with_grown_half_extents(self):
+        inf = vg.inflate_polygon(vg.box_polygon(1, 2, 3.0, 0.05, 0.3), 0.28)
+        want = vg.box_polygon(1, 2, 3.28, 0.33, 0.3)
+        assert all(math.dist(a, b) < 1e-9 for a, b in zip(inf, want))
+
+    def test_every_inflated_edge_is_at_least_r_from_the_original(self):
+        # skills-nav:vgraph-underinflation / sim-locomotion:vgraph-under-inflation:
+        # the radial push gave a thin wall ~3 mm of margin instead of r.
+        r = 0.28
+        shapes = [
+            vg.box_polygon(0, 0, 3.0, 0.05),          # thin wall
+            vg.box_polygon(4, 1, 0.5, 0.5, 0.7),      # rotated square
+            list(reversed(vg.box_polygon(-3, 2, 0.84, 0.45))),  # CW winding
+            vg.cylinder_polygon(2, -3, 0.2),
+        ]
+        for poly in shapes:
+            inf = vg.inflate_polygon(poly, r)
+            for i in range(len(inf)):
+                a, b = inf[i - 1], inf[i]
+                for t in (0.0, 0.1, 0.5, 0.9, 1.0):
+                    p = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+                    assert vg.distance_to_polygon(p, poly) >= r - 1e-9
 
 
 class TestPointPredicates:
@@ -108,3 +124,49 @@ class TestPlanning:
         wall = vg.box_polygon(2.0, 0.0, 0.2, 1.0)
         path, length = vg.plan_path((0, 0), (4, 0), [wall], inflation=0.3)
         assert vg.path_length((0, 0), (4, 0), [wall], inflation=0.3) == length
+
+
+class TestSnapAndEscape:
+    def test_goal_inside_obstacle_snaps_to_nearest_free_point(self):
+        table = vg.box_polygon(0, 0, 0.84, 0.45)
+        path, length = vg.plan_path((-3, 0), (0, 0.2), [table], inflation=0.3, snap_goal=True)
+        assert path is not None and math.isfinite(length)
+        tx, ty = path[-1]
+        # nearest free point is just past the top edge (0.45 + 0.3), straight above
+        assert abs(tx) < 1e-6 and 0.75 <= ty <= 0.77
+        assert not vg.point_in_polygon(path[-1], vg.inflate_polygon(table, 0.3))
+
+    def test_snapped_goal_under_overlapping_polygons_is_free(self):
+        a = vg.box_polygon(0, 0, 1.0, 1.0)
+        b = vg.box_polygon(1.5, 0, 1.0, 1.0)
+        inflated = [vg.inflate_polygon(p, 0.3) for p in (a, b)]
+        snapped = vg.nearest_free((0.9, 0.0), inflated)
+        assert snapped is not None and not vg.point_in_any(snapped, inflated)
+
+    def test_start_in_collision_escapes_first(self):
+        # sim-locomotion:go2-nav-bool-collapse: a start inside the inflation was a
+        # hard 'unreachable'; now the path leaves straight to the nearest free point.
+        box = vg.box_polygon(0, 0, 0.5, 0.5)
+        start = (0.0, 0.6)  # 0.1 m from the face, inside the 0.3 m inflation
+        path, length = vg.plan_path(start, (0, 4), [box], inflation=0.3)
+        assert path is not None and path[0] == start
+        assert not vg.point_in_any(path[1], [vg.inflate_polygon(box, 0.3)])
+        assert abs(length - (4 - 0.6)) < 0.05
+
+    def test_boxed_in_goal_stays_unreachable_when_snapped(self):
+        walls = [
+            vg.box_polygon(0, 2, 3, 0.2),
+            vg.box_polygon(0, -2, 3, 0.2),
+            vg.box_polygon(2, 0, 0.2, 3),
+            vg.box_polygon(-2, 0, 0.2, 3),
+        ]
+        path, length = vg.plan_path((10, 10), (0, 0), walls, inflation=0.3, snap_goal=True)
+        assert path is None and length == float("inf")
+
+
+def test_obstacle_reader_enum_values_match_mujoco():
+    import mujoco
+
+    assert vg.GEOM_BOX == int(mujoco.mjtGeom.mjGEOM_BOX)
+    assert vg.GEOM_CYLINDER == int(mujoco.mjtGeom.mjGEOM_CYLINDER)
+    assert vg.JNT_FREE == int(mujoco.mjtJoint.mjJNT_FREE)

@@ -329,13 +329,13 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
 
     if cfg.nav.get("explorer") == "tare":
         if not os.environ.get("VECTOR_NAV_STACK"):
-            session.notes.append("explore: unavailable (VECTOR_NAV_STACK unset)")
+            session.notes.append("explore: coverage (VECTOR_NAV_STACK unset)")
         else:
             try:
                 session.own("nav stack stopped", _launch_ros2_stack(base, gui=spec.gui))
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
-                session.notes.append(f"explore: unavailable ({exc})")
+                session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
     return agent
 
 

@@ -183,15 +183,16 @@ def test_walk_forward_displacement() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 6: _G1NavResult contract — import-only, no sim instantiation
+# Test 6: NavResult contract — import-only, no sim instantiation
 # ---------------------------------------------------------------------------
 
 
 def test_g1_nav_result_contract() -> None:
-    """_G1NavResult truthiness reflects 'reached'; .get() still works."""
+    """NavResult truthiness reflects 'reached'; .get() still works."""
     import inspect
 
-    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1, _G1NavResult
+    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
+    from vector_os_nano.sim.nav.follow import NavResult as _G1NavResult
 
     # (a) bool reflects 'reached'
     r_false = _G1NavResult({"reached": False, "moved_m": 1.5, "reason": "timeout"})

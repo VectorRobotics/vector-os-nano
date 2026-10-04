@@ -34,13 +34,17 @@ import math
 from typing import Any, Callable
 
 from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M, _MAX_FACING_TOL_RAD
+from vector_os_nano.sim.nav.follow import arrival_radius
 from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 
 logger = logging.getLogger(__name__)
 
 # Tolerances (metres / radians). Deliberately generous: verify is a coarse gate
 # on "did the step reach roughly the intended state", not a precision check.
-_AT_POSITION_TOL_M: float = 0.5
+# The default arrival tol IS the navigation arrival radius (config/nav.yaml), so
+# a navigate that arrived can always verify; capped at the historic 0.5 m so a
+# config edit can only ever tighten the default (spine: stricter only).
+_AT_POSITION_TOL_M: float = min(0.5, arrival_radius())
 _FACING_TOL_RAD: float = math.radians(20.0)
 # A caller-supplied tol is clamped to these caps INSIDE the oracle, so tolerance
 # inflation (``at_position(0, 0, 1e6)``, ``facing(0, 7)``) is vacuous for every goal,

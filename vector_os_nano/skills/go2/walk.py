@@ -13,9 +13,11 @@ Velocity clamps (conservative for Milestone 1):
 from __future__ import annotations
 
 import logging
+import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.skills.go2.turn import normalize_direction
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,16 @@ _DIRECTION_MAP: dict[str, tuple[float, float]] = {
     "backward": (-1.0,  0.0),
     "left":     ( 0.0,  1.0),
     "right":    ( 0.0, -1.0),
+}
+
+# alias -> canonical direction; anything else fails loud (it used to walk forward)
+DIRECTION_ALIASES: dict[str, str] = {
+    **dict.fromkeys(("forward", "forwards", "front", "ahead", "f", "前", "前进", "往前",
+                     "向前", "往前走"), "forward"),
+    **dict.fromkeys(("backward", "backwards", "back", "b", "后", "后退", "往后", "向后",
+                     "倒退"), "backward"),
+    **dict.fromkeys(("left", "l", "左", "往左", "向左", "左走"), "left"),
+    **dict.fromkeys(("right", "r", "右", "往右", "向右", "右走"), "right"),
 }
 
 _DEFAULT_DIRECTION: str = "forward"
@@ -75,7 +87,7 @@ class WalkSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"is_moving": False}
-    failure_modes: list[str] = ["no_base", "walk_failed"]
+    failure_modes: list[str] = ["no_base", "walk_failed", "bad_direction", "bad_distance"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Execute the walk command.
@@ -96,11 +108,34 @@ class WalkSkill:
                 diagnosis_code="no_base",
             )
 
-        direction: str = params.get("direction", _DEFAULT_DIRECTION)
-        distance: float = float(params.get("distance", _DEFAULT_DISTANCE))
-        speed: float = float(params.get("speed", _DEFAULT_SPEED))
+        direction = normalize_direction(params.get("direction", _DEFAULT_DIRECTION),
+                                        DIRECTION_ALIASES)
+        if direction is None:
+            return SkillResult(
+                success=False, diagnosis_code="bad_direction",
+                error_message=(
+                    f"Unknown walk direction {params.get('direction')!r}; valid: "
+                    f"{', '.join(_DIRECTION_MAP)}"
+                ),
+            )
+        try:
+            distance = float(params.get("distance", _DEFAULT_DISTANCE))
+            speed = float(params.get("speed", _DEFAULT_SPEED))
+        except (TypeError, ValueError):
+            return SkillResult(success=False, diagnosis_code="bad_distance",
+                               error_message="Walk distance and speed must be numbers")
+        # A negative distance made a negative duration: the gait ran with no stop
+        # (skills-nav:walk-runaway-on-exception). Direction carries the sign.
+        if not (math.isfinite(distance) and distance > 0 and math.isfinite(speed) and speed > 0):
+            return SkillResult(
+                success=False, diagnosis_code="bad_distance",
+                error_message=(
+                    f"Walk needs a positive distance and speed (got distance={distance}, "
+                    f"speed={speed}); use direction for backward/left/right"
+                ),
+            )
 
-        vx_sign, vy_sign = _DIRECTION_MAP.get(direction, (1.0, 0.0))
+        vx_sign, vy_sign = _DIRECTION_MAP[direction]
 
         # Apply speed and clamp
         if vy_sign != 0.0:

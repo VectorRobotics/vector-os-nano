@@ -4,18 +4,34 @@
 # SIM ONLY — for real-world deployment, replace this with SLAM-based
 # spatial understanding (VLM room identification, semantic mapping, etc.)
 #
-# Format: room_name: [center_x, center_y]
 # Coordinates match go2_room.xml (20m x 14m house).
+# rooms: room_name: [x, y] — a FREE floor point inside the room (a navigation
+#   goal, so never inside furniture: the kitchen island sits on the room's
+#   geometric centre (17, 2.5) and the dining table on (3, 7.5)). Validated
+#   against the compiled scene by tests/unit/sim/test_nav_apartment.py.
+# boxes: room_name: [x_min, y_min, x_max, y_max] — the room's floor extent
+#   (the f_* floor geoms; the hallway is the open centre span, the bathroom
+#   includes the merged laundry). Which room a point is in, by geometry.
 
 rooms:
   living_room:    [3.0,  2.5]
-  dining_room:    [3.0,  7.5]
-  kitchen:        [17.0, 2.5]
+  dining_room:    [3.0,  9.2]
+  kitchen:        [17.0, 1.7]
   study:          [17.0, 7.5]
   master_bedroom: [3.5,  12.0]
   guest_bedroom:  [16.0, 12.0]
   bathroom:       [9.5,  12.0]
   hallway:        [10.0, 5.0]
+
+boxes:
+  living_room:    [0.0,  0.0,  6.0,  5.0]
+  dining_room:    [0.0,  5.0,  6.0,  10.0]
+  kitchen:        [14.0, 0.0,  20.0, 5.0]
+  study:          [14.0, 5.0,  20.0, 10.0]
+  master_bedroom: [0.0,  10.0, 7.0,  14.0]
+  guest_bedroom:  [12.0, 10.0, 20.0, 14.0]
+  bathroom:       [7.0,  10.0, 12.0, 14.0]
+  hallway:        [6.0,  0.0,  14.0, 10.0]
 
 doors:
   living_room-hallway:    [6.5,  3.0]

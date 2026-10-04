@@ -15,7 +15,9 @@ Total patrol timeout: 5 minutes by default, configurable via params or
 context.config["patrol_timeout"].
 
 Falls through to the next room on navigation failure; aborts entirely if the
-robot falls (base z < 0.12 m).
+robot falls (base z < 0.12 m) or a stop arrives (checked before each navigate and
+each look). Named rooms resolve through the navigate aliases (厨房 -> kitchen); a
+failed look is reported, never written into the scene graph as a description.
 """
 from __future__ import annotations
 
@@ -25,6 +27,8 @@ from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.skills.navigate import _resolve_room
+from vector_os_nano.vcli.cognitive.abort import is_abort_requested
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +142,7 @@ class PatrolSkill:
             "type": "array",
             "items": {"type": "string"},
             "required": False,
-            "description": "Specific rooms to patrol (default: all unvisited rooms)",
+            "description": "Specific rooms to patrol, any alias (default: every known room)",
         },
         "max_rooms": {
             "type": "integer",
@@ -160,7 +164,7 @@ class PatrolSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"patrolled": True}
-    failure_modes: list[str] = ["no_base", "navigation_failed"]
+    failure_modes: list[str] = ["no_base", "navigation_failed", "unknown_room", "aborted"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         if context.base is None:
@@ -190,16 +194,29 @@ class PatrolSkill:
             )
 
         # Determine patrol target list
-        rooms_to_visit = self._resolve_rooms(params, context, max_rooms)
+        rooms_to_visit, unknown = self._resolve_rooms(params, context, max_rooms)
+        if not rooms_to_visit:
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"No patrol rooms: unknown {unknown}" if unknown
+                    else "No rooms known. Run explore first."
+                ),
+                diagnosis_code="unknown_room",
+                result_data={"rooms_unknown": unknown},
+            )
 
         # Execute patrol loop
-        return self._run_patrol(
+        result = self._run_patrol(
             rooms_to_visit,
             navigate_skill,
             look_skill,
             context,
             timeout,
         )
+        if unknown:
+            result.result_data["rooms_unknown"] = unknown
+        return result
 
     # ------------------------------------------------------------------
     # Room selection
@@ -210,34 +227,25 @@ class PatrolSkill:
         params: dict,
         context: SkillContext,
         max_rooms: int,
-    ) -> list[str]:
-        """Determine the ordered list of rooms to patrol.
+    ) -> tuple[list[str], list[str]]:
+        """(rooms to patrol in order, explicitly named rooms that resolved to nothing).
 
-        Falls back to SceneGraph visited rooms when no explicit list is given.
+        Explicit names resolve through the navigate aliases against the SceneGraph;
+        with none given, every known room is patrolled.
         """
         memory: Any = context.services.get("spatial_memory")
-        all_known_rooms: list[str] = (
-            memory.get_visited_rooms() if memory is not None else []
-        )
-
         explicit: list[str] | None = params.get("rooms")
         if explicit:
-            # Accept any explicitly-named room; validate against SceneGraph if available
-            if all_known_rooms:
-                valid = [r for r in explicit if r in all_known_rooms]
-            else:
-                valid = list(explicit)
-            return valid[:max_rooms]
-
-        # Use spatial_memory to prefer unvisited rooms
-        if memory is not None and all_known_rooms:
-            unvisited = memory.get_unvisited_rooms(all_known_rooms)
-            if unvisited:
-                return unvisited[:max_rooms]
-            # All rooms visited — revisit all
-            return all_known_rooms[:max_rooms]
-
-        return all_known_rooms[:max_rooms]
+            resolved, unknown = [], []
+            for name in explicit:
+                key = _resolve_room(str(name), sg=memory)
+                if key is None:
+                    unknown.append(str(name))
+                elif key not in resolved:
+                    resolved.append(key)
+            return resolved[:max_rooms], unknown
+        known = memory.get_visited_rooms() if memory is not None else []
+        return list(known)[:max_rooms], []
 
     # ------------------------------------------------------------------
     # Patrol execution
@@ -258,13 +266,15 @@ class PatrolSkill:
         rooms_failed: list[str] = []
         observations: dict[str, str] = {}
 
+        aborted = False
         for room in rooms:
-            # Global timeout guard
+            # Global timeout / stop / fall guards, before the navigate
             if time.monotonic() >= deadline:
                 logger.warning("[PATROL] Timeout reached — stopping patrol early")
                 break
-
-            # Fall detection — abort entire patrol
+            if is_abort_requested():
+                aborted = True
+                break
             if _robot_has_fallen(context):
                 logger.error("[PATROL] Robot fell — aborting patrol")
                 break
@@ -283,24 +293,25 @@ class PatrolSkill:
                 )
                 rooms_failed.append(room)
                 continue
-
-            # --- Observe ---
-            if look_skill is not None:
-                logger.info("[PATROL] Observing %s...", room)
-                look_result: SkillResult = look_skill.execute({}, context)
-                description = _extract_description(look_result)
-            else:
-                description = "(no look skill available)"
-
-            observations[room] = description
             rooms_visited.append(room)
 
-            # Persist observation to spatial memory when available
+            # --- Observe (guards again: the navigate may have taken a while) ---
+            if is_abort_requested():
+                aborted = True
+                break
+            if look_skill is None or time.monotonic() >= deadline:
+                observations[room] = "(not observed)"
+                continue
+            logger.info("[PATROL] Observing %s...", room)
+            look_result: SkillResult = look_skill.execute({}, context)
+            description = _extract_description(look_result)
+            observations[room] = description
+            if not look_result.success:
+                continue  # a failed look is reported, never stored as a description
+
             memory: Any = context.services.get("spatial_memory")
             if memory is not None:
                 try:
-                    pos = context.base.get_position()
-                    memory.visit(room, float(pos[0]), float(pos[1]))
                     memory.observe(room, [], description=description)
                 except Exception as exc:
                     logger.warning("[PATROL] spatial_memory update failed: %s", exc)
@@ -317,7 +328,7 @@ class PatrolSkill:
             except Exception as exc:
                 logger.warning("[PATROL] get_room_summary failed: %s", exc)
 
-        overall_success: bool = visited_count > 0
+        overall_success: bool = visited_count > 0 and not aborted
 
         return SkillResult(
             success=overall_success,
@@ -328,6 +339,7 @@ class PatrolSkill:
                 "coverage": f"{visited_count}/{total} rooms visited",
                 "spatial_summary": spatial_summary,
             },
-            error_message="" if overall_success else "No rooms were successfully patrolled",
-            diagnosis_code="" if overall_success else "navigation_failed",
+            error_message="" if overall_success else (
+                "Patrol stopped" if aborted else "No rooms were successfully patrolled"),
+            diagnosis_code="" if overall_success else ("aborted" if aborted else "navigation_failed"),
         )

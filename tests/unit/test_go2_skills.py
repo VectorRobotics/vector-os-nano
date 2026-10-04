@@ -12,12 +12,18 @@ from vector_os_nano.core.types import SkillResult
 def _make_go2_context():
     """Create a SkillContext with a mock base (Go2)."""
     base = MagicMock()
-    base.walk.return_value = True
+    yaw = [0.0]
+
+    def walk(vx, vy, vyaw, duration):  # a perfect gait: heading integrates the yaw rate
+        yaw[0] += vyaw * duration
+        return True
+
+    base.walk.side_effect = walk
     base.stand.return_value = True
     base.sit.return_value = True
     base.lie_down.return_value = True
     base.get_position.return_value = (2.5, 2.5, 0.27)
-    base.get_heading.return_value = 0.0
+    base.get_heading.side_effect = lambda: yaw[0]
     return SkillContext(
         arm=None,
         gripper=None,

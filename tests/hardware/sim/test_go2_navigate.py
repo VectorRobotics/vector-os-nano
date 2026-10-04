@@ -25,7 +25,7 @@ import pytest
 mujoco = pytest.importorskip("mujoco")
 
 from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-from vector_os_nano.hardware.sim.mujoco_g1 import obstacles_from_model
+from vector_os_nano.sim.nav.vgraph import obstacles_from_model
 
 # Pick-table footprint (x ∈ [10.80, 11.10], y ∈ [2.75, 3.25])
 _TABLE_X_MIN: float = 10.80

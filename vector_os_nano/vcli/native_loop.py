@@ -165,8 +165,10 @@ class _NativeBaseNavigateTool:
                 is_error=True,
             )
 
+        res = None
         try:
-            ok = bool(navigate_to(x, y, timeout=_NAV_TIMEOUT_S))
+            res = navigate_to(x, y, timeout=_NAV_TIMEOUT_S)
+            ok = bool(res)
         except TypeError:
             # A base whose navigate_to does not accept a timeout kwarg.
             try:
@@ -184,7 +186,13 @@ class _NativeBaseNavigateTool:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("native_loop: navigate get_position failed: %s", exc)
         where = f"({pos[0]:.2f}, {pos[1]:.2f})" if pos else "unknown"
-        status = "arrived" if ok else "did NOT confirm arrival (FAR graph unavailable or timeout)"
+        reason = getattr(res, "reason", None)  # the in-process planner's NavResult (Rule 4)
+        if reason is not None:
+            status = "arrived" if ok else f"did NOT arrive ({reason})"
+            if res.get("snapped"):
+                status += f" at {tuple(res['target'])}, the nearest free point (the target is inside an obstacle)"
+        else:
+            status = "arrived" if ok else "did NOT confirm arrival (FAR graph unavailable or timeout)"
         return ToolResult(
             content=f"navigate: {status}; now at {where} (target ({x}, {y})). "
             "Call verify(at_position) to confirm."

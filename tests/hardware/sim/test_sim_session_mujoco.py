@@ -91,7 +91,7 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
             assert (p.get_intrinsics().width, p.get_intrinsics().height) == (320, 240)
         if eid == "go2":
             assert agent._arm is None and agent._base._mj.model.nu == 12  # env ignored
-            assert "explore: unavailable (VECTOR_NAV_STACK unset)" in res.content
+            assert "explore: coverage (VECTOR_NAV_STACK unset)" in res.content
 
     stop = SimStopTool().execute({}, _ctx(app))
     assert "Simulation stopped" in stop.content and app["sim_session"] is None

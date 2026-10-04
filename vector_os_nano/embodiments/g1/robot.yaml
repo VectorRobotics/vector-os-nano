@@ -70,8 +70,6 @@ policy:
     num_actions: 12               # _NUM_ACTIONS
     gait_period: 0.8              # _GAIT_PERIOD
     action_scale: 0.25            # _ACTION_SCALE
-    body_radius: 0.30             # _G1_BODY_RADIUS (nav inflation)
-    nav_speed: 0.5                # _NAV_SPEED
     holonomic: false              # biped; not omnidirectional
 
 capabilities:
@@ -80,3 +78,11 @@ capabilities:
   has_gripper: false
   camera: true                    # g1_head_rgb
   lidar: true                     # get_lidar_scan via g1_lidar_scan
+
+nav:
+  # The in-process follower (sim/nav/follow.py).
+  body_radius: 0.30               # planning inflation (~0.27 m wide + COM sway)
+  speed: 0.5                      # m/s forward
+  vyaw_max: 0.6                   # rad/s
+  fall_z: 0.4                     # m, pelvis below this = fallen
+  goal_tol: 0.30                  # m, the gait's COM sway floor
