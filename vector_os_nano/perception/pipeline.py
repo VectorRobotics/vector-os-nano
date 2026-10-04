@@ -157,6 +157,13 @@ class PerceptionPipeline:
             raise RuntimeError("No camera configured and no synthetic frames set")
         return self._camera.get_depth_frame()  # type: ignore[union-attr]
 
+    def _rgbd(self) -> tuple[np.ndarray, np.ndarray]:
+        """Color + depth of ONE frameset (a RealSense's aligned pair), else the getters."""
+        aligned = getattr(self._camera, "get_aligned_frames", None)
+        if self._synthetic_color is None and self._synthetic_depth is None and callable(aligned):
+            return aligned()
+        return self.get_color_frame(), self.get_depth_frame()
+
     def get_intrinsics(self) -> CameraIntrinsics:
         """Return camera intrinsics."""
         if self._synthetic_intrinsics is not None:
@@ -174,8 +181,7 @@ class PerceptionPipeline:
         Returns:
             (N, 3) float64 array of 3D points in camera frame.
         """
-        depth = self.get_depth_frame()
-        color = self.get_color_frame()
+        color, depth = self._rgbd()
         intrinsics = self.get_intrinsics()
         points, _ = rgbd_to_pointcloud_fast(
             depth, color, intrinsics,
@@ -267,8 +273,7 @@ class PerceptionPipeline:
         if self._tracker is None:
             raise RuntimeError("No tracker configured. Pass tracker=EdgeTAMTracker() to PerceptionPipeline")
 
-        color = self.get_color_frame()
-        depth = self.get_depth_frame()
+        color, depth = self._rgbd()
         intrinsics = self.get_intrinsics()
         h, w = color.shape[:2]
 
@@ -320,9 +325,13 @@ class PerceptionPipeline:
         """
         if self._tracker is None:
             return []
+        if self._tracking_thread is not None and self._tracking_thread.is_alive():
+            # The background loop owns the EdgeTAM session: read its latest result
+            # instead of stepping the same session from a second thread.
+            with self._lock:
+                return list(self._last_tracked)
 
-        color = self.get_color_frame()
-        depth = self.get_depth_frame()
+        color, depth = self._rgbd()
         intrinsics = self.get_intrinsics()
 
         raw_tracks = self._tracker.process_image(color)  # type: ignore[union-attr]
@@ -342,7 +351,8 @@ class PerceptionPipeline:
 
         self._tracking_loss_time = None
         # Preserve labels from last known tracked objects
-        label_map = {t.track_id: t.label for t in self._tracked_objects}
+        with self._lock:
+            label_map = {t.track_id: t.label for t in self._tracked_objects}
         labels = [label_map.get(r.get("track_id", 0), "object") for r in raw_tracks]
 
         tracked_objects = self._build_tracked_objects(
@@ -402,8 +412,7 @@ class PerceptionPipeline:
                     time.sleep(0.1)
                     continue
 
-                color = self.get_color_frame()
-                depth = self.get_depth_frame()
+                color, depth = self._rgbd()
                 if color is None or depth is None:
                     time.sleep(0.05)
                     continue
@@ -411,8 +420,18 @@ class PerceptionPipeline:
                 # Process through EdgeTAM — propagates masks to current frame
                 raw_tracks = self._tracker.process_image(color)  # type: ignore[union-attr]
                 if not raw_tracks:
+                    # A lost track times out here too: its last pose is never kept forever.
+                    if self._tracking_loss_time is None:
+                        self._tracking_loss_time = time.monotonic()
+                    elif time.monotonic() - self._tracking_loss_time > _TRACKING_TIMEOUT_S:
+                        logger.warning("Tracking lost for %.0fs, stopping", _TRACKING_TIMEOUT_S)
+                        self._tracker.stop()  # type: ignore[union-attr]
+                        self._tracking_loss_time = None
+                        with self._lock:
+                            self._tracked_objects, self._last_tracked = [], []
                     time.sleep(0.05)
                     continue
+                self._tracking_loss_time = None
 
                 frame_counter += 1
                 do_3d = (frame_counter % _TRACKING_FRAME_STRIDE == 0) or (frame_counter == 1)

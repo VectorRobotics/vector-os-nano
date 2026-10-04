@@ -137,6 +137,11 @@ class ActorBaseline:
     # transition that signals a fresh grasp.
     gripper_welds: dict[str, bool] | None = None
 
+    # Perception — the belief's count of LOCALIZED observations (SceneGraph
+    # ``observation_count``): it advances only when the actor's perception put an
+    # object at a position this step.
+    belief_obs: int | None = None
+
 
 def _read_float(fn: Any) -> float | None:
     """Call *fn* and coerce to float, fail-safe to None."""
@@ -219,6 +224,7 @@ def capture(agent: Any) -> ActorBaseline:
     base_cmd_motion, base_pos, base_heading = _capture_base(base)
     arm_ctrl_motion, arm_joints = _capture_arm(arm)
     gripper_welds = _capture_gripper(gripper)
+    obs = getattr(getattr(agent, "_spatial_memory", None), "observation_count", None)
     return ActorBaseline(
         base_cmd_motion=base_cmd_motion,
         base_pos=base_pos,
@@ -226,6 +232,7 @@ def capture(agent: Any) -> ActorBaseline:
         arm_ctrl_motion=arm_ctrl_motion,
         arm_joints=arm_joints,
         gripper_welds=gripper_welds,
+        belief_obs=obs if isinstance(obs, int) and not isinstance(obs, bool) else None,
     )
 
 
@@ -246,6 +253,9 @@ _GRIPPER_PREDICATES: frozenset[str] = frozenset(
 # Placement predicates: the actor caused them only by RELEASING an object this step
 # (a weld 1->0), so an object that was already resting there grades UNCAUSED.
 _RELEASE_PREDICATES: frozenset[str] = frozenset({"released", "object_at", "object_on"})
+# Perception predicates (the actor's belief judged against GT): caused only by a
+# localized observation written this step (a perceive), never by an older memory.
+_PERCEPTION_PREDICATES: frozenset[str] = frozenset({"localized"})
 
 
 def _names_in_expr(verify: str, names: frozenset[str]) -> bool:
@@ -352,6 +362,9 @@ def grade(
         advanced AND a joint moved.
     - The verify names a GRIPPER predicate (holding_object): CAUSED iff a weld
         transitioned 0->1 this step (a fresh grasp). [holding grading — see fix 6.]
+    - The verify names a PERCEPTION predicate (localized): CAUSED iff the belief
+        gained a localized observation this step (a perceive wrote it); memory
+        from before the step, or a step that wrote nothing, is UNCAUSED.
     - Any other / ungradable case -> UNCAUSED (fail closed). The executor only
         downgrades on UNCAUSED, and only consults this for GROUNDED-capable robot
         steps, so a non-robot predicate never reaches here as UNCAUSED in practice.
@@ -392,6 +405,11 @@ def grade(
         fresh = _gripper_fresh_release(baseline, post)
         return ActorCaused.CAUSED if fresh else ActorCaused.UNCAUSED
 
+    if _names_in_expr(verify, _PERCEPTION_PREDICATES):
+        if baseline.belief_obs is None or post.belief_obs is None:
+            return ActorCaused.UNCAUSED
+        return ActorCaused.CAUSED if post.belief_obs > baseline.belief_obs else ActorCaused.UNCAUSED
+
     return ActorCaused.UNCAUSED
 
 
@@ -405,5 +423,6 @@ def is_robot_predicate(verify: str, oracle_names: frozenset[str]) -> bool:
     """
     graded = (
         _BASE_PREDICATES | _ARM_PREDICATES | _GRIPPER_PREDICATES | _RELEASE_PREDICATES
+        | _PERCEPTION_PREDICATES
     ) & oracle_names
     return _names_in_expr(verify, frozenset(graded))

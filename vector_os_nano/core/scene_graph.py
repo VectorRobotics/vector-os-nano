@@ -238,6 +238,15 @@ class SceneGraph:
         self._save_timer: threading.Timer | None = None
         # Never autosave over a persisted file this graph has not loaded yet.
         self._may_autosave = not (persist_path and os.path.exists(persist_path))
+        self._obs_count = 0  # localized observations merged (monotonic; not persisted)
+
+    @property
+    def observation_count(self) -> int:
+        """How many LOCALIZED observations this graph has merged (it only grows).
+
+        The actor-causation perception channel: a step caused ``localized`` only if
+        this advanced during it (loading or clearing memory never advances it)."""
+        return self._obs_count
 
     def clear(self) -> None:
         """Forget everything observed, IN PLACE (every holder keeps this instance).
@@ -558,6 +567,8 @@ class SceneGraph:
                     last_seen=now, n_obs=match.n_obs + 1, **pos,
                 )
             self._objects[obj.object_id] = obj
+            if x is not None:
+                self._obs_count += 1
         self._autosave()
         return obj
 

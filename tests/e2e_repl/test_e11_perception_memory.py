@@ -39,7 +39,7 @@ _SESSION1 = {"steps": LAUNCH_STEPS + [
     {"when": _EN, "tool_calls": [{**_GO, "input": {"object": "green bottle"}}]},
     {"when": "'object_id'", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
 ]}
-_RECALL = "绿色的瓶子在哪里"
+_RECALL = "再去绿色的瓶子那里"
 _SESSION2 = {"steps": LAUNCH_STEPS + [
     {"when": _RECALL, "tool_calls": [{**_GO, "input": {"object": "绿色的瓶子"}}]},
     {"when": "'object_id'", "tool_calls": [
@@ -75,11 +75,14 @@ def test_e11_look_localizes_remembers_and_resolves_zh_en_to_one_instance(tmp_pat
                          timeout_sec=480)
     text = r.text
     assert not r.timed_out, text[-3000:]
-    assert "perception: detector=grounding-dino@" in text and "vlm=none" in text, text[:3000]
     look = _turn(text, _LOOK, _ZH)
-    assert f"look → verify {_THREE} ✓" in look, look[-3000:]
+    assert f"look → verify {_THREE} ✓ (actor=CAUSED)" in look, look[-3000:]
     assert "verdict GROUNDED verified=True" in look, look[-3000:]
     obs = _observations(log1)
+    # the start line the model relays carries the perception capability line
+    started = next(o for o in obs if "Started go2_piper simulation" in o)
+    assert re.search(r"perception: detector=grounding-dino@\w+, segmenter=(edgetam|box_rect), "
+                     r"self_mask=yes, vlm=none, rynnbrain=(up|down)", started), started
     ids = _ids(obs)
     assert len(ids) == 2 and ids[0] == ids[1], f"zh and en names went to different instances: {ids}"
 

@@ -104,7 +104,7 @@ class Agent:
                     from vector_os_nano.perception.tracker import EdgeTAMTracker
                     from vector_os_nano.perception.pipeline import PerceptionPipeline
 
-                    cam = RealSenseCamera()
+                    cam = RealSenseCamera(serial=self._config.get("camera", {}).get("serial") or None)
                     cam.connect()
                     vlm_det = VLMDetector()
                     tracker = EdgeTAMTracker()

@@ -505,3 +505,42 @@ def test_in_view_is_caused_by_a_turn_or_a_walk_not_by_looking() -> None:
     base.command(0.3)
     base._yaw = 1.0  # turned in place
     assert grade(before, capture(_agent(base=base)), "in_view('red can')", _WP10) == ActorCaused.CAUSED
+
+
+# ---------------------------------------------------------------------------
+# WP11: localized is graded on the PERCEPTION channel — caused only by a localized
+# observation written this step, never by memory (adversarial cases first).
+# ---------------------------------------------------------------------------
+
+
+def _perceiver():
+    from vector_os_nano.core.scene_graph import SceneGraph
+
+    agent = _agent()
+    agent._spatial_memory = SceneGraph()
+    return agent
+
+
+def test_localized_from_memory_alone_is_uncaused() -> None:
+    agent = _perceiver()
+    agent._spatial_memory.merge_object("green bottle", "hallway", "vp", x=10.88, y=3.0)
+    before = capture(agent)  # the step starts with the object already on the map
+    assert is_robot_predicate("localized('green bottle')", _WP10)
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+    agent._spatial_memory.merge_object("sofa", "hallway", "vp")  # a name with no position
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+    agent._spatial_memory.clear()
+    agent._spatial_memory.load()  # nothing persisted: still nothing perceived this step
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+
+
+def test_localized_after_a_perceive_wrote_the_belief_is_caused() -> None:
+    agent = _perceiver()
+    before = capture(agent)
+    agent._spatial_memory.merge_object("green bottle", "hallway", "vp", x=10.88, y=3.0)
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.CAUSED
+
+
+def test_localized_without_a_belief_or_a_baseline_fails_closed() -> None:
+    assert grade(None, capture(_perceiver()), "localized('x')", _WP10) == ActorCaused.UNCAUSED
+    assert grade(capture(_agent()), capture(_agent()), "localized('x')", _WP10) == ActorCaused.UNCAUSED
