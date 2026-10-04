@@ -723,8 +723,11 @@ class MuJoCoGo2:
         (macOS pump, VECTOR_SIM_LOCKSTEP) it steps the physics here, so the gait
         animates and the viewer syncs on this thread. Sim time, not wall time:
         a walk of N seconds covers the same ground at any real-time ratio.
+        A stop (the calling run's CancelToken) ends the motion now, not after it.
         """
-        return self.runtime.wait_sim(seconds)
+        from vector_os_nano.vcli.cognitive.abort import current_token  # noqa: PLC0415
+
+        return self.runtime.wait_sim(seconds, cancel=current_token())
 
     def _init_mpc_stack(self) -> None:
         """Initialize convex_mpc control stack. Raises ImportError if unavailable.
