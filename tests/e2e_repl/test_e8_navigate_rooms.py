@@ -50,8 +50,10 @@ def _grounded(text: str, xy: tuple[float, float]) -> bool:
 @pytest.mark.cli_main
 @pytest.mark.parametrize("trial", range(3))
 def test_e8_kitchen_and_dining_room_ground(trial: int) -> None:
+    # Lockstep (WP06): physics advances only inside the follower's sim-time waits,
+    # so every trial replays the same ground truth, as fast as the box allows.
     r = run_repl_session([_LAUNCH, "去厨房", "回到起点", "去餐厅"], tool_script=_SCRIPT,
-                         answers=["y"], timeout_sec=420)
+                         answers=["y"], timeout_sec=420, extra_env={"VECTOR_SIM_LOCKSTEP": "1"})
     text = r.text
     assert not r.timed_out, text[-4000:]
     kitchen = text[text.rfind("vector> 去厨房"):text.rfind("vector> 回到起点")]

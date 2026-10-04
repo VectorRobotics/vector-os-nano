@@ -152,7 +152,7 @@ def _launch_then_grasp(repl: _Repl, grasp_line: str, grasp_timeout: float) -> tu
     ready = repl.expect(r"Started go2_piper simulation, ready in [0-9.]+s: MuJoCoGo2 \+ MuJoCoPiper", 90)
     assert time.monotonic() - t0 < 90, "E1: the ready line must arrive within 90 s"
     line = repl.text()[ready.start():ready.start() + 300]
-    assert "gait=" in line and "explore: unavailable (VECTOR_NAV_STACK unset)" in line
+    assert "gait=" in line and "explore: coverage (VECTOR_NAV_STACK unset)" in line
     repl.expect(r"vector>", 120)
     repl.send(grasp_line)
     verdict = repl.expect(r"verdict (\w+) verified=(\w+)", grasp_timeout)
