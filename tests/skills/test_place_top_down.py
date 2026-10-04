@@ -291,21 +291,21 @@ def test_place_top_down_missing_target_returns_missing_target() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 9 — verify_hint: skill declares a grounded placed_count predicate
+# Test 9 — verify_hint: skill declares a grounded object_at predicate
 # ---------------------------------------------------------------------------
 
 
-def test_place_top_down_has_verify_hint_with_placed_count() -> None:
+def test_place_top_down_has_verify_hint_with_object_at() -> None:
     """PlaceTopDownSkill.verify_hint must be a non-empty str containing
-    'placed_count' — the grounded place-success predicate.  It must NOT be
+    'object_at' — the grounded place-success predicate (GT: resting at the drop xy).  It must NOT be
     empty, 'True', or the old always-passing fallback."""
     skill = PlaceTopDownSkill()
     hint = getattr(skill, "verify_hint", None)
     assert hint is not None, "PlaceTopDownSkill must declare verify_hint"
     assert isinstance(hint, str), "verify_hint must be a str"
     assert hint.strip(), "verify_hint must be non-empty"
-    assert "placed_count" in hint, (
-        f"verify_hint must reference 'placed_count'; got {hint!r}"
+    assert "object_at" in hint, (
+        f"verify_hint must reference 'object_at'; got {hint!r}"
     )
 
 
@@ -325,7 +325,7 @@ def test_place_top_down_schema_surfaces_verify_hint() -> None:
     by_name = {s["name"]: s for s in schemas}
     assert "place_top_down" in by_name, "place_top_down skill must appear in schemas"
     hint = by_name["place_top_down"]["verify_hint"]
-    assert "placed_count" in hint, (
-        f"schema verify_hint must contain 'placed_count'; got {hint!r}"
+    assert "object_at" in hint, (
+        f"schema verify_hint must contain 'object_at'; got {hint!r}"
     )
     assert hint != "True", "verify_hint must not be the fallback 'True'"

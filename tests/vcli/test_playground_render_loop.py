@@ -35,7 +35,11 @@ import json
 from typing import Any
 
 from vector_os_nano.playground import PlaygroundWorld
-from vector_os_nano.playground.verify.arm_predicates import _HOME_JOINTS
+from tests.harness.fake_gt import bind_fake_sim
+from vector_os_nano.embodiments import registry
+
+# The SO-101 home pose (its manifest stance; the arm_at_home oracle reads it there).
+_HOME_JOINTS = tuple(registry.load("so101").stance.values())
 from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names
@@ -156,7 +160,7 @@ _TREE = GoalTree(
         SubGoal(
             name="detect_mug",
             description="detect the mug",
-            verify="len(detect_objects('mug')) > 0",
+            verify="object_on('mug', 'table')",
             strategy="detect_skill",
             depends_on=("home_arm",),
         ),
@@ -170,7 +174,7 @@ _TREE = GoalTree(
         SubGoal(
             name="place_mug",
             description="place the mug in the target region",
-            verify="placed_count((0.0, 0.0, 0.5, 0.5)) >= 1",
+            verify="object_at('mug', 0.1, 0.1)",
             strategy="place_skill",
             depends_on=("grasp_mug",),
         ),
@@ -195,6 +199,7 @@ def _engine_with_view_sink(arm: _StubArm, gripper: _StubGripper, view_sink) -> V
 def test_cli_engine_path_emits_step_views_and_renders_verified_loop() -> None:
     arm, gripper = _StubArm(), _StubGripper()
     agent = type("Agent", (), {"_arm": arm, "_gripper": gripper})()
+    bind_fake_sim(agent, "so101")
     registry = _ArmRegistry(arm, gripper)
 
     # The observation surface sink — exactly what cli.py's on_vgg_step_view feeds.

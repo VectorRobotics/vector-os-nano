@@ -542,3 +542,45 @@ def test_look_skill_no_world_coords_when_localization_returns_empty():
         assert "world_x" not in obj
         assert "world_y" not in obj
         assert "world_z" not in obj
+
+
+def _no_vlm_context(world: str | None) -> Any:
+    from vector_os_nano.core.skill import SkillContext
+
+    mem = _RecordingMemory()
+    ctx = SkillContext(
+        base=_FakeBase(), services={"spatial_memory": mem},
+        perception=_StubPerception(label="green bottle"),
+        config={"world": world} if world else {},
+    )
+    return ctx, mem
+
+
+def test_look_without_a_vlm_localizes_the_world_vocabulary():
+    """No VLM: look asks the detector for each of the world's own objects and
+    records ONLY the ones it localized (never an unseen name)."""
+    import unittest.mock as mock
+    from vector_os_nano.skills.go2.look import LookSkill
+
+    ctx, mem = _no_vlm_context("apartment")
+    with mock.patch(
+        "vector_os_nano.skills.go2.look.localize_objects_3d",
+        return_value=[("green bottle", 10.88, 3.0, 0.32)],
+    ) as loc:
+        result = LookSkill().execute({}, ctx)
+    assert result.success, result.error_message
+    asked = loc.call_args.args[1]
+    assert "green bottle" in asked and "red can" in asked  # the manifest vocabulary
+    (call,) = mem.calls
+    assert call["objects"] == ["green bottle"]
+    assert call["detected_objects"] == [("green bottle", 10.88, 3.0)]
+    assert [o["name"] for o in result.result_data["objects"]] == ["green bottle"]
+
+
+def test_look_without_a_vlm_or_a_world_still_fails_loud():
+    from vector_os_nano.skills.go2.look import LookSkill
+
+    ctx, mem = _no_vlm_context(None)
+    result = LookSkill().execute({}, ctx)
+    assert not result.success and result.diagnosis_code == "no_vlm"
+    assert not mem.calls

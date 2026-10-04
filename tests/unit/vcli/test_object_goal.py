@@ -36,6 +36,7 @@ _ARM_ORACLES = frozenset(
     {
         "holding_object", "at_position", "facing", "arm_at_home", "detect_objects",
         "describe_scene", "placed_count", "file_exists", "path_contains",
+        "lifted", "kept_holding", "near_object", "object_on", "released",
     }
 )
 # A go2-only (coordinate) world — NO arm, so the object-goal gate must never fire.
@@ -80,7 +81,10 @@ def test_goal_has_object_intent(goal, expected) -> None:
         ("holding_object('banana')", True),
         ("holding_object()", True),
         ("holding_object('banana') and arm_at_home()", True),  # and-conjunct gates
-        ("placed_count() == 1", True),                          # place verify gates
+        ("placed_count() == 1", False),                         # a placement never proves a grasp
+        ("object_on('banana', 'tray')", False),
+        ("lifted('banana')", True),                             # held clear of its support
+        ("kept_holding('banana') and near_object('user')", True),
         ("not holding_object()", True),                         # release-completion gates
         # NOT a manipulation oracle -> the fabrication vectors:
         ("file_exists('grabbed.txt')", False),
@@ -151,8 +155,6 @@ def test_real_grasp_via_holding_object_stays_grounded() -> None:
 @pytest.mark.parametrize(
     "goal, verify, strategy, actor",
     [
-        # pick-and-place terminating on placed_count -> honest, stays GROUNDED
-        ("把香蕉抓起来放到盒子里", "placed_count() == 1", "place", ActorCaused.NOT_GRADED),
         # generic pick proven by holding anything
         ("pick up the cube", "holding_object()", "pick", ActorCaused.CAUSED),
         # grasp + return-home chain
@@ -163,6 +165,16 @@ def test_honest_manipulation_goals_stay_grounded(goal, verify, strategy, actor) 
     sg, rec = _step("s0", verify, strategy, actor)
     trace = _trace(goal, (sg, rec))
     assert evidence_passed(trace, _ARM_ORACLES) is True
+
+
+def test_pick_and_place_needs_the_grasp_proven_not_only_the_placement() -> None:
+    """WP10: a pick-and-place turn verified ONLY by where the object ended up is not a
+    proven grasp (it may have been resting there all along); with the grasp step's
+    holding_object GROUNDED alongside the place, it is."""
+    place = _step("s1", "object_on('banana', 'tray')", "place", ActorCaused.CAUSED)
+    assert evidence_passed(_trace("把香蕉抓起来放到盒子里", place), _ARM_ORACLES) is False
+    grasp = _step("s0", "holding_object('banana')", "pick", ActorCaused.CAUSED)
+    assert evidence_passed(_trace("把香蕉抓起来放到盒子里", grasp, place), _ARM_ORACLES) is True
 
 
 def test_release_negation_is_not_grounded() -> None:

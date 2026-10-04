@@ -30,20 +30,14 @@ class Scenario:
         scene_xml: path to the MJCF scene file (relative to the repo root or
             absolute) the sim loads for this scenario.
         task_hint: a short human-readable description of the scene's task.
-        object_names: the graspable object body names present in the scene; the
-            sim-oracle verify predicates read ground truth for exactly these.
-        place_region: an optional named drop-zone as an axis-aligned bounding box
-            ``(x_min, y_min, x_max, y_max)``. When set, the playground binds it as
-            the DEFAULT region for ``placed_count()`` so a sub-goal can verify
-            "placed in the scene's drop-zone" without hand-passing raw coordinates.
-            ``None`` (the default) means the scene defines no region and
-            ``placed_count()`` counts every resting object.
-        rooms: an optional mapping of room name -> axis-aligned bounding box
-            ``(x_min, y_min, x_max, y_max)`` for a mobile-base (Go2) scene. The
-            base ``visited(room)`` verify predicate checks the base's planar
-            position against the named box, so a navigation sub-goal can verify
-            "reached the kitchen" by scene name without hand-passing coordinates.
-            Empty (the default) means the scene declares no named rooms.
+        object_names: the graspable object body names present in the scene (the
+            scenario's object listing; empty = every free body).
+        place_region: an optional drop-zone ``(x_min, y_min, x_max, y_max)``; the
+            world manifest's matching surface (``tray`` on the tabletop) is what the
+            ``object_on`` oracle grades a place against.
+        rooms: an optional mapping of room name -> ``(x_min, y_min, x_max, y_max)``
+            for a mobile-base scene (the world manifest's room boxes) — the rooms a
+            "visit each room" plan iterates; ``in_room`` grades arrival.
     """
 
     id: str

@@ -29,7 +29,7 @@ from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 from vector_os_nano.core.agent import Agent
 from vector_os_nano.skills import get_default_skills
 from vector_os_nano.skills.pick import SIM_PICK_CONFIG
-from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
+from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ class TestPickUnboundNearest:
 
     def test_gripper_empty_before_pick(self, sim_agent_unbound: Agent) -> None:
         """Pre-condition: gripper is empty before the unbound pick."""
-        holding = make_holding_object(sim_agent_unbound)
+        holding = rig_namespace(sim_agent_unbound._arm.runtime, "so101")["holding_object"]
         assert holding() is False, "Expected empty gripper before pick"
 
     def test_nearest_object_is_banana(self, sim_agent_unbound: Agent) -> None:
@@ -134,7 +134,7 @@ class TestPickUnboundNearest:
 
     def test_holding_after_unbound_pick(self, sim_agent_unbound: Agent) -> None:
         """After unbound pick, holding_object() must be True."""
-        holding = make_holding_object(sim_agent_unbound)
+        holding = rig_namespace(sim_agent_unbound._arm.runtime, "so101")["holding_object"]
         assert holding() is True, "holding_object() must be True after unbound pick"
 
     def test_nearest_object_is_lifted(self, sim_agent_unbound: Agent) -> None:
@@ -158,7 +158,7 @@ class TestPickBoundTargetUnchanged:
     """Bound target must NOT be overridden by the nearest-object logic."""
 
     def test_gripper_empty_before_bound_pick(self, sim_agent_bound: Agent) -> None:
-        holding = make_holding_object(sim_agent_bound)
+        holding = rig_namespace(sim_agent_bound._arm.runtime, "so101")["holding_object"]
         assert holding() is False, "Expected empty gripper before bound pick"
 
     def test_bound_pick_succeeds(self, sim_agent_bound: Agent) -> None:
@@ -171,7 +171,7 @@ class TestPickBoundTargetUnchanged:
         )
 
     def test_holding_after_bound_pick(self, sim_agent_bound: Agent) -> None:
-        holding = make_holding_object(sim_agent_bound)
+        holding = rig_namespace(sim_agent_bound._arm.runtime, "so101")["holding_object"]
         assert holding() is True, "holding_object() must be True after bound pick"
 
     def test_mug_is_lifted_not_banana(self, sim_agent_bound: Agent) -> None:

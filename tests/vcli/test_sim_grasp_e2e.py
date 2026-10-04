@@ -22,7 +22,7 @@ from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 from vector_os_nano.core.agent import Agent
 from vector_os_nano.skills import get_default_skills
 from vector_os_nano.skills.pick import SIM_PICK_CONFIG
-from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
+from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ class TestSimGraspE2E:
 
     def test_not_holding_before_pick(self, sim_agent: Agent):
         """Pre-condition: gripper is empty before the pick."""
-        holding = make_holding_object(sim_agent)
+        holding = rig_namespace(sim_agent._arm.runtime, "so101")["holding_object"]
         assert holding() is False, "Expected gripper empty before pick"
 
     def test_banana_grasp_and_lift(self, sim_agent: Agent):
@@ -94,7 +94,7 @@ class TestSimGraspE2E:
         assert result.success, f"pick skill failed: {getattr(result, 'failure_reason', result)}"
 
         # Check holding predicate.
-        holding = make_holding_object(sim_agent)
+        holding = rig_namespace(sim_agent._arm.runtime, "so101")["holding_object"]
         assert holding() is True, "holding_object() must be True after successful pick(hold)"
 
         # Check the banana is physically lifted.

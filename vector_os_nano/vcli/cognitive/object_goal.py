@@ -48,16 +48,13 @@ _OBJECT_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# GROUND-TRUTH MANIPULATION oracles — the predicates whose truth PROVES physical
-# possession/placement of an object and which the ACTOR CANNOT AUTHOR:
-#   - holding_object(...) : gripper weld active + object lifted + within EE grasp radius
-#   - placed_count(...)   : object resting inside the target region (you must have
-#                           grasped then placed it to make this true)
-# A grasp goal is honestly grounded by EITHER (a pick proves itself with holding_object;
-# a pick-and-place may terminate on placed_count() or a release ``not holding_object()``).
-# Anything else (file_exists / describe_scene / path_contains / read_file) is the means'
-# own author-writable output, NOT a manipulation oracle, and cannot satisfy the gate.
-_MANIP_ORACLES: frozenset[str] = frozenset({"holding_object", "placed_count"})
+# GROUND-TRUTH POSSESSION oracles — the predicates whose truth PROVES the gripper holds
+# the object and which the ACTOR CANNOT AUTHOR: holding_object (weld + finger contacts
+# + lifted), lifted (held clear of its support), kept_holding (held, never dropped this
+# turn). A placement (object_on / object_at / released) never proves a grasp: an object
+# can rest on a table without ever being picked. Anything else (file_exists /
+# path_contains / a scene reader) is the means' own author-writable output.
+_MANIP_ORACLES: frozenset[str] = frozenset({"holding_object", "lifted", "kept_holding"})
 
 
 def goal_has_object_intent(goal_text: str | None) -> bool:

@@ -18,7 +18,7 @@ from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception  #
 from vector_os_nano.skills.go2 import get_go2_skills  # noqa: E402
 from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill  # noqa: E402
 from vector_os_nano.skills.pick_top_down import PickTopDownSkill  # noqa: E402
-from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object  # noqa: E402
+from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace  # noqa: E402
 
 go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
 go2.connect()
@@ -57,12 +57,12 @@ def bottle_z() -> float:
         return -1.0
 
 
-print("green-bottle z BEFORE:", round(bottle_z(), 3), "holding:", make_holding_object(agent)())
+print("green-bottle z BEFORE:", round(bottle_z(), 3), "holding:", rig_namespace(go2.runtime, "go2_piper")["holding_object"]())
 shot("before")
 
 res = agent.execute_skill("perception_grasp", {"query": "绿色的瓶子"})
 print("perception_grasp success:", res.success)
-print("green-bottle z AFTER :", round(bottle_z(), 3), "holding:", make_holding_object(agent)())
+print("green-bottle z AFTER :", round(bottle_z(), 3), "holding:", rig_namespace(go2.runtime, "go2_piper")["holding_object"]())
 shot("after")
 
 for dev in (gripper, piper, go2):

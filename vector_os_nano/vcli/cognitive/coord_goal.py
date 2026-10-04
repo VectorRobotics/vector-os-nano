@@ -44,6 +44,12 @@ _MAX_ARRIVAL_TOL_M: float = 2.0
 # The same line for a heading tolerance (``facing(h, tol)``): above 45 deg "facing h"
 # no longer names a direction.
 _MAX_FACING_TOL_RAD: float = math.radians(45.0)
+# The same line for the object-distance radii: "near" an object within 1.5 m, an
+# object "at" a point within 0.5 m, "localized" within 0.2 m (the apartment's pick
+# table holds bottles 0.22 m apart: a looser match would credit the neighbour).
+_MAX_NEAR_M: float = 1.5
+_MAX_OBJECT_AT_M: float = 0.5
+_MAX_LOCALIZED_M: float = 0.2
 
 
 def _at_position_tol() -> float:
@@ -52,7 +58,7 @@ def _at_position_tol() -> float:
     Re-read, never re-authored, so the check can never disagree with the oracle.
     """
     try:
-        from vector_os_nano.vcli.worlds.go2_sim_oracle import _AT_POSITION_TOL_M
+        from vector_os_nano.vcli.worlds.sim_oracles import _AT_POSITION_TOL_M
 
         return float(_AT_POSITION_TOL_M)
     except Exception:  # noqa: BLE001

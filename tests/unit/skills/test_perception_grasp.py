@@ -133,7 +133,7 @@ def _ctx(perception, *, arm=None, gripper=None, wm=None):
         gripper=gripper if gripper is not None else FakeGripper(),
         world_model=wm if wm is not None else WorldModel(),  # EMPTY but not None
         perception=perception,
-        config={},
+        config={"world": "apartment"},
     )
 
 
@@ -315,7 +315,7 @@ def test_approach_noop_when_already_in_reach():
 def test_no_arm_fails_loud():
     perc = FakePerception()
     ctx = SkillContext(arm=None, gripper=FakeGripper(), world_model=WorldModel(),
-                       perception=perc, config={})
+                       perception=perc, config={"world": "apartment"})
     res = PerceptionGraspSkill().execute({"query": "banana"}, ctx)
     assert res.success is False
     assert res.result_data["diagnosis"] == "no_arm"

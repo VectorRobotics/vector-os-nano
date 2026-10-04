@@ -109,8 +109,8 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
 
         # The arm must START not holding anything — that is what makes a successful
         # grasp a genuine, actor-CAUSED 0->1 weld transition (never a NO-OP).
-        from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
-        assert make_holding_object(agent)() is False, (
+        from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
+        assert rig_namespace(agent._arm.runtime, "so101")["holding_object"]() is False, (
             "arm must boot NOT holding so the pick is genuinely caused"
         )
 
@@ -120,6 +120,9 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
             tool_turn(("verify", {"expr": f"holding_object('{_PICK_TARGET}')"})),
             tool_turn(end=True),
         ])
+        from tests.harness.fake_gt import bind_real_sim, unbind_fake_sim
+
+        sim = bind_real_sim(agent, "so101")  # the GT oracles of a live session
         eng = VectorEngine(
             backend=backend, registry=CategorizedToolRegistry(),
             permissions=PermissionContext(no_permission=True),  # a hand-built rig is no SimSession: grant asks
@@ -166,6 +169,7 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
         assert report.verified is True, f"a grounded grasp must verify; {report.evidence}"
         assert report.evidence == "GROUNDED"
         assert report.exit_code() == 0
+        unbind_fake_sim(sim)
     finally:
         try:
             arm.disconnect()

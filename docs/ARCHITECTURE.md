@@ -217,8 +217,10 @@ One terse line per package. No line numbers (they rot — read the file). Paths 
 - `vcli/cognitive/capabilities/` — the Capability seam (`Capability` protocol +
   `CapabilityRegistry` + `LLMChatCapability`); the bridge to a heterogeneous model zoo.
 - `vcli/worlds/` — `base.py` (the four-thing `World` protocol), `dev.py`, `robot.py`,
-  `registry.py` (`WorldRegistry` resolution), and the single-sourced sim-oracle predicate
-  modules (`arm_sim_oracle` / `go2_sim_oracle` / `g1_perception_oracle`).
+  `registry.py` (`WorldRegistry` resolution), `world_manifest.py` (loader + name resolver
+  for `config/worlds/<id>.yaml`: rooms, surfaces, pickables, user location) and
+  `sim_oracles.py` — the ONE module of ground-truth verify predicates, bound to the live
+  SimSession's `sim/ground_truth.GroundTruth` (skills/perception never import either).
 - `embodiments/` — **embodiment-as-config**: `config.py` (`EmbodimentConfig` +
   `CapabilityProfile` schema + fail-loud loader), per-robot `<id>/robot.yaml` manifests
   (`go2`, `g1`, `so101`, and `go2_piper` whose typed `arm` block — joint/actuator/site

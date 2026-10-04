@@ -1,0 +1,29 @@
+# World manifest — the SO-101 tabletop (vector_os_nano/hardware/sim/so101_mujoco.xml).
+# Loaded by vector_os_nano/vcli/worlds/world_manifest.py for embodiments with
+# robot.yaml `world: tabletop`. The grasp welds live in the MJCF <equality> block.
+
+rooms: {}
+boxes: {}
+doors: {}
+
+surfaces:
+  table: {body: table, box: [-0.10, -0.25, 0.50, 0.25], height: 0.02}
+  # The drop-zone (right-front of the table), a region on the table top.
+  tray:  {body: table, box: [0.20, 0.0, 0.50, 0.25], height: 0.02}
+
+pickables:
+  banana:      {category: banana,      colour: yellow, surface: table, aliases: [banana, 香蕉]}
+  mug:         {category: mug,         colour: red,    surface: table, aliases: [mug, red mug, 马克杯, 杯子]}
+  bottle:      {category: bottle,      colour: blue,   surface: table, aliases: [bottle, blue bottle, 瓶子]}
+  screwdriver: {category: screwdriver, colour: green,  surface: table, aliases: [screwdriver, 螺丝刀]}
+  duck:        {category: duck,        colour: orange, surface: table, aliases: [duck, rubber duck, 鸭子]}
+  lego:        {category: lego,        colour: red,    surface: table, aliases: [lego, lego brick, 乐高, 积木]}
+
+vocab:
+  colours:
+    yellow: [yellow, 黄]
+    red:    [red, 红]
+    blue:   [blue, 蓝]
+    green:  [green, 绿]
+    orange: [orange, 橙]
+  categories: {}

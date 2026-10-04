@@ -44,7 +44,11 @@ from typing import Any
 import pytest
 
 from vector_os_nano.playground import PlaygroundWorld
-from vector_os_nano.playground.verify.arm_predicates import _HOME_JOINTS
+from tests.harness.fake_gt import bind_fake_sim
+from vector_os_nano.embodiments import registry
+
+# The SO-101 home pose (its manifest stance; the arm_at_home oracle reads it there).
+_HOME_JOINTS = tuple(registry.load("so101").stance.values())
 from vector_os_nano.vcli.cognitive.goal_decomposer import GoalDecomposer
 from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
@@ -218,7 +222,9 @@ class _MockBackend:
 
 def _arm_agent(arm: _StubArm, gripper: _StubGripper) -> SimpleNamespace:
     # No ``_base`` attribute => the engine derives has_base=False (arm-only).
-    return SimpleNamespace(_arm=arm, _gripper=gripper)
+    agent = SimpleNamespace(_arm=arm, _gripper=gripper)
+    bind_fake_sim(agent, "so101")
+    return agent
 
 
 def _playground_vocab_kwargs(agent: Any, registry: _ArmRegistry) -> dict[str, Any]:
@@ -276,7 +282,7 @@ _GOOD_PLAN = {
         {
             "name": "detect_mug",
             "description": "detect the mug on the table",
-            "verify": "len(detect_objects('mug')) > 0",
+            "verify": "object_on('mug', 'table')",
             "strategy": "detect_skill",
             "depends_on": ["home_arm"],
             "strategy_params": {"query": "mug"},
@@ -292,7 +298,7 @@ _GOOD_PLAN = {
         {
             "name": "place_mug",
             "description": "place the mug in the target region",
-            "verify": "placed_count((0.0, 0.0, 0.5, 0.5)) >= 1",
+            "verify": "object_at('mug', 0.1, 0.1)",
             "strategy": "place_skill",
             "depends_on": ["grasp_mug"],
             "strategy_params": {"target": "bin"},
@@ -365,7 +371,8 @@ def test_playground_decompose_vocab_is_arm_only() -> None:
     for absent in ("navigate_skill", "look_skill", "explore_skill", "scan_360", "去厨房", "nearest_room"):
         assert absent not in prompt
     # The playground verify oracle is the allowlist — not the go2 room functions.
-    assert {"arm_at_home", "holding_object", "placed_count", "detect_objects"} <= gd.VERIFY_FUNCTIONS
+    assert {"arm_at_home", "holding_object", "object_at", "object_on"} <= gd.VERIFY_FUNCTIONS
+    assert not ({"placed_count", "detect_objects"} & gd.VERIFY_FUNCTIONS)  # vacuous, gone
     assert "nearest_room" not in gd.VERIFY_FUNCTIONS
 
 
@@ -399,9 +406,9 @@ def test_good_arm_plan_decomposes_and_runs_verified_done() -> None:
     # Each sub_goal carries a playground verify predicate.
     assert [sg.verify for sg in tree.sub_goals] == [
         "arm_at_home()",
-        "len(detect_objects('mug')) > 0",
+        "object_on('mug', 'table')",
         "holding_object()",
-        "placed_count((0.0, 0.0, 0.5, 0.5)) >= 1",
+        "object_at('mug', 0.1, 0.1)",
     ]
 
     # Run the decomposed tree through the real executor + verifier.

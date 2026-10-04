@@ -236,9 +236,16 @@ def capture(agent: Any) -> ActorBaseline:
 # Predicate-name -> the actor channel it implicates. A verify expression naming
 # any of these is a "robot-predicate" step whose causation we grade; the channel
 # decides which counter / displacement to consult.
-_BASE_PREDICATES: frozenset[str] = frozenset({"at_position", "facing", "visited"})
+_BASE_PREDICATES: frozenset[str] = frozenset(
+    {"at_position", "facing", "visited", "in_room", "near_object", "in_view"}
+)
 _ARM_PREDICATES: frozenset[str] = frozenset({"arm_at_home"})
-_GRIPPER_PREDICATES: frozenset[str] = frozenset({"holding_object", "is_holding", "holding"})
+_GRIPPER_PREDICATES: frozenset[str] = frozenset(
+    {"holding_object", "is_holding", "holding", "lifted", "kept_holding"}
+)
+# Placement predicates: the actor caused them only by RELEASING an object this step
+# (a weld 1->0), so an object that was already resting there grades UNCAUSED.
+_RELEASE_PREDICATES: frozenset[str] = frozenset({"released", "object_at", "object_on"})
 
 
 def _names_in_expr(verify: str, names: frozenset[str]) -> bool:
@@ -279,7 +286,16 @@ def _base_channel_caused(
             )
         )
         return dyaw >= _YAW_CAUSE_EPS
-    return math.dist(baseline.base_pos[:2], post.base_pos[:2]) >= DISPLACEMENT_EPS
+    moved = math.dist(baseline.base_pos[:2], post.base_pos[:2]) >= DISPLACEMENT_EPS
+    if _names_in_expr(verify, frozenset({"in_view"})) and not moved:
+        # The camera rides the base: turning in place brings an object into view too.
+        if baseline.base_heading is None or post.base_heading is None:
+            return None
+        return abs(math.atan2(
+            math.sin(post.base_heading - baseline.base_heading),
+            math.cos(post.base_heading - baseline.base_heading),
+        )) >= _YAW_CAUSE_EPS
+    return moved
 
 
 def _arm_displacement(baseline: ActorBaseline, post: ActorBaseline) -> float | None:
@@ -302,6 +318,16 @@ def _gripper_fresh_grasp(baseline: ActorBaseline, post: ActorBaseline) -> bool |
         if active_now and not was:
             return True
     return False
+
+
+def _gripper_fresh_release(baseline: ActorBaseline, post: ActorBaseline) -> bool | None:
+    """True iff some weld went 1->0 between baseline and post, or None if ungradable."""
+    if baseline.gripper_welds is None or post.gripper_welds is None:
+        return None
+    return any(
+        was and not post.gripper_welds.get(body, False)
+        for body, was in baseline.gripper_welds.items()
+    )
 
 
 def grade(
@@ -362,6 +388,10 @@ def grade(
         fresh = _gripper_fresh_grasp(baseline, post)
         return ActorCaused.CAUSED if fresh else ActorCaused.UNCAUSED
 
+    if _names_in_expr(verify, _RELEASE_PREDICATES):
+        fresh = _gripper_fresh_release(baseline, post)
+        return ActorCaused.CAUSED if fresh else ActorCaused.UNCAUSED
+
     return ActorCaused.UNCAUSED
 
 
@@ -373,5 +403,7 @@ def is_robot_predicate(verify: str, oracle_names: frozenset[str]) -> bool:
     oracle set) is left ``NOT_GRADED`` (legacy-equivalent), so non-robot worlds
     (dev predicates, answer steps) are byte-unaffected.
     """
-    graded = (_BASE_PREDICATES | _ARM_PREDICATES | _GRIPPER_PREDICATES) & oracle_names
+    graded = (
+        _BASE_PREDICATES | _ARM_PREDICATES | _GRIPPER_PREDICATES | _RELEASE_PREDICATES
+    ) & oracle_names
     return _names_in_expr(verify, frozenset(graded))

@@ -12,8 +12,7 @@ the playground predicates depend on:
 - ``get_object_positions()`` returns the six known tabletop objects,
 - ``arm_at_home()`` (the playground predicate) is True after the arm is driven to
   the home pose,
-- ``detect_objects()`` (the scene predicate over the oracle) returns the object
-  list.
+- the ground truth's objects are the tabletop world manifest's pickables.
 
 POLLUTION SAFETY (critical):
 This file is collected by the canonical ``tests/vcli tests/unit/vcli`` gate, so
@@ -105,17 +104,18 @@ class TestRealArmOracleContract:
         # (bound to an agent holding the real arm) must read True off the oracle.
         real_arm.move_joints(list(_DEFAULT_HOME_JOINTS), duration=3.0)
 
-        agent = SimpleNamespace(_arm=real_arm, _gripper=None)
-        ns = PlaygroundWorld().build_verify_namespace(agent)
-        assert ns["arm_at_home"]() is True
+        from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
 
-    def test_detect_objects_over_oracle_returns_object_list(self, real_arm: Any) -> None:
-        agent = SimpleNamespace(_arm=real_arm, _gripper=None)
-        ns = PlaygroundWorld().build_verify_namespace(agent)
+        assert rig_namespace(real_arm.runtime, "so101")["arm_at_home"]() is True
 
-        detected = ns["detect_objects"]()
-        assert isinstance(detected, list)
-        names = {o["name"] for o in detected}
-        # The scene predicate reports exactly the scenario's known objects.
-        assert names == set(TABLETOP.object_names)
-        assert all({"name", "x", "y", "z"} <= set(o) for o in detected)
+    def test_ground_truth_objects_are_the_world_manifest_pickables(self, real_arm: Any) -> None:
+        import mujoco
+
+        from vector_os_nano.sim.ground_truth import GroundTruth
+        from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+        m = real_arm.runtime.model
+        gt = GroundTruth(real_arm.runtime, mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "base_link"))
+        names = set(gt.object_positions())
+        # Exactly the scenario's known objects == the tabletop manifest's pickables.
+        assert names == set(TABLETOP.object_names) == set(load_world("tabletop").pickables)

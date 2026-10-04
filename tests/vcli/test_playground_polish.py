@@ -12,9 +12,8 @@ Covers the four small, additive polish items:
 2. CLI startup banner surfaces the ACTIVE scenario name when one is selected.
 3. A SECOND catalog scenario (``tabletop_tray``) so ``resolve_world_named`` is
    exercised over more than one preset and ``--scenario tabletop_tray`` resolves.
-4. Scene-defined place region: the ``tabletop_tray`` scenario carries a named
-   drop-zone bbox, and ``placed_count()`` (no arg) verifies against that
-   scene-defined region — wired through ``PlaygroundWorld.build_verify_namespace``.
+4. Scene-defined place region: the ``tabletop_tray`` scenario carries the
+   tabletop world manifest's ``tray`` drop-zone (``object_on(obj, 'tray')``).
 
 No MuJoCo / network: the arm is a deterministic fake; the engine is a stub that
 records the init_vgg world. No live LLM.
@@ -34,8 +33,11 @@ from vector_os_nano.playground.catalog import (
     TABLETOP_TRAY,
     get_scenario,
 )
-from vector_os_nano.playground.verify.arm_predicates import _HOME_JOINTS
-from vector_os_nano.playground.verify.arm_predicates import make_placed_count
+from tests.harness.fake_gt import bind_fake_sim
+from vector_os_nano.embodiments import registry
+
+# The SO-101 home pose (its manifest stance; the arm_at_home oracle reads it there).
+_HOME_JOINTS = tuple(registry.load("so101").stance.values())
 from vector_os_nano.vcli import cli
 from vector_os_nano.vcli.worlds import resolve_world_named
 
@@ -113,58 +115,11 @@ class TestSecondScenario:
 
 class TestSceneDefinedPlaceRegion:
     def test_tabletop_has_no_region_default(self) -> None:
-        # The bare tabletop scene defines no drop-zone -> placed_count() counts all.
+        # The bare tabletop scenario names no drop-zone.
         assert TABLETOP.place_region is None
 
     def test_tray_scenario_carries_a_region(self) -> None:
         assert TABLETOP_TRAY.place_region == (0.20, 0.0, 0.50, 0.25)
-
-    def test_placed_count_uses_scene_region_when_no_arg(self) -> None:
-        # mug rests INSIDE the tray; banana rests OUTSIDE it. With the tray
-        # scenario active, placed_count() (no arg) must count only the in-region
-        # resting object — the scene region is the default.
-        arm = FakeArm(
-            objects={
-                "mug": [0.30, 0.10, 0.06],  # inside tray, resting
-                "banana": [-0.05, -0.10, 0.06],  # outside tray, resting
-            }
-        )
-        ns = PlaygroundWorld(TABLETOP_TRAY).build_verify_namespace(_agent(arm))
-        assert ns["placed_count"]() == 1
-
-    def test_no_scene_region_counts_all_resting(self) -> None:
-        # Same scene, but the region-less tabletop scenario -> count both.
-        arm = FakeArm(
-            objects={
-                "mug": [0.30, 0.10, 0.06],
-                "banana": [-0.05, -0.10, 0.06],
-            }
-        )
-        ns = PlaygroundWorld(TABLETOP).build_verify_namespace(_agent(arm))
-        assert ns["placed_count"]() == 2
-
-    def test_explicit_region_overrides_scene_default(self) -> None:
-        # An explicit target_region always wins over the scenario default.
-        arm = FakeArm(objects={"mug": [-0.05, -0.10, 0.06]})  # outside tray
-        ns = PlaygroundWorld(TABLETOP_TRAY).build_verify_namespace(_agent(arm))
-        # mug is outside the tray default but inside the explicit region.
-        assert ns["placed_count"]((-0.2, -0.2, 0.0, 0.0)) == 1
-        # ...and zero under the scene default.
-        assert ns["placed_count"]() == 0
-
-    def test_make_placed_count_default_region_direct(self) -> None:
-        arm = FakeArm(objects={"mug": [0.30, 0.10, 0.06]})
-        pc = make_placed_count(_agent(arm), default_region=(0.2, 0.0, 0.5, 0.25))
-        assert pc() == 1
-        pc_none = make_placed_count(_agent(arm))
-        assert pc_none() == 1  # no default region, still resting
-
-    def test_malformed_scene_region_falls_back_to_no_region(self) -> None:
-        # A bad default_region must not raise and must not filter.
-        arm = FakeArm(objects={"mug": [-0.05, -0.10, 0.06]})
-        pc = make_placed_count(_agent(arm), default_region="not-a-region")
-        assert pc() == 1
-
 
 # ---------------------------------------------------------------------------
 # 2. Banner surfaces the active scenario name

@@ -128,7 +128,7 @@ checks the run's stop signal every tick, detects a stall (reverse + sidestep +
 replan) and returns a `NavResult` (`bool` = reached, `reason` in `NAV_REASONS`).
 Tuning lives in `config/nav.yaml` (`follower:`; `navigation.arrival_radius` is also
 the `at_position` default tol) and the manifest `nav:` block. `explore` without a nav
-stack is the coverage tour (`sim/nav/coverage.py`): every `config/room_layout.yaml`
+stack is the coverage tour (`sim/nav/coverage.py`): every `config/worlds/apartment.yaml`
 room point, a 360-degree look at each, a room counted only when the GT pose ends in
 its `boxes:` entry, every leg logged to `<VECTOR_RUN_DIR>/explore_coverage.jsonl`.
 Test bodies: `tests/harness/kin_base.py` (kinematic), `tests/unit/sim/test_nav_*.py`,

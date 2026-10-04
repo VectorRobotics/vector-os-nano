@@ -623,6 +623,27 @@
             mass="0.08" friction="2 0.05 0.001" priority="2"/>
     </body>
 
+    <!-- More pickables on OTHER furniture / in OTHER rooms (config/worlds/apartment.yaml
+         lists every pickable; the grasp welds are generated from that list). Each sits
+         8 cm in from the furniture edge that faces open floor, on the collision box top. -->
+    <body name="pickable_cup_yellow" pos="2.32 2.30 0.445">  <!-- coffee table, living room -->
+      <freejoint/>
+      <geom type="cylinder" size="0.032 0.045" rgba="0.95 0.80 0.15 1"
+            mass="0.08" friction="2 0.05 0.001" priority="2"/>
+    </body>
+
+    <body name="pickable_box_orange" pos="3.50 7.13 0.700">  <!-- dining table, south edge -->
+      <freejoint/>
+      <geom type="box" size="0.03 0.03 0.04" rgba="0.95 0.50 0.10 1"
+            mass="0.08" friction="2 0.05 0.001" priority="2"/>
+    </body>
+
+    <body name="pickable_box_purple" pos="6.90 5.00 0.750">  <!-- hallway console table -->
+      <freejoint/>
+      <geom type="box" size="0.025 0.04 0.05" rgba="0.55 0.25 0.75 1"
+            mass="0.08" friction="2 0.05 0.001" priority="2"/>
+    </body>
+
 
     <!-- ==================== BASEBOARDS (visual only) ==================== -->
     <geom name="bb_south" type="box" pos="10 0.06 0.04" size="10.0 0.01 0.04"

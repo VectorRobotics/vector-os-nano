@@ -9,6 +9,7 @@
 id: go2_piper
 display_name: "Unitree Go2 + AgileX Piper arm (mobile manipulator)"
 driver: mujoco_go2                # transitional (WP17: one generic driver)
+world: apartment          # config/worlds/apartment.yaml
 
 model:
   # Bare-Go2 room scene model (mujoco_go2._MJCF_DIR / go2.xml).

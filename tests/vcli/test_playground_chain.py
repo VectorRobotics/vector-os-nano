@@ -8,9 +8,9 @@ drives it. A static GoalTree (a tuple of SubGoals — no foreach/loop) carries a
 playground verify predicate per step:
 
     home   -> arm_at_home()
-    detect -> len(detect_objects()) > 0
+    detect -> object_on('mug', 'table')
     grasp  -> holding_object()
-    place  -> placed_count(region) >= 1
+    place  -> object_at('mug', x, y)
 
 The chain runs through the REAL GoalExecutor with the REAL GoalVerifier off the
 engine's MERGED playground verify namespace (engine._world = PlaygroundWorld). A
@@ -30,7 +30,11 @@ from types import SimpleNamespace
 from typing import Any
 
 from vector_os_nano.playground import PlaygroundWorld
-from vector_os_nano.playground.verify.arm_predicates import _HOME_JOINTS
+from tests.harness.fake_gt import bind_fake_sim
+from vector_os_nano.embodiments import registry
+
+# The SO-101 home pose (its manifest stance; the arm_at_home oracle reads it there).
+_HOME_JOINTS = tuple(registry.load("so101").stance.values())
 from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 from vector_os_nano.vcli.cognitive.observation import run_snapshot, step_view
@@ -134,7 +138,7 @@ def _tabletop_chain() -> GoalTree:
             SubGoal(
                 name="detect_scene",
                 description="detect objects on the table",
-                verify="len(detect_objects()) > 0",
+                verify="object_on('mug', 'table')",
                 strategy="observe",
                 depends_on=("home_arm",),
             ),
@@ -148,7 +152,7 @@ def _tabletop_chain() -> GoalTree:
             SubGoal(
                 name="place_mug",
                 description="place the mug in the target region",
-                verify="placed_count((0.0, 0.0, 0.5, 0.5)) >= 1",
+                verify="object_at('mug', 0.1, 0.1)",
                 strategy="place_in_region",
                 depends_on=("grasp_mug",),
             ),
@@ -159,6 +163,7 @@ def _tabletop_chain() -> GoalTree:
 def _build(arm: StubArm, gripper: StubGripper) -> GoalExecutor:
     """Wire the REAL executor + REAL verifier over the merged playground ns."""
     agent: Any = SimpleNamespace(_arm=arm, _gripper=gripper)
+    bind_fake_sim(agent, "so101")
 
     # The verify namespace is the playground world's predicates, exactly as the
     # engine merges them (PlaygroundWorld.build_verify_namespace bound to agent).
@@ -236,6 +241,7 @@ def test_verify_flips_false_to_true_as_chain_progresses() -> None:
     arm = StubArm()
     gripper = StubGripper()
     agent: Any = SimpleNamespace(_arm=arm, _gripper=gripper)
+    bind_fake_sim(agent, "so101")
     gv = GoalVerifier(PlaygroundWorld().build_verify_namespace(agent))
 
     # Initial oracle: away from home, nothing held, mug resting (already placed).
@@ -243,7 +249,7 @@ def test_verify_flips_false_to_true_as_chain_progresses() -> None:
     assert gv.verify("holding_object()") is False
 
     # detect is True from the start (objects are on the table).
-    assert gv.verify("len(detect_objects()) > 0") is True
+    assert gv.verify("object_on('mug', 'table')") is True
 
     # Drive the oracle the way the chain's primitives do and re-check.
     arm.go_home()
@@ -256,7 +262,7 @@ def test_verify_flips_false_to_true_as_chain_progresses() -> None:
     arm.place("mug", (0.1, 0.1))
     gripper.open()
     assert gv.verify("holding_object()") is False
-    assert gv.verify("placed_count((0.0, 0.0, 0.5, 0.5)) >= 1") is True
+    assert gv.verify("object_at('mug', 0.1, 0.1)") is True
 
 
 def test_chain_emits_sane_observation_snapshot() -> None:
@@ -284,9 +290,9 @@ def test_chain_emits_sane_observation_snapshot() -> None:
     verifies = [sg["verify"] for sg in snapshot["goal_tree"]["sub_goals"]]
     assert verifies == [
         "arm_at_home()",
-        "len(detect_objects()) > 0",
+        "object_on('mug', 'table')",
         "holding_object()",
-        "placed_count((0.0, 0.0, 0.5, 0.5)) >= 1",
+        "object_at('mug', 0.1, 0.1)",
     ]
 
     assert snapshot["success"] is True

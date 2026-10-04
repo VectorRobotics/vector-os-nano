@@ -100,6 +100,7 @@ class MuJoCoArm:
         self._data: Any = None
         self._viewer: Any = None
         self._connected: bool = False
+        self.runtime: Any = None
 
         # Cached joint / actuator / site IDs (set on connect)
         self._arm_joint_ids: list[int] = []
@@ -148,6 +149,11 @@ class MuJoCoArm:
 
         # Initial forward pass
         mj.mj_forward(self._model, self._data)
+        # The MjData owner the ground-truth oracles read through. Caller-stepped:
+        # this arm steps its own data on the calling thread; no physics daemon.
+        from vector_os_nano.sim.runtime import SimRuntime
+
+        self.runtime = SimRuntime(self._model, self._data, threaded=False, paced=False, name="so101")
 
         # GUI viewer (passive — does not block)
         if self._gui:
@@ -191,6 +197,9 @@ class MuJoCoArm:
             except Exception:  # noqa: BLE001
                 pass
             self._viewer = None
+        rt, self.runtime = self.runtime, None
+        if rt is not None:
+            rt.close()
         self._model = None
         self._data = None
         self._connected = False

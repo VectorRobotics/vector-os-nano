@@ -41,11 +41,11 @@ def _agent():
 
 
 def test_pick_hold_then_place_releases_and_moves_object():
-    from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
+    from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
 
     agent, arm = _agent()
     try:
-        holding = make_holding_object(agent)
+        holding = rig_namespace(agent._arm.runtime, "so101")["holding_object"]
         x0, y0, _ = arm.get_object_positions()["banana"]
 
         assert holding() is False  # gripper starts empty

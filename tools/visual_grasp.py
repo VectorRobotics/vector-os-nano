@@ -15,7 +15,7 @@ from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper  # noqa: E4
 from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception  # noqa: E402
 from vector_os_nano.skills import get_default_skills  # noqa: E402
 from vector_os_nano.skills.pick import SIM_PICK_CONFIG  # noqa: E402
-from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object  # noqa: E402
+from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace  # noqa: E402
 
 arm = MuJoCoArm(gui=False)
 arm.connect()
@@ -51,7 +51,7 @@ def shot(tag: str) -> None:
 
 
 z0 = arm.get_object_positions().get("banana")
-print("banana z BEFORE:", z0, "holding:", make_holding_object(agent)())
+print("banana z BEFORE:", z0, "holding:", rig_namespace(arm.runtime, "so101")["holding_object"]())
 shot("before")
 
 res = agent.execute_skill("pick", {"object_label": "banana", "mode": "hold"})
@@ -60,7 +60,7 @@ print("pick success   :", res.success)
 z1 = arm.get_object_positions().get("banana")
 print("banana z AFTER :", z1)
 print("lift (cm)      :", round((z1[2] - z0[2]) * 100, 1) if (z0 and z1) else "n/a")
-print("holding AFTER  :", make_holding_object(agent)())
+print("holding AFTER  :", rig_namespace(arm.runtime, "so101")["holding_object"]())
 shot("after")
 
 try:

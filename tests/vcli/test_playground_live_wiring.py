@@ -7,7 +7,7 @@ Covers the scenario selector added to the CLI:
 - ``--scenario tabletop`` resolves the playground world (via the lazy registry
   hook) and, wired through the engine exactly as ``main()`` does, makes the
   engine's verifier namespace carry the playground predicates
-  (detect_objects / holding_object / arm_at_home / placed_count).
+  (the GT oracles: holding_object / arm_at_home / object_on / released ...).
 - The assertions go THROUGH the engine (parse_args -> _resolve_active_world ->
   init_vgg/_build_verifier_namespace), never by importing the playground into
   the kernel under test.
@@ -23,6 +23,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
+from tests.harness.fake_gt import bind_fake_sim
 
 from vector_os_nano.vcli.cli import _resolve_active_world, parse_args
 
@@ -56,14 +58,17 @@ class FakeArm:
 
 
 def _fake_arm_agent() -> SimpleNamespace:
-    from vector_os_nano.playground.verify.arm_predicates import _HOME_JOINTS
+    from tests.harness.fake_gt import bind_fake_sim
+    from vector_os_nano.embodiments import registry
 
     arm = FakeArm(
         objects={"mug": [0.22, 0.05, 0.06], "banana": [0.12, 0.12, 0.06]},
-        joints=list(_HOME_JOINTS),
+        joints=list(registry.load("so101").stance.values()),
         ee=[0.2, 0.0, 0.2],
     )
-    return SimpleNamespace(_arm=arm, _gripper=None)
+    agent = SimpleNamespace(_arm=arm, _gripper=None)
+    bind_fake_sim(agent, "so101")  # the live sim session's GT oracles
+    return agent
 
 
 def _make_engine():
@@ -86,13 +91,7 @@ def _make_engine():
     )
 
 
-_PLAYGROUND_PREDICATES = {
-    "detect_objects",
-    "describe_scene",
-    "holding_object",
-    "arm_at_home",
-    "placed_count",
-}
+_PLAYGROUND_PREDICATES = {"holding_object", "arm_at_home", "object_on", "released", "lifted"}
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +140,7 @@ class TestScenarioSelectsPlayground:
         ns = eng._build_verifier_namespace(agent)
 
         gv = GoalVerifier(ns)
-        # The playground oracle replaced the engine's empty detect_objects stub.
-        assert gv.verify("len(detect_objects()) > 0") is True
+        assert gv.verify("object_on('mug', 'table')") is True
         assert gv.verify("arm_at_home()") is True
         assert gv.verify("holding_object()") is False  # no gripper holding
 
@@ -165,10 +163,10 @@ class _MutableStubArm:
 
     Shares the exact oracle surface the playground predicates read. pick lifts the
     held object onto the EE; place drops it (resting) into the tray region, so
-    holding_object()/placed_count() flip False->True as the chain runs.
+    holding_object()/object_on(item, 'tray') flip False->True as the chain runs.
     """
 
-    _TABLE_Z = 0.02
+    _TABLE_Z = 0.04  # object centres resting on the table top (z 0.02)
     _LIFT_Z = 0.20
     _TRAY_CENTRE = (0.35, 0.12)  # inside TABLETOP_TRAY's (0.20, 0.0, 0.50, 0.25)
 
@@ -251,6 +249,7 @@ class TestLiveExecutorRunsWorldPrimitive:
         object_names = PlaygroundWorld().scenario.object_names
         arm = _MutableStubArm(object_names)
         agent: Any = SimpleNamespace(_arm=arm, _gripper=_StubGripper())
+        bind_fake_sim(agent, "so101")
 
         world = PlaygroundWorld()
         eng = _make_engine()
@@ -265,7 +264,7 @@ class TestLiveExecutorRunsWorldPrimitive:
                 SubGoal(
                     name="detect_all",
                     description="detect every object on the table",
-                    verify="len(detect_objects()) > 0",
+                    verify="True",  # a listing proves nothing about the world
                     strategy=PlaygroundWorld.DETECT_STRATEGY,
                 ),
             ),
@@ -289,7 +288,7 @@ class TestLiveExecutorRunsWorldPrimitive:
         from vector_os_nano.playground.world import PlaygroundWorld
         from vector_os_nano.vcli.cognitive.blackboard import Blackboard
 
-        # A scenario WITH a tray drop-zone so placed_count() verifies per item.
+        # A scenario WITH a tray drop-zone so object_on(item, 'tray') verifies per item.
         from vector_os_nano.playground.catalog import TABLETOP_TRAY
 
         object_names = TABLETOP_TRAY.object_names
@@ -297,6 +296,7 @@ class TestLiveExecutorRunsWorldPrimitive:
         arm = _MutableStubArm(object_names)
         gripper = _StubGripper()
         agent: Any = SimpleNamespace(_arm=arm, _gripper=gripper)
+        bind_fake_sim(agent, "so101")
 
         # The foreach body's pick/place are producer-only ``*_skill`` names too, so
         # the SAME world-primitive override routes them live (the real selector would
@@ -331,7 +331,7 @@ class TestLiveExecutorRunsWorldPrimitive:
 
         # Pre-run: nothing placed, nothing held (the oracle starts clean).
         ns = world.build_verify_namespace(agent)
-        assert ns["placed_count"]() == 0
+        assert not any(ns["object_on"](n, "tray") for n in object_names)
         assert ns["holding_object"]() is False
 
         tree = _grab_everything_tree()
@@ -357,7 +357,7 @@ class TestLiveExecutorRunsWorldPrimitive:
             assert s.visual_override is False
 
         # The oracle advanced: all n objects ended resting in the tray.
-        assert ns["placed_count"]() == n
+        assert all(ns["object_on"](n, "tray") for n in object_names)
         assert ns["holding_object"]() is False
 
         # Sanity: the captured producer output is JSON-safe structured data.
@@ -380,7 +380,7 @@ def _grab_everything_tree():
         SubGoal(
             name="place_obj",
             description="place the current object in the tray",
-            verify="placed_count() >= 1",
+            verify="object_on('${obj.name}', 'tray')",
             strategy="place_skill",
             depends_on=("pick_obj",),
             strategy_params={"object_label": "${obj.name}"},
@@ -392,7 +392,7 @@ def _grab_everything_tree():
             SubGoal(
                 name="detect_all",
                 description="detect every object on the table",
-                verify="len(detect_objects()) > 0",
+                verify="True",
                 strategy=PlaygroundWorld.DETECT_STRATEGY,
             ),
             SubGoal(

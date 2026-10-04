@@ -25,6 +25,8 @@ PASSES the decompose validator — never model behaviour:
 
 from __future__ import annotations
 
+import re
+
 import json
 from typing import Any
 
@@ -42,9 +44,8 @@ from vector_os_nano.vcli.cognitive.vocab_from_registry import build_decompose_vo
 _ARM_VERIFY_SIGS: dict[str, str] = {
     "holding_object": "holding_object() -> bool  # gripper holds an object",
     "arm_at_home": "arm_at_home() -> bool  # arm is at its home pose",
-    "detect_objects": "detect_objects(query='') -> list  # detections",
-    "describe_scene": "describe_scene() -> str  # scene caption",
-    "placed_count": "placed_count() -> int  # objects placed in region",
+    "in_view": "in_view(target) -> bool  # object in the camera view (GT segmentation)",
+    "released": "released(target=None) -> bool  # gripper let go",
 }
 
 
@@ -69,26 +70,23 @@ def test_to_schemas_includes_verify_hint_per_skill() -> None:
     by_name = {s["name"]: s for s in _arm_schemas()}
     assert by_name["pick"]["verify_hint"] == "holding_object()"
     assert by_name["home"]["verify_hint"] == "arm_at_home()"
-    assert by_name["detect"]["verify_hint"] == "len(detect_objects()) > 0"
-    assert by_name["place"]["verify_hint"] == "not holding_object()"
+    assert by_name["detect"]["verify_hint"] == "in_view('<query>')"
+    assert by_name["place"]["verify_hint"] == "released()"
 
 
 def test_verify_hint_predicates_live_in_arm_verify_namespace() -> None:
     # Every non-trivial verify_hint must reference only predicates present in the
     # arm verify allowlist (Step 2) or the always-safe True literal — otherwise
     # the planner would be taught a verify the validator rejects.
-    allowed = set(_ARM_VERIFY_SIGS) | {"True", "len"}
+    # Single-sourced from the REAL oracle namespace (vcli/worlds/sim_oracles).
+    from tests.harness.fake_gt import FakeGT, fake_namespace
+
+    gt = FakeGT(None, objects={"pickable_bottle_green": [10.9, 3.0, 0.32]})
+    allowed = set(fake_namespace(None, "go2_piper", gt=gt)) | {"True"}
     for s in _arm_schemas():
         hint = s["verify_hint"]
-        if hint == "True":
-            continue
-        # The predicate name is the token before the first "(".
-        for fn in ("holding_object", "arm_at_home", "detect_objects", "placed_count"):
-            if fn in hint:
-                assert fn in allowed
-                break
-        else:  # pragma: no cover - defensive
-            raise AssertionError(f"verify_hint references unknown predicate: {hint!r}")
+        called = set(re.findall(r"([A-Za-z_]\w*)\(", hint)) or {hint}
+        assert called <= allowed, f"verify_hint references an unbound predicate: {hint!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +100,8 @@ def test_params_help_carries_suggested_verify_per_skill() -> None:
     # Each skill's declared predicate is surfaced as a 'suggested verify' line.
     assert "suggested verify: holding_object()" in help_text
     assert "suggested verify: arm_at_home()" in help_text
-    assert "suggested verify: len(detect_objects()) > 0" in help_text
-    assert "suggested verify: not holding_object()" in help_text
+    assert "suggested verify: in_view('<query>')" in help_text
+    assert "suggested verify: released()" in help_text
 
 
 def test_example_uses_a_verify_hint_as_the_verify_expr() -> None:

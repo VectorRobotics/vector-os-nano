@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from vector_os_nano.vcli.cognitive.actor_causation import (
     ActorCaused,
     capture,
@@ -296,9 +298,9 @@ class _VerifierOverFrozenAgent:
     """
 
     def __init__(self, agent) -> None:
-        from vector_os_nano.vcli.worlds.go2_sim_oracle import make_at_position
+        from tests.harness.fake_gt import fake_namespace
 
-        self._namespace = {"at_position": make_at_position(agent)}
+        self._namespace = {"at_position": fake_namespace(agent, "go2")["at_position"]}
 
     def evaluate(self, expr: str):
         val = eval(expr, {"__builtins__": {}}, dict(self._namespace))  # noqa: S307 - test only
@@ -444,3 +446,62 @@ def test_at_position_uncaused_after_pure_turn() -> None:
     base._yaw = 1.0  # turned in place, position unchanged
     after = capture(_agent(base=base))
     assert grade(before, after, "at_position(10.0, 3.0)", ROBOT_ORACLES) == ActorCaused.UNCAUSED
+
+
+# ---------------------------------------------------------------------------
+# WP10: the GT oracle set is causation-graded on its channel (a new predicate is
+# never NOT_GRADED, which would let a pre-existing state ground for free).
+# ---------------------------------------------------------------------------
+
+_WP10 = ROBOT_ORACLES | {
+    "in_room", "near_object", "in_view", "lifted", "kept_holding", "released",
+    "object_at", "object_on", "localized",
+}
+
+
+@pytest.mark.parametrize("expr", [
+    "in_room('kitchen')", "near_object('user')", "in_view('red can')", "lifted('mug')",
+    "kept_holding('mug')", "released('mug')", "object_at('mug', 1, 2)", "object_on('mug', 'table')",
+])
+def test_wp10_predicates_are_graded(expr) -> None:
+    assert is_robot_predicate(expr, _WP10)
+
+
+def test_object_on_already_true_with_no_release_is_uncaused() -> None:
+    grip = _FakeGripper({"mug": False})  # the mug was resting on the table all along
+    before = capture(_agent(gripper=grip))
+    after = capture(_agent(gripper=grip))
+    assert grade(before, after, "object_on('mug', 'table')", _WP10) == ActorCaused.UNCAUSED
+    assert grade(before, after, "released('mug')", _WP10) == ActorCaused.UNCAUSED
+
+
+def test_object_on_after_a_release_is_caused() -> None:
+    grip = _FakeGripper({"mug": True})
+    before = capture(_agent(gripper=grip))
+    grip._welds["mug"] = False  # placed: weld 1 -> 0 this step
+    after = capture(_agent(gripper=grip))
+    for expr in ("object_on('mug', 'table')", "object_at('mug', 1, 2)", "released('mug')"):
+        assert grade(before, after, expr, _WP10) == ActorCaused.CAUSED, expr
+    # a release never proves a grasp
+    assert grade(before, after, "lifted('mug')", _WP10) == ActorCaused.UNCAUSED
+
+
+def test_carry_needs_base_motion_kept_holding_alone_is_uncaused() -> None:
+    base, grip = _FakeBase(10.0, 3.0), _FakeGripper({"mug": True})
+    before = capture(_agent(base=base, gripper=grip))
+    after = capture(_agent(base=base, gripper=grip))
+    assert grade(before, after, "kept_holding('mug')", _WP10) == ActorCaused.UNCAUSED
+    base.command(0.3)
+    base.teleport(8.0, 3.0)
+    after = capture(_agent(base=base, gripper=grip))
+    expr = "kept_holding('mug') and near_object('user', 0.8)"
+    assert grade(before, after, expr, _WP10) == ActorCaused.CAUSED
+
+
+def test_in_view_is_caused_by_a_turn_or_a_walk_not_by_looking() -> None:
+    base = _FakeBase(10.0, 3.0)
+    before = capture(_agent(base=base))
+    assert grade(before, capture(_agent(base=base)), "in_view('red can')", _WP10) == ActorCaused.UNCAUSED
+    base.command(0.3)
+    base._yaw = 1.0  # turned in place
+    assert grade(before, capture(_agent(base=base)), "in_view('red can')", _WP10) == ActorCaused.CAUSED

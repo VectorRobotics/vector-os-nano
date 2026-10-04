@@ -99,7 +99,7 @@ Key files in this project:
 - vector_os_nano/skills/go2/explore.py: autonomous exploration (TARE)
 - vector_os_nano/skills/navigate.py: room-to-room navigation
 - vector_os_nano/core/scene_graph.py: spatial memory (rooms, doors, objects)
-- config/room_layout.yaml: simulation room positions
+- config/worlds/apartment.yaml: simulation room positions
 """
 
 # --- General "dev" persona (default; no robot body assumed) ----------------

@@ -10,14 +10,12 @@ surface. The dependency edge is strictly ONE-WAY: this package imports the kerne
 (``vcli.worlds.base``) + ``hardware``/``skills``; the kernel never imports the
 playground except through the world registry's lazy hook.
 
-The playground reuses the robot persona and single-sources its decompose
-vocabulary from the skill registry (like ``RobotWorld``). Its distinct, owned
-contribution is the verify namespace: deterministic sim-oracle predicates. The
-predicate set is chosen by the scenario's embodiment — ARM scenarios (tabletop)
-contribute arm/scene predicates over the connected arm + known objects; the GO2
-scenario (a mobile-base quadruped, ``has_base``) contributes base predicates
-(at_position / facing / visited) over the connected base. This proves the seam
-generalizes across embodiments with no embodiment-specific code in the kernel.
+The playground reuses the robot persona, single-sources its decompose vocabulary
+from the skill registry and verifies with the SAME ground-truth oracles as the robot
+world (``vcli/worlds/sim_oracles``, bound to the live sim session). What it owns is
+the scenario: which scene, its known objects / rooms, and the producing-step
+primitives (a deterministic object listing for an arm scene, the room list for the
+Go2 scene) that a foreach plan iterates.
 """
 
 from __future__ import annotations
@@ -26,22 +24,6 @@ from typing import Any
 
 from vector_os_nano.playground.catalog import TABLETOP
 from vector_os_nano.playground.scenario import Scenario
-from vector_os_nano.playground.verify.arm_predicates import (
-    make_arm_at_home,
-    make_holding_object,
-    make_placed_count,
-)
-from vector_os_nano.playground.verify.base_predicates import (
-    make_at_position,
-    make_facing,
-    make_rooms_producer,
-    make_visited,
-)
-from vector_os_nano.playground.verify.scene_predicates import (
-    make_detect_objects,
-    make_detect_producer,
-    make_describe_scene,
-)
 from vector_os_nano.vcli.prompt import ROBOT_ROLE_PROMPT, ROBOT_TOOL_INSTRUCTIONS
 
 
@@ -93,50 +75,12 @@ class PlaygroundWorld:
         return None
 
     def build_verify_namespace(self, agent: Any) -> dict[str, Any]:
-        """Return the playground's deterministic sim-oracle verify predicates.
+        """The same ground-truth oracles as the robot world (``vcli/worlds/sim_oracles``),
+        bound to the live sim session that owns *agent*: the scenario's rooms and
+        surfaces are the world manifest's (``in_room`` / ``object_on``)."""
+        from vector_os_nano.vcli.worlds.robot import RobotWorld
 
-        The engine (INC2) merges these on top of its dev/robot bindings and the
-        empty perception stubs additively. The predicate set is selected by the
-        scenario's embodiment:
-
-        - ARM scenarios (tabletop) contribute arm/scene predicates over the
-          connected arm + the scenario's known objects; ``detect_objects`` /
-          ``describe_scene`` REPLACE the engine's empty perception stubs.
-        - the GO2 scenario contributes base predicates (at_position / facing /
-          visited) over the connected base + the scenario's named rooms.
-
-        All predicates are bound to *agent* and fail safe when the hardware is
-        unavailable (never raise into the GoalVerifier sandbox).
-        """
-        if self.has_base():
-            return self._base_verify_namespace(agent)
-        return self._arm_verify_namespace(agent)
-
-    def _arm_verify_namespace(self, agent: Any) -> dict[str, Any]:
-        objects = self._scenario.object_names
-        return {
-            "detect_objects": make_detect_objects(agent, objects),
-            "describe_scene": make_describe_scene(agent, objects),
-            "holding_object": make_holding_object(agent),
-            "arm_at_home": make_arm_at_home(agent),
-            # The scenario's drop-zone (when defined) becomes the DEFAULT region
-            # for placed_count(), so a sub-goal can verify against the scene-named
-            # region without hand-passing raw coordinates.
-            "placed_count": make_placed_count(
-                agent, default_region=self._scenario.place_region
-            ),
-        }
-
-    def _base_verify_namespace(self, agent: Any) -> dict[str, Any]:
-        # The scenario's named rooms become the source of truth for visited(),
-        # so a navigation sub-goal verifies "reached <room>" by scene name
-        # without hand-passing raw coordinates.
-        rooms = self._scenario.rooms
-        return {
-            "at_position": make_at_position(agent),
-            "facing": make_facing(agent),
-            "visited": make_visited(agent, rooms),
-        }
+        return RobotWorld().build_verify_namespace(agent)
 
     # The strategy name a decompose plan emits for the detect PRODUCING step. It
     # is distinct from the ``detect_objects`` verify PREDICATE: the predicate is
@@ -174,9 +118,8 @@ class PlaygroundWorld:
         Keyed by the strategy name a plan emits (DETECT_STRATEGY / ROOMS_STRATEGY).
         """
         if self.has_base():
-            return {self.ROOMS_STRATEGY: make_rooms_producer(self._scenario.rooms)}
-        objects = self._scenario.object_names
-        return {self.DETECT_STRATEGY: make_detect_producer(agent, objects)}
+            return {self.ROOMS_STRATEGY: _rooms_producer(self._scenario.rooms)}
+        return {self.DETECT_STRATEGY: _detect_producer(agent, self._scenario.object_names)}
 
     def register_capabilities(self, registry: Any, agent: Any, backend: Any) -> None:
         # No-op for now: the playground keeps the kernel's skill/primitive routing.
@@ -191,3 +134,38 @@ class PlaygroundWorld:
         # Single-source the decompose vocabulary from the skill registry, like
         # RobotWorld — no hand-authored, split-brain vocab.
         return True
+
+
+def _rooms_producer(rooms: dict[str, tuple[float, float, float, float]]):
+    """Executor primitive: the scenario's rooms as ``{"rooms": [{name, x, y}], "count"}``
+    (box centres, sorted by name) for a "visit each room" foreach."""
+    out = [
+        {"name": n, "x": (b[0] + b[2]) / 2.0, "y": (b[1] + b[3]) / 2.0}
+        for n, b in sorted((rooms or {}).items())
+    ]
+
+    def rooms_producer(**_: Any) -> dict[str, Any]:
+        return {"rooms": list(out), "count": len(out)}
+
+    return rooms_producer
+
+
+def _detect_producer(agent: Any, object_names: tuple[str, ...]):
+    """Executor primitive: the scenario's objects (the arm's scene listing, filtered to
+    *object_names*; empty = all) as ``{"objects": [{name, x, y, z}], "count"}`` for a
+    "grab everything" foreach. An actor-side listing — never a verify oracle."""
+
+    def detect_producer(query: str = "", **_: Any) -> dict[str, Any]:
+        try:
+            positions = getattr(agent, "_arm", None).get_object_positions()
+        except Exception:  # noqa: BLE001 — no arm / no sim: nothing detected
+            positions = {}
+        q = (query or "").strip().lower()
+        objects = [
+            {"name": n, "x": float(p[0]), "y": float(p[1]), "z": float(p[2])}
+            for n, p in sorted(positions.items())
+            if (not object_names or n in object_names) and (not q or q in n.lower())
+        ]
+        return {"objects": objects, "count": len(objects)}
+
+    return detect_producer

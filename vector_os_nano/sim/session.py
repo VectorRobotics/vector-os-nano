@@ -64,6 +64,42 @@ class SimStartError(RuntimeError):
 _LIVE: list["SimSession"] = []
 
 
+def session_for(agent: Any) -> "SimSession | None":
+    """The live session that owns *agent*, or None (real hardware / no sim)."""
+    if agent is None:
+        return None
+    return next((s for s in _LIVE if s.agent is agent), None)
+
+
+def mark_turn(agent: Any, phase: str, goal: str = "") -> None:
+    """Turn boundary hook for the producer: no-op without a live session. Never raises."""
+    s = session_for(agent)
+    if s is None:
+        return
+    try:
+        s.mark_turn(phase, goal)
+    except Exception as exc:  # noqa: BLE001 — a GT dump must never break a turn
+        logger.warning("GT turn mark (%s) failed: %s", phase, exc)
+
+
+def _append_gt_dump(path: str, s: "SimSession", phase: str, goal: str) -> None:
+    """One JSON line of GT: base pose, every object's pose + weld, the world's
+    surfaces and user location (everything tools/gt_grade.py needs, no oracle code)."""
+    import json
+
+    gt, world = s.gt, s.world
+    welds = gt.weld_active()
+    line = {
+        "phase": phase, "turn": s._turns, "goal": goal, "embodiment": s.config.id,
+        "world": s.config.world, "sim_time": gt.sim_time, "base": gt.base_pose(),
+        "objects": {n: {"pos": p, "welded": welds.get(n, False)} for n, p in gt.object_positions().items()},
+        "surfaces": {k: {"box": v.box, "height": v.height} for k, v in (world.surfaces if world else {}).items()},
+        "user": world.user if world else None,
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
 def stop_all() -> int:
     """Stop every live session (used before ``os._exit``, which skips atexit).
 
@@ -92,6 +128,10 @@ class SimSession:
         self.startup_s: float = 0.0
         self._cleanups: list[tuple[str, Callable[[], Any]]] = []
         self._stopped = False
+        self.gt: Any = None  # GroundTruth of the running sim (oracles + graders only)
+        self.world: Any = None  # the WorldManifest the body stands in
+        self._turn: tuple[float, float] = (-math.inf, -math.inf)  # (sim, wall) turn start
+        self._turns = 0
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -127,6 +167,7 @@ class SimSession:
         try:
             session.agent = builder(session, vlm_api_key)
             session.ready = _probe_ready(session.agent, cfg, deadline=t0 + deadline_s)
+            session._bind_ground_truth()
         except BaseException as exc:
             session.stop()
             if isinstance(exc, (SimStartError, KeyboardInterrupt, SystemExit)):
@@ -154,6 +195,51 @@ class SimSession:
         if self in _LIVE:
             _LIVE.remove(self)
         return "; ".join(parts) or "nothing to stop"
+
+    # -- ground truth (oracles / graders; skills never see it) ---------------
+
+    def _bind_ground_truth(self) -> None:
+        import mujoco as mj
+
+        from vector_os_nano.sim.ground_truth import GroundTruth
+        from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+        agent = self.agent
+        rt = getattr(getattr(agent, "_base", None), "runtime", None) or getattr(
+            getattr(agent, "_arm", None), "runtime", None)
+        if rt is None:  # no MjData owner: no oracles, every verify grades RAN
+            self.notes.append("ground truth: unavailable (no SimRuntime on the base or the arm)")
+            return
+        root = mj.mj_name2id(rt.model, mj.mjtObj.mjOBJ_BODY, self.config.model.root_body)
+        self.gt = GroundTruth(rt, robot_root_bid=int(root))
+        self.world = load_world(self.config.world) if self.config.world else None
+        # Skills resolve object names through the world manifest by id (never GT).
+        cfg = getattr(agent, "_config", None)
+        if isinstance(cfg, dict) and self.config.world:
+            cfg["world"] = self.config.world
+
+    def oracles(self) -> dict[str, Any]:
+        """The GT verify namespace of this session (vcli/worlds/sim_oracles)."""
+        from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
+
+        return build_namespace(
+            self.gt, self.world, self.config,
+            belief=lambda: getattr(self.agent, "_spatial_memory", None),
+            turn_start=lambda: self._turn,
+        )
+
+    def mark_turn(self, phase: str, goal: str = "") -> None:
+        """A REPL turn starts / ends: record its start (kept_holding, localized) and,
+        with ``VECTOR_GT_DUMP=<file>``, append one GT line for the independent grader
+        (tools/gt_grade.py)."""
+        if self.gt is None:
+            return
+        if phase == "start":
+            self._turns += 1
+            self._turn = (self.gt.sim_time, time.time())
+        path = os.environ.get("VECTOR_GT_DUMP", "")
+        if path:
+            _append_gt_dump(path, self, phase, goal)
 
     def own(self, what: str, cleanup: Callable[[], Any]) -> None:
         """Register a teardown step (run LIFO by stop)."""

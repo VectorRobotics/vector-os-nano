@@ -21,11 +21,13 @@ from tests.harness.pty_cli import run_cli_turn  # noqa: E402
 
 _SIM_TIMEOUT_SEC = 360.0
 
+# Each is TRUE whatever the world state, over the live GT oracles (WP10 removed the
+# detect_objects / describe_scene / placed_count listings that used to make the set).
 _VACUOUS = [
-    "len(detect_objects()) >= 0",
-    "'' in describe_scene()",
-    "placed_count() >= 0",
-    "describe_scene() != ''",
+    "released() >= 0",
+    "object_on('banana', 'table') or True",
+    "not holding_object('banana')",
+    "arm_at_home() == arm_at_home()",
     "holding_object('banana') is not None",
 ]
 

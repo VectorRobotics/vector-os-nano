@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vector_os_nano.playground.scenario import Scenario
+from vector_os_nano.vcli.worlds.world_manifest import load_world
 
 # Resolve bundled scene XMLs from the installed package, not a hardcoded path.
 _SIM_DIR = Path(__file__).resolve().parent.parent / "hardware" / "sim"
@@ -43,7 +44,7 @@ TABLETOP = Scenario(
 # (0.30, 0.25)). The tray is the right-front quadrant, so placed_count() with no
 # argument verifies "object resting INSIDE the tray" — a scene-defined region the
 # sub-goal references by scenario instead of hand-passing raw coordinates.
-_TRAY_REGION: tuple[float, float, float, float] = (0.20, 0.0, 0.50, 0.25)
+_TRAY_REGION = load_world("tabletop").surfaces["tray"].box  # the drop-zone (world manifest)
 
 TABLETOP_TRAY = Scenario(
     id="tabletop_tray",
@@ -85,23 +86,12 @@ _GO2_SIM_DIR = Path(__file__).resolve().parent.parent / "hardware" / "sim" / "mj
 # tests/unit/test_navigate_skill_nav2.py (kitchen=(17, 2.5), hallway=(10, 5),
 # master_bedroom=(3.5, 12), ...). The mechanism (producer -> foreach -> visited)
 # is geometry-agnostic, so this is a pure data swap.
-_GO2_ROOMS: dict[str, tuple[float, float, float, float]] = {
-    "living_room": (0.0, 0.0, 6.0, 5.0),
-    "dining_room": (0.0, 5.0, 6.0, 10.0),
-    "kitchen": (14.0, 0.0, 20.0, 5.0),
-    "study": (14.0, 5.0, 20.0, 10.0),
-    "master_bedroom": (0.0, 10.0, 7.0, 14.0),
-    "guest_bedroom": (12.0, 10.0, 20.0, 14.0),
-    "bathroom": (7.0, 10.0, 12.0, 14.0),
-    "hallway": (6.0, 0.0, 14.0, 10.0),
-}
-
 GO2_ROOM = Scenario(
     id="go2_room",
     embodiment="go2",
     scene_xml=str(_GO2_SIM_DIR / "scene_room.xml"),
     task_hint="Navigate the room with the Go2 quadruped (walk, turn, explore).",
-    rooms=_GO2_ROOMS,
+    rooms=dict(load_world("apartment").boxes),
 )
 
 # id -> Scenario. Additive: new preset scenes append here.

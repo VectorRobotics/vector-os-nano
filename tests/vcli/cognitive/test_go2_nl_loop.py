@@ -14,7 +14,7 @@ through the REAL kernel pieces:
      over the MERGED PlaygroundWorld(GO2_ROOM) base sim-oracle verify namespace
      against a DETERMINISTIC stub base that advances position / heading as the
      base primitives (walk_forward / turn / scan_360) run, so each per-step verify
-     (at_position(...) / visited('kitchen') / facing(...)) flips False->True as the
+     (at_position(...) / in_room('kitchen') / facing(...)) flips False->True as the
      chain progresses.
 
 The decomposed chain ("explore the room") is GO2-ONLY:
@@ -118,9 +118,10 @@ class _StubBase:
 
 class _StubAgent:
     def __init__(self) -> None:
-        # The base is reached via getattr(agent, "_base", None) — the same
-        # accessor the kernel + base predicates use.
         self._base = _StubBase()
+        from tests.harness.fake_gt import bind_fake_sim
+
+        bind_fake_sim(self, "go2")  # the live sim session's GT oracles read the base
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +197,7 @@ class _MockBackend:
 _GO2_STRATEGIES = frozenset(
     {"walk_forward", "turn", "scan_360", "explore_skill", "look_skill"}
 )
-_GO2_VERIFY_FNS = frozenset({"at_position", "facing", "visited"})
+_GO2_VERIFY_FNS = frozenset({"at_position", "facing", "in_room"})
 
 
 def _explore_room_plan() -> dict[str, Any]:
@@ -207,7 +208,7 @@ def _explore_room_plan() -> dict[str, Any]:
             {
                 "name": "walk_to_kitchen",
                 "description": "walk forward into the kitchen",
-                "verify": "visited('kitchen') and at_position(17.0, 3.0)",
+                "verify": "in_room('kitchen') and at_position(17.0, 3.0)",
                 "strategy": "walk_forward",
                 "depends_on": [],
                 "strategy_params": {"distance": _WALK_DISTANCE, "speed": 0.3},
@@ -223,7 +224,7 @@ def _explore_room_plan() -> dict[str, Any]:
             {
                 "name": "explore",
                 "description": "autonomously explore the kitchen",
-                "verify": "visited('kitchen')",
+                "verify": "in_room('kitchen')",
                 "strategy": "explore_skill",
                 "depends_on": ["scan"],
                 "strategy_params": {},
@@ -309,7 +310,7 @@ def test_explore_room_runs_end_to_end_verified() -> None:
     # Before the run the base is at the origin: NOT in the kitchen, NOT at target.
     world = PlaygroundWorld(GO2_ROOM)
     ns = world.build_verify_namespace(agent)
-    assert ns["visited"]("kitchen") is False
+    assert ns["in_room"]("kitchen") is False
     assert ns["at_position"](*_KITCHEN_TARGET) is False
 
     tree = _decompose_explore_room(_explore_room_plan())
@@ -332,7 +333,7 @@ def test_explore_room_runs_end_to_end_verified() -> None:
 
     # The sim-oracle ground truth advanced: the base ended inside the kitchen at
     # the walk target, still facing +x after the 360 scan.
-    assert ns["visited"]("kitchen") is True
+    assert ns["in_room"]("kitchen") is True
     assert ns["at_position"](*_KITCHEN_TARGET) is True
     assert ns["facing"](0.0) is True
 
@@ -345,7 +346,7 @@ def test_explore_room_oracle_starts_false_each_step_flips() -> None:
     ns = PlaygroundWorld(GO2_ROOM).build_verify_namespace(agent)
 
     # Origin: not in kitchen.
-    assert ns["visited"]("kitchen") is False
+    assert ns["in_room"]("kitchen") is False
 
     tree = _decompose_explore_room(_explore_room_plan())
     executor = _executor(agent)
@@ -353,10 +354,10 @@ def test_explore_room_oracle_starts_false_each_step_flips() -> None:
 
     assert trace.success is True
     # After the run the base is grounded in the kitchen.
-    assert ns["visited"]("kitchen") is True
+    assert ns["in_room"]("kitchen") is True
     # And it never strayed into the guest bedroom (a disjoint named room across
     # the house at y=10..14).
-    assert ns["visited"]("guest_bedroom") is False
+    assert ns["in_room"]("guest_bedroom") is False
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +396,7 @@ def test_explore_room_snapshot_json_safe_and_renders() -> None:
     # Three grounded step lines plus the overall outcome line, all GROUNDED.
     assert text.count("[GROUNDED]") == 4
     assert "Outcome: [GROUNDED] 3/3 steps grounded" in text
-    assert "visited('kitchen')" in text  # a base predicate is surfaced
+    assert "in_room('kitchen')" in text  # a base predicate is surfaced
     assert "[FAILED]" not in text
 
 

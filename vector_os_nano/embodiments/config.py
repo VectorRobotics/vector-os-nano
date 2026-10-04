@@ -162,6 +162,8 @@ class EmbodimentConfig:
     arm: ArmSpec | None = None
     # Navigation capabilities the body asks for, e.g. {"explorer": "tare"}.
     nav: dict[str, Any] = field(default_factory=dict)
+    # The world it stands in: config/worlds/<world>.yaml (rooms, surfaces, pickables).
+    world: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +336,7 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> Emb
         driver=str(raw.get("driver", "") or ""),
         arm=_parse_arm(raw, ctx),
         nav=_optional_mapping(raw, "nav", ctx) or {},
+        world=str(raw.get("world", "") or ""),
     )
 
 

@@ -723,7 +723,7 @@ class Go2VNavBridge(Node):
                 self._cam_err_logged = True
 
     def _publish_nav_boundary(self) -> None:
-        """Publish /navigation_boundary polygon from room_layout.yaml bounding box.
+        """Publish /navigation_boundary polygon from config/worlds/apartment.yaml bounding box.
 
         TARE only searches for frontiers WITHIN this boundary. Without it,
         TARE's grid extends far beyond the walls and never finishes.
