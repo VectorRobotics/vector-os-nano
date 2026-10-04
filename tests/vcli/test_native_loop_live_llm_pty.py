@@ -162,13 +162,13 @@ def _assert_walk_at_position(r, *, prompt: str) -> None:
 @pytest.mark.capability
 @pytest.mark.live_llm
 def test_live_walk_to_coordinate_routes_and_grounds(sim_cleanup) -> None:
-    """REAL model, NL "走到坐标 (11,3)" -> autonomous walk->verify(at_position) -> GROUNDED.
+    """REAL model, NL "走到坐标 (9,3)" -> autonomous walk->verify(at_position) -> GROUNDED.
 
-    go2 starts at (10,3); (11,3) is ~1m forward, inside at_position's 0.5m tol once
-    the gait displaces. The model alone decides walk + the predicate; the honest
-    spine grades the assembled trace.
+    go2 starts at (10,3); (9,3) is ~1m behind it (forward, the pick table stops a walk
+    at x~10.47), inside at_position's 0.5m tol once the gait displaces. The model alone
+    decides walk + the predicate; the honest spine grades the assembled trace.
     """
-    prompt = "走到坐标 (11.0, 3.0)"
+    prompt = "走到坐标 (9.0, 3.0)"
     r = run_cli_turn(
         prompt,
         sim_go2=True,
@@ -186,12 +186,12 @@ def test_live_walk_to_coordinate_routes_and_grounds(sim_cleanup) -> None:
 def test_live_walk_natural_phrasing_routes_and_grounds(sim_cleanup) -> None:
     """A second, looser NL phrasing must ALSO route to walk + at_position (red-team).
 
-    "往前走到大约前方一米的位置" names no coordinate and no tool — the model must
-    infer the forward ~1m target, route to walk (never navigate), and prove it with
-    an at_position predicate near (11,3). Guards against the model only routing when
-    the prompt literally spells out a coordinate.
+    "往后退到大约后方一米的位置" names no coordinate and no tool — the model must
+    infer the ~1m-back target, route to walk (never navigate), and prove it with an
+    at_position predicate near (9,3). Guards against the model only routing when the
+    prompt literally spells out a coordinate.
     """
-    prompt = "往前走到大约前方一米的位置"
+    prompt = "往后退到大约后方一米的位置"
     r = run_cli_turn(
         prompt,
         sim_go2=True,
