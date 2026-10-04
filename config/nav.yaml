@@ -6,14 +6,41 @@ navigation:
   # 0.8m: V-Graph disappeared — too few points for FAR corner detection.
   # 1.0m: obstacle band 0.5-1.0m (0.5m thick) — enough corners, thin enough for doors.
   # 1.8m: obstacle band 0.5-1.8m (1.3m thick) — too dense, doors invisible.
-  arrival_radius: 0.8            # meters, consider arrived when closer than this
+  # The ONE arrival radius: a navigate only counts as arrived within it, and it is
+  # the default tol of the at_position verify oracle (they can never drift apart).
+  arrival_radius: 0.5            # meters
   far_probe_timeout: 3.0         # seconds, wait for FAR response before fallback
   waypoint_timeout: 30.0         # seconds, per-waypoint timeout in door-chain
   stall_threshold: 0.3           # meters, minimum progress per stuck check interval
   stall_timeout: 30.0            # seconds, abort if no progress for this long
   wall_escape_duration: 2.5      # seconds, reverse + strafe escape maneuver
 
+# The in-process path follower (vector_os_nano/sim/nav/follow.py), every body.
+# All times are SIM seconds. Per-body numbers (radius, speed, yaw rate, fall
+# height) live in the embodiment manifest's nav block.
+follower:
+  goal_tol: 0.25                 # m, the follower aims this close (<= arrival_radius)
+  capture_ratio: 0.5             # an intermediate waypoint is captured within ratio x inflation
+  tick_s: 0.1                    # control period (velocity streamed, never stop-and-go)
+  k_yaw: 2.0                     # heading gain (rad/s per rad)
+  face_tol_rad: 0.4              # pivot in place while the heading error exceeds this
+  slow_radius: 0.6               # m, forward speed tapers inside this distance of the goal
+  min_speed: 0.15                # m/s, the taper never commands less than this
+  budget_factor: 2.0             # default budget = factor x geodesic / speed + budget_pad_s
+  budget_pad_s: 15.0
+  stall_window_s: 4.0            # no stall_progress_m of progress for this long = stalled
+  stall_progress_m: 0.15
+  max_recoveries: 2              # reverse + sidestep + replan attempts before "stalled"
+  reverse_s: 1.0
+  reverse_speed: 0.25
+  sidestep_s: 1.0
+  sidestep_speed: 0.2
+  progress_every_s: 2.0          # on_progress callback period
+
 exploration:
   progress_interval: 5.0         # seconds, minimum interval between progress reports
   seed_walk_duration: 2.0        # seconds, initial forward walk before TARE starts
   seed_walk_speed: 0.3           # m/s
+  look_turns: 4                  # coverage explore: a 360 deg look in this many turns
+  look_vyaw: 0.6                 # rad/s
+  look_tol_deg: 10.0             # closed-loop heading tolerance per turn

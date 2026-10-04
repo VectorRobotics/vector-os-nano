@@ -98,4 +98,12 @@ capabilities:
   # in policy.spec.holonomic below — not a CapabilityProfile field.
 
 nav:
-  explorer: tare                  # needs VECTOR_NAV_STACK; else explore is unavailable
+  # Explore with TARE when VECTOR_NAV_STACK is set, else the in-process coverage tour.
+  explorer: tare
+  # The in-process follower (sim/nav/follow.py). Half-width is 0.19 m; the planning
+  # radius adds the gait's sway. A mounted arm or a held object reaching past the
+  # body's own footprint grows the inflation by that overhang at plan time.
+  body_radius: 0.28
+  speed: 0.4                      # m/s forward
+  vyaw_max: 0.8                   # rad/s
+  fall_z: 0.15                    # m, base below this = fallen

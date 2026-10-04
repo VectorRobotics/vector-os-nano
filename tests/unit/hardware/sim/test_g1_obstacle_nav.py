@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""R8 unit tests — obstacle-aware G1 navigation (pure, no GL/sim window).
+"""Obstacle-aware navigation on the shared planner (pure, no GL/sim window).
 
 Tests are OFFLINE: no MuJoCo GL context, no live robot.
 
@@ -14,11 +14,10 @@ Coverage:
      - pick_table box (default contype) → included
      - freejoint pickable cylinder → excluded
      - floor plane → excluded (type=plane, skipped by gtype filter)
-     - g1_pelvis box → excluded (g1_ prefix)
+     - g1_pelvis box → excluded (robot_geom_ids)
      - baseboard (bb_) geom → excluded (name prefix)
   4. obstacles_from_model returns >=1 obstacle (smoke test).
-  5. navigate_to signature and _G1NavResult contract are intact (import-only).
-  6. _last_nav_plan attribute exists on MuJoCoG1 (import-only).
+  5. navigate_to signature and the NavResult contract are intact (import-only).
 """
 from __future__ import annotations
 
@@ -26,7 +25,7 @@ import math
 
 import pytest
 
-from vector_os_nano.hardware.sim import g1_vgraph as vg
+from vector_os_nano.sim.nav import vgraph as vg
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +192,7 @@ class TestObstaclesFromModel:
     def tiny_result(self):
         """Build the tiny model once and run obstacles_from_model."""
         import mujoco
-        from vector_os_nano.hardware.sim.mujoco_g1 import obstacles_from_model
+        obstacles_from_model = vg.obstacles_from_model
 
         model, data = _build_tiny_model()
         # Build robot_geom_ids for g1_pelvis
@@ -305,14 +304,15 @@ class TestObstaclesFromModel:
 # ---------------------------------------------------------------------------
 
 
-def test_obstacles_from_model_no_robot_ids() -> None:
-    """obstacles_from_model works without robot_geom_ids (falls back to g1_ prefix)."""
-    from vector_os_nano.hardware.sim.mujoco_g1 import obstacles_from_model
-
+def test_obstacles_from_model_without_robot_ids_includes_the_robot() -> None:
+    """With no robot_geom_ids there is no name-prefix guess: the robot box counts."""
     model, data = _build_tiny_model()
-    polys = obstacles_from_model(model, data, robot_geom_ids=None)
+    polys = vg.obstacles_from_model(model, data)
     assert isinstance(polys, list)
-    assert len(polys) >= 1, "Should find at least one obstacle (sofa/wall/table)"
+    near_pelvis = [p for p in polys
+                   if math.hypot(sum(q[0] for q in p) / len(p) - 10.0,
+                                 sum(q[1] for q in p) / len(p) - 3.0) < 0.2]
+    assert near_pelvis, "the g1_ prefix hack is gone: only robot_geom_ids excludes the robot"
 
 
 # ---------------------------------------------------------------------------
@@ -334,59 +334,24 @@ def test_navigate_to_signature_intact() -> None:
     assert "timeout" in params
 
 
-def test_g1nav_result_bool_semantics() -> None:
-    """_G1NavResult truthiness reflects reached; dict accessors work."""
-    from vector_os_nano.hardware.sim.mujoco_g1 import _G1NavResult
+def test_nav_result_bool_semantics() -> None:
+    """NavResult truthiness reflects reached; dict accessors work."""
+    from vector_os_nano.sim.nav.follow import NavResult
 
-    r_reached = _G1NavResult({"reached": True, "moved_m": 2.0, "reason": "arrived"})
-    r_fell = _G1NavResult({"reached": False, "moved_m": 0.5, "reason": "fell"})
-    r_unreachable = _G1NavResult({"reached": False, "moved_m": 0.0, "reason": "unreachable"})
+    r_reached = NavResult({"reached": True, "moved_m": 2.0, "reason": "arrived"})
+    r_fell = NavResult({"reached": False, "moved_m": 0.5, "reason": "fell"})
+    r_unreachable = NavResult({"reached": False, "moved_m": 0.0, "reason": "unreachable"})
 
     assert bool(r_reached) is True
     assert bool(r_fell) is False
     assert bool(r_unreachable) is False
 
     assert r_reached.get("reason") == "arrived"
-    assert r_unreachable.get("reason") == "unreachable"
+    assert r_unreachable.reason == "unreachable"
 
 
-# ---------------------------------------------------------------------------
-# Test 6: _last_nav_plan attribute exists
-# ---------------------------------------------------------------------------
+def test_g1_body_radius_is_manifest_config() -> None:
+    """The G1 planning radius is the manifest's nav.body_radius (Rule 11)."""
+    from vector_os_nano.embodiments.config import load_embodiment_config
 
-
-def test_last_nav_plan_attribute_exists() -> None:
-    """MuJoCoG1 has a _last_nav_plan attribute initialised to None."""
-    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
-
-    g1 = MuJoCoG1.__new__(MuJoCoG1)
-    g1.__init__(gui=False, room=False)  # type: ignore[call-arg]
-    assert hasattr(g1, "_last_nav_plan"), "_last_nav_plan attribute missing from MuJoCoG1"
-    assert g1._last_nav_plan is None, "_last_nav_plan must be None at init"
-
-
-# ---------------------------------------------------------------------------
-# Test 7: g1_vgraph import firewall (no mujoco)
-# ---------------------------------------------------------------------------
-
-
-def test_g1_vgraph_no_mujoco_import() -> None:
-    """g1_vgraph.py must never import mujoco (stays pure-geometry)."""
-    import pathlib
-    import vector_os_nano.hardware.sim.g1_vgraph as m
-
-    src = pathlib.Path(m.__file__).read_text()
-    assert "import mujoco" not in src, "g1_vgraph.py must not import mujoco"
-
-
-# ---------------------------------------------------------------------------
-# Test 8: G1_BODY_RADIUS constant present
-# ---------------------------------------------------------------------------
-
-
-def test_g1_body_radius_constant() -> None:
-    """_G1_BODY_RADIUS must exist and be a positive float."""
-    from vector_os_nano.hardware.sim.mujoco_g1 import _G1_BODY_RADIUS
-
-    assert isinstance(_G1_BODY_RADIUS, float)
-    assert _G1_BODY_RADIUS > 0.0
+    assert load_embodiment_config("g1").nav["body_radius"] == pytest.approx(0.30)
