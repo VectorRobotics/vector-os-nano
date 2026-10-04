@@ -442,3 +442,237 @@ def test_dev_world_keeps_full_code_tool_set() -> None:
     tools = _build_motor_tools(None, _engine_with_code_tools())  # dev world: no agent
     for name in ("file_read", "file_write", "file_edit", "bash", "glob", "grep"):
         assert name in tools, f"dev world must keep {name}"
+
+
+# ---------------------------------------------------------------------------
+# WP07 — the runner's attempt groups, auto post-verify, probe refusal, the task
+# contract, failure recording and dispatched-skill intents (fakes, no sim).
+# ---------------------------------------------------------------------------
+
+
+class _NavBase(_FakeBase):
+    """A base with the in-process ``navigate_to`` the native navigate tool drives."""
+
+    def navigate_to(self, x: float, y: float, timeout: float | None = None) -> bool:
+        self.walk(abs(x - self._x) + abs(y - self._y), 0.0, 0.0, 1.0)
+        self._x, self._y = float(x), float(y)
+        return True
+
+
+class _HeldArm:
+    """An arm whose one object 'can' rises to the EE once grasped."""
+
+    _connected = True
+
+    def __init__(self) -> None:
+        self.held = False
+
+    def get_object_positions(self):
+        return {"can": [0.0, 0.0, 0.3] if self.held else [0.6, 0.6, 0.02]}
+
+    def get_joint_positions(self):
+        return [0.0] * 6
+
+    def fk(self, _joints):
+        return ([0.0, 0.0, 0.3], None)
+
+
+class _WeldGripper:
+    def __init__(self, arm: _HeldArm) -> None:
+        self._arm = arm
+
+    def is_holding(self) -> bool:
+        return self._arm.held
+
+    def weld_is_active(self) -> dict:
+        return {"can": self._arm.held}
+
+
+class _Skill:
+    """A Skill-protocol stub: ``run()`` is its effect; ``fail`` makes it error."""
+
+    preconditions: list = []
+    effects: dict = {}
+
+    def __init__(self, name: str, run, verify_hint: str = "", fail: str = "") -> None:
+        self.name, self.description, self.verify_hint = name, name, verify_hint
+        self.parameters = {"object": {"type": "string", "required": False}}
+        self._run, self._fail = run, fail
+
+    def execute(self, params, context):
+        from vector_os_nano.core.types import SkillResult
+
+        if self._fail:
+            return SkillResult(success=False, error_message=self._fail)
+        self._run()
+        return SkillResult(success=True, result_data={"object": "can"})
+
+
+def _make_arm_agent(*skills_fn):
+    agent, _base = _make_agent(0.0, 0.0)
+    arm = _HeldArm()
+    agent._arm, agent._gripper = arm, _WeldGripper(arm)
+    for make in skills_fn:
+        agent._skill_registry.register(make(arm))
+    return agent, arm
+
+
+def _grasp(arm):
+    return _Skill("grasp_fake", lambda: setattr(arm, "held", True), verify_hint="holding_object()")
+
+
+def _stop(arm):
+    return _Skill("stop", lambda: None)
+
+
+def _verdict(agent, eng, trace):
+    return VerdictReport.from_trace(trace, verify_oracle_names(agent, eng))
+
+
+def _tool_results(session) -> list[str]:
+    return [str(c.get("content")) for m in session.to_messages() for c in (m.get("content") or [])
+            if isinstance(c, dict) and c.get("type") == "tool_result"]
+
+
+def test_reverify_after_a_housekeeping_action_is_graded_against_the_group_baseline() -> None:
+    """The live WP03 shape through the runner: grasp -> verify holding -> stop ->
+    verify holding. The second verify is an attempt of the same sub-goal, graded
+    against the baseline before the grasp, so it is CAUSED and the turn verifies."""
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("grasp_fake", {"object": "can"})),
+        tool_turn(("verify", {"expr": "holding_object('can')"})),
+        tool_turn(("stop", {})),
+        tool_turn(("verify", {"expr": "holding_object('can')"})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _arm = _make_arm_agent(_grasp, _stop)
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("拿起那个罐子", session=_session())
+    assert trace.contract == ("holding_object()",)
+    assert (trace.contract_start, trace.contract_end) == ((False,), (True,))
+    assert [s.superseded for s in trace.steps] == [True, False]
+    assert trace.steps[1].actor_caused is ActorCaused.CAUSED
+    assert trace.intents == ("grasp",)  # a dispatched gripper skill is a manipulation
+    report = _verdict(agent, eng, trace)
+    assert report.verified is True, report.reject_reason
+    assert report.contract == ("holding_object()",)
+
+
+def test_auto_post_verify_proves_an_action_the_model_did_not_verify() -> None:
+    """Graft (c): the skill's verify_hint runs right after it; the finish is accepted
+    without a nudge and the auto-verify is the step's GROUNDED, CAUSED evidence."""
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("grasp_fake", {"object": "can"})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _arm = _make_arm_agent(_grasp)
+    eng = _make_engine(agent, backend)
+    session = _session()
+    trace = eng.run_turn_native("拿起那个罐子", session=session)
+    (step,) = trace.steps
+    assert trace.goal_tree.sub_goals[0].verify == "holding_object()"
+    assert step.channels[0] == "auto-verify" and step.actor_caused is ActorCaused.CAUSED
+    assert _verdict(agent, eng, trace).verified is True
+    assert any("auto-verify holding_object() -> PASS" in r for r in _tool_results(session))
+
+
+def test_a_model_verify_takes_the_place_of_the_auto_verify() -> None:
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("grasp_fake", {"object": "can"})),
+        tool_turn(("verify", {"expr": "holding_object('can')"})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _arm = _make_arm_agent(_grasp)
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("拿起那个罐子", session=_session())
+    (step,) = trace.steps
+    assert trace.goal_tree.sub_goals[0].verify == "holding_object('can')"
+    assert step.result_data["auto_verify"] == {"expr": "holding_object()", "result": True}
+
+
+def _probe_script():
+    return FakeToolScriptBackend.from_tool_script([
+        tool_turn(("walk", {"distance": 0.3, "speed": 0.3})),
+        tool_turn(("verify", {"expr": "at_position(3.0, 0.0, 0.5)"})),
+        tool_turn(("verify", {"expr": "at_position(0.3, 0.0, 0.5)"})),
+        tool_turn(("finish", {})),
+    ])
+
+
+def test_a_verify_probe_with_no_action_since_the_last_verify_is_refused() -> None:
+    """Graft (d): the second verify reads nothing — no GT bit leaks to the actor."""
+    agent, _base = _make_agent(0.0, 0.0)
+    eng = _make_engine(agent, _probe_script())
+    session = _session()
+    trace = eng.run_turn_native("go to (3,0)", session=session)
+    assert [sg.verify for sg in trace.goal_tree.sub_goals] == ["at_position(3.0, 0.0, 0.5)"]
+    assert any("no action ran since your last verify" in r for r in _tool_results(session))
+
+
+def test_mutation_probe_refusal(monkeypatch) -> None:
+    """Graft (g): with the refusal switched off the same script reads GT twice."""
+    from vector_os_nano.vcli import native_loop
+
+    real = native_loop.NativeStepRunner.handle_verify
+
+    def leaky(self, expr, goal_id=""):  # noqa: ANN001, ANN202
+        self._acted_since_verify = True
+        return real(self, expr, goal_id)
+
+    monkeypatch.setattr(native_loop.NativeStepRunner, "handle_verify", leaky)
+    agent, _base = _make_agent(0.0, 0.0)
+    trace = _make_engine(agent, _probe_script()).run_turn_native("go to (3,0)", session=_session())
+    assert len(trace.steps) == 2
+
+
+def test_a_failed_skill_is_recorded_with_its_message() -> None:
+    """producers:native-step-collapses-result: the ToolResult is kept (rule 4)."""
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("grasp_fake", {"object": "can"})),
+        tool_turn(("verify", {"expr": "holding_object('can')"})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _arm = _make_arm_agent(
+        lambda arm: _Skill("grasp_fake", lambda: None, "holding_object()", fail="ik_unreachable"))
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("拿起那个罐子", session=_session())
+    (step,) = trace.steps
+    assert step.success is False and "ik_unreachable" in step.error
+    assert step.result_data["is_error"] is True and "ik_unreachable" in step.result_data["content"]
+    assert _verdict(agent, eng, trace).evidence == "FAILED"
+
+
+def test_navigate_retry_recovers_and_the_contract_is_printed_first() -> None:
+    """The unit analogue of the e2e: navigate short -> FAIL -> navigate -> PASS ->
+    GROUNDED; the task contract is announced before any tool runs."""
+    events: list[str] = []
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("navigate", {"x": 1.0, "y": 0.0})),
+        tool_turn(("verify", {"expr": "at_position(3.0, 0.0)"})),
+        tool_turn(("navigate", {"x": 3.0, "y": 0.0})),
+        tool_turn(("verify", {"expr": "at_position(3.0, 0.0)"})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _base = _make_agent(0.0, 0.0)
+    agent._base = _NavBase(0.0, 0.0)
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("走到坐标 (3.0,0.0)", session=_session(), on_progress=events.append)
+    assert events[0] == "Task contract: at_position(3.0, 0.0)"
+    assert [s.verify_result for s in trace.steps] == [False, True]
+    assert [s.superseded for s in trace.steps] == [True, False]
+    assert trace.steps[1].actor_caused is ActorCaused.CAUSED
+    assert _verdict(agent, eng, trace).verified is True
+
+
+def test_navigate_auto_verifies_its_bound_target() -> None:
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("navigate", {"x": 3.0, "y": 0.0})),
+        tool_turn(("finish", {})),
+    ])
+    agent, _base = _make_agent(0.0, 0.0)
+    agent._base = _NavBase(0.0, 0.0)
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("走到坐标 (3.0,0.0)", session=_session())
+    assert trace.goal_tree.sub_goals[0].verify == "at_position(3.0, 0.0)"
+    assert trace.steps[0].actor_caused is ActorCaused.CAUSED
+    assert _verdict(agent, eng, trace).verified is True

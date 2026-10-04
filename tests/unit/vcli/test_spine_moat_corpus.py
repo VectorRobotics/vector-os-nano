@@ -23,6 +23,7 @@ ROBOT_ORACLES = frozenset({
     "at_position", "facing", "visited", "holding_object", "arm_at_home",
     "placed_count", "detect_objects", "describe_scene", "get_position", "get_heading",
     "detection_matches_gt",  # g1 perception bool oracle
+    "released",
 })
 
 # ---------------------------------------------------------------------------
@@ -94,6 +95,22 @@ CORPUS_RAN: list[str] = [
     "facing(0, 7)",
     "facing(0.0, tol=3.2)",
     "facing(0.0, 0.8) and at_position(11, 3)",
+    # WP02 leftovers (WP07 graft f): a bound vacuous over the oracle's return domain —
+    # a count's fail-safe 0 satisfies it, or it holds over a ranged oracle's whole range
+    "len(detect_objects()) < 1000",
+    "len(detect_objects()) <= 1e9",
+    "len(describe_scene()) < 1000000",
+    "placed_count() <= 1e9",
+    "placed_count() < 5",
+    "placed_count() == 0",
+    "len(detect_objects()) == 0",
+    "get_heading() < 100",
+    "get_heading() > -4",
+    "get_heading() <= 3.1416",
+    # ... and a facing disjunction whose arcs cover the whole circle (FG-3)
+    "facing(0, 0.7854) or facing(1.5708, 0.7854) or facing(3.1416, 0.7854) or facing(-1.5708, 0.7854)",
+    "facing(0) or facing(1.3) or facing(2.6) or facing(3.9) or facing(5.2)",
+    "facing(0) or (facing(1.3) or (facing(2.6) or facing(-2.6) or facing(-1.3)))",
     # FG-4 dev predicates in a robot world (not in ROBOT_ORACLES -> no oracle call)
     "file_exists('.')",
     "file_exists('README.md')",
@@ -147,6 +164,10 @@ HONEST_GROUNDED: list[str] = [
     "facing(0.0, tol=0.5)",
     "detect_objects() == ['banana']",
     "detection_matches_gt('red') == True",  # g1 (R7); its bare call stays RAN
+    "released()",                            # WP07: the positive release predicate
+    "released('banana')",
+    "get_heading() < 1.0",                   # a real bound inside the heading range
+    "facing(0.0) or facing(3.14)",           # two arcs never cover the circle
 ]
 
 
@@ -269,6 +290,49 @@ def test_every_capped_tol_oracle_is_capped_in_the_classifier() -> None:
     agent = SimpleNamespace(_base=None)
     tagged = {f.__name__: f.__oracle__.max_tol for f in (g.make_at_position(agent), g.make_facing(agent))}
     assert tagged == {name: cap for name, (_i, cap) in ec._TOL_ARG.items()}
+
+
+def _tagged_domains() -> dict[str, str]:
+    """``{name: domain source}`` of every ``oracle(..., domain=...)`` under vcli/ — a
+    decorator on a def, or ``ns["name"] = oracle(..., domain=...)(...)``."""
+    import ast
+    from pathlib import Path
+
+    out: dict[str, str] = {}
+    for path in Path(ec.__file__).resolve().parents[1].rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        def domain_of(call: ast.AST) -> str | None:
+            if isinstance(call, ast.Call) and getattr(call.func, "id", None) == "oracle":
+                kw = next((k.value for k in call.keywords if k.arg == "domain"), None)
+                return None if kw is None else ast.unparse(kw)
+            return None
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for d in node.decorator_list:
+                    if (src := domain_of(d)) is not None:
+                        out[node.name] = src
+            elif (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                  and isinstance(node.targets[0], ast.Subscript)
+                  and (src := domain_of(node.value.func)) is not None):
+                out[ast.literal_eval(node.targets[0].slice)] = src
+    return out
+
+
+def test_every_oracle_domain_tag_matches_the_classifier_tables() -> None:
+    """WP07 (f): the @oracle(domain=...) tag and the classifier's domain tables agree,
+    else a vacuous bound on a newly tagged oracle would ground."""
+    import math
+
+    found = _tagged_domains()
+    bools = {n for n, d in found.items() if d == "'bool'"}
+    counts = {n for n, d in found.items() if d == "'count'"}
+    ranges = {n: eval(d, {"math": math}) for n, d in found.items() if d.startswith("(")}  # noqa: S307
+    assert bools <= ec._BOOL_ORACLES, sorted(bools - ec._BOOL_ORACLES)
+    assert _tagged_bool_oracles() <= bools, sorted(_tagged_bool_oracles() - bools)
+    assert counts == ec._COUNT_ORACLES
+    assert ranges == ec._RANGE_ORACLES
 
 
 def test_every_bool_oracle_gets_the_bool_rules() -> None:
