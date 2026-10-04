@@ -102,3 +102,29 @@ def test_coverage_tour_enters_every_room_by_ground_truth(obstacles, tmp_path):
     assert all(room_at(*r["gt_pos"], boxes) == r["room"] and r["looked"] for r in rows)
     assert events[0] == "started" and events[-1] == "completed"
     assert _clearance(base.trace[::10], obstacles) >= _HALF_WIDTH
+
+
+def test_an_extended_arm_or_held_object_grows_the_footprint():
+    """(WP08 graft e) the navigation inflation grows by how far a mounted arm, or a
+    body welded to it, reaches past the dog; the stowed Piper adds nothing."""
+    import mujoco
+
+    from vector_os_nano.embodiments.dof_layout import DofLayout
+    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+
+    m = mujoco.MjModel.from_xml_path(str(_build_room_scene_xml(with_arm=True)))
+    d = mujoco.MjData(m)
+    lay = DofLayout(m, "base_link", 12)
+    d.qpos[lay.root_qpos_adr:lay.root_qpos_adr + 3] = [10.0, 3.0, 0.35]
+    d.qpos[lay.joint_qpos_start:lay.joint_qpos_start + 12] = lay.build_stance_vector(
+        m, load_embodiment_config("go2").stance)
+    extra = lay.joint_qpos_start + lay.num_actuated
+    mujoco.mj_forward(m, d)
+    assert vg.overhang(m, d, lay.root_bid, extra) == 0.0  # stowed
+    d.qpos[extra + 1], d.qpos[extra + 2] = 1.57, -1.0     # reach forward and down
+    mujoco.mj_forward(m, d)
+    reach = vg.overhang(m, d, lay.root_bid, extra)
+    assert reach > 0.02
+    weld = next(i for i in range(m.neq) if m.eq(i).name == "grasp_pickable_can_red")
+    d.eq_active[weld] = 1  # the can counts as part of the arm once welded to it
+    assert vg.overhang(m, d, lay.root_bid, extra) > reach

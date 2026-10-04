@@ -93,6 +93,7 @@ module is the correct pattern.
 |-----------|-----------------|---------------------|
 | `set_velocity` | writes `_cmd_vel` -> the runtime's gait controller | ROS2 `/cmd_vel` topic |
 | `walk` | `set_velocity` + `wait_sim` (SIM seconds) | same |
+| `navigate_to` | vgraph + the shared follower -> `NavResult` | FAR / localPlanner (bool) |
 | `stand` | PD control to `_STAND_JOINTS` | Unitree SDK high-level |
 | `sit` | PD control to `_SIT_JOINTS` | Unitree SDK high-level |
 | `get_position` | `qpos[0:3]` | ROS2 odometry |
@@ -113,6 +114,25 @@ the same ground at any real-time ratio. `VECTOR_SIM_LOCKSTEP=1` starts no steppe
 physics advances only inside `wait_sim`/`step`, so a scripted run is deterministic
 (two runs end in identical ground truth). Generated scenes go to
 `~/.cache/vector_os_nano/scenes/` (content-addressed), never the package dir.
+
+## In-process navigation (vector_os_nano/sim/nav)
+
+`MuJoCoGo2.navigate_to` and `MuJoCoG1.navigate_to` both delegate to ONE follower
+(`sim/nav/follow.py`) over ONE planner (`sim/nav/vgraph.py`): the static scene's
+box/cylinder geoms (`obstacles_from_model`, robot subtree excluded) are Minkowski-
+inflated by the manifest's `nav.body_radius` (plus the overhang of a mounted arm or
+a welded object), a goal inside furniture snaps to the nearest free point and a start
+inside the inflation escapes first. The follower streams velocity in SIM time with
+pure pursuit, gait-slip estimation and (holonomic bodies) a cross-track strafe; it
+checks the run's stop signal every tick, detects a stall (reverse + sidestep +
+replan) and returns a `NavResult` (`bool` = reached, `reason` in `NAV_REASONS`).
+Tuning lives in `config/nav.yaml` (`follower:`; `navigation.arrival_radius` is also
+the `at_position` default tol) and the manifest `nav:` block. `explore` without a nav
+stack is the coverage tour (`sim/nav/coverage.py`): every `config/room_layout.yaml`
+room point, a 360-degree look at each, a room counted only when the GT pose ends in
+its `boxes:` entry, every leg logged to `<VECTOR_RUN_DIR>/explore_coverage.jsonl`.
+Test bodies: `tests/harness/kin_base.py` (kinematic), `tests/unit/sim/test_nav_*.py`,
+`tests/hardware/sim/test_go2_nav_stop.py`, E8/E9 in `tests/e2e_repl/`.
 
 ## MuJoCo Go2 Backends
 

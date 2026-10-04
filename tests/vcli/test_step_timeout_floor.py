@@ -278,7 +278,7 @@ class TestEffectiveTimeoutHelper:
     ("vector_os_nano.skills.handover", "HandoverSkill", 25.0),
     ("vector_os_nano.skills.go2.walk", "WalkSkill", 30.0),
     ("vector_os_nano.skills.go2.patrol", "PatrolSkill", 90.0),
-    ("vector_os_nano.skills.go2.explore", "ExploreSkill", 150.0),
+    ("vector_os_nano.skills.go2.explore", "ExploreSkill", 600.0),  # a blocking 8-room coverage tour (WP08)
     ("vector_os_nano.skills.go2.turn", "TurnSkill", 10.0),
 ])
 def test_motor_skill_typical_duration_sec(

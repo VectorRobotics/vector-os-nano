@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Level 16: Explore + nav stack integration logic tests.
+"""Level 16: the TARE exploration monitor (explore backend 'tare').
 
-Verifies that ExploreSkill:
-- Seeds briefly then stops (doesn't override nav stack)
-- Sends zero velocity after seed
-- Auto-look fires on new room entry
-- No velocity commands sent during main loop
+Verifies that the monitor loop:
+- seeds TARE with one brief walk (it does not override the nav stack);
+- sends no velocity command while monitoring.
+(The auto-look hook had no production setter and is deleted, WP08.)
 """
 from __future__ import annotations
 
@@ -23,13 +22,9 @@ import pytest
 from vector_os_nano.core.skill import SkillContext
 import vector_os_nano.skills.go2.explore as _explore_mod
 from vector_os_nano.skills.go2.explore import (
-    ExploreSkill,
     _exploration_loop,
     _explore_cancel,
     _explore_visited,
-    cancel_exploration,
-    set_auto_look,
-    set_event_callback,
 )
 # Local test fixture replacing removed hardcoded dict from navigate.py
 _ROOM_CENTERS: dict[str, tuple[float, float]] = {
@@ -63,122 +58,30 @@ def _make_base(room_sequence):
 
 
 class TestSeedBehavior:
-    """Verify seed is brief and ends with zero velocity."""
+    """The seed is one brief walk; the monitor itself never commands velocity."""
 
-    def test_seed_walk_called_with_bridge(self):
-        """Seed walk uses base.walk() when has_bridge=True."""
-        base = _make_base(["hallway"] * 50)
+    def _run(self, base, cancel_after: float) -> None:
         _explore_cancel.clear()
         _explore_visited.clear()
 
         def cancel_later():
-            time.sleep(0.1)
+            time.sleep(cancel_after)
             _explore_cancel.set()
 
         t = threading.Thread(target=cancel_later, daemon=True)
         t.start()
-
-        with patch("vector_os_nano.skills.go2.explore._start_tare", return_value=True):
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):  # /start_exploration
             with fake_clock():
-                _exploration_loop(base, has_bridge=True)
-
+                _exploration_loop(base)
         t.join(timeout=3)
 
-        # Seed walk should have called base.walk()
-        assert base.walk.call_count >= 1, f"Seed walk should call base.walk(). Calls: {base.walk.call_args_list}"
+    def test_seed_walk_runs_once(self):
+        base = _make_base(["hallway"] * 50)
+        self._run(base, 0.1)
+        assert base.walk.call_count == 1, base.walk.call_args_list
 
     def test_no_velocity_in_main_loop(self):
-        """After seed, no more set_velocity calls during monitoring loop."""
         base = _make_base(["hallway"] * 30)
-        _explore_cancel.clear()
-        _explore_visited.clear()
-        velocity_calls_before_loop = [0]
-
-        def cancel_later():
-            time.sleep(3.0)  # seed takes ~5s but we mock _start_tare
-            _explore_cancel.set()
-
-        t = threading.Thread(target=cancel_later, daemon=True)
-        t.start()
-
-        with patch("vector_os_nano.skills.go2.explore._start_tare", return_value=False):
-            _exploration_loop(base, has_bridge=False)
-
-        t.join(timeout=5)
-        # When has_bridge=False, no seed or velocity at all
+        self._run(base, 0.5)
         assert base.set_velocity.call_count == 0
-
-
-class TestAutoLookOnExplore:
-    """Verify auto-look fires for new rooms during exploration."""
-
-    def test_auto_look_fires_for_each_new_room(self):
-        rooms_seen = []
-        set_auto_look(lambda r: rooms_seen.append(r) or {"summary": r, "objects": []})
-
-        # Many room changes to ensure at least 2 are detected
-        sequence = ["hallway", "kitchen", "study", "living_room"] * 5
-        base = _make_base(sequence)
-        _explore_cancel.clear()
-        _explore_visited.clear()
-
-        # Provide a mock SceneGraph that returns room names from position.
-        # explore.py uses _spatial_memory.nearest_room() since Wave 2 refactor.
-        mock_sg = MagicMock()
-        def _nearest(x: float, y: float) -> str | None:
-            for name, (cx, cy) in _ROOM_CENTERS.items():
-                if abs(x - cx) < 1.5 and abs(y - cy) < 1.5:
-                    return name
-            return None
-        mock_sg.nearest_room = _nearest
-        mock_sg.visit = MagicMock()
-        mock_sg.add_door = MagicMock()
-        _explore_mod._spatial_memory = mock_sg
-
-        # Cancel once we've seen >= 2 rooms or after enough iterations
-        pos_calls = [0]
-        orig_get_pos = base.get_position
-        def _get_pos_with_cancel():
-            pos_calls[0] += 1
-            result = orig_get_pos()
-            # Cancel after enough iterations for 2+ rooms to be detected
-            if pos_calls[0] >= len(sequence) - 2:
-                _explore_cancel.set()
-            return result
-        base.get_position = _get_pos_with_cancel
-
-        # Patch subprocess.run to avoid 5s TARE start timeout
-        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
-            with fake_clock():
-                _exploration_loop(base, has_bridge=False)
-
-        _explore_mod._spatial_memory = None
-
-        assert len(rooms_seen) >= 2, f"Expected >=2 rooms, got {rooms_seen}"
-        set_auto_look(None)
-
-    def test_explore_skill_works_without_detector(self):
-        """ExploreSkill.execute works with VLM only, no detector."""
-        base = _make_base(["hallway"])
-        mock_vlm = MagicMock()
-        mock_vlm.describe_scene.return_value = MagicMock(
-            summary="test", objects=[], room_type="hallway"
-        )
-        mock_vlm.identify_room.return_value = MagicMock(
-            room="hallway", confidence=0.9
-        )
-
-        context = SkillContext(
-            bases={"default": base},
-            services={
-                "vlm": mock_vlm,
-                "spatial_memory": MagicMock(),
-            },
-        )
-
-        skill = ExploreSkill()
-        with patch("vector_os_nano.skills.go2.explore._start_bridge_on_go2", return_value=False):
-            result = skill.execute({}, context)
-
-        assert result.success
-        cancel_exploration()
+        assert not _explore_mod.is_exploring()
