@@ -525,12 +525,14 @@ class NativeStepRunner:
 
     @property
     def has_unverified_action(self) -> bool:
-        """True iff a skill ran for the current step but no verify has closed it —
-        i.e. the model is about to finish/stop WITHOUT proving the action achieved
-        the goal (D23: weak models skip verify on easy tasks, yielding an empty,
-        ungraded trace). Used to nudge a model-authored verify before accepting finish.
+        """True iff a SIDE-EFFECTING tool ran for the current step but no verify has
+        closed it — i.e. the model is about to finish/stop WITHOUT proving the action
+        achieved the goal (D23: weak models skip verify on easy tasks, yielding an
+        empty, ungraded trace). Used to nudge a model-authored verify before accepting
+        finish. A read (file_read, detect, where_am_i) changes nothing, so it is never
+        nudged: the model answers from it.
         """
-        return self._step_open
+        return self._step_acted
 
     # ------------------------------------------------------------------
     # Skill dispatch (capture baseline before the first skill of a step)
@@ -952,7 +954,7 @@ def run_turn_native(
             except Exception as exc:  # noqa: BLE001 — infrastructure, not the agent
                 llm_error = f"{type(exc).__name__}: {exc}"
                 logger.warning("native_loop: LLM unavailable: %s", llm_error)
-                if runner.has_unverified_action or runner._steps:
+                if runner._step_open or runner._steps:
                     # The plan was cut short: an earlier verified step never makes
                     # the interrupted turn a success.
                     runner.record_abort(f"LLM unavailable: {llm_error}")
@@ -1023,9 +1025,10 @@ def run_turn_native(
             raise
         logger.warning("native_loop: turn failed after %d action(s): %s", runner.actions_dispatched, exc)
         runner.record_abort(f"producer error: {type(exc).__name__}: {exc}")
-    if runner.has_unverified_action:
-        # The model never verified its last action (nudges spent / round-trips out):
-        # keep it on the record as an unproven step — never silently dropped.
+    if runner._step_open:
+        # The model never verified its last tool chain (a read it answered from, or
+        # an action once the nudges are spent): on the record as an unproven step,
+        # never silently dropped.
         runner.record_unverified()
     return runner.build_trace(
         user_message, llm_error=llm_error, model=model, cancelled=token.cancelled

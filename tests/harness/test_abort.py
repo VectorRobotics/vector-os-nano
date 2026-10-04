@@ -143,10 +143,11 @@ class TestP0StopBypass:
         session.append_user = MagicMock()
         session.append_assistant = MagicMock()
 
-        for word in ["停", "停下", "halt", "freeze", "别动", "停止"]:
+        for word in ["停", "停下", "halt", "freeze", "别动", "停止", "停！", "Stop!", "停下。"]:
             result = engine.run_turn(word, session)
             assert result.text == "Stopped.", f"Failed for: {word}"
             backend.call.assert_not_called()
+        assert not engine.is_stop("停？")  # a question about stopping is not a stop
 
     def test_stop_words_are_the_registered_stop_skills_aliases(self):
         """Single source (producers:stop-not-p0): no hand-written kernel list."""

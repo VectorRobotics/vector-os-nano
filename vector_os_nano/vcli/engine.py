@@ -1280,66 +1280,6 @@ class VectorEngine:
         except Exception as exc:  # noqa: BLE001
             logger.debug("VGG: experience compilation skipped: %s", exc)
 
-    def vgg_execute_async(
-        self,
-        goal_tree: "GoalTree",
-        on_complete: "Callable[[ExecutionTrace], None] | None" = None,
-    ) -> None:
-        """Execute a GoalTree, off the caller's thread WHEN that is safe.
-
-        Uses VGGHarness (with retry logic) when available, otherwise falls
-        back to raw GoalExecutor.
-
-        Threading: by default this runs on a background daemon thread so the
-        CLI stays responsive. BUT when a GUI MuJoCo viewer is live
-        (``_has_live_viewer()``) AND we are running under mjpython (macOS),
-        it runs SYNCHRONOUSLY on the caller's thread instead — there GLFW is
-        main-thread-only and the caller's thread owns the viewer, so it must
-        be the only thread touching the sim; the caller blocks until execution
-        finishes (acceptable: the user is watching the arm move, not typing).
-        On Linux/Windows the viewer+physics run on their own daemon threads,
-        so even with a live viewer execution stays on the background thread
-        (the REPL keeps accepting input, e.g. "stop").
-
-        Args:
-            goal_tree: The goal tree to execute.
-            on_complete: Called when execution finishes (on the background
-                thread, or inline on the caller's thread in the
-                viewer-live-under-mjpython case).
-        """
-        def _run() -> None:
-            # Catch Exception (not BaseException) so KeyboardInterrupt still
-            # propagates to the REPL's try/except KeyboardInterrupt (cli.py),
-            # preserving Ctrl-C abort of an in-flight goal.
-            try:
-                trace = self.vgg_execute(goal_tree)
-                if on_complete:
-                    on_complete(trace)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("VGG async execution failed: %s", exc)
-
-        # WHY: GLFW is main-thread-ONLY on macOS/mjpython, where the viewer is
-        # driven by the caller's (main) thread pump — there a background skill
-        # thread touching mjData/GLFW concurrently with the main-thread render
-        # would segfault, so skills MUST run synchronously on the viewer-owning
-        # thread. On Linux/Windows the viewer runs in MuJoCo's own background
-        # render thread and physics+viewer.sync() run on the mujoco_*_physics
-        # daemon (viewer_mode.BACKGROUND_DAEMON); the skill thread never touches
-        # the viewer, so forcing sync-on-main there only freezes the REPL during
-        # a motion (laggy Ctrl-C / "stop") with no safety benefit. Gate the
-        # synchronous path on mjpython, mirroring viewer_mode's platform seam.
-        from vector_os_nano.hardware.sim.viewer_mode import (  # noqa: PLC0415
-            running_under_mjpython,
-        )
-        if self._has_live_viewer() and running_under_mjpython():
-            self._vgg_thread = None
-            _run()
-            return
-
-        t = threading.Thread(target=_run, name="vgg-executor", daemon=True)
-        t.start()
-        self._vgg_thread = t
-
     def _has_live_viewer(self) -> bool:
         """True when a connected sim has an OPEN GUI viewer.
 
@@ -1433,6 +1373,15 @@ class VectorEngine:
         ``session`` None (a stop typed while a turn runs on another thread) skips the
         session record, so the stop never races the running turn's session writes.
         """
+        _agent = agent or getattr(self, "_vgg_agent", None)
+        # The motors first: no skill context to build, no run to wake (BaseProtocol.stop
+        # is ungated and lets a moving body brake while its walk still holds the token).
+        try:
+            stop_base = getattr(getattr(_agent, "_base", None), "stop", None)
+            if callable(stop_base):
+                stop_base()
+        except Exception as exc:  # noqa: BLE001 — the stop skill below stops it again
+            logger.warning("P0 stop: base.stop failed: %s", exc)
         _abort.request_abort()  # every live run's CancelToken (background ones too)
 
         # Invalidate world context cache — robot state changes after a stop
@@ -1440,7 +1389,6 @@ class VectorEngine:
 
         # The stop skill itself — never via agent.execute_skill, whose plan appends a
         # 'home' step (moving the arm and opening the gripper is not a stop).
-        _agent = agent or getattr(self, "_vgg_agent", None)
         reg = getattr(_agent, "_skill_registry", None)
         stop = reg.get("stop") if reg is not None else None
         if stop is not None:
@@ -1468,7 +1416,8 @@ class VectorEngine:
         return frozenset(str(w).strip().lower() for w in words if str(w).strip())
 
     def is_stop(self, text: str) -> bool:
-        return text.strip().lower() in self.stop_words()
+        # '停！' / 'stop!' are the same stop (a panicked owner punctuates); '停?' is not.
+        return text.strip().lower().rstrip("!！。.~～ ") in self.stop_words()
 
     @contextmanager
     def actuating_run(self):
@@ -2026,6 +1975,15 @@ class VectorEngine:
         tool_name = tc.name
         params = tc.input
         tool = self._registry.get(tool_name)
+
+        abort = getattr(tool_context, "abort", None)
+        if abort is not None and abort.is_set():
+            # A stop landed earlier in this batch: nothing after it runs.
+            result = ToolResult(content="Stopped: not run.", is_error=True)
+            return (
+                {"tool_use_id": tc.id, "content": result.content, "is_error": True},
+                ToolCall(tool_name=tool_name, params=params, result=result, duration_sec=0.0, permission_action="denied"),
+            )
 
         if tool is None:
             result = ToolResult(content=f"Unknown tool: {tool_name}", is_error=True)

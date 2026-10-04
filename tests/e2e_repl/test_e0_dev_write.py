@@ -84,3 +84,31 @@ def test_e0_deny_destructive_commands_never_execute() -> None:
         assert _KEEP.read_text(encoding="utf-8") == "keep\n"  # the spy: nothing ran
     finally:
         shutil.rmtree(_KEEP.parent, ignore_errors=True)
+
+
+# E0-read: a read request shows the model's answer (one producer, no verify nudges).
+_DOC = Path("/tmp/vos_e0read/README.md")
+_READ_SCRIPT = {"steps": [
+    {"when": "总结一下", "tool_calls": [{"name": "file_read", "input": {"file_path": str(_DOC)}}]},
+    {"when": "E0READ-MARKER", "text": "README 摘要：E0READ 是一个演示项目。", "tool_calls": []},
+]}
+
+
+@pytest.mark.cli_main
+def test_e0_a_read_request_prints_the_models_answer(tmp_path) -> None:
+    shutil.rmtree(_DOC.parent, ignore_errors=True)
+    _DOC.parent.mkdir(parents=True)
+    _DOC.write_text("# E0READ-MARKER\nA demo project.\n", encoding="utf-8")
+    log = tmp_path / "llm.jsonl"
+    try:
+        r = run_repl_session(
+            ["总结一下 README.md 的内容"], tool_script=_READ_SCRIPT, timeout_sec=120,
+            cwd=_DOC.parent, extra_env={"VECTOR_FAKE_LLM_LOG": str(log)},
+        )
+        text = r.text
+        assert not r.timed_out, text[-3000:]
+        assert "README 摘要：E0READ 是一个演示项目。" in text, text[-3000:]
+        calls = log.read_text(encoding="utf-8").splitlines()
+        assert len(calls) == 2, calls  # the read, the answer: no nudge, no second producer
+    finally:
+        shutil.rmtree(_DOC.parent, ignore_errors=True)

@@ -115,10 +115,9 @@ def test_repl_runs_one_turn_then_exits(tmp_path, monkeypatch: pytest.MonkeyPatch
     # Silence the startup banner sleeps (print_banner uses time.sleep).
     monkeypatch.setattr(cli.time, "sleep", lambda *_a, **_k: None)
 
-    # The REPL runs the turn on a background daemon thread via vgg_execute_async;
-    # capture the completed trace via the on_complete callback by spying on the
-    # SYNC core (vgg_execute) the async path calls. A threading.Event lets us wait
-    # for the background completion deterministically.
+    # The REPL runs the turn on its worker thread (cli._run_turn_busy); capture the
+    # completed trace by spying on the SYNC core (vgg_execute) that turn calls. A
+    # threading.Event lets us wait for the worker's completion deterministically.
     import threading
 
     from vector_os_nano.vcli.engine import VectorEngine

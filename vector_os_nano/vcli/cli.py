@@ -74,7 +74,8 @@ EXIT_COMMANDS: frozenset[str] = frozenset({"quit", "exit", "q"})
 
 _LOGO_PATH = Path(__file__).resolve().parent.parent / "cli" / "logo_braille.txt"
 
-# A stop reports the base speed at these SIM times after the stop command.
+# A stop reports the base speed at the first SIM time after the stop command, its
+# peak from there to the second, and its speed at the second.
 _STOP_SETTLE_SIM_S = (0.2, 1.0)
 # After a stop, wait this long for the cancelled turn to unwind before re-prompting.
 _UNWIND_S = 5.0
@@ -562,7 +563,13 @@ def _repl_attempt_native(
 
     sub_goals = list(getattr(trace.goal_tree, "sub_goals", ()) or ())
     steps = list(getattr(trace, "steps", ()) or ())
+    # The model's own last words (the README summary, the test run's outcome): shown,
+    # then the steps and the verdict, which are the evidence.
+    answer = next((e.get("text") or "" for e in reversed(getattr(scratch, "_entries", ()))
+                   if e.get("type") == "assistant" and (e.get("text") or "").strip()), "").strip()
     console.print()
+    if answer:
+        console.print(escape(answer))
     for refusal in getattr(trace, "refused", ()) or ():
         console.print(f"  [{TEAL}]▸[/] [red]refused[/] {escape(refusal)}")
     for i, s in enumerate(steps):
@@ -604,6 +611,7 @@ def _repl_attempt_native(
         session.append_user(user_input)
         session.append_assistant(
             f"[native executed]\nGoal: {user_input}\nVerified: {verified}\n{summary}"
+            + (f"\n{answer}" if answer else "")
         )
     except Exception:  # noqa: BLE001 — session record is best-effort
         pass
@@ -616,10 +624,11 @@ def _repl_attempt_native(
 
 
 def _stop_report(agent: Any) -> str:
-    """'base 0.12 m/s at 0.2 sim-s, 0.00 m/s at 1.0 sim-s' — the measured proof.
+    """'base 0.03 m/s at 0.2 sim-s, peak 0.06 m/s to 1.0 sim-s, 0.00 m/s at 1.0 sim-s'.
 
-    The command is zeroed at once; a legged body decelerates, so its measured speed
-    is reported at each settle mark (sim time when the body exposes it).
+    The measured proof: the command is zeroed at once and a legged body decelerates,
+    so its horizontal speed is sampled (sim time when the body exposes it) from the
+    first settle mark to the second — the peak, not just two samples.
     """
     base = getattr(agent, "_base", None)
     get_v = getattr(base, "get_velocity", None)
@@ -627,14 +636,22 @@ def _stop_report(agent: Any) -> str:
         return ""
     sim_t = getattr(base, "get_sim_time", None)
     clock = sim_t if callable(sim_t) else time.monotonic
+    first, last = _STOP_SETTLE_SIM_S
     try:
-        t0, wall_end, marks = clock(), time.monotonic() + 4.0, []
-        for mark in _STOP_SETTLE_SIM_S:
-            while clock() - t0 < mark and time.monotonic() < wall_end:
-                time.sleep(0.005)
+        t0, wall_end, at_first, peak = clock(), time.monotonic() + 4.0, None, 0.0
+        while True:
+            dt = clock() - t0
             v = get_v()
-            marks.append(f"{math.hypot(v[0], v[1]):.2f} m/s at {mark} sim-s")
-        return "base " + ", ".join(marks)
+            speed = math.hypot(v[0], v[1])
+            stalled = time.monotonic() >= wall_end  # the sim clock fell behind: say when
+            if dt >= first or stalled:
+                at_first = at_first or (speed, dt)
+                peak = max(peak, speed)
+            if dt >= last or stalled:
+                break
+            time.sleep(0.005)
+        return (f"base {at_first[0]:.2f} m/s at {at_first[1]:.1f} sim-s, peak {peak:.2f} m/s "
+                f"to {dt:.1f} sim-s, {speed:.2f} m/s at {dt:.1f} sim-s")
     except Exception:  # noqa: BLE001 — the report is display only
         return ""
 
@@ -855,8 +872,10 @@ _ASK_Q: "queue.Queue[tuple[str, dict[str, Any], queue.Queue[str]]] | None" = Non
 def ask_permission(tool_name: str, params: dict[str, Any]) -> str:
     if threading.current_thread() is not threading.main_thread():
         q = _ASK_Q
-        if q is None:
-            return "n"  # nobody can answer this prompt: fail closed
+        if q is None or _abort.is_abort_requested():
+            # Nobody can answer this prompt, or it comes from a stopped turn (a stale
+            # worker must never prompt under the owner's next turn): fail closed.
+            return "n"
         reply: "queue.Queue[str]" = queue.Queue(maxsize=1)
         q.put((tool_name, params, reply))
         return reply.get()
@@ -1829,8 +1848,8 @@ def run_one_turn(args: Any) -> int:
 
     This is the machine-checkable acceptance entrypoint (R2a). It reuses the SAME
     shared setup the REPL uses (``_build_turn_context``), runs the turn
-    SYNCHRONOUSLY via ``engine.vgg_execute`` (NEVER ``vgg_execute_async`` — an
-    in-flight async trace would emit a verdict on incomplete evidence), then builds
+    SYNCHRONOUSLY via ``engine.vgg_execute`` (never on a background thread — an
+    in-flight trace would emit a verdict on incomplete evidence), then builds
     a frozen ``VerdictReport`` from the EXISTING
     ``evidence_passed(trace, verify_oracle_names(agent, engine))`` (never a second
     opinion). Under ``--json`` it emits exactly one stdout line
@@ -1867,6 +1886,11 @@ def run_one_turn(args: Any) -> int:
         console.print("[yellow]No API key. Use /login to authenticate first.[/]")
         return _emit(VerdictReport.no_trace(goal=prompt or "", error="no engine (no API key)"))
 
+    # P0 stop: the registered stop skill's words, no LLM call.
+    if engine.is_stop(prompt or ""):
+        _p0_stop(engine, prompt, ctx.app_state, ctx.session)
+        return _emit(VerdictReport.no_trace(goal=prompt, error="stopped (P0, no LLM call)"))
+
     # S5b PRINT-PATH CUTOVER native-attempt-then-fallback (DEFAULT ON via
     # _print_native_enabled; also forced by --native-first / VECTOR_NATIVE_FIRST):
     # ATTEMPT the native producer first; if it DISPATCHED an action skill (routed the
@@ -1882,11 +1906,6 @@ def run_one_turn(args: Any) -> int:
     # native, no fallback) — defer to block 2 in that case; an explicit --native-first
     # still wins (preserving every prior flag behavior). So block 1 fires on: explicit
     # --native-first, OR the default cutover when --native-loop is NOT explicitly set.
-    # P0 stop: the registered stop skill's words, no LLM call.
-    if engine.is_stop(prompt or ""):
-        _p0_stop(engine, prompt, ctx.app_state, ctx.session)
-        return _emit(VerdictReport.no_trace(goal=prompt, error="stopped (P0, no LLM call)"))
-
     if _native_first_enabled(args) or (
         _print_native_enabled() and not _native_loop_enabled(args)
     ):
@@ -1935,7 +1954,7 @@ def run_one_turn(args: Any) -> int:
         return _emit(VerdictReport.no_trace(goal=prompt or "", error="not a VGG turn (no trace)"))
 
     try:
-        trace = engine.vgg_execute(goal_tree)  # SYNC — never vgg_execute_async
+        trace = engine.vgg_execute(goal_tree)  # SYNC: the verdict reads a finished trace
     except Exception as exc:  # noqa: BLE001
         return _emit(VerdictReport.no_trace(goal=goal_tree.goal, error=f"execute failed: {exc}"))
 

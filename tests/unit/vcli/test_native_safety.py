@@ -352,6 +352,25 @@ def test_a_stop_during_a_react_llm_call_runs_none_of_its_tool_calls() -> None:
     _assert_well_formed(s.to_messages())  # the unanswered tool_use is closed, not dangling
 
 
+def test_a_stop_from_a_react_tool_runs_none_of_the_rest_of_its_batch() -> None:
+    """The REPL turn runs on a worker, so a stop never raises inside the ReAct
+    dispatch loop: the batch itself must stop at the first tool after the stop."""
+
+    class _StopsTheTurn(_SpyTool):
+        def execute(self, params: dict, ctx: Any) -> ToolResult:
+            abort.request_abort()  # the owner's stop lands while A runs
+            return super().execute(params, ctx)
+
+    a, b = _StopsTheTurn("bash", "allow"), _SpyTool("file_write", "allow")
+    eng = _dev_engine(_script(tool_turn(("bash", {"command": "A"}), ("file_write", {"command": "B"}))), a, b)
+    s = _session()
+    with abort.turn():
+        result = eng.run_turn("A then B", s)
+    assert (a.calls, b.calls) == (1, 0)
+    assert [tc.result.content for tc in result.tool_calls] == ["ran", "Stopped: not run."]
+    _assert_well_formed(s.to_messages())
+
+
 # ---------------------------------------------------------------------------
 # No double execution (cli-entry:native-exception-double-action,
 # legacy-cognitive:B4-native-exception-double-actuation, producers:native-double-execution)
@@ -429,6 +448,34 @@ def test_repl_native_attempt_owns_an_unverified_acted_turn(monkeypatch, owned) -
     engine = SimpleNamespace(_vgg_agent=None, run_turn_native=lambda *a, **k: acted)
     monkeypatch.setattr(cli, "create_session", lambda **k: _session())
     assert cli._repl_attempt_native(engine, "walk", _session(), {}, cli.Console(file=open(os.devnull, "w")))
+
+
+@pytest.mark.parametrize("tool", ["file_read", "bash"])
+def test_a_dev_turn_native_owns_shows_the_models_answer(tmp_path, monkeypatch, tool) -> None:
+    """'总结一下 README.md' / '运行测试' in the bare REPL: native reads (or runs), the
+    model answers, and the answer is printed. A read is never nudged for a verify."""
+    import io
+
+    from vector_os_nano.vcli.tools import bash_tool
+    from vector_os_nano.vcli.tools.file_tools import FileReadTool
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "README.md").write_text("Vector OS: an agent runtime.\n")
+    monkeypatch.setattr(bash_tool.subprocess, "run", lambda *a, **k: SimpleNamespace(
+        returncode=0, stdout=b"3 passed", stderr=b""))
+    call = ("file_read", {"file_path": str(tmp_path / "README.md")}) if tool == "file_read" \
+        else ("bash", {"command": "pytest -q"})
+    backend = _script(tool_turn(call), tool_turn(text="README 说这是一个 agent runtime。", end=True))
+    eng = _dev_engine(backend, FileReadTool(), bash_tool.BashTool(),
+                      permissions=PermissionContext(no_permission=True))
+    monkeypatch.setattr(cli, "create_session", lambda **k: _session())
+    out = io.StringIO()
+    owned = cli._repl_attempt_native(eng, "总结一下 README.md 的内容", _session(), {},
+                                     cli.Console(file=out, width=200))
+    assert owned  # one producer: the read or the run never runs twice
+    assert "README 说这是一个 agent runtime。" in out.getvalue(), out.getvalue()
+    if tool == "file_read":
+        assert backend._cursor == 2  # the read, the answer: no 'verify' nudges
 
 
 # ---------------------------------------------------------------------------
@@ -554,37 +601,95 @@ def test_a_stop_typed_after_another_command_drops_that_command(typed) -> None:
     assert eng.stops == ["往后走", "停"]
 
 
+@pytest.fixture
+def sigints():
+    """Count the SIGINTs the main thread has HANDLED (each still raises
+    KeyboardInterrupt), so a turn can wait for every Ctrl-C to land inside it: a
+    late timer must never interrupt pytest itself."""
+    handled: list[int] = []
+
+    def _handler(signum: int, frame: Any) -> None:
+        handled.append(signum)
+        raise KeyboardInterrupt
+
+    prev = signal.signal(signal.SIGINT, _handler)
+    yield handled
+    signal.signal(signal.SIGINT, prev)
+
+
+def _until(cond: Any, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
 @pytest.mark.parametrize("stdin_idle", [False, True])
-def test_ctrl_c_mid_turn_stops_and_never_exits(typed, monkeypatch, stdin_idle) -> None:
+def test_ctrl_c_mid_turn_stops_and_never_exits(typed, monkeypatch, sigints, stdin_idle) -> None:
     """A Ctrl-C lands wherever the REPL thread is — reading stdin, or waiting on the
     turn (stdin_idle: the loop then lives in the wait) — and never escapes."""
     if stdin_idle:
         monkeypatch.setattr(cli, "_read_line", lambda timeout: None)
     eng = _ReplEngine()
-    release = threading.Event()
     for at in (0.2, 0.35):  # a panicked double Ctrl-C
         threading.Timer(at, os.kill, args=(os.getpid(), signal.SIGINT)).start()
-    threading.Timer(0.6, release.set).start()
     try:
-        nxt = cli._run_turn_busy(eng, lambda: release.wait(5), {})
+        nxt = cli._run_turn_busy(eng, lambda: _until(lambda: len(sigints) == 2), {})
     except KeyboardInterrupt:
         pytest.fail("Ctrl-C escaped the REPL turn loop (the REPL would exit)")
-    assert nxt is None
+    assert nxt is None and len(sigints) == 2
     assert eng.stops and set(eng.stops) == {"interrupt"}
 
 
-def test_ctrl_c_during_a_stops_speed_report_never_exits(typed) -> None:
+def test_ctrl_c_during_a_stops_speed_report_never_exits(typed, sigints) -> None:
     """The REPL runs a P0 stop like any turn: a panicked Ctrl-C while the stop measures
     the base speed (~1 sim-s) stops again and never escapes the REPL."""
     eng = _ReplEngine()
     base = SimpleNamespace(get_velocity=lambda: (0.0, 0.0, 0.0), get_sim_time=time.monotonic)
     app = {"agent": SimpleNamespace(_base=base)}
     threading.Timer(0.3, os.kill, args=(os.getpid(), signal.SIGINT)).start()
+
+    def stop_turn() -> None:
+        cli._p0_stop(eng, "停下", app)
+        _until(lambda: len(sigints) == 1)  # a late Ctrl-C still lands inside the turn
+
     try:
-        cli._run_turn_busy(eng, lambda: cli._p0_stop(eng, "停下", app), app)
+        cli._run_turn_busy(eng, stop_turn, app)
     except KeyboardInterrupt:
         pytest.fail("Ctrl-C during the stop report escaped the REPL")
     assert eng.stops == ["停下", "interrupt"]
+
+
+def test_the_stop_report_shows_a_lurch_between_its_marks() -> None:
+    """Two samples can miss the body moving again between them: the report carries
+    the peak from 0.2 to 1.0 sim-s (a fake clock: 0.01 sim-s per read)."""
+    clock = iter(i * 0.01 for i in range(10_000))
+    now = [0.0]
+
+    def sim_time() -> float:
+        now[0] = next(clock)
+        return now[0]
+
+    def velocity() -> tuple[float, float, float]:
+        t = now[0]
+        return (0.3 if t < 0.1 else 0.12 if 0.4 <= t < 0.5 else 0.02, 0.0, 0.0)
+
+    base = SimpleNamespace(get_velocity=velocity, get_sim_time=sim_time)
+    assert cli._stop_report(SimpleNamespace(_base=base)) == (
+        "base 0.02 m/s at 0.2 sim-s, peak 0.12 m/s to 1.0 sim-s, 0.02 m/s at 1.0 sim-s"
+    )
+
+
+def test_a_stopped_turns_worker_never_prompts(typed, monkeypatch) -> None:
+    """A stopped (stale) turn's permission ask is denied, never shown to the owner."""
+    monkeypatch.setattr(cli.Prompt, "ask", lambda *a, **k: pytest.fail("a stopped turn prompted"))
+    answers: list[str] = []
+
+    def turn() -> None:
+        abort.request_abort()
+        answers.append(cli.ask_permission("bash", {"command": "rm -rf build"}))
+
+    cli._run_turn_busy(_ReplEngine(), turn, {})
+    assert answers == ["n"]
 
 
 def test_a_permission_prompt_from_the_turn_worker_is_answered_by_the_repl_thread(typed, monkeypatch) -> None:
