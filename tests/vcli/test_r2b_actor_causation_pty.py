@@ -153,6 +153,9 @@ def test_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
     try:
         base.stand()
         agent = Agent(base=base, llm_api_key="x", config={})
+        from tests.harness.fake_gt import bind_real_sim
+
+        bind_real_sim(agent, "go2")  # the GT oracles of a live session
         for s in get_go2_skills():
             agent._skill_registry.register(s)
         eng = VectorEngine(
