@@ -1660,8 +1660,10 @@ class VectorEngine:
                 ]
             session.append_assistant(response.text, tool_use_dicts)
 
-            if not response.tool_calls:
-                break  # end_turn — no tools called, conversation complete
+            if not response.tool_calls or abort_event.is_set():
+                # end_turn — or a stop landed during the LLM call: its tool calls never
+                # run (to_messages answers them 'interrupted' next turn).
+                break
 
             # Execute tools and collect results
             raw_results = self._dispatch_tools(

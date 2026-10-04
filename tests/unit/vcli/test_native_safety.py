@@ -284,6 +284,55 @@ def test_drive_for_ends_the_motion_on_a_stop() -> None:
     assert time.monotonic() - t0 < 1.5
 
 
+class _StopLandsMidCall:
+    """The owner's stop lands while the model is thinking; the reply then asks for a tool."""
+
+    def __init__(self, reply: Any) -> None:
+        self._reply, self.calls = reply, 0
+
+    def call(self, **kw: Any) -> Any:
+        self.calls += 1
+        abort.request_abort()
+        return self._reply
+
+
+def test_a_stop_during_the_llm_call_owns_the_turn_and_runs_nothing() -> None:
+    """The stop cancels native before it dispatched anything: no tool runs, and the
+    stopped turn is owned (never handed to the legacy planner to run after the stop)."""
+    agent, base = _make_agent()
+    walks: list[Any] = []
+    base.walk = lambda *a: walks.append(a) or True
+    backend = _StopLandsMidCall(tool_turn(("walk", {"distance": 1.0})))
+    trace = _make_engine(agent, backend).run_turn_native("往前走一米", session=_session())
+    assert walks == [] and backend.calls == 1
+    assert trace.cancelled and trace.actions_dispatched == 0
+    assert cli._native_owns_turn(trace)
+
+
+def test_a_stop_anywhere_in_a_turn_stops_every_run_the_turn_starts_later() -> None:
+    """A stop landing between two runs of one turn (native answered, then the legacy
+    plan starts) still stops the later run; the next turn starts clean."""
+    eng = _dev_engine(_script())
+    with abort.turn():
+        with eng.actuating_run():
+            pass  # native's run: the model answered, nothing dispatched
+        abort.request_abort()
+        with eng.actuating_run() as legacy:
+            assert legacy.cancelled and abort.is_abort_requested()
+    with abort.turn():
+        with eng.actuating_run() as nxt:
+            assert not nxt.cancelled
+
+
+def test_a_stop_during_a_react_llm_call_runs_none_of_its_tool_calls() -> None:
+    spy = _SpyTool("bash", "allow")
+    eng = _dev_engine(_StopLandsMidCall(tool_turn(("bash", {"command": "echo hi"}))), spy)
+    s = _session()
+    eng.run_turn("run it", s)
+    assert spy.calls == 0
+    _assert_well_formed(s.to_messages())  # the unanswered tool_use is closed, not dangling
+
+
 # ---------------------------------------------------------------------------
 # No double execution (cli-entry:native-exception-double-action,
 # legacy-cognitive:B4-native-exception-double-actuation, producers:native-double-execution)
@@ -321,10 +370,25 @@ def test_an_llm_failure_after_an_action_returns_the_partial_trace() -> None:
     assert report.exit_code() == 1 and not report.verified
 
 
-def test_p_path_never_hands_an_acted_turn_to_the_legacy_planner(monkeypatch) -> None:
+def test_an_llm_failure_after_a_verified_step_never_verifies_the_cut_short_plan() -> None:
+    agent, _base = _make_agent()
+    eng = _make_engine(agent, _DiesAfter(
+        tool_turn(("walk", {"distance": 2.0, "speed": 1.0})),
+        tool_turn(("verify", {"expr": "at_position(2.0, 0.0, 1.0)"})),
+    ))
+    trace = eng.run_turn_native("go to (2, 0) and then to (4, 0)", session=_session())
+    assert trace.steps[0].verify_result  # the first leg did ground...
+    report = VerdictReport.from_trace(trace, verify_oracle_names(agent, eng))
+    assert not report.verified and report.evidence == "FAILED"  # ...the plan did not
+    assert report.llm_unavailable and report.exit_code() == 1
+
+
+@pytest.mark.parametrize("owned", ["acted", "cancelled"])
+def test_p_path_never_hands_an_acted_turn_to_the_legacy_planner(monkeypatch, owned) -> None:
     from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
 
-    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0, actions_dispatched=1)
+    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0,
+                           actions_dispatched=int(owned == "acted"), cancelled=owned == "cancelled")
     decomposed: list[str] = []
     engine = SimpleNamespace(
         _vgg_agent=None, is_stop=lambda t: False,
@@ -337,10 +401,12 @@ def test_p_path_never_hands_an_acted_turn_to_the_legacy_planner(monkeypatch) -> 
     assert code != 0
 
 
-def test_repl_native_attempt_owns_an_unverified_acted_turn(monkeypatch) -> None:
+@pytest.mark.parametrize("owned", ["acted", "cancelled"])
+def test_repl_native_attempt_owns_an_unverified_acted_turn(monkeypatch, owned) -> None:
     from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
 
-    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0, actions_dispatched=1)
+    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0,
+                           actions_dispatched=int(owned == "acted"), cancelled=owned == "cancelled")
     engine = SimpleNamespace(_vgg_agent=None, run_turn_native=lambda *a, **k: acted)
     monkeypatch.setattr(cli, "create_session", lambda **k: _session())
     assert cli._repl_attempt_native(engine, "walk", _session(), {}, cli.Console(file=open(os.devnull, "w")))
@@ -476,6 +542,20 @@ def test_ctrl_c_mid_turn_stops_and_never_exits(typed, monkeypatch, stdin_idle) -
         pytest.fail("Ctrl-C escaped the REPL turn loop (the REPL would exit)")
     assert nxt is None
     assert eng.stops and set(eng.stops) == {"interrupt"}
+
+
+def test_ctrl_c_during_a_stops_speed_report_never_exits(typed) -> None:
+    """The REPL runs a P0 stop like any turn: a panicked Ctrl-C while the stop measures
+    the base speed (~1 sim-s) stops again and never escapes the REPL."""
+    eng = _ReplEngine()
+    base = SimpleNamespace(get_velocity=lambda: (0.0, 0.0, 0.0), get_sim_time=time.monotonic)
+    app = {"agent": SimpleNamespace(_base=base)}
+    threading.Timer(0.3, os.kill, args=(os.getpid(), signal.SIGINT)).start()
+    try:
+        cli._run_turn_busy(eng, lambda: cli._p0_stop(eng, "停下", app), app)
+    except KeyboardInterrupt:
+        pytest.fail("Ctrl-C during the stop report escaped the REPL")
+    assert eng.stops == ["停下", "interrupt"]
 
 
 def test_a_permission_prompt_from_the_turn_worker_is_answered_by_the_repl_thread(typed, monkeypatch) -> None:

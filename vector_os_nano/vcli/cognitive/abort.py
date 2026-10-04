@@ -12,12 +12,18 @@ once — stop means stop everything. Starting a new run (``new_run`` /
 another run's token, so a chat turn can no longer clear the abort a stop just set
 on a background run.
 
+A user turn (``turn()``) is the stop's scope: every run the turn starts shares the
+turn's token, so a stop that lands between two runs of one turn (native's LLM call,
+then a legacy plan) still stops the later one.
+
 Thread-safe: a token wraps one ``threading.Event``; the live set is guarded.
 """
 from __future__ import annotations
 
 import threading
 import weakref
+from contextlib import contextmanager
+from typing import Iterator
 
 
 class CancelToken:
@@ -52,14 +58,29 @@ _live.add(_latest)
 
 
 def new_run() -> CancelToken:
-    """Start a run on this thread: a fresh token, bound here, cancelled by a stop."""
+    """Start a run on this thread: a fresh token, bound here, cancelled by a stop.
+
+    Inside a ``turn()`` the run shares the turn's token (cancelled already if the
+    turn was stopped): a stopped turn cannot start a fresh, uncancelled run.
+    """
     global _latest
-    token = CancelToken()
+    token = getattr(_bound, "turn", None) or CancelToken()
     with _lock:
         _live.add(token)
         _latest = token
     _bound.token = token
     return token
+
+
+@contextmanager
+def turn() -> Iterator[CancelToken]:
+    """One user turn on this thread: a stop anywhere in it stops every run it starts."""
+    _bound.turn = None
+    _bound.turn = new_run()
+    try:
+        yield _bound.turn
+    finally:
+        _bound.turn = None
 
 
 def current_token() -> CancelToken:

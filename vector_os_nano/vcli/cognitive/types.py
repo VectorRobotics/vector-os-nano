@@ -219,8 +219,10 @@ class ExecutionTrace:
     # turn acted and must never be re-planned by another producer. ``llm_error``
     # marks an LLM-backend failure (infrastructure, not an agent failure);
     # ``model`` is the backend model id that drove the turn; ``refused`` lists the
-    # tool calls the permission gate refused ("<tool>: <why>").
+    # tool calls the permission gate refused ("<tool>: <why>"); ``cancelled`` marks a
+    # turn the owner stopped (no other producer may run it after the stop).
     actions_dispatched: int = 0
     llm_error: str = ""
     model: str = ""
     refused: tuple[str, ...] = ()
+    cancelled: bool = False

@@ -722,7 +722,9 @@ class NativeStepRunner:
     # Trace assembly
     # ------------------------------------------------------------------
 
-    def build_trace(self, goal: str, *, llm_error: str = "", model: str = "") -> ExecutionTrace:
+    def build_trace(
+        self, goal: str, *, llm_error: str = "", model: str = "", cancelled: bool = False
+    ) -> ExecutionTrace:
         """Assemble the ExecutionTrace from the recorded (chain -> verify) steps.
 
         ``success`` is True iff at least one step was recorded AND none failed —
@@ -742,6 +744,7 @@ class NativeStepRunner:
             llm_error=llm_error,
             model=model,
             refused=tuple(self.refused),
+            cancelled=cancelled,
         )
 
 
@@ -849,9 +852,11 @@ def run_turn_native(
     (``ask_permission`` resolves an ``ask``; None denies). ``cancel`` is this run's
     ``CancelToken`` (a fresh one bound to this thread when None); it is checked
     before every model round-trip and every tool call, and a cancelled turn ends with
-    ONE recorded ``aborted`` step. A model failure never raises out of here once an
-    action ran — the partial trace comes back with ``llm_error`` set, so no caller
-    re-runs a turn that already moved the robot.
+    ONE recorded ``aborted`` step and ``trace.cancelled`` set (the caller owns it: a
+    stopped turn never falls through to another producer). A model failure never
+    raises out of here once an action ran — the partial trace comes back with
+    ``llm_error`` set and a failed step closing it, so no caller re-runs a turn that
+    already moved the robot and an interrupted plan never verifies.
 
     The caller (``cli.run_one_turn``) feeds the returned trace to the EXISTING
     ``VerdictReport.from_trace(trace, verify_oracle_names(agent, engine))`` — this
@@ -947,7 +952,9 @@ def run_turn_native(
             except Exception as exc:  # noqa: BLE001 — infrastructure, not the agent
                 llm_error = f"{type(exc).__name__}: {exc}"
                 logger.warning("native_loop: LLM unavailable: %s", llm_error)
-                if runner.has_unverified_action:
+                if runner.has_unverified_action or runner._steps:
+                    # The plan was cut short: an earlier verified step never makes
+                    # the interrupted turn a success.
                     runner.record_abort(f"LLM unavailable: {llm_error}")
                 break
             model = _model_id(backend)
@@ -1020,7 +1027,9 @@ def run_turn_native(
         # The model never verified its last action (nudges spent / round-trips out):
         # keep it on the record as an unproven step — never silently dropped.
         runner.record_unverified()
-    return runner.build_trace(user_message, llm_error=llm_error, model=model)
+    return runner.build_trace(
+        user_message, llm_error=llm_error, model=model, cancelled=token.cancelled
+    )
 
 
 # ---------------------------------------------------------------------------

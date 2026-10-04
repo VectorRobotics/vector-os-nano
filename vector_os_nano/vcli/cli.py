@@ -47,6 +47,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style as PTStyle
 
 from vector_os_nano.vcli.backends import create_backend
+from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.engine import VectorEngine, TurnResult
 from vector_os_nano.vcli.session import (
     Session,
@@ -423,11 +424,14 @@ def _native_trace_acted(trace: Any) -> bool:
 
 def _native_owns_turn(trace: Any) -> bool:
     """The native result is final: it acted, the permission gate refused what it
-    tried (no second producer re-attempts it), or the LLM itself is unavailable (the
-    legacy producer would only hit the same dead model)."""
+    tried (no second producer re-attempts it), the owner stopped the turn (a stop
+    landing during native's LLM call must not hand the command to the legacy
+    planner), or the LLM itself is unavailable (the legacy producer would only hit
+    the same dead model)."""
     return trace is not None and (
         _native_trace_acted(trace)
         or bool(getattr(trace, "refused", ()))
+        or bool(getattr(trace, "cancelled", False))
         or bool(getattr(trace, "llm_error", ""))
     )
 
@@ -665,13 +669,16 @@ def _run_turn_busy(engine: Any, fn: Callable[[], None], app_state: dict[str, Any
       * a permission prompt the turn raises is answered here (this thread owns stdin);
       * any OTHER line cancels the running turn (robot stopped) and is returned, so
         the caller runs it next: cancel-then-run.
+    The turn is one stop scope (``abort.turn``): a stop that lands anywhere in it —
+    native's LLM call included — also stops every run the turn would start later.
     Under mjpython with a live viewer (GLFW is main-thread-only) the turn runs inline.
     """
     from vector_os_nano.hardware.sim.viewer_mode import running_under_mjpython
 
     if engine._has_live_viewer() and running_under_mjpython():
         try:
-            fn()
+            with _abort.turn():
+                fn()
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted.[/yellow]")
             _p0_stop(engine, "interrupt", app_state)
@@ -683,7 +690,8 @@ def _run_turn_busy(engine: Any, fn: Callable[[], None], app_state: dict[str, Any
 
     def _target() -> None:
         try:
-            fn()
+            with _abort.turn():
+                fn()
         except Exception as exc:  # noqa: BLE001 — the turn's own handler already printed
             console.print(f"[red]Error:[/] {exc}")
         finally:
@@ -2481,6 +2489,8 @@ def main(argv: list[str] | None = None) -> None:
                         if engine.classify_intent(user_input).use_vgg
                         else None
                     )
+                if _abort.is_abort_requested():
+                    return  # the owner stopped this turn: nothing else runs for it
                 if goal_tree is not None:
                     # Show plan BEFORE execution
                     console.print()
@@ -2712,15 +2722,15 @@ def main(argv: list[str] | None = None) -> None:
                 continue
 
             # P0 stop: the REGISTERED stop skill's own words, before any producer —
-            # zero LLM calls, < 100 ms.
+            # zero LLM calls, < 100 ms. Like any turn it runs on a worker thread while
+            # this thread keeps reading input: a typed stop / Ctrl-C stops it mid-turn
+            # (a Ctrl-C during the stop's speed report never exits the REPL), and
+            # another command cancels it and runs next (cancel-then-run).
             if engine.is_stop(user_input):
-                _p0_stop(engine, user_input, app_state, session)
-                continue
-
-            # The turn runs on a worker thread while this thread keeps reading input:
-            # a typed stop / Ctrl-C stops it mid-turn, and another command cancels it
-            # and runs next (cancel-then-run).
-            typed_next = _run_turn_busy(engine, lambda: _engine_turn(user_input), app_state)
+                turn = lambda: _p0_stop(engine, user_input, app_state, session)  # noqa: E731
+            else:
+                turn = lambda: _engine_turn(user_input)  # noqa: E731
+            typed_next = _run_turn_busy(engine, turn, app_state)
             if typed_next:
                 pending_input.append(typed_next)
 

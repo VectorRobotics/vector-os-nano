@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -206,7 +207,8 @@ class ReactiveFakeBackend:
     PTY child also appends each call's observation to ``$VECTOR_FAKE_LLM_LOG`` (one
     JSON line per call — the call counter a parent test reads). A step with
     ``"raise": "<msg>"`` raises ``RuntimeError(<msg>)`` instead of answering (an
-    injected LLM outage).
+    injected LLM outage); ``"delay": <s>`` answers *s* seconds late (a slow model, so
+    a test can land input while the LLM call is in flight).
     """
 
     def __init__(self, steps: list[dict[str, Any]]) -> None:
@@ -241,6 +243,7 @@ class ReactiveFakeBackend:
             if any(tc.name not in offered for tc in self._turns[i].tool_calls):
                 continue
             self._used.add(i)
+            time.sleep(float(step.get("delay", 0)))
             if "raise" in step:
                 raise RuntimeError(str(step["raise"]))
             turn = self._turns[i]
