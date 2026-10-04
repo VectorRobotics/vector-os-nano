@@ -5,10 +5,12 @@
 
 ``follow(base, goal, obstacles, body=...)`` plans with the vgraph (goal snapped
 out of furniture, start escaped out of the inflation), then streams velocity at
-``tick_s`` of SIM time — never stop-and-go — toward the current waypoint. A
-waypoint is passed once the robot is within ``capture_ratio x inflation`` of it
-or has a clear line of sight (against the inflated obstacles) to the next one,
-so the executed path never cuts a corner the planner kept clear. Each tick it
+``tick_s`` of SIM time — never stop-and-go — with pure pursuit (a point
+``lookahead_m`` ahead on the tracked segment, so a drifting gait is pulled back
+onto the clear line). A waypoint is passed once the robot is within
+``capture_ratio x inflation`` of it or has a clear line of sight (against the
+inflated obstacles) to the next one, so the executed path never cuts a corner
+the planner kept clear. Each tick it
 checks the cancel signal (a stop), a fall, the sim-time budget and progress: no
 ``stall_progress_m`` of progress in ``stall_window_s`` triggers a reverse +
 sidestep + replan recovery, ``max_recoveries`` times, then an honest "stalled".
@@ -91,6 +93,17 @@ def _drive(base: Any, vx: float, vy: float, vyaw: float, seconds: float, cancel:
     base.set_velocity(0.0, 0.0, 0.0)
 
 
+def _pursuit_point(p, a, b, lookahead: float) -> "tuple[float, float]":
+    """The point *lookahead* m past p's projection onto segment a->b (clamped at b)."""
+    ex, ey = b[0] - a[0], b[1] - a[1]
+    le = math.hypot(ex, ey)
+    if le < 1e-6:
+        return b
+    t = ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / (le * le)
+    s = min(1.0, max(0.0, t) + lookahead / le)
+    return (a[0] + s * ex, a[1] + s * ey)
+
+
 def _remaining(pos: tuple[float, float], path: list, i: int) -> float:
     return math.dist(pos, path[i]) + sum(math.dist(a, b) for a, b in zip(path[i:], path[i + 1:]))
 
@@ -154,6 +167,8 @@ def follow(
     deadline = t0 + float(budget)
     capture = float(cfg["capture_ratio"]) * r
     i = 1
+    seg_start = (x0, y0)  # the segment the robot tracks: seg_start -> path[i] (clear)
+    lookahead = float(cfg["lookahead_m"])
     best, best_t = _remaining((x0, y0), path, i), t0
     next_progress = t0
     try:
@@ -175,6 +190,7 @@ def follow(
                     math.dist((x, y), path[i]) <= capture
                     or vg.segment_clear((x, y), path[i + 1], inflated)):
                 i += 1
+                seg_start = (x, y)
             rem = _remaining((x, y), path, i)
             if on_progress is not None and now >= next_progress:
                 next_progress = now + float(cfg["progress_every_s"])
@@ -190,11 +206,12 @@ def follow(
                 new_path, new_m = vg.plan_path((x, y), goal, obstacles, r, snap_goal=True)
                 if new_path is None:
                     return result("unreachable")
-                path, plan_m, i = new_path, new_m, 1
+                path, plan_m, i, seg_start = new_path, new_m, 1, (x, y)
                 best, best_t = _remaining((x, y), path, i), base.get_sim_time()
                 continue
-            # steer toward the current waypoint, streamed (no settle between ticks)
-            wx, wy = path[i]
+            # pure pursuit on the tracked segment (pulls a drifting gait back onto the
+            # clear line), streamed: no settle between ticks
+            wx, wy = _pursuit_point((x, y), seg_start, path[i], lookahead)
             err = _wrap(math.atan2(wy - y, wx - x) - base.get_heading())
             vyaw = max(-vyaw_max, min(vyaw_max, float(cfg["k_yaw"]) * err))
             if abs(err) > float(cfg["face_tol_rad"]):

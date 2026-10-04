@@ -175,3 +175,21 @@ def test_follower_can_run_on_another_thread_and_be_cancelled():
     th.start()
     th.join(10)
     assert out["r"].reason == "aborted"
+
+
+class Drifting(KinBase):
+    """A gait that slides sideways (+y world) while walking, like the MPC go2 does."""
+
+    def wait_sim(self, seconds, cancel=None):
+        self.y += 0.06 * seconds if abs(self.cmd[0]) > 0 else 0.0
+        return super().wait_sim(seconds, cancel)
+
+
+def test_pure_pursuit_pulls_a_drifting_gait_back_onto_the_line():
+    # Real go2 tour (MPC): aiming at a waypoint 3.7 m away corrected a 0.13 m sideways
+    # drift too slowly and the body grazed the hallway wall (centre clearance 0.15 m).
+    wall = vg.box_polygon(4.0, 0.4, 4.0, 0.05)  # its inflated face sits at y = 0.07
+    base = Drifting()
+    res = follow(base, (8.0, 0.0), [wall], body=GO2, cancel=Never())
+    assert res
+    assert min(vg.distance_to_polygon(p, wall) for p in base.trace) >= 0.19 + 0.05
