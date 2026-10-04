@@ -50,10 +50,11 @@ class StopSkill:
                 diagnosis_code="no_base",
             )
 
-        # Signal global abort — stops VGG, GoalExecutor, navigate, explore
+        # Stop every other run (VGG, GoalExecutor, navigate, explore) — never the run
+        # this stop is a step of; the owner's P0 stop has cancelled every run already.
         try:
             from vector_os_nano.vcli.cognitive.abort import request_abort
-            request_abort()
+            request_abort(spare_caller=True)
             logger.info("[STOP] Global abort signal sent")
         except Exception:
             pass

@@ -169,6 +169,23 @@ def test_a_stop_mid_turn_records_an_aborted_step_and_calls_the_model_no_more() -
     assert trace.actions_dispatched == 1
 
 
+def test_a_stop_step_the_model_takes_does_not_abort_its_own_turn() -> None:
+    """'走两步然后停下': the model's own stop call halts the base, and the turn goes on."""
+    from vector_os_nano.skills.go2.stop import StopSkill
+
+    agent, base = _make_agent()
+    base.set_velocity = lambda *v: None
+    agent._skill_registry.register(StopSkill())
+    trace = _make_engine(agent, _script(
+        tool_turn(("walk", {"distance": 2.0, "speed": 1.0})),
+        tool_turn(("stop", {})),
+        tool_turn(("verify", {"expr": "at_position(2.0, 0.0, 1.0)"})),
+        tool_turn(end=True),
+    )).run_turn_native("走两步然后停下", session=_session())
+    assert not trace.cancelled and [s.error for s in trace.steps] == [""]
+    assert trace.steps[0].verify_result
+
+
 def test_a_previous_stop_does_not_abort_the_next_native_turn() -> None:
     agent, base = _make_agent()
 

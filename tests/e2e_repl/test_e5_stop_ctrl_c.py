@@ -50,6 +50,9 @@ _SCRIPT = {"steps": [
     {"when": "后退半米", "tool_calls": [
         {"name": "walk", "input": {"direction": "backward", "distance": 0.5, "speed": 0.3}}]},
     {"when": "Skill 'walk' succeeded", "raise": "injected LLM outage (503)"},
+    # The body can stumble on one of the stops above (the known red below): the walk is
+    # still dispatched and the outage still lands right after it.
+    {"when": "Walk command failed", "raise": "injected LLM outage (503)"},
 ]}
 
 # The zero command goes out in the reported ms; the legged body then decelerates,

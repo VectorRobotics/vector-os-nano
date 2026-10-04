@@ -300,16 +300,30 @@ class TestVGGHarnessAbort:
 # ---------------------------------------------------------------------------
 
 class TestStopSkillAbort:
-    def test_stop_skill_calls_request_abort(self):
-        from unittest.mock import MagicMock, patch
+    def test_stop_skill_stops_every_other_run_but_not_its_own(self):
+        """A stop STEP ("walk two steps, then stop") stops background runs (a plan, a
+        navigate), never the run it is a step of."""
+        import threading
+        from unittest.mock import MagicMock
         from vector_os_nano.vcli.cognitive.abort import clear_abort, is_abort_requested
         from vector_os_nano.skills.go2.stop import StopSkill
         from vector_os_nano.core.skill import SkillContext
 
-        clear_abort()
-        base = MagicMock()
-        ctx = SkillContext(bases={"go2": base})
-        skill = StopSkill()
-        skill.execute({}, ctx)
-        assert is_abort_requested()
-        clear_abort()
+        other: list[bool] = []
+        ready, check = threading.Event(), threading.Event()
+
+        def background_run() -> None:
+            clear_abort()
+            ready.set()
+            check.wait(5)
+            other.append(is_abort_requested())
+
+        t = threading.Thread(target=background_run)
+        t.start()
+        ready.wait(5)
+        clear_abort()  # the run this stop is a step of
+        StopSkill().execute({}, SkillContext(bases={"go2": MagicMock()}))
+        check.set()
+        t.join(5)
+        assert other == [True]
+        assert not is_abort_requested()

@@ -93,10 +93,16 @@ def current_token() -> CancelToken:
     return getattr(_bound, "token", None) or _latest
 
 
-def request_abort() -> None:
-    """Stop: cancel every live run's token."""
+def request_abort(*, spare_caller: bool = False) -> None:
+    """Stop: cancel every live run's token.
+
+    ``spare_caller`` keeps the run bound to the calling thread going: a stop STEP
+    inside a run ("walk two steps, then stop") stops everything else, not the run
+    that asked for it. The owner's P0 stop never spares anything.
+    """
+    own = getattr(_bound, "token", None) if spare_caller else None
     with _lock:
-        tokens = list(_live)
+        tokens = [t for t in _live if t is not own]
     for t in tokens:
         t.cancel()
 
