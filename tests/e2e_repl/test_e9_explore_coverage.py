@@ -8,6 +8,7 @@ Now the tour must visit >= 6 of the 8 rooms, graded twice from outside the produ
 the tour's ground-truth log is re-checked against room boxes read from the scene's
 own floor geoms (not the layout file the product uses), and the turn's verify is a
 GT at_position on the tour's last room, which only fires once explore succeeded.
+Lockstep (WP06): physics advances only inside the tour's sim-time waits (~90 s wall).
 """
 from __future__ import annotations
 
@@ -66,7 +67,8 @@ _SCRIPT = {"steps": [
 def test_e9_explore_without_a_nav_stack_tours_the_house() -> None:
     run_dir = Path(tempfile.mkdtemp(prefix="vos_e9_"))
     r = run_repl_session(["启动 go2 仿真 无窗口", "探索一下房子"], tool_script=_SCRIPT,
-                         answers=["y"], timeout_sec=900, extra_env={"VECTOR_RUN_DIR": str(run_dir)})
+                         answers=["y"], timeout_sec=900,
+                         extra_env={"VECTOR_RUN_DIR": str(run_dir), "VECTOR_SIM_LOCKSTEP": "1"})
     text = r.text
     assert not r.timed_out, text[-4000:]
     tour = text[text.rfind("vector> 探索一下房子"):]
