@@ -7,7 +7,7 @@ Run as ``python -m tests.harness.sim_preflight`` (tests/conftest.py does, once p
 session, in a child so an EGL/MuJoCo crash cannot kill pytest). Prints ``''`` when
 the sim tier can run, else ONE line naming every missing prerequisite. Checks:
 
-- the git-TRACKED ``vector_os_nano`` tree, copied to a temp dir, imports and builds
+- the git-TRACKED ``vector_os_nano`` + ``config`` trees, copied to a temp dir, import and build
   the go2 and go2_piper room scenes there (catches absolute mesh paths and files
   that exist locally but were never committed, e.g. an ignored ``assets/``);
 - the vendored convex_mpc stack (casadi + the Pinocchio go2 model) initialises;
@@ -30,11 +30,12 @@ GDINO_REPO = "IDEA-Research/grounding-dino-tiny"
 def _copy_tracked_tree(dst: Path) -> None:
     try:
         files = subprocess.run(
-            ["git", "ls-files", "-z", "vector_os_nano"], cwd=_REPO_ROOT,
+            ["git", "ls-files", "-z", "vector_os_nano", "config"], cwd=_REPO_ROOT,
             capture_output=True, check=True, timeout=30,
         ).stdout.decode().split("\0")
     except (OSError, subprocess.SubprocessError):
-        shutil.copytree(_REPO_ROOT / "vector_os_nano", dst / "vector_os_nano")
+        for top in ("vector_os_nano", "config"):  # the scene build reads config/worlds
+            shutil.copytree(_REPO_ROOT / top, dst / top)
         return
     for rel in filter(None, files):
         (dst / rel).parent.mkdir(parents=True, exist_ok=True)

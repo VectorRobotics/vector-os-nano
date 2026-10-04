@@ -48,7 +48,9 @@ class DetectSkill:
     name: str = "detect"
     description: str = "Detect objects in the workspace using VLM. The query is a natural-language noun/phrase in ANY language (e.g. 'banana' / '香蕉' / 'red cup' / '红色杯子'), or 'all objects' to detect everything."
     # Success predicate this skill is verified against (single-source for the planner).
-    verify_hint: str = "len(detect_objects()) > 0"
+    # GT: the object is in the robot's camera view (segmentation), never a count of
+    # the detector's own boxes.
+    verify_hint: str = "in_view('<query>')"
     parameters: dict = {
         "query": {
             "type": "string",

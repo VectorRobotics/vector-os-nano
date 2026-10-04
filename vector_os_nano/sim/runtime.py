@@ -130,6 +130,10 @@ class SimRuntime:
         self._thread: threading.Thread | None = None
         self._stepper: int | None = None  # ident of the thread stepping right now
         self._steps = 0
+        # Weld/equality transition log: (sim_time, eq index, active) per change,
+        # appended at every publish (GroundTruth.weld_events reads it).
+        self.eq_log: collections.deque[tuple[float, int, bool]] = collections.deque(maxlen=4096)
+        self._eq_prev = np.asarray(data.eq_active).copy()
         self._snap = self._take_snapshot()
         self._render_pool: ThreadPoolExecutor | None = ThreadPoolExecutor(
             1, thread_name_prefix=f"{name}_render"
@@ -426,6 +430,11 @@ class SimRuntime:
 
     def _publish(self) -> None:
         self._snap = self._take_snapshot()
+        eq = np.asarray(self.data.eq_active)
+        if eq.size and not np.array_equal(eq, self._eq_prev):
+            for i in np.flatnonzero(eq != self._eq_prev):
+                self.eq_log.append((self._snap.sim_time, int(i), bool(eq[i])))
+            self._eq_prev = eq.copy()
         with self._published:
             self._published.notify_all()
 

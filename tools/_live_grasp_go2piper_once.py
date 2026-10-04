@@ -44,7 +44,7 @@ def main() -> int:
         from vector_os_nano.vcli.session import Session
         from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
         from vector_os_nano.vcli.verdict import VerdictReport
-        from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
+        from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
         from vector_os_nano.vcli.worlds.robot import RobotWorld
 
         go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
@@ -61,7 +61,7 @@ def main() -> int:
             agent._skill_registry.register(sk)
         agent._skill_registry.register(PerceptionGraspSkill())
 
-        assert make_holding_object(agent)() is False, "must boot not holding"
+        assert rig_namespace(go2.runtime, "go2_piper")["holding_object"]() is False, "must boot not holding"
 
         api_key, provider, model, base_url = resolve_credentials()
         backend = create_backend_with_fake_seam(
@@ -88,7 +88,7 @@ def main() -> int:
         res["verified"] = bool(report.verified)
         res["n_steps"] = len(steps)
         res["strategies"] = [s.strategy for s in steps]
-        res["holding_final"] = bool(make_holding_object(agent)())
+        res["holding_final"] = bool(rig_namespace(go2.runtime, "go2_piper")["holding_object"]())
     except Exception as exc:  # noqa: BLE001
         res["evidence"] = "ERROR"
         res["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"

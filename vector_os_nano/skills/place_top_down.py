@@ -113,14 +113,12 @@ class PlaceTopDownSkill:
         "Arm lifts back to pre-place pose (does NOT return home to avoid "
         "wrist rotation spilling any residue)."
     )
-    # Grounded success predicate for the PLACE step.  The producer substitutes
-    # the real region literal (x_min, y_min, x_max, y_max) — a ±0.15 m box
-    # around the drop XY, built with skills.utils.place_region.region_around.
-    # Example after substitution:
-    #   placed_count((10.45, 2.55, 10.75, 2.85)) >= 1
-    # This is consumed by vcli/cognitive/vocab_from_registry.py:_verify_hint
-    # via schema["verify_hint"] — do NOT edit that file to change this signal.
-    verify_hint: str = "placed_count((x_min, y_min, x_max, y_max)) >= 1"
+    # Grounded success predicate for the PLACE step: the object rests (unwelded, no
+    # robot contact) within 0.3 m of the drop XY. The producer substitutes the real
+    # object and coordinates, e.g. object_at('pickable_bottle_green', 10.6, 2.7).
+    # Consumed by vcli/cognitive/vocab_from_registry.py:_verify_hint via
+    # schema["verify_hint"].
+    verify_hint: str = "object_at('<object>', x, y)"
     parameters: dict = {
         "target_xyz": {
             "type": "list",

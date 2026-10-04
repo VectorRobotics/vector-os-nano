@@ -59,32 +59,32 @@ pickables:
   pickable_bottle_green:
     category: bottle
     colour: green
-    on: pick_table
+    surface: pick_table
     aliases: [green bottle, 绿色瓶子, 绿色的瓶子, 绿瓶子]
   pickable_bottle_blue:
     category: bottle
     colour: blue
-    on: pick_table
+    surface: pick_table
     aliases: [blue bottle, 蓝色瓶子, 蓝色的瓶子, 蓝瓶子]
   pickable_can_red:
     category: can
     colour: red
-    on: pick_table
+    surface: pick_table
     aliases: [red can, 红色罐子, 红色的罐子, 红罐子, 红色易拉罐]
   pickable_cup_yellow:
     category: cup
     colour: yellow
-    on: coffee_table
+    surface: coffee_table
     aliases: [yellow cup, 黄色杯子, 黄色的杯子, 黄杯子]
   pickable_box_orange:
     category: box
     colour: orange
-    on: dining_table
+    surface: dining_table
     aliases: [orange box, 橙色盒子, 橙色的盒子, 橙盒子]
   pickable_box_purple:
     category: box
     colour: purple
-    on: console_table
+    surface: console_table
     aliases: [purple box, 紫色盒子, 紫色的盒子, 紫盒子]
 
 # Words that name a colour / category in a query (zh + en), so "绿色的瓶子",

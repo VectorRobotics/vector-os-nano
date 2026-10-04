@@ -42,7 +42,7 @@ def main() -> int:
     from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
     from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
     from vector_os_nano.skills.pick_top_down import PickTopDownSkill
-    from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object
+    from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
 
     go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True); go2.connect()
     piper = MuJoCoPiper(go2); piper.connect()
@@ -63,7 +63,7 @@ def main() -> int:
     tgt1 = objs1.get(_TARGET)
     dog1 = go2.get_position()
     dist1 = math.hypot(tgt1[0] - dog1[0], tgt1[1] - dog1[1]) if tgt1 else -1
-    holding = bool(make_holding_object(agent)())
+    holding = bool(rig_namespace(go2.runtime, "go2_piper")["holding_object"]())
     lift = (tgt1[2] - tgt0[2]) if (tgt0 and tgt1) else None
     rd = dict(getattr(res, "result_data", {}) or {})
 

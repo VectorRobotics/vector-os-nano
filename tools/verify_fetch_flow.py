@@ -47,7 +47,7 @@ from vector_os_nano.perception.vlm_go2 import (  # noqa: E402
 from vector_os_nano.skills.go2.look import LookSkill  # noqa: E402
 from vector_os_nano.skills.navigate_to_object import NavigateToObjectSkill  # noqa: E402
 from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill  # noqa: E402
-from vector_os_nano.vcli.worlds.arm_sim_oracle import make_holding_object  # noqa: E402
+from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace  # noqa: E402
 
 _TARGET = "green bottle"
 _GT_BODY = "pickable_bottle_green"
@@ -93,7 +93,7 @@ def main() -> int:
     gripper.connect()
     perception = Go2GraspPerception(go2, width=320, height=240)
     agent = Agent(base=go2, arm=piper, gripper=gripper, perception=perception, config={})
-    holding_oracle = make_holding_object(agent)
+    holding_oracle = rig_namespace(go2.runtime, "go2_piper")["holding_object"]
 
     z0 = _gt(go2, _GT_BODY)[2]
     out["green_z_before"] = round(z0, 3)

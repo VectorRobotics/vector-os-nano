@@ -75,11 +75,9 @@ class PlaceSkill:
     # (R2-2) so a completed place is never falsely marked timeout under a live viewer.
     typical_duration_sec: float = 45.0
     # Success predicate this skill is verified against (single-source for the planner).
-    # A place RELEASES the held object, so the gripper ends empty: not holding_object()
-    # discriminates a real place (released -> False -> verify passes) from a failed one
-    # (still holding). Preferred over placed_count() >= 1, which is trivially true in a
-    # region-less robot world (all resting objects count) and so verifies nothing.
-    verify_hint: str = "not holding_object()"
+    # A place RELEASES the held object, so the gripper ends empty: released() is GT
+    # (no weld active) and grades CAUSED only by a release this step.
+    verify_hint: str = "released()"
     failure_modes: list[str] = ["no_arm", "ik_unreachable", "move_failed"]
     parameters: dict = {
         "location": {

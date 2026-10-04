@@ -38,7 +38,13 @@ from __future__ import annotations
 import ast
 from typing import Literal
 
-from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M, _MAX_FACING_TOL_RAD
+from vector_os_nano.vcli.cognitive.coord_goal import (
+    _MAX_ARRIVAL_TOL_M,
+    _MAX_FACING_TOL_RAD,
+    _MAX_LOCALIZED_M,
+    _MAX_NEAR_M,
+    _MAX_OBJECT_AT_M,
+)
 
 Verdict = Literal["GROUNDED", "RAN"]
 
@@ -50,8 +56,16 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
     {
         "at_position",
         "facing",
-        "visited",
+        "in_room",
+        "near_object",
+        "in_view",
         "holding_object",
+        "lifted",
+        "kept_holding",
+        "released",
+        "object_at",
+        "object_on",
+        "localized",
         "arm_at_home",
         "file_exists",
         # path_contains(path, substr) is a goal-conditioned bool (the author
@@ -60,12 +74,11 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
     }
 )
 # Every bool oracle: in a compare only ``== True`` grounds (an ordering or ``== False``
-# on a bool is a tautology or a negation), and it is never a state term. g1's
-# ``detection_matches_gt`` grounds only as ``== True`` (R7); its bare call stays RAN.
+# on a bool is a tautology or a negation), and it is never a state term.
 # Every ``@oracle``-tagged ``-> bool`` callable MUST be here, else it gets the looser
 # state rules; test_spine_moat_corpus scans the tags and fails on drift.
 # ponytail: kernel lists until the @oracle tag grows a return kind.
-_BOOL_ORACLES: frozenset[str] = _PREDICATE_ORACLES | {"detection_matches_gt"}
+_BOOL_ORACLES: frozenset[str] = _PREDICATE_ORACLES
 
 # Tolerance-taking predicates: positional index of ``tol`` and its cap (the cap the
 # oracle clamps to = its ``@oracle(max_tol=...)``). A literal tol above the cap, or a
@@ -73,6 +86,9 @@ _BOOL_ORACLES: frozenset[str] = _PREDICATE_ORACLES | {"detection_matches_gt"}
 _TOL_ARG: dict[str, tuple[int, float]] = {
     "at_position": (2, _MAX_ARRIVAL_TOL_M),
     "facing": (1, _MAX_FACING_TOL_RAD),
+    "near_object": (1, _MAX_NEAR_M),
+    "object_at": (3, _MAX_OBJECT_AT_M),
+    "localized": (1, _MAX_LOCALIZED_M),
 }
 
 _ORDERING = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
@@ -122,7 +138,7 @@ def _oracle_call(node: ast.AST, oracle_names: frozenset[str]) -> str | None:
     spec = _TOL_ARG.get(node.func.id)
     if spec is not None:
         i, cap = spec
-        tols = [k.value for k in node.keywords if k.arg == "tol"] + node.args[i : i + 1]
+        tols = [k.value for k in node.keywords if k.arg in ("tol", "r")] + node.args[i : i + 1]
         if any((v := _number(t)) is None or v > cap for t in tols):
             return None
     return node.func.id

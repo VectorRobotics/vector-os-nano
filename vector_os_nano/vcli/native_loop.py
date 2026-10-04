@@ -98,7 +98,7 @@ _MUTATING_CODE_TOOLS: frozenset[str] = frozenset({"file_write", "file_edit", "ba
 # a safe fallback so this module never hard-depends on the oracle's private const.
 def _at_position_tol() -> float:
     try:
-        from vector_os_nano.vcli.worlds.go2_sim_oracle import _AT_POSITION_TOL_M
+        from vector_os_nano.vcli.worlds.sim_oracles import _AT_POSITION_TOL_M
         return float(_AT_POSITION_TOL_M)
     except Exception:  # noqa: BLE001
         return 0.5
@@ -210,17 +210,16 @@ class _NativeDetectTool:
     registered into the engine's ``CapabilityRegistry`` (agent-bound for the live
     perception) and invokes it — single-sourced, no second model load (rule 3).
 
-    Read-only PERCEPTION: the detector only localizes, it does not act on the world, so
-    a detect step grades RAN — the honest grade for a perceive-only route (mirrors D50;
-    actor-causation has no displacement to attribute). The capability never self-
-    certifies; the model-authored ``verify(len(detect_objects()) > 0)`` is the moat.
+    Read-only PERCEPTION: the detector only localizes, it does not act on the world.
+    The capability never self-certifies: the suggested verify is the GT ``in_view``
+    oracle (segmentation of the robot's own camera, which the detector never sees), and
+    it grades on the base channel, so a detect without a base move grades RAN — the
+    honest grade for a perceive-only route. ``localized`` (the scene graph vs GT) holds
+    once look/explore have put the object on the map.
 
-    The detection result (boxes/labels/scores) is stashed on the agent so the world's
-    ``detect_objects()`` verify oracle reflects what the LEARNED MODEL actually saw on
-    the live camera (rule 4: the structured observation flows to the verify step, never
-    collapsed to (success, error)). Duck-typed like a ``Tool`` so ``dispatch_skill``
-    runs it uniformly. Only surfaced when a ``detect`` capability is registered AND the
-    agent has a camera (see ``_build_motor_tools``) — sensorless/dev paths never see it.
+    Duck-typed like a ``Tool`` so ``dispatch_skill`` runs it uniformly. Only surfaced
+    when a ``detect`` capability is registered AND the agent has a camera (see
+    ``_build_motor_tools``) — sensorless/dev paths never see it.
     """
 
     name = "detect"
@@ -250,27 +249,8 @@ class _NativeDetectTool:
 
     @staticmethod
     def _verify_hint(agent: Any, query: str) -> str:
-        """The verify call the model should make AFTER detect, matched to the live oracle.
-
-        Two honest grades depending on the embodiment's verify namespace:
-          - g1-shape (camera + SIM GT base + NO arm): the GT-backed SPATIAL-MATCH
-            oracle ``detection_matches_gt`` is bound (R7), so the GROUNDED verify is
-            ``detection_matches_gt('<query>') == True`` — True iff the detector's box
-            matches where the INDEPENDENT GT object projects (not a self-read).
-          - go2+arm or anything with a GT ``detect_objects`` oracle: the existing
-            ``len(detect_objects()) > 0`` hint (its GROUND-TRUTH oracle, D62).
-        World-side hint only; the model still AUTHORS the verify and the spine grades it.
-        """
-        arm = getattr(agent, "_arm", None) if agent is not None else None
-        base = getattr(agent, "_base", None) if agent is not None else None
-        if (
-            arm is None
-            and base is not None
-            and getattr(base, "_model", None) is not None
-            and getattr(base, "_data", None) is not None
-        ):
-            return f"verify(detection_matches_gt({query!r}) == True)"
-        return "verify(len(detect_objects()) > 0)"
+        """The GT verify the model should make after detect (it still authors it)."""
+        return f"verify(in_view({query!r}))"
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         query = str((params or {}).get("query", "")).strip()
@@ -287,22 +267,15 @@ class _NativeDetectTool:
         labels = output.get("labels") or []
         scores = output.get("scores") or []
 
-        # MOAT DISCIPLINE (R6 audit): the detector's OWN output is deliberately NOT
-        # stashed on the agent. R4 stashed it as ``agent._last_detection`` so a
-        # world ``detect_objects()`` oracle could read it back — that made
-        # ``verify(len(detect_objects()) > 0)`` a TAUTOLOGY (the detector certifying
-        # itself) and minted a FALSE GREEN (D61). The self-read oracle was removed
-        # (worlds/robot.py), and the orphaned stash is removed here so no future
-        # round can re-wire the means' own output into the verify namespace. The
-        # detector's result still flows to the HUMAN-READABLE tool output below and
-        # (when a sim arm is present) the GROUND-TRUTH ``detect_objects`` oracle reads
-        # ``arm.get_object_positions()`` — independent of the means, never this output.
+        # MOAT DISCIPLINE (R6 audit): the detector's OWN output is never stashed on
+        # the agent for a verify to read back (the D61 self-certifying tautology); it
+        # flows only to the human-readable tool output below.
         if not getattr(result, "success", False) and not boxes:
             err = getattr(result, "error", "") or "no detections"
             return ToolResult(
                 content=(
                     f"detect({query!r}): the detector RAN but localized nothing ({err}). "
-                    f"Call {hint} to confirm (it will be False — nothing matched the GT)."
+                    f"{hint} checks whether it is in the camera view at all."
                 )
             )
         first = (
@@ -650,8 +623,34 @@ def run_turn_native(
     The caller (``cli.run_one_turn``) feeds the returned trace to the EXISTING
     ``VerdictReport.from_trace(trace, verify_oracle_names(agent, engine))`` — this
     function NEVER computes ``verified``.
+
+    The sim session (if any) is told where the turn starts and ends: its GT oracles
+    scope ``kept_holding`` / ``localized`` to the turn, and ``VECTOR_GT_DUMP`` gets a
+    ground-truth line at both ends for the independent grader (tools/gt_grade.py).
     """
+    from vector_os_nano.sim.session import mark_turn
+
     agent = agent if agent is not None else getattr(engine, "_vgg_agent", None)
+    mark_turn(agent, "start", user_message)
+    try:
+        return _run_turn_native(
+            engine, user_message, agent=agent, session=session, app_state=app_state,
+            max_turns=max_turns, on_progress=on_progress,
+        )
+    finally:
+        mark_turn(agent, "end", user_message)
+
+
+def _run_turn_native(
+    engine: Any,
+    user_message: str,
+    *,
+    agent: Any,
+    session: Any,
+    app_state: dict[str, Any] | None,
+    max_turns: int,
+    on_progress: Callable[[str], None] | None,
+) -> ExecutionTrace:
 
     # The live verifier + oracle names — single-sourced from the SAME namespace the
     # spine reads (rule 3). Fail closed on any error (empty oracle set -> every

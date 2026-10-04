@@ -97,15 +97,16 @@ def _names_object(query: str) -> bool:
     return any(tok in q for tok in _OBJECT_NOUN_TOKENS)
 
 
-# ATTRIBUTE (colour) grasp (D47): map a parsed colour to the scene object name the
-# verify oracle grades. The grasp POINT still comes from perception (depth+mask) —
-# only the verify LABEL uses this colour→name convention, so an emitted verify reads
-# holding_object('pickable_can_red') etc. The colour cylinders in scene_room_piper.xml.
-_COLOR_TO_SCENE: dict[str, str] = {
-    "red": "pickable_can_red",
-    "blue": "pickable_bottle_blue",
-    "green": "pickable_bottle_green",
-}
+
+def _scene_name(context: SkillContext, query: str) -> str | None:
+    """The world-manifest pickable *query* names ("绿色的瓶子" -> pickable_bottle_green),
+    or None. Only the verify LABEL comes from it; the grasp POINT is always perceived."""
+    world_id = (context.config or {}).get("world")
+    if not world_id:
+        return None
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+    return load_world(world_id).resolve(query)
 
 
 # Dog-to-object planar distance (m) at which the Piper top-down envelope reaches the
@@ -663,10 +664,11 @@ class PerceptionGraspSkill:
 
         # --- ATTRIBUTE grasp (D47): parse a colour from the query. When present, the
         # perception resolver selects the blob of THAT colour (not the front-most) and
-        # the verify LABEL maps to the colour's scene name (the grasp POINT is still
-        # perceived from depth+mask). A deictic "前面的东西" parses no colour → unchanged.
+        # the verify LABEL is the world-manifest body the query names (the grasp
+        # POINT is still perceived from depth+mask). A deictic "前面的东西" parses no colour → unchanged.
         from vector_os_nano.perception.front_object import parse_color
         color = parse_color(query)
+        scene = _scene_name(context, query)
 
         # --- PRODUCER->CONSUMER composition (R37): if an earlier `detect` step
         # already produced boxes (flowed in via ${detect.output.detections} /
@@ -684,7 +686,7 @@ class PerceptionGraspSkill:
                 passed_box, color,
             )
             gp, resolved, fail = self._grasp_point_from_passed_box(
-                perception, query, passed_box, color=color
+                perception, query, passed_box, color=color, scene=scene
             )
         else:
             # --- perceive the target's 3D grasp point (real depth + mask, never GT).
@@ -698,7 +700,7 @@ class PerceptionGraspSkill:
             # scripted-from-spawn path (can dead-ahead) the first sample is already
             # plausible, so the scan returns immediately — no D34-D51 regression.
             gp, resolved, fail = self._perceive_with_scan(
-                perception, context.base, query, color=color
+                perception, context.base, query, color=color, scene=scene
             )
         if fail is not None:
             return fail
@@ -929,7 +931,8 @@ class PerceptionGraspSkill:
         return max(detections, key=_conf)
 
     def _grasp_point_from_passed_box(
-        self, perception: Any, query: str, box: tuple, *, color: str | None = None
+        self, perception: Any, query: str, box: tuple, *, color: str | None = None,
+        scene: str | None = None,
     ):
         """Back-project a PRODUCER-passed pixel box to a WORLD grasp point.
 
@@ -949,13 +952,9 @@ class PerceptionGraspSkill:
             return None, (query or "front object"), _fail(
                 "no_camera", f"Failed to read RGB-D frame: {exc}")
 
-        # Verify LABEL convention matches the self-detect route: a colour query grades
-        # the colour's scene key; otherwise the query text.
-        resolved = (
-            _COLOR_TO_SCENE.get(color)
-            if color and color in _COLOR_TO_SCENE
-            else (query or "front object")
-        )
+        # Verify LABEL convention matches the self-detect route: the world manifest's
+        # body name when the query names one; otherwise the query text.
+        resolved = scene or (query or "front object")
 
         # Segment the PASSED box — reuse the perception segmenter (EdgeTAM, box-rect
         # fallback). NO perception.detect / front_object_mask call here (that is the
@@ -1024,7 +1023,8 @@ class PerceptionGraspSkill:
         return max(detections, key=_conf)
 
     def _perceive_with_scan(
-        self, perception: Any, base: Any, query: str, *, color: str | None = None
+        self, perception: Any, base: Any, query: str, *, color: str | None = None,
+        scene: str | None = None,
     ):
         """Perceive the grasp point, turning in place to FIND the target if needed.
 
@@ -1061,7 +1061,7 @@ class PerceptionGraspSkill:
             return (d <= _SCAN_MAX_LOCAL_M, d)
 
         # First look at the current heading.
-        gp, resolved, fail = self._perceive_grasp_point(perception, query, color=color)
+        gp, resolved, fail = self._perceive_grasp_point(perception, query, color=color, scene=scene)
         ok, dist = _plausible(gp)
         if ok or not steerable:
             if gp is not None:
@@ -1082,7 +1082,7 @@ class PerceptionGraspSkill:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[PGRASP] scan turn raised: %s", exc)
                 break
-            g2, r2, f2 = self._perceive_grasp_point(perception, query, color=color)
+            g2, r2, f2 = self._perceive_grasp_point(perception, query, color=color, scene=scene)
             ok2, d2 = _plausible(g2)
             logger.info("[PGRASP] scan step %d/%d: %s d=%.2fm plausible=%s",
                         step + 1, _SCAN_MAX_STEPS,
@@ -1110,7 +1110,9 @@ class PerceptionGraspSkill:
             )
         return best[0], best[1], best[2]
 
-    def _perceive_grasp_point(self, perception: Any, query: str, *, color: str | None = None):
+    def _perceive_grasp_point(
+        self, perception: Any, query: str, *, color: str | None = None, scene: str | None = None,
+    ):
         """Acquire RGB-D, resolve the target mask, compute the WORLD grasp point.
 
         Returns ``(gp | None, resolved_label, fail_result | None)``. Pure perception:
@@ -1118,8 +1120,9 @@ class PerceptionGraspSkill:
         twice (before/after an approach) so the point tracks the live camera pose.
 
         ATTRIBUTE grasp (D47): when *color* is given, the front-object resolver selects
-        the salient blob of that colour (FAIL LOUD if none) and the resolved LABEL is the
-        colour's scene name (verify oracle key) — the grasp POINT remains from depth+mask.
+        the salient blob of that colour (FAIL LOUD if none). The resolved LABEL is
+        *scene* (the world-manifest body the query names) when given — the grasp POINT
+        remains from depth+mask.
         """
         import numpy as np
         from vector_os_nano.perception.object_localizer import capture_rgbd
@@ -1148,9 +1151,9 @@ class PerceptionGraspSkill:
         use_front_resolver = have_front and (deictic or color is not None)
         classical = deictic  # kept for the mask-fallback and diagnostics below
         mask = None
-        # A colour query's verify LABEL is the colour's scene name (the grasp POINT is
-        # still perceived); a plain deictic query keeps the query text as its label.
-        resolved = _COLOR_TO_SCENE.get(color, query or "front object") if color else (query or "front object")
+        # A query that names a world-manifest object labels the verify with its body
+        # name (the grasp POINT is still perceived); otherwise the query text.
+        resolved = scene or (query or "front object")
         detection_found = False
         if use_front_resolver:
             try:
@@ -1204,13 +1207,9 @@ class PerceptionGraspSkill:
                 # max-confidence, unchanged.
                 det = self._select_detection(detections, color)
                 # Verify LABEL: when a colour is named ("红色的罐子") the verify oracle
-                # grades the colour's scene key (pickable_can_red); otherwise the
+                # grades the manifest body (pickable_can_red); otherwise the
                 # detector's own label. The grasp POINT is still from depth+mask.
-                resolved = (
-                    _COLOR_TO_SCENE.get(color)
-                    if color and color in _COLOR_TO_SCENE
-                    else str(getattr(det, "label", query) or query)
-                )
+                resolved = scene or str(getattr(det, "label", query) or query)
                 try:
                     mask = perception.segment(rgb, det.bbox)
                 except Exception as exc:  # noqa: BLE001

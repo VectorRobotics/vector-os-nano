@@ -12,12 +12,12 @@ surfaces:
   tray:  {body: table, box: [0.20, 0.0, 0.50, 0.25], height: 0.02}
 
 pickables:
-  banana:      {category: banana,      colour: yellow, on: table, aliases: [banana, 香蕉]}
-  mug:         {category: mug,         colour: red,    on: table, aliases: [mug, red mug, 马克杯, 杯子]}
-  bottle:      {category: bottle,      colour: blue,   on: table, aliases: [bottle, blue bottle, 瓶子]}
-  screwdriver: {category: screwdriver, colour: green,  on: table, aliases: [screwdriver, 螺丝刀]}
-  duck:        {category: duck,        colour: orange, on: table, aliases: [duck, rubber duck, 鸭子]}
-  lego:        {category: lego,        colour: red,    on: table, aliases: [lego, lego brick, 乐高, 积木]}
+  banana:      {category: banana,      colour: yellow, surface: table, aliases: [banana, 香蕉]}
+  mug:         {category: mug,         colour: red,    surface: table, aliases: [mug, red mug, 马克杯, 杯子]}
+  bottle:      {category: bottle,      colour: blue,   surface: table, aliases: [bottle, blue bottle, 瓶子]}
+  screwdriver: {category: screwdriver, colour: green,  surface: table, aliases: [screwdriver, 螺丝刀]}
+  duck:        {category: duck,        colour: orange, surface: table, aliases: [duck, rubber duck, 鸭子]}
+  lego:        {category: lego,        colour: red,    surface: table, aliases: [lego, lego brick, 乐高, 积木]}
 
 vocab:
   colours:

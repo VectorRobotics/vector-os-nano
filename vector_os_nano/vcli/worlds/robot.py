@@ -34,29 +34,6 @@ def _agent_has_camera(agent: Any) -> bool:
     return resolve_capability_profile(agent).camera
 
 
-# R5 CORRECTION (moat integrity): there is deliberately NO camera-no-arm
-# ``detect_objects`` verify oracle here. R4 added ``_make_perceived_detections``,
-# which built ``detect_objects()`` over ``agent._last_detection`` — the LEARNED
-# detector's OWN stashed boxes (the MEANS' output). Binding that into the verify
-# namespace made ``len(detect_objects()) > 0`` a *truth-bearing* oracle over the
-# means' own product, so the R1 evidence gate graded the g1 detect step GROUNDED:
-# the detector certifying ITSELF (a TAUTOLOGY — the actor's output verifying the
-# actor). That was a FALSE GREEN (red-team, D61). A detector running + localizing
-# is READ-ONLY perception: there is no actor-caused world change to ground, and
-# the verify must never read the means' own output as if it were an independent
-# oracle (rule 5: the sandbox only gets stricter; rule 4 #moat: GT anchors stay
-# invisible to the means). With NO ``detect_objects`` in the camera-no-arm
-# namespace, the native detect tool's ``verify(len(detect_objects()) > 0)`` finds
-# no oracle name in the live verify-namespace, so ``classify_verify_expr`` returns
-# RAN (no oracle call) — fail-closed to the honest D50 grade. The detector still
-# REGISTERS + ROUTES + localizes (the genuine cross-EMBODIMENT x cross-MODEL
-# achievement, kept); only the dishonest GROUNDED is removed.
-#
-# A legitimate FUTURE GROUNDED for detection (possible R6, NOT done) would require
-# a GT-backed spatial match — the detector's box back-projects to where the SIM GT
-# says the object is — i.e. an oracle INDEPENDENT of the means, not a self-read.
-
-
 class RobotWorld:
     """Adapter for the robot domain (Go2 / SO-101 / Piper)."""
 
@@ -75,96 +52,20 @@ class RobotWorld:
         return None
 
     def build_verify_namespace(self, agent: Any) -> dict[str, Any]:
-        # Ground the verifier on the SIM deterministic oracle(s). The engine
-        # builds its dev/robot bindings + empty perception stubs first
-        # (engine._build_verifier_namespace), then merges THIS on top — so when a
-        # sim embodiment is present these predicates REPLACE the stubs (e.g.
-        # detect_objects->[], describe_scene->"") with real ground-truth lookups,
-        # and the planner's verify allowlist (derived from this namespace) gains
-        # them. Single-sourced from the kernel-side oracles (ADR-008 C1 / kernel
-        # rule 3); lazily imported here so the module load stays robot-free.
-        #
-        # Compose whatever embodiment(s) the agent actually has, so an arm-only,
-        # a go2-base-only, OR a go2+arm agent each get a GROUNDED verify namespace
-        # (world-agnostic — no embodiment is special-cased). Real hardware / no
-        # sim oracle contributes nothing, leaving the engine namespace byte-
-        # identical. object_names=() => all scene objects (the plain robot world
-        # has no Scenario to declare a known-set).
-        ns: dict[str, Any] = {}
+        """The GT oracles of the live sim session that owns *agent*.
 
-        arm = getattr(agent, "_arm", None)
-        if arm is not None and hasattr(arm, "get_object_positions"):
-            from vector_os_nano.vcli.worlds.arm_sim_oracle import (
-                make_arm_at_home,
-                make_describe_scene,
-                make_detect_objects,
-                make_holding_object,
-                make_placed_count,
-            )
-            ns.update({
-                "detect_objects": make_detect_objects(agent, ()),
-                "describe_scene": make_describe_scene(agent, ()),
-                "holding_object": make_holding_object(agent),
-                "arm_at_home": make_arm_at_home(agent),
-                "placed_count": make_placed_count(agent),
-            })
+        Every predicate reads the session's ground truth (``vcli/worlds/sim_oracles``),
+        never an agent or device attribute. Real hardware / no session contributes
+        nothing, so every verify there grades RAN. The engine merges this over its
+        own bindings, so the GT ``get_position`` / ``get_heading`` replace its
+        agent-read ones in a sim.
+        """
+        from vector_os_nano.sim.session import session_for
 
-        base = getattr(agent, "_base", None)
-        if (
-            base is not None
-            and hasattr(base, "get_position")
-            and hasattr(base, "get_heading")
-        ):
-            # Ground the base predicates the go2 vocab verifies against. The plain
-            # robot world has no Scenario, so ``visited`` (which needs a named-room
-            # set) is left to the playground; ``at_position`` / ``facing`` need
-            # only the live base and replace the engine stubs.
-            from vector_os_nano.vcli.worlds.go2_sim_oracle import (
-                make_at_position,
-                make_facing,
-            )
-            ns.update({
-                "at_position": make_at_position(agent),
-                "facing": make_facing(agent),
-            })
-
-        # R7: the HONEST GROUNDED for a camera-only embodiment (g1: head camera, NO
-        # arm). R5 (D61) correctly REFUSED to bind a camera-no-arm ``detect_objects``
-        # oracle, because the only anchor THEN available was the detector's OWN output
-        # (a self-read → the R4 false green). R7 supplies what was missing: INDEPENDENT
-        # SIM GROUND TRUTH (a MuJoCo SEGMENTATION render — the renderer's own per-pixel
-        # geom-id image, never passed to the detector) and a SPATIAL-MATCH oracle,
-        # ``detection_matches_gt``, that returns True IFF the detector's box CENTER
-        # lands within tol px of the segmentation centroid of the matching-colour geoms.
-        # The TRUTH is the render (the detector cannot author it); the detection is the
-        # CLAIM being judged. A wrong box (wall / wrong object) or the object OUT OF VIEW
-        # (no matching-colour geom in the segmentation) → no match → False → RAN. This
-        # is the GT-backed match the R5 note (above) anticipated as the legitimate
-        # future GROUNDED — NOT a ``len(detect_objects()) > 0`` self-read. (R7 used the
-        # segmentation render rather than a hand-rolled world→pixel projection because
-        # the freejoint pickables are occluded in g1's view and the head-camera
-        # pose-vs-frame did not reconcile under a pinhole convention — segmentation is
-        # strictly more reliable + more independent; see the oracle module docstring.)
-        #
-        # Bound ONLY for a camera-bearing, ARM-LESS sim base exposing the live MuJoCo
-        # model/data (the g1 shape). The go2+arm path already has its GT ``detect_objects``
-        # (above) and grasp weld-causation, so it does not need this; gating on
-        # arm-absence keeps the two paths from double-binding a detect oracle. The frozen
-        # ``vcli/cognitive/`` spine is UNTOUCHED — the model reaches GROUNDED via the
-        # existing state-oracle-vs-constant rule (``detection_matches_gt('red') == True``).
-        if (
-            arm is None
-            and base is not None
-            and _agent_has_camera(agent)
-            and getattr(base, "_model", None) is not None
-            and getattr(base, "_data", None) is not None
-        ):
-            from vector_os_nano.vcli.worlds.g1_perception_oracle import (
-                make_detection_matches_gt,
-            )
-            ns["detection_matches_gt"] = make_detection_matches_gt(agent)
-
-        return ns
+        session = session_for(agent)
+        if session is None or session.gt is None:
+            return {}
+        return session.oracles()
 
     def register_capabilities(self, registry: Any, agent: Any, backend: Any) -> None:
         # Register the learned open-vocabulary DETECTOR (grounding-dino-tiny) as a

@@ -34,7 +34,7 @@ class Pickable:
     category: str
     colour: str
     aliases: tuple[str, ...]
-    on: str = ""
+    surface: str = ""  # the support it rests on at scene load
 
 
 @dataclass(frozen=True)
@@ -138,12 +138,13 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
     for name, p in (raw.get("pickables") or {}).items():
         try:
             aliases = tuple(str(a) for a in p["aliases"])
-            pk = Pickable(str(name), str(p["category"]), str(p["colour"]), aliases, str(p.get("on", "")))
+            pk = Pickable(str(name), str(p["category"]), str(p["colour"]), aliases, str(p.get("surface", "")))
         except (KeyError, TypeError) as exc:
             raise WorldManifestError(
                 f"{ctx}: pickables.{name} needs category, colour, aliases ({exc})") from exc
-        if pk.on and pk.on not in surfaces:
-            raise WorldManifestError(f"{ctx}: pickables.{name}.on={pk.on!r}; surfaces: {sorted(surfaces)}")
+        if pk.surface and pk.surface not in surfaces:
+            raise WorldManifestError(
+                f"{ctx}: pickables.{name}.surface={pk.surface!r}; surfaces: {sorted(surfaces)}")
         pickables[pk.name] = pk
     vocab = raw.get("vocab") or {}
     user = raw.get("user")
