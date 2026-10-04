@@ -509,9 +509,19 @@ class TestVGGTryVggWithRealRobot:
         assert result is None, "Empty input should return None"
 
     def test_try_vgg_explore_returns_trace(self, vgg_engine):
-        """try_vgg('explore') returns ExecutionTrace — ExploreSkill launches background thread."""
+        """try_vgg('explore') returns ExecutionTrace. Explore is the blocking coverage
+        tour here (no nav stack): it is cancelled after 3 s so the test stays short."""
+        import threading
+
+        from vector_os_nano.skills.go2.explore import cancel_exploration
+
         engine, go2 = vgg_engine
-        result = engine.try_vgg("explore")
+        timer = threading.Timer(3.0, cancel_exploration)
+        timer.start()
+        try:
+            result = engine.try_vgg("explore")
+        finally:
+            timer.cancel()
 
         assert result is not None, (
             "try_vgg('explore') returned None — should produce 1-step GoalTree"
