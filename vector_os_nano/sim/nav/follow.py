@@ -137,8 +137,8 @@ def follow(
     *body* is the manifest nav block (``body_radius``, ``speed``, ``vyaw_max``,
     ``fall_z``, optional ``goal_tol``). *inflation* defaults to ``body_radius``;
     *tol* to the body's ``goal_tol`` else ``follower.goal_tol``, and never exceeds
-    the arrival radius; *timeout* (sim s)
-    to ``budget_factor x geodesic / speed + budget_pad_s``. *cancel* is anything
+    the arrival radius; *timeout* (sim s) to ``budget_factor x geodesic / speed +
+    budget_pad_s``. *cancel* is anything
     with ``is_set()``; None means the run's abort signal.
     """
     cfg = nav_config()["follower"]
@@ -240,7 +240,6 @@ def follow(
                 slip = max(-float(cfg["slip_max_rad"]), min(float(cfg["slip_max_rad"]), slip))
             err = _wrap(math.atan2(wy - y, wx - x) - heading - slip)
             vyaw = max(-vyaw_max, min(vyaw_max, float(cfg["k_yaw"]) * err))
-            straight = abs(err) < 0.15
             if abs(err) > float(cfg["face_tol_rad"]):
                 vx = 0.0
                 best_t = now  # a pivot in place is progress the distance cannot see
@@ -254,6 +253,8 @@ def follow(
                 lim = float(cfg["cross_track_max"])
                 corr = max(-lim, min(lim, -float(cfg["cross_track_gain"]) * e))
                 vy = corr * (nx * -math.sin(heading) + ny * math.cos(heading))
+            # only plain straight walking measures the slip (a pivot or strafe would bias it)
+            straight = abs(err) < 0.15 and abs(vy) < 0.05
             base.set_velocity(vx, vy, vyaw)
             base.wait_sim(tick, cancel)
     finally:
