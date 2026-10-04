@@ -100,6 +100,7 @@ class RobotWorld:
                 make_detect_objects,
                 make_holding_object,
                 make_placed_count,
+                make_released,
             )
             ns.update({
                 "detect_objects": make_detect_objects(agent, ()),
@@ -107,6 +108,7 @@ class RobotWorld:
                 "holding_object": make_holding_object(agent),
                 "arm_at_home": make_arm_at_home(agent),
                 "placed_count": make_placed_count(agent),
+                "released": make_released(agent),
             })
 
         base = getattr(agent, "_base", None)

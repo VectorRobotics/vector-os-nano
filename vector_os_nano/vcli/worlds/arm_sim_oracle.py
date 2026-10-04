@@ -119,7 +119,7 @@ def make_holding_object(agent: Any) -> Callable[..., bool]:
     Reads only deterministic ground truth; fails safe to ``False``.
     """
 
-    @oracle(scope="robot", channel="gripper", transition="rise")
+    @oracle(scope="robot", channel="gripper", transition="rise", domain="bool")
     def holding_object(target: Any = None) -> bool:
         arm = _get_arm(agent)
         if arm is None:
@@ -152,6 +152,27 @@ def make_holding_object(agent: Any) -> Callable[..., bool]:
     return holding_object
 
 
+def make_released(agent: Any) -> Callable[..., bool]:
+    """Build ``released(target=None)`` bound to *agent* — the RELEASE predicate.
+
+    True when the gripper holds nothing; with ``target``, when that object is not
+    held. Tagged ``transition="fall"``: it grounds a place / release only when the
+    actor's own step made a weld 1->0 (actor_causation), so an empty gripper at the
+    baseline never proves a release. Fails safe to ``False`` without an arm.
+    """
+    holding_object = make_holding_object(agent)
+
+    @oracle(scope="robot", channel="gripper", transition="fall", domain="bool")
+    def released(target: Any = None) -> bool:
+        if _get_arm(agent) is None:
+            return False
+        if not _gripper_is_holding(agent):
+            return True
+        return target is not None and not holding_object(target)
+
+    return released
+
+
 def make_arm_at_home(agent: Any) -> Callable[[], bool]:
     """Build ``arm_at_home()`` bound to *agent*.
 
@@ -159,7 +180,7 @@ def make_arm_at_home(agent: Any) -> Callable[[], bool]:
     Reads deterministic joint ground truth; fails safe to ``False``.
     """
 
-    @oracle(scope="robot", channel="arm", transition="rise")
+    @oracle(scope="robot", channel="arm", transition="rise", domain="bool")
     def arm_at_home() -> bool:
         arm = _get_arm(agent)
         if arm is None:
@@ -192,7 +213,7 @@ def make_placed_count(agent: Any, default_region: Any = None) -> Callable[..., i
 
     scene_region = _parse_region(default_region)
 
-    @oracle(scope="robot", channel="gripper")
+    @oracle(scope="robot", channel="gripper", domain="count")
     def placed_count(target_region: Any = None) -> int:
         arm = _get_arm(agent)
         if arm is None:

@@ -27,21 +27,26 @@ would still grade CAUSED (the command signal fires); proving caused-ONLY-by requ
 a shadow MjData re-step (re-simulate from the baseline applying only the recorded
 commands and compare) — explicitly OUT OF SCOPE this round.
 
-ALSO OUT OF SCOPE (documented, deferred): the live go2 ``navigate`` path drives via
-a ROS2 bridge whose ``cmd_vel`` runs on another thread and is GATED OUT before the
-instrumented counter (``mujoco_go2.set_velocity`` returns at the ``_gated`` guard
-when the caller is not the skill-token thread). Only ``walk()``/``walk_forward``
-(which set ``_skill_ctrl_tid`` so their ``set_velocity`` is ungated + counted) carry
-an honest actor-causation signal. Grading the bridge/nav route is deferred.
+WP07 (spine S2): every robot-channel oracle call in a verify is graded on its OWN
+channel, with the channel and transition read off its ``@oracle`` tag (no first
+match): base/arm need commanded motion + displacement, the gripper needs the weld
+transition the call's polarity asks for (0->1 for ``holding_object``, 1->0 under a
+``not``), and a base target already met at the baseline pose is UNCAUSED (F->T).
+Commanded motion is the ACTOR's only while a producer-dispatched tool runs
+(``sim.runtime.ACTOR_EPOCH``): the in-process ``navigate`` follower counts, while a
+TARE/bridge follower or a background explore driving the base between tools never
+does. The producer grades a re-verify against the baseline of its attempt group.
 
 Single-sourced into ``classify_step_evidence`` (trace_store) so the actor-causation
 verdict flows to BOTH gates and the VECTOR_VERDICT report — no split-brain.
 """
 from __future__ import annotations
 
+import ast
 import enum
 import logging
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -230,148 +235,171 @@ def capture(agent: Any) -> ActorBaseline:
 
 
 # ---------------------------------------------------------------------------
-# Grading
+# Grading — per channel, from the oracles' own @oracle tags
 # ---------------------------------------------------------------------------
 
-# Predicate-name -> the actor channel it implicates. A verify expression naming
-# any of these is a "robot-predicate" step whose causation we grade; the channel
-# decides which counter / displacement to consult.
-_BASE_PREDICATES: frozenset[str] = frozenset({"at_position", "facing", "visited"})
-_ARM_PREDICATES: frozenset[str] = frozenset({"arm_at_home"})
-_GRIPPER_PREDICATES: frozenset[str] = frozenset({"holding_object", "is_holding", "holding"})
+# The actor channels causation is graded on; "perception"/"none" oracles name no
+# actor state (a step verified only by them is never graded here).
+_ROBOT_CHANNELS: frozenset[str] = frozenset({"base", "arm", "gripper"})
+# ``not <pred>`` asks for the opposite transition of ``<pred>``.
+_FLIP = {"rise": "fall", "fall": "rise", "level": "level"}
 
 
-def _names_in_expr(verify: str, names: frozenset[str]) -> bool:
-    """True iff *verify* references any name in *names* as a bare identifier."""
-    import re
+def _tag(oracles: Any, name: str) -> Any:
+    """The OracleTag of *name* in *oracles* ({name: OracleTag | tagged callable})."""
+    from vector_os_nano.vcli.cognitive.oracle_registry import OracleTag
 
-    if not verify:
-        return False
-    tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", verify))
-    return bool(tokens & names)
+    v = oracles.get(name) if isinstance(oracles, Mapping) else None
+    return v if isinstance(v, OracleTag) else getattr(v, "__oracle__", None)
 
 
-def _base_channel_caused(
-    baseline: ActorBaseline, post: ActorBaseline, verify: str
-) -> bool | None:
-    """True iff the base moved in the dimension *verify*'s predicate constrains.
+def robot_calls(verify: str, oracles: Any) -> list[tuple[str, ast.Call, str, str]]:
+    """``(name, call, channel, wanted transition)`` for every robot-channel oracle call
+    in *verify*. The channel and the transition come from the oracle's tag; under a
+    ``not`` the wanted transition flips (``not holding_object()`` asks for a release)."""
+    try:
+        tree = ast.parse((verify or "").strip(), mode="eval")
+    except SyntaxError:
+        return []
+    out: list[tuple[str, ast.Call, str, str]] = []
 
-    A base predicate's causation must come from the channel it actually measures,
-    NOT a blended ``max(planar, yaw)`` (review fix STEP-12: a forward walk's planar
-    move must NOT satisfy a ``facing(heading)`` no-op, and a pure turn's yaw move must
-    NOT satisfy ``at_position``/``visited``):
+    def walk(node: ast.AST, neg: bool) -> None:
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            walk(node.operand, not neg)
+            return
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            tag = _tag(oracles, node.func.id)
+            if tag is not None and tag.channel in _ROBOT_CHANNELS:
+                want = _FLIP[tag.transition] if neg else tag.transition
+                out.append((node.func.id, node, tag.channel, want))
+        for child in ast.iter_child_nodes(node):
+            walk(child, neg)
 
-      - ``facing``                    -> heading channel: ``dyaw >= _YAW_CAUSE_EPS``
-      - ``at_position`` / ``visited`` -> planar channel:  ``dxy  >= DISPLACEMENT_EPS``
+    walk(tree.body, False)
+    return out
 
-    Returns None when the relevant snapshot is unavailable (grade fail-closes to
-    UNCAUSED).
-    """
-    if baseline.base_pos is None or post.base_pos is None:
-        return None
-    if _names_in_expr(verify, frozenset({"facing"})):
-        if baseline.base_heading is None or post.base_heading is None:
+
+def _call_number(call: ast.Call, index: int, key: str) -> float | None:
+    from vector_os_nano.vcli.cognitive.coord_goal import _const_number
+
+    if len(call.args) > index:
+        return _const_number(call.args[index])
+    kw = next((k.value for k in call.keywords if k.arg == key), None)
+    return None if kw is None else _const_number(kw)
+
+
+def _facing_tol() -> float:
+    try:
+        from vector_os_nano.vcli.worlds.go2_sim_oracle import _FACING_TOL_RAD
+
+        return float(_FACING_TOL_RAD)
+    except Exception:  # noqa: BLE001
+        return math.radians(20.0)
+
+
+def _base_truth_at(name: str, call: ast.Call, b: ActorBaseline) -> bool | None:
+    """Was ``at_position`` / ``facing`` with these literal args already true at the
+    baseline pose? None when unknowable (another predicate, non-literal args)."""
+    from vector_os_nano.vcli.cognitive import coord_goal as cg
+
+    if name == "at_position" and b.base_pos is not None:
+        x, y, tol = _call_number(call, 0, "x"), _call_number(call, 1, "y"), _call_number(call, 2, "tol")
+        if x is None or y is None:
             return None
-        dyaw = abs(
-            math.atan2(
-                math.sin(post.base_heading - baseline.base_heading),
-                math.cos(post.base_heading - baseline.base_heading),
-            )
-        )
-        return dyaw >= _YAW_CAUSE_EPS
-    return math.dist(baseline.base_pos[:2], post.base_pos[:2]) >= DISPLACEMENT_EPS
+        tol = min(cg._at_position_tol() if tol is None else tol, cg._MAX_ARRIVAL_TOL_M)
+        return math.dist(b.base_pos[:2], (x, y)) <= tol
+    if name == "facing" and b.base_heading is not None:
+        h, tol = _call_number(call, 0, "heading"), _call_number(call, 1, "tol")
+        if h is None:
+            return None
+        tol = min(_facing_tol() if tol is None else tol, cg._MAX_FACING_TOL_RAD)
+        return abs(math.atan2(math.sin(b.base_heading - h), math.cos(b.base_heading - h))) <= tol
+    return None
 
 
-def _arm_displacement(baseline: ActorBaseline, post: ActorBaseline) -> float | None:
-    """Max per-joint |delta| between baseline and post arm joints, or None."""
-    if baseline.arm_joints is None or post.arm_joints is None:
-        return None
-    if len(baseline.arm_joints) != len(post.arm_joints):
-        return None
-    if not baseline.arm_joints:
-        return 0.0
-    return max(abs(p - b) for b, p in zip(baseline.arm_joints, post.arm_joints))
+def _moved(b: ActorBaseline, p: ActorBaseline, name: str) -> bool:
+    """The base moved in the dimension the predicate measures: yaw for ``facing``, the
+    planar position otherwise (a walk's wobble never causes a facing no-op, and a turn
+    in place never causes an at_position)."""
+    if b.base_pos is None or p.base_pos is None:
+        return False
+    if name == "facing":
+        if b.base_heading is None or p.base_heading is None:
+            return False
+        d = p.base_heading - b.base_heading
+        return abs(math.atan2(math.sin(d), math.cos(d))) >= _YAW_CAUSE_EPS
+    return math.dist(b.base_pos[:2], p.base_pos[:2]) >= DISPLACEMENT_EPS
 
 
-def _gripper_fresh_grasp(baseline: ActorBaseline, post: ActorBaseline) -> bool | None:
-    """True iff some weld went 0->1 between baseline and post, or None if ungradable."""
-    if baseline.gripper_welds is None or post.gripper_welds is None:
-        return None
-    for body, active_now in post.gripper_welds.items():
-        was = bool(baseline.gripper_welds.get(body, False))
-        if active_now and not was:
-            return True
-    return False
+def _commanded(before: float | None, after: float | None) -> bool:
+    return before is not None and after is not None and after - before >= MOTION_EPS
 
 
-def grade(
-    baseline: ActorBaseline | None,
-    post: ActorBaseline,
-    verify: str,
-    oracle_names: frozenset[str],
-) -> ActorCaused:
-    """Grade whether the actor CAUSED the step's GROUNDED state change.
+def _gripper_caused(want: str, call: ast.Call, b: ActorBaseline, p: ActorBaseline) -> bool:
+    """A weld transition of the wanted polarity: 0->1 for ``rise`` (a grasp), 1->0 for
+    ``fall`` (a release), either for ``level``. Target-aware when the call names a
+    welded body (``holding_object('mug')`` is not caused by a fresh banana weld)."""
+    if b.gripper_welds is None or p.gripper_welds is None:
+        return False
+    target = call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) else None
+    keys = set(b.gripper_welds) | set(p.gripper_welds)
+    if isinstance(target, str) and target.strip().lower() in {k.lower() for k in keys}:
+        keys = {k for k in keys if k.lower() == target.strip().lower()}
+    rose = any(p.gripper_welds.get(k) and not b.gripper_welds.get(k) for k in keys)
+    fell = any(b.gripper_welds.get(k) and not p.gripper_welds.get(k) for k in keys)
+    return {"rise": rose, "fall": fell}.get(want, rose or fell)
 
-    Called by the executor ONCE per step, after ``_verify_and_value``. The caller
-    only consults the result for a step the R1 gate already deems GROUNDED-capable
-    (a robot predicate over a real oracle); this function decides CAUSED vs UNCAUSED
-    for such a step. Rules (fail-CLOSED — when in doubt, UNCAUSED, never CAUSED):
 
-    - *baseline is None* (capture never ran) -> UNCAUSED (fail closed).
-    - The verify names a BASE predicate (at_position / facing / visited):
-        CAUSED iff cumulative commanded |cmd| advanced by >= MOTION_EPS AND the base
-        pose displaced by >= DISPLACEMENT_EPS. A NO-OP (no commanded motion) or a
-        TELEPORT (no commanded motion, pose jumps) both -> UNCAUSED.
-    - The verify names an ARM predicate (arm_at_home): CAUSED iff arm ctrl motion
-        advanced AND a joint moved.
-    - The verify names a GRIPPER predicate (holding_object): CAUSED iff a weld
-        transitioned 0->1 this step (a fresh grasp). [holding grading — see fix 6.]
-    - Any other / ungradable case -> UNCAUSED (fail closed). The executor only
-        downgrades on UNCAUSED, and only consults this for GROUNDED-capable robot
-        steps, so a non-robot predicate never reaches here as UNCAUSED in practice.
+def _call_caused(name: str, call: ast.Call, channel: str, want: str,
+                 b: ActorBaseline, p: ActorBaseline) -> bool:
+    if channel == "gripper":
+        return _gripper_caused(want, call, b, p)
+    if channel == "arm":
+        if not _commanded(b.arm_ctrl_motion, p.arm_ctrl_motion):
+            return False
+        if b.arm_joints is None or p.arm_joints is None or len(b.arm_joints) != len(p.arm_joints):
+            return False
+        return max((abs(x - y) for x, y in zip(b.arm_joints, p.arm_joints)), default=0.0) >= DISPLACEMENT_EPS
+    # base: commanded motion inside the actor's tools, moved in the measured dimension,
+    # and (F->T) the literal target was not already met at the baseline pose.
+    if not (_commanded(b.base_cmd_motion, p.base_cmd_motion) and _moved(b, p, name)):
+        return False
+    was = _base_truth_at(name, call, b)
+    return not ((want == "rise" and was is True) or (want == "fall" and was is False))
 
-    Keys on the ACTOR signal (commanded-motion counter + pose displacement), NEVER
-    on sim_time advancing (which the go2 daemon ticks regardless — the stale trap).
+
+def grade_channels(
+    baseline: ActorBaseline | None, post: ActorBaseline, verify: str, oracles: Any,
+) -> tuple[ActorCaused, tuple[str, ...]]:
+    """Grade EVERY robot-channel oracle call in *verify* (no first match).
+
+    CAUSED iff each call was caused on its own channel between *baseline* and *post*
+    (``_call_caused``): the base/arm commanded motion inside the actor's tools and
+    moved, the gripper made the weld transition the call's polarity asks for, and a
+    base target was not already met at the baseline (F->T). The per-call detail
+    (``"gripper:holding_object:CAUSED"``) is returned for the audit row. *oracles*
+    maps the live evidence names to their ``@oracle`` tags (or the tagged callables).
+    Fail closed: no baseline, no robot call, or an unreadable channel grade UNCAUSED.
     """
+    calls = robot_calls(verify, oracles)
     if baseline is None:
-        return ActorCaused.UNCAUSED
-
-    if _names_in_expr(verify, _BASE_PREDICATES):
-        if baseline.base_cmd_motion is None or post.base_cmd_motion is None:
-            return ActorCaused.UNCAUSED
-        commanded = post.base_cmd_motion - baseline.base_cmd_motion
-        moved = _base_channel_caused(baseline, post, verify)
-        if moved is None:
-            return ActorCaused.UNCAUSED
-        if commanded >= MOTION_EPS and moved:
-            return ActorCaused.CAUSED
-        return ActorCaused.UNCAUSED
-
-    if _names_in_expr(verify, _ARM_PREDICATES):
-        if baseline.arm_ctrl_motion is None or post.arm_ctrl_motion is None:
-            return ActorCaused.UNCAUSED
-        commanded = post.arm_ctrl_motion - baseline.arm_ctrl_motion
-        disp = _arm_displacement(baseline, post)
-        if disp is None:
-            return ActorCaused.UNCAUSED
-        if commanded >= MOTION_EPS and disp >= DISPLACEMENT_EPS:
-            return ActorCaused.CAUSED
-        return ActorCaused.UNCAUSED
-
-    if _names_in_expr(verify, _GRIPPER_PREDICATES):
-        fresh = _gripper_fresh_grasp(baseline, post)
-        return ActorCaused.CAUSED if fresh else ActorCaused.UNCAUSED
-
-    return ActorCaused.UNCAUSED
+        return ActorCaused.UNCAUSED, ("no baseline",)
+    if not calls:
+        return ActorCaused.UNCAUSED, ()
+    detail = tuple(
+        f"{channel}:{name}:{'CAUSED' if _call_caused(name, call, channel, want, baseline, post) else 'UNCAUSED'}"
+        for name, call, channel, want in calls
+    )
+    caused = all(d.endswith(":CAUSED") for d in detail)
+    return (ActorCaused.CAUSED if caused else ActorCaused.UNCAUSED), detail
 
 
-def is_robot_predicate(verify: str, oracle_names: frozenset[str]) -> bool:
-    """True iff *verify* names a graded robot predicate present in *oracle_names*.
+def grade(baseline: ActorBaseline | None, post: ActorBaseline, verify: str, oracles: Any) -> ActorCaused:
+    """``grade_channels`` without the per-call detail."""
+    return grade_channels(baseline, post, verify, oracles)[0]
 
-    The executor uses this to decide whether to GRADE a step's causation at all: a
-    step whose verify names no robot predicate (or names one absent from the live
-    oracle set) is left ``NOT_GRADED`` (legacy-equivalent), so non-robot worlds
-    (dev predicates, answer steps) are byte-unaffected.
-    """
-    graded = (_BASE_PREDICATES | _ARM_PREDICATES | _GRIPPER_PREDICATES) & oracle_names
-    return _names_in_expr(verify, frozenset(graded))
+
+def is_robot_predicate(verify: str, oracles: Any) -> bool:
+    """True iff *verify* calls an oracle tagged with an actor channel (base / arm /
+    gripper). Anything else is not causation-graded (dev predicates, answer steps)."""
+    return bool(robot_calls(verify, oracles))

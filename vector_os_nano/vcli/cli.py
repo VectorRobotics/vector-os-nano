@@ -568,6 +568,9 @@ def _repl_attempt_native(
             # shows activity instead of a frozen line. Best-effort, never fatal.
             def _on_progress(msg: str) -> None:
                 try:
+                    if msg.startswith("Task contract:"):  # stays on screen (WP07)
+                        console.print(f"  [{TEAL}]▸[/] {escape(msg)}")
+                        return
                     _status.update(f"[{TEAL}]native[/] {msg}")
                 except Exception:  # noqa: BLE001
                     pass
@@ -617,8 +620,9 @@ def _repl_attempt_native(
             console.print(f"  [{TEAL}]▸[/] {chain} → [yellow]{escape(s.error)}[/]")
             continue
         mark = "[green]✓[/]" if ok else "[yellow]·[/]"
+        sup = ", superseded" if getattr(s, "superseded", False) else ""
         console.print(
-            f"  [{TEAL}]▸[/] {chain} → verify {verify_expr} {mark} [dim](actor={actor})[/]"
+            f"  [{TEAL}]▸[/] {chain} → verify {verify_expr} {mark} [dim](actor={actor}{sup})[/]"
         )
 
     verified = False
@@ -633,6 +637,8 @@ def _repl_attempt_native(
             f"[{color}]verified={report.verified}[/] "
             f"[dim]({report.n_grounded}/{report.n_steps} grounded){gait}[/]"
         )
+        if report.reject_reason and not report.llm_unavailable:
+            console.print(f"  [dim]not verified: {escape(report.reject_reason)}[/]")
         if report.llm_unavailable:
             console.print(f"  [yellow]{escape(report.error)}[/] [dim](infrastructure, not an agent failure)[/]")
     except Exception as exc:  # noqa: BLE001 — fail closed (display only)

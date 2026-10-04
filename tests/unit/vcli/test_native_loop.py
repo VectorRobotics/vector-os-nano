@@ -287,8 +287,9 @@ def test_noop_verify_only_is_uncaused_and_not_verified() -> None:
 
 def test_replan_is_model_driven_not_runner_state() -> None:
     """A False verify is followed by ANOTHER model walk+verify. Both pairs are
-    recorded; the runner computed no 'retry' state. The final trace verifies only
-    when EVERY checked step is GROUNDED, so a False first step keeps it unverified."""
+    recorded; the runner computed no 'retry' state. WP07 attempt semantics: the
+    re-verify of the SAME predicate supersedes the FAIL (kept as audit) and, being
+    actor-CAUSED, verifies the recovered turn (spine:retry-poisons-turn)."""
     backend = FakeToolScriptBackend.from_tool_script(
         [
             tool_turn(("walk", {"distance": 0.3, "speed": 0.3})),  # lands short
@@ -307,10 +308,14 @@ def test_replan_is_model_driven_not_runner_state() -> None:
     assert len(trace.steps) == 2
     assert trace.steps[0].verify_result is False  # the short attempt
     assert trace.steps[1].verify_result is True   # the corrected attempt
+    assert trace.steps[0].superseded is True and trace.steps[1].superseded is False
+    assert trace.steps[1].actor_caused is ActorCaused.CAUSED
     oracle_names = verify_oracle_names(agent, eng)
     report = VerdictReport.from_trace(trace, oracle_names)
-    # A trace with ANY non-GROUNDED checked step is NOT verified (all-must-pass).
-    assert report.verified is False
+    assert report.verified is True, report.reject_reason
+    assert [s.superseded for s in report.per_step] == [True, False]
+    assert report.per_step[0].reject_reason == "verify FAIL"  # the FAIL row stays as audit
+    assert (report.n_steps, report.n_grounded) == (1, 1)
 
 
 def test_empty_script_yields_unverified_empty_trace() -> None:
@@ -326,77 +331,30 @@ def test_empty_script_yields_unverified_empty_trace() -> None:
 
 
 # ---------------------------------------------------------------------------
-# STEP 7 — cross-language grasp vocab: the native loop hands the MODEL the
-# world's CANONICAL object names so a non-English command verifies the STRICT
-# object-specific predicate, while the oracle stays untouched-strict.
+# WP07 (h) — the prompt carries no ground-truth scene names. The old STEP-7 object
+# vocab listed the arm's GT object bodies; world context may only come from the
+# actor's belief (the grasp skill reports the object it resolved).
 # ---------------------------------------------------------------------------
 
 
-class _FakeArmWithObjects:
-    """Duck-typed arm exposing get_object_positions (the single-source vocab)."""
+def test_prompt_never_lists_gt_scene_names() -> None:
+    seen: list[str] = []
 
-    def __init__(self, objects):
-        self._objects = objects
+    class _Recorder(FakeToolScriptBackend):
+        def call(self, **kw):  # type: ignore[override]
+            seen.append(" ".join(b.get("text", "") for b in kw.get("system") or []))
+            return super().call(**kw)
 
-    def get_object_positions(self):
-        return self._objects
-
-
-def _arm_agent(objects):
-    return SimpleNamespace(_arm=_FakeArmWithObjects(objects))
-
-
-def test_scene_object_names_single_sources_canonical_names() -> None:
-    """``_scene_object_names`` returns the arm's object-position keys, sorted.
-
-    This is the SAME ground truth ``holding_object`` matches against, so the names
-    the model is taught are exactly the names the oracle accepts (no split source).
-    """
-    from vector_os_nano.vcli.native_loop import _scene_object_names
-
-    agent = _arm_agent({"banana": [0.1, 0.1, 0.06], "mug": [0.2, 0.0, 0.06]})
-    assert _scene_object_names(agent) == ("banana", "mug")
-
-
-def test_scene_object_names_fail_safe_empty() -> None:
-    """No agent / no arm / no getter / raising getter -> EMPTY (pre-step-7 prompt)."""
-    from vector_os_nano.vcli.native_loop import _scene_object_names
-
-    assert _scene_object_names(None) == ()
-    assert _scene_object_names(SimpleNamespace(_arm=None)) == ()
-    assert _scene_object_names(SimpleNamespace(_arm=SimpleNamespace())) == ()
-
-    class _Raises:
+    class _Arm:
         def get_object_positions(self):
-            raise RuntimeError("boom")
+            return {"pickable_bottle_green": [1.0, 1.0, 0.3]}
 
-    assert _scene_object_names(SimpleNamespace(_arm=_Raises())) == ()
-
-
-def test_system_prompt_lists_object_vocab_when_present() -> None:
-    """The prompt teaches the canonical names + the translate-to-scene-name rule."""
-    from vector_os_nano.vcli.native_loop import _native_system_prompt
-
-    blocks = _native_system_prompt(None, frozenset({"holding_object"}), ("banana", "mug"))
-    text = blocks[0]["text"]
-    assert "graspable objects are: banana, mug" in text
-    # The rule that closes the cross-language gap: translate the user's wording to
-    # the canonical scene name (the model does 香蕉->banana itself).
-    assert "translating the user's wording" in text
-    assert "holding_object('banana')" in text
-
-
-def test_system_prompt_omits_object_vocab_when_empty() -> None:
-    """An EMPTY object set yields the EXACT pre-step-7 prompt (no object list)."""
-    from vector_os_nano.vcli.native_loop import _native_system_prompt
-
-    with_names = _native_system_prompt(None, frozenset({"holding_object"}), ("banana",))
-    without = _native_system_prompt(None, frozenset({"holding_object"}), ())
-    assert "graspable objects are" not in without[0]["text"]
-    # Default arg also omits it (back-compat with any caller passing only 2 args).
-    default = _native_system_prompt(None, frozenset({"holding_object"}))
-    assert default[0]["text"] == without[0]["text"]
-    assert with_names[0]["text"] != without[0]["text"]
+    agent, _base = _make_agent(0.0, 0.0)
+    agent._arm = _Arm()
+    eng = _make_engine(agent, _Recorder.from_tool_script([tool_turn(end=True)]))
+    eng.run_turn_native("grab the green bottle", session=_session())
+    assert seen and "pickable_bottle_green" not in seen[0]
+    assert "graspable objects are" not in seen[0]
 
 
 def test_oracle_stays_strict_wrong_canonical_name_is_false() -> None:

@@ -64,7 +64,7 @@ _DEV_ORACLES = frozenset({"file_exists", "path_contains"})
         ("导航到客厅", False),
         ("explore the room", False),
         ("detect the red object", False),
-        ("把两个放到盒子里", False),           # place-only, no grasp verb
+        ("把两个放到盒子里", True),            # place is a manipulation intent too (WP07)
         ("turn left", False),
         ("", False),
         (None, False),
@@ -151,8 +151,6 @@ def test_real_grasp_via_holding_object_stays_grounded() -> None:
 @pytest.mark.parametrize(
     "goal, verify, strategy, actor",
     [
-        # pick-and-place terminating on placed_count -> honest, stays GROUNDED
-        ("把香蕉抓起来放到盒子里", "placed_count() == 1", "place", ActorCaused.NOT_GRADED),
         # generic pick proven by holding anything
         ("pick up the cube", "holding_object()", "pick", ActorCaused.CAUSED),
         # grasp + return-home chain
@@ -181,8 +179,8 @@ def test_release_negation_is_not_grounded() -> None:
 @pytest.mark.parametrize(
     "goal, verify, strategy, actor, oracles",
     [
-        # place-only goal (no grasp word) — gate fails open, unchanged
-        ("把两个放到盒子里", "placed_count() == 2", "place", ActorCaused.NOT_GRADED, _ARM_ORACLES),
+        # place-only goal proven by a placement (D69: placed_count proves a place)
+        ("把两个放到盒子里", "placed_count() == 2", "place", ActorCaused.CAUSED, _ARM_ORACLES),
         # coordinate nav (go2, no holding_object oracle) — gate never fires
         ("走到坐标 (11,3)", "at_position(11, 3)", "navigate", ActorCaused.CAUSED, _GO2_ORACLES),
         # dev file task — gate never fires (no holding_object oracle)

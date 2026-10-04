@@ -49,6 +49,8 @@ class SkillWrapperTool:
         self._skill = skill
         self._agent = agent
         self._is_motor: bool = self._detect_motor(skill)
+        # The skill's GT post-condition template; the native runner auto-verifies it.
+        self.verify_hint: str = str(getattr(skill, "verify_hint", "") or "")
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -238,7 +238,7 @@ def make_detection_matches_gt(agent: Any) -> Callable[..., bool]:
     spurious True.
     """
 
-    @oracle(scope="robot", channel="perception")
+    @oracle(scope="robot", channel="perception", domain="bool")
     def detection_matches_gt(target: Any = None, tol: float = _DEFAULT_TOL_PX) -> bool:
         base = _g1_base(agent)
         if base is None:

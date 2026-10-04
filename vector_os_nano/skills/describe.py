@@ -38,8 +38,9 @@ class DescribeSkill:
 
     name: str = "describe"
     description: str = "Describe what the camera sees using VLM scene understanding"
-    # Success predicate this skill is verified against (single-source for the planner).
-    verify_hint: str = "describe_scene() != ''"
+    # Perception only: no ground-truth post-condition to verify (``describe_scene()
+    # != ''`` was a vacuous compare that never grounds; in_view() will, WP10).
+    verify_hint: str = ""
     parameters: dict = {
         "question": {
             "type": "string",

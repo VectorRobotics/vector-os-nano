@@ -104,7 +104,7 @@ def make_at_position(agent: Any) -> Callable[..., bool]:
     deterministic ground truth; fails safe to ``False`` (bad args or no base).
     """
 
-    @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_ARRIVAL_TOL_M)
+    @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_ARRIVAL_TOL_M, domain="bool")
     def at_position(x: Any, y: Any, tol: Any = _AT_POSITION_TOL_M) -> bool:
         base = _get_base(agent)
         if base is None:
@@ -130,7 +130,7 @@ def make_facing(agent: Any) -> Callable[..., bool]:
     ``False`` (bad args or no base).
     """
 
-    @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_FACING_TOL_RAD)
+    @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_FACING_TOL_RAD, domain="bool")
     def facing(heading: Any, tol: Any = _FACING_TOL_RAD) -> bool:
         base = _get_base(agent)
         if base is None:
@@ -163,7 +163,7 @@ def make_visited(agent: Any, rooms: dict[str, tuple[float, float, float, float]]
         if _is_box(box)
     }
 
-    @oracle(scope="robot", channel="base", transition="rise")
+    @oracle(scope="robot", channel="base", transition="rise", domain="bool")
     def visited(room: Any) -> bool:
         base = _get_base(agent)
         if base is None:

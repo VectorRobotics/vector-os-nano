@@ -74,12 +74,12 @@ class PlaceSkill:
     # for a retry or a slow IK solve. GoalExecutor floors the step timeout at this value
     # (R2-2) so a completed place is never falsely marked timeout under a live viewer.
     typical_duration_sec: float = 45.0
-    # Success predicate this skill is verified against (single-source for the planner).
-    # A place RELEASES the held object, so the gripper ends empty: not holding_object()
-    # discriminates a real place (released -> False -> verify passes) from a failed one
-    # (still holding). Preferred over placed_count() >= 1, which is trivially true in a
-    # region-less robot world (all resting objects count) and so verifies nothing.
-    verify_hint: str = "not holding_object()"
+    # Success predicate this skill is verified against (single-source for the planner,
+    # auto-verified by the native runner). A place RELEASES the held object:
+    # released() is the positive release predicate (a weld 1->0 by this step), where
+    # ``not holding_object()`` is a negation the classifier never grounds and
+    # placed_count() >= 1 is trivially true in a region-less world.
+    verify_hint: str = "released()"
     failure_modes: list[str] = ["no_arm", "ik_unreachable", "move_failed"]
     parameters: dict = {
         "location": {

@@ -24,12 +24,18 @@ from vector_os_nano.vcli.cognitive.actor_causation import (
     grade,
     is_robot_predicate,
 )
+from vector_os_nano.vcli.cognitive.oracle_registry import OracleTag
 from vector_os_nano.vcli.cognitive.trace_store import classify_step_evidence
 from vector_os_nano.vcli.cognitive.types import StepRecord, SubGoal
 
-ROBOT_ORACLES = frozenset(
-    {"at_position", "facing", "visited", "holding_object", "arm_at_home"}
-)
+# The live evidence oracles with their @oracle tags (channel / transition), as
+# trace_store.verify_oracles returns them.
+_BASE = OracleTag(scope="robot", channel="base", transition="rise")
+ROBOT_ORACLES = {
+    "at_position": _BASE, "facing": _BASE, "visited": _BASE,
+    "holding_object": OracleTag(scope="robot", channel="gripper", transition="rise"),
+    "arm_at_home": OracleTag(scope="robot", channel="arm", transition="rise"),
+}
 
 
 # ---------------------------------------------------------------------------

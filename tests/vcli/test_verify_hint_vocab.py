@@ -9,7 +9,7 @@ PASSES the decompose validator — never model behaviour:
 
   1. ``Skill.to_schemas()`` surfaces each arm skill's declared ``verify_hint``
      (pick -> holding_object(), home -> arm_at_home(), detect ->
-     len(detect_objects()) > 0, place -> not holding_object()).
+     len(detect_objects()) > 0, place -> released()).
   2. ``build_decompose_vocab`` derives, world-agnostically:
        - per-strategy ``suggested verify:`` lines in strategy_params_help,
        - a few-shot example whose verify expression IS a skill's verify_hint,
@@ -45,6 +45,7 @@ _ARM_VERIFY_SIGS: dict[str, str] = {
     "detect_objects": "detect_objects(query='') -> list  # detections",
     "describe_scene": "describe_scene() -> str  # scene caption",
     "placed_count": "placed_count() -> int  # objects placed in region",
+    "released": "released() -> bool  # the gripper let go",
 }
 
 
@@ -70,7 +71,7 @@ def test_to_schemas_includes_verify_hint_per_skill() -> None:
     assert by_name["pick"]["verify_hint"] == "holding_object()"
     assert by_name["home"]["verify_hint"] == "arm_at_home()"
     assert by_name["detect"]["verify_hint"] == "len(detect_objects()) > 0"
-    assert by_name["place"]["verify_hint"] == "not holding_object()"
+    assert by_name["place"]["verify_hint"] == "released()"  # WP07: a positive release predicate
 
 
 def test_verify_hint_predicates_live_in_arm_verify_namespace() -> None:
@@ -83,7 +84,7 @@ def test_verify_hint_predicates_live_in_arm_verify_namespace() -> None:
         if hint == "True":
             continue
         # The predicate name is the token before the first "(".
-        for fn in ("holding_object", "arm_at_home", "detect_objects", "placed_count"):
+        for fn in ("holding_object", "arm_at_home", "detect_objects", "placed_count", "released"):
             if fn in hint:
                 assert fn in allowed
                 break
@@ -103,7 +104,7 @@ def test_params_help_carries_suggested_verify_per_skill() -> None:
     assert "suggested verify: holding_object()" in help_text
     assert "suggested verify: arm_at_home()" in help_text
     assert "suggested verify: len(detect_objects()) > 0" in help_text
-    assert "suggested verify: not holding_object()" in help_text
+    assert "suggested verify: released()" in help_text
 
 
 def test_example_uses_a_verify_hint_as_the_verify_expr() -> None:

@@ -80,6 +80,11 @@ def is_sim_agent(agent: Any) -> bool:
     return agent is not None and any(s.agent is agent for s in _LIVE)
 
 
+def sim_id(agent: Any) -> str:
+    """The embodiment id of the live SimSession whose body is *agent*, else ''."""
+    return next((s.spec.embodiment for s in _LIVE if agent is not None and s.agent is agent), "")
+
+
 class SimSession:
     """One running simulation: the Agent plus everything it owns."""
 
