@@ -283,3 +283,37 @@ def test_a_lifecycle_tool_recompiles_the_contract_for_the_new_body() -> None:
     assert "Task contract: at_position(2.0, 0.0)" in events
     report = VerdictReport.from_trace(trace, verify_oracle_names(app_state["agent"], eng))
     assert report.verified is True, report.reject_reason
+
+
+# ---------------------------------------------------------------------------
+# producers:place-deliver-goals-ungated / spine:no-turn-contract-fetch-place: a place
+# or fetch goal never grounds on an unrelated caused predicate, nor on another object
+# ---------------------------------------------------------------------------
+
+
+def _one_row(goal, verify, contract=None, start=None, end=None):
+    contract = task_contract(goal, APT, "apartment") if contract is None else contract
+    n = len(contract)
+    return _hand_trace(goal, verify, contract=contract, start=start or (False,) * n, end=end or (True,) * n)
+
+
+@pytest.mark.parametrize("goal, verify", [
+    ("put the red can on the dining table", "at_position(3.0, 7.5)"),     # walked there, placed nothing
+    ("把绿色瓶子拿过来", "near_object('user')"),                          # arrived, holding unproven
+    ("拿起绿色的瓶子", "holding_object('red can')"),                       # the wrong object
+    ("把绿色瓶子放到餐桌上", "object_on('green bottle', 'coffee_table')"),  # the wrong surface
+])
+def test_a_goal_never_grounds_on_another_caused_predicate(goal, verify) -> None:
+    assert turn_reject_reason(_one_row(goal, verify), APT) != ""
+
+
+def test_a_place_naming_no_surface_still_needs_a_release_or_placement() -> None:
+    t = _one_row("place the can on the table", "at_position(10.9, 3.0)")
+    assert t.contract == ()
+    assert "object_at/object_on/released" in turn_reject_reason(t, APT)
+    assert turn_reject_reason(_one_row("place the can on the table", "released('red can')"), APT) == ""
+
+
+def test_the_right_object_on_the_right_surface_grounds() -> None:
+    assert turn_reject_reason(_one_row("把绿色瓶子放到餐桌上", "object_on('green bottle', 'dining_table')"), APT) == ""
+    assert turn_reject_reason(_one_row("拿起绿色的瓶子", f"holding_object('{GREEN}')"), APT) == ""

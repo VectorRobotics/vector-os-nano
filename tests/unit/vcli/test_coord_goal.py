@@ -361,3 +361,15 @@ def test_turn_gate_keeps_honest_necessary_conjunctions() -> None:
     # I4 G3: a hedged conjunct is no evidence even beside the necessary at_position
     hedged = "at_position(11,3) and (in_room(0,0) or facing(1,0))"
     assert evidence_passed(_trace("走到坐标 (11,3)", [(hedged, "walk", True, _CA())]), _GO2) is False
+
+
+@pytest.mark.parametrize("goal", ["走到（11，3）", "走到坐标（11.0，3.0）", "go to (11, 3)"])
+def test_full_width_coordinates_parse_like_ascii(goal) -> None:
+    """I4 (spine:coord-intent-ascii-only): an IME's full-width （11，3） is the same
+    coordinate goal, so the coordinate gate and the task contract never fail open on it."""
+    from vector_os_nano.vcli.cognitive.coord_goal import goal_has_coordinate_intent, parse_goal_coord
+    from vector_os_nano.vcli.cognitive.object_goal import task_contract
+
+    assert parse_goal_coord(goal) == (11.0, 3.0)
+    assert goal_has_coordinate_intent(goal)
+    assert task_contract(goal, frozenset({"at_position"})) == ("at_position(11.0, 3.0)",)

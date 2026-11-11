@@ -27,6 +27,7 @@ from __future__ import annotations
 import ast
 import math
 import re
+import unicodedata
 
 # First (x, y) numeric pair in parentheses — matches "走到坐标 (11.0,3.0)" and
 # "go to (11,3)" (optional sign / decimals / whitespace).
@@ -73,7 +74,8 @@ def parse_goal_coord(goal_text: str | None) -> tuple[float, float] | None:
     """
     if not goal_text:
         return None
-    matches = _COORD_RE.findall(goal_text)
+    # NFKC: an IME's full-width （11，3） is the same coordinate as (11,3).
+    matches = _COORD_RE.findall(unicodedata.normalize("NFKC", goal_text))
     if not matches:
         return None
     coords = {(float(x), float(y)) for x, y in matches}
@@ -250,7 +252,7 @@ def goal_has_coordinate_intent(goal_text: str | None) -> bool:
     """
     if not goal_text:
         return False
-    return bool(_COORD_INTENT_RE.search(goal_text))
+    return bool(_COORD_INTENT_RE.search(unicodedata.normalize("NFKC", goal_text)))
 
 
 def coord_goal_mismatch(

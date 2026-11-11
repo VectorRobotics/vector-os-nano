@@ -1256,9 +1256,8 @@ def _run_turn_native(
             turns += 1
             if finished:
                 break
-        else:
-            if token.cancelled:
-                runner.record_abort("aborted")
+        else:  # the round-trip cap ran out before the model finished: say so, on the record
+            runner.record_abort("aborted" if token.cancelled else f"turn cap reached ({max_turns} model round-trips)")
     except Exception as exc:  # noqa: BLE001 — a producer bug after an action: own the turn
         if not runner.actions_dispatched:
             raise
