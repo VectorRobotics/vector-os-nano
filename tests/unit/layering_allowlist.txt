@@ -41,24 +41,11 @@
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/actor_causation.py | vcli.worlds.sim_oracles._FACING_TOL_RAD
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/coord_goal.py | vcli.worlds.sim_oracles
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/coord_goal.py | vcli.worlds.sim_oracles._AT_POSITION_TOL_M
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/goal_executor.py | sim.runtime
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/goal_executor.py | sim.runtime.ACTOR_EPOCH
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/goal_executor.py | skills.go2.explore
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/goal_executor.py | skills.go2.explore.is_exploring
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/object_goal.py | vcli.worlds.world_manifest
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/object_goal.py | vcli.worlds.world_manifest.WorldManifestError
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/object_goal.py | vcli.worlds.world_manifest.load_world
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/trace_store.py | vcli.worlds.registry
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/trace_store.py | vcli.worlds.registry.resolve_world
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/vocab_from_registry.py | vcli.worlds.base.DecomposeVocab
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | embodiments.capability_profile
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | embodiments.capability_profile.resolve_capability_profile
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | sim.nav.coverage
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | sim.nav.coverage.room_layout
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | skills.navigate
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | skills.navigate._resolve_room
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.dev
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.dev.DEV_TOOL_ALLOWLIST
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.registry
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.registry.resolve_world
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | embodiments.capability_profile
@@ -70,8 +57,6 @@
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.mark_turn
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.session_for
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.sim_id
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | vcli.worlds.sim_oracles
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | vcli.worlds.sim_oracles._AT_POSITION_TOL_M
 5 core imports only interfaces and schemas | core/agent.py | hardware.so101.gripper
 5 core imports only interfaces and schemas | core/agent.py | hardware.so101.gripper.SO101Gripper
 5 core imports only interfaces and schemas | core/agent.py | hardware.so101.ik_solver
