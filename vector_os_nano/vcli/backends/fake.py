@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Scripted test LLMs that drive the REAL cli.main through the native producer.
+"""Scripted LLMs: the packaged test seam that drives the REAL ``vector-cli``.
 
-The backend-injection seam in ``runtime.make_backend`` is gated ONLY on
-the env var ``VECTOR_FAKE_LLM_TOOLS=<json-path>``: the network LLM is replaced by a
-``FakeToolScriptBackend`` (an open-loop ``{"turns"}`` script) or a
-``ReactiveFakeBackend`` (a ``{"steps"}`` script keyed on what the model observes).
-Only the network LLM is replaced: every tool, GoalVerifier, actor-causation grade
-and verdict still runs, so the verdict stays honest by construction.
+Switched on ONLY by the test-seam variables: ``VECTOR_FAKE_LLM_TOOLS=<json-path>``
+(``runtime.make_backend`` replaces the network LLM with a ``FakeToolScriptBackend``
+for an open-loop ``{"turns"}`` script or a ``ReactiveFakeBackend`` for a ``{"steps"}``
+script keyed on what the model observes) and ``VECTOR_FAKE_LLM_LOG`` (each reactive
+call's observation, one JSON line). Only the network LLM is replaced: every tool,
+GoalVerifier, actor-causation grade and verdict still runs, so the verdict stays
+honest by construction.
 """
 from __future__ import annotations
 
@@ -65,7 +66,7 @@ class FakeToolScriptBackend:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(data, dict) and "steps" in data:
             # A reactive (closed-loop) script rides the SAME env seam, so the CLI
-            # under test stays bare `vector-cli` (cli.py imports only this class).
+            # under test stays bare `vector-cli` (the seam names only this class).
             return ReactiveFakeBackend(data["steps"])  # type: ignore[return-value]
         if not isinstance(data, dict) or "turns" not in data:
             raise ValueError(

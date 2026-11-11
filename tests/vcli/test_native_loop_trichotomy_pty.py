@@ -153,7 +153,7 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
             base.wait_sim(0.15)
             return SkillResult(success=True, result_data={"x": params.get("x")})
 
-    from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+    from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 
     base = MuJoCoGo2(gui=False, room=True, backend="auto")
     base.connect()

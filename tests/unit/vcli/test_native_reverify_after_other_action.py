@@ -10,7 +10,7 @@ read recorded success=True, because only the chain's LAST tool was looked at.
 """
 from __future__ import annotations
 
-from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from tests.unit.vcli.test_native_loop import (
     _Skill, _make_agent, _make_engine, _nav_agent, _session, _verdict,
 )

@@ -60,16 +60,15 @@ def make_backend(creds: Any) -> Any:
     """The LLM backend for *creds* (None while its key is missing), with the
     deterministic test seam.
 
-    ``VECTOR_FAKE_LLM_TOOLS=<json-path>`` replaces the network model with a script
-    replay (``tests/harness/fake_backend.py``); every tool, verify, permission and
-    verdict is still the product's own.
+    ``VECTOR_FAKE_LLM_TOOLS=<json-path>`` (a test seam) replaces the network model
+    with a script replay (``vcli/backends/fake.py``); every tool, verify, permission
+    and verdict is still the product's own.
     """
     from vector_os_nano.vcli.backends import create_backend
 
     tools_path = os.environ.get("VECTOR_FAKE_LLM_TOOLS")
     if tools_path:
-        # TEST-ONLY import (lazy, gated on the env var): production never reaches it.
-        from tests.harness.fake_backend import FakeToolScriptBackend
+        from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend
 
         return FakeToolScriptBackend.from_json_file(tools_path)
     if not creds.api_key:

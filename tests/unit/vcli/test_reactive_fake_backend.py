@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.harness.fake_backend import FakeToolScriptBackend, ReactiveFakeBackend
+from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, ReactiveFakeBackend
 
 
 class _WriteFileSkill:

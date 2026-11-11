@@ -57,7 +57,7 @@ def test_present_env_uses_the_tool_script_backend(tmp_path: Path, monkeypatch: p
     with patch.object(backends, "create_backend") as real:
         backend = runtime.make_backend(_CREDS)
     real.assert_not_called()
-    from tests.harness.fake_backend import FakeToolScriptBackend
+    from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend
 
     assert isinstance(backend, FakeToolScriptBackend)
     assert isinstance(backend, LLMBackend)  # structural Protocol check
@@ -66,7 +66,7 @@ def test_present_env_uses_the_tool_script_backend(tmp_path: Path, monkeypatch: p
 
 @pytest.mark.cli_main
 def test_scripted_true_verify_classifies_ran_not_grounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+    from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
     from vector_os_nano.vcli.engine import VectorEngine
     from vector_os_nano.vcli.permissions import PermissionContext
@@ -87,3 +87,21 @@ def test_scripted_true_verify_classifies_ran_not_grounded(tmp_path: Path, monkey
     assert (tmp_path / "x.txt").read_text() == "y"  # the write really ran
     report = VerdictReport.from_trace(trace, verify_oracle_names(None, eng))
     assert report.verified is False and report.evidence == "RAN"
+
+
+def test_the_package_never_imports_the_tests_package() -> None:
+    """tests-gate-e2e:prod-cli-imports-tests-package: the scripted LLM is a packaged
+    seam (vcli/backends/fake.py); no package module imports ``tests`` (an installed
+    wheel has none)."""
+    import ast
+
+    import vector_os_nano
+
+    pkg = Path(vector_os_nano.__file__).resolve().parent
+    bad = []
+    for path in pkg.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            names = [a.name for a in node.names] if isinstance(node, ast.Import) else \
+                [node.module or ""] if isinstance(node, ast.ImportFrom) and not node.level else []
+            bad += [f"{path.relative_to(pkg)}: {n}" for n in names if n == "tests" or n.startswith("tests.")]
+    assert bad == []

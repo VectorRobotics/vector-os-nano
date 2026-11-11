@@ -26,7 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
 from vector_os_nano.vcli.cognitive.trace_store import (
     evidence_passed,

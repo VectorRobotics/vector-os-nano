@@ -35,7 +35,7 @@ def _run(tool_script, on_progress=None, skill=None):
     from vector_os_nano.vcli.session import Session
     from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
     from vector_os_nano.vcli.worlds.dev import DevWorld
-    from tests.harness.fake_backend import FakeToolScriptBackend
+    from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend
 
     class _WriteFileSkill:
         name = "write_file"
@@ -69,7 +69,7 @@ def _run(tool_script, on_progress=None, skill=None):
 
 
 def test_batched_action_verify_uses_fewer_roundtrips():
-    from tests.harness.fake_backend import tool_turn
+    from vector_os_nano.vcli.backends.fake import tool_turn
 
     write = ("write_file", {"file_path": "out.txt", "content": "ready\n"})
     verify = ("verify", {"expr": "path_contains('out.txt', 'ready')"})
@@ -90,7 +90,7 @@ def test_batched_action_verify_uses_fewer_roundtrips():
 def test_on_progress_streams_steps():
     """D9 #2 perceived latency: on_progress fires per tool call (+ model text), so
     the REPL spinner shows live activity instead of a frozen 'load 好几秒'."""
-    from tests.harness.fake_backend import tool_turn
+    from vector_os_nano.vcli.backends.fake import tool_turn
 
     msgs: list[str] = []
     _run(
@@ -116,7 +116,7 @@ def test_verify_skip_is_nudged_then_recorded():
     """Model runs the action then STOPS without verifying -> the runner nudges, and
     once the model verifies, the step is recorded. Without the nudge the turn would
     break at the empty end_turn and the trace would be empty (steps=0)."""
-    from tests.harness.fake_backend import tool_turn
+    from vector_os_nano.vcli.backends.fake import tool_turn
 
     msgs: list[str] = []
     _calls, trace = _run(
@@ -132,7 +132,7 @@ def test_stubborn_no_verify_terminates_bounded_and_honest():
     """A model that NEVER verifies (only an action, then narration) still terminates
     (bounded nudges, not max_turns), and the action stays ON the record as an unproven
     step (never silently dropped, which let the caller re-run it) — never a false green."""
-    from tests.harness.fake_backend import tool_turn
+    from vector_os_nano.vcli.backends.fake import tool_turn
     from vector_os_nano.vcli.verdict import VerdictReport
 
     calls, trace = _run([tool_turn(_WRITE)])  # then script exhausts -> end_turn forever
@@ -145,7 +145,7 @@ def test_stubborn_no_verify_terminates_bounded_and_honest():
 
 def test_compliant_finish_after_verify_not_nudged():
     """Action+verify then finish: finish is accepted with no nudge (one graded step)."""
-    from tests.harness.fake_backend import tool_turn
+    from vector_os_nano.vcli.backends.fake import tool_turn
 
     msgs: list[str] = []
     _calls, trace = _run(
@@ -163,7 +163,7 @@ def test_recover_after_failed_verify_records_fail_then_pass():
     re-acts after FAIL until PASS; this guards the path with a scripted retry."""
     from pathlib import Path as _P
     from vector_os_nano.core.types import SkillResult
-    from tests.harness.fake_backend import tool_turn
+    from vector_os_nano.vcli.backends.fake import tool_turn
 
     class _FlakyWrite:
         name = "write_file"; description = "write text to a file"
@@ -193,7 +193,7 @@ def test_multistep_plan_records_one_step_per_subgoal():
     """PLAN/ROUTE (north-star #1/#2): a 2-step task decomposes into 2 (action->verify)
     steps, both GROUNDED. Real-LLM confirmed (R9/D27): haiku decomposes + routes +
     verifies EACH step (out.txt='a', done.txt='b'); this guards the path scripted."""
-    from tests.harness.fake_backend import tool_turn
+    from vector_os_nano.vcli.backends.fake import tool_turn
 
     w1 = ("write_file", {"file_path": "out.txt", "content": "a"})
     v1 = ("verify", {"expr": "path_contains('out.txt', 'a')"})

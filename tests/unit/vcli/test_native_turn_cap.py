@@ -4,7 +4,7 @@
 the record as an aborted step that says so — never as a silent, unexplained stop."""
 from __future__ import annotations
 
-from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from tests.unit.vcli.test_native_loop import _make_agent, _make_engine, _session, _verdict
 
 
