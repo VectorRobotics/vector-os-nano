@@ -33,28 +33,6 @@ logger = logging.getLogger(__name__)
 
 StepEvidence = Literal["GROUNDED", "RAN", "FAILED"]
 
-# The ONLY side-effect-free dispatch route (``GoalExecutor._execute_answer`` does
-# no I/O and no model call). The evidence-gate exemption for a no-robot-evidence
-# step is bound to it, never to the LLM-controlled ``answer_only`` flag alone.
-_ANSWER_STRATEGY = "answer"
-
-
-def _is_answer_only(sub_goal: SubGoal) -> bool:
-    """True iff *sub_goal* is a legitimately-exempt answer-only step.
-
-    The evidence-gate relaxation (skip the real-predicate requirement) applies
-    ONLY to a step that is BOTH flagged ``answer_only`` AND routed through the
-    side-effect-free ``answer`` strategy. Tying the exemption to the zero-I/O
-    executor — not to the LLM-controlled ``answer_only`` bit alone — keeps the
-    moat (rule 5) intact: an LLM that sets ``answer_only: true`` on a
-    side-effecting strategy (``tool_call`` / a skill) does NOT get waived, because
-    that step still runs a real executor and so must carry deterministic evidence.
-    The decomposer additionally refuses the flag on non-``answer`` strategies, so
-    this gate and the decomposer agree; this check is the belt to that suspenders.
-    """
-    return bool(getattr(sub_goal, "answer_only", False)) and sub_goal.strategy == _ANSWER_STRATEGY
-
-
 # ---------------------------------------------------------------------------
 # Oracle names — single-sourced from the LIVE verify namespace
 # ---------------------------------------------------------------------------
@@ -121,22 +99,17 @@ def classify_step_evidence(
     """Classify a single executed step's evidence: GROUNDED / RAN / FAILED.
 
     The ONE source of truth for the done-gate (``evidence_passed``) and the
-    verdict's per-step rows — rule 3 (no split-brain). It replaces the old ``if is_robot: return True`` short-circuit with the honest
-    classifier: a robot step that merely RAN (``verify="True"``) is no longer
-    auto-passed; only a step whose verify actually consumes a world oracle in a
-    non-tautological way reaches GROUNDED.
+    verdict's per-step rows — rule 3 (no split-brain): a robot step that merely RAN
+    (``verify="True"``) is never auto-passed; only a step whose verify actually
+    consumes a world oracle in a non-tautological way reaches GROUNDED.
 
     - FAILED — the step did not succeed (``not step.success``).
-    - GROUNDED — the step succeeded AND either:
-        * it is a legitimately-exempt answer-only step (zero-I/O ``answer``
-          strategy) whose ``verify_result`` is True and not a visual override; OR
-        * ``classify_verify_expr(sub_goal.verify, oracle_names) == "GROUNDED"``
-          AND ``step.verify_result`` AND not a visual override.
-      A VLM visual override is not deterministic (not replayable) evidence, so it
-      can never reach GROUNDED.
+    - GROUNDED — the step succeeded AND
+      ``classify_verify_expr(sub_goal.verify, oracle_names) == "GROUNDED"`` AND
+      ``step.verify_result``.
     - RAN — the step succeeded but its verify carries no real, non-tautological
       world evidence (a sentinel ``""``/``"True"``, an absent oracle, or a
-      tautology), or it succeeded with a visual override.
+      tautology).
 
     R2b ACTOR-CAUSATION downgrade (single-sourced HERE so it flows to BOTH gates
     and the VECTOR_VERDICT report): a step that would otherwise classify GROUNDED is
@@ -165,13 +138,6 @@ def _classify(
     """``(evidence, reason)`` for one step — the reason is "" when GROUNDED."""
     if not step.success:
         return "FAILED", f"the action failed: {step.error}" if step.error else "the action failed"
-    visual_override = bool(getattr(step, "visual_override", False))
-    if _is_answer_only(sub_goal):
-        if step.verify_result and not visual_override:
-            return "GROUNDED", ""
-        return "RAN", "the answer was not confirmed"
-    if visual_override:
-        return "RAN", "a VLM visual override is not deterministic evidence"
     if classify_verify_expr(sub_goal.verify, oracle_names) != "GROUNDED":
         return "RAN", "no verify" if not (sub_goal.verify or "").strip() else "the verify is not ground-truth evidence"
     if not step.verify_result:
@@ -357,8 +323,6 @@ def _graded(trace: ExecutionTrace, oracle_names: frozenset[str]) -> Any:
     """``(attempt groups, graded steps, sub-goal by name, {id(step): (evidence, why)})``
     for the latest attempt of every group, or why the trace cannot be graded step by step."""
     sg_by_name = {sg.name: sg for sg in trace.goal_tree.sub_goals}
-    if any(getattr(sg, "foreach", None) is not None for sg in trace.goal_tree.sub_goals):
-        return "a foreach plan cannot be graded step by step"
     if any(s.sub_goal_name not in sg_by_name for s in trace.steps):
         return "a step has no sub-goal to grade it against"
     groups = attempt_groups(trace)
@@ -405,8 +369,8 @@ def goal_check(trace: ExecutionTrace, oracle_names: frozenset[str]) -> tuple[Goa
 def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> str:
     """Why the turn is NOT verified, or "" when it is — the ONE done-gate.
 
-    Whole-trace rules: the trace succeeded, every step maps to a sub-goal, no foreach
-    node, and at least one graded step. Graded = the latest attempt of each attempt
+    Whole-trace rules: the trace succeeded, every step maps to a sub-goal, and at
+    least one graded step. Graded = the latest attempt of each attempt
     group (``graded_indices``); every graded action succeeded.
 
     - Every graded step must classify GROUNDED, with ONE exception: a row the

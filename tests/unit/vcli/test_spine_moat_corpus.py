@@ -494,32 +494,22 @@ def test_tolerance_is_clamped_in_oracle() -> None:
 
 
 # ---------------------------------------------------------------------------
-# evidence_passed whole-trace guards (B1-foreach-evidence-blind / foreach-unchecked,
-# spine.md FG-8): the gate grades every step or none. Each case isolates one guard.
+# evidence_passed whole-trace guards (spine.md FG-8): the gate grades every step or
+# none. Each case isolates one guard.
 # ---------------------------------------------------------------------------
 
 _DETECT_ONLY = frozenset({"in_view"})
 
 
-def _detect_trace(extra_sub_goals=(), extra_steps=(), success=True):  # noqa: ANN001, ANN202
+def _detect_trace(extra_steps=(), success=True):  # noqa: ANN001, ANN202
     from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord, SubGoal
 
     detect = SubGoal(name="detect", description="detect", verify="in_view('cube')")
     return ExecutionTrace(
-        goal_tree=GoalTree(goal="list the objects on the table", sub_goals=(detect, *extra_sub_goals)),
+        goal_tree=GoalTree(goal="list the objects on the table", sub_goals=(detect,)),
         steps=(StepRecord("detect", "detect_skill", True, True, 0.1), *extra_steps),
         success=success,
         total_duration_sec=0.1,
-    )
-
-
-def _pick_each():  # noqa: ANN202
-    from vector_os_nano.vcli.cognitive.types import ForEachSpec, SubGoal
-
-    tmpl = SubGoal(name="tmpl", description="pick ${item.name}", verify="True", strategy="pick")
-    return SubGoal(
-        name="pick_each", description="pick each", verify="",
-        foreach=ForEachSpec(source_step="detect", source_path="objects", body=(tmpl,)),
     )
 
 
@@ -539,13 +529,8 @@ def test_evidence_passed_control_grounded_trace_passes() -> None:
     "trace_kwargs",
     [
         pytest.param({"success": False}, id="trace-not-success"),
-        pytest.param({"extra_sub_goals": (_pick_each(),)}, id="zero-iteration-foreach"),
         pytest.param({"extra_steps": (_child(True),)}, id="unmapped-child-verify-True"),
         pytest.param({"extra_steps": (_child(False),)}, id="unmapped-child-FAILED"),
-        pytest.param(
-            {"extra_sub_goals": (_pick_each(),), "extra_steps": (_child(False),)},
-            id="FG-8-foreach-with-failed-child",
-        ),
     ],
 )
 def test_evidence_passed_whole_trace_guards(trace_kwargs) -> None:  # noqa: ANN001

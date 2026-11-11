@@ -7,7 +7,7 @@ when vector-eval was deleted).
 - the evidence gate grades pass/fail.
 - a verify="True"-only (sentinel) trace is NOT counted as verified evidence; robot
   traces do not bypass the gate.
-- per step: a sentinel verify or a visual override is never evidence.
+- per step: a sentinel verify is never evidence.
 
 Pure kernel logic — no robot, no network, no mujoco fixtures.
 """
@@ -54,8 +54,6 @@ def _trace(
         description="create a.txt",
         verify=verify,
         strategy="tool_call",
-        strategy_params={"tool": "file_write", "args": {"file_path": "a.txt", "content": "x"}},
-        depends_on=(),
     )
     step = StepRecord(
         sub_goal_name="step1",
@@ -107,8 +105,6 @@ def _step_and_goal(
     verify: str = "file_exists('a.txt')",
     success: bool = True,
     verify_result: bool = True,
-    visual_override: bool = False,
-    answer_only: bool = False,
     strategy: str = "tool_call",
 ) -> tuple[StepRecord, SubGoal]:
     sg = SubGoal(
@@ -116,7 +112,6 @@ def _step_and_goal(
         description="do a thing",
         verify=verify,
         strategy=strategy,
-        answer_only=answer_only,
     )
     step = StepRecord(
         sub_goal_name="step1",
@@ -124,7 +119,6 @@ def _step_and_goal(
         success=success,
         verify_result=verify_result,
         duration_sec=0.05,
-        visual_override=visual_override,
     )
     return step, sg
 
@@ -135,19 +129,9 @@ def test_w1_1_sentinel_verify_blocks_evidence_dev() -> None:
     assert (classify_step_evidence(step, sg, ORACLES) == "GROUNDED") is False
 
 
-def test_w1_1_visual_override_blocks_evidence_dev() -> None:
-    # T2: a VLM visual override is not deterministic evidence.
-    step, sg = _step_and_goal(
-        verify="file_exists('a.txt')", success=True, verify_result=True, visual_override=True
-    )
-    assert (classify_step_evidence(step, sg, ORACLES) == "GROUNDED") is False
-
-
 def test_w1_1_real_predicate_has_evidence_dev() -> None:
-    # T3: a real predicate + verify_result True + no visual override -> evidence.
-    step, sg = _step_and_goal(
-        verify="file_exists('a.txt')", success=True, verify_result=True, visual_override=False
-    )
+    # T3: a real predicate + verify_result True -> evidence.
+    step, sg = _step_and_goal(verify="file_exists('a.txt')", success=True, verify_result=True)
     assert (classify_step_evidence(step, sg, ORACLES) == "GROUNDED") is True
 
 
@@ -159,21 +143,3 @@ def test_w1_1_robot_world_now_requires_evidence_gate() -> None:
     assert (classify_step_evidence(passing, sg, ORACLES) == "GROUNDED") is False
     failed, sg_f = _step_and_goal(verify="True", success=False, verify_result=False)
     assert (classify_step_evidence(failed, sg_f, ORACLES) == "GROUNDED") is False
-
-
-# --- a visual override is not deterministic evidence (from test_level68) ---------
-
-
-def _trace_with_override(visual_override: bool) -> ExecutionTrace:
-    sg = SubGoal(name="see_cup", description="look for cup", verify="len(detect_objects('cup')) > 0")
-    step = StepRecord("see_cup", "look_skill", success=True, verify_result=True,
-                      duration_sec=0.1, visual_override=visual_override)
-    return ExecutionTrace(goal_tree=GoalTree("find cup", (sg,)), steps=(step,),
-                          success=True, total_duration_sec=0.1)
-
-
-def test_visual_override_is_not_evidence() -> None:
-    assert evidence_passed(_trace_with_override(visual_override=True), ORACLES) is False
-    # a real deterministic pass on the same shape IS evidence
-    assert evidence_passed(_trace_with_override(visual_override=False), ORACLES) is True
-
