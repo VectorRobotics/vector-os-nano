@@ -156,6 +156,25 @@ def test_home_as_the_project_root_never_auto_allows(box: dict[str, Path]) -> Non
     assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, box["home"]) == "ask"
 
 
+@pytest.mark.parametrize("pseudo", ["/proc", "/proc/self", "/sys", "/dev"])
+def test_an_ancestor_of_home_or_a_pseudo_fs_as_the_root_never_auto_allows(
+        box: dict[str, Path], pseudo: str) -> None:
+    """cwd=/home with HOME=/home/alice: 'alice/.npmrc' lies inside the root, yet it is
+    a home dotfile secret and must not auto-allow; neither may /proc/self/environ."""
+    home = box["home"]
+    (home / ".npmrc").write_text(SECRET)
+    (home / ".cache" / "huggingface").mkdir(parents=True)
+    (home / ".cache" / "huggingface" / "token").write_text(SECRET)
+    for cwd in (home.parent, home.parent.parent):
+        rel = os.path.relpath(home, cwd)
+        for f in (".npmrc", ".bash_history", ".cache/huggingface/token"):
+            assert _decide(FileReadTool(), {"file_path": f"{rel}/{f}"}, cwd) != "allow", (cwd, f)
+        for tool, params in ((GlobTool(), {"pattern": "**/*"}), (GrepTool(), {"pattern": "x"})):
+            assert _decide(tool, {**params, "path": "."}, cwd) != "allow", (cwd, tool)
+    assert _decide(FileReadTool(), {"file_path": "self/environ"}, Path("/proc")) != "allow"
+    assert _decide(GrepTool(), {"pattern": "PATH=", "path": "."}, Path(pseudo)) != "allow"
+
+
 def test_search_tools_ask_outside_the_project(box: dict[str, Path]) -> None:
     cwd = box["project"]
     for tool, params in ((GlobTool(), {"pattern": "*"}), (GrepTool(), {"pattern": "x"})):
@@ -229,6 +248,11 @@ def test_grep_option_like_pattern_is_searched_literally(box: dict[str, Path]) ->
 def test_glob_pattern_cannot_climb_out_of_the_root(box: dict[str, Path]) -> None:
     res = GlobTool().execute({"pattern": "../home/.ssh/*"}, _ctx(box["project"]))
     assert res.is_error and "id_ed25519" not in res.content
+
+
+def test_glob_an_absolute_pattern_is_a_clean_error(box: dict[str, Path]) -> None:
+    res = GlobTool().execute({"pattern": "/etc/*"}, _ctx(box["project"]))
+    assert res.is_error and "shadow" not in res.content
 
 
 def test_glob_execute_refuses_a_protected_root(box: dict[str, Path]) -> None:

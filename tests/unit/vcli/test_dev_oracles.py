@@ -187,13 +187,34 @@ def test_home_as_cwd_is_no_content_oracle(tmp_path: Path, monkeypatch) -> None:
     assert _verify("grep_count('S') == 0") is False
 
 
-def test_root_as_cwd_is_no_probe_of_the_process_environment(monkeypatch) -> None:
-    """Started in /, a per-character probe of /proc/self/environ (where an LLM key lives)."""
-    monkeypatch.chdir("/")
-    for expr in ("path_contains('proc/self/environ', 'PATH=')",
-                 "not path_contains('proc/self/environ', 'PATH=#no-such-value#')",
-                 "grep_count('PATH=', 'proc/self/environ') > 0",
-                 "grep_count('PATH=#no-such-value#', 'proc/self/environ') == 0"):
+def test_an_ancestor_of_home_as_cwd_is_no_content_oracle(tmp_path: Path, monkeypatch) -> None:
+    """Started in /home with HOME=/home/alice: 'alice/.npmrc' lies under the root."""
+    home = tmp_path / "home" / "alice"
+    for rel, text in _HOME_FILES.items():
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).write_text(text)
+    monkeypatch.setenv("HOME", str(home))
+    for cwd in (home.parent, tmp_path):
+        monkeypatch.chdir(cwd)
+        base = os.path.relpath(home, cwd)
+        for rel, text in _HOME_FILES.items():
+            rel = f"{base}/{rel}"
+            prefix, wrong = text[:-1], text[:-1] + "#"
+            for expr in (f"path_contains({rel!r}, {prefix!r})", f"not path_contains({rel!r}, {wrong!r})",
+                         f"grep_count({prefix!r}, {rel!r}) == 1", f"grep_count({wrong!r}, {rel!r}) == 0"):
+                assert _verify(expr) is False, (cwd, expr)
+        assert _verify("grep_count('S') == 0") is False
+
+
+@pytest.mark.parametrize("cwd,rel", [("/", "proc/self/environ"), ("/proc", "self/environ"),
+                                     ("/proc/self", "environ")])
+def test_root_or_proc_as_cwd_is_no_probe_of_the_process_environment(monkeypatch, cwd, rel) -> None:
+    """Started in / or /proc, a per-character probe of /proc/self/environ (where an LLM key lives)."""
+    monkeypatch.chdir(cwd)
+    for expr in (f"path_contains({rel!r}, 'PATH=')",
+                 f"not path_contains({rel!r}, 'PATH=#no-such-value#')",
+                 f"grep_count('PATH=', {rel!r}) > 0",
+                 f"grep_count('PATH=#no-such-value#', {rel!r}) == 0"):
         assert _verify(expr) is False, expr
 
 

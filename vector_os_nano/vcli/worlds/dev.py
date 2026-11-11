@@ -62,7 +62,8 @@ def _readable_path(path: str) -> Path:
 def file_exists(path: str) -> bool:
     """True if *path* (relative to cwd) exists. Existence is not content, so a
     protected path inside the project may be asked about; anything read_permission
-    would not auto-allow for its location ($HOME or / as cwd, outside cwd) raises."""
+    would not auto-allow for its location ($HOME, an ancestor of it or a pseudo-fs
+    as cwd, outside cwd) raises."""
     p = real_path(path)
     if not in_project(p, project_root(None)):
         raise PermissionError(f"verify may not look outside the project: {path}")

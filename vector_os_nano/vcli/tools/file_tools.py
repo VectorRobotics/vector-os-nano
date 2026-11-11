@@ -78,8 +78,11 @@ def project_root(context: Any) -> Path:
 
 
 def in_project(path: Path, root: Path) -> bool:
-    """The REAL *path* lies inside *root*, and root is neither $HOME nor /."""
-    return root not in (Path("/"), Path(os.path.realpath(Path.home()))) and _within(path, root)
+    """The REAL *path* lies inside *root*, and root is neither $HOME, an ancestor of it
+    (/, /home, /Users), nor inside a pseudo-fs (/proc, /sys, /dev)."""
+    home = Path(os.path.realpath(Path.home()))
+    pseudo = any(_within(root, Path(p)) for p in ("/proc", "/sys", "/dev"))
+    return not (pseudo or root == home or root in home.parents) and _within(path, root)
 
 
 def read_permission(path_str: str, context: Any) -> PermissionResult:
@@ -87,7 +90,7 @@ def read_permission(path_str: str, context: Any) -> PermissionResult:
 
     deny  — the real path is protected (credential deny-list, .git);
     allow — the real path lies inside the project root (in_project);
-    ask   — anything else (a home dir or / as the root never auto-allows).
+    ask   — anything else ($HOME, an ancestor of it or a pseudo-fs as the root never auto-allows).
     """
     root = project_root(context)
     path = real_path(path_str, root)

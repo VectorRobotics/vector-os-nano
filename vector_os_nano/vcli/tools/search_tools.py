@@ -77,7 +77,7 @@ class GlobTool:
         try:
             # A dir symlink in the tree must not list a secret dir or an outside dir.
             matches = [m for m in search_path.glob(pattern) if _readable(m, search_path)]
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, NotImplementedError) as exc:
             return ToolResult(content=f"Error: {exc}", is_error=True)
 
         if not matches:
