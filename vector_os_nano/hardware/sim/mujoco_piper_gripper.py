@@ -9,20 +9,21 @@ an equality constraint defined in the Menagerie MJCF. Names and range come
 from the manifest arm block's ``gripper`` (``embodiments/go2_piper/robot.yaml``).
 
 A grasp is physical first: ``close()`` drives the jaws shut, waits (sim time)
-for them to settle, and welds an object ONLY if it is in contact with EVERY
-finger body while the jaws are held open by it. The weld then keeps the soft
+for them to settle, and asks the runtime for the world-side grasp decision
+(``sim/grasp.py``): an object is attached ONLY if it is in contact with EVERY
+finger body while the jaws are held open by it. The attachment then keeps the soft
 position-controlled grip from slipping; it never attracts an object that is
-merely near the gripper.
+merely near the gripper. This driver never attaches or detaches anything itself.
 
-Shares MjModel/MjData with the parent MuJoCoGo2; every write (jaw ctrl, weld
-on/off) goes through the parent's SimRuntime at a step boundary.
+Shares the parent MuJoCoGo2's world; every write (jaw ctrl, grasp, release) goes
+through its SimRuntime at a step boundary.
 """
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from vector_os_nano.sim.grasp import GraspSpec
 
 if TYPE_CHECKING:  # pragma: no cover
     from vector_os_nano.embodiments.config import GripperSpec
@@ -67,10 +68,8 @@ class MuJoCoPiperGripper:
         self._connected: bool = False
         self._actuator_id: int = -1
         self._joint_qpos_adr: int = -1
-        self._finger_geoms: list[frozenset[int]] = []  # collision geoms, one set per finger
-        self._welds: dict[int, int] = {}  # object body id -> its weld equality index
-        self._held_object: str | None = None  # body welded by the last close()
-        self._gt: Any = None
+        self._grasp: GraspSpec | None = None  # the manifest gripper in canonical ids
+        self._held_object: str | None = None  # body attached by the last close()
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -97,31 +96,28 @@ class MuJoCoPiperGripper:
             raise RuntimeError(f"MuJoCoPiperGripper: joint {spec.joint!r} not in loaded MJCF.")
         self._joint_qpos_adr = int(model.jnt_qposadr[jid])
 
-        self._finger_geoms = []
         for body in spec.finger_bodies:
             bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body)
-            geoms = frozenset(
-                g for g in range(model.ngeom)
-                if model.geom_bodyid[g] == bid and (model.geom_contype[g] or model.geom_conaffinity[g])
-            )
-            if bid < 0 or not geoms:
+            if bid < 0 or not any(
+                model.geom_bodyid[g] == bid and (model.geom_contype[g] or model.geom_conaffinity[g])
+                for g in range(model.ngeom)
+            ):
                 raise RuntimeError(f"MuJoCoPiperGripper: finger body {body!r} has no collision geom")
-            self._finger_geoms.append(geoms)
-        if not self._finger_geoms:
+        if not spec.finger_bodies:
             raise RuntimeError("MuJoCoPiperGripper: the manifest names no finger_bodies")
-
-        weld_bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, spec.weld_body)
-        self._welds = {
-            int(model.eq_obj2id[i]): i for i in range(model.neq)
-            if model.eq_type[i] == mj.mjtEq.mjEQ_WELD and int(model.eq_obj1id[i]) == weld_bid
-        }
-        from vector_os_nano.sim.ground_truth import GroundTruth
-
-        self._gt = GroundTruth(self._go2.runtime, robot_root_bid=self._go2._mj.layout.root_bid)
+        scene = self._go2.runtime.world.scene
+        self._grasp = GraspSpec(
+            weld_body=scene.body(spec.weld_body),
+            finger_bodies=tuple(scene.body(b) for b in spec.finger_bodies),
+            jaw_joint=scene.joint(spec.joint),
+            closed=float(spec.closed),
+            min_opening=float(spec.min_opening),
+        )
         self._connected = True
         logger.info(
-            "MuJoCoPiperGripper connected (actuator=%s, closed=%.3f, open=%.3f, %d weldable objects)",
-            spec.actuator, spec.closed, spec.open, len(self._welds),
+            "MuJoCoPiperGripper connected (actuator=%s, closed=%.3f, open=%.3f, %d graspable objects)",
+            spec.actuator, spec.closed, spec.open,
+            sum(p == self._grasp.weld_body for p, _c in scene.grasp_pairs),
         )
 
     def disconnect(self) -> None:
@@ -138,33 +134,27 @@ class MuJoCoPiperGripper:
     # ------------------------------------------------------------------
 
     def open(self) -> bool:
-        """Open the jaws and release every grasp weld (one step boundary), verified.
+        """Open the jaws and release whatever the gripper holds, verified.
 
-        Returns False (and keeps the held state) if a weld is still active after
-        the release or the write failed.
+        Returns False (and keeps the held state) if something is still attached
+        after the release or the write failed.
         """
         self._require_connection()
-        aid, eqs = self._actuator_id, list(self._welds.values())
-
-        def _open(w: Any) -> list[int]:
-            data = w.data
-            data.ctrl[aid] = self._spec.open
-            data.eq_active[eqs] = 0
-            return [i for i in eqs if int(data.eq_active[i]) != 0]
-
+        aid, rt = self._actuator_id, self._go2.runtime
         try:
-            still = self._go2.runtime.call(_open)
+            rt.call(lambda w: w.data.ctrl.__setitem__(aid, self._spec.open))
+            still = rt.release(self._grasp.weld_body)
         except Exception as exc:  # noqa: BLE001 — reported, never a silent success
             logger.error("MuJoCoPiperGripper: open/release failed: %s", exc)
             return False
         if still:
-            logger.error("MuJoCoPiperGripper: welds %s still active after release", still)
+            logger.error("MuJoCoPiperGripper: bodies %s still attached after release", still)
             return False
         self._held_object = None
         return True
 
     def close(self) -> bool:
-        """Close the jaws; weld the object they actually grip (see module docstring).
+        """Close the jaws; the runtime attaches the object they actually grip (module docstring).
 
         Returns True once the jaws were commanded and settled (whether or not they
         gripped anything — is_holding() says that); False if the sim refused.
@@ -175,16 +165,16 @@ class MuJoCoPiperGripper:
         try:
             rt.call(lambda w: w.data.ctrl.__setitem__(aid, self._spec.closed))
             self._wait_jaws_settled()
-            held = rt.call(self._weld_if_gripped)
+            held = rt.grasp(self._grasp)
         except Exception as exc:  # noqa: BLE001 — a failed grasp is a no-hold, never a crash
             logger.warning("MuJoCoPiperGripper: close failed: %s", exc)
             return False
         if held is not None:
-            self._held_object = held
+            self._held_object = rt.world.scene.body_name(held)
         return True
 
     def is_holding(self, name: str | None = None) -> bool:
-        """True iff a grasp weld is ACTIVE in the sim for the gripped object.
+        """True iff the gripped object is still attached to the gripper in the sim.
 
         ``name`` makes it target-aware: only that object (case-insensitive scene
         body name) counts.
@@ -195,17 +185,16 @@ class MuJoCoPiperGripper:
         return bool(self.weld_is_active().get(held, False))
 
     def weld_is_active(self) -> dict[str, bool]:
-        """``{welded-body-name -> data.eq_active[i] != 0}`` over the live weld eqs —
-        the SAME body2-keyed map MuJoCoGripper exposes, read by actor_causation
-        (_capture_gripper) for the 0->1 fresh-grasp transition. Fail-safe ``{}``.
+        """``{graspable body name -> attached to this gripper}`` as the runtime last
+        published it — the SAME body-keyed map MuJoCoGripper exposes, read by
+        actor_causation (_capture_gripper) for the 0->1 fresh-grasp transition.
+        Fail-safe ``{}``.
         """
         if not self._connected:
             return {}
-        try:
-            return self._gt.weld_active()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("MuJoCoPiperGripper: weld_is_active read failed: %s", exc)
-            return {}
+        rt, parent = self._go2.runtime, self._grasp.weld_body
+        scene, held = rt.world.scene, rt.attachments()
+        return {scene.body_name(c): held.get(c) == parent for p, c in scene.grasp_pairs if p == parent}
 
     def get_position(self) -> float:
         """Normalized jaw position: 0.0 closed, 1.0 fully open."""
@@ -233,45 +222,3 @@ class MuJoCoPiperGripper:
             last = now
             if not rt.wait_sim(_SETTLE_POLL_S):
                 return
-
-    def _weld_if_gripped(self, w: Any) -> str | None:
-        """At a step boundary: weld the object every finger touches while the jaws
-        are held open by it (anchor = the live relative pose, so nothing snaps)."""
-        mj = _get_mujoco()
-        model, data = w.model, w.data
-        opening = float(data.qpos[self._joint_qpos_adr]) - self._spec.closed
-        n = int(data.ncon)
-        g1 = np.asarray(data.contact.geom1[:n])
-        g2 = np.asarray(data.contact.geom2[:n])
-        touching: list[set[int]] = []
-        for geoms in self._finger_geoms:
-            bodies: set[int] = set()
-            for a, b in zip(g1, g2):
-                if a in geoms:
-                    bodies.add(int(model.geom_bodyid[b]))
-                elif b in geoms:
-                    bodies.add(int(model.geom_bodyid[a]))
-            touching.append(bodies)
-        gripped = sorted(set.intersection(*touching) & set(self._welds))
-        names = {
-            b: mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, b)
-            for b in set().union(*touching)
-        }
-        if not gripped or opening < self._spec.min_opening:
-            logger.info(
-                "MuJoCoPiperGripper: no grasp — jaw opening %.1f mm, finger contacts %s",
-                opening * 1000, [sorted(names[b] or "?" for b in t) for t in touching])
-            return None
-        bid = gripped[0]
-        i = self._welds[bid]
-        b1 = int(model.eq_obj1id[i])
-        p1, R1 = data.xpos[b1], data.xmat[b1].reshape(3, 3)
-        p2, R2 = data.xpos[bid], data.xmat[bid].reshape(3, 3)
-        rel_quat = np.zeros(4)
-        mj.mju_mat2Quat(rel_quat, (R1.T @ R2).flatten())
-        model.eq_data[i, :3] = 0.0
-        model.eq_data[i, 3:6] = R1.T @ (p2 - p1)
-        model.eq_data[i, 6:10] = rel_quat
-        data.eq_active[i] = 1
-        logger.info("MuJoCoPiperGripper: grasped '%s' (jaw opening %.1f mm)", names[bid], opening * 1000)
-        return names[bid]

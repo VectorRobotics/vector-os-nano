@@ -23,7 +23,7 @@ import mujoco as mj
 import numpy as np
 
 from vector_os_nano.interfaces.physics import CONTACT_DISTANCE_M, CompiledScene, RGBDFrame
-from vector_os_nano.sim.scene import canonical, reader
+from vector_os_nano.sim.scene import reader
 
 _KINDS = ("rgb", "depth", "seg")
 _VIEWER_SYNC_S = 1.0 / 60.0
@@ -168,7 +168,10 @@ class MuJoCoWorld:
             raise ValueError(f"body {child} is already attached to body {held}; detach it first")
         m, d, i = self.model, self.data, self._welds[pair]
         with self._lock:
-            pos, quat = canonical.body_poses(self.scene, d.qpos)  # the CURRENT pose, not last step's xpos
+            # The engine's own body poses: as of the last step's kinematics (one physics
+            # step behind q after a step, current after reset). Today's go2_piper grasp
+            # anchor, kept bit for bit (S1 golden trace).
+            pos, quat = d.xpos, d.xquat
             r1, r2 = np.empty(9), np.empty(9)
             mj.mju_quat2Mat(r1, quat[pair[0]])
             mj.mju_quat2Mat(r2, quat[pair[1]])

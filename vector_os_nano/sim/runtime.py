@@ -22,8 +22,10 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
   lock-free readers slice ``q`` / ``qd`` by the scene's canonical addresses.
   Renders and rays go to the world itself (``world.render`` / ``world.raycast``,
   callable from any thread: the backend copies the state it observes).
-* **Attachments.** Every change of ``world.attached()`` is logged with its sim
-  time (:attr:`attach_log`), diffed at every publish.
+* **Attachments.** :meth:`grasp` / :meth:`release` run the world-side grasp
+  decision (``sim/grasp.py``) at a step boundary; every change of
+  ``world.attached()`` is logged with its sim time (:attr:`attach_log`) when the
+  grasp or release call makes it, and any other change at the next publish.
 * **Sim time.** :meth:`wait_sim` waits for SIM seconds, so a timed motion means
   the same thing at any real-time ratio.
 * **Actor epoch.** :data:`ACTOR_EPOCH` marks when commanded motion belongs to a
@@ -44,6 +46,7 @@ from typing import Any, Callable
 import numpy as np
 
 from vector_os_nano.interfaces.physics import PhysicsWorld
+from vector_os_nano.sim import grasp as _grasp
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +259,18 @@ class SimRuntime:
         """``submit(fn).result()``: a read or mutation at a step boundary."""
         return self.submit(fn).result()
 
+    def grasp(self, spec: _grasp.GraspSpec) -> int | None:
+        """The grasp decision at a step boundary: the attached body, or None."""
+        return self.call(lambda w: self._noted(_grasp.grasp(w, spec)))
+
+    def release(self, parent: int) -> list[int]:
+        """Detach what *parent* holds, at a step boundary; returns what is still attached."""
+        return self.call(lambda w: self._noted(_grasp.release(w, parent)))
+
+    def attachments(self) -> dict[int, int]:
+        """``{child: parent}`` as of the last publish (or grasp / release call)."""
+        return dict(self._attached)
+
     @contextlib.contextmanager
     def paused(self):
         """Park the daemon at a step boundary for the duration (reference-counted)."""
@@ -339,15 +354,23 @@ class SimRuntime:
 
     def _publish(self) -> None:
         self._snap = self._take_snapshot()
+        self._note_attachments()
+        with self._published:
+            self._published.notify_all()
+
+    def _note_attachments(self) -> None:
+        """Log every change of ``world.attached()`` since the last note, at this sim time."""
         now = self.world.attached()
         if now != self._attached:
-            t, was = self._snap.sim_time, self._attached
+            t, was = self.world.time(), self._attached
             for child in sorted(was.keys() | now.keys()):
                 if was.get(child) != now.get(child):
                     self.attach_log.append((t, child, now.get(child)))
             self._attached = now
-        with self._published:
-            self._published.notify_all()
+
+    def _noted(self, result: Any) -> Any:
+        self._note_attachments()  # at call time: a release and a re-grasp in one batch both log
+        return result
 
     def _run(self, jobs: list[tuple[Callable[[PhysicsWorld], Any], Future]]) -> None:
         """Apply mutations, publish the new state, THEN resolve their futures."""
