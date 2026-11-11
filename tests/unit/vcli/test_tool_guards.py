@@ -46,6 +46,13 @@ def box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     (project / "server.pem").write_text(SECRET)
     (project / "id_rsa").write_text(SECRET)
     (project / "id_rsa.pub").write_text("ssh-rsa AAAA public\n")
+    # Upper-case spellings: distinct files on Linux, the real secrets on a
+    # case-insensitive filesystem (macOS, Windows).
+    for name in (".ENV", "server.PEM", "api.Key", "ID_RSA", ".Env.local"):
+        (project / name).write_text(SECRET)
+    (project / ".GIT").mkdir()
+    (project / ".GIT" / "config").write_text(SECRET)
+    (project / ".ENV.Example").write_text("ANTHROPIC_API_KEY=\n")
     (project / ".git" / "config").write_text(f"url = https://x:{SECRET}@github.com/a/b\n")
     (project / ".git" / "hooks" / "pre-commit").write_text("#!/bin/sh\n")
     (project / "main.py").write_text("def main():\n    return 1\n")
@@ -83,6 +90,7 @@ def _credential_paths(box: dict[str, Path]) -> list[str]:
         str(p / "id_rsa"),
         str(p / ".git" / "config"),
         "/etc/shadow",
+        ".ENV", "server.PEM", "api.Key", "ID_RSA", ".Env.local", ".GIT/config",
     ]
 
 
@@ -113,7 +121,7 @@ def test_symlink_inside_the_project_to_a_secret_is_refused(box: dict[str, Path])
 
 
 def test_templates_and_public_keys_stay_readable(box: dict[str, Path]) -> None:
-    for name in (".env.example", "id_rsa.pub", "main.py"):
+    for name in (".env.example", ".ENV.Example", "id_rsa.pub", "main.py"):
         path = str(box["project"] / name)
         assert _decide(FileReadTool(), {"file_path": path}, box["project"]) == "allow", name
         assert not FileReadTool().execute({"file_path": path}, _ctx(box["project"])).is_error
