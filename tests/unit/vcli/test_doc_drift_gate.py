@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from vector_os_nano.vcli import cli
+from vector_os_nano.vcli.engine import VectorEngine
 
 _DOC = Path(__file__).resolve().parents[3] / "docs" / "cli-tool-system.md"
 
@@ -33,19 +33,6 @@ def test_documented_default_producer_matches_live_default(monkeypatch):
         "If the default producer genuinely changed, update BOTH the code and this gate."
     )
 
-    # The LIVE default must agree: native is the default producer on BOTH the interactive
-    # REPL and the -p acceptance path, with no env override. If a future change flips either
-    # default without updating the doc marker, this gate fails (the drift it exists to catch).
-    for env in (
-        "VECTOR_REPL_NATIVE", "VECTOR_PRINT_NATIVE",
-        "VECTOR_NATIVE_LOOP", "VECTOR_NATIVE_FIRST",
-    ):
-        monkeypatch.delenv(env, raising=False)
-    assert cli._repl_native_enabled() is True, (
-        "doc says default_producer=run_turn_native, but _repl_native_enabled() is False "
-        "(REPL no longer defaults to native — doc drift)"
-    )
-    assert cli._print_native_enabled() is True, (
-        "doc says default_producer=run_turn_native, but _print_native_enabled() is False "
-        "(-p no longer defaults to native — doc drift)"
-    )
+    # The LIVE code must agree: the native loop is the ONLY producer (REPL, -p, MCP).
+    assert callable(getattr(VectorEngine, "run_turn_native", None))
+    assert not hasattr(VectorEngine, "run_turn"), "a second producer is back — doc drift"

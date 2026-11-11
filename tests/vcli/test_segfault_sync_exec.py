@@ -27,7 +27,7 @@ from vector_os_nano.vcli.engine import VectorEngine
 
 
 def _make_engine() -> VectorEngine:
-    return VectorEngine(backend=MagicMock(), intent_router=MagicMock())
+    return VectorEngine(backend=MagicMock())
 
 
 def _turn_thread(monkeypatch, *, mjpython: bool, viewer: object) -> threading.Thread:

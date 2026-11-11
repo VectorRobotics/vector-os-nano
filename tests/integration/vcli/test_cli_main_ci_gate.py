@@ -12,11 +12,9 @@ Two responsibilities:
    ``cli_main``) lives in ``tests/conftest.py``; this guard proves the marker is
    actually in use.
 
-2. REPL UNREGRESSED — the ``run_one_turn`` / ``-p`` refactor extracted shared
-   setup but the interactive REPL path must stay byte-identical. A smoke test runs
+2. REPL UNREGRESSED — the REPL and ``-p`` share their setup. A smoke test runs
    ``main`` with a stubbed prompt session feeding one input then EOF, and asserts
-   the REPL starts, decomposes+executes the turn, and exits cleanly — i.e. the
-   refactor did not break the loop.
+   the REPL starts, runs the turn through the native producer, and exits cleanly.
 """
 from __future__ import annotations
 
@@ -68,34 +66,31 @@ def test_cli_main_marker_selects_real_pty_runs() -> None:
 
 @pytest.mark.cli_main
 def test_repl_runs_one_turn_then_exits(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The REPL path (no -p) still decomposes+executes a turn and exits cleanly.
+    """The REPL path (no -p) runs a turn through the native producer and exits cleanly.
 
-    Drives the REAL ``main()`` with a fake PromptSession that yields one input
-    then EOF (clean exit). Uses the VECTOR_FAKE_LLM seam for a deterministic plan.
-    Asserts the engine's VGG layer executed the turn (a trace was produced) — i.e.
-    the run_one_turn refactor did NOT regress the interactive loop.
+    Drives the REAL ``main()`` with a fake PromptSession that yields one input then
+    EOF (clean exit). The VECTOR_FAKE_LLM_TOOLS seam scripts the model: write a
+    marker, verify it, finish. The written marker and the GROUNDED trace prove the
+    interactive loop reached the producer.
     """
+    import threading
+
     from vector_os_nano.vcli import cli
+    from vector_os_nano.vcli.engine import VectorEngine
 
     # Run the REPL IN tmp_path so the dev-world file oracle (cwd-scoped) reads the
-    # marker the actor writes. Isolate HOME so the persistent dev template tier
-    # (~/.vector) is per-test — a compiled template from another run must not
-    # short-circuit this decompose with a stale plan.
+    # marker the actor writes; isolate HOME (sessions, history).
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path))
     marker = "repl_marker.txt"
-    plan = {
-        "goal": "repl turn writes a marker",
-        "sub_goals": [{
-            "name": "w", "description": "write marker",
-            "verify": f"path_contains({marker!r}, 'ok')",
-            "strategy": "tool_call",
-            "strategy_params": {"tool": "file_write", "args": {"file_path": marker, "content": "ok\n"}},
-        }],
-    }
-    plan_file = tmp_path / "plan.json"
-    plan_file.write_text(json.dumps(plan), encoding="utf-8")
-    monkeypatch.setenv("VECTOR_FAKE_LLM", str(plan_file))
+    script = {"turns": [
+        {"tool_calls": [{"name": "file_write", "input": {"file_path": marker, "content": "ok\n"}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": f"path_contains({marker!r}, 'ok')"}}]},
+        {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
+    ]}
+    script_file = tmp_path / "script.json"
+    script_file.write_text(json.dumps(script), encoding="utf-8")
+    monkeypatch.setenv("VECTOR_FAKE_LLM_TOOLS", str(script_file))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
 
     # One input then EOF — the REPL reads it, runs the turn, then breaks on EOF.
@@ -116,27 +111,32 @@ def test_repl_runs_one_turn_then_exits(tmp_path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(cli.time, "sleep", lambda *_a, **_k: None)
 
     # The REPL runs the turn on its worker thread (cli._run_turn_busy); capture the
-    # completed trace by spying on the SYNC core (vgg_execute) that turn calls. A
-    # threading.Event lets us wait for the worker's completion deterministically.
-    import threading
-
-    from vector_os_nano.vcli.engine import VectorEngine
-
+    # trace by spying on the producer.
     executed: dict[str, object] = {}
     done = threading.Event()
-    real_execute = VectorEngine.vgg_execute
+    real_native = VectorEngine.run_turn_native
 
-    def _spy_execute(self, goal_tree):  # noqa: ANN001
-        trace = real_execute(self, goal_tree)
+    def _spy_native(self, *a, **k):  # noqa: ANN001 ANN002 ANN003
+        trace = real_native(self, *a, **k)
         executed["trace"] = trace
         done.set()
         return trace
 
-    monkeypatch.setattr(VectorEngine, "vgg_execute", _spy_execute)
+    monkeypatch.setattr(VectorEngine, "run_turn_native", _spy_native)
 
     cli.main(["--no-permission"])
 
-    # The REPL must have decomposed + executed the turn (a trace was produced),
-    # proving the interactive loop is unregressed by the run_one_turn refactor.
-    assert done.wait(timeout=15.0), "REPL did not execute the VGG turn (loop regressed?)"
-    assert executed["trace"].goal_tree.goal == "repl turn writes a marker"
+    assert done.wait(timeout=15.0), "REPL did not run the native turn (loop regressed?)"
+    trace = executed["trace"]
+    assert trace.goal_tree.goal == "write the marker then verify it"
+    assert [s.strategy for s in trace.steps] == ["file_write"] and trace.steps[0].verify_result
+    assert (tmp_path / marker).read_text() == "ok\n"
+
+
+def test_cli_help_exits_zero() -> None:
+    """main(['--help']) prints usage and exits with code 0 (moved from test_end_to_end)."""
+    from vector_os_nano.vcli.cli import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--help"])
+    assert exc_info.value.code == 0

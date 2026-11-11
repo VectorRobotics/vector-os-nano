@@ -110,7 +110,7 @@ def test_native_finish_after_fail_is_not_verified(sim_cleanup) -> None:
         "走到坐标 (9.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_FINISH_AFTER_FAIL_SCRIPT,
     )
     assert r.verified is False, f"finish-on-FAIL must NOT verify; got {r.verdict}"
@@ -140,7 +140,7 @@ def test_native_recovery_never_succeeds_terminates_ran_not_verified(sim_cleanup)
         "走到坐标 (50.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_NEVER_SUCCEEDS_SCRIPT,
     )
     assert r.verified is False, f"never-succeeds must NOT verify; got {r.verdict}"
@@ -178,7 +178,7 @@ def test_native_inturn_recovery_is_fail_closed_not_verified(sim_cleanup) -> None
         "走到坐标 (9.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_GENUINE_RECOVERY_SCRIPT,
     )
     assert r.verified is False, f"a recorded-FAIL recovery must fail closed; got {r.verdict}"

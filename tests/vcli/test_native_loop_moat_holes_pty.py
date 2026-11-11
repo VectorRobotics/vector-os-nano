@@ -65,7 +65,7 @@ def test_membership_shortcircuit_false_green_flips_to_ran(sim_cleanup) -> None:
         "走到坐标 (99.0,99.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_MEMBERSHIP_FALSE_GREEN,
     )
     assert r.verified is False, f"membership short-circuit must NOT verify; got {r.verdict}"
@@ -90,7 +90,7 @@ def test_facing_forward_walk_false_green_flips_to_ran(sim_cleanup) -> None:
         "保持当前朝向",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_FACING_FORWARD_WALK_FALSE_GREEN,
     )
     assert r.verified is False, f"forward-walk facing no-op must NOT verify; got {r.verdict}"
@@ -126,7 +126,7 @@ def test_wrong_place_self_verified_landing_flips_to_ran(sim_cleanup) -> None:
         "走到坐标 (11.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_WRONG_PLACE_FALSE_GREEN,
     )
     assert r.verified is False, f"verifying your own wrong landing must NOT verify; got {r.verdict}"
@@ -166,7 +166,7 @@ def test_callable_container_shortcircuit_flips_to_ran(sim_cleanup) -> None:
         "走到坐标 (2.0,0.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_CALLABLE_CONTAINER_FALSE_GREEN,
     )
     assert r.verified is False, f"callable-container short-circuit must NOT verify; got {r.verdict}"
@@ -210,7 +210,7 @@ def test_wrong_predicate_type_coord_goal_flips_to_ran(sim_cleanup) -> None:
         "走到坐标 (11.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_WRONG_PREDICATE_TYPE_FALSE_GREEN,
     )
     assert r.verified is False, f"coord goal verified with only facing must NOT verify; got {r.verdict}"
@@ -256,7 +256,7 @@ def test_or_decoy_non_necessary_at_position_flips_to_ran(sim_cleanup) -> None:
         "走到坐标 (11.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_OR_DECOY_FALSE_GREEN,
     )
     assert r.verified is False, f"OR-decoy (non-necessary at_position) must NOT verify; got {r.verdict}"

@@ -10,10 +10,6 @@
 # ---- hermetic-tier baseline (scripts/gate.sh hermetic, 2026-10-04): every red on base c188658 that
 # is NOT a WP01 bug. Rows below are xfail (never deselected); each names its ledger key or owner WP.
 
-# legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
-tests/harness/test_level50_phase2_integration.py::TestGoalExecutorStatsRecording::test_executor_records_success_true | xfail | legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
-tests/harness/test_level56_vgg_harness.py::TestHarnessEdgeCases::test_harness_stats_recording_called_per_step | xfail | legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
-
 # stale skill-count pin (13 go2 skills now); docs-vs-code:tool-menu-noise decides the menu (WP12)
 tests/unit/test_go2_skills.py::TestSkillRegistration::test_get_go2_skills | xfail | stale skill-count pin (13 go2 skills now); docs-vs-code:tool-menu-noise decides the menu (WP12)
 
@@ -28,7 +24,6 @@ tests/unit/test_mcp_server.py::TestVectorMCPServer::test_list_resources_uris | x
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_natural_language | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_direct_skill | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_with_arguments | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_legacy_flag_uses_run_turn | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_world_state | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_world_objects | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_robot_state | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)

@@ -150,7 +150,7 @@ def test_live_multistep_two_leg_journey_decomposes_and_routes(sim_cleanup) -> No
         sim_go2=True,
         live=True,
         timeout_sec=_LIVE_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
     )
     # Echo the live verdict (visible under `pytest -s`) so a real run's autonomous
     # multi-step decomposition is inspectable in the log, not just pass/fail.

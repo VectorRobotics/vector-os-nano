@@ -11,15 +11,16 @@ poking — the product is the system under test.
 
 Cases (RED -> GREEN):
   * NO-OP / staged 'done' (verify='True')  -> verified False / exit 2 (RAN)
-  * GROUNDED (a tool_call that actually writes a file a real oracle reads)
+  * GROUNDED (a file_write a real oracle reads back)
                                            -> verified True  / exit 0
   * two different prompts                  -> different VerdictReport.goal
                                               (no stale reuse across runs)
   * empty-oracle / non-oracle verify       -> fail-closed (verified False)
+  * a chat turn (no action, no verify)     -> exit 0, acted false, no claim
 
-All runs are deterministic via the ``VECTOR_FAKE_LLM`` seam (canned plan, no live
-LLM); the dev world is the default (no MuJoCo). Marked ``cli_main`` + ``capability``
-so the CI gate counts them.
+All runs are deterministic via the ``VECTOR_FAKE_LLM_TOOLS`` seam (the model's tool
+calls are scripted, no live LLM); the dev world is the default (no MuJoCo). Marked
+``cli_main`` + ``capability`` so the CI gate counts them.
 """
 from __future__ import annotations
 
@@ -40,33 +41,29 @@ def _unique(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _write_then_verify(fname: str, content: str, verify: str) -> dict:
+    return {"turns": [
+        {"tool_calls": [{"name": "file_write", "input": {"file_path": fname, "content": content}}]},
+        {"tool_calls": [{"name": "verify", "input": {"expr": verify}}]},
+        {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
+    ]}
+
+
 @pytest.mark.cli_main
 @pytest.mark.capability
 def test_noop_staged_done_is_not_verified(tmp_path) -> None:
     fname = _unique("noop")
-    plan = {
-        "goal": "stage a 'done' with no real evidence",
-        "sub_goals": [
-            {
-                "name": "stage_done",
-                "description": "write a file but claim done with verify='True'",
-                "verify": "True",  # sentinel — carries NO grounded evidence
-                "strategy": "tool_call",
-                "strategy_params": {"tool": "file_write", "args": {"file_path": fname, "content": "x\n"}},
-            }
-        ],
-    }
-    result = run_cli_turn(
-        "stage a done with no evidence then finish", fake_plan=plan, cwd=tmp_path
-    )
+    script = _write_then_verify(fname, "x\n", "True")  # sentinel — no grounded evidence
+    result = run_cli_turn("stage a done with no evidence then finish", tool_script=script, cwd=tmp_path)
     assert result.verified is False
     assert result.exit_code == 2
     assert result.evidence == "RAN"
+    assert result.verdict["acted"] is True
 
 
 # ---------------------------------------------------------------------------
-# GROUNDED — a tool_call that actually drives the actor; a real oracle reads
-#            real post-state -> GROUNDED -> verified True / exit 0
+# GROUNDED — the actor really writes; a real oracle reads real post-state
+#            -> GROUNDED -> verified True / exit 0
 # ---------------------------------------------------------------------------
 
 
@@ -74,28 +71,10 @@ def test_noop_staged_done_is_not_verified(tmp_path) -> None:
 @pytest.mark.capability
 def test_grounded_turn_is_verified(tmp_path) -> None:
     # The dev-world file oracle (`path_contains`) only reads WITHIN cwd, so run
-    # the child IN tmp_path and use a relative filename — the actor writes a real
-    # file the real oracle then reads back.
+    # the child IN tmp_path and use a relative filename.
     fname = _unique("marker")
-    plan = {
-        "goal": "create a marker file containing ready",
-        "sub_goals": [
-            {
-                "name": "write_marker",
-                "description": "write the marker file with the content ready",
-                # A REAL dev-world oracle reading actual post-state on disk.
-                "verify": f"path_contains({fname!r}, 'ready')",
-                "strategy": "tool_call",
-                "strategy_params": {
-                    "tool": "file_write",
-                    "args": {"file_path": fname, "content": "ready\n"},
-                },
-            }
-        ],
-    }
-    result = run_cli_turn(
-        "create the marker file then verify it", fake_plan=plan, cwd=tmp_path
-    )
+    script = _write_then_verify(fname, "ready\n", f"path_contains({fname!r}, 'ready')")
+    result = run_cli_turn("create the marker file then verify it", tool_script=script, cwd=tmp_path)
     assert result.verified is True
     assert result.exit_code == 0
     assert result.evidence == "GROUNDED"
@@ -112,29 +91,13 @@ def test_grounded_turn_is_verified(tmp_path) -> None:
 @pytest.mark.cli_main
 @pytest.mark.capability
 def test_two_prompts_yield_distinct_goals(tmp_path) -> None:
-    f1 = _unique("alpha")
-    f2 = _unique("beta")
-    plan_a = {
-        "goal": "GOAL_ALPHA write alpha",
-        "sub_goals": [{
-            "name": "wa", "description": "write alpha",
-            "verify": f"path_contains({f1!r}, 'A')", "strategy": "tool_call",
-            "strategy_params": {"tool": "file_write", "args": {"file_path": f1, "content": "A\n"}},
-        }],
-    }
-    plan_b = {
-        "goal": "GOAL_BETA write beta",
-        "sub_goals": [{
-            "name": "wb", "description": "write beta",
-            "verify": f"path_contains({f2!r}, 'B')", "strategy": "tool_call",
-            "strategy_params": {"tool": "file_write", "args": {"file_path": f2, "content": "B\n"}},
-        }],
-    }
-    ra = run_cli_turn("write the alpha file then verify it", fake_plan=plan_a, cwd=tmp_path)
-    rb = run_cli_turn("write the beta file then verify it", fake_plan=plan_b, cwd=tmp_path)
-    assert ra.goal == "GOAL_ALPHA write alpha"
-    assert rb.goal == "GOAL_BETA write beta"
-    assert ra.goal != rb.goal  # no stale reuse across separate cli.main runs
+    f1, f2 = _unique("alpha"), _unique("beta")
+    ra = run_cli_turn("GOAL_ALPHA write the alpha file then verify it",
+                      tool_script=_write_then_verify(f1, "A\n", f"path_contains({f1!r}, 'A')"), cwd=tmp_path)
+    rb = run_cli_turn("GOAL_BETA write the beta file then verify it",
+                      tool_script=_write_then_verify(f2, "B\n", f"path_contains({f2!r}, 'B')"), cwd=tmp_path)
+    assert ra.goal == "GOAL_ALPHA write the alpha file then verify it"
+    assert rb.goal == "GOAL_BETA write the beta file then verify it"
     assert ra.verified is True and rb.verified is True
 
 
@@ -146,24 +109,27 @@ def test_two_prompts_yield_distinct_goals(tmp_path) -> None:
 @pytest.mark.cli_main
 @pytest.mark.capability
 def test_non_oracle_verify_fails_closed(tmp_path) -> None:
-    # A verify that calls a function NOT in the dev oracle set classifies RAN —
-    # an absent oracle can only make the gate stricter (fail closed). The step
-    # "succeeds" and the file is written, but the verdict is NOT verified.
-    fname = str(tmp_path / _unique("phantom"))
-    plan = {
-        "goal": "verify with a non-oracle predicate",
-        "sub_goals": [
-            {
-                "name": "phantom",
-                "description": "write a file but verify with a phantom oracle",
-                "verify": "totally_made_up_oracle() == 1",
-                "strategy": "tool_call",
-                "strategy_params": {"tool": "file_write", "args": {"file_path": fname, "content": "z\n"}},
-            }
-        ],
-    }
-    result = run_cli_turn(
-        "verify with a phantom predicate then finish", fake_plan=plan, cwd=tmp_path
-    )
+    # A verify that calls a function NOT in the dev oracle set classifies RAN — an
+    # absent oracle can only make the gate stricter. The file is written, but the
+    # verdict is NOT verified.
+    fname = _unique("phantom")
+    script = _write_then_verify(fname, "z\n", "totally_made_up_oracle() == 1")
+    result = run_cli_turn("verify with a phantom predicate then finish", tool_script=script, cwd=tmp_path)
     assert result.verified is False
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# A chat turn: the model answers, nothing acts or claims -> exit 0, acted false
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.cli_main
+@pytest.mark.capability
+def test_chat_turn_exits_0_with_acted_false(tmp_path) -> None:
+    script = {"turns": [{"text": "我是 V，一个机器人运行时。", "tool_calls": [], "stop_reason": "end_turn"}]}
+    result = run_cli_turn("你是谁？", tool_script=script, cwd=tmp_path)
+    assert result.exit_code == 0
+    assert result.verdict["acted"] is False and result.verified is False
+    assert result.evidence == "NO_TRACE" and result.verdict["error"] == ""
+    assert "我是 V" in result.raw_output

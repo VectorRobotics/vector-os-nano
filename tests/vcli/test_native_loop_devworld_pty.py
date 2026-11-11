@@ -7,7 +7,7 @@ Steps 1-2 + 3A-B proved the native producer covers the go2 ACTION surface (walk,
 turn -> at_position, facing). The legacy planner's other job is being WORLD-AGNOSTIC:
 the same loop must ACT in the dev world too (write a file, run a tool) and prove it
 with a dev verify predicate. Step 3 documented a REAL FINDING — through the REAL
-``cli.main --native-loop`` PTY the native loop offered NO dev action tools, so a dev
+``cli.main`` PTY the native loop offered NO dev action tools, so a dev
 ``file_write`` was an "Unknown tool" -> RAN / exit 2. STEP 6 CLOSES that leak; this
 module now PINS the fix.
 
@@ -23,7 +23,7 @@ THE LEAK (was) AND THE FIX (now):
     These are real ``Tool`` objects whose ``.execute(params, ctx)`` is the interface
     ``dispatch_skill`` already calls. World-agnostic BY CONSTRUCTION: native asks the
     ENGINE'S registry for its registered action tools — no "if dev" branch in the spine.
-    So a dev write-then-verify script through ``cli.main --native-loop`` now dispatches
+    So a dev write-then-verify script through ``cli.main`` now dispatches
     ``file_write`` for real, writes the file, and ``path_contains`` reads True ->
     GROUNDED / verified True / exit 0.
 
@@ -52,12 +52,12 @@ from tests.harness.pty_cli import run_cli_turn
 
 
 # ---------------------------------------------------------------------------
-# (C.1) THE FIX — through the REAL cli.main --native-loop PTY, the dev world ACTS
+# (C.1) THE FIX — through the REAL cli.main PTY, the dev world ACTS
 # ---------------------------------------------------------------------------
 
 
 def test_native_devworld_via_cli_main_covers_dev_action_via_native(tmp_path) -> None:
-    """A dev write-then-verify script through cli.main --native-loop -> GROUNDED / exit 0.
+    """A dev write-then-verify script through cli.main -> GROUNDED / exit 0.
 
     STEP 6 closed the leak: ``_build_motor_tools`` now ALSO surfaces the engine
     registry's ``code``-category tools, so the native loop in the dev world (no agent)
@@ -85,11 +85,10 @@ def test_native_devworld_via_cli_main_covers_dev_action_via_native(tmp_path) -> 
                 {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
             ]
         },
-        extra_args=["--native-loop"],
         timeout_sec=90.0,
         cwd=tmp_path,
     )
-    print(f"\n[devworld coverage] cli.main --native-loop -> {r.verdict}")
+    print(f"\n[devworld coverage] cli.main -> {r.verdict}")
     # The dev action ran through the native loop: verified, GROUNDED, exit 0.
     assert r.verified is True, f"dev write must verify (code tool now wired); {r.verdict}"
     assert r.evidence == "GROUNDED", f"got evidence={r.evidence}; {r.verdict}"
@@ -182,10 +181,7 @@ def test_native_devworld_grounds_when_dev_action_skill_is_wrapped() -> None:
             backend=backend, registry=CategorizedToolRegistry(),
             permissions=PermissionContext(no_permission=True),
         )
-        eng._world = DevWorld()
-        eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=DevWorld())
-        eng._vgg_agent = agent
-        eng._backend = backend
+        eng.bind(agent, DevWorld())
 
         session = Session(
             session_id="native-devworld", created_at="t", updated_at="t",
@@ -250,11 +246,10 @@ def test_native_devworld_verify_only_noop_is_ran(tmp_path) -> None:
                 {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
             ]
         },
-        extra_args=["--native-loop"],
         timeout_sec=90.0,
         cwd=tmp_path,
     )
-    print(f"\n[devworld no-op] cli.main --native-loop -> {r.verdict}")
+    print(f"\n[devworld no-op] cli.main -> {r.verdict}")
     # No action ran -> not verified, RAN, exit 2 — even though the predicate reads True.
     assert r.verified is False, f"a verify-only dev no-op must NOT verify (no action); {r.verdict}"
     assert r.evidence == "RAN", f"got evidence={r.evidence}; {r.verdict}"
