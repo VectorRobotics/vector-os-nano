@@ -5,14 +5,18 @@
 
 Ground-truth quantities are read the way the world side reads them: canonical shape
 AABBs over the backend's state (clearance), the backend's contacts, its attachments
-and its segmentation render. Only the PhysicsWorld API drives the arm.
+and its segmentation render. Only the PhysicsWorld API drives the arm, and the grasp
+is the world side's own decision (sim/grasp.py), the same on every backend.
 """
 from __future__ import annotations
+
+import dataclasses
 
 import numpy as np
 import pytest
 
 from tests.conformance.rig import clearance, ik
+from vector_os_nano.sim import grasp as g
 from vector_os_nano.sim.scene import canonical
 
 pytestmark = pytest.mark.sim
@@ -32,6 +36,8 @@ class Arm:
         self.site = int(scene.model.site("ee_site").id)
         self.fingers = {scene.body("link7"), scene.body("link8")}
         self.hand = scene.body("link6")
+        self.spec = g.GraspSpec(weld_body=self.hand, finger_bodies=tuple(sorted(self.fingers)),
+                                jaw_joint=self.jaw, closed=0.0, min_opening=0.005)
 
     def move(self, pos: np.ndarray, jaw: float, steps: int = 750) -> None:
         q = self.w.state()[0]
@@ -46,8 +52,17 @@ class Arm:
         return float(self.w.state()[0][self.sc.joint_q(self.jaw)])
 
     def gripped(self, obj: int) -> bool:
-        """The contact gate: every finger body touches the object."""
+        """Every finger body touches the object."""
         return self.fingers <= self.w.contacts(obj)
+
+    def grip(self) -> tuple[float, int]:
+        """Approach the box with open jaws, close them on it: (jaw q where they stop, box)."""
+        box = self.sc.body("box")
+        at = self.w.state()[0][self.sc.free_q(box)][:3]
+        self.move(at + [0, 0, 0.10], OPEN)
+        self.move(at, OPEN)
+        assert g.grasp(self.w, self.spec) is None and not self.w.attached()  # jaws open: no finger touches
+        return self.servo_jaw(0.0), box
 
 
 def _settled(load, backend, scene):
@@ -111,14 +126,11 @@ def test_own_shapes_and_never_colliding_pairs_are_no_contact(backend, load, batt
 def test_contact_gated_pick_attach_and_lift(backend, load, battery_scene):
     sc = battery_scene
     w = _settled(load, backend, sc)
-    arm, box = Arm(w, sc), sc.body("box")
+    arm = Arm(w, sc)
+    _jaw, box = arm.grip()
     at = w.state()[0][sc.free_q(box)][:3]
-    arm.move(at + [0, 0, 0.10], OPEN)
-    arm.move(at, OPEN)
-    assert not arm.gripped(box)  # jaws open: no finger touches
-    arm.servo_jaw(0.0)
     assert arm.gripped(box), f"finger contacts {[w.contacts(f) for f in arm.fingers]}"
-    w.attach(arm.hand, box)
+    assert g.grasp(w, arm.spec) == box
     assert w.attached() == {box: arm.hand}
     # attached but still resting: the attach log says held, the AABB rule says not lifted
     assert abs(clearance(sc, w.state()[0], box)) < 3e-3
@@ -134,15 +146,31 @@ def test_contact_gated_pick_attach_and_lift(backend, load, battery_scene):
 def test_fingers_3mm_away_do_not_grip(backend, load, battery_scene):
     sc = battery_scene
     w = _settled(load, backend, sc)
-    arm, box = Arm(w, sc), sc.body("box")
-    at = w.state()[0][sc.free_q(box)][:3]
-    arm.move(at + [0, 0, 0.10], OPEN)
-    arm.move(at, OPEN)
-    touching = arm.servo_jaw(0.0)  # where the jaws stop on the box
+    arm = Arm(w, sc)
+    touching, box = arm.grip()  # where the jaws stop on the box
     assert arm.gripped(box)
     arm.servo_jaw(touching + 0.003)
     assert not arm.gripped(box)
     assert not (arm.fingers & w.contacts(box))
+    assert g.grasp(w, arm.spec) is None and w.attached() == {}
+
+
+def test_grasp_needs_the_jaws_held_open_and_a_declared_pair(backend, load, battery_scene):
+    """Both fingers on the box is not enough: jaws squeezed under min_opening, or a
+    weld body with no grasp pair for the box, attach nothing."""
+    sc = battery_scene
+    w = _settled(load, backend, sc)
+    arm = Arm(w, sc)
+    jaw, box = arm.grip()
+    assert arm.gripped(box)
+    squeezed = dataclasses.replace(arm.spec, min_opening=jaw + 1e-3)
+    assert g.grasp(w, squeezed) is None
+    wrist = dataclasses.replace(arm.spec, weld_body=sc.body("link5"))  # no (link5, box) pair
+    assert g.grasp(w, wrist) is None
+    assert w.attached() == {}
+    assert g.grasp(w, arm.spec) == box
+    assert g.release(w, sc.body("link5")) == [] and w.attached() == {box: arm.hand}  # not its parent
+    assert g.release(w, arm.hand) == [] and w.attached() == {}
 
 
 def test_segmentation_pixel_counts_agree_across_backends(both, load, battery_scene):

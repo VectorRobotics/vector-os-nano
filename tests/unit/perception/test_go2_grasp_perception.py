@@ -7,9 +7,8 @@ import logging
 
 import numpy as np
 
+from vector_os_nano.interfaces.physics import RGBDFrame
 from vector_os_nano.perception import go2_grasp_perception as g2
-from vector_os_nano.perception.depth_projection import mujoco_intrinsics
-from vector_os_nano.sim.runtime import RGBDFrame
 
 
 class _Base:
@@ -19,10 +18,11 @@ class _Base:
     def get_rgbd_frame(self, w, h, kinds):
         self.calls.append((w, h, kinds))
         seg = np.full((h, w), -1, np.int32)
-        seg[:2] = 7  # the arm's geom
+        seg[:2] = 7  # the arm's body
+        K = np.array([[30.0, 0.0, w / 2], [0.0, 30.0, h / 2], [0.0, 0.0, 1.0]])
         return RGBDFrame(rgb=np.zeros((h, w, 3), np.uint8), depth=np.ones((h, w), np.float32),
-                         seg=seg, K=mujoco_intrinsics(w, h), cam_pos=np.zeros(3),
-                         cam_mat=np.eye(3).ravel(), sim_time=3.0, camera="d435_rgb")
+                         seg=seg, K=K, cam_pos=np.zeros(3), cam_mat=np.eye(3), sim_time=3.0,
+                         camera="d435_rgb")
 
     def self_mask(self, seg):
         return seg == 7
@@ -38,7 +38,7 @@ def test_capture_is_one_frame_with_the_arm_zeroed():
     f = g2.Go2GraspPerception(base, width=32, height=24).capture()
     assert base.calls == [(32, 24, ("rgb", "depth", "seg"))]  # ONE render, every field
     assert (f.depth[:2] == 0).all() and (f.depth[2:] == 1).all()
-    assert (f.K.width, f.K.height) == (32, 24)
+    assert (f.K[0, 2], f.K[1, 2]) == (16, 12) and f.sim_time == 3.0  # the base's frame, depth replaced
 
 
 def test_segmenter_provenance_and_a_loud_box_rect_fallback(caplog, monkeypatch):

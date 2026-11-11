@@ -4,7 +4,7 @@
 """sim_oracles — every ground-truth verify predicate of a sim world, in ONE module.
 
 Each predicate reads the session's :class:`~vector_os_nano.sim.ground_truth.GroundTruth`
-(MjData at a step boundary) plus the world / embodiment manifests — never a device
+(the world side of its runtime) plus the world / embodiment manifests — never a device
 or agent attribute, so nothing the actor writes can make one true. The one CLAIM an
 oracle judges is the actor's belief for ``localized`` (a SceneGraph instance), and
 it is judged against GT.
@@ -217,10 +217,16 @@ def build_namespace(
     # ---------------------------------------------------------------- gripper
     gripper = getattr(getattr(cfg, "arm", None), "gripper", None)
     fingers = tuple(gt.body_id(b) for b in (gripper.finger_bodies if gripper else ()))
-    if caps is not None and caps.has_gripper and gt.weld_active():
+    # The body a grasp attaches to; a manifest without a gripper block (SO-101) has only
+    # its scene's grasp pairs, whose parent is its gripper link.
+    weld_body = gripper.weld_body if gripper else None
+    if caps is not None and caps.has_gripper:
+
+        def on_gripper(parent: str | None) -> bool:
+            return parent is not None and (weld_body is None or parent == weld_body)
 
         def welded(name: str) -> bool:
-            return bool(gt.weld_active().get(name, False))
+            return on_gripper(gt.attached_to(name))
 
         def gripped(name: str) -> bool:
             # A gripper with finger bodies in its manifest grasps by contact: every
@@ -242,7 +248,7 @@ def build_namespace(
             >= 3 cm above its support. ``target=None``: any object."""
             if target is not None:
                 return held(obj(target))
-            return any(held(n) for n, on in gt.weld_active().items() if on)
+            return any(held(n) for n, parent in gt.attachments().items() if on_gripper(parent))
 
         @oracle(scope="robot", channel="gripper", transition="rise", domain="bool")
         @_safe(False)
@@ -260,7 +266,7 @@ def build_namespace(
             turn began never proves a fetch."""
             name = obj(target)
             t0, _wall = turn_start()
-            dropped = any(n == name and not on for _t, n, on in gt.weld_events(since=t0))
+            dropped = any(n == name and not on_gripper(p) for _t, n, p in gt.attach_events(since=t0))
             return held(name) and not dropped
 
         @oracle(scope="robot", channel="gripper", transition="fall", domain="bool")
@@ -269,7 +275,7 @@ def build_namespace(
             """No longer held: the object's weld is off and no robot body touches it.
             ``target=None``: the gripper holds nothing."""
             if target is None:
-                return not any(gt.weld_active().values())
+                return not any(on_gripper(p) for p in gt.attachments().values())
             name = obj(target)
             return not welded(name) and not (gt.contacts(name) & gt.robot_bodies)
 
@@ -300,13 +306,9 @@ def build_namespace(
 
 def rig_namespace(runtime: Any, embodiment_id: str, **kwargs: Any) -> dict[str, Callable[..., Any]]:
     """:func:`build_namespace` for a runtime built without a SimSession (tests, probe tools)."""
-    import mujoco as mj
-
     from vector_os_nano.embodiments import registry
     from vector_os_nano.sim.ground_truth import GroundTruth
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     cfg = registry.load(embodiment_id)
-    root = mj.mj_name2id(runtime.model, mj.mjtObj.mjOBJ_BODY, cfg.model.root_body)
-    gt = GroundTruth(runtime, robot_root_bid=int(root))
-    return build_namespace(gt, load_world(cfg.world) if cfg.world else None, cfg, **kwargs)
+    return build_namespace(GroundTruth(runtime), load_world(cfg.world) if cfg.world else None, cfg, **kwargs)

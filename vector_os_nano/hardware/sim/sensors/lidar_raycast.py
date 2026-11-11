@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Shared lidar polar-grid ray cast (STAGE 3a de-triplication; one mj_multiRay call).
+"""Shared lidar polar-grid ray cast (STAGE 3a de-triplication; one world.raycast call).
 
 ONE impl per capability (CLAUDE.md Rule 11). The identical multi-elevation
 ``mj_ray`` polar-grid loop previously lived in two drivers:
@@ -15,8 +15,8 @@ storage assembly stays per-driver, so each driver's external output remains
 byte-for-byte identical to before this refactor.
 
 The two original loops were byte-identical in the per-ray math (direction
-construction, body-frame rotation, pitch tilt, ``mj_ray`` self-filter via
-``robot_geom_ids`` + ``bodyexclude``) and differed ONLY in:
+construction, body-frame rotation, pitch tilt, a self-filter by the robot's bodies
+plus ``bodyexclude``) and differed ONLY in:
 
 * ``max_range`` (g1 = 15.0, go2 = 12.0) — points-cloud upper bound;
 * whether the elev==0 mid-ring applies that upper bound (g1: yes, go2: no — go2
@@ -29,7 +29,7 @@ each driver's exact behaviour.
 from __future__ import annotations
 
 import math
-from typing import Any, NamedTuple
+from typing import Callable, NamedTuple
 
 import numpy as np
 
@@ -56,35 +56,33 @@ class RaycastResult(NamedTuple):
 
 
 def raycast_lidar(
-    model: Any,
-    data: Any,
+    raycast: Callable[..., tuple[np.ndarray, np.ndarray]],
     *,
     pos_lidar: np.ndarray,
     heading: float,
     exclude_bid: int,
-    robot_geom_ids: set[int],
+    robot_bodies: frozenset[int],
     tilt_deg: float,
     elevations: list[int],
     n_azimuth: int,
     max_range: float,
     mid_ring_apply_max_range: bool = True,
 ) -> RaycastResult:
-    """Cast the multi-elevation polar grid in ONE ``mj_multiRay`` call; raw results.
+    """Cast the multi-elevation polar grid in ONE ``raycast`` call; raw results.
 
     Same rays, same per-ray rules as the original per-ray ``mj_ray`` loop of the
     two live drivers (golden-tested), vectorised: the directions are built with
-    numpy and every ray is cast by one C call that releases the GIL, so a scan no
-    longer holds the interpreter for ~35 ms. Only the diverging knobs
-    (``max_range``, ``mid_ring_apply_max_range``) are parameterised.
+    numpy and every ray is cast by one call (``PhysicsWorld.raycast``: one C
+    multi-ray on a copy of the state, off the physics lock). Only the diverging
+    knobs (``max_range``, ``mid_ring_apply_max_range``) are parameterised.
 
     Args:
-        model: ``mujoco.MjModel`` for the compiled scene.
-        data: ``mujoco.MjData`` for the current sim state.
+        raycast: ``PhysicsWorld.raycast`` of the running world.
         pos_lidar: ``(3,)`` float64 world position of the virtual lidar origin.
         heading: Robot yaw (radians); index 0 of the azimuth sweep is behind the
             robot (``heading - 180 deg``).
-        exclude_bid: Body id passed to ``mj_multiRay`` as *bodyexclude*.
-        robot_geom_ids: Geom ids that count as self-hits (filtered out).
+        exclude_bid: Body whose own geometry the rays pass through.
+        robot_bodies: Bodies whose hits count as self-hits (filtered out).
         tilt_deg: Beam pitch tilt in degrees (g1 = -10, go2 = -20).
         elevations: Elevation rings in degrees (must include 0 for the mid ring).
         n_azimuth: Azimuth samples per ring.
@@ -98,8 +96,6 @@ def raycast_lidar(
         :class:`RaycastResult` — the raw per-ray output, for the caller to
         assemble into its own LaserScan / diagnostics.
     """
-    import mujoco as _mj  # noqa: PLC0415
-
     tilt = math.radians(tilt_deg)
     cos_h, sin_h = math.cos(heading), math.sin(heading)
     elev = np.radians(np.repeat(np.asarray(elevations, dtype=np.float64), n_azimuth))
@@ -117,14 +113,10 @@ def raycast_lidar(
     dz_bt = dx_b * math.sin(tilt) + dz_w * math.cos(tilt)
     vec = np.stack([dx_bt * cos_h - dy_b * sin_h, dx_bt * sin_h + dy_b * cos_h, dz_bt], axis=1)
 
-    n = vec.shape[0]
-    geom_id = np.full(n, -1, dtype=np.int32)
-    dist = np.full(n, -1.0, dtype=np.float64)
     pnt = np.asarray(pos_lidar, dtype=np.float64)
-    _mj.mj_multiRay(model, data, pnt, vec.reshape(-1), None, 1, int(exclude_bid),
-                    geom_id, dist, None, n, _mj.mjMAXVAL)
+    dist, body = raycast(np.broadcast_to(pnt, vec.shape), vec, exclude_body=int(exclude_bid))
 
-    is_self = np.isin(geom_id, np.fromiter(robot_geom_ids, dtype=np.int32, count=len(robot_geom_ids)))
+    is_self = np.isin(body, np.fromiter(robot_bodies, dtype=np.int64, count=len(robot_bodies)))
     hit = (dist > 0) & ~is_self
     valid = hit & (dist < max_range)
     pts = pnt + dist[valid, None] * vec[valid]

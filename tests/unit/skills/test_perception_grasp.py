@@ -26,6 +26,7 @@ from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
 
 _W, _H = 64, 48
 _INTR = mujoco_intrinsics(_W, _H, vfov_deg=42.0)
+_K = np.array([[_INTR.fx, 0.0, _INTR.cx], [0.0, _INTR.fy, _INTR.cy], [0.0, 0.0, 1.0]])  # the frame's own K
 # A camera pose that puts a 1 m-forward point at a physically plausible world spot:
 # camera at (9.0, 3.0, 0.8), facing +X (forward). MuJoCo xmat convention:
 #   col0 = cam right = world +y
@@ -66,8 +67,8 @@ class FakePerception:
         self.calls: list[str] = []
 
     def capture(self):
-        from vector_os_nano.sim.runtime import RGBDFrame
-        return RGBDFrame(rgb=self._color, depth=self._depth, seg=None, K=_INTR,
+        from vector_os_nano.interfaces.physics import RGBDFrame
+        return RGBDFrame(rgb=self._color, depth=self._depth, seg=None, K=_K,
                          cam_pos=_CAM_XPOS, cam_mat=_CAM_XMAT, sim_time=0.0, camera="d435_rgb")
 
     def detect_in(self, rgb, query):

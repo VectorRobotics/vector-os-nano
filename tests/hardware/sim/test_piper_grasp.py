@@ -40,7 +40,7 @@ def rig():
         arm.connect()
         grip.connect()
         rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda _m, d: d.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
+        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
         go2.reset_pose()
         go2.wait_sim(1.5)
         yield go2, arm, grip
@@ -51,9 +51,11 @@ def rig():
         go2.disconnect()
 
 
-def _restore_objects(_m, d) -> None:
+def _restore_objects(w) -> None:
     """Every pickable back to its compiled rest pose, at rest."""
     import mujoco as mj
+
+    _m, d = w.model, w.data
 
     for j in range(_m.njnt):
         if _m.jnt_type[j] == mj.mjtJoint.mjJNT_FREE and mj.mj_id2name(
@@ -91,7 +93,7 @@ def test_the_robot_is_not_a_scene_object(seated) -> None:
 
 def test_an_object_beside_the_jaws_is_never_welded(seated) -> None:
     """EE 5 cm from the bottle centre (inside the old 6 cm magnet), jaws beside it."""
-    _go2, arm, grip = seated
+    go2, arm, grip = seated
     g = arm.get_object_positions()[_GREEN]
     beside = (g[0] - 0.05, g[1], g[2])
     assert _top_down_to(arm, (beside[0], beside[1], beside[2] + 0.02), 4.0)
@@ -100,24 +102,25 @@ def test_an_object_beside_the_jaws_is_never_welded(seated) -> None:
     assert math.dist(ee, g) < 0.06  # the magnet would have welded this
     assert grip.close()
     assert grip.is_holding() is False
-    assert not any(grip.weld_is_active().values())
+    assert go2.runtime.attachments() == {}
 
 
 def test_an_object_between_the_jaws_is_gripped_lifted_and_released(seated) -> None:
-    _go2, arm, grip = seated
+    go2, arm, grip = seated
     g = arm.get_object_positions()[_GREEN]
     assert _top_down_to(arm, (g[0], g[1], g[2] + 0.02), 4.0)
     assert _top_down_to(arm, tuple(g), 2.0)
     assert grip.close()
     assert grip.is_holding() and grip.is_holding(_GREEN)
     assert not grip.is_holding("pickable_can_red")  # target-aware
-    assert grip.weld_is_active()[_GREEN]
+    sc = go2.runtime.world.scene
+    assert go2.runtime.attachments() == {sc.body(_GREEN): sc.body("piper_link6")}
     lift = arm.get_joint_positions()
     lift[1] = max(0.0, lift[1] - 0.5)
     assert arm.move_joints(lift, duration=2.0)
     assert arm.get_object_positions()[_GREEN][2] > g[2] + 0.03
     assert grip.open()
-    assert grip.is_holding() is False and not any(grip.weld_is_active().values())
+    assert grip.is_holding() is False and go2.runtime.attachments() == {}
 
 
 def test_a_failed_release_is_reported_and_keeps_the_hold(seated, monkeypatch) -> None:
@@ -171,9 +174,9 @@ def test_stop_preempts_a_move_within_50_sim_ms(seated) -> None:
     assert out["ok"] is False
     assert out["t"] - t_stop <= 0.05, f"move returned {out['t'] - t_stop:.3f} sim-s after stop()"
     ids = arm._arm_actuator_ids
-    ctrl = rt.call(lambda _m, d: d.ctrl[ids].copy())
+    ctrl = rt.call(lambda w: w.data.ctrl[ids].copy())
     go2.wait_sim(0.3)
-    np.testing.assert_allclose(rt.call(lambda _m, d: d.ctrl[ids].copy()), ctrl)  # nothing written after the hold
+    np.testing.assert_allclose(rt.call(lambda w: w.data.ctrl[ids].copy()), ctrl)  # nothing written after the hold
     assert np.max(np.abs(np.array(arm.get_joint_positions()) - q_stop)) < 0.1
 
 
@@ -207,6 +210,6 @@ def test_ik_right_after_a_walk_solves_for_the_stopped_body(seated) -> None:
         assert math.dist(pos, target) < 0.01, pos
     finally:  # back to the seat for the module's other tests
         rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda _m, d: d.qpos.__setitem__(slice(rq, rq + 7), [*_SEAT, 0.3, 1.0, 0.0, 0.0, 0.0]))
+        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 7), [*_SEAT, 0.3, 1.0, 0.0, 0.0, 0.0]))
         go2.reset_pose()
         go2.wait_sim(1.5)

@@ -28,7 +28,7 @@ from vector_os_nano.perception.object_localizer import (
     _perception_is_usable,
     localize_objects_3d,
 )
-from vector_os_nano.sim.runtime import RGBDFrame
+from vector_os_nano.interfaces.physics import RGBDFrame
 
 # ---------------------------------------------------------------------------
 # Shared synthetic scene parameters
@@ -36,12 +36,13 @@ from vector_os_nano.sim.runtime import RGBDFrame
 
 _W, _H = 64, 48
 _INTR = mujoco_intrinsics(_W, _H, vfov_deg=42.0)
+_K = np.array([[_INTR.fx, 0.0, _INTR.cx], [0.0, _INTR.fy, _INTR.cy], [0.0, 0.0, 1.0]])  # the frame's own K
 _CAM_XPOS = np.array([0.0, 0.0, 0.4])
 _CAM_XMAT = np.array([[0, 0, -1], [-1, 0, 0], [0, 1, 0]], dtype=np.float64).reshape(9)
 
 
 def _frame(rgb: np.ndarray, depth: np.ndarray) -> RGBDFrame:
-    return RGBDFrame(rgb=rgb, depth=depth, seg=None, K=_INTR, cam_pos=_CAM_XPOS,
+    return RGBDFrame(rgb=rgb, depth=depth, seg=None, K=_K, cam_pos=_CAM_XPOS,
                      cam_mat=_CAM_XMAT, sim_time=1.0, camera="d435_rgb")
 
 _DEPTH_VAL = 1.5  # metres — non-trivial, not 1.0 (avoids accidental pass)

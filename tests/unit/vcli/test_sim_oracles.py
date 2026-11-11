@@ -20,9 +20,12 @@ mj = pytest.importorskip("mujoco")
 
 from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph  # noqa: E402
 from vector_os_nano.embodiments.dof_layout import DofLayout  # noqa: E402
-from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml  # noqa: E402
+from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml, _grasp_pairs  # noqa: E402
+from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: E402
 from vector_os_nano.sim.ground_truth import GroundTruth  # noqa: E402
 from vector_os_nano.sim.runtime import SimRuntime  # noqa: E402
+from vector_os_nano.sim.scene import compiled_scene  # noqa: E402
+from vector_os_nano.sim.scene.compiled import inactive_welds  # noqa: E402
 from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace  # noqa: E402
 from vector_os_nano.vcli.worlds.world_manifest import load_world  # noqa: E402
 
@@ -35,9 +38,9 @@ class Rig:
     """The compiled scene + a kinematic pin for the robot's root, legs, arm and jaws."""
 
     def __init__(self) -> None:
-        m = mj.MjModel.from_xml_path(str(_build_room_scene_xml(with_arm=True)))
-        d = mj.MjData(m)
-        self.m, self.d = m, d
+        world = MuJoCoWorld(compiled_scene(
+            _build_room_scene_xml(with_arm=True), robot_root="base_link", grasp_pairs=_grasp_pairs(True)))
+        m = self.m = world.model
         self.L = DofLayout(m, "base_link", 12)
         jq = lambda n: int(m.jnt_qposadr[m.joint(n).id])  # noqa: E731
         self.arm_adr = [jq(f"piper_joint{i}") for i in range(1, 7)]
@@ -45,17 +48,18 @@ class Rig:
         self.base = [10.0, 3.0, 0.32, 0.0]  # x, y, z, yaw
         self.arm = [0.0] * 6
         self.jaw = 0.035
-        self.rt = SimRuntime(m, d, threaded=False, paced=False, name="oracle_test")
-        self.rt.call(lambda _m, _d: self._pin(_m, _d))
+        self.rt = SimRuntime(world, threaded=False, paced=False, name="oracle_test")
+        self.rt.call(self._pin)
         self.rt.step(300, controller=self._pin)  # objects settle into resting contact
-        self.qpos0 = d.qpos.copy()
-        self.gt = GroundTruth(self.rt, robot_root_bid=self.L.root_bid)
+        self.qpos0 = self.rt.snapshot().q.copy()
+        self.gt = GroundTruth(self.rt)
         self.turn = (-math.inf, -math.inf)
         self.sg: SceneGraph | None = None
         self.ns = rig_namespace(self.rt, "go2_piper", belief=lambda: self.sg,
                                 turn_start=lambda: self.turn)
 
-    def _pin(self, m, d) -> None:
+    def _pin(self, w) -> None:
+        m, d = w.model, w.data
         a = self.L.root_qpos_adr
         x, y, z, yaw = self.base
         d.qpos[a:a + 3] = [x, y, z]
@@ -71,11 +75,12 @@ class Rig:
         self.base, self.arm, self.jaw = [10.0, 3.0, 0.32, 0.0], [0.0] * 6, 0.035
         self.sg = None
 
-        def fn(m, d):
+        def fn(w):
+            m, d = w.model, w.data
             d.qpos[:] = self.qpos0
             d.qvel[:] = 0.0
             d.eq_active[:] = [int(m.eq_type[i] != mj.mjtEq.mjEQ_WELD) for i in range(m.neq)]
-            self._pin(m, d)
+            self._pin(w)
 
         self.rt.call(fn)
         self.turn = (self.gt.sim_time, time.time())
@@ -83,28 +88,33 @@ class Rig:
     def weld(self, name: str, on: bool = True) -> None:
         i = next(i for i in range(self.m.neq) if self.m.eq_type[i] == mj.mjtEq.mjEQ_WELD
                  and mj.mj_id2name(self.m, mj.mjtObj.mjOBJ_BODY, int(self.m.eq_obj2id[i])) == name)
-        self.rt.call(lambda _m, d: d.eq_active.__setitem__(i, int(on)))
+        self.rt.call(lambda w: w.data.eq_active.__setitem__(i, int(on)))
 
     def move(self, name: str, xyz) -> None:
         a = int(self.m.jnt_qposadr[self.m.body(name).jntadr[0]])
 
-        def fn(m, d):
-            d.qpos[a:a + 3] = xyz
-            d.qpos[a + 3:a + 7] = [1.0, 0.0, 0.0, 0.0]
-            self._pin(m, d)
+        def fn(w):
+            w.data.qpos[a:a + 3] = xyz
+            w.data.qpos[a + 3:a + 7] = [1.0, 0.0, 0.0, 0.0]
+            self._pin(w)
 
         self.rt.call(fn)
 
     def grasp_pose(self, jaw: float) -> np.ndarray:
         """Arm at the top-down seed; returns the point between the two finger pads."""
         self.arm, self.jaw = list(_GRASP_SEED), 0.035
-        self.rt.call(lambda m, d: self._pin(m, d))
         pads = []
         for body in ("piper_link7", "piper_link8"):
             bid = self.m.body(body).id
             gs = [g for g in range(self.m.ngeom) if self.m.geom_bodyid[g] == bid
                   and (self.m.geom_contype[g] or self.m.geom_conaffinity[g])]
-            pads.append(np.mean([self.d.geom_xpos[g] for g in gs], axis=0))
+            pads.append(gs)
+
+        def pin_and_read(w):  # at a step boundary
+            self._pin(w)
+            return [np.mean([w.data.geom_xpos[g] for g in gs], axis=0) for gs in pads]
+
+        pads = self.rt.call(pin_and_read)
         self.jaw = jaw
         return (pads[0] + pads[1]) / 2.0
 
@@ -199,7 +209,7 @@ def test_kept_holding_is_false_after_a_drop_this_turn(ns, rig: Rig) -> None:
     rig.turn = (rig.gt.sim_time - 1.0, time.time())
     _held_green(rig)
     rig.weld(GREEN, False)  # the scripted drop
-    rig.gt.weld_events()  # (a read publishes the change)
+    assert [(n, p) for _t, n, p in rig.gt.attach_events(since=rig.turn[0])][-1] == (GREEN, None)
     rig.weld(GREEN, True)  # ... and a re-grab
     assert ns["holding_object"]("green bottle")
     assert not ns["kept_holding"]("green bottle")
@@ -219,7 +229,7 @@ def test_arm_at_home_on_the_piper_at_zero(ns, rig: Rig) -> None:
     assert rig.arm == [0.0] * 6
     assert ns["arm_at_home"]()
     rig.arm = [0.0, 0.3, 0.0, 0.0, 0.0, 0.0]
-    rig.rt.call(lambda m, d: rig._pin(m, d))
+    rig.rt.call(rig._pin)
     assert not ns["arm_at_home"]()
 
 
@@ -238,7 +248,7 @@ def test_base_oracles(ns, rig: Rig) -> None:
     assert not ns["near_object"]("user")  # 2 m away
     assert not ns["near_object"]("user", 99)  # clamped to 1.5 m
     rig.base = [8.3, 3.0, 0.32, 0.0]
-    rig.rt.call(lambda m, d: rig._pin(m, d))
+    rig.rt.call(rig._pin)
     assert ns["near_object"]("user")
     assert ns["get_position"]()[:2] == pytest.approx((8.3, 3.0))
 
@@ -247,7 +257,7 @@ def test_in_view_is_segmentation_of_the_robot_camera(ns, rig: Rig) -> None:
     assert ns["in_view"]("green bottle")
     assert not ns["in_view"]("purple box")  # behind the robot, on the hallway console
     rig.base = [10.0, 3.0, 0.32, math.pi]  # turned around
-    rig.rt.call(lambda m, d: rig._pin(m, d))
+    rig.rt.call(rig._pin)
     assert not ns["in_view"]("green bottle")
 
 
@@ -297,14 +307,19 @@ def test_so101_tabletop_oracles() -> None:
     from vector_os_nano.hardware.sim.mujoco_arm import _DEFAULT_SCENE_XML
     from vector_os_nano.embodiments import registry
 
-    m = mj.MjModel.from_xml_path(str(_DEFAULT_SCENE_XML))
-    d = mj.MjData(m)
+    world = MuJoCoWorld(compiled_scene(
+        _DEFAULT_SCENE_XML, robot_root="base_link", grasp_pairs=inactive_welds(_DEFAULT_SCENE_XML)))
+    m = world.model
     stance = registry.load("so101").stance
-    for j, v in stance.items():
-        d.qpos[m.jnt_qposadr[m.joint(j).id]] = v
-    rt = SimRuntime(m, d, threaded=False, paced=False, name="so101_test")
+    rt = SimRuntime(world, threaded=False, paced=False, name="so101_test")
+
+    def at_home(w) -> None:
+        for j, v in stance.items():
+            w.data.qpos[m.jnt_qposadr[m.joint(j).id]] = v
+        mj.mj_forward(w.model, w.data)
+
     try:
-        rt.call(lambda mm, dd: mj.mj_forward(mm, dd))
+        rt.call(at_home)
         ns = rig_namespace(rt, "so101")
         assert "at_position" not in ns  # fixed base: no base oracles
         assert ns["arm_at_home"]()
@@ -313,10 +328,10 @@ def test_so101_tabletop_oracles() -> None:
         assert ns["object_on"]("banana", "table") and not ns["holding_object"]("banana")
         i = next(i for i in range(m.neq)
                  if mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, int(m.eq_obj2id[i])) == "banana")
-        rt.call(lambda _m, dd: dd.eq_active.__setitem__(i, 1))
+        rt.call(lambda w: w.data.eq_active.__setitem__(i, 1))
         assert not ns["holding_object"]("banana")  # welded, not lifted
         a = int(m.jnt_qposadr[m.body("banana").jntadr[0]])
-        rt.call(lambda mm, dd: (dd.qpos.__setitem__(a + 2, dd.qpos[a + 2] + 0.10), mj.mj_forward(mm, dd)))
+        rt.call(lambda w: (w.data.qpos.__setitem__(a + 2, w.data.qpos[a + 2] + 0.10), mj.mj_forward(w.model, w.data)))
         assert ns["holding_object"]("banana")  # a weld-only gripper: weld + lift
         assert ns["holding_object"]("香蕉")
     finally:

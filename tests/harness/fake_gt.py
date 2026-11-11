@@ -9,8 +9,9 @@ tested on the compiled scene in tests/unit/vcli/test_sim_oracles.py):
 
 - base pose      <- ``base.get_position()`` / ``get_heading()``
 - object poses   <- ``arm.get_object_positions()`` (or ``objects=`` given here)
-- welds          <- ``gripper.weld_is_active()``; else the object nearest the EE
-                    (``arm.fk``) within 8 cm while ``gripper.is_holding()``
+- attachments    <- ``gripper.weld_is_active()``; else the object nearest the EE
+                    (``arm.fk``) within 8 cm while ``gripper.is_holding()``; the
+                    parent is always the Piper's weld body
 - lifted         <- z above the lowest z the object has been seen at
 - contacts       <- the fingers while welded, else *support* while resting
 - arm joints     <- ``arm.get_joint_positions()``
@@ -26,6 +27,7 @@ from types import SimpleNamespace
 from typing import Any
 
 _EE_RADIUS = 0.08
+_PARENT = "piper_link6"  # the go2_piper manifest's weld body (the SO-101 accepts any)
 
 
 class FakeGT:
@@ -37,7 +39,7 @@ class FakeGT:
         self.finger_contact = finger_contact
         self.support = support
         self._ids: dict[str, int] = {"piper_link7": 9001, "piper_link8": 9002}
-        self.events: list[tuple[float, str, bool]] = []
+        self.events: list[tuple[float, str, str | None]] = []
         self.sim_time = 0.0
         self._rest: dict[str, float] = {}
         self._last_welds: dict[str, bool] = {}
@@ -78,7 +80,7 @@ class FakeGT:
     def body_id(self, name: str) -> int:
         return self._ids.setdefault(name, 1000 + len(self._ids))
 
-    def weld_active(self) -> dict[str, bool]:
+    def _welds(self) -> dict[str, bool]:
         gripper, arm = self._dev("_gripper"), self._dev("_arm")
         objs = self.object_positions()
         welds = {n: False for n in objs}
@@ -95,16 +97,22 @@ class FakeGT:
                 pass
         for n, on in welds.items():
             if self._last_welds.get(n, False) != on:
-                self.events.append((self.sim_time, n, on))
+                self.events.append((self.sim_time, n, _PARENT if on else None))
         self._last_welds = welds
         return welds
 
-    def weld_events(self, since: float = -math.inf) -> list[tuple[float, str, bool]]:
-        self.weld_active()
+    def attachments(self) -> dict[str, str]:
+        return {n: _PARENT for n, on in self._welds().items() if on}
+
+    def attached_to(self, name: str) -> str | None:
+        return self.attachments().get(name)
+
+    def attach_events(self, since: float = -math.inf) -> list[tuple[float, str, str | None]]:
+        self._welds()
         return [e for e in self.events if e[0] > since]
 
     def contacts(self, name: str) -> set[int]:
-        if self.weld_active().get(name):
+        if self._welds().get(name):
             return set(self.robot_bodies) if self.finger_contact else set()
         return {self.body_id(self.support)} if self.clearance(name) < 0.005 else set()
 

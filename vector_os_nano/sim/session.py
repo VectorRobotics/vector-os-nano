@@ -21,6 +21,7 @@ grasp number came from it), chosen by the embodiment manifest
 from __future__ import annotations
 
 import atexit
+import itertools
 import logging
 import math
 import os
@@ -63,6 +64,7 @@ class SimStartError(RuntimeError):
 
 
 _LIVE: list["SimSession"] = []
+_UIDS = itertools.count(1)
 
 
 def session_for(agent: Any) -> "SimSession | None":
@@ -89,11 +91,11 @@ def _append_gt_dump(path: str, s: "SimSession", phase: str, goal: str) -> None:
     import json
 
     gt, world = s.gt, s.world
-    welds = gt.weld_active()
+    held = gt.attachments()
     line = {
         "phase": phase, "turn": s._turns, "goal": goal, "embodiment": s.config.id,
         "world": s.config.world, "sim_time": gt.sim_time, "base": gt.base_pose(),
-        "objects": {n: {"pos": p, "welded": welds.get(n, False)} for n, p in gt.object_positions().items()},
+        "objects": {n: {"pos": p, "welded": n in held} for n, p in gt.object_positions().items()},
         "surfaces": {k: {"box": v.box, "height": v.height} for k, v in (world.surfaces if world else {}).items()},
         "user": world.user if world else None,
     }
@@ -128,6 +130,7 @@ class SimSession:
     def __init__(self, spec: SimSpec, config: Any) -> None:
         self.spec = spec
         self.config = config
+        self.uid = next(_UIDS)  # stamps every causation baseline taken in this session
         self.agent: Any = None
         self.notes: list[str] = []
         self.ready: dict[str, Any] = {}
@@ -205,19 +208,16 @@ class SimSession:
     # -- ground truth (oracles / graders; skills never see it) ---------------
 
     def _bind_ground_truth(self) -> None:
-        import mujoco as mj
-
         from vector_os_nano.sim.ground_truth import GroundTruth
         from vector_os_nano.vcli.worlds.world_manifest import load_world
 
         agent = self.agent
         rt = getattr(getattr(agent, "_base", None), "runtime", None) or getattr(
             getattr(agent, "_arm", None), "runtime", None)
-        if rt is None:  # no MjData owner: no oracles, every verify grades RAN
+        if rt is None:  # no world owner: no oracles, every verify grades RAN
             self.notes.append("ground truth: unavailable (no SimRuntime on the base or the arm)")
             return
-        root = mj.mj_name2id(rt.model, mj.mjtObj.mjOBJ_BODY, self.config.model.root_body)
-        self.gt = GroundTruth(rt, robot_root_bid=int(root))
+        self.gt = GroundTruth(rt)
         self.world = load_world(self.config.world) if self.config.world else None
         # Skills resolve object names through the world manifest by id (never GT).
         cfg = getattr(agent, "_config", None)

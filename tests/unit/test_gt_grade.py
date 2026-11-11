@@ -67,14 +67,16 @@ def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypa
     mj = pytest.importorskip("mujoco")
     from vector_os_nano.embodiments import registry
     from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+    from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld
     from vector_os_nano.sim.runtime import SimRuntime
+    from vector_os_nano.sim.scene import compiled_scene
     from vector_os_nano.sim.session import SimSession, SimSpec
 
-    m = mj.MjModel.from_xml_path(str(_build_room_scene_xml(with_arm=True)))
-    d = mj.MjData(m)
-    rt = SimRuntime(m, d, threaded=False, paced=False, name="dump_test")
+    world = MuJoCoWorld(compiled_scene(_build_room_scene_xml(with_arm=True), robot_root="base_link"))
+    m = world.model
+    rt = SimRuntime(world, threaded=False, paced=False, name="dump_test")
     try:
-        rt.call(lambda mm, dd: mj.mj_forward(mm, dd))
+        rt.call(lambda w: mj.mj_forward(w.model, w.data))
         s = SimSession(SimSpec("go2_piper", gui=False), registry.load("go2_piper"))
         s.agent = SimpleNamespace(_base=SimpleNamespace(runtime=rt), _arm=None, _config={})
         s._bind_ground_truth()
@@ -85,7 +87,7 @@ def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypa
         monkeypatch.setenv("VECTOR_GT_DUMP", str(dump))
         s.mark_turn("start", "把绿色瓶子拿过来")
         a = int(m.jnt_qposadr[m.body("pickable_bottle_green").jntadr[0]])
-        rt.call(lambda mm, dd: (dd.qpos.__setitem__(slice(a, a + 3), [8.2, 3.0, 0.4]), mj.mj_forward(mm, dd)))
+        rt.call(lambda w: (w.data.qpos.__setitem__(slice(a, a + 3), [8.2, 3.0, 0.4]), mj.mj_forward(w.model, w.data)))
         s.mark_turn("end", "把绿色瓶子拿过来")
 
         lines = gt_grade.load(str(dump))

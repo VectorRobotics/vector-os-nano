@@ -149,7 +149,7 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         def execute(self, params, context):
             base = context.base  # the root freejoint is NOT qpos[0] once pickables precede it
             adr, x = base._mj.layout.root_qpos_adr, float(params.get("x", 9.0))
-            base.runtime.call(lambda _m, d: d.qpos.__setitem__(adr, x))  # at a step boundary
+            base.runtime.call(lambda w: w.data.qpos.__setitem__(adr, x))  # at a step boundary
             base.wait_sim(0.15)
             return SkillResult(success=True, result_data={"x": params.get("x")})
 

@@ -213,7 +213,9 @@ class PhysicsWorld(Protocol):
         over it never is, whatever the geoms' own margins."""
 
     def attach(self, parent: int, child: int) -> None:
-        """Hold *child* rigidly at its CURRENT pose relative to *parent*. Only pairs in
+        """Hold *child* rigidly at its pose relative to *parent* as of the last
+        :meth:`step` or :meth:`reset` (MuJoCo: the kinematics the last step computed,
+        one physics step behind ``q``; current after a reset). Only pairs in
         ``scene.grasp_pairs``; any other pair is a ``KeyError`` listing them; a child
         attached to another parent is a ``ValueError``. World side only
         (``sim/grasp.py``): no driver, skill or perception module calls it."""

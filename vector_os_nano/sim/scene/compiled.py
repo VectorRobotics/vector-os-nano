@@ -25,6 +25,18 @@ def _names(model: mj.MjModel, obj: mj.mjtObj, n: int) -> dict[str, int]:
     return out
 
 
+def inactive_welds(xml_path: str | Path) -> list[tuple[str, str]]:
+    """``(body1, body2)`` names of every inactive body weld in *xml_path*: the grasp
+    pairs of a scene whose file declares them by hand (so101_mujoco.xml)."""
+    m = mj.MjModel.from_xml_path(str(xml_path))
+    name = lambda b: mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, int(b))  # noqa: E731
+    return [
+        (name(m.eq_obj1id[i]), name(m.eq_obj2id[i])) for i in range(m.neq)
+        if m.eq_type[i] == mj.mjtEq.mjEQ_WELD and m.eq_objtype[i] == mj.mjtObj.mjOBJ_BODY
+        and not m.eq_active0[i]
+    ]
+
+
 def compiled_scene(
     xml_path: str | Path,
     *,

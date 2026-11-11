@@ -129,6 +129,12 @@ class CameraIntrinsics:
             height=int(d["height"]),
         )
 
+    @classmethod
+    def from_matrix(cls, K: Any, width: int, height: int) -> CameraIntrinsics:
+        """From a (3, 3) pinhole matrix (``RGBDFrame.K``) and the frame's shape."""
+        return cls(fx=float(K[0][0]), fy=float(K[1][1]), cx=float(K[0][2]), cy=float(K[1][2]),
+                   width=int(width), height=int(height))
+
 
 # ---------------------------------------------------------------------------
 # Perception types

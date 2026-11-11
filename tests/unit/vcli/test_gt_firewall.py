@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-"""The GT firewall: the actor (skills, perception) never reads ground truth.
+"""The GT firewall: the actor (skills, perception, the device drivers) never reads ground truth.
 
 Ground truth (``sim.ground_truth``) and the oracles over it (``vcli/worlds/
 sim_oracles``) are for grading only. A skill or a perception module that imported
@@ -29,9 +29,11 @@ def _imports(path: Path) -> set[str]:
     return out
 
 
-def test_skills_and_perception_never_import_ground_truth() -> None:
+def test_skills_perception_and_drivers_never_import_ground_truth() -> None:
+    """spine:gt-firewall-import-only — the sim drivers held a GroundTruth and handed it
+    to skills through get_object_positions (mujoco_piper / mujoco_piper_gripper)."""
     offenders = []
-    for top in ("skills", "perception"):
+    for top in ("skills", "perception", "hardware/sim"):
         for path in sorted((_PKG / top).rglob("*.py")):
             bad = [m for m in _imports(path) if m == "GroundTruth" or m.startswith(_FORBIDDEN)]
             if bad:

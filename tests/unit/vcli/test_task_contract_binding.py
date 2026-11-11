@@ -196,7 +196,7 @@ def test_a_drop_during_the_carry_never_grounds_a_fetch() -> None:
             for held in (False, True):
                 arm.held = held
                 gt.sim_time += 1.0
-                gt.weld_active()  # the GT weld log records the transition
+                gt.attachments()  # the GT attach log records the transition
         return _Skill("fumble", run)
 
     trace, rep = _fetch([_GRASP, ("fumble", {}), _TO_USER, _DELIVERED], extra=(_fumble,))

@@ -144,11 +144,7 @@ def test_walk_forward_displacement() -> None:
         g1.connect()
 
         # Record start position
-        off = g1._offsets
-        assert off is not None
-        qa = off.pelvis_qpos_adr
-        x0 = float(g1._data.qpos[qa])
-        y0 = float(g1._data.qpos[qa + 1])
+        x0, y0, _z = g1.get_position()
         z0 = g1.get_base_height()
 
         assert z0 > 0.5, f"Robot not standing at connect: z={z0:.3f}"
@@ -156,8 +152,7 @@ def test_walk_forward_displacement() -> None:
         # Walk forward for 2 seconds
         g1.walk(vx=0.5, duration=2.0)
 
-        xf = float(g1._data.qpos[qa])
-        yf = float(g1._data.qpos[qa + 1])
+        xf, yf, _z = g1.get_position()
         zf = g1.get_base_height()
 
         displacement_x = xf - x0

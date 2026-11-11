@@ -19,10 +19,11 @@ Joint ordering (MuJoCo ctrl and qpos[7:19]):
 Quaternion convention: MuJoCo uses (w, x, y, z) in qpos[3:7].
 
 Physics ownership (vector_os_nano/sim/runtime.py):
-    connect() hands MjModel/MjData to ONE SimRuntime, whose single stepper runs
-    the gait controller (_control) every 5 ms tick (200 Hz control, 1 kHz
-    physics). Every other thread mutates through runtime.submit (applied at a
-    step boundary) and reads runtime.snapshot() or a runtime.render() copy.
+    connect() compiles the scene into a MuJoCoWorld and hands it to ONE
+    SimRuntime, whose single stepper runs the gait controller (_control) every
+    5 ms tick (200 Hz control, 1 kHz physics). Every other thread mutates through runtime.submit (applied at a
+    step boundary) and reads runtime.snapshot(); renders and the lidar go to the
+    world, which observes a copy of one instant off the physics lock.
     set_velocity() writes (vx, vy, vyaw) under _cmd_lock (non-blocking).
     stand/sit/lie_down step a PD ramp on the caller's thread (stepper parked).
     Timed motions (walk, navigate_to) count SIM time, so they mean the same
@@ -44,9 +45,10 @@ from typing import Any
 import numpy as np
 from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.embodiments.dof_layout import DofLayout
+from vector_os_nano.interfaces.physics import RGBDFrame
 from vector_os_nano.sim.nav import vgraph as vg
 from vector_os_nano.sim.nav.follow import NavResult, follow
-from vector_os_nano.sim.runtime import ACTOR_EPOCH, RGBDFrame, SimRuntime
+from vector_os_nano.sim.runtime import ACTOR_EPOCH, SimRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +184,7 @@ class _Go2Model:
     Caches actuator IDs so set_joint_torque() is fast.
     """
 
-    __slots__ = ("model", "data", "base_bid", "_act_ids", "_robot_geom_ids", "viewer", "layout")
+    __slots__ = ("model", "data", "base_bid", "_act_ids", "viewer", "layout")
 
     def __init__(self, model: Any, data: Any) -> None:
         mj = _get_mujoco()
@@ -204,11 +206,6 @@ class _Go2Model:
                         model, mj.mjtObj.mjOBJ_ACTUATOR, f"{leg}_{joint}"
                     )
                 )
-        # ALL geom IDs in the robot body tree (lidar self-filter): mj_ray's
-        # bodyexclude filters only ONE body, so we need the whole subtree.
-        # DofLayout.robot_geom_ids is the same subtree walk that used to be
-        # inlined here.
-        self._robot_geom_ids: set[int] = self.layout.robot_geom_ids
 
     def set_joint_torque(self, torque: np.ndarray) -> None:
         """Apply 12 joint torques in canonical order."""
@@ -259,6 +256,21 @@ def _build_flat_scene_xml() -> Path:
     return write_scene("scene_flat", xml.replace("MJCF_DIR", str(_MJCF_DIR)))
 
 
+def _grasp_pairs(with_arm: bool) -> tuple[tuple[str, str], ...]:
+    """(parent, child) grasp welds — only with the arm (the no-arm model has no weld
+    body; a weld to a missing body fails to compile). Parent = the manifest gripper's
+    weld_body (the wrist carrying the EE site + fingers), child = EVERY pickable the
+    world manifest lists; created INACTIVE — the grasp decision activates one only
+    when both fingers grip that object (mirrors so101_mujoco.xml)."""
+    if not with_arm:
+        return ()
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+    weld_body = registry.load("go2_piper").arm.gripper.weld_body
+    return tuple((weld_body, p) for p in load_world("apartment").pickables)
+
+
 def _build_room_scene_xml(with_arm: bool = False) -> Path:
     """Build composite room scene using local MJCF files.
 
@@ -284,18 +296,8 @@ def _build_room_scene_xml(with_arm: bool = False) -> Path:
         # go2_piper.xml carries mesh paths relative to its own directory;
         # build_room_scene resolves them (meshes_dir=None = model-file dir).
         robot_meshes_dir = None
-        # Grasp welds (name, body1, body2) — only with the arm (the no-arm model
-        # has no weld body; a weld to a missing body fails to compile). body1 =
-        # the manifest gripper's weld_body (the wrist carrying the EE site +
-        # fingers), body2 = EVERY pickable the world manifest lists; created
-        # INACTIVE — the gripper's close() activates one only when both fingers
-        # grip that object (mirrors so101_mujoco.xml).
-        from vector_os_nano.embodiments import registry
-        from vector_os_nano.vcli.worlds.world_manifest import load_world
-
-        weld_body = registry.load("go2_piper").arm.gripper.weld_body
         welds: tuple[tuple[str, str, str], ...] = tuple(
-            (f"grasp_{p}", weld_body, p) for p in load_world("apartment").pickables
+            (f"grasp_{child}", parent, child) for parent, child in _grasp_pairs(with_arm)
         )
     else:
         go2_xml = _MJCF_DIR / "go2.xml"
@@ -440,9 +442,8 @@ class MuJoCoGo2:
 
         self._cmd_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self._cmd_lock: threading.Lock = threading.Lock()
-        # Lidar: recast on demand from a private copy, at most every _LIDAR_PERIOD_S.
+        # Lidar: recast on demand by the world, at most every _LIDAR_PERIOD_S.
         self._lidar_lock = threading.Lock()
-        self._lidar_data: Any = None
         self._lidar_cache: tuple[float, Any, list] | None = None
 
         # Viewer drive mode (resolved in connect()): one of "main_thread_pump"
@@ -518,10 +519,18 @@ class MuJoCoGo2:
             raise RuntimeError("MuJoCoGo2: already connected (disconnect first)")
         mj = _get_mujoco()
 
+        # The world owns MjModel / MjData; this driver reaches them as world.model /
+        # world.data (MuJoCo-internal code), always on the runtime's thread.
+        from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: PLC0415
+        from vector_os_nano.sim.scene import compiled_scene  # noqa: PLC0415
+
         if self._room:
             scene_path = _build_room_scene_xml(with_arm=self._with_arm)
-            model = mj.MjModel.from_xml_path(str(scene_path))
-            data = mj.MjData(model)
+            world = MuJoCoWorld(compiled_scene(
+                scene_path, robot_root="base_link", grasp_pairs=_grasp_pairs(self._with_arm),
+                timestep=_SIM_DT,
+            ))
+            model, data = world.model, world.data
             self._mj = _Go2Model(model, data)
             # Expose for downstream consumers that need to load an isolated
             # MjModel from the same MJCF (e.g. MuJoCoPiper's IK).
@@ -554,8 +563,8 @@ class MuJoCoGo2:
                 data.ctrl[12:19] = _PIPER_STOW_CTRL
         else:
             scene_path = _build_flat_scene_xml()
-            model = mj.MjModel.from_xml_path(str(scene_path))
-            data = mj.MjData(model)
+            world = MuJoCoWorld(compiled_scene(scene_path, robot_root="base_link", timestep=_SIM_DT))
+            model, data = world.model, world.data
             self._mj = _Go2Model(model, data)
             self._scene_xml_path = str(scene_path)
 
@@ -564,21 +573,15 @@ class MuJoCoGo2:
             if key_id >= 0:
                 mj.mj_resetDataKeyframe(model, data, key_id)
 
-        # Set physics timestep to 1 kHz
-        self._mj.model.opt.timestep = _SIM_DT
-
-        mj.mj_forward(self._mj.model, self._mj.data)
-        self.runtime = SimRuntime(
-            self._mj.model, self._mj.data, controller=self._control,
-            substeps=_CTRL_DECIM, name="mujoco_go2",
-        )
+        mj.mj_forward(model, data)
+        self.runtime = SimRuntime(world, controller=self._control, substeps=_CTRL_DECIM, name="mujoco_go2")
 
         if self._gui:
             if os.environ.get("MUJOCO_GL", "").lower() == "egl":
                 # EGL offscreen contexts must exist before the viewer's GLFW/GLX init.
                 # ponytail: the head-camera sizes in use (go2 640x480, go2_piper and the
                 # nav bridge 320x240); a new size with the window open fails loud.
-                self.runtime.warm_renderers(("rgb", "depth", "seg"), ((320, 240), (640, 480)))
+                world.warm_renderers(("rgb", "depth", "seg"), ((320, 240), (640, 480)))
             try:
                 import mujoco.viewer  # noqa: PLC0415
                 self._viewer = mujoco.viewer.launch_passive(
@@ -671,7 +674,6 @@ class MuJoCoGo2:
         self._mpc = None
         self._leg_ctrl = None
         self._use_mpc = False
-        self._lidar_data = None
         self._lidar_cache = None
         self._connected = False
 
@@ -780,12 +782,13 @@ class MuJoCoGo2:
         dq_cur = np.asarray(data.qvel[jd : jd + 12], dtype=np.float64)
         return np.clip(_KP * (q_des - q_cur) - _KD * dq_cur, -_TAU_LIMITS, _TAU_LIMITS)
 
-    def _control(self, model: Any, data: Any) -> None:
+    def _control(self, w: Any) -> None:
         """The runtime controller: one 200 Hz tick (runs before 5 physics steps).
 
         Moving: the MPC force plan (or the sinusoidal gait); idle: PD-hold the
         manifest stance. Then the held torque is written and the viewer synced.
         """
+        data = w.data
         with self._cmd_lock:
             vx, vy, vyaw = self._cmd_vel
         t = float(data.time)
@@ -980,7 +983,8 @@ class MuJoCoGo2:
         height = float(self._config.spawn.base_height)
         has_arm = self._mj.model.nu >= 19
 
-        def _reset(model: Any, data: Any) -> None:
+        def _reset(w: Any) -> None:
+            data = w.data
             with self._cmd_lock:
                 self._cmd_vel = (0.0, 0.0, 0.0)
             data.qpos[rq + 2] = height
@@ -996,7 +1000,7 @@ class MuJoCoGo2:
             if has_arm:
                 data.ctrl[12:19] = _PIPER_STOW_CTRL
             self._reset_step_state()
-            mj.mj_forward(model, data)
+            mj.mj_forward(w.model, data)
 
         self.runtime.call(_reset)
 
@@ -1012,7 +1016,7 @@ class MuJoCoGo2:
 
     def _q(self) -> np.ndarray:
         self._require_connection()
-        return self.runtime.snapshot().qpos
+        return self.runtime.snapshot().q
 
     def get_position(self) -> list[float]:
         """Return base position [x, y, z] in world frame."""
@@ -1023,7 +1027,7 @@ class MuJoCoGo2:
         """Return base linear velocity [vx, vy, vz] in world frame."""
         self._require_connection()
         rd = self._mj.layout.root_dof_adr
-        return [float(v) for v in self.runtime.snapshot().qvel[rd : rd + 3]]
+        return [float(v) for v in self.runtime.snapshot().qd[rd : rd + 3]]
 
     def get_heading(self) -> float:
         """Return yaw angle (radians) from base quaternion."""
@@ -1042,7 +1046,7 @@ class MuJoCoGo2:
         """Return all 12 joint velocities (rad/s), ordered FL/FR/RL/RR."""
         self._require_connection()
         jd = self._mj.layout.joint_dof_start
-        return [float(v) for v in self.runtime.snapshot().qvel[jd : jd + 12]]
+        return [float(v) for v in self.runtime.snapshot().qd[jd : jd + 12]]
 
     def get_odometry(self) -> Any:
         """Odometry of one instant (the latest runtime snapshot)."""
@@ -1050,7 +1054,7 @@ class MuJoCoGo2:
 
         self._require_connection()
         s = self.runtime.snapshot()
-        q, v = s.qpos, s.qvel
+        q, v = s.q, s.qd
         rq = self._mj.layout.root_qpos_adr
         rd = self._mj.layout.root_dof_adr
         return Odometry(
@@ -1075,12 +1079,13 @@ class MuJoCoGo2:
     ) -> RGBDFrame:
         """RGB / depth / segmentation + camera pose of the d435 head camera, ONE instant.
 
-        Rendered from a step-boundary copy of the sim, so every field shares the
-        frame's ``sim_time``; ``K`` comes from the camera fovy and the frame shape.
-        Depth is metres with the D435 range (0.1-10 m) applied (0 = invalid).
+        Rendered by the world from a copy of one instant, so every field shares the
+        frame's ``sim_time``; ``K`` comes from the camera fovy and the frame shape,
+        ``seg`` holds canonical body ids. Depth is metres with the D435 range
+        (0.1-10 m) applied (0 = invalid).
         """
         self._require_connection()
-        f = self.runtime.render("d435_rgb", width, height, kinds)
+        f = self.runtime.world.render("d435_rgb", width, height, kinds)
         if f.depth is not None:
             f.depth[(f.depth < 0.1) | (f.depth > 10.0)] = 0.0
         return f
@@ -1108,48 +1113,27 @@ class MuJoCoGo2:
         self._require_connection()
         cam_id = self._mj.model.cam("d435_rgb").id
         return self.runtime.call(
-            lambda _m, d: (d.cam_xpos[cam_id].copy(), d.cam_xmat[cam_id].copy())
+            lambda w: (w.data.cam_xpos[cam_id].copy(), w.data.cam_xmat[cam_id].copy())
         )
 
     def self_mask(self, seg: "np.ndarray") -> "np.ndarray":
-        """Bool mask of the pixels of *seg* (geom ids) showing the robot's OWN Piper arm.
+        """Bool mask of the pixels of *seg* (canonical body ids) showing the robot's OWN
+        Piper arm.
 
         The honest real-robot self-filter (by IDENTITY, pose/colour/group-agnostic):
         the arm at rest occludes the table in the head camera and would otherwise be
         picked as the grasp target (D30 — site/geom-group hides are no-ops after
-        MjSpec.attach). Every geom of every body in the arm subtree counts — not
-        just "piper*"-named ones (the gripper/finger bodies are named differently;
-        R15: a name-prefix filter left the gripper as a distractor).
+        MjSpec.attach). Every body in the arm subtree counts — not just "piper*"-named
+        ones (the gripper/finger bodies are named differently; R15: a name-prefix
+        filter left the gripper as a distractor).
         """
         self._require_connection()
-        if not hasattr(self, "_piper_geom_ids"):
-            mj = _get_mujoco()
-            model = self._mj.model
-            root = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "piper_base_link")
-            arm_bodies: set[int] = set()
-            if root >= 0:
-                for b in range(model.nbody):
-                    x = b
-                    while x > 0:
-                        if x == root:
-                            arm_bodies.add(b)
-                            break
-                        x = int(model.body_parentid[x])
-            ids = [
-                g for g in range(model.ngeom)
-                if int(model.geom_bodyid[g]) in arm_bodies
-                or (mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[g])) or "").startswith("piper")
-            ]
-            self._piper_geom_ids = np.asarray(ids, dtype=np.int32)
-        if self._piper_geom_ids.size == 0:
-            return np.zeros(seg.shape, dtype=bool)
-        return np.isin(seg, self._piper_geom_ids)
-
-    def get_self_mask(
-        self, width: int = 640, height: int = 480,
-    ) -> "np.ndarray":
-        """Bool (H, W) mask of the head-camera pixels showing the robot's own arm."""
-        return self.self_mask(self.get_rgbd_frame(width, height, ("seg",)).seg)
+        if not hasattr(self, "_piper_bodies"):
+            scene = self.runtime.world.scene
+            arm = scene.subtree(scene.body_ids["piper_base_link"]) if "piper_base_link" in scene.body_ids else ()
+            self._piper_bodies = np.asarray(
+                sorted(set(arm) | {b for n, b in scene.body_ids.items() if n.startswith("piper")}), dtype=np.int32)
+        return np.isin(seg, self._piper_bodies)
 
     # ------------------------------------------------------------------
     # Sensor update helpers
@@ -1158,25 +1142,18 @@ class MuJoCoGo2:
     def _lidar(self) -> tuple[float, Any, list]:
         """(sim_time, LaserScan, points) — recast when older than _LIDAR_PERIOD_S.
 
-        Cast OFF the physics thread, on a private copy taken at a step boundary,
-        with one vectorised mj_multiRay call: the scan costs the stepper nothing.
+        Cast by the world on a copy of one instant, OFF the physics lock, with one
+        vectorised multi-ray call: the scan costs the stepper nothing.
         """
         self._require_connection()
         with self._lidar_lock:
             c = self._lidar_cache
             if c is not None and 0.0 <= self.runtime.sim_time - c[0] < _LIDAR_PERIOD_S:
                 return c
-            mj = _get_mujoco()
-            model = self._mj.model
-            d = self._lidar_data
-            if d is None:
-                d = self._lidar_data = mj.MjData(model)
-            self.runtime.call(lambda m, src: mj.mj_copyData(d, m, src))
-            mj.mj_kinematics(model, d)  # geom poses of the copied qpos
-            self._lidar_cache = self._cast_lidar(model, d)
+            self._lidar_cache = self._cast_lidar(self.runtime.snapshot())
             return self._lidar_cache
 
-    def _cast_lidar(self, model: Any, data: Any) -> tuple[float, Any, list]:
+    def _cast_lidar(self, snap: Any) -> tuple[float, Any, list]:
         """Cast rays in multiple elevation rings — Livox MID360-like 3D lidar.
 
         The beams are pitched -20 deg in the body frame, so the "horizontal"
@@ -1194,8 +1171,8 @@ class MuJoCoGo2:
 
         L = self._mj.layout
         rq = L.root_qpos_adr
-        pos = np.asarray(data.qpos[rq : rq + 3], dtype=np.float64)
-        w, x, y, z = data.qpos[L.quat_start : L.quat_start + 4]
+        pos = np.asarray(snap.q[rq : rq + 3], dtype=np.float64)
+        w, x, y, z = snap.q[L.quat_start : L.quat_start + 4]
         heading = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
         cos_h = math.cos(heading)
         sin_h = math.sin(heading)
@@ -1214,18 +1191,18 @@ class MuJoCoGo2:
         # Shared ray cast (sensors/lidar_raycast.py). go2: tilt -20, max_range 12,
         # mid-ring records any non-self hit regardless of range
         # (mid_ring_apply_max_range=False). Leg/arm geoms are separate bodies, so
-        # self-hits are filtered via _robot_geom_ids.
+        # self-hits are filtered by the robot's bodies.
         from vector_os_nano.hardware.sim.sensors.lidar_raycast import (  # noqa: PLC0415
             raycast_lidar,
         )
 
+        scene = self.runtime.world.scene
         raw = raycast_lidar(
-            model,
-            data,
+            self.runtime.world.raycast,
             pos_lidar=pos_lidar,
             heading=heading,
             exclude_bid=self._mj.base_bid,
-            robot_geom_ids=self._mj._robot_geom_ids,
+            robot_bodies=scene.subtree(scene.robot_root),
             tilt_deg=-20.0,
             elevations=elevations,
             n_azimuth=n_azimuth,
@@ -1233,7 +1210,7 @@ class MuJoCoGo2:
             mid_ring_apply_max_range=False,
         )
         scan = LaserScan(
-            timestamp=float(data.time),
+            timestamp=snap.sim_time,
             angle_min=-math.pi,
             angle_max=math.pi,
             angle_increment=math.radians(azimuth_step),
@@ -1241,7 +1218,7 @@ class MuJoCoGo2:
             range_max=12.0,
             ranges=tuple(raw.mid_ring_ranges),
         )
-        return float(data.time), scan, raw.points_3d
+        return snap.sim_time, scan, raw.points_3d
 
     # ------------------------------------------------------------------
     # PD interpolation (stepped on the caller's thread, stepper parked)
@@ -1257,13 +1234,14 @@ class MuJoCoGo2:
         self._was_moving, self._brake_t, self._brake_q = False, None, None  # the posture owns the joints
         rt = self.runtime
         jq = self._mj.layout.joint_qpos_start
-        q_start = np.array(rt.snapshot().qpos[jq : jq + 12], dtype=np.float64)
+        q_start = np.array(rt.snapshot().q[jq : jq + 12], dtype=np.float64)
         q_target = np.asarray(target_joints, dtype=np.float64)
         dt = rt.tick_dt
         n_ramp = max(1, int(duration / dt))
         tick = [0]
 
-        def ramp(_model: Any, data: Any) -> None:
+        def ramp(w: Any) -> None:
+            data = w.data
             k = tick[0]
             tick[0] += 1
             if k < n_ramp:
@@ -1378,9 +1356,9 @@ class MuJoCoGo2:
         robot = layout.robot_geom_ids
         extra_q = layout.joint_qpos_start + layout.num_actuated
 
-        def read(m: Any, d: Any) -> tuple[list, float]:
-            return (vg.obstacles_from_model(m, d, robot),
-                    vg.overhang(m, d, layout.root_bid, extra_q))
+        def read(w: Any) -> tuple[list, float]:
+            return (vg.obstacles_from_model(w.model, w.data, robot),
+                    vg.overhang(w.model, w.data, layout.root_bid, extra_q))
 
         obstacles, reach = self.runtime.call(read)
         nav = self._config.nav

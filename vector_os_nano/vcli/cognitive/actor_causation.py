@@ -38,6 +38,12 @@ TARE/bridge follower or a background explore driving the base between tools neve
 does. The producer grades a re-verify that retried (or only re-checked) its attempt
 group's latest attempt against that attempt's baseline, any other on its own step.
 
+S1 (charter 3.2): the pose half of a baseline is GROUND TRUTH — the base pose, the arm
+joints and the attachments come from the sim session's GroundTruth, never from what
+the actor's own devices report; only the commanded-motion counters come from the
+drivers. A baseline carries its session's id, and one taken in another session (a
+body switched mid-turn) never causes.
+
 Single-sourced into ``classify_step_evidence`` (trace_store) so the actor-causation
 verdict flows to BOTH gates and the VECTOR_VERDICT report — no split-brain.
 """
@@ -118,9 +124,9 @@ def from_name(name: Any) -> "ActorCaused":
 
 @dataclass(frozen=True)
 class ActorBaseline:
-    """A frozen snapshot of the actor's commanded-motion counters + pose.
+    """A frozen snapshot of the actor's commanded-motion counters + its true pose.
 
-    Captured BEFORE a step executes (``capture(agent)``); compared with a fresh
+    Captured BEFORE a step executes (``capture(agent, session)``); compared with a fresh
     ``capture`` taken AFTER ``_verify_and_value`` to grade causation. Every field
     is a SNAPSHOT VALUE (a plain float / tuple), never a live handle, so advancing
     the live robot after capture cannot mutate the baseline (the staleness trap
@@ -139,14 +145,18 @@ class ActorBaseline:
     arm_ctrl_motion: float | None = None
     arm_joints: tuple[float, ...] | None = None
 
-    # Gripper — per-weld {welded-body-name -> active(bool)} snapshot for the 0->1
-    # transition that signals a fresh grasp.
+    # Gripper — {attached object -> True} (ground truth) for the 0->1 transition that
+    # signals a fresh grasp.
     gripper_welds: dict[str, bool] | None = None
 
     # Perception — the belief's count of LOCALIZED observations (SceneGraph
     # ``observation_count``): it advances only when the actor's perception put an
     # object at a position this step.
     belief_obs: int | None = None
+
+    # The sim session the pose half was read in (its ``uid``): a baseline from another
+    # session never causes.
+    session: Any = None
 
 
 def _read_float(fn: Any) -> float | None:
@@ -160,85 +170,53 @@ def _read_float(fn: Any) -> float | None:
         return None
 
 
-def _read_tuple(fn: Any) -> tuple[float, ...] | None:
-    """Call *fn* and coerce to a float tuple, fail-safe to None."""
-    if not callable(fn):
-        return None
+def _read_truth(what: str, fn: Any) -> Any:
+    """A ground-truth read, fail-safe to None (an unreadable channel never causes)."""
     try:
-        return tuple(float(v) for v in fn())
+        return fn()
     except Exception as exc:  # noqa: BLE001
-        logger.debug("actor_causation: tuple read failed: %s", exc)
+        logger.debug("actor_causation: ground-truth %s read failed: %s", what, exc)
         return None
 
 
-def _capture_base(base: Any) -> tuple[float | None, tuple[float, float, float] | None, float | None]:
-    """Snapshot the base's commanded-motion counter + pose (all fail-safe)."""
-    if base is None:
-        return None, None, None
-    if getattr(base, "_connected", True) is False:
-        return None, None, None
-    cmd_motion = _read_float(getattr(base, "cmd_motion", None))
-    pos_t = _read_tuple(getattr(base, "get_position", None))
-    pos = (pos_t[0], pos_t[1], pos_t[2]) if pos_t is not None and len(pos_t) >= 3 else None
-    heading = _read_float(getattr(base, "get_heading", None))
-    return cmd_motion, pos, heading
+def _connected(device: Any) -> bool:
+    return device is not None and getattr(device, "_connected", True) is not False
 
 
-def _capture_arm(arm: Any) -> tuple[float | None, tuple[float, ...] | None]:
-    """Snapshot the arm's commanded-motion counter + joints (all fail-safe)."""
-    if arm is None:
-        return None, None
-    if getattr(arm, "_connected", True) is False:
-        return None, None
-    ctrl_motion = _read_float(getattr(arm, "ctrl_motion", None))
-    joints = _read_tuple(getattr(arm, "get_joint_positions", None))
-    return ctrl_motion, joints
+def capture(agent: Any, session: Any = None) -> ActorBaseline:
+    """Capture a FROZEN actor-causation baseline of *agent* in its sim *session*.
 
-
-def _capture_gripper(gripper: Any) -> dict[str, bool] | None:
-    """Snapshot the gripper's per-weld {body -> active} map (fail-safe)."""
-    if gripper is None:
-        return None
-    reader = getattr(gripper, "weld_is_active", None)
-    if not callable(reader):
-        return None
-    try:
-        welds = reader()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("actor_causation: gripper weld read failed: %s", exc)
-        return None
-    if not isinstance(welds, dict):
-        return None
-    return {str(k): bool(v) for k, v in welds.items()}
-
-
-def capture(agent: Any) -> ActorBaseline:
-    """Capture a FROZEN actor-causation baseline from *agent* (duck-typed).
-
-    Reads ``agent._base`` / ``agent._arm`` / ``agent._gripper`` — the SAME kernel
-    accessors the verify oracles use — and snapshots each channel's cumulative
-    commanded-motion counter plus its pose. Every value is read NOW and stored as a
-    plain float/tuple/dict, so the returned baseline is immutable to subsequent
-    live-robot motion (no stale-handle trap). A missing agent / channel yields a
-    baseline whose fields are None (graded fail-safe). NEVER raises.
+    The commanded-motion counters come from the drivers (``agent._base.cmd_motion``,
+    ``agent._arm.ctrl_motion``); the base pose, the arm joints (by the arm's joint
+    names) and the attachments come from ``session.gt`` — never from what the devices
+    report. Every value is read NOW and stored as a plain float/tuple/dict, so the
+    returned baseline is immutable to subsequent live-robot motion. A missing agent,
+    session or channel yields None fields (graded fail-safe). NEVER raises.
     """
     if agent is None:
         return ActorBaseline()
     base = getattr(agent, "_base", None)
     arm = getattr(agent, "_arm", None)
     gripper = getattr(agent, "_gripper", None)
-    base_cmd_motion, base_pos, base_heading = _capture_base(base)
-    arm_ctrl_motion, arm_joints = _capture_arm(arm)
-    gripper_welds = _capture_gripper(gripper)
+    gt = getattr(session, "gt", None)
+    base_pose = None
+    if _connected(base) and gt is not None and gt.has_base:
+        base_pose = _read_truth("base pose", gt.base_pose)
+    arm_joints = None
+    if _connected(arm) and gt is not None:
+        joints = _read_truth("arm joints", lambda: gt.joint_positions(tuple(arm.joint_names)))
+        arm_joints = None if joints is None else tuple(float(v) for v in joints)
+    held = _read_truth("attachments", gt.attachments) if gripper is not None and gt is not None else None
     obs = getattr(getattr(agent, "_spatial_memory", None), "observation_count", None)
     return ActorBaseline(
-        base_cmd_motion=base_cmd_motion,
-        base_pos=base_pos,
-        base_heading=base_heading,
-        arm_ctrl_motion=arm_ctrl_motion,
+        base_cmd_motion=_read_float(getattr(base, "cmd_motion", None)) if _connected(base) else None,
+        base_pos=None if base_pose is None else tuple(float(v) for v in base_pose[:3]),
+        base_heading=None if base_pose is None else float(base_pose[3]),
+        arm_ctrl_motion=_read_float(getattr(arm, "ctrl_motion", None)) if _connected(arm) else None,
         arm_joints=arm_joints,
-        gripper_welds=gripper_welds,
+        gripper_welds=None if held is None else {str(n): True for n in held},
         belief_obs=obs if isinstance(obs, int) and not isinstance(obs, bool) else None,
+        session=getattr(session, "uid", None),
     )
 
 
@@ -402,17 +380,20 @@ def grade_channels(
     before the turn never does. The per-call detail
     (``"gripper:holding_object:CAUSED"``) is returned for the audit row. *oracles*
     maps the live evidence names to their ``@oracle`` tags (or the tagged callables).
-    Fail closed: no baseline, no robot call, or an unreadable channel grade UNCAUSED.
+    Fail closed: no baseline, no robot call, an unreadable channel, or a baseline taken
+    in another sim session grade UNCAUSED.
     """
     calls = robot_calls(verify, oracles)
     if baseline is None:
         return ActorCaused.UNCAUSED, ("no baseline",)
+    if baseline.session != post.session:
+        return ActorCaused.UNCAUSED, ("baseline from another session",)
     if not calls:
         return ActorCaused.UNCAUSED, ()
 
     def caused(name: str, call: ast.Call, channel: str, want: str) -> bool:
         b = turn_baseline if getattr(_tag(oracles, name), "window", "step") == "turn" else baseline
-        return b is not None and _call_caused(name, call, channel, want, b, post, world)
+        return b is not None and b.session == post.session and _call_caused(name, call, channel, want, b, post, world)
 
     detail = tuple(
         f"{channel}:{name}:{'CAUSED' if caused(name, call, channel, want) else 'UNCAUSED'}"

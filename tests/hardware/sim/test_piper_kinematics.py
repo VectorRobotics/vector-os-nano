@@ -31,11 +31,11 @@ _BASE_Z = 0.30  # standing trunk height
 
 class _Runtime:
     def __init__(self, model) -> None:
-        self.model = model
+        self.world = SimpleNamespace(model=model)
         self.qpos = model.qpos0.copy()
 
     def snapshot(self):
-        return SimpleNamespace(qpos=self.qpos.copy())
+        return SimpleNamespace(q=self.qpos.copy())
 
 
 class _Go2:

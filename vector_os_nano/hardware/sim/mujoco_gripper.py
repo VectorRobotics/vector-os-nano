@@ -9,7 +9,11 @@ attaches the object to the gripper body. On open(), the constraint is
 released. The visual jaw mesh rotates via a separate revolute actuator.
 
 This approach is standard in robotics simulation (avoids contact/friction
-alignment issues with 5-DOF arms).
+alignment issues with 5-DOF arms). It is the documented exception to the
+world-side grasp decision (sim/grasp.py): the SO-101 jaws are visual only (no
+collision), so this driver keeps welding by proximity and writes the weld itself,
+inside a runtime job; the runtime logs the change from ``world.attached()`` (derived
+from ``eq_active``) when that job ends. Every step goes through the arm's runtime.
 """
 from __future__ import annotations
 
@@ -31,9 +35,6 @@ _GRASP_RADIUS: float = 0.05
 
 # Steps to animate gripper open/close
 _GRIPPER_SETTLE_STEPS: int = 400
-
-# Geom names for contact detection (kept for is_holding API)
-_GRIPPER_GEOM_NAMES = {"fixed_jaw", "moving_jaw"}
 
 
 class MuJoCoGripper:
@@ -79,41 +80,6 @@ class MuJoCoGripper:
         """Return True if an object is currently welded to the gripper."""
         return self._held_object is not None
 
-    def weld_is_active(self) -> dict[str, bool]:
-        """Return ``{welded-body-name -> data.eq_active[i] != 0}`` (R2b).
-
-        Reads the REAL constraint state off ``data.eq_active`` (the live physics
-        truth a grasp toggles 0->1), keyed by the welded BODY name resolved via
-        ``model.eq_obj2id -> mj_id2name`` — the SAME per-weld resolution
-        ``_try_grasp`` uses (gripper.py:128-129). Target-aware: the actor-causation
-        grader compares this body-keyed map across a step and treats a body that
-        went 0->1 as a fresh grasp BY THE ACTOR, so a wrong-object weld toggled
-        for the wrong target does not satisfy ``holding_object(target)``.
-
-        Fail-safe: any error (disconnected, no model) yields ``{}`` — an empty map
-        is ungradable (grades NOT_GRADED / UNCAUSED), never a spurious CAUSED.
-        """
-        if not getattr(self._arm, "_connected", False):
-            return {}
-        try:
-            import mujoco  # noqa: PLC0415
-
-            model = self._arm._model
-            data = self._arm._data
-            out: dict[str, bool] = {}
-            for i in range(model.neq):
-                if model.eq_type[i] != mujoco.mjtEq.mjEQ_WELD:
-                    continue
-                body2_id = int(model.eq_obj2id[i])
-                body2_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body2_id)
-                if body2_name is None:
-                    continue
-                out[str(body2_name)] = bool(int(data.eq_active[i]) != 0)
-            return out
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("MuJoCoGripper: weld_is_active read failed: %s", exc)
-            return {}
-
     def get_position(self) -> float:
         """Return normalised gripper position (1.0=open, 0.0=closed)."""
         return 1.0 if self._is_open else 0.0
@@ -132,92 +98,97 @@ class MuJoCoGripper:
             return
 
         try:
-            import mujoco  # noqa: PLC0415
-            import numpy as np  # noqa: PLC0415
-
-            # Get EE position
-            ee_pos = self._arm._data.site_xpos[self._arm._ee_site_id].copy()
-
-            # Find nearest free-body object
-            best_name: str | None = None
-            best_dist = _GRASP_RADIUS
-
-            objs = self._arm.get_object_positions()
-            for name, pos in objs.items():
-                dist = float(np.linalg.norm(np.array(pos) - ee_pos))
-                if dist < best_dist:
-                    best_dist = dist
-                    best_name = name
-
+            best_name = self._arm.runtime.call(self._weld_nearest)
             if best_name is None:
-                logger.debug("MuJoCoGripper: no object within %.0fmm of EE", _GRASP_RADIUS * 1000)
                 return
-
-            # Find and enable the weld constraint for this object
-            model = self._arm._model
-            data = self._arm._data
-            for i in range(model.neq):
-                eq_type = model.eq_type[i]
-                if eq_type != mujoco.mjtEq.mjEQ_WELD:
-                    continue
-                body2_id = model.eq_obj2id[i]
-                body2_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body2_id)
-                if body2_name == best_name:
-                    # Set weld anchor to CURRENT relative pose so object
-                    # stays in place (no snap/fly-away on activation).
-                    body1_id = model.eq_obj1id[i]
-                    p1 = data.xpos[body1_id]
-                    R1 = data.xmat[body1_id].reshape(3, 3)
-                    p2 = data.xpos[body2_id]
-                    R2 = data.xmat[body2_id].reshape(3, 3)
-
-                    # Relative position of body2 in body1 frame
-                    rel_pos = R1.T @ (p2 - p1)
-
-                    # Relative rotation as quaternion (body2 in body1 frame)
-                    rel_R = R1.T @ R2
-                    # Rotation matrix to MuJoCo quaternion [w, x, y, z]
-                    rel_quat = np.zeros(4)
-                    mujoco.mju_mat2Quat(rel_quat, rel_R.flatten())
-
-                    # eq_data layout for weld: anchor(3) + pos(3) + quat(4) + torquescale(1) = 11
-                    model.eq_data[i, :3] = 0.0          # anchor at body1 origin
-                    model.eq_data[i, 3:6] = rel_pos     # relative position
-                    model.eq_data[i, 6:10] = rel_quat   # relative quaternion
-                    # data[10] = torquescale (keep default 1.0)
-
-                    data.eq_active[i] = 1
-                    self._held_object = best_name
-                    logger.info(
-                        "MuJoCoGripper: grasped '%s' (%.0fmm from EE)",
-                        best_name, best_dist * 1000,
-                    )
-                    # Step to let weld settle
-                    for _ in range(50):
-                        mujoco.mj_step(model, data)
-                    if self._arm._viewer is not None:
-                        self._arm._viewer.sync()
-                    return
-
-            logger.warning("MuJoCoGripper: no weld constraint for '%s'", best_name)
-
+            self._held_object = best_name
+            # Step to let weld settle
+            self._arm.runtime.step(50)
+            if self._arm._viewer is not None:
+                self._arm._viewer.sync()
         except Exception as exc:  # noqa: BLE001
             logger.warning("MuJoCoGripper: grasp failed: %s", exc)
+
+    def _weld_nearest(self, w: Any) -> str | None:
+        """At a step boundary: weld the free body nearest the EE (within the grasp radius)."""
+        import mujoco  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+
+        from vector_os_nano.hardware.sim.mujoco_arm import object_positions
+
+        model, data = w.model, w.data
+        # Get EE position
+        ee_pos = data.site_xpos[self._arm._ee_site_id].copy()
+
+        # Find nearest free-body object
+        best_name: str | None = None
+        best_dist = _GRASP_RADIUS
+
+        for name, pos in object_positions(model, data).items():
+            dist = float(np.linalg.norm(np.array(pos) - ee_pos))
+            if dist < best_dist:
+                best_dist = dist
+                best_name = name
+
+        if best_name is None:
+            logger.debug("MuJoCoGripper: no object within %.0fmm of EE", _GRASP_RADIUS * 1000)
+            return None
+
+        # Find and enable the weld constraint for this object
+        for i in range(model.neq):
+            eq_type = model.eq_type[i]
+            if eq_type != mujoco.mjtEq.mjEQ_WELD:
+                continue
+            body2_id = model.eq_obj2id[i]
+            body2_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body2_id)
+            if body2_name == best_name:
+                # Set weld anchor to CURRENT relative pose so object
+                # stays in place (no snap/fly-away on activation).
+                body1_id = model.eq_obj1id[i]
+                p1 = data.xpos[body1_id]
+                R1 = data.xmat[body1_id].reshape(3, 3)
+                p2 = data.xpos[body2_id]
+                R2 = data.xmat[body2_id].reshape(3, 3)
+
+                # Relative position of body2 in body1 frame
+                rel_pos = R1.T @ (p2 - p1)
+
+                # Relative rotation as quaternion (body2 in body1 frame)
+                rel_R = R1.T @ R2
+                # Rotation matrix to MuJoCo quaternion [w, x, y, z]
+                rel_quat = np.zeros(4)
+                mujoco.mju_mat2Quat(rel_quat, rel_R.flatten())
+
+                # eq_data layout for weld: anchor(3) + pos(3) + quat(4) + torquescale(1) = 11
+                model.eq_data[i, :3] = 0.0          # anchor at body1 origin
+                model.eq_data[i, 3:6] = rel_pos     # relative position
+                model.eq_data[i, 6:10] = rel_quat   # relative quaternion
+                # data[10] = torquescale (keep default 1.0)
+
+                data.eq_active[i] = 1
+                logger.info(
+                    "MuJoCoGripper: grasped '%s' (%.0fmm from EE)",
+                    best_name, best_dist * 1000,
+                )
+                return best_name
+
+        logger.warning("MuJoCoGripper: no weld constraint for '%s'", best_name)
+        return None
 
     def _release_all(self) -> None:
         """Disable all weld constraints, releasing any held object."""
         if not self._arm._connected:
             return
 
-        try:
+        def release(w: Any) -> None:
             import mujoco  # noqa: PLC0415
 
-            model = self._arm._model
-            data = self._arm._data
-            for i in range(model.neq):
-                if model.eq_type[i] == mujoco.mjtEq.mjEQ_WELD:
-                    data.eq_active[i] = 0
+            for i in range(w.model.neq):
+                if w.model.eq_type[i] == mujoco.mjtEq.mjEQ_WELD:
+                    w.data.eq_active[i] = 0
 
+        try:
+            self._arm.runtime.call(release)
         except Exception:  # noqa: BLE001
             pass
 
@@ -232,7 +203,6 @@ class MuJoCoGripper:
 
         try:
             import mujoco  # noqa: PLC0415
-            import time as _time  # noqa: PLC0415
 
             act_id = mujoco.mj_name2id(
                 self._arm._model,
@@ -242,28 +212,16 @@ class MuJoCoGripper:
             if act_id < 0:
                 return
 
-            start_val = float(self._arm._data.ctrl[act_id])
-            dt = self._arm._model.opt.timestep
-            sync_interval = max(1, int(1.0 / 60.0 / dt))
+            rt = self._arm.runtime
+            start_val = rt.call(lambda w: float(w.data.ctrl[act_id]))
+            tick = [0]
 
-            if self._arm._viewer is not None:
-                wall_start = _time.monotonic()
-                for i in range(_GRIPPER_SETTLE_STEPS):
-                    t = (i + 1) / _GRIPPER_SETTLE_STEPS
-                    self._arm._data.ctrl[act_id] = start_val + t * (target_angle - start_val)
-                    mujoco.mj_step(self._arm._model, self._arm._data)
-                    if i % sync_interval == 0:
-                        self._arm._viewer.sync()
-                        sim_elapsed = (i + 1) * dt
-                        wall_elapsed = _time.monotonic() - wall_start
-                        sleep = sim_elapsed - wall_elapsed
-                        if sleep > 0:
-                            _time.sleep(sleep)
-            else:
-                for i in range(_GRIPPER_SETTLE_STEPS):
-                    t = (i + 1) / _GRIPPER_SETTLE_STEPS
-                    self._arm._data.ctrl[act_id] = start_val + t * (target_angle - start_val)
-                    mujoco.mj_step(self._arm._model, self._arm._data)
+            def ramp(w: Any) -> None:
+                t = (tick[0] + 1) / _GRIPPER_SETTLE_STEPS
+                tick[0] += 1
+                w.data.ctrl[act_id] = start_val + t * (target_angle - start_val)
+
+            rt.step(_GRIPPER_SETTLE_STEPS, controller=self._arm._paced(ramp))
 
         except Exception as exc:  # noqa: BLE001
             logger.warning("MuJoCoGripper: jaw animation failed: %s", exc)

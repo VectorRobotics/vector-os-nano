@@ -9,14 +9,9 @@
 2 a simulator is imported only by its backend | hardware/sim/mujoco_piper.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/mujoco_piper_gripper.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/scene_builder.py | mujoco
-2 a simulator is imported only by its backend | hardware/sim/sensors/lidar_raycast.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/viewer_mode.py | mujoco
-2 a simulator is imported only by its backend | sim/ground_truth.py | mujoco
-2 a simulator is imported only by its backend | sim/runtime.py | mujoco
-2 a simulator is imported only by its backend | sim/session.py | mujoco
 2 a simulator is imported only by its backend | vcli/cli.py | mujoco
 2 a simulator is imported only by its backend | vcli/tools/sim_tool.py | mujoco
-2 a simulator is imported only by its backend | vcli/worlds/sim_oracles.py | mujoco
 3 actor code calls no attach / detach | perception/tracker.py | detach
 3 actor code imports neither the world side nor the kernel | perception/detector_capability.py | vcli.cognitive.capabilities.types
 3 actor code imports neither the world side nor the kernel | perception/detector_capability.py | vcli.cognitive.capabilities.types.CapabilityResult

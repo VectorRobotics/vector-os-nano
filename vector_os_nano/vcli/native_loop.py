@@ -455,6 +455,15 @@ def _finish_tool_schema() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def actor_state(agent: Any) -> Any:
+    """The causation baseline of *agent*: its drivers' motion counters, the true pose of
+    its sim session (none outside a sim: every robot channel then fails closed).
+    Shared by both producers (the legacy GoalExecutor too)."""
+    from vector_os_nano.sim.session import session_for
+
+    return actor_causation.capture(agent, session_for(agent))
+
+
 class NativeStepRunner:
     """Assemble an ExecutionTrace from a native tool-use turn loop.
 
@@ -503,7 +512,7 @@ class NativeStepRunner:
         self._ask = ask_permission
         # The actor state when the turn (or its current body) started: a turn-window
         # oracle (kept_holding) is caused only by a transition since then.
-        self._turn_baseline: Any = actor_causation.capture(agent)
+        self._turn_baseline: Any = actor_state(agent)
 
         # Per-step accumulator: the producing action chain (skill names) + the
         # capture baseline taken BEFORE the first skill of the current step.
@@ -597,7 +606,7 @@ class NativeStepRunner:
             self._flush_pending()  # an auto-verified step closes before the next action
         if not self._step_open:
             # First skill of a fresh step -> capture the causation baseline NOW.
-            self._baseline = actor_causation.capture(self._agent)
+            self._baseline = actor_state(self._agent)
             self._step_open = True
         self._chain.append(name)
         hint = None
@@ -726,7 +735,7 @@ class NativeStepRunner:
         self._motor_tools = motor_tools
         self._ctx.agent = agent
         self._group_baselines.clear()
-        self._turn_baseline = actor_causation.capture(agent)
+        self._turn_baseline = actor_state(agent)
 
     def _record(
         self, expr: str, verify_result: bool, actor_caused: Any, channels: tuple[str, ...],
@@ -880,7 +889,7 @@ class NativeStepRunner:
                 if not self._step_acted:
                     return actor_causation.ActorCaused.UNCAUSED, ("no action this step",)
                 return actor_causation.ActorCaused.NOT_GRADED, ()
-            post = actor_causation.capture(self._agent)
+            post = actor_state(self._agent)
             baseline = self._group_baseline(key) or self._baseline
             from vector_os_nano.sim.session import session_for
 

@@ -684,8 +684,8 @@ class Go2VNavBridge(Node):
     def _publish_camera(self) -> None:
         """Publish ONE head-camera instant: RGB, depth and camera pose, one stamp.
 
-        The frame comes from MuJoCoGo2.get_rgbd_frame (rendered on the runtime's
-        render thread from a step-boundary copy), so pixels and the published
+        The frame comes from MuJoCoGo2.get_rgbd_frame (rendered by the world from a
+        copy of one instant), so pixels and the published
         d435 pose belong to the same sim time (D36: grasp_point_from_rgbd
         back-projects with exactly this pose).
         """
@@ -695,7 +695,7 @@ class Go2VNavBridge(Node):
 
             from std_msgs.msg import Float64MultiArray
             pose_msg = Float64MultiArray()
-            pose_msg.data = [float(v) for v in frame.cam_pos] + [float(v) for v in frame.cam_mat]
+            pose_msg.data = [float(v) for v in frame.cam_pos] + [float(v) for v in frame.cam_mat.ravel()]
             self._cam_pose_pub.publish(pose_msg)
 
             img_msg = Image()

@@ -24,6 +24,8 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
+from vector_os_nano.core.types import CameraIntrinsics
+
 logger = logging.getLogger(__name__)
 
 _REQUIRED_METHODS = ("capture", "detect_in", "segment")
@@ -55,8 +57,13 @@ def _perception_is_usable(perception: Any) -> bool:
 
 def capture_rgbd(perception: Any) -> tuple[Any, Any, Any, Any, Any]:
     """``(rgb, depth, intrinsics, cam_xpos, cam_xmat)`` of ONE camera instant."""
-    f = perception.capture()
-    return f.rgb, f.depth, f.K, f.cam_pos, f.cam_mat
+    return _unpack(perception.capture())
+
+
+def _unpack(f: Any) -> tuple[Any, Any, CameraIntrinsics, Any, Any]:
+    """An ``RGBDFrame`` as ``(rgb, depth, intrinsics, cam_xpos, cam_xmat)``."""
+    h, w = f.depth.shape[:2]
+    return f.rgb, f.depth, CameraIntrinsics.from_matrix(f.K, w, h), f.cam_pos, f.cam_mat
 
 
 def detect_on(perception: Any, rgb: Any, query: str) -> Any:
@@ -130,8 +137,7 @@ def localize_objects_3d(
     from vector_os_nano.perception.vocab import vocab
 
     try:
-        f = frame if frame is not None else perception.capture()
-        rgb, depth, K, cam_pos, cam_mat = f.rgb, f.depth, f.K, f.cam_pos, f.cam_mat
+        rgb, depth, K, cam_pos, cam_mat = _unpack(frame if frame is not None else perception.capture())
     except Exception as exc:  # noqa: BLE001
         logger.debug("[OBJ-LOC] capture failed: %s", exc)
         return []

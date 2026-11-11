@@ -156,8 +156,6 @@ class MuJoCoPiper:
         self._ik_ee_site_id: int = -1
         self._ik_range: np.ndarray | None = None  # (dof, 2) joint limits
 
-        self._gt: Any = None  # GroundTruth of the parent's runtime (set on connect)
-
         # stop() sets it: an in-flight move_joints returns False within one
         # set-point period and writes nothing after the hold.
         self._stop_evt = threading.Event()
@@ -232,10 +230,8 @@ class MuJoCoPiper:
             )
 
         self._allocate_ik_model(mj)
-        from vector_os_nano.sim.ground_truth import GroundTruth
         from vector_os_nano.vcli.cognitive.abort import is_abort_requested
 
-        self._gt = GroundTruth(self._go2.runtime, robot_root_bid=self._go2._mj.layout.root_bid)
         self._abort_requested = is_abort_requested
         self._connected = True
         logger.info(
@@ -283,17 +279,21 @@ class MuJoCoPiper:
     def get_joint_positions(self) -> list[float]:
         """Read the arm joint positions in radians."""
         self._require_connection()
-        q = self._go2.runtime.snapshot().qpos
+        q = self._go2.runtime.snapshot().q
         return [float(q[adr]) for adr in self._arm_joint_qpos_adr]
 
     def get_object_positions(self) -> dict[str, list[float]]:
-        """Free-body object world positions {body_name: [x, y, z]} from the live go2
-        model — the robot's own bodies are never among them. Mirrors
-        MuJoCoArm.get_object_positions so the holding_object oracle sees the SAME
-        duck-typed surface on the go2 path.
+        """Free-body object world positions {body_name: [x, y, z]} from the published
+        state — the robot's own bodies are never among them. Mirrors
+        MuJoCoArm.get_object_positions (pick's no-target fallback reads it).
+
+        ponytail: simulator truth handed to a skill; S3 deletes it with the generic Arm.
         """
         self._require_connection()
-        return self._gt.free_body_positions()
+        rt = self._go2.runtime
+        sc, q = rt.world.scene, rt.snapshot().q
+        robot = sc.subtree(sc.robot_root)
+        return {n: q[sc.free_q(b)][:3].tolist() for n, b in sc.free_bodies().items() if b not in robot}
 
     # ------------------------------------------------------------------
     # Motion
@@ -321,16 +321,16 @@ class MuJoCoPiper:
         ids = list(self._arm_actuator_ids)
         stop = self._stop_evt
         stop.clear()
-        start = rt.call(lambda _m, d: [float(d.ctrl[aid]) for aid in ids])
+        start = rt.call(lambda w: [float(w.data.ctrl[aid]) for aid in ids])
         # R2b: the commanded ctrl displacement (sum of |target - start|).
         commanded = sum(abs(g - s) for s, g in zip(start, goal))
         from vector_os_nano.sim.runtime import ACTOR_EPOCH
 
         counted = ACTOR_EPOCH.active
 
-        def _write(_m: Any, d: Any, v: list[float]) -> None:
+        def _write(w: Any, v: list[float]) -> None:
             if not stop.is_set():  # checked at the step boundary: never after stop()'s hold
-                d.ctrl[ids] = v
+                w.data.ctrl[ids] = v
 
         steps = max(1, int(duration * _MOVE_UPDATE_HZ))
         dt = duration / steps
@@ -340,7 +340,7 @@ class MuJoCoPiper:
                 break
             t = i / steps
             targets = [s + t * (g - s) for s, g in zip(start, goal)]
-            rt.submit(lambda m, d, v=targets: _write(m, d, v))
+            rt.submit(lambda w, v=targets: _write(w, v))
             done = t
             rt.wait_sim(dt, cancel=stop)
 
@@ -358,7 +358,7 @@ class MuJoCoPiper:
         tol = float(self._spec.track_tol)
         deadline = rt.sim_time + _SETTLE_S
         while True:
-            q = rt.snapshot().qpos
+            q = rt.snapshot().q
             err = max(abs(float(q[a]) - g) for a, g in zip(self._arm_joint_qpos_adr, goal))
             if err < tol:
                 return True
@@ -398,7 +398,7 @@ class MuJoCoPiper:
         self._require_connection()
         self._stop_evt.set()  # BEFORE the hold, so no queued set-point lands after it
         qadr, ids = list(self._arm_joint_qpos_adr), list(self._arm_actuator_ids)
-        self._go2.runtime.call(lambda _m, d: d.ctrl.__setitem__(ids, d.qpos[qadr]))
+        self._go2.runtime.call(lambda w: w.data.ctrl.__setitem__(ids, w.data.qpos[qadr]))
 
     def home(self, duration: float = 3.0) -> bool:
         """Move to the manifest home pose."""
@@ -492,7 +492,7 @@ class MuJoCoPiper:
         The source is the runtime snapshot — a copy, no physics pause.
         """
         go2 = self._go2
-        live_qpos = go2.runtime.snapshot().qpos
+        live_qpos = go2.runtime.snapshot().q
         lo = go2._mj.layout.root_qpos_adr
         n = 7 + go2._mj.layout.num_actuated  # freejoint(7) + legs
         self._ik_data.qpos[lo:lo + n] = live_qpos[lo:lo + n]

@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""GroundTruth — world-side truth of a :class:`SimRuntime`, read at a step boundary.
+"""GroundTruth — the world-side truth of one :class:`SimRuntime`: ONE generic class
+over (runtime, scene), the same on every backend.
 
-For oracles and graders: free-body poses, weld states, contacts, the support
-under an object, what the robot's camera sees (segmentation) and the weld
-transition log — everything the actor cannot author. Skills and perception
-never import this module (tests/unit/vcli/test_gt_firewall.py).
+For oracles and graders: free-body poses and speeds, joint positions, attachments and
+their log, contacts, the support under an object and what the robot's camera sees —
+everything the actor cannot author. Poses and speeds slice the runtime's published
+snapshot (one instant) by the scene's canonical addresses; clearance is today's AABB
+rule over canonical shape AABBs of that instant; contacts and pixels ask the world.
+Skills, perception and the actor-side drivers never import this module
+(tests/unit/vcli/test_gt_firewall.py).
 """
 from __future__ import annotations
 
@@ -15,201 +19,114 @@ from typing import Any
 
 import numpy as np
 
+from vector_os_nano.sim.scene import canonical
 
-def in_subtree(model: Any, bid: int, root_bid: int) -> bool:
-    """True iff body *bid* is *root_bid* or one of its descendants."""
-    while bid > 0:
-        if bid == root_bid:
-            return True
-        bid = int(model.body_parentid[bid])
-    return False
-
-
-# A geom counts as the support under an object when its top is at most this far
+# A shape counts as the support under an object when its top is at most this far
 # above the object's lowest point (resting contact interpenetrates by ~1 mm).
 _SUPPORT_EPS = 0.01
 
 
 class GroundTruth:
-    """Ground truth of one runtime (names resolved once at construction).
+    """Ground truth of one runtime (ids resolved once, from its compiled scene).
 
-    ``robot_root_bid``: the robot's root body; it and every body in its kinematic
-    tree are left out, so the robot is never one of the scene's objects.
+    The robot is the scene's ``robot_root`` and every body below it; it is never one of
+    the scene's objects.
     """
 
-    def __init__(self, runtime: Any, robot_root_bid: int = -1) -> None:
-        import mujoco as mj
-
+    def __init__(self, runtime: Any) -> None:
         self._rt = runtime
-        m = runtime.model
-        self.robot_root_bid = int(robot_root_bid)
-        self.robot_bodies: frozenset[int] = frozenset(
-            b for b in range(m.nbody) if robot_root_bid > 0 and in_subtree(m, b, robot_root_bid)
-        )
-        # A free joint's qpos IS its body's world pose (x y z qw qx qy qz).
-        self._free: dict[str, int] = {}
-        self.bid: dict[str, int] = {}
-        for b in range(m.nbody):
-            j = int(m.body_jntadr[b])
-            name = mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, b)
-            if b in self.robot_bodies:
-                continue
-            if j >= 0 and name and m.jnt_type[j] == mj.mjtJoint.mjJNT_FREE:
-                self._free[name] = int(m.jnt_qposadr[j])
-                self.bid[name] = b
-        self._welds: dict[str, int] = {}
-        for i in range(m.neq):
-            if m.eq_type[i] == mj.mjtEq.mjEQ_WELD:
-                name = mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, int(m.eq_obj2id[i]))
-                if name:
-                    self._welds[name] = i
-        self._weld_body = {i: n for n, i in self._welds.items()}
-        root_j = int(m.body_jntadr[robot_root_bid]) if robot_root_bid > 0 else -1
-        self._root_qadr = (
-            int(m.jnt_qposadr[root_j])
-            if root_j >= 0 and m.jnt_type[root_j] == mj.mjtJoint.mjJNT_FREE else -1
-        )
-        self._colliding = np.asarray((m.geom_contype != 0) | (m.geom_conaffinity != 0))
-
-    @property
-    def runtime(self) -> Any:
-        return self._rt
-
-    @property
-    def has_base(self) -> bool:
-        """The robot root is a free (mobile) body."""
-        return self._root_qadr >= 0
+        sc = self._scene = runtime.world.scene
+        self.robot_bodies: frozenset[int] = sc.subtree(sc.robot_root) if sc.robot_root >= 0 else frozenset()
+        free = sc.free_bodies()
+        # The scene's objects: every free body that is not the robot, name -> body id.
+        self.bid: dict[str, int] = {n: b for n, b in free.items() if b not in self.robot_bodies}
+        self.has_base: bool = sc.robot_root in free.values()  # the robot root moves freely
+        self._names = {b: n for n, b in sc.body_ids.items()}
 
     @property
     def sim_time(self) -> float:
-        return float(self._rt.call(lambda _m, d: float(d.time)))
+        return self._rt.sim_time
 
     # -- poses -------------------------------------------------------------
 
-    def free_body_poses(self) -> dict[str, tuple[list[float], list[float]]]:
-        """``{body: ([x, y, z], [qw, qx, qy, qz])}`` for every free body, one instant."""
-        q = self._rt.snapshot().qpos
-        return {n: (q[a:a + 3].tolist(), q[a + 3:a + 7].tolist()) for n, a in self._free.items()}
-
-    def free_body_positions(self) -> dict[str, list[float]]:
-        return {n: xyz for n, (xyz, _quat) in self.free_body_poses().items()}
-
     def object_positions(self) -> dict[str, list[float]]:
-        """Like :meth:`free_body_positions`, read from the live data at a step boundary
-        (also right for a caller-stepped scene that steps MjData directly)."""
-        free = self._free
-        return self._rt.call(lambda _m, d: {n: d.qpos[a:a + 3].tolist() for n, a in free.items()})
+        """``{object: [x, y, z]}`` of every object, one instant."""
+        q, sc = self._rt.snapshot().q, self._scene
+        return {n: q[sc.free_q(b)][:3].tolist() for n, b in self.bid.items()}
 
     def object_speed(self, name: str) -> float:
-        """Linear speed (m/s) of free body *name*."""
-        j = self.bid[name]
-
-        def read(m: Any, d: Any) -> float:
-            a = int(m.jnt_dofadr[int(m.body_jntadr[j])])
-            return float(np.linalg.norm(d.qvel[a:a + 3]))
-
-        return self._rt.call(read)
+        """Linear speed (m/s) of object *name*."""
+        return float(np.linalg.norm(self._rt.snapshot().qd[self._scene.free_qd(self.bid[name])][:3]))
 
     def base_pose(self) -> tuple[float, float, float, float] | None:
-        """``(x, y, z, yaw)`` of the robot root's free joint; None for a fixed base."""
-        a = self._root_qadr
-        if a < 0:
+        """``(x, y, z, yaw)`` of the robot root; None for a fixed base."""
+        if not self.has_base:
             return None
-        q = self._rt.call(lambda _m, d: d.qpos[a:a + 7].copy())
-        w, x, y, z = (float(v) for v in q[3:7])
-        yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-        return float(q[0]), float(q[1]), float(q[2]), yaw
+        x, y, z, w, qx, qy, qz = (float(v) for v in self._rt.snapshot().q[self._scene.free_q(self._scene.robot_root)])
+        return x, y, z, math.atan2(2.0 * (w * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
 
     def joint_positions(self, joints: tuple[str, ...]) -> list[float]:
-        """qpos of the named hinge/slide joints (fails loud on an unknown name)."""
-        import mujoco as mj
+        """q of the named hinge / slide joints (fails loud on an unknown name)."""
+        sc = self._scene
+        adr = [sc.joint_q(sc.joint(name)) for name in joints]
+        q = self._rt.snapshot().q
+        return [float(q[a]) for a in adr]
 
-        m = self._rt.model
-        adr = []
-        for name in joints:
-            jid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_JOINT, name)
-            if jid < 0:
-                raise KeyError(f"joint {name!r} not in the model")
-            adr.append(int(m.jnt_qposadr[jid]))
-        return self._rt.call(lambda _m, d: [float(d.qpos[a]) for a in adr])
+    # -- attachments -------------------------------------------------------
 
-    # -- welds -------------------------------------------------------------
+    def attachments(self) -> dict[str, str]:
+        """``{object: the body it is attached to}`` right now."""
+        return {self._names[c]: self._names[p] for c, p in self._rt.attachments().items()}
 
-    def weld_active(self) -> dict[str, bool]:
-        """``{welded body2 name: active}`` over every weld equality."""
-        welds = self._welds
-        return self._rt.call(
-            lambda _m, d: {n: bool(int(np.asarray(d.eq_active)[i]) != 0) for n, i in welds.items()}
-        )
+    def attached_to(self, name: str) -> str | None:
+        """The body *name* is attached to, or None."""
+        return self.attachments().get(name)
 
-    def weld_events(self, since: float = -math.inf) -> list[tuple[float, str, bool]]:
-        """``(sim_time, welded body, active)`` weld transitions after *since*, oldest first.
+    def attach_events(self, since: float = -math.inf) -> list[tuple[float, str, str | None]]:
+        """``(sim_time, object, parent or None for a detach)`` after *since*, oldest first.
 
-        From the runtime's transition log (every step-boundary publish compares
-        ``eq_active``); a read publishes first, so a write made outside the runtime
-        is logged by the next read at the latest.
+        From the runtime's attachment log (every attach / detach logs at call time, a
+        raw engine write when its job ends; a read publishes first). Fails closed (raises)
+        when the log no longer reaches back to *since*: an event may have been dropped.
         """
-        self._rt.call(lambda _m, _d: None)
-        return [
-            (t, self._weld_body[i], on) for t, i, on in list(self._rt.eq_log)
-            if i in self._weld_body and t > since
-        ]
+        self._rt.call(lambda _w: None)
+        log = self._rt.attach_log
+        events = list(log)
+        if len(events) == log.maxlen and since < events[0][0]:
+            raise RuntimeError(f"attach log truncated: it starts at {events[0][0]:.3f}, after {since:.3f}")
+        return [(t, self._names[c], None if p is None else self._names[p]) for t, c, p in events if t > since]
 
     # -- contacts / support ------------------------------------------------
 
-    def contacts(self, name: str) -> set[int]:
-        """Body ids in contact with free body *name* right now."""
+    def contacts(self, name: str) -> frozenset[int]:
+        """Bodies in contact with object *name* right now (the world's contact sentence)."""
         bid = self.bid[name]
-
-        def read(m: Any, d: Any) -> set[int]:
-            n = int(d.ncon)
-            b1 = m.geom_bodyid[np.asarray(d.contact.geom1[:n])]
-            b2 = m.geom_bodyid[np.asarray(d.contact.geom2[:n])]
-            return {int(o) for a, o in zip(b1, b2) if a == bid} | {
-                int(a) for a, o in zip(b1, b2) if o == bid
-            }
-
-        return self._rt.call(read)
+        return self._rt.call(lambda w: w.contacts(bid))
 
     def body_id(self, name: str) -> int:
-        import mujoco as mj
-
-        return int(mj.mj_name2id(self._rt.model, mj.mjtObj.mjOBJ_BODY, name))
+        return self._scene.body(name)
 
     def clearance(self, name: str) -> float:
         """Gap (m) between the object's lowest point and the highest colliding,
-        non-robot geom top under it — about 0 when it rests on a support, large
+        non-robot shape top under it — about 0 when it rests on a support, large
         while it is carried; inf over nothing at all."""
-        bid = self.bid[name]
-        robot = np.array(sorted(self.robot_bodies), dtype=int)
-        colliding = self._colliding
-
-        def read(m: Any, d: Any) -> float:
-            # World AABB of every geom (its local aabb rotated by the geom frame).
-            R = d.geom_xmat.reshape(-1, 3, 3)
-            c = d.geom_xpos + np.einsum("gij,gj->gi", R, m.geom_aabb[:, :3])
-            h = np.einsum("gij,gj->gi", np.abs(R), m.geom_aabb[:, 3:])
-            lo, hi = c - h, c + h
-            own = m.geom_bodyid == bid
-            bottom = float(lo[own, 2].min())
-            x, y = float(d.xpos[bid][0]), float(d.xpos[bid][1])
-            under = (
-                colliding & ~own & ~np.isin(m.geom_bodyid, robot)
-                & (lo[:, 0] <= x) & (x <= hi[:, 0]) & (lo[:, 1] <= y) & (y <= hi[:, 1])
-                & (hi[:, 2] <= bottom + _SUPPORT_EPS)
-            )
-            return bottom - float(hi[under, 2].max()) if under.any() else math.inf
-
-        return self._rt.call(read)
+        sc, bid = self._scene, self.bid[name]
+        q = self._rt.snapshot().q
+        lo, hi, owner, colliding = canonical.shape_aabbs(sc, q)
+        own = owner == bid
+        bottom = float(lo[own, 2].min())
+        x, y = (float(v) for v in q[sc.free_q(bid)][:2])
+        under = (
+            colliding & ~own & ~np.isin(owner, sorted(self.robot_bodies))
+            & (lo[:, 0] <= x) & (x <= hi[:, 0]) & (lo[:, 1] <= y) & (y <= hi[:, 1])
+            & (hi[:, 2] <= bottom + _SUPPORT_EPS)
+        )
+        return bottom - float(hi[under, 2].max()) if under.any() else math.inf
 
     # -- camera ------------------------------------------------------------
 
     def visible_pixels(self, name: str, camera: str, width: int, height: int) -> int:
-        """Pixels of free body *name* in a segmentation render of *camera* (occlusion-exact)."""
-        m = self._rt.model
-        geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] == self.bid[name]]
-        # ponytail: RGBDFrame.seg keeps the object id only (not its type), so a
-        # rendered site whose id equals one of these geom ids would count too; the
-        # scenes' few sites sit at ids far below the pickables' geoms.
-        seg = self._rt.render(camera, width, height, ("seg",)).seg
-        return int(np.isin(seg, geoms).sum()) if seg is not None else 0
+        """Pixels of object *name* in a segmentation render of *camera* (occlusion-exact;
+        ``seg`` holds canonical body ids)."""
+        seg = self._rt.world.render(camera, width, height, ("seg",)).seg
+        return int((seg == self.bid[name]).sum())

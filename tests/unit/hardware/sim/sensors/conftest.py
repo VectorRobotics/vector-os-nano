@@ -9,7 +9,6 @@ is OOM-prone under parallel pytest; sensor unit tests must stay light.
 """
 from __future__ import annotations
 
-
 import pytest
 
 
@@ -29,30 +28,13 @@ _TINY_MJCF = """
 
 
 @pytest.fixture
-def tiny_model_data():
-    """Single-body MJCF + paired data — shared across sensor tests."""
-    import mujoco
-    model = mujoco.MjModel.from_xml_string(_TINY_MJCF)
-    data = mujoco.MjData(model)
-    mujoco.mj_forward(model, data)
-    return model, data
+def tiny_world(tmp_path):
+    """The single-body MJCF as a MuJoCoWorld (rays go through ``world.raycast``)."""
+    from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld
+    from vector_os_nano.sim.scene import compiled_scene
 
-
-@pytest.fixture
-def trunk_translated_to(tiny_model_data):
-    """Helper that lets a test reposition the trunk and re-runs FK.
-
-    Returns a callable ``move(x, y, z)`` that updates qpos and forwards
-    kinematics; subsequent reads of ``data.xpos[trunk_id]`` reflect the
-    new position.
-    """
-    import mujoco
-    model, data = tiny_model_data
-    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "trunk")
-
-    def _move(x: float, y: float, z: float) -> None:
-        # qpos layout for a freejoint: [x, y, z, qw, qx, qy, qz]
-        data.qpos[0:3] = [x, y, z]
-        mujoco.mj_forward(model, data)
-
-    return body_id, _move
+    path = tmp_path / "tiny.xml"
+    path.write_text(_TINY_MJCF)
+    world = MuJoCoWorld(compiled_scene(path))
+    yield world
+    world.close()

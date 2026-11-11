@@ -109,13 +109,10 @@ class TestRealArmOracleContract:
         assert rig_namespace(real_arm.runtime, "so101")["arm_at_home"]() is True
 
     def test_ground_truth_objects_are_the_world_manifest_pickables(self, real_arm: Any) -> None:
-        import mujoco
-
         from vector_os_nano.sim.ground_truth import GroundTruth
         from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-        m = real_arm.runtime.model
-        gt = GroundTruth(real_arm.runtime, mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "base_link"))
+        gt = GroundTruth(real_arm.runtime)
         names = set(gt.object_positions())
         # Exactly the scenario's known objects == the tabletop manifest's pickables.
         assert names == set(TABLETOP.object_names) == set(load_world("tabletop").pickables)
