@@ -66,15 +66,14 @@ class _BaseTool:
 
 
 class AllowReadOnlyTool(_BaseTool):
-    """Read-only: auto-allowed by layer 6 of the gate, never prompts."""
+    """Read-only with no check of its own: auto-allowed by layer 6 of the gate,
+    never prompts. (Since R3 a tool's own explicit ``ask`` is NOT overridden by
+    the read-only flag — tests/unit/vcli/test_permissions.py pins that.)"""
 
     name = "allow_ro"
 
     def is_read_only(self, params: dict[str, Any]) -> bool:
         return True
-
-    def check_permissions(self, params, context) -> PermissionResult:
-        return PermissionResult(behavior="ask")  # overridden by read-only allow
 
     def execute(self, params, context) -> ToolResult:
         return ToolResult(content="ro-ok", is_error=False)

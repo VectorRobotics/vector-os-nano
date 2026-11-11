@@ -92,6 +92,90 @@ class TestBashToolExecute:
         assert result.is_error is True
 
 
+def _gone(pid: int) -> bool:
+    """True once *pid* has exited (missing, or a zombie awaiting its reaper)."""
+    import time
+
+    for _ in range(60):
+        try:
+            with open(f"/proc/{pid}/stat") as fh:
+                if fh.read().rsplit(")", 1)[1].split()[0] == "Z":
+                    return True
+        except FileNotFoundError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+class TestBashToolProcessGroup:
+    """R3: abort and timeout stop the WHOLE command, and a background job cannot
+    hold the call open (tools-worlds:bash-gate-weak-and-blocking)."""
+
+    def test_abort_stops_the_command_and_its_children(self, tmp_path: Path) -> None:
+        import os
+        import time
+
+        abort = threading.Event()
+        pidfile = tmp_path / "child.pid"
+        threading.Timer(0.5, abort.set).start()
+        t0 = time.monotonic()
+        result = _get_tool().execute(
+            {"command": f"sleep 30 & echo $! > {pidfile}; wait"},
+            _make_context(abort=abort),
+        )
+        assert time.monotonic() - t0 < 5.0
+        assert result.is_error and "aborted" in result.content.lower()
+        child = int(pidfile.read_text())
+        try:
+            assert _gone(child), "the backgrounded grandchild outlived the abort"
+        finally:
+            try:
+                os.kill(child, 9)
+            except ProcessLookupError:
+                pass
+
+    def test_timeout_kills_grandchildren(self, tmp_path: Path) -> None:
+        import os
+
+        pidfile = tmp_path / "child.pid"
+        result = _get_tool().execute(
+            {"command": f"sleep 30 & echo $! > {pidfile}; wait", "timeout_ms": 500},
+            _make_context(),
+        )
+        assert result.is_error and "timed out" in result.content.lower()
+        child = int(pidfile.read_text())
+        try:
+            assert _gone(child), "the grandchild outlived the timeout"
+        finally:
+            try:
+                os.kill(child, 9)
+            except ProcessLookupError:
+                pass
+
+    def test_a_background_job_does_not_hang_the_call(self, tmp_path: Path) -> None:
+        import os
+        import time
+
+        pidfile = tmp_path / "bg.pid"
+        t0 = time.monotonic()
+        result = _get_tool().execute(
+            {"command": f"sleep 30 & echo $! > {pidfile}; echo started", "timeout_ms": 20_000},
+            _make_context(),
+        )
+        try:
+            assert time.monotonic() - t0 < 5.0, "the call waited for the background job"
+            assert not result.is_error and "started" in result.content
+        finally:
+            try:
+                os.kill(int(pidfile.read_text()), 9)
+            except ProcessLookupError:
+                pass
+
+    def test_stdin_is_closed(self) -> None:
+        result = _get_tool().execute({"command": "cat; echo done", "timeout_ms": 5000}, _make_context())
+        assert not result.is_error and "done" in result.content
+
+
 # ---------------------------------------------------------------------------
 # check_permissions()
 # ---------------------------------------------------------------------------

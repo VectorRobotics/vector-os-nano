@@ -11,28 +11,103 @@ Public exports:
 from __future__ import annotations
 
 import difflib
+import os
+import re
 from pathlib import Path
 from typing import Any
 
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, tool
 
 # ---------------------------------------------------------------------------
-# Security constants
+# Path guard (shared by every file / search tool)
 # ---------------------------------------------------------------------------
+# Every check runs on the REAL path (os.path.realpath): "..", symlinks and
+# relative spellings resolve before any comparison, so none of them bypass it.
 
-DANGEROUS_PATHS: frozenset[str] = frozenset(
-    {"/etc/shadow", "/etc/passwd", "/etc/sudoers"}
+# Credential stores are matched by PATH COMPONENT anywhere, case-insensitively, not
+# under one $HOME: a cwd that holds several users' homes is covered without knowing
+# who the users are. Refused outright, whatever the permission mode.
+_SECRET_DIRS: frozenset[str] = frozenset({
+    ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".vector", ".azure", ".git",
+})
+_SECRET_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset({
+    (".config", "gh"), (".config", "gcloud"),
+    (".claude", ".credentials.json"),                                   # Claude credentials
+    ("huggingface", "token"), ("huggingface", "stored_tokens"), (".huggingface", "token"),
+})
+_SECRET_FILES: frozenset[str] = frozenset({
+    ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials", ".claude.json",
+    ".bash_history", ".zsh_history", ".python_history",
+})
+_SYSTEM_SECRETS: tuple[str, ...] = (
+    "/etc/shadow", "/etc/gshadow", "/etc/passwd", "/etc/sudoers", "/etc/sudoers.d",
+    "/etc/ssh", "/etc/ssl/private",
 )
-
-DANGEROUS_PREFIXES: tuple[str, ...] = (
-    "/etc/ssh/",
-    "/etc/ssl/private/",
-    "~/.ssh/",
-    "~/.claude/",
-    ".git/",
+# Secret-looking file names anywhere (.env, private keys); templates stay readable.
+_SECRET_NAME_RE: re.Pattern[str] = re.compile(
+    r"^(\.env(\..+)?|id_(rsa|dsa|ecdsa|ed25519)(_sk)?|.+\.(pem|key|p12|pfx))$"
 )
+_ENV_TEMPLATE_SUFFIXES: tuple[str, ...] = (".example", ".sample", ".template")
 
 _BINARY_DETECT_BYTES = 8192
+
+
+def real_path(path_str: str, cwd: Any = None) -> Path:
+    """Expand ~, anchor a relative path at *cwd*, and resolve it (realpath)."""
+    p = Path(os.path.expanduser(path_str))
+    if not p.is_absolute():
+        p = Path(cwd or os.getcwd()) / p
+    return Path(os.path.realpath(p))
+
+
+def is_protected(path: Path) -> bool:
+    """True when the REAL *path* is a credential store, a secret file or inside .git.
+    Compared case-insensitively (a harmless false positive on Linux): on macOS or
+    Windows .AWS/credentials and .GIT/config ARE the real secrets."""
+    low = Path(str(path).lower())
+    parts = low.parts
+    if _SECRET_DIRS.intersection(parts) or low.name in _SECRET_FILES:
+        return True
+    if _SECRET_DIR_PAIRS.intersection(zip(parts, parts[1:])):
+        return True
+    if _SECRET_NAME_RE.match(low.name) and not low.name.endswith(_ENV_TEMPLATE_SUFFIXES):
+        return True
+    # All of this user's ~/.claude (session transcripts, not only credentials), and /etc secrets.
+    roots = [os.path.join(os.path.realpath(Path.home()), ".claude")]
+    roots += [os.path.realpath(p) for p in _SYSTEM_SECRETS]
+    return any(low.is_relative_to(r.lower()) for r in roots)
+
+
+def project_root(context: Any) -> Path:
+    """The real project root: the cwd the CLI was started in."""
+    return Path(os.path.realpath(getattr(context, "cwd", None) or os.getcwd()))
+
+
+def in_project(path: Path, root: Path) -> bool:
+    """The REAL *path* lies inside *root*, and root is neither $HOME, an ancestor of it
+    (/, /home, /Users), nor inside a pseudo-fs (/proc, /sys, /dev). The root test is
+    case-insensitive like is_protected (cwd=/users holds /Users/alice on macOS); the
+    containment test stays exact, so case folding never widens what auto-allows."""
+    low = Path(str(root).lower())
+    home = Path(os.path.realpath(Path.home()).lower())
+    pseudo = any(low.is_relative_to(p) for p in ("/proc", "/sys", "/dev"))
+    return not (pseudo or low == home or low in home.parents) and path.is_relative_to(root)
+
+
+def read_permission(path_str: str, context: Any) -> PermissionResult:
+    """The ONE permission rule for every auto-allowed read tool.
+
+    deny  — the real path is protected (credential deny-list, .git);
+    allow — the real path lies inside the project root (in_project);
+    ask   — anything else ($HOME, an ancestor of it or a pseudo-fs as the root never auto-allows).
+    """
+    root = project_root(context)
+    path = real_path(path_str, root)
+    if is_protected(path):
+        return PermissionResult("deny", f"{path_str} is a protected path")
+    if in_project(path, root):
+        return PermissionResult("allow")
+    return PermissionResult("ask", f"Read {path} (outside the project {root})?")
 
 
 # ---------------------------------------------------------------------------
@@ -43,27 +118,11 @@ _BINARY_DETECT_BYTES = 8192
 def _is_binary(path: Path) -> bool:
     """Return True when the file contains null bytes in the first 8 KB."""
     try:
-        chunk = path.read_bytes()[:_BINARY_DETECT_BYTES]
+        with path.open("rb") as fh:
+            chunk = fh.read(_BINARY_DETECT_BYTES)
     except OSError:
         return False
     return b"\x00" in chunk
-
-
-def _resolve(file_path: str) -> Path:
-    """Expand ~ and return a resolved Path (without requiring it to exist)."""
-    return Path(file_path).expanduser()
-
-
-def _is_dangerous(path: Path) -> bool:
-    """Return True when the path hits a known sensitive location."""
-    path_str = str(path)
-    if path_str in DANGEROUS_PATHS:
-        return True
-    for prefix in DANGEROUS_PREFIXES:
-        expanded = str(Path(prefix).expanduser())
-        if path_str.startswith(expanded) or path_str.startswith(prefix):
-            return True
-    return False
 
 
 def _line_numbered(lines: list[str], start_lineno: int) -> str:
@@ -127,15 +186,18 @@ class FileReadTool:
         "required": ["file_path"],
     }
 
+    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
+        return read_permission(str(params.get("file_path", "")), context)
+
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         file_path_str: str = params["file_path"]
         offset: int = int(params.get("offset", 0))
         limit: int = int(params.get("limit", 2000))
 
-        path = _resolve(file_path_str)
+        path = real_path(file_path_str, getattr(context, "cwd", None))
 
-        # 1. Security check
-        if _is_dangerous(path):
+        # 1. Security check (defence in depth: also holds when no permission gate ran)
+        if is_protected(path):
             return ToolResult(
                 content=f"Access denied: {file_path_str} is a protected path.",
                 is_error=True,
@@ -207,7 +269,7 @@ class FileWriteTool:
     def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
         # Hard-deny writes to protected paths, mirroring the read path's guard.
         # A "deny" here is unconditional (survives --no-permission / always-allow).
-        if _is_dangerous(_resolve(str(params.get("file_path", "")))):
+        if is_protected(real_path(str(params.get("file_path", "")), getattr(context, "cwd", None))):
             return PermissionResult("deny", f"{params.get('file_path')} is a protected path")
         return PermissionResult("ask")
 
@@ -215,11 +277,11 @@ class FileWriteTool:
         file_path_str: str = params["file_path"]
         content: str = params["content"]
 
-        path = _resolve(file_path_str)
+        path = real_path(file_path_str, getattr(context, "cwd", None))
 
         # Defence in depth: also block protected paths at execute() so the guard
         # holds even if a caller bypasses PermissionContext.
-        if _is_dangerous(path):
+        if is_protected(path):
             return ToolResult(
                 content=f"Access denied: {file_path_str} is a protected path.",
                 is_error=True,
@@ -345,7 +407,7 @@ class FileEditTool:
 
     def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
         # Hard-deny edits to protected paths (mirrors the read/write guards).
-        if _is_dangerous(_resolve(str(params.get("file_path", "")))):
+        if is_protected(real_path(str(params.get("file_path", "")), getattr(context, "cwd", None))):
             return PermissionResult("deny", f"{params.get('file_path')} is a protected path")
         return PermissionResult("ask")
 
@@ -354,10 +416,10 @@ class FileEditTool:
         old_string: str = params["old_string"]
         new_string: str = params["new_string"]
 
-        path = _resolve(file_path_str)
+        path = real_path(file_path_str, getattr(context, "cwd", None))
 
         # Defence in depth: block protected paths even outside PermissionContext.
-        if _is_dangerous(path):
+        if is_protected(path):
             return ToolResult(
                 content=f"Access denied: {file_path_str} is a protected path.",
                 is_error=True,

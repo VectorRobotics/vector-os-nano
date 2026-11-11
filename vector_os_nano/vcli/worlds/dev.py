@@ -16,100 +16,63 @@ permission-gated ``bash`` tool — never a verify predicate.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
 
 from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 from vector_os_nano.vcli.prompt import DEV_ROLE_PROMPT, DEV_TOOL_INSTRUCTIONS
+from vector_os_nano.vcli.tools.file_tools import in_project, project_root, read_permission, real_path
 from vector_os_nano.vcli.worlds.base import DecomposeVocab
 
-# Bounds for read-only predicates (keep evaluation cheap + safe within the
-# GoalVerifier 5s sandbox).
-_MAX_FILES = 2000
+# A predicate runs inside the GoalVerifier 5s sandbox: one bounded file per call.
 _MAX_BYTES_PER_FILE = 1_000_000
-_SKIP_DIRS = {
-    ".git",
-    ".venv",
-    ".venv-nano",
-    "venv",
-    "node_modules",
-    "__pycache__",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".pytest_cache",
-    "dist",
-    "build",
-}
 
 
-def _safe_path(path: str) -> Path | None:
-    """Resolve *path* under the current working directory.
+def _read_file(path: str) -> str:
+    """The text of the ONE regular file at *path*, if the shared read rule
+    (file_tools.read_permission) auto-allows it. A model-authored predicate runs with
+    no prompt, so it must never become a content oracle on what file_read would ask
+    or refuse, and it never walks a directory (a walk that skips or stops part-way
+    lets a negated count verify True).
 
-    Returns the resolved Path if it stays within cwd, else None (reject
-    traversal / absolute escapes). Predicates are observational and must not
-    read outside the project tree.
-    """
-    try:
-        root = Path.cwd().resolve()
-        target = (root / path).resolve()
-        if target == root or root in target.parents:
-            return target
-        return None
-    except OSError:
-        return None
+    Anything else RAISES (GoalVerifier turns that into False): a refused path, a
+    directory, a missing path, a non-regular file (FIFO, socket) or one over the size
+    cap. Returning False/0 would make 'not path_contains(...)' or
+    'grep_count(...) == 0' verify True on a file that was never examined."""
+    perm = read_permission(path, None)
+    if perm.behavior != "allow":
+        raise PermissionError(f"verify may not read {path}: {perm.reason}")
+    p = real_path(path)
+    if not p.is_file():
+        if not p.exists():
+            raise FileNotFoundError(f"verify found no file {path}: state absence with not file_exists(...)")
+        raise OSError(f"verify reads one regular file per call; {path} is not one")
+    if p.stat().st_size > _MAX_BYTES_PER_FILE:
+        raise OSError(f"verify will not read {path}: larger than {_MAX_BYTES_PER_FILE} bytes")
+    return p.read_text(encoding="utf-8", errors="ignore")
 
 
 @oracle(scope="dev")
 def file_exists(path: str) -> bool:
-    """True if *path* (relative to cwd) exists."""
-    p = _safe_path(path)
-    return bool(p is not None and p.exists())
+    """True if *path* (relative to cwd) exists. Existence is not content, so a
+    protected path inside the project may be asked about; anything read_permission
+    would not auto-allow for its location ($HOME, an ancestor of it or a pseudo-fs
+    as cwd, outside cwd) raises."""
+    p = real_path(path)
+    if not in_project(p, project_root(None)):
+        raise PermissionError(f"verify may not look outside the project: {path}")
+    return p.exists()
 
 
 @oracle(scope="dev")
 def path_contains(path: str, substr: str) -> bool:
-    """True if the text file at *path* contains *substr* (bounded read)."""
-    p = _safe_path(path)
-    if p is None or not p.is_file():
-        return False
-    try:
-        if p.stat().st_size > _MAX_BYTES_PER_FILE:
-            with p.open("r", encoding="utf-8", errors="ignore") as fh:
-                return substr in fh.read(_MAX_BYTES_PER_FILE)
-        return substr in p.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return False
+    """True if the regular file at *path* contains *substr*."""
+    return substr in _read_file(path)
 
 
 @oracle(scope="dev")
-def grep_count(pattern: str, path: str = ".") -> int:
-    """Count regex *pattern* matches in text files under *path* (bounded)."""
-    root = _safe_path(path)
-    if root is None or not root.exists():
-        return 0
-    try:
-        rx = re.compile(pattern)
-    except re.error:
-        return 0
-    files: list[Path] = []
-    if root.is_file():
-        files = [root]
-    else:
-        for p in root.rglob("*"):
-            if len(files) >= _MAX_FILES:
-                break
-            if p.is_file() and not (_SKIP_DIRS & set(p.parts)):
-                files.append(p)
-    total = 0
-    for fp in files:
-        try:
-            if fp.stat().st_size > _MAX_BYTES_PER_FILE:
-                continue
-            text = fp.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        total += len(rx.findall(text))
-    return total
+def grep_count(pattern: str, path: str) -> int:
+    """Number of regex *pattern* matches in the regular file at *path*."""
+    return len(re.compile(pattern).findall(_read_file(path)))
 
 
 def dev_verify_namespace() -> dict[str, Any]:
@@ -123,10 +86,22 @@ def dev_verify_namespace() -> dict[str, Any]:
 
 # --- Decompose vocabulary --------------------------------------------------
 
+_ONE_FILE = "One file per call: to state something about several files, 'and' the calls together."
+
 _DEV_VERIFY_SIGNATURES: dict[str, str] = {
-    "file_exists": "file_exists(path: str) -> bool  # path (relative to cwd) exists",
-    "grep_count": "grep_count(pattern: str, path: str = '.') -> int  # regex match count under path",
-    "path_contains": "path_contains(path: str, substr: str) -> bool  # file at path contains substr",
+    "file_exists": (
+        "file_exists(path: str) -> bool  # path (relative to cwd) exists; "
+        "state absence as not file_exists(path)"
+    ),
+    "grep_count": (
+        "grep_count(pattern: str, path: str) -> int  # regex match count in ONE regular file; "
+        "a directory, a missing, secret or non-regular path, a file over "
+        f"{_MAX_BYTES_PER_FILE} bytes or an invalid regex verifies False. {_ONE_FILE}"
+    ),
+    "path_contains": (
+        "path_contains(path: str, substr: str) -> bool  # the ONE regular file at path contains "
+        f"substr; a directory, a missing, secret or non-regular path verifies False. {_ONE_FILE}"
+    ),
 }
 
 _DEV_EXAMPLE = """\

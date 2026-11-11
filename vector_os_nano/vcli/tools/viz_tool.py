@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""FoxgloveTool — start/stop Foxglove Bridge for web visualization."""
+"""FoxgloveTool — start/stop Foxglove Bridge for web visualization.
+
+It only ever stops the bridge THIS process started (its own process group);
+a bridge someone else runs on port 8765 is reported, never killed.
+"""
 from __future__ import annotations
 
+import atexit
+import os
 import shutil
+import signal
 import subprocess
 from typing import Any
 
@@ -38,7 +45,7 @@ def _is_bridge_running() -> bool:
         "Use action='start' to launch, action='stop' to shut down, action='status' to check."
     ),
     read_only=False,
-    permission="allow",
+    permission="ask",
 )
 class FoxgloveTool:
     """Manage the Foxglove Bridge lifecycle from the CLI."""
@@ -102,6 +109,7 @@ class FoxgloveTool:
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,  # own process group: stop reaches the whole launch tree
             )
         except OSError as e:
             return ToolResult(
@@ -112,7 +120,8 @@ class FoxgloveTool:
         # Brief wait and verify
         try:
             _foxglove_proc.wait(timeout=2)
-            # If it exited quickly, something went wrong
+            # If it exited quickly, something went wrong (and it is no longer ours to stop)
+            _foxglove_proc = None
             return ToolResult(
                 content=(
                     "foxglove_bridge exited immediately. "
@@ -135,30 +144,37 @@ class FoxgloveTool:
         )
 
     def _stop(self) -> ToolResult:
-        global _foxglove_proc
-
-        if _foxglove_proc is not None:
-            _foxglove_proc.terminate()
-            try:
-                _foxglove_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                _foxglove_proc.kill()
-            _foxglove_proc = None
+        if _stop_own_bridge():
             return ToolResult(content="Foxglove Bridge stopped.")
-
-        # Try to kill by port even if we don't have the process handle
         if _is_bridge_running():
-            try:
-                subprocess.run(
-                    ["fuser", "-k", "8765/tcp"],
-                    capture_output=True,
-                    timeout=5,
-                )
-                return ToolResult(content="Foxglove Bridge stopped (via port kill).")
-            except (subprocess.SubprocessError, FileNotFoundError):
-                return ToolResult(
-                    content="Could not stop foxglove_bridge. Kill manually: fuser -k 8765/tcp",
-                    is_error=True,
-                )
-
+            return ToolResult(
+                content=(
+                    "A Foxglove Bridge is listening on port 8765, but this session did not "
+                    "start it, so it was left running."
+                ),
+                is_error=True,
+            )
         return ToolResult(content="Foxglove Bridge is not running.")
+
+
+def _stop_own_bridge() -> bool:
+    """Terminate the bridge process group this module started; False if none."""
+    global _foxglove_proc
+    proc, _foxglove_proc = _foxglove_proc, None
+    if proc is None:
+        return False
+    if proc.poll() is not None:
+        return True  # already gone (and reaped): its pid is no longer ours to signal
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait(timeout=5)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
+    return True
+
+
+atexit.register(_stop_own_bridge)
