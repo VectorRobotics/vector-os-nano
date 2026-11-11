@@ -87,7 +87,7 @@ def test_rm_rf_root_is_blocked_by_the_bash_deny_list_on_the_native_path(monkeypa
     from vector_os_nano.vcli.tools import bash_tool
 
     ran: list[Any] = []
-    monkeypatch.setattr(bash_tool.subprocess, "run", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr(bash_tool.subprocess, "Popen", lambda *a, **k: ran.append(a))
     eng = _dev_engine(
         _script(tool_turn(("bash", {"command": "rm -rf /"})), tool_turn(end=True)),
         bash_tool.BashTool(),
@@ -464,10 +464,8 @@ def test_a_dev_turn_native_owns_shows_the_models_answer(tmp_path, monkeypatch, t
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "README.md").write_text("Vector OS: an agent runtime.\n")
-    monkeypatch.setattr(bash_tool.subprocess, "run", lambda *a, **k: SimpleNamespace(
-        returncode=0, stdout=b"3 passed", stderr=b""))
     call = ("file_read", {"file_path": str(tmp_path / "README.md")}) if tool == "file_read" \
-        else ("bash", {"command": "pytest -q"})
+        else ("bash", {"command": "echo '3 passed'"})
     backend = _script(tool_turn(call), tool_turn(text="README 说这是一个 agent runtime。", end=True))
     eng = _dev_engine(backend, FileReadTool(), bash_tool.BashTool(),
                       permissions=PermissionContext(no_permission=True))
