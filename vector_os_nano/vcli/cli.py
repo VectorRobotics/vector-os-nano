@@ -1280,14 +1280,8 @@ def _handle_slash_command(
         agent_obj = app_state.get("agent") if app_state else None
         if agent_obj is not None:
             sm = getattr(agent_obj, "_spatial_memory", None)
-            if sm is not None:
-                persist_path = getattr(sm, "_persist_path", None) or _sg_path
-                from vector_os_nano.core.scene_graph import SceneGraph
-                new_sg = SceneGraph(persist_path=persist_path)
-                agent_obj._spatial_memory = new_sg
-                base = getattr(agent_obj, "_base", None)
-                if base is not None and hasattr(base, "_scene_graph"):
-                    base._scene_graph = new_sg
+            if sm is not None and hasattr(sm, "clear"):
+                sm.clear()  # in place: skills, oracles and the base keep this instance
                 cleared = True
 
         # Always delete the persist file(s) (works even without agent); a running

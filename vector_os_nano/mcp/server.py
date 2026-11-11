@@ -455,7 +455,7 @@ def create_hardware_stack() -> Agent:
         from vector_os_nano.perception.pipeline import PerceptionPipeline  # noqa: PLC0415
 
         _log("[MCP] Connecting camera (RealSense D405)...")
-        camera = RealSenseCamera()
+        camera = RealSenseCamera(serial=(cfg.get("camera") or {}).get("serial") or None)
         camera.connect()
         _log("[MCP] Camera connected.")
 

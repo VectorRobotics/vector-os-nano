@@ -124,6 +124,7 @@ def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
     # Model weights are a read-only shared cache, not run state: keep finding them
     # (the detector loads offline from the HF cache, never the network).
     env.setdefault("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+    env.setdefault("VECTOR_MODEL_DIR", str(Path.home() / ".cache" / "vector_os" / "models"))
     home = tempfile.mkdtemp(prefix=home_prefix)
     env["HOME"] = home
     return env, home

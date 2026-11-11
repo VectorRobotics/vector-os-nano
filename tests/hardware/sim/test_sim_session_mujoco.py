@@ -86,9 +86,9 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
             # camera by another caller (look) must not change what it gets.
             agent._base.get_camera_frame()
             p = agent._perception
-            assert p.get_color_frame().shape == (240, 320, 3)
-            assert p.get_depth_frame().shape == (240, 320)
-            assert (p.get_intrinsics().width, p.get_intrinsics().height) == (320, 240)
+            f = p.capture()
+            assert f.rgb.shape == (240, 320, 3) and f.depth.shape == (240, 320)
+            assert (f.K.width, f.K.height) == (320, 240)
         if eid == "go2":
             assert agent._arm is None and agent._base._mj.model.nu == 12  # env ignored
             assert "explore: coverage (VECTOR_NAV_STACK unset)" in res.content
@@ -114,11 +114,11 @@ def test_frames_render_from_any_thread_after_start(monkeypatch) -> None:
     s = SimSession.start(SimSpec("go2_piper", gui=False))
     try:
         p, base = s.agent._perception, s.agent._base
-        assert p.get_color_frame().shape == (240, 320, 3)  # the starting thread
+        assert p.capture().rgb.shape == (240, 320, 3)  # the starting thread
 
         def grab(_: int) -> tuple:
-            return (p.get_color_frame().shape, p.get_depth_frame().shape,
-                    base.get_camera_frame().shape)
+            f = p.capture()
+            return (f.rgb.shape, f.depth.shape, base.get_camera_frame().shape)
 
         want = ((240, 320, 3), (240, 320), (480, 640, 3))
         out: list[tuple] = []
@@ -128,7 +128,7 @@ def test_frames_render_from_any_thread_after_start(monkeypatch) -> None:
         assert out == [want]  # another thread, while the starting thread lives on
         with ThreadPoolExecutor(4) as ex:  # concurrent callers serialize, none fails
             assert list(ex.map(grab, range(8))) == [want] * 8
-        assert p.get_color_frame().shape == (240, 320, 3)  # and back on the start thread
+        assert p.capture().rgb.shape == (240, 320, 3)  # and back on the start thread
     finally:
         s.stop()
     assert threading.active_count() == threads0

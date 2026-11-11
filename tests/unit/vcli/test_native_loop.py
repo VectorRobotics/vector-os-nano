@@ -351,12 +351,10 @@ class _FakeLookSkill:
         self._sg, self._sees = sg, sees
 
     def execute(self, params, context):
-        from vector_os_nano.core.scene_graph import ObjectNode
         from vector_os_nano.core.types import SkillResult
 
-        if self._sees:
-            self._sg.add_object(ObjectNode(object_id="obj_g", category="bottle", x=_BOTTLE_XY[0],
-                                           y=_BOTTLE_XY[1], attributes={"color": "green"}))
+        if self._sees:  # a localized observation (what observation_count counts)
+            self._sg.merge_object("green bottle", "", "", x=_BOTTLE_XY[0], y=_BOTTLE_XY[1])
         return SkillResult(success=True)
 
 

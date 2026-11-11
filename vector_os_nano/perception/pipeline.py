@@ -35,6 +35,7 @@ from vector_os_nano.core.types import (
     Pose3D,
     TrackedObject,
 )
+from vector_os_nano.perception._centroid import remove_depth_outliers, robust_centroid
 from vector_os_nano.perception.base import PerceptionProtocol
 from vector_os_nano.perception.pointcloud import (
     pointcloud_to_bbox3d_fast,
@@ -156,6 +157,13 @@ class PerceptionPipeline:
             raise RuntimeError("No camera configured and no synthetic frames set")
         return self._camera.get_depth_frame()  # type: ignore[union-attr]
 
+    def _rgbd(self) -> tuple[np.ndarray, np.ndarray]:
+        """Color + depth of ONE frameset (a RealSense's aligned pair), else the getters."""
+        aligned = getattr(self._camera, "get_aligned_frames", None)
+        if self._synthetic_color is None and self._synthetic_depth is None and callable(aligned):
+            return aligned()
+        return self.get_color_frame(), self.get_depth_frame()
+
     def get_intrinsics(self) -> CameraIntrinsics:
         """Return camera intrinsics."""
         if self._synthetic_intrinsics is not None:
@@ -173,8 +181,7 @@ class PerceptionPipeline:
         Returns:
             (N, 3) float64 array of 3D points in camera frame.
         """
-        depth = self.get_depth_frame()
-        color = self.get_color_frame()
+        color, depth = self._rgbd()
         intrinsics = self.get_intrinsics()
         points, _ = rgbd_to_pointcloud_fast(
             depth, color, intrinsics,
@@ -266,8 +273,7 @@ class PerceptionPipeline:
         if self._tracker is None:
             raise RuntimeError("No tracker configured. Pass tracker=EdgeTAMTracker() to PerceptionPipeline")
 
-        color = self.get_color_frame()
-        depth = self.get_depth_frame()
+        color, depth = self._rgbd()
         intrinsics = self.get_intrinsics()
         h, w = color.shape[:2]
 
@@ -319,9 +325,13 @@ class PerceptionPipeline:
         """
         if self._tracker is None:
             return []
+        if self._tracking_thread is not None and self._tracking_thread.is_alive():
+            # The background loop owns the EdgeTAM session: read its latest result
+            # instead of stepping the same session from a second thread.
+            with self._lock:
+                return list(self._last_tracked)
 
-        color = self.get_color_frame()
-        depth = self.get_depth_frame()
+        color, depth = self._rgbd()
         intrinsics = self.get_intrinsics()
 
         raw_tracks = self._tracker.process_image(color)  # type: ignore[union-attr]
@@ -341,7 +351,8 @@ class PerceptionPipeline:
 
         self._tracking_loss_time = None
         # Preserve labels from last known tracked objects
-        label_map = {t.track_id: t.label for t in self._tracked_objects}
+        with self._lock:
+            label_map = {t.track_id: t.label for t in self._tracked_objects}
         labels = [label_map.get(r.get("track_id", 0), "object") for r in raw_tracks]
 
         tracked_objects = self._build_tracked_objects(
@@ -401,8 +412,7 @@ class PerceptionPipeline:
                     time.sleep(0.1)
                     continue
 
-                color = self.get_color_frame()
-                depth = self.get_depth_frame()
+                color, depth = self._rgbd()
                 if color is None or depth is None:
                     time.sleep(0.05)
                     continue
@@ -410,8 +420,18 @@ class PerceptionPipeline:
                 # Process through EdgeTAM — propagates masks to current frame
                 raw_tracks = self._tracker.process_image(color)  # type: ignore[union-attr]
                 if not raw_tracks:
+                    # A lost track times out here too: its last pose is never kept forever.
+                    if self._tracking_loss_time is None:
+                        self._tracking_loss_time = time.monotonic()
+                    elif time.monotonic() - self._tracking_loss_time > _TRACKING_TIMEOUT_S:
+                        logger.warning("Tracking lost for %.0fs, stopping", _TRACKING_TIMEOUT_S)
+                        self._tracker.stop()  # type: ignore[union-attr]
+                        self._tracking_loss_time = None
+                        with self._lock:
+                            self._tracked_objects, self._last_tracked = [], []
                     time.sleep(0.05)
                     continue
+                self._tracking_loss_time = None
 
                 frame_counter += 1
                 do_3d = (frame_counter % _TRACKING_FRAME_STRIDE == 0) or (frame_counter == 1)
@@ -539,7 +559,7 @@ class PerceptionPipeline:
                 )
                 if len(points) >= 4:
                     # 1. Remove statistical outliers (depth noise, edge bleeding)
-                    clean = self._remove_depth_outliers(points)
+                    clean = remove_depth_outliers(points)
                     if len(clean) < 4:
                         clean = points
 
@@ -548,7 +568,7 @@ class PerceptionPipeline:
 
                     # 2. Compute robust centroid using trimmed mean
                     # Trim 10% extremes on each axis to remove edge artifacts
-                    pose = self._robust_centroid(sampled)
+                    pose = robust_centroid(sampled)
 
             result.append(TrackedObject(
                 track_id=track_id,
@@ -594,56 +614,3 @@ class PerceptionPipeline:
             return points
         idx = np.linspace(0, len(points) - 1, num=max_points, dtype=np.int32)
         return points[idx]
-
-    @staticmethod
-    def _remove_depth_outliers(points: np.ndarray) -> np.ndarray:
-        """Remove depth outliers using IQR on Z axis.
-
-        Mask edges produce depth bleed — points that are far behind or in front
-        of the actual object surface. IQR filtering removes these.
-        """
-        if len(points) < 10:
-            return points
-        z = points[:, 2]
-        q1, q3 = np.percentile(z, [25, 75])
-        iqr = q3 - q1
-        if iqr < 1e-6:
-            return points
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
-        mask = (z >= lower) & (z <= upper)
-        filtered = points[mask]
-        return filtered if len(filtered) >= 4 else points
-
-    @staticmethod
-    def _robust_centroid(points: np.ndarray) -> Pose3D:
-        """Compute centroid using trimmed mean (10% trim on each axis).
-
-        More robust than median or mean:
-        - Mean is sensitive to outliers
-        - Median ignores point density
-        - Trimmed mean balances both: removes 10% extremes, averages the rest
-        """
-        if len(points) < 10:
-            c = np.median(points, axis=0)
-            return Pose3D(x=float(c[0]), y=float(c[1]), z=float(c[2]))
-
-        trim_frac = 0.10
-        n = len(points)
-        trim_n = max(1, int(n * trim_frac))
-
-        cx, cy, cz = 0.0, 0.0, 0.0
-        for axis in range(3):
-            sorted_vals = np.sort(points[:, axis])
-            trimmed = sorted_vals[trim_n: n - trim_n]
-            if len(trimmed) == 0:
-                trimmed = sorted_vals
-            val = float(np.mean(trimmed))
-            if axis == 0:
-                cx = val
-            elif axis == 1:
-                cy = val
-            else:
-                cz = val
-
-        return Pose3D(x=cx, y=cy, z=cz)

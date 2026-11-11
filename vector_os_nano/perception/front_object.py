@@ -38,34 +38,47 @@ _OPEN_KSIZE = 3     # px; morphological-opening kernel. Erode→dilate severs th
                     # a pure threshold flips central→wrong-object within ~5 sat units).
 
 # --- ATTRIBUTE (colour) selection (D47) ---------------------------------------
-# OpenCV hue is 0..180. Red wraps the 0/180 seam so it needs two bands. Ranges are
-# the assumed nominal bands for the three scene cylinders (red rgba .85/.25/.20,
-# green .25/.70/.35, blue .20/.40/.85); REAL-VERIFY measures the rendered blob hues
-# and these are tuned to the measured values if the render fidelity shifts them.
+# OpenCV hue is 0..180. Red wraps the 0/180 seam so it needs two bands. Bands sit
+# around the scene objects' nominal hues (red rgba .85/.25/.20 -> 2, orange
+# .95/.50/.10 -> 14, yellow .95/.80/.15 -> 24, green .25/.70/.35 -> 70, blue
+# .20/.40/.85 -> 111, purple .55/.25/.75 -> 138); REAL-VERIFY measures the rendered
+# blob hues and these are tuned if the render fidelity shifts them.
 _COLOR_HUE: dict[str, list[tuple[int, int]]] = {
-    "red": [(0, 12), (168, 180)],
+    "red": [(0, 10), (168, 180)],
+    "orange": [(11, 19)],
+    "yellow": [(20, 34)],
     "green": [(38, 88)],
-    "blue": [(92, 135)],
-}
-# NL → canonical colour. Substring match (zh + en), so "抓红色的东西" → "red".
-_COLOR_ALIASES: dict[str, str] = {
-    "红": "red", "红色": "red", "red": "red",
-    "绿": "green", "绿色": "green", "green": "green",
-    "蓝": "blue", "蓝色": "blue", "blue": "blue",
+    "blue": [(92, 128)],
+    "purple": [(129, 160)],
 }
 
 
 def parse_color(query: str | None) -> str | None:
-    """Return the canonical colour ('red'/'green'/'blue') named in *query*, else None.
+    """The canonical colour *query* names (the shared world vocabulary), else None.
 
-    Substring match over the zh/en aliases on the lowercased query. A deictic query
-    with no colour word ("抓前面的东西") returns None → existing front-most behaviour.
+    English colour words match on word boundaries ("infrared" is not red), CJK as
+    substrings ("抓红色的东西" -> red). Only colours this resolver has a hue band for
+    are returned; a deictic query with no colour word returns None (front-most).
     """
-    q = (query or "").lower()
-    for alias, color in _COLOR_ALIASES.items():
-        if alias in q:
-            return color
-    return None
+    from vector_os_nano.perception.vocab import vocab
+
+    colour = vocab().colour(query)
+    return colour if colour in _COLOR_HUE else None
+
+
+def colour_matches(rgb: np.ndarray, mask: np.ndarray, color: str, *, min_px: int = 20) -> bool | None:
+    """Does the vivid part of *mask* on *rgb* have *color*'s hue? None = cannot tell.
+
+    The median hue of the mask's saturated pixels against the colour's band. None
+    when the colour has no band or too few vivid pixels sit under the mask.
+    """
+    if color not in _COLOR_HUE:
+        return None
+    sat, val = _saturation(rgb)
+    vivid = (mask > 0) & (sat >= _SAT_MIN // 2) & (val >= _VAL_MIN)
+    if int(vivid.sum()) < min_px:
+        return None
+    return _hue_in_color(float(np.median(_hue(rgb)[vivid])), color)
 
 
 def _hue(rgb: np.ndarray) -> np.ndarray:

@@ -728,7 +728,8 @@ class TestObserveWithViewpoint:
     """L7-6: Full viewpoint-aware observation flow."""
 
     def test_observe_with_viewpoint_creates_all(self) -> None:
-        """observe_with_viewpoint creates viewpoint + objects + visits room."""
+        """observe_with_viewpoint creates viewpoint + objects; looking is not
+        arriving, so it never visits the room (skills-nav:look-vlm-room-phantoms)."""
         sg = _sg()
         sg.add_room(_room("bedroom"))
         vp = sg.observe_with_viewpoint(
@@ -740,7 +741,7 @@ class TestObserveWithViewpoint:
         assert vp is not None
         assert vp.room_id == "bedroom"
         room = sg.get_room("bedroom")
-        assert room is not None and room.visit_count >= 1
+        assert room is not None and room.visit_count == 0
         objs = sg.find_objects_in_room("bedroom")
         cats = {o.category for o in objs}
         assert cats == {"bed", "nightstand"}
@@ -811,7 +812,7 @@ class TestObserveWithViewpoint:
         assert s["rooms"] == 2
         assert s["viewpoints"] == 2
         assert s["objects"] == 3   # fridge, stove, bed
-        assert s["visited_rooms"] == 2
+        assert s["visited_rooms"] == 0  # observing a room is not visiting it
 
     def test_observe_with_viewpoint_updates_room_description(self) -> None:
         """description passed to observe_with_viewpoint becomes room description."""

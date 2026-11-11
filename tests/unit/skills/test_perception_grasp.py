@@ -65,6 +65,14 @@ class FakePerception:
         ]
         self.calls: list[str] = []
 
+    def capture(self):
+        from vector_os_nano.sim.runtime import RGBDFrame
+        return RGBDFrame(rgb=self._color, depth=self._depth, seg=None, K=_INTR,
+                         cam_pos=_CAM_XPOS, cam_mat=_CAM_XMAT, sim_time=0.0, camera="d435_rgb")
+
+    def detect_in(self, rgb, query):
+        return self.detect(query)
+
     def get_color_frame(self):
         self.calls.append("color")
         return self._color
@@ -565,3 +573,31 @@ def test_low_z_passed_box_fails_loud():
         f"expected low_z_backprojection at passed-box site, got {rd['diagnosis']}")
     assert rd.get("consumed_bbox") is True
     assert rd.get("actual_z", 1.0) < _MIN_GRASP_Z
+
+
+def _frame_of(xpos, size=(_W, _H)):
+    return {"size": list(size), "sim_time": 1.0, "cam_pos": [float(v) for v in xpos],
+            "cam_mat": [float(v) for v in _CAM_XMAT]}
+
+
+def test_a_box_from_the_current_frame_is_consumed():
+    perc = FrontPerception()
+    dets = [{"label": "green bottle", "bbox": _PRODUCER_BOX, "confidence": 0.9,
+             "frame": _frame_of(_CAM_XPOS)}]
+    res = PerceptionGraspSkill().execute({"query": "绿色的瓶子", "detections": dets}, _ctx(perc))
+    assert res.success and not any(c.startswith("detect") for c in perc.calls)
+
+
+def test_a_stale_producer_box_is_redetected_on_the_current_frame():
+    """perception:producer-box-no-provenance — a box detected before the camera moved
+    (a navigate, the arm stow) was segmented on a later frame where it no longer is."""
+    perc = FrontPerception()
+    moved = _CAM_XPOS + np.array([0.5, 0.0, 0.0])
+    dets = [{"label": "green bottle", "bbox": [0.0, 0.0, 6.0, 6.0], "confidence": 0.9,
+             "frame": _frame_of(moved)}]
+    res = PerceptionGraspSkill().execute({"query": "绿色的瓶子", "detections": dets}, _ctx(perc))
+    assert any(c.startswith("detect") for c in perc.calls), "the stale box must be re-detected"
+    assert res.success and res.result_data["consumed_bbox"] is True
+    perc = FrontPerception(detections=[])
+    res = PerceptionGraspSkill().execute({"query": "绿色的瓶子", "detections": dets}, _ctx(perc))
+    assert not res.success and res.result_data["diagnosis"] == "stale_box"

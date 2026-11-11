@@ -8,11 +8,10 @@ perception objects.  Tests are marked as unit (no sim marker).
 
 World-point derivation reference
 ---------------------------------
-Identity camera pose (cam_xpos=[0,0,0], cam_xmat=identity), MuJoCo
-convention: camera forward = -col2, so a point 1 m in front of the
-camera lands at world (0, 0, -1.0).  A mask centred on the principal
-point (cx, cy) yields a camera-frame centroid at (0, 0, depth_val),
-which camera_to_world maps to (0, 0, -depth_val) in world frame.
+The camera sits at (0, 0, 0.4) looking along world +x (MuJoCo xmat columns
+right=-y, up=+z, -forward=-x). A mask centred on the principal point (cx, cy)
+yields a camera-frame centroid at (0, 0, depth_val), which camera_to_world maps
+to (depth_val, 0, 0.4) in the world frame.
 """
 from __future__ import annotations
 
@@ -25,9 +24,11 @@ import pytest
 from vector_os_nano.core.types import Detection
 from vector_os_nano.perception.depth_projection import camera_to_world, mujoco_intrinsics
 from vector_os_nano.perception.object_localizer import (
+    Localized,
     _perception_is_usable,
     localize_objects_3d,
 )
+from vector_os_nano.sim.runtime import RGBDFrame
 
 # ---------------------------------------------------------------------------
 # Shared synthetic scene parameters
@@ -35,8 +36,13 @@ from vector_os_nano.perception.object_localizer import (
 
 _W, _H = 64, 48
 _INTR = mujoco_intrinsics(_W, _H, vfov_deg=42.0)
-_CAM_XPOS = np.zeros(3, dtype=np.float64)
-_CAM_XMAT = np.eye(3, dtype=np.float64).reshape(9)
+_CAM_XPOS = np.array([0.0, 0.0, 0.4])
+_CAM_XMAT = np.array([[0, 0, -1], [-1, 0, 0], [0, 1, 0]], dtype=np.float64).reshape(9)
+
+
+def _frame(rgb: np.ndarray, depth: np.ndarray) -> RGBDFrame:
+    return RGBDFrame(rgb=rgb, depth=depth, seg=None, K=_INTR, cam_pos=_CAM_XPOS,
+                     cam_mat=_CAM_XMAT, sim_time=1.0, camera="d435_rgb")
 
 _DEPTH_VAL = 1.5  # metres — non-trivial, not 1.0 (avoids accidental pass)
 
@@ -105,19 +111,10 @@ class _StubPerception:
         self._color = _make_color()
         self._depth, self._mask = _make_depth_and_mask(depth_val)
 
-    def get_color_frame(self) -> np.ndarray:
-        return self._color
+    def capture(self) -> RGBDFrame:
+        return _frame(self._color, self._depth)
 
-    def get_depth_frame(self) -> np.ndarray:
-        return self._depth
-
-    def get_intrinsics(self) -> Any:
-        return _INTR
-
-    def get_camera_pose(self) -> tuple:
-        return (_CAM_XPOS, _CAM_XMAT)
-
-    def detect(self, query: str) -> list[Detection]:
+    def detect_in(self, rgb: np.ndarray, query: str) -> list[Detection]:
         return [
             Detection(
                 label=self._label,
@@ -137,7 +134,7 @@ class _StubPerception:
 class _StubPerceptionNoDetections(_StubPerception):
     """Returns empty detections list."""
 
-    def detect(self, query: str) -> list[Detection]:
+    def detect_in(self, rgb: np.ndarray, query: str) -> list[Detection]:
         return []
 
 
@@ -161,11 +158,8 @@ def test_guard_missing_one_method_returns_false():
     """An object missing even one required method is not usable."""
 
     class _MissingSegment:
-        def get_color_frame(self): ...
-        def get_depth_frame(self): ...
-        def get_intrinsics(self): ...
-        def get_camera_pose(self): ...
-        def detect(self, q): ...
+        def capture(self): ...
+        def detect_in(self, rgb, q): ...
         # 'segment' deliberately absent
 
     assert _perception_is_usable(_MissingSegment()) is False
@@ -187,12 +181,9 @@ def test_localize_returns_empty_when_perception_is_none():
 
 def test_localize_returns_empty_when_perception_missing_method():
     class _NoDect:
-        def get_color_frame(self): ...
-        def get_depth_frame(self): ...
-        def get_intrinsics(self): ...
-        def get_camera_pose(self): ...
+        def capture(self): ...
         def segment(self, img, bbox): ...
-        # no 'detect'
+        # no 'detect_in'
 
     result = localize_objects_3d(_NoDect(), ["apple"])
     assert result == []
@@ -212,27 +203,25 @@ def test_localize_one_object_returns_correct_world_point():
     """Centred mask, identity cam pose, depth 1.5 m → world (0, 0, -1.5).
 
     The stub detect() returns one Detection; segment() returns the
-    synthetic centred mask.  grasp_point_from_rgbd computes the camera-frame
-    centroid at (0, 0, 1.5) and camera_to_world flips it to (0, 0, -1.5)
-    under the identity cam pose / MuJoCo convention.
+    synthetic centred mask: the camera-frame centroid (0, 0, 1.5) lands 1.5 m
+    ahead of the camera, at its height.
     """
     perc = _StubPerception(label="apple", depth_val=_DEPTH_VAL)
     results = localize_objects_3d(perc, ["apple"])
 
     assert len(results) == 1
-    label, x, y, z = results[0]
-    assert label == "apple"
+    label, x, y, z = results[0][:4]
+    assert label == "apple" and results[0].score == pytest.approx(0.9)
 
     # Cross-check with the proven camera_to_world transform.
     expected_wx, expected_wy, expected_wz = camera_to_world(
-        0.0, 0.0, _DEPTH_VAL, 0, 0, 0, 0,
+        0.0, 0.0, _DEPTH_VAL,
         cam_xpos=_CAM_XPOS, cam_xmat=_CAM_XMAT,
     )
     assert x == pytest.approx(expected_wx, abs=0.03)
     assert y == pytest.approx(expected_wy, abs=0.03)
     assert z == pytest.approx(expected_wz, abs=0.03)
-    # MuJoCo identity: forward = -Z_world, so z = -depth_val
-    assert z == pytest.approx(-_DEPTH_VAL, abs=0.03)
+    assert (x, z) == pytest.approx((_DEPTH_VAL, 0.4), abs=0.03)
 
 
 def test_localize_multiple_different_queries():
@@ -245,20 +234,16 @@ def test_localize_multiple_different_queries():
             self._depth, self._mask = _make_depth_and_mask()
             self._color = _make_color()
 
-        def get_color_frame(self): return self._color
-        def get_depth_frame(self): return self._depth
-        def get_intrinsics(self): return _INTR
-        def get_camera_pose(self): return (_CAM_XPOS, _CAM_XMAT)
+        def capture(self): return _frame(self._color, self._depth)
 
-        def detect(self, query: str) -> list[Detection]:
+        def detect_in(self, rgb, query: str) -> list[Detection]:
             return [Detection(label=query, bbox=_bbox_for_mask(), confidence=0.8)]
 
         def segment(self, image, bbox): return self._mask
 
+    # Two queries on ONE spot: only one object is there, the better score keeps it.
     results = localize_objects_3d(_TwoLabelPerc(), ["cup", "bottle"])
-    labels = {r[0] for r in results}
-    assert labels == {"cup", "bottle"}
-    assert len(results) == 2
+    assert [r.label for r in results] == ["cup"]
 
 
 def test_localize_keys_result_by_query_not_detector_label():
@@ -273,15 +258,17 @@ def test_localize_keys_result_by_query_not_detector_label():
     assert results[0][0] == "green bottle"  # the QUERY, not "a green bottle"
 
 
-def test_localize_keys_each_distinct_query_independently():
-    """Each distinct query is localized and keyed by the QUERY string, even when
-    the detector returns the same label for both (query-keyed contract — no
-    cross-query dedup by detector label)."""
-    perc = _StubPerception(label="can")  # detector labels everything "can"
-    results = localize_objects_3d(perc, ["can", "metal can"])
-    keys = {r[0] for r in results}
-    assert keys == {"can", "metal can"}
-    assert len(results) == 2
+def test_two_queries_on_one_spot_keep_the_better_score():
+    """perception:localizer-no-plausibility-gate (dedupe) — 'can' and 'red can' became
+    two scene-graph entries for one body."""
+
+    class _Scored(_StubPerception):
+        def detect_in(self, rgb, query):
+            return [Detection(label=query, bbox=_bbox_for_mask(),
+                              confidence={"can": 0.5, "metal can": 0.7}[query])]
+
+    results = localize_objects_3d(_Scored(), ["can", "metal can"])
+    assert [r.label for r in results] == ["metal can"]
 
 
 # ---------------------------------------------------------------------------
@@ -326,12 +313,9 @@ def test_localize_partial_failure_returns_successes():
             self._depth, self._mask = _make_depth_and_mask()
             self._color = _make_color()
 
-        def get_color_frame(self): return self._color
-        def get_depth_frame(self): return self._depth
-        def get_intrinsics(self): return _INTR
-        def get_camera_pose(self): return (_CAM_XPOS, _CAM_XMAT)
+        def capture(self): return _frame(self._color, self._depth)
 
-        def detect(self, query: str) -> list[Detection]:
+        def detect_in(self, rgb, query: str) -> list[Detection]:
             return [Detection(label=query, bbox=_bbox_for_mask(), confidence=0.8)]
 
         def segment(self, image, bbox):
@@ -450,7 +434,7 @@ def test_look_skill_passes_detected_objects_when_perception_present():
     skill = LookSkill()
 
     # Patch localize_objects_3d to return a predictable non-zero world point.
-    fake_loc = [("apple", 1.1, 2.2, 3.3)]
+    fake_loc = [Localized("apple", 1.1, 2.2, 3.3, 0.9, "edgetam")]
     with mock.patch(
         "vector_os_nano.skills.go2.look.localize_objects_3d",
         return_value=fake_loc,
@@ -481,10 +465,9 @@ def test_look_skill_passes_detected_objects_when_perception_present():
     )
 
 
-def test_look_skill_passes_detected_objects_none_when_perception_absent():
-    """Without perception, observe_with_viewpoint is called with
-    detected_objects=None (names-only fallback — no regression).
-    """
+def test_look_skill_stores_nothing_when_perception_absent():
+    """docs-vs-code:zero-zero-pollution-all-fail — without a localizer the VLM's names
+    used to be stored at (0, 0); now only the viewpoint is recorded, no object."""
     from vector_os_nano.skills.go2.look import LookSkill
 
     ctx, mem = _make_context(with_perception=False)
@@ -494,8 +477,8 @@ def test_look_skill_passes_detected_objects_none_when_perception_absent():
     assert result.success, result.error_message
     assert len(mem.calls) == 1
     call = mem.calls[0]
-    # No perception → detected_objects should be None (names-only path)
-    assert call["detected_objects"] is None
+    assert call["detected_objects"] == [] and call["objects"] == []
+    assert sorted(result.result_data["unlocalized"]) == ["apple", "cup"]
 
 
 def test_look_skill_includes_world_coords_in_result_data():
@@ -506,7 +489,7 @@ def test_look_skill_includes_world_coords_in_result_data():
     ctx, _ = _make_context(with_perception=True)
     skill = LookSkill()
 
-    fake_loc = [("apple", 4.0, 5.0, 6.0)]
+    fake_loc = [Localized("apple", 4.0, 5.0, 6.0, 0.9, "edgetam")]
     with mock.patch(
         "vector_os_nano.skills.go2.look.localize_objects_3d",
         return_value=fake_loc,
@@ -565,15 +548,15 @@ def test_look_without_a_vlm_localizes_the_world_vocabulary():
     ctx, mem = _no_vlm_context("apartment")
     with mock.patch(
         "vector_os_nano.skills.go2.look.localize_objects_3d",
-        return_value=[("green bottle", 10.88, 3.0, 0.32)],
+        return_value=[Localized("green bottle", 10.88, 3.0, 0.32, 0.6, "edgetam")],
     ) as loc:
         result = LookSkill().execute({}, ctx)
     assert result.success, result.error_message
     asked = loc.call_args.args[1]
     assert "green bottle" in asked and "red can" in asked  # the manifest vocabulary
     (call,) = mem.calls
-    assert call["objects"] == ["green bottle"]
-    assert call["detected_objects"] == [("green bottle", 10.88, 3.0)]
+    assert call["objects"] == []  # names are never stored, only localized objects
+    assert call["detected_objects"] == [("green bottle", 10.88, 3.0, 0.32)]
     assert [o["name"] for o in result.result_data["objects"]] == ["green bottle"]
 
 
@@ -584,3 +567,62 @@ def test_look_without_a_vlm_or_a_world_still_fails_loud():
     result = LookSkill().execute({}, ctx)
     assert not result.success and result.diagnosis_code == "no_vlm"
     assert not mem.calls
+
+
+# ---------------------------------------------------------------------------
+# Plausibility gates (perception:localizer-no-plausibility-gate) and one frame
+# (perception:localizer-box-from-later-frame / docs-vs-code:localizer-frame-skew)
+# ---------------------------------------------------------------------------
+
+
+class _Scene(_StubPerception):
+    """A wall at 3 m filling the frame, optionally with an object patch in front."""
+
+    def __init__(self, *, obj_depth: float | None, rgb_fill=(40, 170, 70), box=None,
+                 score: float = 0.8) -> None:
+        super().__init__(confidence=score)
+        self._depth = np.full((_H, _W), 3.0, dtype=np.float32)
+        self._color = np.full((_H, _W, 3), 90, dtype=np.uint8)
+        self._box = box or _bbox_for_mask()
+        x1, y1, x2, y2 = (int(v) for v in self._box)
+        self._mask = np.zeros((_H, _W), dtype=np.uint8)
+        self._mask[y1:y2 + 1, x1:x2 + 1] = 1
+        if obj_depth is not None:
+            self._depth[self._mask > 0] = obj_depth
+        self._color[self._mask > 0] = rgb_fill
+        self.frames_seen: list[int] = []
+
+    def detect_in(self, rgb, query):
+        self.frames_seen.append(id(rgb))
+        return [Detection(label=query, bbox=self._box, confidence=self._confidence)]
+
+
+def test_the_localizer_rejects_a_box_on_a_wall():
+    """A confident box whose depth is flush with what surrounds it is a surface."""
+    assert localize_objects_3d(_Scene(obj_depth=None), ["green bottle"]) == []
+
+
+def test_an_object_standing_in_front_of_the_wall_is_localized():
+    (r,) = localize_objects_3d(_Scene(obj_depth=1.2), ["green bottle"])
+    assert r.x == pytest.approx(1.2, abs=0.03) and r.z == pytest.approx(0.4, abs=0.03)
+
+
+def test_a_box_of_the_wrong_colour_is_rejected():
+    """WP10: 'yellow cup' boxed on a green bottle was stored as a yellow cup."""
+    assert localize_objects_3d(_Scene(obj_depth=1.2), ["yellow cup"]) == []
+    assert localize_objects_3d(_Scene(obj_depth=1.2, rgb_fill=(240, 200, 40)), ["yellow cup"])
+
+
+def test_low_scores_slivers_furniture_and_far_boxes_are_rejected():
+    assert localize_objects_3d(_Scene(obj_depth=1.2, score=0.26), ["green bottle"]) == []
+    sliver = (2.0, 2.0, 60.0, 4.0)
+    assert localize_objects_3d(_Scene(obj_depth=1.2, box=sliver), ["green bottle"]) == []
+    sofa = (4.0, 8.0, 60.0, 44.0)  # ~1.4 m wide at 1.2 m: no graspable object
+    assert localize_objects_3d(_Scene(obj_depth=1.2, box=sofa), ["green bottle"]) == []
+    assert localize_objects_3d(_Scene(obj_depth=5.5), ["green bottle"]) == []
+
+
+def test_every_query_is_detected_on_the_one_captured_frame():
+    scene = _Scene(obj_depth=1.2)
+    localize_objects_3d(scene, ["green bottle", "blue bottle", "red can"])
+    assert len(scene.frames_seen) == 3 and len(set(scene.frames_seen)) == 1

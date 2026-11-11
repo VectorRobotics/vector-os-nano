@@ -104,7 +104,7 @@ class Agent:
                     from vector_os_nano.perception.tracker import EdgeTAMTracker
                     from vector_os_nano.perception.pipeline import PerceptionPipeline
 
-                    cam = RealSenseCamera()
+                    cam = RealSenseCamera(serial=self._config.get("camera", {}).get("serial") or None)
                     cam.connect()
                     vlm_det = VLMDetector()
                     tracker = EdgeTAMTracker()
@@ -356,8 +356,9 @@ class Agent:
                 self._ik_solver = False
                 logger.debug("IK solver not available: %s", exc)
 
-        # Lazy-init calibration
-        if self._calibration is None:
+        # Lazy-init the camera->arm calibration of a fixed (base-less) arm. A mobile
+        # base never gets an identity one: its perception carries the camera pose.
+        if self._calibration is None and self._base is None:
             try:
                 from pathlib import Path
 

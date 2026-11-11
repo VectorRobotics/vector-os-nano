@@ -1,14 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""DetectorCapability — the learned open-vocab detector as a routable capability.
+"""DetectorCapability — learned detectors as ONE routable capability, two backends.
 
-Wraps :class:`GroundingDinoDetector` behind the Phase-C Capability contract
-(``vcli/cognitive/capabilities/types.py``) so a ``detect`` sub-goal can be ROUTED
-to a second model family alongside the chat LLM. Read-only (``side_effecting=False``)
-— it only perceives. Per the protocol, ``invoke`` reports only that the detector
-RAN; the sub-goal's deterministic verify predicate (evaluated by the GoalExecutor)
-decides real success — the capability never self-certifies.
+``backend`` picks the model: ``grounding-dino`` (default; local open-vocab
+detector, ~0.1 s, scored boxes, English noun phrases) or ``rynnbrain`` (the
+external RynnBrain embodied VLM at :8786, ~1 s, one unscored box, reads zh and
+relations). Behind the Capability contract (``vcli/cognitive/capabilities/types.py``)
+so a ``detect`` step is ROUTED to a specialized model alongside the chat LLM.
+Read-only (``side_effecting=False``): ``invoke`` reports only that the detector
+RAN; the verify predicate decides real success — it never self-certifies.
+
+Every box carries its frame's provenance (``frame``: id, size, sim time, camera
+pose) so a consumer can tell a box from an earlier frame (perception_grasp
+re-detects a stale one).
 
 Lives OUTSIDE ``vcli/cognitive/`` (the frozen verify+routing seam): it is domain
 perception code that the robot world registers into the kernel's registry.
@@ -17,6 +22,8 @@ from __future__ import annotations
 
 import time
 from typing import Any
+
+BACKENDS = ("grounding-dino", "rynnbrain")
 
 import numpy as np
 
@@ -43,6 +50,7 @@ class DetectorCapability:
         "required": ["query"],
         "properties": {
             "query": {"type": "string"},
+            "backend": {"type": "string", "enum": list(BACKENDS)},
             "rgb": {"type": "array"},
             "perception": {"type": "object"},
         },
@@ -54,11 +62,14 @@ class DetectorCapability:
             "boxes": {"type": "array"},
             "labels": {"type": "array"},
             "scores": {"type": "array"},
+            "frame": {"type": "object"},
+            "backend": {"type": "string"},
         },
     }
 
     def __init__(
-        self, detector: Any = None, perception: Any = None, agent: Any = None
+        self, detector: Any = None, perception: Any = None, agent: Any = None,
+        rynnbrain: Any = None,
     ) -> None:
         # Default to the shared lazy singleton so this capability and the grasp
         # route share ONE loaded model. Injectable for tests (no torch load).
@@ -77,6 +88,7 @@ class DetectorCapability:
         # time, so a cold product turn (sim started this same turn) perceives without
         # any pre-boot. World-side wiring only; the cognitive seam is untouched.
         self._agent = agent
+        self._rynnbrain = rynnbrain
 
     def _live_perception(self) -> Any:
         """The current frame source: a snapshot perception, else the agent's LIVE one.
@@ -93,7 +105,12 @@ class DetectorCapability:
             return getattr(agent, "_perception", None)
         return None
 
-    def _get_detector(self) -> Any:
+    def _get_detector(self, backend: str = "grounding-dino") -> Any:
+        if backend == "rynnbrain":
+            if self._rynnbrain is None:
+                from vector_os_nano.perception.rynnbrain import RynnBrainDetector
+                self._rynnbrain = RynnBrainDetector()
+            return self._rynnbrain
         if self._detector is None:
             from vector_os_nano.perception.grounding_dino import get_shared_detector
             self._detector = get_shared_detector()
@@ -114,28 +131,38 @@ class DetectorCapability:
                 error="missing required input: query (non-empty string)",
             )
 
-        rgb = self._resolve_rgb(payload, context, self._live_perception())
+        backend = str(payload.get("backend") or "grounding-dino").strip().lower()
+        if backend not in BACKENDS:
+            return CapabilityResult(
+                success=False, error=f"unknown detector backend {backend!r}; valid: {list(BACKENDS)}",
+            )
+
+        frame, rgb = self._resolve_frame(payload, context, self._live_perception())
         if rgb is None:
             return CapabilityResult(
                 success=False,
-                error="no RGB frame: supply 'rgb' or a 'perception' with get_color_frame()",
+                error="no RGB frame: supply 'rgb' or a 'perception' with capture()/get_color_frame()",
                 latency_sec=time.monotonic() - start,
             )
 
         try:
-            detections = self._get_detector().detect(rgb, query)
+            detections = self._get_detector(backend).detect(rgb, query)
         except Exception as exc:  # noqa: BLE001
             return CapabilityResult(
                 success=False,
-                error=f"detector error: {exc}",
+                error=f"{backend} error: {exc}",
+                output={"backend": backend},
                 latency_sec=time.monotonic() - start,
             )
 
+        prov = _provenance(frame, rgb)
         output = {
-            "detections": [d.to_dict() for d in detections],
+            "detections": [dict(d.to_dict(), frame=prov) for d in detections],
             "boxes": [list(d.bbox) for d in detections],
             "labels": [d.label for d in detections],
             "scores": [d.confidence for d in detections],
+            "frame": prov,
+            "backend": backend,
         }
         # success reports only that it RAN AND found something (per the protocol
         # docstring); the sub-goal's verify decides the real outcome.
@@ -146,36 +173,44 @@ class DetectorCapability:
         )
 
     @staticmethod
-    def _resolve_rgb(
+    def _resolve_frame(
         payload: dict[str, Any], context: Any, bound_perception: Any = None
-    ) -> np.ndarray | None:
-        """Get an (H,W,3) RGB frame from the payload rgb, a perception, or context.
+    ) -> tuple[Any, np.ndarray | None]:
+        """``(frame, rgb)``: an explicit ``rgb`` (no frame), else the first source's
+        snapshot (``capture()``: pixels + pose of one instant), else its RGB.
 
-        Source priority: an explicit ``rgb`` array, then the payload's
-        ``perception``, then the capability's REGISTRATION-BOUND perception, then
-        a ``context`` that itself yields a frame (``get_color_frame`` or a
-        ``.perception`` exposing it). The bound source is how the routed ``detect``
-        sub-goal reaches the live go2 camera — the kernel context is a SkillContext
-        (no frame), so without it the capability route cannot perceive.
+        Source priority: the payload's ``perception``, the capability's
+        REGISTRATION-BOUND perception, then a ``context`` that yields a frame (itself
+        or its ``.perception``) — the kernel context is a SkillContext, so the bound
+        source is how a routed ``detect`` step reaches the live camera.
         """
         rgb = payload.get("rgb")
         if isinstance(rgb, np.ndarray) and rgb.ndim == 3:
-            return rgb
-        # A SkillContext exposes its perception via ``.perception``; unwrap it so a
-        # context-only call can still reach a frame source.
-        ctx_perception = getattr(context, "perception", None)
-        for src in (
-            payload.get("perception"),
-            bound_perception,
-            context,
-            ctx_perception,
-        ):
-            getter = getattr(src, "get_color_frame", None)
-            if getter is not None:
-                try:
-                    frame = getter()
-                except Exception:  # noqa: BLE001 — best-effort frame source
-                    frame = None
-                if isinstance(frame, np.ndarray) and frame.ndim == 3:
-                    return frame
-        return None
+            return None, rgb
+        for src in (payload.get("perception"), bound_perception, context,
+                    getattr(context, "perception", None)):
+            try:
+                if callable(getattr(src, "capture", None)):
+                    f = src.capture()
+                    if isinstance(f.rgb, np.ndarray) and f.rgb.ndim == 3:
+                        return f, f.rgb
+                elif callable(getattr(src, "get_color_frame", None)):
+                    img = src.get_color_frame()
+                    if isinstance(img, np.ndarray) and img.ndim == 3:
+                        return None, img
+            except Exception:  # noqa: BLE001 — best-effort frame source; try the next
+                continue
+        return None, None
+
+
+def _provenance(frame: Any, rgb: np.ndarray) -> dict[str, Any]:
+    """What a box belongs to: frame size, and (from a snapshot) its id, time and pose."""
+    prov: dict[str, Any] = {"size": [int(rgb.shape[1]), int(rgb.shape[0])]}
+    if frame is not None:
+        prov.update(
+            frame_id=f"{getattr(frame, 'camera', 'camera')}@{float(frame.sim_time):.4f}",
+            sim_time=float(frame.sim_time),
+            cam_pos=[float(v) for v in np.asarray(frame.cam_pos).ravel()],
+            cam_mat=[float(v) for v in np.asarray(frame.cam_mat).ravel()],
+        )
+    return prov
