@@ -112,6 +112,9 @@ class GoalVerifier:
         self._namespace: dict[str, Any] = dict(primitives_namespace)
         # A thread-path evaluation that outlived its timeout (it cannot be killed).
         self._runaway: threading.Thread | None = None
+        # Why the last evaluate() raised inside an oracle ("" when it did not): the
+        # step's failure reason, so the planner learns e.g. that a path was refused.
+        self.last_error = ""
 
     # ------------------------------------------------------------------
     # Public API
@@ -137,6 +140,7 @@ class GoalVerifier:
         path uses the IDENTICAL sandbox, AST checks, safe builtins, and timeout as
         the boolean path — nothing is loosened.
         """
+        self.last_error = ""
         if not expression or not expression.strip():
             _LOG.warning("GoalVerifier: empty expression")
             return False, None
@@ -223,6 +227,7 @@ class GoalVerifier:
             return _EVAL_FAILED
         except Exception as exc:  # noqa: BLE001
             _LOG.warning("GoalVerifier: runtime error: %s", exc)
+            self.last_error = f"{type(exc).__name__}: {exc}"
             return _EVAL_FAILED
         finally:
             signal.signal(signal.SIGALRM, old_handler)
@@ -260,6 +265,7 @@ class GoalVerifier:
 
         if error_box[0] is not None:
             _LOG.warning("GoalVerifier: runtime error: %s", error_box[0])
+            self.last_error = f"{type(error_box[0]).__name__}: {error_box[0]}"
             return _EVAL_FAILED
 
         return result_box[0]

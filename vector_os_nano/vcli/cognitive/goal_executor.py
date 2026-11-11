@@ -542,14 +542,17 @@ class GoalExecutor:
                 actor_caused=actor_caused_after,
             )
 
-        # No fallback, verification failed
+        # No fallback, verification failed. An oracle that raised says why (a refused
+        # path, an invalid regex), so the replan can pick a predicate that can hold.
+        reason = getattr(self._verifier, "last_error", "")
         return StepRecord(
             sub_goal_name=sub_goal.name,
             strategy=strategy_name,
             success=False,
             verify_result=False,
             duration_sec=time.monotonic() - step_start,
-            error="verification failed",
+            error=f"verification failed: {reason}" if reason and isinstance(reason, str)
+            else "verification failed",
             fallback_used=False,
             result_data={"output": exec_output, "verify_value": verify_value},
             failure_class="verify_fail",  # W2.4: executed OK but verify was False
