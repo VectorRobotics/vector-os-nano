@@ -20,6 +20,7 @@ import ipaddress
 import re
 import socket
 import ssl
+import threading
 import time
 import urllib.parse
 from typing import Any
@@ -122,6 +123,22 @@ def _fetch(url: str) -> tuple[bytes, bool]:
             raise TimeoutError
         cls = _PinnedHTTPSConnection if parts.scheme == "https" else _PinnedHTTPConnection
         conn = cls(parts.hostname, port, ip, timeout=remaining)
+        # The socket timeout is per recv; a server dripping header or chunk-size bytes
+        # keeps every recv short. The deadline is enforced by shutting the socket down.
+        expired = threading.Event()
+
+        def _expire(conn: http.client.HTTPConnection = conn) -> None:
+            expired.set()
+            sock = getattr(conn, "raw_sock", None)  # conn.sock is None once a response owns it
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        timer = threading.Timer(remaining, _expire)
+        timer.daemon = True
+        timer.start()
         try:
             target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
             conn.request("GET", target, headers={"User-Agent": "VectorOS/1.0 WebFetchTool"})
@@ -134,17 +151,19 @@ def _fetch(url: str) -> tuple[bytes, bool]:
                 raise http.client.HTTPException(f"HTTP error {resp.status}: {resp.reason}")
             body = bytearray()
             while len(body) <= _MAX_BODY_BYTES:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError
-                # conn.sock is None once a Connection: close response owns it.
-                conn.raw_sock.settimeout(remaining)
                 chunk = resp.read1(65536)
+                if expired.is_set():  # a shut-down socket reads as EOF: not a full body
+                    raise TimeoutError
                 if not chunk:
                     return bytes(body), False
                 body += chunk
             return bytes(body[:_MAX_BODY_BYTES]), True
+        except (OSError, http.client.HTTPException, ValueError):
+            if expired.is_set():
+                raise TimeoutError from None
+            raise
         finally:
+            timer.cancel()
             conn.close()
     raise _Refused(f"too many redirects (more than {_MAX_REDIRECTS})")
 

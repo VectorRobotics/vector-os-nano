@@ -64,6 +64,19 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
+        if self.path in ("/drip-hdr", "/drip-chunk"):
+            # One byte every 0.2 s inside a header line, or inside a chunk-size line.
+            head = (b"HTTP/1.1 200 OK\r\nX-Drip: " if self.path == "/drip-hdr"
+                    else b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+            try:
+                self.wfile.write(head)
+                for _ in range(100):
+                    self.wfile.write(b"0" if self.path == "/drip-chunk" else b"x")
+                    self.wfile.flush()
+                    threading.Event().wait(0.2)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if self.path == "/slow":
             self.send_response(200)
             self.end_headers()
@@ -201,3 +214,17 @@ def test_total_time_is_capped(server: str, server_is_public: None, monkeypatch: 
     res = _fetch(server + "/slow")
     assert res.is_error and "timed out" in res.content
     assert time.monotonic() - t0 < 5.0
+
+
+@pytest.mark.parametrize("route", ["/drip-hdr", "/drip-chunk"])
+def test_total_time_is_capped_for_dripped_headers_and_chunk_lines(
+    route: str, server: str, server_is_public: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cap is a wall-clock deadline: a drip that keeps every single recv fast still ends."""
+    import time
+
+    monkeypatch.setattr(web_tool, "_TOTAL_TIMEOUT_S", 1.0)
+    t0 = time.monotonic()
+    res = _fetch(server + route)
+    assert res.is_error and "timed out" in res.content, res.content
+    assert time.monotonic() - t0 < 3.0
