@@ -1246,6 +1246,11 @@ def _run_turn_native(
                 if token.cancelled:
                     result_dicts.append(_tool_result_dict(tc.id, "Stopped: not run.", is_error=True))
                     continue
+                if getattr(tc, "parse_error", ""):  # never dispatched with defaults
+                    result_dicts.append(_tool_result_dict(
+                        tc.id, f"{tc.name} was not run: its {tc.parse_error}. Call it again with "
+                        "valid JSON arguments.", is_error=True))
+                    continue
                 if tc.name == FINISH_TOOL:
                     # D23: refuse a finish that rides on an unverified action — re-prompt
                     # for a model-authored verify first (bounded).

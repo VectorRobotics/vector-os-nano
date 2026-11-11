@@ -273,6 +273,12 @@ def _run_turn_busy(engine: Any, fn: Callable[[], None], app_state: dict[str, Any
                     reply.put("n")
                     reply = None
                 interrupted = True
+    except SystemExit:
+        # SIGTERM / SIGHUP (cli._exit_on_signal) mid-turn: stop the robot and cancel
+        # the turn (its bash process group is killed on the abort) before leaving.
+        engine._emergency_stop("exit", None, app_state.get("agent"), app_state)
+        done.wait(_UNWIND_S)
+        raise
     finally:
         _ASK_Q = None
         while True:  # nobody answers once the loop ends: deny what is still queued
@@ -312,7 +318,8 @@ def ask_permission(tool_name: str, params: dict[str, Any]) -> str:
     if len(params_str) > 200:
         params_str = params_str[:200] + "..."
     console.print(f"  Params: [dim]{params_str}[/dim]")
-    return Prompt.ask("  Allow? [y/n/a=always]", choices=["y", "n", "a"], default="y")
+    # Enter alone, or type-ahead, never approves: the default is NO.
+    return Prompt.ask("  Allow? [y/n/a=always]", choices=["y", "n", "a"], default="n")
 
 
 def run_repl(rt: Any) -> None:

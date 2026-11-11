@@ -21,6 +21,9 @@ class LLMToolCall:
     id: str
     name: str
     input: dict[str, Any]
+    # Why the model's arguments could not be read ('' when they could): such a call
+    # is answered with an error, never run with defaults.
+    parse_error: str = ""
 
 
 @dataclass(frozen=True)

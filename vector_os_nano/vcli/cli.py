@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 from dataclasses import replace
 from typing import Any
@@ -116,13 +117,10 @@ def _maybe_reexec_under_mjpython(args: argparse.Namespace) -> None:
     if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
         return
 
-    # Check if already under mjpython
-    try:
-        import mujoco.viewer as _mj_viewer  # type: ignore[import]
-        if getattr(_mj_viewer, "_MJPYTHON", None):
-            return  # already under mjpython — nothing to do
-    except Exception:
-        pass  # mujoco not importable yet; proceed to re-exec attempt
+    from vector_os_nano.hardware.sim.viewer_mode import running_under_mjpython
+
+    if running_under_mjpython():
+        return  # already under mjpython — nothing to do
 
     # Locate mjpython next to the running interpreter (the venv's bin/) — robust
     # regardless of where this file sits or how the CLI was launched. The old
@@ -285,6 +283,10 @@ def run_one_turn(args: Any) -> int:
     return _emit(report)
 
 
+def _exit_on_signal(signum: int, frame: Any) -> None:
+    raise SystemExit(128 + signum)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
@@ -293,6 +295,10 @@ def main(argv: list[str] | None = None) -> None:
 
     _setup_logging(args.verbose)
     _ensure_sigint_under_mjpython()
+    # SIGTERM / SIGHUP take the normal exit path: the turn is stopped, the session and
+    # the scene graph are saved, every sim this process started is stopped (atexit).
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _exit_on_signal)
 
     # Non-interactive -p/--print: run ONE turn and exit with the verdict code.
     # Under --json route ALL Rich/banner output to stderr so stdout carries ONLY

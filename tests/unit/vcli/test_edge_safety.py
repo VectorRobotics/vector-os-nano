@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+"""Safety at the edges: the permission prompt's default, unreadable tool-call
+arguments, the sim lifecycle tools' declared permission, a bash child that outlives
+its caller."""
+from __future__ import annotations
+
+import os
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from tests.unit.vcli.test_native_loop import _session
+from tests.unit.vcli.test_native_safety import _dev_engine, _script, _SpyTool
+from vector_os_nano.vcli import repl
+from vector_os_nano.vcli.backends.fake import tool_turn
+from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
+
+
+def test_the_permission_prompt_defaults_to_no(monkeypatch) -> None:
+    """cli-entry:permission-prompt-default-allow: Enter alone (or type-ahead) never
+    approves bash / file_write / robot motion."""
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(repl.Prompt, "ask", lambda *a, **k: seen.update(k) or k["default"])
+    monkeypatch.setattr(repl.console, "file", open(os.devnull, "w"))
+    assert repl.ask_permission("bash", {"command": "rm -rf build"}) == "n"
+    assert seen["default"] == "n"
+
+
+def test_an_unreadable_tool_call_is_an_error_the_model_sees_never_a_dispatch() -> None:
+    """producers:malformed-toolcall-runs-with-defaults: a truncated argument string used
+    to run the tool as {'_raw': ...}, i.e. with its defaults."""
+    spy = _SpyTool("walk", "allow")
+    bad = LLMResponse(text="", tool_calls=[LLMToolCall("c1", "walk", {}, parse_error="arguments are not "
+                                                       "valid JSON (Unterminated string)")], stop_reason="tool_use")
+    session = _session()
+    eng = _dev_engine(_script(bad, tool_turn(end=True)), spy)
+    trace = eng.run_turn_native("walk 2 m", session=session)
+    assert spy.calls == 0 and trace.actions_dispatched == 0
+    result = next(r for e in session._entries if e["type"] == "tool_result" for r in e["results"])
+    assert result["is_error"] and "walk was not run: its arguments are not valid JSON" in result["content"]
+
+
+@pytest.mark.parametrize("arguments, error", [('{"distance": 2', "not valid JSON"), ("[1, 2]", "not a JSON object")])
+def test_the_openai_compatible_backend_marks_unreadable_arguments(arguments, error) -> None:
+    from vector_os_nano.vcli.backends.openai_compat import OpenAICompatBackend
+
+    with patch("openai.OpenAI"):
+        backend = OpenAICompatBackend(api_key="k", model="m")
+    fn = SimpleNamespace(name="walk", arguments=arguments)
+    delta = SimpleNamespace(content=None, reasoning_content=None, reasoning=None,
+                            tool_calls=[SimpleNamespace(index=0, id="c1", function=fn)])
+    chunk = SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason="tool_calls")], usage=None)
+    backend._client = MagicMock()
+    backend._client.chat.completions.create.return_value = iter([chunk])
+    call = backend.call(messages=[{"role": "user", "content": "go"}], tools=[], system=[], max_tokens=64).tool_calls[0]
+    assert call.input == {} and error in call.parse_error
+
+
+@pytest.mark.parametrize("cls", ["SimStartTool", "SimStopTool"])
+def test_the_sim_lifecycle_tools_do_what_they_declare(cls) -> None:
+    """tools-worlds:start-sim-permission-mismatch: the decorator said 'ask' while
+    check_permissions allowed; declared and enforced permission are one value now."""
+    from vector_os_nano.vcli.tools import sim_tool
+
+    tool = getattr(sim_tool, cls)()
+    assert tool.__tool_permission__ == tool.check_permissions({}, None).behavior == "allow"
+
+
+def test_a_window_without_mjpython_runs_headless_and_never_replaces_the_repl(monkeypatch) -> None:
+    """The NL start used to os.execve the whole CLI under mjpython (the conversation lost)."""
+    from vector_os_nano.sim import session as sim_session
+    from vector_os_nano.vcli import runtime
+    from vector_os_nano.vcli.tools.base import ToolContext
+    from vector_os_nano.vcli.tools.sim_tool import SimStartTool
+
+    started: list[Any] = []
+    fake = SimpleNamespace(summary=lambda: "ready", stop=lambda: "stopped", agent=None)
+    monkeypatch.setattr(sim_session.SimSession, "validate", staticmethod(lambda spec: None))
+    monkeypatch.setattr(sim_session.SimSession, "start", staticmethod(lambda spec: started.append(spec) or fake))
+    monkeypatch.setattr(runtime, "bind_body", lambda app, session: None)
+    monkeypatch.setattr(SimStartTool, "_viewer_available", staticmethod(lambda: False))
+    monkeypatch.setattr(os, "execve", lambda *a: pytest.fail("the REPL was replaced"))
+    ctx = ToolContext(agent=None, cwd=Path.cwd(), session=None, permissions=None,
+                      abort=threading.Event(), app_state={})
+    res = SimStartTool().execute({"embodiment": "so101", "gui": True}, ctx)
+    assert not res.is_error and started[0].gui is False and "needs mjpython" in res.content
+
+
+def _alive(marker: str) -> list[int]:
+    out = []
+    for pid in os.listdir("/proc"):
+        try:
+            if pid.isdigit() and marker in Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode():
+                out.append(int(pid))
+        except OSError:
+            continue
+    return out
+
+
+def test_a_bash_child_dies_with_its_caller() -> None:
+    """A SIGTERM (SystemExit) or Ctrl-C landing while bash waits kills its process
+    group, so -p and the REPL leave no child behind."""
+    import time
+
+    from vector_os_nano.vcli.tools.bash_tool import BashTool
+    from vector_os_nano.vcli.tools.base import ToolContext
+
+    marker = "987.6543"
+    calls = {"n": 0}
+
+    class _Term:
+        def is_set(self) -> bool:
+            calls["n"] += 1
+            if calls["n"] > 3:
+                raise SystemExit(143)
+            return False
+
+    ctx = ToolContext(agent=None, cwd=Path.cwd(), session=None, permissions=None, abort=_Term(), app_state={})
+    with pytest.raises(SystemExit):
+        BashTool().execute({"command": f"sleep {marker}"}, ctx)
+    deadline = time.monotonic() + 5
+    while _alive(marker) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert _alive(marker) == []
