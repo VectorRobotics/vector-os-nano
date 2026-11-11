@@ -143,12 +143,18 @@ def test_web_fetch_never_joins_a_parallel_batch() -> None:
     "100.64.0.1", "224.0.0.1", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1",
     "::ffff:10.0.0.1", "64:ff9b::7f00:1", "2002:7f00:1::1", "::",
     "::127.0.0.1", "::10.0.0.1", "::8.8.8.8",   # IPv4-compatible (::/96, deprecated)
+    # is_global is True for the outer address of each of these (R3B5-5):
+    "::ffff:0:7f00:1", "::ffff:0:a00:1",        # IPv4-translated ::ffff:0:0:0/96 of loopback / 10/8
+    "64:ff9b::a9fe:a9fe",                       # NAT64 of 169.254.169.254
+    "192.88.99.1",                              # 6to4 relay anycast
+    "fec0::1",                                  # deprecated site-local fec0::/10
 ])
 def test_non_public_addresses_are_refused(addr: str) -> None:
     assert web_tool._is_public(ipaddress.ip_address(addr)) is False
 
 
-@pytest.mark.parametrize("addr", ["93.184.216.34", "8.8.8.8", "2606:4700:4700::1111"])
+@pytest.mark.parametrize("addr", ["93.184.216.34", "8.8.8.8", "2606:4700:4700::1111",
+                                  "64:ff9b::808:808", "::ffff:0:808:808"])  # public inner, unwrapped
 def test_public_addresses_pass(addr: str) -> None:
     assert web_tool._is_public(ipaddress.ip_address(addr)) is True
 

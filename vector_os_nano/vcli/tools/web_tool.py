@@ -53,19 +53,25 @@ class _Refused(Exception):
 # ---------------------------------------------------------------------------
 
 
-_NAT64 = ipaddress.ip_network("64:ff9b::/96")
-_V4_COMPATIBLE = ipaddress.ip_network("::/96")  # deprecated ::a.b.c.d; never routable
+# IPv6 ranges whose low 32 bits are an IPv4 address (6to4 is unwrapped by .sixtofour).
+_EMBEDS_V4 = tuple(ipaddress.ip_network(n) for n in (
+    "::ffff:0:0/96",     # v4-mapped
+    "::ffff:0:0:0/96",   # IPv4-translated (RFC 2765)
+    "64:ff9b::/96",      # NAT64
+))
+# is_global says True for these, yet they never reach a public host: the 6to4 relay
+# anycast, deprecated site-local, and v4-compatible ::/96 (refused whatever it embeds).
+_NEVER_PUBLIC = tuple(ipaddress.ip_network(n) for n in ("192.88.99.0/24", "fec0::/10", "::/96"))
 
 
 def _is_public(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """True only for a globally routable unicast address. An IPv6 address that
-    embeds an IPv4 one (v4-mapped, 6to4, NAT64) must be public on both readings."""
-    if not addr.is_global or addr.is_multicast or addr in _V4_COMPATIBLE:
+    embeds an IPv4 one must be public on both readings (outer and inner)."""
+    if not addr.is_global or addr.is_multicast or any(addr in n for n in _NEVER_PUBLIC):
         return False
     if isinstance(addr, ipaddress.IPv6Address):
-        inner = addr.ipv4_mapped or addr.sixtofour or (
-            ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF) if addr in _NAT64 else None
-        )
+        inner = addr.sixtofour or next(
+            (ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF) for n in _EMBEDS_V4 if addr in n), None)
         if inner is not None:
             return _is_public(inner)
     return True
