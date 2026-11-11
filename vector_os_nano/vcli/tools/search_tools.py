@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, tool
-from vector_os_nano.vcli.tools.file_tools import _within, is_protected, read_permission, real_path
+from vector_os_nano.vcli.tools.file_tools import is_protected, read_permission, real_path
 
 
 def _search_root(params: dict[str, Any], context: ToolContext) -> Path:
@@ -33,7 +33,7 @@ def _readable(path: str | Path, root: Path) -> bool:
     """A file found under *root* may be read: not protected, and its real path
     stays inside the root the permission was granted for (no symlink escape)."""
     real = Path(os.path.realpath(path))
-    return not is_protected(real) and _within(real, root)
+    return not is_protected(real) and real.is_relative_to(root)
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,10 @@ class GrepTool:
 
         matches = self._run_rg(pattern, search_path, limit)
         if matches is None:
-            matches = self._run_python(pattern, search_path, limit)
+            try:
+                matches = self._run_python(pattern, search_path, limit)
+            except re.error as exc:
+                return ToolResult(content=f"Error: invalid regex {pattern!r}: {exc}", is_error=True)
 
         if not matches:
             return ToolResult(content="No matches found")
@@ -175,11 +178,9 @@ class GrepTool:
             return None
 
     def _run_python(self, pattern: str, path: Path, limit: int) -> list[str]:
-        """Pure-Python fallback: re.search over every text file."""
-        try:
-            compiled = re.compile(pattern)
-        except re.error:
-            return []
+        """Pure-Python fallback: re.search over every regular file (an invalid regex raises
+        re.error; a FIFO or socket is skipped, since opening one blocks)."""
+        compiled = re.compile(pattern)
 
         results: list[str] = []
         targets: list[Path] = [path] if path.is_file() else []
@@ -196,7 +197,7 @@ class GrepTool:
         for fpath in targets:
             if len(results) >= limit:
                 break
-            if not _readable(fpath, path):
+            if not _readable(fpath, path) or not fpath.is_file():
                 continue
             try:
                 text = fpath.read_text(encoding="utf-8", errors="replace")

@@ -24,14 +24,21 @@ from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolRe
 # Every check runs on the REAL path (os.path.realpath): "..", symlinks and
 # relative spellings resolve before any comparison, so none of them bypass it.
 
-# Credential stores under $HOME: refused outright, whatever the permission mode.
-_HOME_SECRET_DIRS: tuple[str, ...] = (
-    ".ssh", ".aws", ".gnupg", ".claude", ".config/gh", ".config/gcloud", ".docker", ".kube",
-)
-_HOME_SECRET_FILES: tuple[str, ...] = (
-    ".vector/config.yaml", ".vector/oauth_credentials.json",
-    ".netrc", ".git-credentials", ".pgpass",
-)
+# Credential stores are matched by PATH COMPONENT anywhere, case-insensitively, not
+# under one $HOME: a cwd that holds several users' homes is covered without knowing
+# who the users are. Refused outright, whatever the permission mode.
+_SECRET_DIRS: frozenset[str] = frozenset({
+    ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".vector", ".azure", ".git",
+})
+_SECRET_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset({
+    (".config", "gh"), (".config", "gcloud"),
+    (".claude", ".credentials.json"),                                   # Claude credentials
+    ("huggingface", "token"), ("huggingface", "stored_tokens"), (".huggingface", "token"),
+})
+_SECRET_FILES: frozenset[str] = frozenset({
+    ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials", ".claude.json",
+    ".bash_history", ".zsh_history", ".python_history",
+})
 _SYSTEM_SECRETS: tuple[str, ...] = (
     "/etc/shadow", "/etc/gshadow", "/etc/passwd", "/etc/sudoers", "/etc/sudoers.d",
     "/etc/ssh", "/etc/ssl/private",
@@ -53,23 +60,22 @@ def real_path(path_str: str, cwd: Any = None) -> Path:
     return Path(os.path.realpath(p))
 
 
-def _within(path: Path, root: Path) -> bool:
-    return path == root or root in path.parents
-
-
 def is_protected(path: Path) -> bool:
     """True when the REAL *path* is a credential store, a secret file or inside .git.
     Compared case-insensitively (a harmless false positive on Linux): on macOS or
     Windows .AWS/credentials and .GIT/config ARE the real secrets."""
     low = Path(str(path).lower())
-    if ".git" in low.parts:
+    parts = low.parts
+    if _SECRET_DIRS.intersection(parts) or low.name in _SECRET_FILES:
+        return True
+    if _SECRET_DIR_PAIRS.intersection(zip(parts, parts[1:])):
         return True
     if _SECRET_NAME_RE.match(low.name) and not low.name.endswith(_ENV_TEMPLATE_SUFFIXES):
         return True
-    home = os.path.realpath(Path.home())
-    roots = [os.path.realpath(p) for p in _SYSTEM_SECRETS]
-    roots += [os.path.join(home, p) for p in _HOME_SECRET_DIRS + _HOME_SECRET_FILES]
-    return any(_within(low, Path(r.lower())) for r in roots)
+    # All of this user's ~/.claude (session transcripts, not only credentials), and /etc secrets.
+    roots = [os.path.join(os.path.realpath(Path.home()), ".claude")]
+    roots += [os.path.realpath(p) for p in _SYSTEM_SECRETS]
+    return any(low.is_relative_to(r.lower()) for r in roots)
 
 
 def project_root(context: Any) -> Path:
@@ -79,10 +85,13 @@ def project_root(context: Any) -> Path:
 
 def in_project(path: Path, root: Path) -> bool:
     """The REAL *path* lies inside *root*, and root is neither $HOME, an ancestor of it
-    (/, /home, /Users), nor inside a pseudo-fs (/proc, /sys, /dev)."""
-    home = Path(os.path.realpath(Path.home()))
-    pseudo = any(_within(root, Path(p)) for p in ("/proc", "/sys", "/dev"))
-    return not (pseudo or root == home or root in home.parents) and _within(path, root)
+    (/, /home, /Users), nor inside a pseudo-fs (/proc, /sys, /dev). The root test is
+    case-insensitive like is_protected (cwd=/users holds /Users/alice on macOS); the
+    containment test stays exact, so case folding never widens what auto-allows."""
+    low = Path(str(root).lower())
+    home = Path(os.path.realpath(Path.home()).lower())
+    pseudo = any(low.is_relative_to(p) for p in ("/proc", "/sys", "/dev"))
+    return not (pseudo or low == home or low in home.parents) and path.is_relative_to(root)
 
 
 def read_permission(path_str: str, context: Any) -> PermissionResult:

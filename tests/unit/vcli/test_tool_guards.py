@@ -142,8 +142,8 @@ def test_read_inside_project_is_allowed_outside_asks(box: dict[str, Path]) -> No
     cwd = box["project"]
     assert _decide(FileReadTool(), {"file_path": "main.py"}, cwd) == "allow"
     assert _decide(FileReadTool(), {"file_path": str(box["outside"] / "notes.txt")}, cwd) == "ask"
-    # ~/.vector holds more than secrets: the rest is not denied, but it asks
-    assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, cwd) == "ask"
+    # .vector is a credential-store component: all of it is refused, not only config.yaml
+    assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, cwd) == "deny"
 
 
 def test_a_symlink_out_of_the_project_asks(box: dict[str, Path]) -> None:
@@ -153,7 +153,9 @@ def test_a_symlink_out_of_the_project_asks(box: dict[str, Path]) -> None:
 
 
 def test_home_as_the_project_root_never_auto_allows(box: dict[str, Path]) -> None:
-    assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, box["home"]) == "ask"
+    (box["home"] / "notes.md").write_text("plain\n")
+    assert _decide(FileReadTool(), {"file_path": "~/notes.md"}, box["home"]) == "ask"
+    assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, box["home"]) == "deny"
 
 
 @pytest.mark.parametrize("pseudo", ["/proc", "/proc/self", "/sys", "/dev"])
@@ -282,7 +284,7 @@ def test_glob_still_lists_ordinary_project_files(box: dict[str, Path]) -> None:
 @pytest.mark.parametrize("expr", [
     "not path_contains({p!r}, 'sk-ant')",
     "grep_count('sk-ant', {p!r}) == 0",
-    "grep_count('sk-ant', '.') == 0",          # the walk meets .env / server.pem
+    "grep_count('sk-ant', '.') == 0",          # a directory: never walked, refused
     "not path_contains('../elsewhere/notes.txt', 'outside')",
 ])
 @pytest.mark.parametrize("p", [".env", ".git/config", "cfg_link"])
@@ -309,9 +311,9 @@ def test_dev_oracles_cannot_probe_secret_files(box: dict[str, Path]) -> None:
             path_contains(path, "sk-ant")
         with pytest.raises(PermissionError):
             grep_count("sk-ant", path)
-    with pytest.raises(PermissionError):              # the walk meets .env: no partial count
+    with pytest.raises(OSError, match="one regular file"):   # a directory is never walked
         grep_count("sk-ant", ".")
-    assert grep_count("^def main", "src") == 1        # ordinary files still searched
+    assert grep_count("^def main", "src/app.py") == 1 # ordinary files still searched
     assert grep_count("^def main", "main.py") == 1
     assert path_contains("main.py", "def main")
     assert file_exists(".env")                        # existence is not content
@@ -373,3 +375,121 @@ def test_guard_holds_with_no_tool_context(box: dict[str, Path]) -> None:
     assert PermissionContext().check(FileReadTool(), {"file_path": ".env"}).behavior == "deny"
     assert PermissionContext().check(FileReadTool(), {"file_path": "main.py"}).behavior == "allow"
     assert os.getcwd() == str(box["project"])
+
+
+# ---------------------------------------------------------------------------
+# Credential names are matched by path component anywhere, not under one $HOME
+# ---------------------------------------------------------------------------
+
+_BOB = {".aws/credentials": "aws_secret_access_key", ".vector/config.yaml": "anthropic_api_key",
+        ".ssh/id_ed25519": "PRIVATE KEY", ".config/gh/hosts.yml": "oauth_token",
+        ".config/gcloud/credentials.db": "c", ".docker/config.json": "auth", ".kube/config": "token",
+        ".azure/accessTokens.json": "t", ".gnupg/secring.gpg": "k", ".npmrc": "authToken",
+        ".pypirc": "password", ".netrc": "password", ".pgpass": "pw", ".git-credentials": "https",
+        ".bash_history": "export", ".zsh_history": "export", ".python_history": "key",
+        ".claude/.credentials.json": "token", ".cache/huggingface/token": "hf_"}
+
+
+@pytest.fixture()
+def homes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """cwd holds several users' homes (e.g. root started in /home), $HOME lies elsewhere."""
+    root = tmp_path / "home"
+    for rel, word in _BOB.items():
+        (root / "bob" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / "bob" / rel).write_text(f"{word}={SECRET}\n")
+    (root / "bob" / "docs").mkdir()
+    (root / "bob" / "docs" / "aws-notes.md").write_text("how we use aws\n")
+    (root / "bob" / "src").mkdir()
+    (root / "bob" / "src" / "ssh_utils.py").write_text("def ssh_connect():\n    pass\n")
+    (tmp_path / "root").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "root"))
+    monkeypatch.chdir(root)
+    return root
+
+
+@pytest.mark.parametrize("rel", list(_BOB))
+def test_another_users_credentials_are_refused_with_home_elsewhere(homes: Path, rel: str) -> None:
+    from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
+    from vector_os_nano.vcli.worlds.dev import dev_verify_namespace
+
+    path = f"bob/{rel}"
+    assert _decide(FileReadTool(), {"file_path": path}, homes) == "deny"
+    assert FileReadTool().execute({"file_path": path}, _ctx(homes)).is_error
+    gv = GoalVerifier(dev_verify_namespace())
+    for expr in (f"path_contains({path!r}, {SECRET!r})", f"not path_contains({path!r}, 'nope')",
+                 f"grep_count({SECRET!r}, {path!r}) == 1", f"grep_count('nope', {path!r}) == 0"):
+        assert gv.verify(expr) is False, expr
+    for tool in (GrepTool(), GlobTool()):
+        assert _decide(tool, {"pattern": "*", "path": path}, homes) == "deny"
+    if rel.count("/") == 1 and not rel.startswith((".claude", ".cache")):   # a credential dir
+        store = path.rsplit("/", 1)[0]
+        for tool in (GrepTool(), GlobTool()):
+            assert _decide(tool, {"pattern": "*", "path": store}, homes) == "deny", store
+
+
+def test_a_search_over_several_homes_never_returns_credentials(homes: Path) -> None:
+    res = GrepTool().execute({"pattern": SECRET, "path": "."}, _ctx(homes))
+    assert SECRET not in res.content, res.content
+    listed = GlobTool().execute({"pattern": "**/*"}, _ctx(homes)).content
+    for rel in _BOB:
+        assert f"bob/{rel}" not in listed, rel
+    assert "aws-notes.md" in listed and "ssh_utils.py" in listed
+
+
+def test_a_name_that_merely_contains_a_credential_word_stays_readable(homes: Path) -> None:
+    from vector_os_nano.vcli.worlds.dev import path_contains
+
+    for path, text in (("bob/docs/aws-notes.md", "use aws"), ("bob/src/ssh_utils.py", "ssh_connect")):
+        assert _decide(FileReadTool(), {"file_path": path}, homes) == "allow", path
+        assert text in FileReadTool().execute({"file_path": path}, _ctx(homes)).content
+        assert text in GrepTool().execute({"pattern": text, "path": path}, _ctx(homes)).content
+        assert path_contains(path, text)
+
+
+def test_a_case_variant_ancestor_of_home_never_auto_allows(tmp_path: Path, monkeypatch) -> None:
+    """On a case-insensitive volume cwd=/users holds /Users/alice: the root test folds case."""
+    (tmp_path / "Users" / "alice").mkdir(parents=True)
+    (tmp_path / "users" / "alice").mkdir(parents=True)
+    (tmp_path / "users" / "alice" / "notes.md").write_text("plain\n")
+    monkeypatch.setenv("HOME", str(tmp_path / "Users" / "alice"))
+    for cwd in (tmp_path / "users", tmp_path / "users" / "alice"):
+        assert _decide(FileReadTool(), {"file_path": str(tmp_path / "users/alice/notes.md")}, cwd) == "ask"
+
+
+def test_case_folding_never_widens_the_project(tmp_path: Path, monkeypatch) -> None:
+    """Containment stays exact: /x/PROJ is a sibling of the root /x/proj on Linux."""
+    (tmp_path / "proj").mkdir()
+    (tmp_path / "PROJ").mkdir()
+    (tmp_path / "PROJ" / "a.txt").write_text("x\n")
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
+    assert _decide(FileReadTool(), {"file_path": str(tmp_path / "PROJ" / "a.txt")}, tmp_path / "proj") == "ask"
+
+
+# ---------------------------------------------------------------------------
+# grep's Python fallback (the path taken when ripgrep is absent)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def no_rg(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vector_os_nano.vcli.tools import search_tools
+
+    def missing(*a: Any, **kw: Any) -> Any:
+        raise FileNotFoundError("rg")
+
+    monkeypatch.setattr(search_tools.subprocess, "run", missing)
+
+
+def test_grep_fallback_reports_an_invalid_regex(box: dict[str, Path], no_rg: None) -> None:
+    res = GrepTool().execute({"pattern": "[unclosed"}, _ctx(box["project"]))
+    assert res.is_error and "invalid regex" in res.content and "unterminated" in res.content
+
+
+def test_grep_fallback_skips_a_fifo(box: dict[str, Path], no_rg: None) -> None:
+    os.mkfifo(box["project"] / "pipe")
+    out: list[Any] = []
+    t = threading.Thread(target=lambda: out.append(
+        GrepTool().execute({"pattern": "def main"}, _ctx(box["project"]))), daemon=True)
+    t.start()
+    t.join(timeout=10)
+    assert not t.is_alive(), "grep blocked opening a FIFO"
+    assert "main.py" in out[0].content
