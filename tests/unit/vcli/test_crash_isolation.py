@@ -34,7 +34,7 @@ def test_segfault_trace_lands_next_to_the_transcript(tmp_path) -> None:
         "import faulthandler, sys\n"
         "from types import SimpleNamespace\n"
         "from pathlib import Path\n"
-        "from vector_os_nano.vcli.cli import _enable_crash_log\n"
+        "from vector_os_nano.vcli.repl import _enable_crash_log\n"
         f"_enable_crash_log(SimpleNamespace(_path=Path({str(tmp_path / 's1.jsonl')!r})))\n"
         "faulthandler._sigsegv()\n"
     )

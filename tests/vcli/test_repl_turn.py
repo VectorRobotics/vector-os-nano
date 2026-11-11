@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""The REPL turn (``cli._repl_turn``): every turn is the native producer's, rendered.
+"""The REPL turn (``repl._repl_turn``): every turn is the native producer's, rendered.
 
 Deterministic unit proofs (no sim, no LLM; the bare-REPL PTY tests drive the real
 thing). Moved and rewritten from tests/vcli/test_repl_native_cutover.py when the
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from vector_os_nano.vcli import cli
+from vector_os_nano.vcli import repl
 from vector_os_nano.vcli.runtime import Runtime
 from vector_os_nano.vcli.session import Session
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
@@ -128,7 +128,7 @@ def test_acted_turn_renders_the_verdict_on_the_real_session(monkeypatch) -> None
     session = _FakeSession()
     console = _FakeConsole()
 
-    cli._repl_turn(_rt(engine, session), "走到坐标 (11,3)", console)
+    repl._repl_turn(_rt(engine, session), "走到坐标 (11,3)", console)
 
     assert engine.native_calls == 1
     assert "verified=True" in console.text
@@ -147,14 +147,15 @@ def test_chat_turn_renders_the_models_text_and_no_claim(monkeypatch) -> None:
     session.append_user("earlier turn")
     console = _FakeConsole()
 
-    cli._repl_turn(_rt(engine, session), "拿绿色的瓶子", console)
+    rt = _rt(engine, session)
+    repl._repl_turn(rt, "拿绿色的瓶子", console)
 
     assert engine.native_calls == 1
     assert "I see no green bottle; explore first." in console.text
     assert "verdict" not in console.text and "▸" not in console.text
     assert [e.get("content") or e.get("text") for e in session._entries] == [
         "earlier turn", "拿绿色的瓶子", "I see no green bottle; explore first."]
-    assert cli._last_response == "I see no green bottle; explore first."
+    assert rt.app_state["last_response"] == "I see no green bottle; explore first."  # for /copy
 
 
 def test_a_task_sentence_the_model_only_answered_is_a_goal_not_met(monkeypatch) -> None:
@@ -166,7 +167,7 @@ def test_a_task_sentence_the_model_only_answered_is_a_goal_not_met(monkeypatch) 
                            total_duration_sec=0.0, contract=("at_position(3.0, 7.5)",),
                            contract_start=(False,), contract_end=(False,))
     console = _FakeConsole()
-    cli._repl_turn(_rt(_FakeEngine(trace, answer="好的，我这就过去。")), goal, console)
+    repl._repl_turn(_rt(_FakeEngine(trace, answer="好的，我这就过去。")), goal, console)
     assert "好的，我这就过去。" in console.text
     assert "verified=False" in console.text and "goal=failed" in console.text
     assert "goal not met:" in console.text
@@ -176,7 +177,7 @@ def test_a_verify_without_an_action_is_a_claim_and_grades_honestly(monkeypatch) 
     """A verify-only turn claims something: its step and an unverified verdict show."""
     _stub_oracle(monkeypatch)
     console = _FakeConsole()
-    cli._repl_turn(_rt(_FakeEngine(_noaction_trace("g"), answer="已经在了")), "去 (10,3)", console)
+    repl._repl_turn(_rt(_FakeEngine(_noaction_trace("g"), answer="已经在了")), "去 (10,3)", console)
     assert "verify at_position(10.0, 3.0)" in console.text
     assert "verified=False" in console.text and "RAN" in console.text
 
@@ -184,7 +185,7 @@ def test_a_verify_without_an_action_is_a_claim_and_grades_honestly(monkeypatch) 
 def test_a_raising_native_turn_is_not_swallowed(monkeypatch) -> None:
     _stub_oracle(monkeypatch)
     with pytest.raises(RuntimeError, match="native blew up"):
-        cli._repl_turn(_rt(_FakeEngine(RuntimeError("native blew up"))), "走到 (11,3)", _FakeConsole())
+        repl._repl_turn(_rt(_FakeEngine(RuntimeError("native blew up"))), "走到 (11,3)", _FakeConsole())
 
 
 def test_a_lifecycle_only_turn_prints_its_result_and_no_empty_verdict(monkeypatch) -> None:
@@ -203,7 +204,7 @@ def test_a_lifecycle_only_turn_prints_its_result_and_no_empty_verdict(monkeypatc
             return started
 
     console = _FakeConsole()
-    cli._repl_turn(_rt(_Launch(started)), "启动 go2 仿真", console)
+    repl._repl_turn(_rt(_Launch(started)), "启动 go2 仿真", console)
     assert "Started go2_piper simulation, ready in 9.1s" in console.text
     assert "go2 仿真已启动" in console.text and "verdict" not in console.text
 
@@ -212,5 +213,5 @@ def test_a_failed_verify_renders_an_unverified_verdict(monkeypatch) -> None:
     _stub_oracle(monkeypatch)
     trace = _acted_trace("g", strategy="walk", verify="at_position(99.0, 99.0)", verified_pose=False)
     console = _FakeConsole()
-    cli._repl_turn(_rt(_FakeEngine(trace)), "走到 (99,99)", console)
+    repl._repl_turn(_rt(_FakeEngine(trace)), "走到 (99,99)", console)
     assert "verified=False" in console.text, "a failed verify must surface verified=False (honest)"

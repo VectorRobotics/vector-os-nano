@@ -5,7 +5,7 @@
 
 MuJoCo mjData and GLFW are not thread-safe, and GLFW is main-thread-ONLY under
 mjpython/macOS, where the passive viewer is pumped by the caller/main thread. The
-REPL runs each turn on a worker thread (``cli._run_turn_busy``) so it can read a stop
+REPL runs each turn on a worker thread (``repl._run_turn_busy``) so it can read a stop
 mid-turn; under mjpython with a live viewer that worker would race the main-thread
 render and segfault, so the turn runs INLINE on the caller's (viewer-owning) thread.
 Everywhere else — headless/dev, and Linux/Windows even WITH a live viewer (their
@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from vector_os_nano.vcli import cli
+from vector_os_nano.vcli import repl
 from vector_os_nano.vcli.engine import VectorEngine
 
 
@@ -35,11 +35,11 @@ def _turn_thread(monkeypatch, *, mjpython: bool, viewer: object) -> threading.Th
     import vector_os_nano.hardware.sim.viewer_mode as vm
 
     monkeypatch.setattr(vm, "running_under_mjpython", lambda: mjpython)
-    monkeypatch.setattr(cli, "_read_line", lambda timeout: None)  # nobody types
+    monkeypatch.setattr(repl, "_read_line", lambda timeout: None)  # nobody types
     eng = _make_engine()
     eng._agent = SimpleNamespace(_arm=SimpleNamespace(_viewer=viewer))
     ran: list[threading.Thread] = []
-    cli._run_turn_busy(eng, lambda: ran.append(threading.current_thread()), {})
+    repl._run_turn_busy(eng, lambda: ran.append(threading.current_thread()), {})
     assert len(ran) == 1
     return ran[0]
 

@@ -180,7 +180,7 @@ def test_goal_check_states_on_hand_traces() -> None:
 
 
 def test_the_verdict_carries_the_goal_check_and_the_repl_says_it() -> None:
-    from vector_os_nano.vcli.cli import _goal_line
+    from vector_os_nano.vcli.render import _goal_line
     from vector_os_nano.vcli.verdict import VerdictReport
 
     t = _hand_trace("pick up the green bottle", "holding_object('green bottle')",

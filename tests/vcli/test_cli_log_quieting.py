@@ -25,7 +25,7 @@ import logging
 
 import pytest
 
-from vector_os_nano.vcli import cli
+from vector_os_nano.vcli import cli, render
 
 COGNITIVE = "vector_os_nano.vcli.cognitive"
 
@@ -137,7 +137,7 @@ def test_explore_events_follow_the_console_stream(capsys):
 
     saved = explore._on_event
     try:
-        cli._setup_explore_events(Console(stderr=True))
+        render._setup_explore_events(Console(stderr=True))
         explore._emit("started", {"total_rooms": 8})
     finally:
         explore.set_event_callback(saved)
