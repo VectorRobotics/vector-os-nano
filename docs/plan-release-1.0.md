@@ -41,11 +41,11 @@ on this box is cut from the promise and labelled experimental, never shipped as 
 
 | item | in 1.0 | note |
 |---|---|---|
-| second simulator | **PyBullet**, in-process ✔ | builds on py3.12 (probed); Isaac Sim / ManiSkill plug in later as out-of-process backends behind the same contract (1.1) |
+| second simulator | **PyBullet**, in-process ✔ | builds on py3.12 (installed in the venv); go2 walks there on the sinusoidal policy, the convex-MPC trot is a time-boxed stretch; Isaac Sim / ManiSkill plug in later as out-of-process backends behind the same contract (1.1) |
 | G1 humanoid | supported ✔ | assets (57 MB, BSD-3, unitree_rl_gym @ pinned commit) are fetched by a script, never committed |
 | native tool-use producer | the ONLY producer | legacy VGG producer, IntentRouter, primitives, playground, `vector-eval` deleted |
 | MCP server | rebuilt on the native producer: stdio default, loopback SSE, sim bodies | today it cannot start (mcp SDK 2.x) and is open on 0.0.0.0 |
-| perception weights | fetched on first use with a visible notice; `VECTOR_OFFLINE=1` forbids | a fresh clone has none |
+| perception weights | resolved through the Hugging Face cache, fetched on first use with one visible notice; `HF_HUB_OFFLINE=1` forbids | a fresh clone has none |
 | install | editable clone documented; the wheel is also made correct | `config/` outside the package; `.gitignore` `assets/` drops 232 meshes |
 | real SO-101 hardware | experimental, SDK-only, unadvertised | no hardware here to verify |
 | external TARE/FAR stack | experimental opt-in (`VECTOR_NAV_STACK`), honest readiness | the in-process bridge (old WP13) is 1.1 |
@@ -53,52 +53,34 @@ on this box is cut from the promise and labelled experimental, never shipped as 
 
 ## Architecture — N simulators × M robots with N + M code
 
+The binding contract is [plan-release-1.0-interfaces.md](plan-release-1.0-interfaces.md) (the
+interface charter, reviewed against the code by four adversarial reviewers). In short:
+
 ```
- skills · perception · kernel · oracles            never import a simulator
-        │  BaseProtocol · ArmProtocol · GripperProtocol · Camera · GroundTruth
+ skills · perception · kernel                      never import a simulator, never see ground truth
+        │  BaseProtocol · ArmProtocol · GripperProtocol · CameraProtocol (CameraFrame: no segmentation)
  generic drivers, one per morphology class         LeggedBase · Arm · Gripper · Camera · Lidar
- GroundTruth, ONE implementation                   (oracle-only; skills and perception never see it)
-        │  control policies, one per controller    servo · convex_mpc · torchscript · sinusoidal
-        │  PhysicsWorld  (~25 methods)             ← the ONLY thing a simulator implements
- backends, one per simulator                       sim/backends/mujoco · sim/backends/pybullet
-        ▲  SceneDescription (canonical IR)         MJCF / URDF compiled once by MuJoCo: bodies, joints,
-        │                                          inertia, geoms, meshes, actuators, cameras
- manifests, one per robot / world                  embodiments/<id>/robot.yaml (compose: base ⊕ arm)
-                                                   config/worlds/<world>.yaml
+        │  ControlPolicy, one per controller       convex_mpc · torchscript · sinusoidal
+ world side, ONE implementation each               SimRuntime · grasp decision · GroundTruth · oracles
+        │  PhysicsWorld (14 methods)               ← the ONLY thing a simulator implements
+ backends                                          sim/backends/mujoco · sim/backends/pybullet
+        ▲  CompiledScene (canonical model)         MJCF / URDF compiled once by MuJoCo; ids, state
+        │                                          layout and kinematics are canonical on every backend
+ data plug-ins                                     embodiments/<id>/ (robot.yaml + model files, compose:)
+                                                   worlds/<id>/ (world.yaml + scene)
 ```
 
-- **PhysicsWorld** (`vector_os_nano/sim/physics.py`) — load(scene) · close · time / step · name →
-  opaque handle · body pose / twist · joint position / velocity · joint servo (target, kp, kd,
-  max force) and joint torque · contacts · attach / detach (the grasp constraint) with a transition
-  log · AABB · raycast · render(camera) → RGB-D + segmentation. A new simulator is this one class
-  plus a green conformance suite.
-- **SimRuntime** — the one stepper thread (or lockstep), step-boundary mutations, `paused()`,
-  `wait_sim`, one render thread. Simulator-neutral: it drives any PhysicsWorld.
-- **GroundTruth** — written once over PhysicsWorld (object poses, contacts, attachments, clearance,
-  visible pixels). The firewall test stays: skills and perception never import it.
-- **Generic drivers** read the manifest and talk to PhysicsWorld only: `Arm` (IK / FK on the
-  canonical model, settle-checked moves, abort, commanded-motion counter), `Gripper` (contact-gated
-  attach), `LeggedBase` (velocity command → policy → torques, posture, stop brake, odometry),
-  `Camera`, `Lidar`. Uniform protocols, no per-robot method drift (Rule 11).
-- **Policies** (`sim/policies/`) are chosen by `policy.ref` in the manifest.
-- **Manifests** hold every per-robot number. `compose:` builds `go2_piper` from `go2` ⊕ `piper`
-  at scene-build time (the committed `go2_piper.xml` goes away).
-- **Skill packs bind by capability**: locomotion + navigation (base), manipulation (arm + gripper),
-  perception (camera), mobile manipulation (base + arm). Per-robot parameters live in the manifest.
-- **Session** — `start_simulation(embodiment, backend)`; `backend.supports(config)` returns a
-  reason or None, so the backend × embodiment matrix is derived, never hand-written.
+The owner's four requirements map to the charter's sections: explicit interfaces (§3, the
+`interfaces/` package), explicit config-file interfaces (§4, the `schemas/` package: `robot.yaml`,
+`world.yaml`, the user config, the environment catalogue), explicit file / model interfaces (§5: a
+robot is a folder, a world is a folder, one state directory, policy and weight files, versioned
+outputs), everything modular (§6: a layering test with an allowlist that only shrinks).
 
-Staging (strangler; every stage leaves the gate green):
-S1 contract + generic runtime + generic GroundTruth, MuJoCo behind PhysicsWorld, no driver change →
-S2 SceneDescription export + PyBullet PhysicsWorld + kinematic / dynamic parity tests →
-S3 generic Arm / Gripper / Camera (piper tabletop on both backends; go2_piper's arm moved over) →
-S4 generic LeggedBase + policy plugins (go2 on both backends; G1 on MuJoCo) →
-S5 session × backend × embodiment: NL selection, composition manifests, capability-bound skill packs,
-conformance suite, zero-code robot test.
-Fallbacks, decided by evidence and stated in the docs: if the MPC gait cannot be made stable on
-PyBullet, go2 / go2_piper stay MuJoCo-only in 1.0 and `supports()` says why; G1 on PyBullet is not
-attempted; SO-101 moves to the generic arm driver only if its 5-DoF pick survives, otherwise it keeps
-its dedicated driver behind the same protocols.
+Measured facts the design rests on (charter review): body-frame kinematic parity MuJoCo ↔ PyBullet
+is ~1e-7 m; PyBullet clears torque commands every step (the backend re-issues them); the go2 PD
+stance matches to the millimetre; the sinusoidal gait walks on PyBullet (0.37 m/s) while the
+convex-MPC trot falls within 2 s there; a fixed constraint holds a carried object under 20 m/s²;
+ray-based clearance would have graded a resting object as lifted (so the AABB rule stays).
 
 ## Acceptance (internal gate + bare `vector-cli`; the owner's face is the bare REPL)
 
@@ -137,16 +119,17 @@ its dedicated driver behind the same protocols.
 | I23 | 1 | merge `wave3-wp11` (perception + memory) and `wave3-wp14` (native persona / context / lifecycle) | running |
 | I4 | 1 | land `wave2-wp07` (spine S2) + bind the task contract to the manifest + close the probe hole + vacuous-compare corpus | queued behind I23 |
 | R3 | 1 | tool security: `rg` argv, resolved-path guard + credential deny-list, `web_fetch` asks + redirect checks | running |
+| S2 | 1b | the contract, standalone, on both engines (new files only): `interfaces/`, `sim/scene/{reader, canonical}`, `sim/backends/{mujoco, pybullet}/world.py`, `tests/conformance/` (kinematic + inertial parity, every binding sentence, oracle-parity battery, go2 walking on PyBullet) | running |
 | R1 | 2 | ONE producer: delete the legacy producer + IntentRouter + primitives + playground + `vector-eval` + their tests | open |
-| S1 | 2 | physics contract on MuJoCo: `PhysicsWorld`, simulator-neutral `SimRuntime`, ONE `GroundTruth` over it; drivers untouched | open |
-| S2 | 2 | `SceneDescription` export from the compiled model + PyBullet `PhysicsWorld` + parity tests | open |
-| S3 | 3 | generic Arm / Gripper / Camera drivers; `piper` tabletop body on both backends; go2_piper's arm moved over; SO-101 stop + commanded-motion counter | open |
+| S1 | 2 | MuJoCo runs on the contract: golden traces first; `SimRuntime` over `PhysicsWorld`; `fn(model, data)` → `fn(world)`; `sim/grasp.py`; the one `GroundTruth` | open |
+| S3 | 3 | generic Arm / Gripper / Camera; the `piper` body on both backends; go2_piper's arm moved over; SO-101 on the generic drivers (or the documented fallback); no ground truth through any actor-side method | open |
 | R5 | 3 | split `cli.py`; ONE `build_runtime`; slash-command table; explicit credentials (no borrowed OAuth) | open |
-| S4 | 4 | generic LeggedBase + policy plugins (convex_mpc, torchscript, sinusoidal); go2 on both backends; G1 on MuJoCo with skills + causation; posture persistence | open |
+| S4 | 4 | generic LeggedBase + policies (convex_mpc, torchscript, sinusoidal); go2 on both backends; G1 on MuJoCo with skills + causation; posture persistence | open |
 | R4 | 4 | fetch closure: one place skill for the mobile arm, carry, deliver; e2e fetch + place | open |
 | R6 | 4 | MCP server on `build_runtime` + native producer; SDK 2.x; stdio / loopback; verdict returned | open |
-| S5 | 5 | session × backend × embodiment: NL selection, derived support matrix, `compose:` manifests, capability-bound skill packs, conformance suite, zero-code robot test, asset fetch (G1, weights) | open |
-| R8 | 5 | packaging + hygiene: `config/` in the package, `.gitignore`, pyproject (`[pybullet]` extra), dead periphery, NOTICE, gate honesty, CI | open |
+| S5 | 5 | session × backend × embodiment × world: NL selection with honest errors, the one scene compile, `compose:`, capability-bound skill packs + derived persona, a robot added by manifest only | open |
+| C1 | 5 | config + file interfaces: `schemas/` (robot, world, user, env, paths), `$VECTOR_HOME`, robot and world folders, asset fetch script, perception weight provisioning | open |
+| R8 | 5 | packaging + hygiene: pyproject (`[pybullet]` extra), `.gitignore`, dead periphery, NOTICE, gate honesty, CI, the layering ratchet at zero | open |
 | R9 | 6 | docs: README, getting-started, ARCHITECTURE, STATUS, DECISIONS, add-a-simulator / add-a-robot guides, CHANGELOG, version | open |
 | REL | 6 | final acceptance A1–A10, adversarial review of the whole diff, tag `v1.0.0` (local) | open |
 
