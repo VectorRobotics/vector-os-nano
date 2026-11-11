@@ -413,5 +413,6 @@ def test_in_process_navigation_writes_no_flag_file(tmp_path):
     base.navigate_to.return_value = _nav(True, "arrived", (17.0, 2.5))
     ctx = SkillContext(base=base, services={"spatial_memory": _sg()})
     NavigateSkill().execute({"room": "kitchen"}, ctx)
+    assert list(tmp_path.iterdir()) == []  # the room path armed it and left it armed
     NavigateSkill().execute({"x": 1.0, "y": 1.0}, ctx)
     assert list(tmp_path.iterdir()) == []
