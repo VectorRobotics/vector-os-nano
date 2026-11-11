@@ -436,7 +436,8 @@ def test_p_path_never_hands_an_acted_turn_to_the_legacy_planner(monkeypatch, own
         run_turn_native=lambda *a, **k: acted,
         vgg_decompose=lambda p: decomposed.append(p),
     )
-    monkeypatch.setattr(cli, "_build_turn_context", lambda args: SimpleNamespace(engine=engine, session=None))
+    monkeypatch.setattr(cli, "_build_turn_context",
+                        lambda args: SimpleNamespace(engine=engine, session=None, app_state={}))
     code = cli.run_one_turn(SimpleNamespace(print_prompt="walk 1 m", json=False, native_loop=False, native_first=False))
     assert decomposed == []  # vgg_decompose never invoked
     assert code != 0
@@ -801,21 +802,28 @@ def test_navigate_is_not_rerun_when_the_base_raises_a_type_error_mid_way() -> No
     assert result.is_error and calls == [(1.0, 2.0)]
 
 
-def test_dev_world_actions_go_native_but_sim_commands_and_questions_do_not() -> None:
-    """E0: the keyword router knows no dev verbs, so a dev write must reach the gated,
-    verified native producer — but a sim launch (native has no sim tools) or a
-    question must not pay a wasted native round-trip."""
+def test_every_repl_turn_reaches_native_and_the_dev_world_can_launch_a_sim() -> None:
+    """producers:keyword-gate-default-producer + docs-vs-code:repl-keyword-gate-english-fetch:
+    no keyword router decides whether native runs. The dev world's native toolset holds
+    the sim lifecycle, so '启动 go2 仿真' is the model's to route, like a dev write; a
+    robot world attempts 'please bring me the red bottle', which the router skipped."""
     from vector_os_nano.vcli.intent_router import IntentRouter
+    from vector_os_nano.vcli.native_loop import _build_motor_tools, should_attempt_native
+    from vector_os_nano.vcli.tools import discover_categorized_tools
+    from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
 
-    def engine(robot: bool) -> Any:
-        return SimpleNamespace(classify_intent=lambda t: SimpleNamespace(use_vgg=False),
-                               _world=SimpleNamespace(is_robot=lambda: robot),
-                               _intent_router=IntentRouter())
-
-    assert cli._intent_actionable(engine(False), "在 /tmp/vos_e0 写一个 hello.txt")
-    assert not cli._intent_actionable(engine(False), "启动 go2 仿真 无窗口")
-    assert not cli._intent_actionable(engine(False), "这个仓库是做什么的？")
-    assert not cli._intent_actionable(engine(True), "在 /tmp/vos_e0 写一个 hello.txt")
+    registry = CategorizedToolRegistry()
+    tools, cats = discover_categorized_tools()
+    for t in tools:
+        registry.register(t, category=next((c for c, ns in cats.items() if t.name in ns), "default"))
+    dev = SimpleNamespace(_registry=registry)
+    assert {"start_simulation", "stop_simulation"} <= set(_build_motor_tools(None, dev))
+    for line in ("在 /tmp/vos_e0 写一个 hello.txt", "启动 go2 仿真 无窗口", "这个仓库是做什么的？"):
+        assert should_attempt_native(line, agent=None, engine=dev), line
+    assert IntentRouter().should_use_vgg("please bring me the red bottle") is False  # the old gate
+    robot = SimpleNamespace(_base=None, _arm=None, _perception=None, _skill_registry=None)
+    assert should_attempt_native("please bring me the red bottle", agent=robot, engine=dev)
+    assert "_intent_actionable" not in vars(cli)
 
 
 def test_headless_turn_context_never_resolves_permissions_on_stdin(monkeypatch, tmp_path) -> None:

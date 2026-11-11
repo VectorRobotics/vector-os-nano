@@ -154,3 +154,54 @@ class TestTerrainStatusTool:
 
     def test_terrain_tool_is_concurrency_safe(self, terrain_tool):
         assert terrain_tool.is_concurrency_safe({}) is True
+
+
+class TestGoToRoom:
+    """go_to_room: a room name in any language -> the map's free point -> navigate."""
+
+    @staticmethod
+    def _agent(skills):
+        from types import SimpleNamespace
+
+        from vector_os_nano.core.skill import SkillRegistry
+
+        reg = SkillRegistry()
+        for s in skills:
+            reg.register(s)
+        return SimpleNamespace(
+            _skill_registry=reg, _spatial_memory=None, _base=None, _config={"world": "apartment"},
+            _build_context=lambda: SimpleNamespace(), _sync_robot_state=lambda: None,
+        )
+
+    @staticmethod
+    def _ctx(agent):
+        import threading
+
+        return ToolContext(agent=None, cwd=Path("/tmp"), session=None, permissions=None,
+                           abort=threading.Event(), app_state={"agent": agent})
+
+    def test_room_alias_drives_navigate_to_the_map_point(self):
+        from types import SimpleNamespace
+
+        from vector_os_nano.core.types import SkillResult
+        from vector_os_nano.vcli.tools.nav_tools import GoToRoomTool
+
+        calls = []
+        nav = SimpleNamespace(name="navigate", parameters={},
+                              execute=lambda p, c: calls.append(p) or SkillResult(success=True))
+        res = GoToRoomTool().execute({"room": "厨房"}, self._ctx(self._agent([nav])))
+        assert not res.is_error, res.content
+        assert calls == [{"x": 17.0, "y": 1.7}]  # config/worlds/apartment.yaml kitchen seed
+        assert "verify(in_room('kitchen'))" in res.content
+
+    def test_unknown_room_fails_loud_with_the_valid_set(self):
+        from vector_os_nano.vcli.tools.nav_tools import GoToRoomTool
+
+        res = GoToRoomTool().execute({"room": "garage"}, self._ctx(self._agent([])))
+        assert res.is_error and "kitchen" in res.content and "garage" in res.content
+
+    def test_no_robot(self):
+        from vector_os_nano.vcli.tools.nav_tools import GoToRoomTool
+
+        res = GoToRoomTool().execute({"room": "kitchen"}, self._ctx(None))
+        assert res.is_error and "start_simulation" in res.content

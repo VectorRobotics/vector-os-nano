@@ -396,77 +396,88 @@ def test_a_map_entry_the_step_did_not_write_never_grounds(tool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# STEP 7 — cross-language grasp vocab: the native loop hands the MODEL the
-# world's CANONICAL object names so a non-English command verifies the STRICT
-# object-specific predicate, while the oracle stays untouched-strict.
+# WP14 — the native prompt is the kernel loop rules + the world's persona (task
+# policy composed from the manifests) + the actor's belief ([Robot State]).
 # ---------------------------------------------------------------------------
 
 
-class _FakeArmWithObjects:
-    """Duck-typed arm exposing get_object_positions (the single-source vocab)."""
-
-    def __init__(self, objects):
-        self._objects = objects
-
-    def get_object_positions(self):
-        return self._objects
+class _Gripper:
+    def is_holding(self) -> bool:
+        return False
 
 
-def _arm_agent(objects):
-    return SimpleNamespace(_arm=_FakeArmWithObjects(objects))
+def _go2_piper_like_agent():
+    """A go2+arm-shaped agent in the apartment: base, gripper, scene graph, skills."""
+    from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph
+    from vector_os_nano.core.skill import SkillRegistry
+
+    agent, base = _make_agent(10.0, 3.0)
+    reg = SkillRegistry()
+    for name in ("walk", "look", "explore", "navigate", "navigate_to_object", "perception_grasp", "mobile_place"):
+        reg.register(SimpleNamespace(name=name, description=name, parameters={}))
+    sg = SceneGraph()
+    sg.add_object(ObjectNode(object_id="o1", category="bottle", x=10.86, y=2.8, z=0.31,
+                             attributes={"color": "green"}))
+    agent._skill_registry, agent._spatial_memory = reg, sg
+    agent._gripper, agent._config = _Gripper(), {"world": "apartment"}
+    return agent
 
 
-def test_scene_object_names_single_sources_canonical_names() -> None:
-    """``_scene_object_names`` returns the arm's object-position keys, sorted.
-
-    This is the SAME ground truth ``holding_object`` matches against, so the names
-    the model is taught are exactly the names the oracle accepts (no split source).
-    """
-    from vector_os_nano.vcli.native_loop import _scene_object_names
-
-    agent = _arm_agent({"banana": [0.1, 0.1, 0.06], "mug": [0.2, 0.0, 0.06]})
-    assert _scene_object_names(agent) == ("banana", "mug")
-
-
-def test_scene_object_names_fail_safe_empty() -> None:
-    """No agent / no arm / no getter / raising getter -> EMPTY (pre-step-7 prompt)."""
-    from vector_os_nano.vcli.native_loop import _scene_object_names
-
-    assert _scene_object_names(None) == ()
-    assert _scene_object_names(SimpleNamespace(_arm=None)) == ()
-    assert _scene_object_names(SimpleNamespace(_arm=SimpleNamespace())) == ()
-
-    class _Raises:
-        def get_object_positions(self):
-            raise RuntimeError("boom")
-
-    assert _scene_object_names(SimpleNamespace(_arm=_Raises())) == ()
-
-
-def test_system_prompt_lists_object_vocab_when_present() -> None:
-    """The prompt teaches the canonical names + the translate-to-scene-name rule."""
+def _prompt_text(agent, world) -> str:
     from vector_os_nano.vcli.native_loop import _native_system_prompt
 
-    blocks = _native_system_prompt(None, frozenset({"holding_object"}), ("banana", "mug"))
-    text = blocks[0]["text"]
-    assert "graspable objects are: banana, mug" in text
-    # The rule that closes the cross-language gap: translate the user's wording to
-    # the canonical scene name (the model does 香蕉->banana itself).
-    assert "translating the user's wording" in text
-    assert "holding_object('banana')" in text
+    blocks = _native_system_prompt(SimpleNamespace(_world=world), frozenset({"holding_object"}), agent)
+    return "\n".join(b["text"] for b in blocks)
 
 
-def test_system_prompt_omits_object_vocab_when_empty() -> None:
-    """An EMPTY object set yields the EXACT pre-step-7 prompt (no object list)."""
-    from vector_os_nano.vcli.native_loop import _native_system_prompt
+def test_kernel_prompt_has_no_grasp_first_rule() -> None:
+    """docs-vs-code:prompt-forbids-fetch-composition: nothing forbids look / navigate
+    before a grasp any more; the kernel rules are the verify/finish loop only."""
+    text = _prompt_text(None, None)
+    assert "verify(expr)" in text and "Never finish while" in text
+    for banned in ("FIRST action", "do NOT navigate", "do NOT look", "obstacle-aware"):
+        assert banned not in text, banned
 
-    with_names = _native_system_prompt(None, frozenset({"holding_object"}), ("banana",))
-    without = _native_system_prompt(None, frozenset({"holding_object"}), ())
-    assert "graspable objects are" not in without[0]["text"]
-    # Default arg also omits it (back-compat with any caller passing only 2 args).
-    default = _native_system_prompt(None, frozenset({"holding_object"}))
-    assert default[0]["text"] == without[0]["text"]
-    assert with_names[0]["text"] != without[0]["text"]
+
+def test_prompt_names_no_ground_truth_object() -> None:
+    """The GT object-name leak (arm.get_object_positions keys) is gone."""
+    agent = _go2_piper_like_agent()
+    agent._arm = SimpleNamespace(get_object_positions=lambda: {"pickable_bottle_green": [10.9, 2.8, 0.3]})
+    from vector_os_nano.vcli.worlds.robot import RobotWorld
+
+    assert "pickable_" not in _prompt_text(agent, RobotWorld())
+
+
+def test_robot_world_policy_and_belief_state_reach_the_native_turn() -> None:
+    """producers:native-no-context: the turn sees its body's task policy (composed from
+    the manifests: the user's spot, the surfaces) and its belief (pose, room, gripper,
+    the objects it localized)."""
+    from vector_os_nano.vcli.worlds.robot import RobotWorld
+
+    text = _prompt_text(_go2_piper_like_agent(), RobotWorld())
+    assert "look (it localizes" in text and "navigate_to_object first" in text
+    assert "grasp it with perception_grasp" in text
+    assert "navigate(8.0, 3.0)" in text and "near_object('user') and kept_holding" in text
+    assert "dining_table centre (3.00, 7.50) top 0.66 m" in text and "object_on(" in text
+    assert "go_to_room(room)" in text and "kitchen" in text
+    assert "Position: (10.0, 3.0" in text and "Current room: hallway" in text
+    assert "Gripper: empty" in text
+    assert "green bottle at (10.86, 2.80, 0.31), seen" in text
+
+
+def test_policy_lines_follow_the_body() -> None:
+    """An arm-only body gets no base lines; a base without an arm no grasp lines."""
+    from vector_os_nano.vcli.worlds.robot import task_policy
+
+    arm_only = _go2_piper_like_agent()
+    arm_only._base = None
+    text = task_policy(arm_only)
+    assert "perception_grasp" in text and "navigate(" not in text and "go_to_room" not in text
+    base_only = _go2_piper_like_agent()
+    base_only._gripper = None
+    text = task_policy(base_only)
+    assert "go_to_room" in text and "holding_object" not in text
+    assert task_policy(None) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -520,3 +531,103 @@ def test_dev_world_keeps_full_code_tool_set() -> None:
     tools = _build_motor_tools(None, _engine_with_code_tools())  # dev world: no agent
     for name in ("file_read", "file_write", "file_edit", "bash", "glob", "grep"):
         assert name in tools, f"dev world must keep {name}"
+
+
+# ---------------------------------------------------------------------------
+# WP14 — sim lifecycle inside a native turn, real-session memory, usage
+# ---------------------------------------------------------------------------
+
+
+class _FakeStartSim:
+    """start_simulation stand-in: brings up a body and rebinds the REPL to it."""
+
+    name = "start_simulation"
+    description = "Start a sim."
+    input_schema = {"type": "object", "properties": {}}
+
+    def __init__(self, engine_ref: list) -> None:
+        self._engine = engine_ref
+
+    def check_permissions(self, params, context):
+        from vector_os_nano.vcli.tools.base import PermissionResult
+
+        return PermissionResult("allow")
+
+    def is_read_only(self, params) -> bool:
+        return False
+
+    def execute(self, params, context):
+        from vector_os_nano.vcli.tools.base import ToolResult
+        from vector_os_nano.vcli.worlds.robot import RobotWorld
+
+        agent, _ = _make_agent(0.0, 0.0)
+        context.app_state["agent"] = agent  # what rebind_world does
+        self._engine[0].init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())
+        return ToolResult(content="Started go2 simulation, ready in 1.0s")
+
+
+def test_lifecycle_tool_rebinds_the_turn_to_the_new_body() -> None:
+    """A dev-world turn starts a sim, then walks and verifies on it in the SAME turn: the
+    runner rebuilds tools, verifier and oracle names after the lifecycle tool."""
+    from vector_os_nano.vcli.engine import VectorEngine
+    from vector_os_nano.vcli.permissions import PermissionContext
+    from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
+    from vector_os_nano.vcli.worlds.dev import DevWorld
+
+    backend = FakeToolScriptBackend.from_tool_script([
+        tool_turn(("start_simulation", {})),
+        tool_turn(("walk", {"distance": 2.0, "speed": 0.3})),
+        tool_turn(("verify", {"expr": "at_position(2.0, 0.0, 1.0)"})),
+        tool_turn(("finish", {})),
+    ])
+    ref: list = []
+    registry = CategorizedToolRegistry()
+    registry.register(_FakeStartSim(ref), category="sim")
+    eng = VectorEngine(backend=backend, registry=registry, permissions=PermissionContext(no_permission=True))
+    ref.append(eng)
+    eng.init_vgg(agent=None, world=DevWorld())
+    app_state: dict = {"agent": None}
+    trace = eng.run_turn_native("start go2 and walk 2 m", session=_session(), app_state=app_state)
+
+    new_agent = app_state["agent"]
+    assert new_agent is not None and eng._vgg_agent is new_agent
+    assert trace.actions_dispatched == 2  # the start + the walk: nothing re-runs either
+    assert [s.strategy for s in trace.steps] == ["walk"]  # the start opens no graded step
+    assert trace.steps[0].actor_caused is ActorCaused.CAUSED
+    report = VerdictReport.from_trace(trace, verify_oracle_names(new_agent, eng))
+    assert report.verified is True
+
+
+def test_turns_share_the_real_session() -> None:
+    """cli-entry:native-scratch-session-no-memory: the second turn's model call sees the
+    first turn ('it' has a referent), and the usage lands on the session."""
+    from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
+    from vector_os_nano.vcli.session import TokenUsage
+
+    seen: list[list] = []
+
+    class _Recorder:
+        def __init__(self, turns):
+            self._turns = list(turns)
+
+        def call(self, messages, **_kw):
+            seen.append(list(messages))
+            return self._turns.pop(0) if self._turns else LLMResponse(text="", stop_reason="end_turn")
+
+    used = TokenUsage(input_tokens=100, output_tokens=7)
+    walk = LLMResponse(text="", tool_calls=[LLMToolCall(id="a", name="walk", input={"distance": 1.0})],
+                       stop_reason="tool_use", usage=used)
+    check = LLMResponse(text="", tool_calls=[LLMToolCall(id="b", name="verify", input={"expr": "at_position(1.0, 0.0, 1.0)"})],
+                        stop_reason="tool_use", usage=used)
+    done = LLMResponse(text="到了", stop_reason="end_turn", usage=used)
+    agent, _ = _make_agent(0.0, 0.0)
+    eng = _make_engine(agent, _Recorder([walk, check, done, done]))
+    session = _session()
+    eng.run_turn_native("往前走一米", session=session)
+    eng.run_turn_native("再走一次", session=session)
+
+    second_turn_first_call = seen[3]
+    assert second_turn_first_call[0] == {"role": "user", "content": "往前走一米"}
+    assert any(b.get("name") == "walk" for m in second_turn_first_call if m["role"] == "assistant"
+               for b in m["content"] if isinstance(b, dict))
+    assert session.token_usage.input_tokens == 400 and session.token_usage.output_tokens == 28

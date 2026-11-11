@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, tool
+from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, live_agent, tool
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ class WorldQueryTool:
         return True
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        agent = context.agent
+        agent = live_agent(context)
         if agent is None:
             return ToolResult(content="No agent available", is_error=True)
 
@@ -127,7 +127,7 @@ class RobotStatusTool:
         return True
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        agent = context.agent
+        agent = live_agent(context)
         if agent is None:
             return ToolResult(content="No agent available", is_error=True)
 

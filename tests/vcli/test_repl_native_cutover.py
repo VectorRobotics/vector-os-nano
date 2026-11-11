@@ -11,19 +11,18 @@ REPL helpers (no sim, no LLM); the real acceptance is driving the actual REPL by
 
   - ``_repl_native_enabled`` — default ON; VECTOR_REPL_NATIVE in {0,false,off,no} forces
     the pure-legacy REPL (reversible escape hatch).
-  - ``_intent_actionable`` — the classify_intent OPTIMIZATION hint (use_vgg -> attempt
-    native; else go straight to tool_use); fail-OPEN to native on a classify error.
-  - ``_repl_attempt_native`` — acted trace -> returns True, renders the honest verdict,
-    records a clean session summary; no-action / raised -> returns False (caller falls
-    back to legacy), and NO session pollution.
+  - ``_repl_attempt_native`` — runs on the REAL session; acted trace -> returns True and
+    renders the honest verdict; no-action / raised -> returns False (caller falls back
+    to legacy) and the native entries are removed again (no session pollution).
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
 from vector_os_nano.vcli import cli
+from vector_os_nano.vcli.session import Session
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
@@ -94,38 +93,29 @@ class _FakeConsole:
         return "\n".join(self.lines)
 
 
-class _FakeSession:
-    def __init__(self) -> None:
-        self.user: list[str] = []
-        self.asst: list[str] = []
-
-    def append_user(self, t: str) -> None:
-        self.user.append(t)
-
-    def append_assistant(self, t: str, *a: object, **k: object) -> None:
-        self.asst.append(t)
+def _FakeSession() -> Session:
+    """A real, in-memory Session (never saved by these tests)."""
+    return Session(session_id="t", created_at="", updated_at="", path=Path("/nonexistent/t.jsonl"))
 
 
 class _FakeEngine:
-    def __init__(self, trace: object, *, use_vgg: bool = True, raise_classify: bool = False) -> None:
+    def __init__(self, trace: object, *, answer: str = "") -> None:
         self._vgg_agent = None
         self._trace = trace
-        self._use_vgg = use_vgg
-        self._raise = raise_classify
+        self._answer = answer
         self.native_calls = 0
-
-    def classify_intent(self, text: str) -> SimpleNamespace:
-        if self._raise:
-            raise RuntimeError("classify boom")
-        return SimpleNamespace(use_vgg=self._use_vgg)
+        self.sessions: list[object] = []
 
     def run_turn_native(self, user_message, agent=None, session=None, app_state=None, on_progress=None, ask_permission=None):  # noqa: ANN001
         # ``on_progress`` mirrors the REAL VectorEngine.run_turn_native signature —
         # _repl_attempt_native passes it for the live spinner; a fake omitting it made
         # the call raise TypeError (caught as "no action"), masking the cutover path.
         self.native_calls += 1
+        self.sessions.append(session)
+        session.append_user(user_message)  # like the real loop: the turn is on the session
         if isinstance(self._trace, Exception):
             raise self._trace
+        session.append_assistant(self._answer)
         return self._trace
 
 
@@ -159,32 +149,15 @@ def test_repl_native_enabled_on_for_truthy(monkeypatch, val: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _intent_actionable — classify hint, fail-open.
-# ---------------------------------------------------------------------------
-
-
-def test_intent_actionable_true_when_use_vgg() -> None:
-    assert cli._intent_actionable(_FakeEngine(None, use_vgg=True), "走到 (11,3)") is True
-
-
-def test_intent_actionable_false_when_not_use_vgg() -> None:
-    assert cli._intent_actionable(_FakeEngine(None, use_vgg=False), "你好") is False
-
-
-def test_intent_actionable_fail_open_on_classify_error() -> None:
-    # A classify failure must NOT silently skip the redesign — attempt native.
-    assert cli._intent_actionable(_FakeEngine(None, raise_classify=True), "x") is True
-
-
-# ---------------------------------------------------------------------------
-# _repl_attempt_native — acted -> True+record; no-action / raised -> False+clean.
+# _repl_attempt_native — acted -> True on the real session; no-action / raised ->
+# False and the session is as before.
 # ---------------------------------------------------------------------------
 
 
 def test_repl_attempt_native_true_and_records_when_acted(monkeypatch) -> None:
     _stub_oracle(monkeypatch)
     trace = _acted_trace("g", strategy="walk", verify="at_position(11.0, 3.0)", verified_pose=True)
-    engine = _FakeEngine(trace)
+    engine = _FakeEngine(trace, answer="到了")
     session = _FakeSession()
     console = _FakeConsole()
 
@@ -194,24 +167,25 @@ def test_repl_attempt_native_true_and_records_when_acted(monkeypatch) -> None:
     assert engine.native_calls == 1
     # Honest verdict rendered (GROUNDED + CAUSED + at_position True -> verified True).
     assert "verified=True" in console.text
-    assert "walk" in console.text
-    # Clean session summary recorded for follow-up context.
-    assert session.user == ["走到坐标 (11,3)"]
-    assert len(session.asst) == 1 and "native executed" in session.asst[0]
+    assert "walk" in console.text and "到了" in console.text
+    # cli-entry:native-scratch-session-no-memory: the turn ran on the REAL session.
+    assert engine.sessions == [session]
+    assert [e.get("content") for e in session._entries if e["type"] == "user"] == ["走到坐标 (11,3)"]
 
 
 def test_repl_attempt_native_false_and_clean_when_no_action(monkeypatch) -> None:
     _stub_oracle(monkeypatch)
-    engine = _FakeEngine(_noaction_trace("g"))
+    engine = _FakeEngine(_noaction_trace("g"), answer="你好")
     session = _FakeSession()
+    session.append_user("earlier turn")
     console = _FakeConsole()
 
-    acted = cli._repl_attempt_native(engine, "启动 go2 仿真", session, {}, console)
+    acted = cli._repl_attempt_native(engine, "你好", session, {}, console)
 
     assert acted is False, "verify-only / no-action native trace must fall back to legacy"
     assert engine.native_calls == 1
-    # NO session pollution — the legacy path will record the turn instead.
-    assert session.user == [] and session.asst == []
+    # The native entries are gone again: the legacy path records the turn itself.
+    assert [e.get("content") for e in session._entries] == ["earlier turn"]
 
 
 def test_repl_attempt_native_false_when_native_raises(monkeypatch) -> None:
@@ -223,7 +197,28 @@ def test_repl_attempt_native_false_when_native_raises(monkeypatch) -> None:
     acted = cli._repl_attempt_native(engine, "走到 (11,3)", session, {}, console)
 
     assert acted is False, "a raised native attempt must fall back to legacy, not crash the REPL"
-    assert session.user == [] and session.asst == []
+    assert session._entries == []
+
+
+def test_repl_attempt_native_prints_the_lifecycle_result_and_no_empty_verdict(monkeypatch) -> None:
+    """A turn that only started a sim: its readiness line shows, no 0/0 verdict claim."""
+    _stub_oracle(monkeypatch)
+    started = ExecutionTrace(goal_tree=GoalTree(goal="g", sub_goals=()), steps=(), success=False,
+                             total_duration_sec=0.0, actions_dispatched=1)
+
+    class _Launch(_FakeEngine):
+        def run_turn_native(self, user_message, session=None, **_kw):  # noqa: ANN001
+            session.append_user(user_message)
+            session.append_assistant("", [{"id": "c1", "name": "start_simulation", "input": {}, "type": "tool_use"}])
+            session.append_tool_results([{"type": "tool_result", "tool_use_id": "c1",
+                                          "content": "Started go2_piper simulation, ready in 9.1s: ...\nmore"}])
+            session.append_assistant("go2 仿真已启动")
+            return started
+
+    console = _FakeConsole()
+    assert cli._repl_attempt_native(_Launch(started), "启动 go2 仿真", _FakeSession(), {}, console) is True
+    assert "Started go2_piper simulation, ready in 9.1s" in console.text
+    assert "go2 仿真已启动" in console.text and "verdict" not in console.text
 
 
 def test_repl_attempt_native_false_verdict_when_verify_fails(monkeypatch) -> None:
@@ -239,4 +234,3 @@ def test_repl_attempt_native_false_verdict_when_verify_fails(monkeypatch) -> Non
 
     assert acted is True, "native dispatched an action -> it owns the turn"
     assert "verified=False" in console.text, "a failed verify must surface verified=False (honest)"
-    assert "Verified: False" in session.asst[0]

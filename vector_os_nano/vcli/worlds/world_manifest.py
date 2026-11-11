@@ -165,6 +165,17 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
     )
 
 
+def world_of(agent: Any) -> WorldManifest | None:
+    """The manifest of the world *agent* stands in (its config names it), or None.
+
+    The same lookup skills use (``SkillContext.config['world']``): what the map
+    says, never ground truth.
+    """
+    cfg = getattr(agent, "_config", None)
+    world_id = cfg.get("world") if isinstance(cfg, dict) else None
+    return load_world(str(world_id)) if world_id else None
+
+
 @functools.lru_cache(maxsize=8)
 def load_world(world_id: str) -> WorldManifest:
     """Load ``config/worlds/<world_id>.yaml``; unknown id fails loud with the valid set."""

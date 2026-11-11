@@ -554,3 +554,124 @@ class TestWrapSkillsMultiple:
 
         for t in tools:
             assert isinstance(t, Tool)
+
+
+# ---------------------------------------------------------------------------
+# WP14 regressions: schema passthrough, failure data, live agent + live skill
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaPassthrough:
+    """tools-worlds:schema-drops-enum-array — enum/default/array reach the model."""
+
+    def test_enum_default_and_array_types_survive(self) -> None:
+        from vector_os_nano.skills.go2.patrol import PatrolSkill
+        from vector_os_nano.skills.go2.walk import WalkSkill
+        from vector_os_nano.skills.mobile_place import MobilePlaceSkill
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        walk = SkillWrapperTool(WalkSkill(), None).input_schema["properties"]["direction"]
+        assert walk["enum"] == ["forward", "backward", "left", "right"]
+        assert walk["default"] == "forward"
+        rooms = SkillWrapperTool(PatrolSkill(), None).input_schema["properties"]["rooms"]
+        assert rooms["type"] == "array" and rooms["items"] == {"type": "string"}
+        xyz = SkillWrapperTool(MobilePlaceSkill(), None).input_schema["properties"]["target_xyz"]
+        assert xyz["type"] == "array"  # declared "list"
+
+    def test_json_string_array_is_coerced(self) -> None:
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        seen: dict = {}
+
+        class Place:
+            name = "place_at"
+            parameters = {"target_xyz": {"type": "list", "required": True}}
+
+            def execute(self, params: dict, context: Any) -> MockSkillResult:
+                seen.update(params)
+                return MockSkillResult(success=True)
+
+        skill = Place()
+        agent = _make_agent([skill])
+        SkillWrapperTool(skill, agent).execute({"target_xyz": "[3.0, 7.5, 0.66]"}, _make_context(agent))
+        assert seen["target_xyz"] == [3.0, 7.5, 0.66]
+
+
+class TestFailureKeepsData:
+    """tools-worlds:wrapper-drops-failure-data — the observation survives a failure."""
+
+    def test_failure_returns_result_data_and_diagnosis_hint(self) -> None:
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        class Nav:
+            name = "nav"
+            parameters: dict = {}
+
+            def execute(self, params: dict, context: Any) -> MockSkillResult:
+                return MockSkillResult(
+                    success=False, error_message="no map",
+                    result_data={"diagnosis": "room_not_explored", "room": "kitchen"})
+
+        skill = Nav()
+        agent = _make_agent([skill])
+        res = SkillWrapperTool(skill, agent).execute({}, _make_context(agent))
+        assert res.is_error
+        assert res.metadata["room"] == "kitchen"
+        assert "kitchen" in res.content
+        assert "Suggested: Room not explored yet" in res.content
+
+    def test_success_does_not_mutate_the_skills_result_data(self) -> None:
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        data = {"value": 1}
+        skill = MagicMock()
+        skill.name, skill.parameters = "motor", {}
+        skill.execute.return_value = MockSkillResult(success=True, result_data=data)
+        agent = _make_agent([skill])
+        agent._base.get_position.return_value = (1.0, 2.0, 0.3)
+        agent._base.get_heading.return_value = 0.0
+        SkillWrapperTool(skill, agent).execute({}, _make_context(agent))
+        assert data == {"value": 1}
+
+
+class TestLiveAgentAndSkill:
+    """tools-worlds:stale-turn-agent + tools-worlds:skill-reload-stale-wrapper."""
+
+    def test_runs_on_the_live_agent_after_an_in_turn_switch(self) -> None:
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        old_skill, new_skill = MagicMock(), MagicMock()
+        for s in (old_skill, new_skill):
+            s.name, s.parameters = "walk", {}
+            s.execute.return_value = MockSkillResult(success=True)
+        old, new = _make_agent([old_skill]), _make_agent([new_skill])
+        ctx = _make_context(agent=old)  # fixed when the turn started
+        ctx.app_state = {"agent": new}  # a stop+start inside the turn rebound it
+        SkillWrapperTool(new_skill, new).execute({}, ctx)
+        new_skill.execute.assert_called_once()
+        old_skill.execute.assert_not_called()
+        new._build_context.assert_called_once()
+
+    def test_stopped_sim_is_an_error_not_a_call_on_the_dead_agent(self) -> None:
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        skill = MagicMock()
+        skill.name, skill.parameters = "walk", {}
+        agent = _make_agent([skill])
+        ctx = _make_context(agent=agent)
+        ctx.app_state = {"agent": None}
+        res = SkillWrapperTool(skill, agent).execute({}, ctx)
+        assert res.is_error and "start_simulation" in res.content
+        skill.execute.assert_not_called()
+
+    def test_reloaded_skill_instance_is_the_one_that_runs(self) -> None:
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+
+        old_skill, new_skill = MagicMock(), MagicMock()
+        for s in (old_skill, new_skill):
+            s.name, s.parameters = "walk", {}
+            s.execute.return_value = MockSkillResult(success=True)
+        agent = _make_agent([new_skill])  # skill_reload re-registered the name
+        SkillWrapperTool(old_skill, agent).execute({}, _make_context(agent))
+        new_skill.execute.assert_called_once()
+        old_skill.execute.assert_not_called()

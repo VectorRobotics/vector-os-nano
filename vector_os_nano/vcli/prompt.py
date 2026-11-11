@@ -14,6 +14,7 @@ Public API:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -52,54 +53,24 @@ If no hardware is connected yet, tell 主人 they can say \
 """
 
 ROBOT_TOOL_INSTRUCTIONS = """\
-You are a robotics development environment. You can BOTH control the robot \
-AND edit code in the same conversation. This is your core superpower.
+You control a robot and can also read and fix this project's code.
 
-When 主人 describes a robot problem (e.g. "探索时狗撞墙", "导航太慢"):
-1. Use file_read/grep to find the relevant code
-2. Analyze the issue, explain briefly
-3. Use file_edit to fix it
-4. Use skill_reload to hot-reload without restarting the simulation
-5. Suggest testing the fix (e.g. "要不要重新跑一次探索?")
-
-When 主人 asks about robot state or diagnostics:
-1. Check the [Robot State] section above first -- you already know position, room, SceneGraph
-2. Use ros2_topics, ros2_nodes, ros2_log to dig deeper if needed
-3. Use nav_state or terrain_status for navigation-specific checks
-4. Use scene_graph_query for spatial data (rooms, doors, objects, paths)
-
-Tool categories:
-- code tools: file_read, file_write, file_edit, bash, glob, grep -- for reading and editing code
-- robot tools: 22 skills (walk, navigate, explore, pick, etc.) + scene_graph_query -- for controlling the robot
-- diag tools: ros2_topics, ros2_nodes, ros2_log, nav_state, terrain_status -- for diagnosing issues
-- system tools: robot_status, start_simulation, web_fetch, skill_reload -- for system management
+Your tools are the robot's skills, scene_graph_query (your memory of rooms and \
+objects), the code tools and the simulation lifecycle. The [Robot State] block \
+is the robot's own view right now: pose, room, gripper, the objects it has \
+localized, the nav/explore backend.
 
 Tool rules:
-- Motor tools (walk, navigate, pick, etc.) require user permission before execution.
-- Read-only tools (file_read, grep, ros2_topics, etc.) run automatically, no permission needed.
-- After motor skills, check the robot_state_after field in the result to verify the action succeeded.
-- If a skill fails, read the "Suggested" hint in the error message for recovery steps.
-- After editing code with file_edit, use skill_reload to apply changes without restart.
-
-Safety:
-- Check robot_status before risky motions.
-- Always detect/scan before attempting pick operations.
-- Report hardware errors immediately. Do not retry motor commands silently.
+- A failed skill says why, often with a "Suggested:" next step. Follow it; never \
+retry a motor command silently.
+- After editing a skill's code, skill_reload applies it without restarting the sim.
 
 Launching / switching simulation:
 Use start_simulation(embodiment=...) for every body (its schema lists the embodiments;
 pick the arm variant for pick/place). It returns once the sim is ready; a different
-embodiment stops the running one first.
+embodiment stops the running one first. stop_simulation stops it.
 If 主人 says "headless" / "无窗口" / "no window" / "不要窗口", pass gui=false.
 Never launch a sim with bash.
-
-Key files in this project:
-- scripts/go2_vnav_bridge.py: path follower, obstacle avoidance, terrain persistence
-- vector_os_nano/sim/session.py: the in-process sim session behind start_simulation
-- vector_os_nano/skills/go2/explore.py: autonomous exploration (TARE)
-- vector_os_nano/skills/navigate.py: room-to-room navigation
-- vector_os_nano/core/scene_graph.py: spatial memory (rooms, doors, objects)
-- config/worlds/apartment.yaml: simulation room positions
 """
 
 # --- General "dev" persona (default; no robot body assumed) ----------------
@@ -168,7 +139,7 @@ def _select_persona(agent: Any, world: Any) -> tuple[str, str]:
     """
     if world is not None and hasattr(world, "persona_blocks"):
         try:
-            role, tools = world.persona_blocks()
+            role, tools = world.persona_blocks(agent)
             if role and tools:
                 return role, tools
         except Exception:
@@ -360,15 +331,18 @@ def _format_world(agent: Any) -> str:
 # Project-context filenames recognized in the working directory, in precedence
 # order. VECTOR.md is Vector's own; AGENTS.md is the cross-tool standard; CLAUDE.md
 # is honored for repos already carrying one. The FIRST one found in cwd is used.
+# Another agent's files (AGENTS.md / CLAUDE.md) are opt-in (VECTOR_PROJECT_CONTEXT=1):
+# a repo's developer constitution is not the robot's system prompt.
 _PROJECT_CONTEXT_FILES: tuple[str, ...] = ("VECTOR.md", "AGENTS.md", "CLAUDE.md")
 
 
 def _load_vector_md(cwd: Path | None) -> str:
-    """Load project context from cwd (VECTOR.md / AGENTS.md / CLAUDE.md) + ~/.vector/VECTOR.md."""
+    """Load project context from cwd (VECTOR.md; AGENTS.md / CLAUDE.md when opted in) + ~/.vector/VECTOR.md."""
     parts: list[str] = []
+    opted_in = os.environ.get("VECTOR_PROJECT_CONTEXT", "").strip().lower() in ("1", "true", "yes", "on")
 
     if cwd is not None:
-        for fname in _PROJECT_CONTEXT_FILES:
+        for fname in _PROJECT_CONTEXT_FILES if opted_in else _PROJECT_CONTEXT_FILES[:1]:
             local_path = cwd / fname
             if local_path.is_file():
                 try:

@@ -637,8 +637,6 @@ def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
     from vector_os_nano.vcli.worlds import resolve_world
 
     agent = session.agent if session is not None else None
-    base = getattr(agent, "_base", None)
-    arm = getattr(agent, "_arm", None)
     sg = getattr(agent, "_spatial_memory", None)
     skill_registry = getattr(agent, "_skill_registry", None)
     app_state.update(sim_session=session, agent=agent, scene_graph=sg,
@@ -664,7 +662,7 @@ def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
     engine = app_state.get("engine")
     if engine is None:
         return
-    provider = RobotContextProvider(base=base, scene_graph=sg, arm=arm)
+    provider = RobotContextProvider.for_agent(agent)
     app_state["robot_ctx_provider"] = provider
     engine._system_prompt = DynamicSystemPrompt(
         build_system_prompt(agent=agent, cwd=Path.cwd(), robot_context=provider, world=world),

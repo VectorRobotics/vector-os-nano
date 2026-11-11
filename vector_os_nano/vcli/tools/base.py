@@ -54,6 +54,13 @@ class ToolContext:
     app_state: dict[str, Any] | None = None  # mutable CLI state for runtime tools
 
 
+def live_agent(context: ToolContext) -> Any:
+    """The agent to act on NOW: the REPL's live ``app_state['agent']`` (a sim switch
+    inside a turn rebinds it), else the ``context.agent`` the turn started with."""
+    app = context.app_state or {}
+    return app["agent"] if "agent" in app else context.agent
+
+
 # ---------------------------------------------------------------------------
 # Tool Protocol
 # ---------------------------------------------------------------------------
