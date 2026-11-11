@@ -53,7 +53,7 @@ class Rig:
         self.rt.call(self._pin)
         self.rt.step(300, controller=self._pin)  # objects settle into resting contact
         self.qpos0 = d.qpos.copy()
-        self.gt = GroundTruth(self.rt, robot_root_bid=self.L.root_bid)
+        self.gt = GroundTruth(self.rt)
         self.turn = (-math.inf, -math.inf)
         self.sg: SceneGraph | None = None
         self.ns = rig_namespace(self.rt, "go2_piper", belief=lambda: self.sg,
@@ -205,7 +205,7 @@ def test_kept_holding_is_false_after_a_drop_this_turn(ns, rig: Rig) -> None:
     rig.turn = (rig.gt.sim_time - 1.0, time.time())
     _held_green(rig)
     rig.weld(GREEN, False)  # the scripted drop
-    rig.gt.weld_events()  # (a read publishes the change)
+    assert [(n, p) for _t, n, p in rig.gt.attach_events(since=rig.turn[0])][-1] == (GREEN, None)
     rig.weld(GREEN, True)  # ... and a re-grab
     assert ns["holding_object"]("green bottle")
     assert not ns["kept_holding"]("green bottle")

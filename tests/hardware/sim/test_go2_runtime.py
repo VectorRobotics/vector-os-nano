@@ -174,7 +174,9 @@ try:
     arm.move_joints([0.2, 0.5, -0.4, 0.0, 0.3, 0.0], duration=0.5)
     grip.close(); grip.open()
     s.agent._perception.capture()
-    print("GT=" + json.dumps(GroundTruth(base.runtime).free_body_poses()))
+    gt = GroundTruth(base.runtime)
+    print("GT=" + json.dumps({"base": gt.base_pose(), "objects": gt.object_positions(),
+                              "q": base.runtime.snapshot().q.tolist()}))
 finally:
     s.stop()
 """
@@ -193,8 +195,8 @@ def test_two_lockstep_runs_end_in_identical_ground_truth() -> None:
     """VECTOR_SIM_LOCKSTEP=1: the same script in two fresh processes, same final GT."""
     a, b = _lockstep_run(), _lockstep_run()
     assert a == b
-    base = np.array(a["base_link"][0])
-    assert np.linalg.norm(base[:2] - [10.0, 3.0]) > 0.2, "the scripted walk did not move the dog"
+    base = np.array(a["base"][:2])
+    assert np.linalg.norm(base - [10.0, 3.0]) > 0.2, "the scripted walk did not move the dog"
 
 
 def test_missing_mpc_stack_falls_back_loudly_and_reports_the_gait(monkeypatch, caplog) -> None:

@@ -17,7 +17,21 @@ anything, and replayed here bit for bit:
 
 States compare with ``np.array_equal`` and oracle values exactly. Regenerate (only for
 a documented, justified change) with ``python -m tests.hardware.sim.test_golden_traces
-<dir>`` under scripts/gate.sh's environment.
+<dir>`` under scripts/gate.sh's environment; the ``release_*`` arrays are kept.
+
+Two ground-truth values changed by design when GroundTruth became the one generic class
+(S1 step 4); the release/1.0 values are kept as ``release_gt_clearance`` /
+``release_gt_contacts`` and :func:`test_ground_truth_moved_only_as_documented` bounds the
+change:
+
+* clearance is today's AABB rule over CANONICAL shape AABBs of the published state;
+  the old one read the stepped data's geom poses, one physics step behind it. Every
+  value moved by at most the object's own motion in that step (max 0.11 mm, carried
+  bottle; 0.24 um resting); no 3 cm lift or resting verdict flipped.
+* contacts are the world's contract sentence (a gap up to 1 mm is a contact, from a
+  probe of the current state); the old one read the stepped data's contact list. One
+  value changed: the green bottle touches the pick table after the approach move
+  (t = 8.62 s), at a measured gap of 0.92 mm.
 """
 from __future__ import annotations
 
@@ -43,13 +57,12 @@ _SAMPLE_S = 0.1
 def _ground_truth(go2: Any) -> Any:
     from vector_os_nano.sim.ground_truth import GroundTruth
 
-    return GroundTruth(go2.runtime, robot_root_bid=go2._mj.layout.root_bid)
+    return GroundTruth(go2.runtime)
 
 
 def _gt_row(gt: Any, objects: list[str], camera: tuple[str, int, int], arm: tuple[str, ...]) -> dict:
     """Every value the oracles read, at this instant."""
     pos = gt.object_positions()
-    welds = gt.weld_active()
     contacts = [sorted(gt.contacts(n)) for n in objects]
     return {
         "t": gt.sim_time,
@@ -57,7 +70,7 @@ def _gt_row(gt: Any, objects: list[str], camera: tuple[str, int, int], arm: tupl
         "pos": np.array([pos[n] for n in objects]),
         "speed": np.array([gt.object_speed(n) for n in objects]),
         "clearance": np.array([gt.clearance(n) for n in objects]),
-        "welded": np.array([bool(welds.get(n, False)) for n in objects]),
+        "welded": np.array([gt.attached_to(n) is not None for n in objects]),
         "pixels": np.array([gt.visible_pixels(n, *camera) for n in objects]),
         "arm": np.array(gt.joint_positions(arm) if arm else []),
         "contacts": contacts,
@@ -191,10 +204,10 @@ def run_go2_piper_pick() -> dict[str, np.ndarray]:
         rec.sample(20)
         ns = build_namespace(gt, load_world(cfg.world), cfg)
         out = rec.arrays()
-        events = gt.weld_events()
-        out["weld_t"] = np.array([t for t, _n, _on in events])
-        out["weld_body"] = np.array([n for _t, n, _on in events])
-        out["weld_on"] = np.array([on for _t, _n, on in events])
+        events = gt.attach_events()
+        out["weld_t"] = np.array([t for t, _n, _p in events])
+        out["weld_body"] = np.array([n for _t, n, _p in events])
+        out["weld_on"] = np.array([p == cfg.arm.gripper.weld_body for _t, _n, p in events])
         out["final_pose"] = _free_pose(go2, _GREEN)
         out["verdicts"] = np.array([ns["holding_object"](_GREEN), ns["lifted"](_GREEN),
                                     ns["holding_object"]()])
@@ -220,22 +233,43 @@ def _first_mismatch(name: str, want: np.ndarray, got: np.ndarray) -> str:
     return f"{name}: {len(bad)} values differ; first at {i}: {got[i]!r} != golden {want[i]!r}"
 
 
+def _replayed(golden: np.lib.npyio.NpzFile) -> list[str]:
+    return sorted(k for k in golden.files if not k.startswith("release_"))
+
+
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
 def test_golden_trace_replays_bit_for_bit(scenario: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VECTOR_SIM_LOCKSTEP", "1")
     golden = np.load(GOLDEN / f"{scenario}.npz")
     got = SCENARIOS[scenario]()
-    assert sorted(got) == sorted(golden.files)
-    bad = [_first_mismatch(k, golden[k], got[k]) for k in golden.files
+    assert sorted(got) == _replayed(golden)
+    bad = [_first_mismatch(k, golden[k], got[k]) for k in _replayed(golden)
            if not np.array_equal(golden[k], got[k], equal_nan=golden[k].dtype.kind == "f")]
     assert not bad, "\n".join(bad)
+
+
+@pytest.mark.parametrize("scenario", sorted(SCENARIOS))
+def test_ground_truth_moved_only_as_documented(scenario: str) -> None:
+    """The step-4 change of clearance and contacts against release/1.0 (module docstring)."""
+    g = np.load(GOLDEN / f"{scenario}.npz")
+    new, old = g["gt_clearance"], g["release_gt_clearance"]
+    assert np.array_equal(np.isinf(new), np.isinf(old))
+    fin = np.isfinite(old)
+    step = 1.5 * g["gt_speed"] * 1e-3  # one 1 ms physics step of the object's own motion
+    assert (np.abs(new - old)[fin] <= step[fin] + 1e-9).all()
+    assert ((new >= 0.03) == (old >= 0.03)).all() and ((np.abs(new) < 5e-3) == (np.abs(old) < 5e-3)).all()
+    moved = np.argwhere(g["gt_contacts"] != g["release_gt_contacts"])
+    assert all(g["gt_contacts"][tuple(i)] for i in moved)  # only contacts gained, none lost
+    assert all(g["gt_clearance"][i, k] < 1e-3 for i, k, _b in moved)  # each within the 1 mm sentence
+    assert len(moved) == {"go2_walk": 0, "go2_piper_pick": 1}[scenario]
 
 
 def write(out: Path) -> None:
     os.environ["VECTOR_SIM_LOCKSTEP"] = "1"
     out.mkdir(parents=True, exist_ok=True)
     for name, run in SCENARIOS.items():
-        np.savez_compressed(out / f"{name}.npz", **run())
+        kept = np.load(GOLDEN / f"{name}.npz")
+        np.savez_compressed(out / f"{name}.npz", **run(), **{k: kept[k] for k in kept.files if k.startswith("release_")})
         print(f"wrote {out / name}.npz")
 
 
