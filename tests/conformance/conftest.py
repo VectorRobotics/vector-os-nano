@@ -20,8 +20,6 @@ from vector_os_nano.sim.scene import compiled_scene, reader
 
 SCENES = Path(__file__).parent / "scenes"
 SIM_DIR = Path(vector_os_nano.__file__).parent / "hardware" / "sim"
-# ponytail: the coordinator's fetched G1 assets; C1 resolves them under $VECTOR_HOME/assets.
-G1_DIR = Path("/data/vos-analysis/release-1.0/assets/g1_gait")
 
 
 def _engine_missing(name: str) -> str | None:
@@ -139,9 +137,14 @@ def _robot_scene(name: str):
         return compiled_scene(path, robot_root="base_link", grasp_pairs=_inactive_welds(path),
                               timestep=mujoco_go2._SIM_DT)
     if name == "g1":
-        if not (G1_DIR / "scene.xml").exists():
-            pytest.skip(f"G1 assets absent ({G1_DIR}): fetch them first")
-        return compiled_scene(G1_DIR / "scene.xml", robot_root="pelvis")
+        from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
+        from vector_os_nano.embodiments.config import load_embodiment_config
+
+        try:
+            folder = asset_dir(load_embodiment_config("g1"))
+        except AssetsMissing as exc:
+            pytest.skip(str(exc))
+        return compiled_scene(folder / "scene.xml", robot_root="pelvis")
     raise KeyError(name)
 
 

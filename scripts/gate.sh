@@ -73,11 +73,15 @@ fi
 if [ -z "${GATE_HOME_SET:-}" ]; then
   # Every tier: a throwaway HOME, so nothing reads or writes the real ~/.vector (or
   # ~/.vector_os_nano, ~/.cache/vector_os_nano). The model weights stay found, read
-  # only: the real HF cache offline, the real VECTOR_MODEL_DIR.
+  # only: the real HF cache, offline. So do the robot assets scripts/fetch_assets.py
+  # provisioned (~/.vector/assets, linked; no test writes it).
   export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface} HF_HUB_OFFLINE=1 GATE_HOME_SET=1
   export VECTOR_MODEL_DIR=${VECTOR_MODEL_DIR:-$HOME/.cache/vector_os/models}
   GATE_HOME=$(mktemp -d -t vos_gate_home_XXXX) || exit 2
   trap 'rm -rf "$GATE_HOME"' EXIT
+  if [ -d "$HOME/.vector/assets" ]; then
+    mkdir -p "$GATE_HOME/.vector" && ln -s "$HOME/.vector/assets" "$GATE_HOME/.vector/assets"
+  fi
   HOME=$GATE_HOME; export HOME
 fi
 # Always the repo's pytest config (addopts disable ROS's broken pytest plugins),

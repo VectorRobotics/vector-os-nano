@@ -321,14 +321,18 @@ def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_p
     """tests-gate-e2e:sim-tier-uses-real-home — only the hermetic tier swapped HOME, so
     the sim and e2e tiers wrote the owner's ~/.vector (strategy stats, traces, sessions)."""
     real, out = tmp_path / "real_home", tmp_path / "env.json"
-    real.mkdir()
+    (real / ".vector" / "assets" / "g1_gait").mkdir(parents=True)
+    (real / ".vector" / "assets" / "g1_gait" / "motion.pt").write_text("provisioned")
     probe = tmp_path / "test_probe_env.py"
     probe.write_text(
         "import json, os, pathlib, pytest\n\n"
         + ("@pytest.mark.sim\n" if tier == "sim" else "")
         + "def test_env():\n"
         "    keys = ('HOME', 'HF_HOME', 'VECTOR_MODEL_DIR', 'HF_HUB_OFFLINE')\n"
-        "    pathlib.Path(os.environ['PROBE_OUT']).write_text(json.dumps({k: os.environ.get(k) for k in keys}))\n"
+        "    seen = {k: os.environ.get(k) for k in keys}\n"
+        "    pt = pathlib.Path.home() / '.vector' / 'assets' / 'g1_gait' / 'motion.pt'\n"
+        "    seen['assets'] = pt.read_text() if pt.is_file() else None\n"
+        "    pathlib.Path(os.environ['PROBE_OUT']).write_text(json.dumps(seen))\n"
     )
     env = {k: v for k, v in os.environ.items() if k not in ("GATE_HOME_SET", "HF_HOME", "VECTOR_MODEL_DIR")}
     r = subprocess.run(
@@ -342,7 +346,25 @@ def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_p
     assert seen["HOME"] != str(real) and not Path(seen["HOME"]).exists()  # throwaway, removed after
     assert seen["HF_HOME"] == str(real / ".cache" / "huggingface") and seen["HF_HUB_OFFLINE"] == "1"
     assert seen["VECTOR_MODEL_DIR"] == str(real / ".cache" / "vector_os" / "models")
-    assert list(real.iterdir()) == []  # the gate wrote nothing into the real home
+    assert seen["assets"] == "provisioned"  # fetched robot assets are found, like the caches
+    # the gate wrote nothing into the real home
+    assert sorted(str(p.relative_to(real)) for p in real.rglob("*")) == [
+        ".vector", ".vector/assets", ".vector/assets/g1_gait", ".vector/assets/g1_gait/motion.pt"]
+
+
+def test_a_pty_child_home_finds_the_provisioned_robot_assets(tmp_path, monkeypatch) -> None:
+    import shutil
+
+    from tests.harness import pty_cli
+
+    (tmp_path / ".vector" / "assets").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    _env, home = pty_cli._child_env(live=False, home_prefix="c0_probe_")
+    try:
+        assert (Path(home) / ".vector" / "assets").resolve() == (tmp_path / ".vector" / "assets")
+    finally:
+        shutil.rmtree(home)
+    assert (tmp_path / ".vector" / "assets").is_dir()  # removing the child home left it alone
 
 
 def test_every_known_red_row_names_an_existing_test_file() -> None:
