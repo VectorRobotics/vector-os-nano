@@ -294,6 +294,25 @@ def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
     assert "RED rc=2 collection" in r.stdout, r.stdout[-2000:]
 
 
+@pytest.mark.parametrize("tier", ["sim", "e2e"])
+def test_gate_counts_a_tier_skipped_by_the_sim_preflight_as_red(tmp_path, tier) -> None:
+    """C0F1V-1 — with EdgeTAM missing from the HF cache the preflight skipped all 573
+    sim tests and the gate printed green; a tier that ran nothing proved nothing."""
+    probe = tmp_path / "test_probe_sim.py"
+    probe.write_text("import pytest\n\n@pytest.mark.sim\ndef test_a():\n    pass\n\n"
+                     "@pytest.mark.sim\ndef test_b():\n    pass\n")
+    r = subprocess.run(
+        ["bash", str(_REPO / "scripts" / "gate.sh"), tier, "-p", "tests.conftest"],
+        env={**os.environ, "GATE_PER_FILE": "0", "GATE_PATHS": str(probe),
+             "GATE_OUT": str(tmp_path / "out"), "MUJOCO_GL": "egl",
+             "__EGL_VENDOR_LIBRARY_FILENAMES": "/nonexistent/egl_vendor.json"},
+        cwd=_REPO, capture_output=True, text=True, timeout=600,
+    )
+    assert r.returncode != 0, r.stdout[-2000:] + r.stderr[-2000:]
+    assert f"[gate] RED: the {tier} tier skipped on the sim preflight" in r.stdout, r.stdout[-2000:]
+    assert "[gate] 2 tests, 2 skipped" in r.stdout, r.stdout[-2000:]
+
+
 def test_own_process_tests_run_in_a_child_a_self_signal_ends_only_it(tmp_path) -> None:
     """tests-inventory:signal-own-pid — native_safety SIGINTed the pytest process from a
     timer; one firing late would abort the whole file. @own_process runs it in a child."""

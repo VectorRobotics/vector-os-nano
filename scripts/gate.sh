@@ -9,7 +9,8 @@
 #   hermetic  everything not marked sim/live_llm; no LLM keys
 #   sim       tests marked sim (auto-marked by file/fixture in tests/conftest.py); the
 #             session sim_preflight skips the tier with ONE reason if this box
-#             cannot run MuJoCo (no EGL, missing weights, scene does not compile)
+#             cannot run MuJoCo (no EGL, missing weights, scene does not compile),
+#             and the gate counts such a skip RED in the sim and e2e tiers
 #   e2e       tests/e2e_repl: bare vector-cli on a PTY, one REPL per scenario
 #   all       hermetic, then sim, then e2e
 #
@@ -101,6 +102,14 @@ capped() {
   return $rc
 }
 
+# "<tests> tests, <skipped> skipped" summed over the given junit files.
+counts() {
+  cat "$@" 2>/dev/null | grep -o '<testsuite [^>]*' | awk '
+    match($0, / tests="[0-9]+"/)   { n += substr($0, RSTART + 8, RLENGTH - 9) }
+    match($0, / skipped="[0-9]+"/) { s += substr($0, RSTART + 10, RLENGTH - 11) }
+    END { printf "%d tests, %d skipped", n, s }'
+}
+
 if [ "${GATE_PER_FILE-1}" = 1 ]; then
   : > "$OUT/rc.txt"
   capped "$PY" -m pytest "${CFG[@]}" -p no:cacheprovider --co -q "${PATHS[@]}" ${MARK:+-m "$MARK"} "${IGNORE[@]}" "$@" \
@@ -131,7 +140,7 @@ if [ "${GATE_PER_FILE-1}" = 1 ]; then
     [ $rc = 0 ] || [ $rc = 5 ] || echo "[gate] RED rc=$rc $1 ($OUT/$k.log)"
   ' "$0" {} "$@" < "$OUT/files.txt"
   red=$(awk '$1 != 0 && $1 != 5' "$OUT/rc.txt" | wc -l)
-  echo "[gate] $TIER per-file: $red of $(wc -l < "$OUT/rc.txt") runs red (one per file, plus collection if it failed) ($OUT/rc.txt)"
+  echo "[gate] $TIER per-file: $red of $(wc -l < "$OUT/rc.txt") runs red (one per file, plus collection if it failed); $(counts "$OUT"/*/junit.xml) ($OUT/rc.txt)"
   [ "$red" = 0 ]
   exit
 fi
@@ -140,4 +149,11 @@ echo "[gate] $TIER: ${PATHS[*]} -m '$MARK' -> $OUT/junit.xml (ROS_DOMAIN_ID=$ROS
 capped timeout "${TMO:-7200}" "$PY" -m pytest "${CFG[@]}" -p no:cacheprovider --timeout=300 -q -rfE \
   -o junit_family=xunit2 --junitxml="$OUT/junit.xml" \
   "${PATHS[@]}" ${MARK:+-m "$MARK"} "${IGNORE[@]}" "$@" 2>&1 | tee "$OUT/pytest.log"
-exit "${PIPESTATUS[0]}"
+rc=${PIPESTATUS[0]}
+echo "[gate] $(counts "$OUT/junit.xml")"
+# The sim and e2e tiers exist to run the simulator: a preflight skip ran nothing.
+if [ "$TIER" != hermetic ] && grep -q 'message="sim preflight: ' "$OUT/junit.xml" 2>/dev/null; then
+  echo "[gate] RED: the $TIER tier skipped on the sim preflight, so it ran nothing (provision what the SKIPPED reason names)"
+  [ "$rc" = 0 ] && rc=1
+fi
+exit "$rc"
