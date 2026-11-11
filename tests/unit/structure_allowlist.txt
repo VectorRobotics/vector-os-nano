@@ -3,7 +3,6 @@
 over-800 | vector_os_nano/core/scene_graph.py
 over-800 | vector_os_nano/hardware/sim/mujoco_go2.py
 over-800 | vector_os_nano/skills/perception_grasp.py
-over-800 | vector_os_nano/vcli/cli.py
 over-800 | vector_os_nano/vcli/native_loop.py
 target-tree | config
 target-tree | foxglove
@@ -20,4 +19,3 @@ unreachable | vector_os_nano/hardware/ros2/viz.py
 unreachable | vector_os_nano/hardware/sim/mjcf/go2_piper/build_go2_piper.py
 unreachable | vector_os_nano/hardware/sim/sim_clock.py
 unreachable | vector_os_nano/skills/utils/place_region.py
-unreachable | vector_os_nano/vcli/backends/text_llm_adapter.py
