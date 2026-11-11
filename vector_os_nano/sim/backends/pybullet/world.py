@@ -158,11 +158,10 @@ class PyBulletWorld:
         self._joints = reader.joints(m)
         self._geoms = reader.geoms(m)
         self._cams = {c.name: c for c in reader.cameras(m)}
-        self._mesh_files: dict[int, str] = {}
+        self._mesh_files: dict[str, str] = {}
         self._link: dict[int, tuple[int, int]] = {}          # canonical body -> (uid, link)
         self._body_at: dict[tuple[int, int], int] = {}       # (uid, link) -> canonical body
         self._iframe: dict[int, tuple[np.ndarray, np.ndarray]] = {}  # base body -> local inertial (pos, quat)
-        self._expected_inertia: dict[int, np.ndarray] = {}   # body -> body-frame tensor Bullet must hold
         pos0, quat0 = canonical.body_poses(scene, m.qpos0)
         self._static_pose = {b.id: (pos0[b.id], quat0[b.id]) for b in self._bodies}
         self._invisible = p.createVisualShape(pb.GEOM_SPHERE, radius=1e-4, rgbaColor=[0, 0, 0, 0])
@@ -289,7 +288,6 @@ class PyBulletWorld:
         if body.joint >= 0 and self._joints[body.joint].type == JNT_HINGE:
             n = self._joints[body.joint].axis / np.linalg.norm(self._joints[body.joint].axis)
             tensor = tensor + self._joints[body.joint].armature * np.outer(n, n)
-        self._expected_inertia[b] = tensor
         w, V = np.linalg.eigh(tensor)
         if np.linalg.det(V) < 0:
             V[:, 0] = -V[:, 0]
@@ -389,7 +387,6 @@ class PyBulletWorld:
 
     def _build_actuation(self) -> None:
         acts = reader.actuators(self.scene.model)
-        self._acts = acts
         self._ctrl = np.zeros(len(acts))
         self._position = {a.joint: a for a in acts if a.kind == "position"}
         self._motor = {a.joint: a for a in acts if a.kind == "motor"}
@@ -614,7 +611,6 @@ class PyBulletWorld:
         o = np.asarray(origins, dtype=np.float64).reshape(-1, 3)
         v = np.asarray(directions, dtype=np.float64).reshape(-1, 3)
         dist, body = np.full(len(o), np.inf), np.full(len(o), -1, dtype=np.int64)
-        hidden = []  # rays whose nearest hit is the excluded body
 
         def cast(idx: np.ndarray, **kw: int) -> list:
             out = []
@@ -730,7 +726,3 @@ class PyBulletWorld:
             R = _qmat(_wxyz(info[4]))
             mass[b], com[b], tensor[b] = info[0], info[3], R @ np.diag(info[2]) @ R.T
         return mass, com, tensor
-
-    def _expected_inertials(self) -> dict[int, np.ndarray]:
-        """The body-frame inertia this backend must hold: the model's plus the hinge armature."""
-        return dict(self._expected_inertia)

@@ -35,6 +35,12 @@
       <geom type="box" size="0.03 0.03 0.03" mass="0.2" rgba="0.9 0.5 0.1 1"/>
     </body>
 
+    <!-- the free-body velocity layout with the COM 5 cm off the frame origin -->
+    <body name="wand" pos="-0.5 -1 1.5">
+      <freejoint name="wand"/>
+      <geom type="sphere" pos="0.05 0 0" size="0.03" mass="0.2" rgba="0.5 0.5 0.9 1"/>
+    </body>
+
     <!-- actuation: a fixed rig at y = 3 (out of every camera and ray) -->
     <body name="rig" pos="0 3 1">
       <geom type="box" size="0.05 0.05 0.05" contype="0" conaffinity="0"/>

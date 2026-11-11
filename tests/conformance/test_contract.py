@@ -10,7 +10,7 @@ import threading
 import numpy as np
 import pytest
 
-from tests.conformance.rig import qexp, qmul, quat_angle
+from tests.conformance.rig import qexp, qmat, qmul, quat_angle
 from vector_os_nano.interfaces import CONTACT_DISTANCE_M, PhysicsWorld, RGBDFrame
 from vector_os_nano.sim.scene import canonical
 
@@ -112,6 +112,28 @@ def test_free_body_velocity_is_world_linear_and_body_angular(backend, load, cont
     np.testing.assert_allclose(pos[die], q1[sc.free_q(die)][:3], atol=1e-12)
 
 
+def test_free_body_linear_velocity_is_the_frame_origin_s(backend, load, contract_scene):
+    """The wand's COM sits 5 cm off its frame origin: spinning, the origin's velocity
+    differs from the COM's by omega x r (0.15 m/s here), which the layout must carry."""
+    sc = contract_scene
+    wand = sc.body("wand")
+    w = load(backend, sc)
+    q, qd = sc.model.qpos0.copy(), np.zeros(sc.model.nv)
+    v0, omega, r = np.array([0.2, 0.0, 0.5]), np.array([0.0, 0.0, 3.0]), np.array([0.05, 0.0, 0.0])
+    qd[sc.free_qd(wand)] = np.concatenate([v0, omega])
+    w.reset(q, qd)
+    n, dt = 25, sc.timestep
+    w.step(n)
+    q1, qd1 = w.state()
+    R = qmat(qexp(omega * n * dt))  # starts at identity: body z = world z
+    g = np.array([0.0, 0.0, -G])
+    com = q[sc.free_q(wand)][:3] + r + (v0 + np.cross(omega, r)) * n * dt + g * dt * dt * n * (n + 1) / 2
+    np.testing.assert_allclose(q1[sc.free_q(wand)][:3], com - R @ r, atol=1e-4)
+    v_com = v0 + np.cross(omega, r) + g * n * dt
+    np.testing.assert_allclose(qd1[sc.free_qd(wand)][:3], v_com - np.cross(omega, R @ r), atol=2e-3)
+    np.testing.assert_allclose(qd1[sc.free_qd(wand)][3:], omega, atol=1e-6)
+
+
 # -- actuation -------------------------------------------------------------------
 
 
@@ -133,16 +155,20 @@ def test_torque_is_held_for_all_n_steps_and_clipped(backend, load, contract_scen
     assert w.state()[1][sc.joint_qd(spin)] == pytest.approx(2 * expect - 0.25 / inertia * 50 * sc.timestep, rel=1e-6)
 
 
-def test_reset_clears_torques_and_keeps_targets(backend, load, contract_scene):
+def test_reset_clears_torques_and_keeps_targets_and_attachments(backend, load, contract_scene):
     sc = contract_scene
     spin, servo = sc.joint("spin"), sc.joint("servo")
     w = load(backend, sc)
     w.set_torque([spin], [0.5])
     w.set_targets([servo], [0.1])
+    w.attach(sc.body("carrier"), sc.body("parcel"))
+    t = w.time()
     w.reset(sc.model.qpos0)
+    assert w.time() == t
     w.step(50)
     assert abs(w.state()[1][sc.joint_qd(spin)]) < 1e-12
     assert w.targets([servo])[0] == pytest.approx(0.1)
+    assert w.attached() == {sc.body("parcel"): sc.body("carrier")}
 
 
 def test_actuator_kind_mismatch_is_a_key_error(backend, load, contract_scene):
@@ -234,27 +260,26 @@ def test_attach_holds_the_current_relative_pose(backend, load, contract_scene):
 
     def rel(q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         pos, quat = canonical.body_poses(sc, q)
-        from tests.conformance.rig import qmat
-
-        R = qmat(quat[carrier])
-        return R.T @ (pos[parcel] - pos[carrier]), quat[parcel]
+        return qmat(quat[carrier]).T @ (pos[parcel] - pos[carrier]), quat[parcel]
 
     w.attach(carrier, parcel)
     assert w.attached() == {parcel: carrier}
     p0, r0 = rel(w.state()[0])
     mass = 2.0 + 0.2
-    drift = 0.0
+    drift = tilt = 0.0
     dt = sc.timestep
     for k in range(int(1.5 / dt)):
         t = k * dt
         accel = 2.0 if t < 0.5 else 10.0 * math.sin(2 * math.pi * 5 * (t - 0.5))  # push, then a 5 Hz shake
         w.set_torque([rail], [mass * accel])
         w.step(1)
-        p, _ = rel(w.state()[0])
+        p, r = rel(w.state()[0])
         drift = max(drift, float(np.linalg.norm(p - p0)))
+        tilt = max(tilt, float(quat_angle(r, r0)[0]))  # the carrier only translates
     q = w.state()[0]
     assert q[sc.joint_q(rail)] > 0.2  # it really moved
     assert drift < 1e-3, f"attached child drifted {drift * 1000:.2f} mm"
+    assert tilt < 1e-2, f"attached child turned {tilt:.4f} rad"
     with pytest.raises(ValueError, match="already attached"):
         w.attach(sc.body("arm"), parcel)
     w.detach(parcel)

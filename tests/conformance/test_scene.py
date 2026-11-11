@@ -37,7 +37,7 @@ def test_compiled_scene_tables(contract_scene):
     assert sc.body("die") == sc.body_ids["die"] and sc.body_name(sc.body("die")) == "die"
     assert sc.cameras == {"cam": 0}
     assert sc.grasp_pairs == ((sc.body("carrier"), sc.body("parcel")), (sc.body("arm"), sc.body("parcel")))
-    assert set(sc.free_bodies()) == {"die", "parcel"}
+    assert set(sc.free_bodies()) == {"die", "parcel", "wand"}
     assert sc.subtree(sc.body("rig")) == {sc.body(n) for n in ("rig", "spinner", "arm", "weak_arm")}
     assert compiled_scene(SCENES / "contract.xml", timestep=0.001).timestep == 0.001
     with pytest.raises(KeyError, match="bodies"):
