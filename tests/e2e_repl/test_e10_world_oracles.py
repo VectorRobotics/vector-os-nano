@@ -12,8 +12,9 @@
 3. '把绿色瓶子拿过来' in ONE turn: grasp -> navigate to the user (the world persona's
    delivery point) -> kept_holding + near_object('user') GROUNDED against the task
    contract kept_holding('pickable_bottle_green') and near_object('user') (I4). Then
-   '再拿过来一点' with the bottle already held at turn start -> RAN (kept_holding is
-   caused only by a grasp in the turn), and a scripted drop during a carry -> RAN.
+   '再把绿色瓶子拿过来一点' with the bottle already held at turn start -> RAN
+   (kept_holding is caused only by a grasp in the turn; the contract was True at the
+   start too), and a scripted drop during a carry -> RAN.
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ _FIND_SCRIPT = {"steps": LAUNCH_STEPS + [
     {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
 ]}
 
-_FETCH, _AGAIN, _DROP = "把绿色瓶子拿过来", "再拿过来一点", "继续拿过来"
+_FETCH, _AGAIN, _DROP = "把绿色瓶子拿过来", "再把绿色瓶子拿过来一点", "继续拿过来"
 _CARRY_VERIFY = "kept_holding('green bottle') and near_object('user')"
 _CONTRACT = "Task contract: kept_holding('pickable_bottle_green') and near_object('user')"
 _CARRY_SCRIPT = {"steps": LAUNCH_STEPS + [
@@ -102,8 +103,10 @@ def test_e10_carry_grounds_and_a_drop_during_carry_is_never_green() -> None:
     assert "verdict GROUNDED verified=True" in fetch, fetch[-3000:]
     again = _turn(text, _AGAIN)
     again = again[: again.find(_DROP)] if _DROP in again else again
+    assert _CONTRACT in again, again[-3000:]
     assert f"walk → verify {_CARRY_VERIFY} ✓ (actor=UNCAUSED)" in again, again[-3000:]
-    assert "already satisfied at turn start: kept_holding('pickable_bottle_green')" in again, again[-3000:]
+    # held since the last turn: kept_holding is caused only by a grasp in THIS turn
+    assert "not verified: native_step_0: UNCAUSED (gripper:kept_holding:UNCAUSED" in again, again[-3000:]
     assert "verdict RAN verified=False" in again, again[-3000:]
     drop = _turn(text, _DROP)
     assert f"gripper_open → verify {_CARRY_VERIFY} ·" in drop, drop[-3000:]
