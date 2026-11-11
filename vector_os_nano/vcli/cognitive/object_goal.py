@@ -6,7 +6,7 @@ task contract — the object-goal analogue of ``coord_goal``.
 
 A manipulation goal (grasp / fetch / place) must be proven by a ground-truth
 MANIPULATION oracle the actor cannot author (a possession oracle for a grasp / fetch;
-a release or placement for a pure place), never by a self-authored file / scene /
+a release or placement for a place, both for a pick-and-place), never by a self-authored file / scene /
 marker predicate — the fakeable-grasp false-green (D17) — nor by a detect.
 
 - ``goal_intents`` reads the intents from the user's NL goal through ONE vocabulary
@@ -72,11 +72,17 @@ def goal_has_object_intent(goal_text: str | None) -> bool:
     return bool(goal_intents(goal_text))
 
 
-def proof_oracles(intents: frozenset[str] | set[str]) -> frozenset[str]:
-    """The oracles that can prove a turn with these intents (empty: no gate)."""
-    if intents & {"grasp", "fetch"}:
-        return _HOLD
-    return _PLACE if "place" in intents else frozenset()
+def proof_oracles(goal: frozenset[str] | set[str], dispatched: frozenset[str] | set[str] = frozenset()
+                  ) -> tuple[frozenset[str], ...]:
+    """The oracle sets a turn must EACH prove (empty: no gate), from the *goal*'s
+    intents and the *dispatched* skills' ones: a hold for a grasp / fetch, a release or
+    placement for a place. A dispatched intent adds a proof, never replaces the goal's
+    own (I4-V1: a place that also grasped still needs its place proof); a release
+    dispatched inside a grasp / fetch goal (a pre-open) adds none."""
+    intents = set(goal) | set(dispatched)
+    hold = bool(intents & {"grasp", "fetch"})
+    place = "place" in goal or ("place" in intents and not set(goal) & {"grasp", "fetch"})
+    return tuple(names for names, need in ((_HOLD, hold), (_PLACE, place)) if need)
 
 
 def _necessary_manip(node: ast.AST, names: frozenset[str]) -> bool:
@@ -183,11 +189,12 @@ def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id:
       False at turn start: an object already held, or dropped during the carry, never
       grounds a fetch;
     - grasp (拿起 / pick up ...) -> ``holding_object(obj)`` (``holding_object()``, any
-      object, when the goal names none the manifest resolves);
+      object, only in a world without a manifest);
     - a pure coordinate goal -> ``at_position(x, y)``. With a manipulation intent the
       coordinate is a waypoint, not an end state; the coordinate gate checks it.
 
-    An object the manifest cannot resolve ("bring it to me", two bottles) binds
+    An object the manifest cannot resolve ("bring it to me", two bottles, an apple the
+    world lacks) binds
     ``None``: that item is no ground-truth evidence, so the turn fails closed. Scoped
     to the world's oracles (rule 3): a world without ``holding_object`` /
     ``at_position`` gets no manipulation / coordinate contract (dev). A manipulation
@@ -205,7 +212,8 @@ def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id:
             return (f"object_on({obj!r}, {surface!r})",) if surface else ()
         if "fetch" in intents:
             return (f"kept_holding({obj!r})", "near_object('user')")
-        return (f"holding_object({obj!r})" if obj else "holding_object()",)
+        # a manifest binds the object or None (fails closed: "the apple", two bottles)
+        return (f"holding_object({obj!r})" if world is not None else "holding_object()",)
     xy = parse_goal_coord(goal_text)
     if xy is not None and "at_position" in oracle_names:
         return (f"at_position({xy[0]}, {xy[1]})",)

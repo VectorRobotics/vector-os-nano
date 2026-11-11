@@ -47,7 +47,9 @@ GREEN = "pickable_bottle_green"
     # unresolvable object: None binds, the item is no evidence (fails closed)
     ("把那个罐子拿过来", ("kept_holding(None)", "near_object('user')")),
     ("把瓶子放到餐桌上", ("object_on(None, 'dining_table')",)),
-    ("拿起瓶子", ("holding_object()",)),  # two bottles: any held object, as before
+    # I4-V2: a grasp binds like a fetch: two bottles, or an object the world lacks, bind None
+    ("拿起瓶子", ("holding_object(None)",)),
+    ("pick up the apple", ("holding_object(None)",)),
 ])
 def test_the_contract_binds_through_the_world_manifest(goal, contract) -> None:
     assert task_contract(goal, APT, "apartment") == contract
@@ -317,3 +319,72 @@ def test_a_place_naming_no_surface_still_needs_a_release_or_placement() -> None:
 def test_the_right_object_on_the_right_surface_grounds() -> None:
     assert turn_reject_reason(_one_row("把绿色瓶子放到餐桌上", "object_on('green bottle', 'dining_table')"), APT) == ""
     assert turn_reject_reason(_one_row("拿起绿色的瓶子", f"holding_object('{GREEN}')"), APT) == ""
+
+
+# ---------------------------------------------------------------------------
+# I4-V1: a place goal is never proven by a grasp alone (the grasp intent, from the
+# goal or from the dispatched grasp skill, adds the hold proof; it never replaces the
+# place proof). I4-V2: a grasp naming an object the world cannot resolve fails closed.
+# ---------------------------------------------------------------------------
+
+
+def _rows(goal, verifies, *, intents=()):
+    contract = task_contract(goal, APT, "apartment")
+    sgs = tuple(SubGoal(name=f"s{i}", description="", verify=v) for i, v in enumerate(verifies))
+    sts = tuple(StepRecord(f"s{i}", "skill", True, True, 0.0, actor_caused=ActorCaused.CAUSED, attempt_of="native")
+                for i in range(len(verifies)))
+    n = len(contract)
+    return ExecutionTrace(GoalTree(goal, sgs), sts, True, 0.0, contract=contract, contract_start=(False,) * n,
+                          contract_end=(True,) * n, intents=tuple(intents), world="apartment")
+
+
+@pytest.mark.parametrize("goal", [
+    "拿起绿色瓶子放到桌子上",
+    "pick up the green bottle and put it down",
+    "pick up the green bottle and place it on the table",
+])
+def test_pick_and_place_is_not_proven_by_a_hold(goal) -> None:
+    t = _rows(goal, [f"holding_object('{GREEN}')"])
+    assert "object_at/object_on/released" in turn_reject_reason(t, APT), t.contract
+    both = _rows(goal, [f"holding_object('{GREEN}')", "released('green bottle')"])
+    assert turn_reject_reason(both, APT) == ""
+
+
+def test_a_pure_place_with_a_dispatched_grasp_needs_both_proofs() -> None:
+    hold = _rows("place the can on the table", ["holding_object('red can')"], intents=("grasp",))
+    assert "object_at/object_on/released" in turn_reject_reason(hold, APT)
+    place = _rows("place the can on the table", ["released('red can')"], intents=("grasp",))
+    assert "holding_object/kept_holding/lifted" in turn_reject_reason(place, APT)
+    both = _rows("place the can on the table", ["holding_object('red can')", "released('red can')"],
+                 intents=("grasp",))
+    assert turn_reject_reason(both, APT) == ""
+
+
+@pytest.mark.parametrize("goal", ["把绿色瓶子放到桌子上", "put the green bottle down"])
+def test_a_place_goal_that_only_grasped_is_rejected_through_the_runner(goal) -> None:
+    from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
+    from vector_os_nano.sim.session import session_for
+
+    agent, _ = _make_agent(10.0, 3.0)
+    agent._base = _NavBase(10.0, 3.0)
+    arm = _BottleArm()
+    agent._arm, agent._gripper = arm, _Gripper(arm)
+    unbind_fake_sim(session_for(agent))
+    bind_fake_sim(agent, "go2_piper")
+    agent._skill_registry.register(
+        _Skill("grasp_fake", lambda: setattr(arm, "held", True), verify_hint="holding_object()"))
+    backend = FakeToolScriptBackend.from_tool_script([tool_turn(_GRASP), tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native(goal, session=_session())
+    rep = _verdict(agent, eng, trace)
+    assert trace.contract == () and "grasp" in trace.intents, (trace.contract, trace.intents)
+    assert rep.verified is False and "object_at/object_on/released" in rep.reject_reason, rep.reject_reason
+
+
+@pytest.mark.parametrize("goal, verify", [
+    ("pick up the apple", f"holding_object('{GREEN}')"),       # the world has no apple
+    ("pick up a bottle", "holding_object('pickable_can_red')"),  # two bottles, and a can
+    ("拿起瓶子", f"holding_object('{GREEN}')"),                  # two bottles: which one is unknown
+])
+def test_a_grasp_of_an_unresolvable_object_fails_closed(goal, verify) -> None:
+    assert "names no object" in turn_reject_reason(_one_row(goal, verify), APT)

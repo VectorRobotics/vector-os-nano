@@ -463,9 +463,10 @@ def _manipulation_reason(
 ) -> str:
     """D17/D69 manipulation gate, independent of the coordinate gate: a goal (or a
     dispatched gripper skill) with a manipulation intent needs a GROUNDED graded step
-    that necessarily asserts its proof oracle — ``holding_object`` for a grasp /
-    fetch (``placed_count`` never proves a grasp), a placement or release for a pure
-    place. Scoped to a world with ``holding_object``."""
+    that necessarily asserts EACH proof it needs (``proof_oracles``) — a possession
+    oracle for a grasp / fetch (``placed_count`` never proves a grasp), a placement or
+    release for a place, both for a pick-and-place. Scoped to a world with
+    ``holding_object``."""
     from vector_os_nano.vcli.cognitive.object_goal import (
         goal_intents,
         has_necessary_manip_oracle,
@@ -474,13 +475,13 @@ def _manipulation_reason(
 
     if "holding_object" not in oracle_names:
         return ""
-    intents = set(goal_intents(trace.goal_tree.goal)) | set(getattr(trace, "intents", ()) or ())
-    names = proof_oracles(intents)
-    if not names:
-        return ""
-    ok = any(ev[id(s)] == "GROUNDED" and has_necessary_manip_oracle(sg_by_name[s.sub_goal_name].verify, names)
-             for s in graded)
-    return "" if ok else f"a {'/'.join(sorted(intents))} goal needs an actor-caused {'/'.join(sorted(names))} step"
+    goal = goal_intents(trace.goal_tree.goal)
+    dispatched = set(getattr(trace, "intents", ()) or ())
+    for names in proof_oracles(goal, dispatched):
+        if not any(ev[id(s)] == "GROUNDED" and has_necessary_manip_oracle(sg_by_name[s.sub_goal_name].verify, names)
+                   for s in graded):
+            return f"a {'/'.join(sorted(goal | dispatched))} goal needs an actor-caused {'/'.join(sorted(names))} step"
+    return ""
 
 
 def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> str:
