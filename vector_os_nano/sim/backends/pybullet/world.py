@@ -554,17 +554,16 @@ class PyBulletWorld:
     # -- contact and attachment ----------------------------------------------
 
     def contacts(self, body: int) -> frozenset[int]:
-        # A distance query over the shapes whose broadphase boxes come within the threshold,
-        # not getContactPoints: Bullet keeps a separated point only inside its per-shape
-        # breaking threshold, under 1 mm for small shapes (a 2 cm cylinder reads nothing at
-        # 0.2 mm). getClosestPoints ignores the collision filter, so MuJoCo's never-collide
-        # pairs are dropped here. Stepping is untouched.
+        # A distance query over the shapes whose broadphase boxes meet this body's box, not
+        # getContactPoints: Bullet keeps a separated point only inside its per-shape breaking
+        # threshold, under 1 mm for small shapes (a 2 cm cylinder reads nothing at 0.2 mm).
+        # The broadphase boxes carry Bullet's 2 cm padding (measured), so every shape within
+        # the threshold is a candidate. getClosestPoints ignores the collision filter, so
+        # MuJoCo's never-collide pairs are dropped here. Stepping is untouched.
         body, p, out = int(body), self._p, set()
         with self._lock:
             for ua, la in self._places.get(body, ()):
-                lo, hi = p.getAABB(ua, la)
-                near = p.getOverlappingObjects([v - CONTACT_DISTANCE_M for v in lo], [v + CONTACT_DISTANCE_M for v in hi])
-                for ub, lb in near or ():
+                for ub, lb in p.getOverlappingObjects(*p.getAABB(ua, la)) or ():
                     b = self._body_at[(ub, lb)]
                     if (b != body and b not in out and (min(b, body), max(b, body)) not in self._apart
                             and p.getClosestPoints(ua, ub, CONTACT_DISTANCE_M, la, lb)):
