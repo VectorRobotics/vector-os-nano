@@ -3,8 +3,9 @@
 
 """Stance skills for the Go2 quadruped: stand, sit, lie down.
 
-All three are direct skills (no LLM planning needed). Each validates that
-context.base is present before issuing the command.
+Each commands the base's posture and reports what it can measure: the base height
+before and after. The base exposes no posture read-back, so a skill never claims
+the posture was reached; it says the command ran and what the height did.
 """
 from __future__ import annotations
 
@@ -14,6 +15,40 @@ from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 
 logger = logging.getLogger(__name__)
+
+
+def _height(base) -> float | None:
+    try:
+        return round(float(base.get_position()[2]), 3)
+    except Exception:  # noqa: BLE001 — a base without a pose cannot be measured
+        return None
+
+
+def _command_posture(context: SkillContext, posture: str) -> SkillResult:
+    """Run base.<posture>() and report the measured base height around it."""
+    base = context.base
+    if base is None:
+        return SkillResult(success=False, error_message="No base connected", diagnosis_code="no_base")
+    command = getattr(base, posture, None)
+    if not callable(command):
+        return SkillResult(
+            success=False, diagnosis_code=f"{posture}_failed",
+            error_message=f"{type(base).__name__} cannot {posture.replace('_', ' ')} (no {posture})",
+        )
+    logger.info("[STANCE] Commanding %s", posture)
+    before = _height(base)
+    ok = command()
+    data = {
+        "stance": posture,
+        "height_before_m": before,
+        "height_after_m": _height(base),
+        "posture_verified": False,
+        "note": "the base reports no posture: the command ran; the height change is all it can tell",
+    }
+    if not ok:
+        return SkillResult(success=False, error_message=f"{posture} command failed",
+                           diagnosis_code=f"{posture}_failed", result_data=data)
+    return SkillResult(success=True, result_data=data)
 
 
 @skill(
@@ -31,35 +66,7 @@ class StandSkill:
     failure_modes: list[str] = ["no_base", "stand_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Issue stand command to base.
-
-        Args:
-            params: unused.
-            context: SkillContext with base (Go2).
-
-        Returns:
-            SkillResult(success=True) when command accepted.
-            SkillResult(success=False) if base missing or command fails.
-        """
-        if context.base is None:
-            logger.error("[STAND] No base connected")
-            return SkillResult(
-                success=False,
-                error_message="No base connected",
-                diagnosis_code="no_base",
-            )
-
-        logger.info("[STAND] Commanding stand")
-        ok = context.base.stand()
-
-        if not ok:
-            return SkillResult(
-                success=False,
-                error_message="Stand command failed",
-                diagnosis_code="stand_failed",
-            )
-
-        return SkillResult(success=True, result_data={"stance": "stand"})
+        return _command_posture(context, "stand")
 
 
 @skill(
@@ -77,35 +84,7 @@ class SitSkill:
     failure_modes: list[str] = ["no_base", "sit_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Issue sit command to base.
-
-        Args:
-            params: unused.
-            context: SkillContext with base (Go2).
-
-        Returns:
-            SkillResult(success=True) when command accepted.
-            SkillResult(success=False) if base missing or command fails.
-        """
-        if context.base is None:
-            logger.error("[SIT] No base connected")
-            return SkillResult(
-                success=False,
-                error_message="No base connected",
-                diagnosis_code="no_base",
-            )
-
-        logger.info("[SIT] Commanding sit")
-        ok = context.base.sit()
-
-        if not ok:
-            return SkillResult(
-                success=False,
-                error_message="Sit command failed",
-                diagnosis_code="sit_failed",
-            )
-
-        return SkillResult(success=True, result_data={"stance": "sit"})
+        return _command_posture(context, "sit")
 
 
 @skill(
@@ -123,39 +102,4 @@ class LieDownSkill:
     failure_modes: list[str] = ["no_base", "lie_down_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Issue lie_down command to base.
-
-        Args:
-            params: unused.
-            context: SkillContext with base (Go2).
-
-        Returns:
-            SkillResult(success=True) when command accepted.
-            SkillResult(success=False) if base missing or command fails.
-        """
-        if context.base is None:
-            logger.error("[LIE_DOWN] No base connected")
-            return SkillResult(
-                success=False,
-                error_message="No base connected",
-                diagnosis_code="no_base",
-            )
-
-        lie_down = getattr(context.base, "lie_down", None)
-        if not callable(lie_down):  # e.g. the ROS2 proxy base (skills-nav:missed5)
-            return SkillResult(
-                success=False,
-                error_message=f"{type(context.base).__name__} cannot lie down (no lie_down)",
-                diagnosis_code="lie_down_failed",
-            )
-        logger.info("[LIE_DOWN] Commanding lie down")
-        ok = lie_down()
-
-        if not ok:
-            return SkillResult(
-                success=False,
-                error_message="Lie down command failed",
-                diagnosis_code="lie_down_failed",
-            )
-
-        return SkillResult(success=True, result_data={"stance": "lie_down"})
+        return _command_posture(context, "lie_down")

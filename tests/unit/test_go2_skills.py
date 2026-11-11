@@ -2,6 +2,8 @@
 # Copyright (c) 2024-2026 Vector Robotics
 
 """Tests for Go2 quadruped skills."""
+import math
+
 import pytest
 from unittest.mock import MagicMock
 from vector_os_nano.core.skill import SkillContext
@@ -13,8 +15,12 @@ def _make_go2_context():
     """Create a SkillContext with a mock base (Go2)."""
     base = MagicMock()
     yaw = [0.0]
+    pos = [2.5, 2.5]
 
-    def walk(vx, vy, vyaw, duration):  # a perfect gait: heading integrates the yaw rate
+    def walk(vx, vy, vyaw, duration):  # a perfect gait: pose integrates the command
+        c, s = math.cos(yaw[0]), math.sin(yaw[0])
+        pos[0] += (vx * c - vy * s) * duration
+        pos[1] += (vx * s + vy * c) * duration
         yaw[0] += vyaw * duration
         return True
 
@@ -22,7 +28,7 @@ def _make_go2_context():
     base.stand.return_value = True
     base.sit.return_value = True
     base.lie_down.return_value = True
-    base.get_position.return_value = (2.5, 2.5, 0.27)
+    base.get_position.side_effect = lambda: (pos[0], pos[1], 0.27)
     base.get_heading.side_effect = lambda: yaw[0]
     return SkillContext(
         arm=None,

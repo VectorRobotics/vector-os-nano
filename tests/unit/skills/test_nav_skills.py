@@ -235,6 +235,42 @@ def test_lie_down_on_a_base_without_it_fails_loud():
     assert not res.success and res.diagnosis_code == "lie_down_failed"
 
 
+@pytest.mark.parametrize("cls, posture", [("StandSkill", "stand"), ("SitSkill", "sit")])
+def test_stand_and_sit_on_a_base_without_them_fail_loud(cls, posture):
+    """skills-nav:stance-no-posture-check: stand/sit called the method bare (AttributeError)."""
+    from vector_os_nano.skills.go2 import stance
+
+    res = getattr(stance, cls)().execute({}, SkillContext(base=MagicMock(spec=["get_position"])))
+    assert not res.success and res.diagnosis_code == f"{posture}_failed"
+
+
+def test_a_posture_reports_what_it_measured_and_never_claims_the_posture():
+    """skills-nav:stance-false-green: success was the base's bool, with no measurement."""
+    from vector_os_nano.skills.go2.stance import SitSkill
+
+    heights = iter([0.30, 0.18])
+    base = MagicMock()
+    base.get_position.side_effect = lambda: [0.0, 0.0, next(heights)]
+    base.sit.return_value = True
+    res = SitSkill().execute({}, SkillContext(base=base))
+    assert res.success and res.result_data["posture_verified"] is False
+    assert (res.result_data["height_before_m"], res.result_data["height_after_m"]) == (0.30, 0.18)
+
+
+def test_a_blocked_walk_fails_with_the_distance_it_moved():
+    """skills-nav:walk-success-unverified: a blocked robot reported success."""
+    from vector_os_nano.skills.go2.walk import WalkSkill
+
+    wall = KinBase(blocked=lambda x, y, t: x > 0.1)
+    res = WalkSkill().execute({"direction": "forward", "distance": 1.0, "speed": 0.5}, SkillContext(base=wall))
+    assert not res.success and res.diagnosis_code == "walk_blocked"
+    assert res.result_data["moved_m"] == pytest.approx(0.1, abs=0.02)
+
+    free = KinBase()
+    res = WalkSkill().execute({"direction": "forward", "distance": 1.0, "speed": 0.5}, SkillContext(base=free))
+    assert res.success and res.result_data["moved_m"] == pytest.approx(1.0, abs=0.02)
+
+
 # ---------------------------------------------------------------------------
 # Patrol / where_am_i / compass / at_position
 # ---------------------------------------------------------------------------

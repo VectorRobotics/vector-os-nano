@@ -43,6 +43,13 @@ DIRECTION_ALIASES: dict[str, str] = {
     **dict.fromkeys(("right", "r", "右", "往右", "向右", "右走"), "right"),
 }
 
+# What an open-loop walk can honestly claim: under load the gait covers 40-100 % of
+# a request, so a walk that moved less than _BLOCKED_FRACTION of it was blocked;
+# below _MIN_CHECKABLE_M the gait's start-up transient is the whole move, so a short
+# walk reports its displacement and says it cannot tell.
+_BLOCKED_FRACTION: float = 0.25
+_MIN_CHECKABLE_M: float = 0.3
+
 _DEFAULT_DIRECTION: str = "forward"
 _DEFAULT_DISTANCE: float = 1.0   # metres
 _DEFAULT_SPEED: float = 0.3      # m/s
@@ -86,7 +93,7 @@ class WalkSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"is_moving": False}
-    failure_modes: list[str] = ["no_base", "walk_failed", "bad_direction", "bad_distance"]
+    failure_modes: list[str] = ["no_base", "walk_failed", "walk_blocked", "bad_direction", "bad_distance"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Execute the walk command.
@@ -96,8 +103,8 @@ class WalkSkill:
             context: SkillContext with base (Go2) attached.
 
         Returns:
-            SkillResult(success=True) when walk completes.
-            SkillResult(success=False, diagnosis_code="no_base") if base missing.
+            SkillResult(success=True) when the walk ran and was not blocked, with the
+            displacement it measured; failure when the base fell or barely moved.
         """
         if context.base is None:
             logger.error("[WALK] No base connected")
@@ -155,27 +162,33 @@ class WalkSkill:
             direction, vx, vy, 0.0, duration,
         )
 
+        start = _position(context.base)
         ok = context.base.walk(vx, vy, 0.0, duration)
-
+        end = _position(context.base)
+        moved = None if start is None or end is None else math.hypot(end[0] - start[0], end[1] - start[1])
+        data = {
+            "direction": direction,
+            "distance": distance,
+            "moved_m": None if moved is None else round(moved, 3),
+            "position": end,
+        }
         if not ok:
+            return SkillResult(success=False, error_message="Walk command failed",
+                               diagnosis_code="walk_failed", result_data=data)
+        if moved is None or distance < _MIN_CHECKABLE_M:
+            data["note"] = "the displacement cannot confirm a walk this short (or was not measured)"
+        elif moved < _BLOCKED_FRACTION * distance:
             return SkillResult(
-                success=False,
-                error_message="Walk command failed",
-                diagnosis_code="walk_failed",
+                success=False, diagnosis_code="walk_blocked", result_data=data,
+                error_message=f"Walk blocked: moved {moved:.2f} m of the {distance:.2f} m asked",
             )
+        return SkillResult(success=True, result_data=data)
 
-        position = None
-        if hasattr(context.base, "get_position"):
-            try:
-                position = context.base.get_position()
-            except Exception:
-                pass
 
-        return SkillResult(
-            success=True,
-            result_data={
-                "direction": direction,
-                "distance": distance,
-                "position": list(position) if position is not None else None,
-            },
-        )
+def _position(base) -> list[float] | None:
+    """The base's position, or None when it cannot report one."""
+    try:
+        p = [float(v) for v in base.get_position()]
+        return p if len(p) >= 2 else None
+    except Exception:  # noqa: BLE001 — a base without a pose cannot be measured
+        return None
