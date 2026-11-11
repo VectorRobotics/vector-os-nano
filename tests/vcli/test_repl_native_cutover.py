@@ -188,6 +188,29 @@ def test_repl_attempt_native_false_and_clean_when_no_action(monkeypatch) -> None
     assert [e.get("content") for e in session._entries] == ["earlier turn"]
 
 
+def test_repl_no_action_attempt_keeps_its_billed_usage(monkeypatch) -> None:
+    """I23: the no-action attempt's entries are deleted but its tokens were billed, so
+    the session's spend counter (/usage) keeps them; the transcript stays clean."""
+    from vector_os_nano.vcli.session import TokenUsage
+
+    _stub_oracle(monkeypatch)
+    engine = _FakeEngine(_noaction_trace("g"), answer="你好")
+    real = engine.run_turn_native
+
+    def _billed(user_message, session=None, **kw):  # noqa: ANN001
+        session.add_usage(TokenUsage(input_tokens=900, output_tokens=40))
+        return real(user_message, session=session, **kw)
+
+    engine.run_turn_native = _billed
+    session = _FakeSession()
+    session.add_usage(TokenUsage(input_tokens=100, output_tokens=10))
+
+    assert cli._repl_attempt_native(engine, "你好", session, {}, _FakeConsole()) is False
+    assert session._entries == []
+    u = session.token_usage
+    assert (u.input_tokens, u.output_tokens) == (1000, 50)
+
+
 def test_repl_attempt_native_false_when_native_raises(monkeypatch) -> None:
     _stub_oracle(monkeypatch)
     engine = _FakeEngine(RuntimeError("native blew up"))

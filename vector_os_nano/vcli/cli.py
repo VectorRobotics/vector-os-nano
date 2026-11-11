@@ -494,7 +494,7 @@ def _repl_native_enabled() -> bool:
 
 def _lifecycle_lines(entries: list[dict[str, Any]]) -> list[str]:
     """The first line of every start/stop_simulation result among *entries* (in order)."""
-    ids ={b.get("id") for e in entries if e.get("type") == "assistant"
+    ids = {b.get("id") for e in entries if e.get("type") == "assistant"
            for b in (e.get("tool_use") or ()) if b.get("name") in LIFECYCLE_TOOLS}
     return [str(r.get("content") or "").splitlines()[0][:200] for e in entries
             if e.get("type") == "tool_result" for r in e.get("results") or ()
@@ -569,7 +569,10 @@ def _repl_attempt_native(
         sys.stderr = _saved_stderr
 
     if not _native_owns_turn(trace):
-        del session._entries[n0:]  # the fallback producer starts from a clean transcript
+        # The fallback producer starts from a clean transcript; the attempt's token
+        # usage STAYS on the session: it is the spend counter (/usage), and those
+        # tokens were billed whether or not the transcript keeps the attempt.
+        del session._entries[n0:]
         return False  # native could not route -> caller falls back to legacy
 
     turn = session._entries[n0:]
