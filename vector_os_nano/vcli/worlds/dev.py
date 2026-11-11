@@ -21,6 +21,7 @@ from typing import Any
 
 from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 from vector_os_nano.vcli.prompt import DEV_ROLE_PROMPT, DEV_TOOL_INSTRUCTIONS
+from vector_os_nano.vcli.tools.file_tools import is_protected
 from vector_os_nano.vcli.worlds.base import DecomposeVocab
 
 # Bounds for read-only predicates (keep evaluation cheap + safe within the
@@ -59,6 +60,13 @@ def _safe_path(path: str) -> Path | None:
         return None
 
 
+def _readable_path(path: str) -> Path | None:
+    """_safe_path, minus secret files: a model-authored predicate runs with no
+    prompt, so it must not become a content oracle on .env or .git/config."""
+    p = _safe_path(path)
+    return None if p is None or is_protected(p) else p
+
+
 @oracle(scope="dev")
 def file_exists(path: str) -> bool:
     """True if *path* (relative to cwd) exists."""
@@ -69,7 +77,7 @@ def file_exists(path: str) -> bool:
 @oracle(scope="dev")
 def path_contains(path: str, substr: str) -> bool:
     """True if the text file at *path* contains *substr* (bounded read)."""
-    p = _safe_path(path)
+    p = _readable_path(path)
     if p is None or not p.is_file():
         return False
     try:
@@ -84,7 +92,7 @@ def path_contains(path: str, substr: str) -> bool:
 @oracle(scope="dev")
 def grep_count(pattern: str, path: str = ".") -> int:
     """Count regex *pattern* matches in text files under *path* (bounded)."""
-    root = _safe_path(path)
+    root = _readable_path(path)
     if root is None or not root.exists():
         return 0
     try:
@@ -98,7 +106,7 @@ def grep_count(pattern: str, path: str = ".") -> int:
         for p in root.rglob("*"):
             if len(files) >= _MAX_FILES:
                 break
-            if p.is_file() and not (_SKIP_DIRS & set(p.parts)):
+            if p.is_file() and not (_SKIP_DIRS & set(p.parts)) and _readable_path(str(p)):
                 files.append(p)
     total = 0
     for fp in files:

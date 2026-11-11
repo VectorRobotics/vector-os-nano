@@ -75,7 +75,8 @@ class GlobTool:
             return ToolResult(content="Error: '..' is not allowed in a glob pattern; set path instead.", is_error=True)
 
         try:
-            matches = list(search_path.glob(pattern))
+            # A dir symlink in the tree must not list a secret dir or an outside dir.
+            matches = [m for m in search_path.glob(pattern) if _readable(m, search_path)]
         except (ValueError, OSError) as exc:
             return ToolResult(content=f"Error: {exc}", is_error=True)
 

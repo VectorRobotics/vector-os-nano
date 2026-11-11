@@ -221,6 +221,38 @@ def test_glob_execute_refuses_a_protected_root(box: dict[str, Path]) -> None:
     assert res.is_error and "id_ed25519" not in res.content
 
 
+@pytest.mark.parametrize("pattern", ["cfg/*", "*/*", "**/*"])
+def test_glob_does_not_list_through_a_symlinked_dir(box: dict[str, Path], pattern: str) -> None:
+    """A dir symlink inside the project leaks neither ~/.ssh names nor an outside dir."""
+    (box["project"] / "cfg").symlink_to(box["home"] / ".ssh")
+    (box["project"] / "ext").symlink_to(box["outside"])
+    assert _decide(GlobTool(), {"pattern": pattern}, box["project"]) == "allow"
+    res = GlobTool().execute({"pattern": pattern}, _ctx(box["project"]))
+    assert "id_ed25519" not in res.content and "notes.txt" not in res.content
+
+
+def test_glob_still_lists_ordinary_project_files(box: dict[str, Path]) -> None:
+    res = GlobTool().execute({"pattern": "*.py"}, _ctx(box["project"]))
+    assert not res.is_error and "main.py" in res.content
+
+
+# ---------------------------------------------------------------------------
+# dev-world verify oracles: model-authored, run with no prompt -> same guard
+# ---------------------------------------------------------------------------
+
+def test_dev_oracles_cannot_probe_secret_files(box: dict[str, Path]) -> None:
+    from vector_os_nano.vcli.worlds.dev import file_exists, grep_count, path_contains
+
+    (box["project"] / "cfg_link").symlink_to(box["home"] / ".vector" / "config.yaml")
+    for path in (".env", ".git/config", "server.pem", "cfg_link"):
+        assert not path_contains(path, "sk-ant"), path
+        assert grep_count("sk-ant", path) == 0, path
+    assert grep_count("sk-ant", ".") == 0
+    assert grep_count("^def main", ".") == 1          # ordinary files still searched
+    assert path_contains("main.py", "def main")
+    assert file_exists(".env")                        # existence is not content
+
+
 # ---------------------------------------------------------------------------
 # write / edit: the protected-path guard resolves before comparing
 # ---------------------------------------------------------------------------
