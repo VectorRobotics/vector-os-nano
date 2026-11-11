@@ -17,6 +17,8 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from vector_os_nano.vcli.worlds import (
     DevWorld,
     RobotWorld,
@@ -66,8 +68,15 @@ class TestDevPredicates:
         ns = dev_verify_namespace()
         # Escaping cwd must be rejected (observational predicates only).
         assert ns["file_exists"]("../../../../etc/hosts") is False
-        assert ns["grep_count"]("root", "..") == 0
-        assert ns["path_contains"]("../../etc/hosts", "localhost") is False
+        # Refused reads raise (GoalVerifier -> False), so a negated predicate
+        # cannot verify True vacuously either.
+        with pytest.raises(PermissionError):
+            ns["grep_count"]("root", "..")
+        with pytest.raises(PermissionError):
+            ns["path_contains"]("../../etc/hosts", "localhost")
+        from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
+
+        assert GoalVerifier(ns).verify("not path_contains('../../etc/hosts', 'localhost')") is False
 
 # ---------------------------------------------------------------------------
 # World resolution + persona

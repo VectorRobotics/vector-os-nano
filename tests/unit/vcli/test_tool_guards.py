@@ -240,15 +240,40 @@ def test_glob_still_lists_ordinary_project_files(box: dict[str, Path]) -> None:
 # dev-world verify oracles: model-authored, run with no prompt -> same guard
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("expr", [
+    "not path_contains({p!r}, 'sk-ant')",
+    "grep_count('sk-ant', {p!r}) == 0",
+    "grep_count('sk-ant', '.') == 0",          # the walk meets .env / server.pem
+    "not path_contains('../elsewhere/notes.txt', 'outside')",
+])
+@pytest.mark.parametrize("p", [".env", ".git/config", "cfg_link"])
+def test_negated_dev_oracle_on_a_refused_path_verifies_false(box: dict[str, Path],
+                                                             expr: str, p: str) -> None:
+    """A refused read must fail closed in BOTH polarities: if path_contains/grep_count
+    returned False/0 for a secret, 'not path_contains(...)' would verify True whatever
+    the file holds, and a task that never happened could grade GROUNDED."""
+    from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
+    from vector_os_nano.vcli.worlds.dev import dev_verify_namespace
+
+    (box["project"] / "cfg_link").symlink_to(box["home"] / ".vector" / "config.yaml")
+    assert GoalVerifier(dev_verify_namespace()).verify(expr.format(p=p)) is False
+
+
 def test_dev_oracles_cannot_probe_secret_files(box: dict[str, Path]) -> None:
     from vector_os_nano.vcli.worlds.dev import file_exists, grep_count, path_contains
 
     (box["project"] / "cfg_link").symlink_to(box["home"] / ".vector" / "config.yaml")
+    (box["project"] / "src").mkdir()
+    (box["project"] / "src" / "app.py").write_text("def main():\n    pass\n")
     for path in (".env", ".git/config", "server.pem", "cfg_link"):
-        assert not path_contains(path, "sk-ant"), path
-        assert grep_count("sk-ant", path) == 0, path
-    assert grep_count("sk-ant", ".") == 0
-    assert grep_count("^def main", ".") == 1          # ordinary files still searched
+        with pytest.raises(PermissionError):          # refused, never a False/0 answer
+            path_contains(path, "sk-ant")
+        with pytest.raises(PermissionError):
+            grep_count("sk-ant", path)
+    with pytest.raises(PermissionError):              # the walk meets .env: no partial count
+        grep_count("sk-ant", ".")
+    assert grep_count("^def main", "src") == 1        # ordinary files still searched
+    assert grep_count("^def main", "main.py") == 1
     assert path_contains("main.py", "def main")
     assert file_exists(".env")                        # existence is not content
 

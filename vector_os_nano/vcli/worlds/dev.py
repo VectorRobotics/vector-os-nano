@@ -60,11 +60,17 @@ def _safe_path(path: str) -> Path | None:
         return None
 
 
-def _readable_path(path: str) -> Path | None:
+def _readable_path(path: str) -> Path:
     """_safe_path, minus secret files: a model-authored predicate runs with no
-    prompt, so it must not become a content oracle on .env or .git/config."""
+    prompt, so it must not become a content oracle on .env or .git/config.
+
+    A refused path RAISES (GoalVerifier turns that into False): returning
+    False/0 would make ``not path_contains('.env', ...)`` verify True whatever
+    the file holds. Fail closed in both polarities."""
     p = _safe_path(path)
-    return None if p is None or is_protected(p) else p
+    if p is None or is_protected(p):
+        raise PermissionError(f"verify may not read {path} (outside the project or a protected file)")
+    return p
 
 
 @oracle(scope="dev")
@@ -78,7 +84,7 @@ def file_exists(path: str) -> bool:
 def path_contains(path: str, substr: str) -> bool:
     """True if the text file at *path* contains *substr* (bounded read)."""
     p = _readable_path(path)
-    if p is None or not p.is_file():
+    if not p.is_file():
         return False
     try:
         if p.stat().st_size > _MAX_BYTES_PER_FILE:
@@ -93,7 +99,7 @@ def path_contains(path: str, substr: str) -> bool:
 def grep_count(pattern: str, path: str = ".") -> int:
     """Count regex *pattern* matches in text files under *path* (bounded)."""
     root = _readable_path(path)
-    if root is None or not root.exists():
+    if not root.exists():
         return 0
     try:
         rx = re.compile(pattern)
@@ -106,8 +112,8 @@ def grep_count(pattern: str, path: str = ".") -> int:
         for p in root.rglob("*"):
             if len(files) >= _MAX_FILES:
                 break
-            if p.is_file() and not (_SKIP_DIRS & set(p.parts)) and _readable_path(str(p)):
-                files.append(p)
+            if p.is_file() and not (_SKIP_DIRS & set(p.parts)):
+                files.append(_readable_path(str(p)))  # a refused file fails the whole count
     total = 0
     for fp in files:
         try:
