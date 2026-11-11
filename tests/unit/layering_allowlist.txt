@@ -1,0 +1,90 @@
+# The layering violations that existed when the ratchet was added (release/1.0 after the spine merge).
+# rule | file | what. Never add a row: fix the violation. `python tests/unit/test_layering.py --prune` drops fixed rows.
+2 a simulator is imported only by its backend | embodiments/dof_layout.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/mjcf/go2_piper/build_go2_piper.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/mujoco_arm.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/mujoco_g1.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/mujoco_go2.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/mujoco_gripper.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/mujoco_piper.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/mujoco_piper_gripper.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/scene_builder.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/sensors/lidar_raycast.py | mujoco
+2 a simulator is imported only by its backend | hardware/sim/viewer_mode.py | mujoco
+2 a simulator is imported only by its backend | sim/ground_truth.py | mujoco
+2 a simulator is imported only by its backend | sim/runtime.py | mujoco
+2 a simulator is imported only by its backend | sim/session.py | mujoco
+2 a simulator is imported only by its backend | vcli/cli.py | mujoco
+2 a simulator is imported only by its backend | vcli/tools/sim_tool.py | mujoco
+2 a simulator is imported only by its backend | vcli/worlds/sim_oracles.py | mujoco
+3 actor code calls no attach / detach | perception/tracker.py | detach
+3 actor code imports neither the world side nor the kernel | perception/detector_capability.py | vcli.cognitive.capabilities.types
+3 actor code imports neither the world side nor the kernel | perception/detector_capability.py | vcli.cognitive.capabilities.types.CapabilityResult
+3 actor code imports neither the world side nor the kernel | perception/vocab.py | vcli.worlds.world_manifest
+3 actor code imports neither the world side nor the kernel | perception/vocab.py | vcli.worlds.world_manifest.WORLDS_DIR
+3 actor code imports neither the world side nor the kernel | perception/vocab.py | vcli.worlds.world_manifest._has
+3 actor code imports neither the world side nor the kernel | perception/vocab.py | vcli.worlds.world_manifest.load_world
+3 actor code imports neither the world side nor the kernel | skills/go2/explore.py | vcli.cognitive.abort
+3 actor code imports neither the world side nor the kernel | skills/go2/explore.py | vcli.cognitive.abort.is_abort_requested
+3 actor code imports neither the world side nor the kernel | skills/go2/look.py | vcli.worlds.world_manifest
+3 actor code imports neither the world side nor the kernel | skills/go2/look.py | vcli.worlds.world_manifest.load_world
+3 actor code imports neither the world side nor the kernel | skills/go2/patrol.py | vcli.cognitive.abort
+3 actor code imports neither the world side nor the kernel | skills/go2/patrol.py | vcli.cognitive.abort.is_abort_requested
+3 actor code imports neither the world side nor the kernel | skills/go2/stop.py | vcli.cognitive.abort
+3 actor code imports neither the world side nor the kernel | skills/go2/stop.py | vcli.cognitive.abort.request_abort
+3 actor code imports neither the world side nor the kernel | skills/navigate.py | vcli.cognitive.abort
+3 actor code imports neither the world side nor the kernel | skills/navigate.py | vcli.cognitive.abort.is_abort_requested
+3 actor code imports neither the world side nor the kernel | skills/perception_grasp.py | vcli.worlds.world_manifest
+3 actor code imports neither the world side nor the kernel | skills/perception_grasp.py | vcli.worlds.world_manifest.load_world
+3 skills and perception touch no runtime / world / gt | skills/pick.py | get_object_positions
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/actor_causation.py | vcli.worlds.sim_oracles
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/actor_causation.py | vcli.worlds.sim_oracles._FACING_TOL_RAD
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/coord_goal.py | vcli.worlds.sim_oracles
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/coord_goal.py | vcli.worlds.sim_oracles._AT_POSITION_TOL_M
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/goal_executor.py | sim.runtime
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/goal_executor.py | sim.runtime.ACTOR_EPOCH
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/goal_executor.py | skills.go2.explore
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/goal_executor.py | skills.go2.explore.is_exploring
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/object_goal.py | vcli.worlds.world_manifest
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/object_goal.py | vcli.worlds.world_manifest.WorldManifestError
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/object_goal.py | vcli.worlds.world_manifest.load_world
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/trace_store.py | vcli.worlds.registry
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/trace_store.py | vcli.worlds.registry.resolve_world
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/vocab_from_registry.py | vcli.worlds.base.DecomposeVocab
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | embodiments.capability_profile
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | embodiments.capability_profile.resolve_capability_profile
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | sim.nav.coverage
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | sim.nav.coverage.room_layout
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | skills.navigate
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | skills.navigate._resolve_room
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.dev
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.dev.DEV_TOOL_ALLOWLIST
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.registry
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.registry.resolve_world
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | embodiments.capability_profile
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | embodiments.capability_profile.resolve_capability_profile
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.runtime
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.runtime.ACTOR_EPOCH
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.is_sim_agent
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.mark_turn
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.session_for
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.sim_id
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | vcli.worlds.sim_oracles
+4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | vcli.worlds.sim_oracles._AT_POSITION_TOL_M
+5 core imports only interfaces and schemas | core/agent.py | hardware.so101.gripper
+5 core imports only interfaces and schemas | core/agent.py | hardware.so101.gripper.SO101Gripper
+5 core imports only interfaces and schemas | core/agent.py | hardware.so101.ik_solver
+5 core imports only interfaces and schemas | core/agent.py | hardware.so101.ik_solver.IKSolver
+5 core imports only interfaces and schemas | core/agent.py | perception.calibration
+5 core imports only interfaces and schemas | core/agent.py | perception.calibration.Calibration
+5 core imports only interfaces and schemas | core/agent.py | perception.pipeline
+5 core imports only interfaces and schemas | core/agent.py | perception.pipeline.PerceptionPipeline
+5 core imports only interfaces and schemas | core/agent.py | perception.realsense
+5 core imports only interfaces and schemas | core/agent.py | perception.realsense.RealSenseCamera
+5 core imports only interfaces and schemas | core/agent.py | perception.tracker
+5 core imports only interfaces and schemas | core/agent.py | perception.tracker.EdgeTAMTracker
+5 core imports only interfaces and schemas | core/agent.py | perception.vlm
+5 core imports only interfaces and schemas | core/agent.py | perception.vlm.VLMDetector
+5 core imports only interfaces and schemas | core/agent.py | skills
+5 core imports only interfaces and schemas | core/agent.py | skills.get_default_skills
