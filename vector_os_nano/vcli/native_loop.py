@@ -511,7 +511,8 @@ class NativeStepRunner:
         self._step_open: bool = False
         self._step_acted: bool = False  # a side-effecting tool ran this step
         # Every tool of the step's chain is read-only or a declared housekeeping
-        # action (stop): the row may stay un-GROUNDED under a met task contract.
+        # action (stop): the row may stay un-GROUNDED when another row proved the turn
+        # (trace_store.turn_reject_reason), and a re-verify after it only re-checks.
         self._housekeeping: bool = True
         self._last_ok: bool = True      # the chain's last tool did not report an error
         self._acting: set[str] = set()  # the step's side-effecting tools
