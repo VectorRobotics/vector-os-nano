@@ -37,6 +37,21 @@ Three pillars, each with a proof that runs through bare `vector-cli` + natural l
 proven by one gate; the docs say exactly what the code does. What cannot be made true and verified
 on this box is cut from the promise and labelled experimental, never shipped as a silent half.
 
+## Goal — run until done (owner directive, 2026-11-11)
+
+"设置个 goal，一直到做完为止；代码结构也要 concise，删除仓库废代码，重构结构也是目标的一环。"
+
+The campaign runs wave after wave, without waiting for the owner, until ALL of this is true:
+
+1. **Acceptance A1–A11 below is green**, each proven by the gate or by a recorded run.
+2. **The code base is concise** (A11): the tree is the charter's target tree; no dead code; one
+   implementation per capability; no compatibility shims; fewer source lines than at the start.
+3. **`v1.0.0` is tagged locally on `release/1.0`.** Nothing is pushed until the owner says so.
+
+The coordinator stops only for a decision that is genuinely the owner's (a product choice the plan
+does not already settle) or for a guardrail (anything destructive outside this repository).
+Progress lives in the work-package table below and in `/data/vos-analysis/release-1.0/ledger.json`.
+
 ## Scope decisions (owner-confirmed where marked ✔; otherwise coordinator defaults)
 
 | item | in 1.0 | note |
@@ -110,6 +125,13 @@ ray-based clearance would have graded a resting object as lifted (so the AABB ru
   current; add-a-simulator and add-a-robot guides; CHANGELOG; the doc-drift gate green.
 - **A10 live matrix** (billed, small) — real model through the bare REPL across body × backend ×
   task (fetch, navigate, pick / place); success and false-GROUNDED counts recorded in STATUS.
+- **A11 concise structure** — (a) the tree equals the charter's target tree: no `hardware/sim/`, no
+  repo-root `config/`, `tools/`, `foxglove/`, no stray scripts; (b) no dead code: every package
+  module is reachable from an entry point (test), every test targets live behaviour, no
+  commented-out blocks, no compatibility shims or re-exports, no generated file tracked; (c) one
+  implementation per capability; (d) no source file over 800 lines (vendored third-party code and
+  listed, justified exceptions only); (e) `vector_os_nano/` has fewer Python source lines than the
+  53.3k it started with, the second backend included — every work package reports its delta.
 
 ## Work packages (each: own worktree + branch `rel/<WP>`, independent verifier, merged by the coordinator)
 
@@ -131,7 +153,8 @@ ray-based clearance would have graded a resting object as lifted (so the AABB ru
 | C1 | 5 | config + file interfaces: `schemas/` (robot, world, user, env, paths), `$VECTOR_HOME`, robot and world folders, asset fetch script, perception weight provisioning | open |
 | R8 | 5 | packaging + hygiene: pyproject (`[pybullet]` extra), `.gitignore`, dead periphery, NOTICE, gate honesty, CI, the layering ratchet at zero | open |
 | R9 | 6 | docs: README, getting-started, ARCHITECTURE, STATUS, DECISIONS, add-a-simulator / add-a-robot guides, CHANGELOG, version | open |
-| REL | 6 | final acceptance A1–A10, adversarial review of the whole diff, tag `v1.0.0` (local) | open |
+| DC | 6 | dead-code and structure sweep: static reachability, unused functions, duplicate helpers, the 800-line rule, stale tests | open |
+| REL | 6 | final acceptance A1–A11, adversarial review of the whole diff, tag `v1.0.0` (local) | open |
 
 ## Disciplines (every WP, every agent)
 
