@@ -37,7 +37,6 @@ tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_ov
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_unknown_uri | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 
 # stale: PerceptionProtocol grew members the hand-written mock lacks (runtime_checkable isinstance; WP11)
-tests/unit/test_perception_base.py::test_protocol_defined | xfail | stale: PerceptionProtocol grew members the hand-written mock lacks (runtime_checkable isinstance; WP11)
 
 # stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
 tests/unit/test_skill_diagnostics.py::TestScanSkillDiagnosticsMoveFailed::test_scan_move_failed_returns_diagnosis | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)

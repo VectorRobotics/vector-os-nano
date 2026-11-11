@@ -32,6 +32,12 @@ def test_protocol_defined():
         def get_intrinsics(self) -> CameraIntrinsics:
             return CameraIntrinsics(fx=600.0, fy=600.0, cx=320.0, cy=240.0, width=640, height=480)
 
+        def caption(self, length: str = "normal") -> str:
+            return ""
+
+        def visual_query(self, question: str) -> str:
+            return ""
+
         def detect(self, query: str) -> list[Detection]:
             return []
 
