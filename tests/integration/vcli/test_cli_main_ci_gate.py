@@ -78,10 +78,14 @@ def test_repl_runs_one_turn_then_exits(tmp_path, monkeypatch: pytest.MonkeyPatch
     from vector_os_nano.vcli import cli
     from vector_os_nano.vcli.engine import VectorEngine
 
-    # Run the REPL IN tmp_path so the dev-world file oracle (cwd-scoped) reads the
-    # marker the actor writes; isolate HOME (sessions, history).
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    # Run the REPL IN a work dir so the dev-world file oracle (cwd-scoped) reads the
+    # marker the actor writes; isolate HOME (sessions, history) beside it — the oracle
+    # never reads under $HOME.
+    work, home = tmp_path / "work", tmp_path / "home"
+    work.mkdir()
+    home.mkdir()
+    monkeypatch.chdir(work)
+    monkeypatch.setenv("HOME", str(home))
     marker = "repl_marker.txt"
     script = {"turns": [
         {"tool_calls": [{"name": "file_write", "input": {"file_path": marker, "content": "ok\n"}}]},
@@ -130,7 +134,7 @@ def test_repl_runs_one_turn_then_exits(tmp_path, monkeypatch: pytest.MonkeyPatch
     trace = executed["trace"]
     assert trace.goal_tree.goal == "write the marker then verify it"
     assert [s.strategy for s in trace.steps] == ["file_write"] and trace.steps[0].verify_result
-    assert (tmp_path / marker).read_text() == "ok\n"
+    assert (work / marker).read_text() == "ok\n"
 
 
 def test_cli_help_exits_zero() -> None:

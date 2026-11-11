@@ -121,3 +121,21 @@ def test_a_good_bind_commits_all_three() -> None:
     eng.bind(agent, _World())
     assert eng._vgg_agent is agent and isinstance(eng._world, _World)
     assert eng._capability_registry.names() == frozenset({"probe_cap"})
+
+
+def test_the_repl_fails_loud_when_the_bind_fails(monkeypatch) -> None:
+    """cli-entry:init-vgg-failloud-swallowed: a setup / bind error is shown and the
+    REPL exits 2; it never starts on a half-bound engine."""
+    import os
+
+    from vector_os_nano.vcli import cli
+
+    def boom(args: Any) -> Any:
+        raise TypeError("cannot bind <world>: it lacks ['persona_blocks']")
+
+    monkeypatch.setattr(cli, "_build_turn_context", boom)
+    monkeypatch.setattr(cli, "_maybe_reexec_under_mjpython", lambda args: None)
+    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
+    with pytest.raises(SystemExit) as exc:
+        cli.main([])
+    assert exc.value.code == 2

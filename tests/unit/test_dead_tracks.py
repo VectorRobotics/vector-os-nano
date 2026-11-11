@@ -111,10 +111,13 @@ _DEAD_SWITCHES = (
 
 
 def test_one_producer() -> None:
+    from vector_os_nano.core.skill import SkillRegistry
     from vector_os_nano.vcli.engine import VectorEngine
 
     back = [n for n in _DEAD_ENGINE_API if hasattr(VectorEngine, n)]
     assert not back, f"VectorEngine has a second producer again: {back}"
+    # core:alias-prefix-misroute: no keyword matcher routes user text to a skill.
+    assert not hasattr(SkillRegistry, "match")
 
 
 def test_dead_switches_are_gone() -> None:

@@ -18,15 +18,13 @@ from tests.harness.pty_cli import run_repl_session
 
 _TARGET = Path("/tmp/vos_e0/hello.txt")
 _PROMPT = f"在 {_TARGET.parent} 写一个 hello.txt"
-# Reactive: the step fires on what the model just saw. The native producer gets the
-# verify/finish steps; the tool_use path (no verify tool offered) gets the text step.
+# Reactive: each step fires on what the model just saw.
 _SCRIPT = {"steps": [
     {"when": "hello.txt", "tool_calls": [
         {"name": "file_write", "input": {"file_path": str(_TARGET), "content": "hello\n"}}]},
     {"when": "Wrote", "tool_calls": [
         {"name": "verify", "input": {"expr": f"path_contains('{_TARGET}', 'hello')"}}]},
     {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
-    {"when": "Wrote", "text": "已写入 hello.txt", "tool_calls": []},
 ]}
 
 
@@ -112,3 +110,25 @@ def test_e0_a_read_request_prints_the_models_answer(tmp_path) -> None:
         assert len(calls) == 2, calls  # the read, the answer: no nudge, no second producer
     finally:
         shutil.rmtree(_DOC.parent, ignore_errors=True)
+
+
+# E0-chat: a question is the model's own answer: one LLM round-trip, no verdict claim,
+# and nothing else re-plans the turn.
+_CHAT_SCRIPT = {"steps": [
+    {"when": "这个仓库", "text": "这是 Vector OS Nano：一个机器人 agent 运行时。", "tool_calls": []},
+]}
+
+
+@pytest.mark.cli_main
+def test_e0_a_chat_question_is_the_models_text_in_one_round_trip(tmp_path) -> None:
+    log = tmp_path / "llm.jsonl"
+    r = run_repl_session(
+        ["这个仓库是做什么的？"], tool_script=_CHAT_SCRIPT, timeout_sec=120, cwd=tmp_path,
+        extra_env={"VECTOR_FAKE_LLM_LOG": str(log)},
+    )
+    text = r.text
+    assert not r.timed_out, text[-3000:]
+    assert "这是 Vector OS Nano：一个机器人 agent 运行时。" in text, text[-3000:]
+    assert "verdict" not in text and "verified=" not in text, text[-3000:]
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 1, calls  # the answer: no second producer, no extra LLM call

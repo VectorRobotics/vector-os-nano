@@ -105,18 +105,24 @@ class TestDevNamespace:
 
 
 class TestRobotRegression:
-    def test_robot_namespace_intact_plus_dev(self) -> None:
+    def test_a_base_without_ground_truth_verifies_nothing_grounded(self) -> None:
+        """spine:real-hw-verdict-vacuous: the agent's own pose read is a self-report,
+        never an oracle; a robot body no sim session owns (real hardware) has no
+        evidence oracle at all, and dev file predicates never enter a robot world."""
+        from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
+        from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
+
         eng = _make_engine()
+        eng._world = RobotWorld()
         base = SimpleNamespace(
             get_position=lambda: (1.0, 2.0, 0.0), get_heading=lambda: 0.5
         )
         agent = SimpleNamespace(_base=base, _spatial_memory=None)
         ns = eng._build_verifier_namespace(agent)
-        # Robot primitives present...
-        assert "get_position" in ns and "get_heading" in ns
-        # WP02 (dev-oracles-in-robot-world fix): dev file predicates are NEVER merged
-        # into a robot namespace, so they cannot ground a robot verify.
-        assert "file_exists" not in ns and "grep_count" not in ns
+        assert ns == {}
+        names = verify_oracle_names(agent, eng)
+        assert names == frozenset()
+        assert classify_verify_expr("get_position()[0] < 5.0", names) == "RAN"
 
 
 # ---------------------------------------------------------------------------

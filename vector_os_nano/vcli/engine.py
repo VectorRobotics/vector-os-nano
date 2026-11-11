@@ -82,35 +82,25 @@ class VectorEngine:
         self._vgg_agent, self._world, self._capability_registry = agent, world, capabilities
 
     def _build_verifier_namespace(self, agent: Any) -> dict[str, Any]:
-        """The verify namespace for *agent*: its base's pose reads + the world's oracles.
+        """The verify namespace for *agent*: the active world's predicates, nothing else.
 
         Only ``@oracle``-tagged callables of the active world's scope count as
-        evidence (``trace_store.verify_oracle_names``). The world's namespace is
-        merged last, so a sim world's GT ``get_position`` / ``get_heading`` replace
-        the agent-read ones. No constant stubs: a verify naming an unavailable
-        function fails closed (NameError -> False).
+        evidence (``trace_store.verify_oracle_names``). The kernel adds none: the
+        agent's own pose reads are a self-report, never evidence, so a body without
+        a ground-truth world (real hardware) verifies nothing GROUNDED. A verify
+        naming an unavailable function fails closed (NameError -> False); a world
+        whose namespace raises contributes nothing.
         """
-        from vector_os_nano.vcli.cognitive.oracle_registry import oracle
-
-        ns: dict[str, Any] = {}
-        base = getattr(agent, "_base", None)
-        if base:
-            ns["get_position"] = oracle(scope="robot", channel="base")(
-                lambda: tuple(base.get_position())
-            )
-            ns["get_heading"] = oracle(scope="robot", channel="base")(
-                lambda: base.get_heading()
-            )
         world = self._world
         if world is None:
             from vector_os_nano.vcli.worlds.registry import resolve_world
 
             world = resolve_world(agent)
         try:
-            ns.update(world.build_verify_namespace(agent) or {})
+            return dict(world.build_verify_namespace(agent) or {})
         except Exception as exc:  # noqa: BLE001 — fail closed: no world oracles
             logger.debug("world %r build_verify_namespace failed: %s", getattr(world, "name", world), exc)
-        return ns
+            return {}
 
     def _has_live_viewer(self) -> bool:
         """True when a connected sim has an OPEN GUI viewer.

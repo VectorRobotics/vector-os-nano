@@ -142,8 +142,7 @@ class ReactiveFakeBackend:
     or the user's text). The first not-yet-used step fires iff ``when`` is a substring
     of the observation, ``is_error`` (if given) equals the observation's error flag,
     and every tool it calls is in the offered ``tools`` (a real model cannot call a
-    tool it was not offered, so a native attempt that lacks ``start_simulation`` never
-    consumes the legacy turn's step). Each step fires once; tool-call ids are unique
+    tool it was not offered). Each step fires once; tool-call ids are unique
     per step (``call_<step>_<j>``). No match -> ``end_turn`` with no tools and a
     ``[reactive-fake] no step matched`` text, so a broken script fails visibly.
 
