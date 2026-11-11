@@ -1,3 +1,8 @@
+# >> 2026-11-11 — RELEASE 1.0 CAMPAIGN IN PROGRESS on branch `release/1.0`.
+#   The live resume anchor is docs/plan-release-1.0.md (scope, work packages, disciplines).
+#   Everything below this banner predates the 2026-10 refactor waves and is STALE until the docs
+#   work package (R9) rewrites this file. Do not act on it.
+
 # >> REFACTOR HANDOFF — 2026-06-25 — find-and-grasp pipeline refactor in progress.
 # Sim is FREE now (nuked). RESUME FROM: docs/plan-find-grasp-refactor.md + DECISIONS D88-D97 + git log.
 # >> D97 (90dd65c) — BARE-CLI FOUNDATION FIXED (Yusen-found; my stub harness missed it). Yusen tested bare
