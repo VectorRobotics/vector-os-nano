@@ -28,6 +28,8 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
   asked for and its intrinsics are derived from that shape.
 * **Sim time.** :meth:`wait_sim` waits for SIM seconds, so a timed motion means
   the same thing at any real-time ratio.
+* **Actor epoch.** :data:`ACTOR_EPOCH` marks when commanded motion belongs to a
+  producer-dispatched tool (see :class:`ActorEpoch`).
 """
 from __future__ import annotations
 
@@ -92,6 +94,40 @@ class RGBDFrame:
     cam_mat: np.ndarray
     sim_time: float
     camera: str
+
+
+class ActorEpoch:
+    """When commanded motion is the ACTOR's: only while a producer-dispatched tool runs.
+
+    A producer (the native runner, the legacy executor) wraps each tool it dispatches
+    in :meth:`tool`; the bodies' commanded-motion counters (``cmd_motion`` /
+    ``ctrl_motion``, read by the actor-causation grader) accumulate only while one is
+    open. A TARE/bridge follower or a background explore driving the base BETWEEN
+    tools is therefore never counted as the actor causing a step.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._open = 0
+
+    @contextlib.contextmanager
+    def tool(self):
+        with self._lock:
+            self._open += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._open -= 1
+
+    @property
+    def active(self) -> bool:
+        return self._open > 0
+
+
+# ponytail: one epoch per process (one SimSession at a time); per-runtime if two sims
+# ever share a process.
+ACTOR_EPOCH = ActorEpoch()
 
 
 class SimRuntime:

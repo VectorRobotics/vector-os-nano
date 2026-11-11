@@ -11,9 +11,14 @@
   (single-sourced via ``classify_step_evidence`` -> ``classify_verify_expr``).
   A sentinel ``""`` / ``"True"`` verify, an absent oracle, or a tautology
   classify RAN and do NOT pass the gate.
+- WP07: only the latest attempt of each attempt group is graded (FAIL -> retry ->
+  PASS on the same predicate verifies; the FAIL row stays as audit), a turn-level
+  task contract compiled from the goal must go False -> True across the turn, and
+  the coordinate and manipulation gates run independently (``turn_reject_reason``).
 """
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import uuid
@@ -22,7 +27,7 @@ from typing import Any, Literal
 
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused, from_name
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
-from vector_os_nano.vcli.cognitive.oracle_registry import evidence_names
+from vector_os_nano.vcli.cognitive.oracle_registry import OracleTag, oracle_tags
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     GoalTree,
@@ -38,8 +43,9 @@ _DEFAULT_TRACES_DIR = Path.home() / ".vector" / "traces"
 
 # Bump when the on-disk shape changes; load_trace tolerates older/unknown keys.
 # v2 adds StepRecord.visual_override; v3 adds SubGoal.answer_only (S5.2);
-# v4 adds StepRecord.actor_caused (R2b actor-causation grade).
-_SCHEMA_VERSION = 4
+# v4 adds StepRecord.actor_caused (R2b actor-causation grade); v5 adds the WP07
+# attempt fields (attempt_of / superseded / channels) and the trace's task contract.
+_SCHEMA_VERSION = 5
 
 # The ONLY side-effect-free dispatch route (``GoalExecutor._execute_answer`` does
 # no I/O and no model call). The evidence-gate exemption for a no-robot-evidence
@@ -69,24 +75,30 @@ def _is_answer_only(sub_goal: SubGoal) -> bool:
 
 
 def verify_oracle_names(agent: Any, engine: Any = None) -> frozenset[str]:
-    """The EVIDENCE oracle names in the LIVE verify namespace GoalVerifier uses.
+    """The names of ``verify_oracles`` (the evidence oracles of the live namespace)."""
+    return frozenset(verify_oracles(agent, engine))
+
+
+def verify_oracles(agent: Any, engine: Any = None) -> dict[str, OracleTag]:
+    """``{name: OracleTag}`` of the EVIDENCE oracles in the LIVE verify namespace.
 
     Single source (rule 3): read off the SAME dict
     ``engine._build_verifier_namespace(agent)`` builds for ``GoalVerifier`` — but
     only the callables tagged ``@oracle`` with the active world's scope
     (``"robot"`` in a robot world, ``"dev"`` in the dev world). Untagged callables
     (memory readers, helpers) and dev predicates inside a robot world stay callable
-    but are not evidence, so a verify built on them classifies RAN.
+    but are not evidence, so a verify built on them classifies RAN. The tags carry
+    each oracle's channel / transition for the causation grader.
 
     *engine* is required to build the namespace; when it is None (or namespace /
     world resolution raises) this FAILS CLOSED to ``frozenset()`` — with no oracle
     names every predicate classifies RAN, never a spurious GROUNDED (rule 5).
     """
     if engine is None:
-        return frozenset()
+        return {}
     builder = getattr(engine, "_build_verifier_namespace", None)
     if builder is None:
-        return frozenset()
+        return {}
     try:
         ns = builder(agent)
         world = getattr(engine, "_world", None)
@@ -97,8 +109,8 @@ def verify_oracle_names(agent: Any, engine: Any = None) -> frozenset[str]:
         scope = "robot" if world.is_robot() else "dev"
     except Exception as exc:  # noqa: BLE001
         logger.debug("verify_oracle_names: namespace build failed: %s", exc)
-        return frozenset()
-    return evidence_names(ns, scope)
+        return {}
+    return oracle_tags(ns, scope)
 
 
 # ---------------------------------------------------------------------------
@@ -159,29 +171,48 @@ def classify_step_evidence(
     the commanded target. Non-coordinate goals/verifies fail OPEN (unchanged);
     ``goal_text=None`` (the per-step reward gate) is a no-op. Stricter-only (rule 5).
     """
+    return _classify(step, sub_goal, oracle_names, goal_text)[0]
+
+
+def _classify(
+    step: StepRecord, sub_goal: SubGoal, oracle_names: frozenset[str], goal_text: str | None = None,
+) -> tuple[StepEvidence, str]:
+    """``(evidence, reason)`` for one step — the reason is "" when GROUNDED."""
     if not step.success:
-        return "FAILED"
+        return "FAILED", f"the action failed: {step.error}" if step.error else "the action failed"
     visual_override = bool(getattr(step, "visual_override", False))
     if _is_answer_only(sub_goal):
-        return "GROUNDED" if (step.verify_result and not visual_override) else "RAN"
-    grounded = (
-        classify_verify_expr(sub_goal.verify, oracle_names) == "GROUNDED"
-        and step.verify_result
-        and not visual_override
-    )
-    if grounded and _actor_uncaused(step):
-        # R2b: GROUNDED predicate but the actor did not cause it -> downgrade to RAN.
-        return "RAN"
-    if grounded and goal_text is not None:
-        # STEP-13 goal-authenticity: an actor-CAUSED at_position verify whose constant
-        # does NOT match the user's parsed COORDINATE goal means the model verified its
-        # OWN landing, not the commanded target -> downgrade to RAN. Fail-OPEN whenever
-        # the goal or the verify is not a parseable coordinate. Stricter-only.
+        if step.verify_result and not visual_override:
+            return "GROUNDED", ""
+        return "RAN", "the answer was not confirmed"
+    if visual_override:
+        return "RAN", "a VLM visual override is not deterministic evidence"
+    if classify_verify_expr(sub_goal.verify, oracle_names) != "GROUNDED":
+        return "RAN", "no verify" if not (sub_goal.verify or "").strip() else "the verify is not ground-truth evidence"
+    if not step.verify_result:
+        return "RAN", "verify FAIL"
+    if _actor_uncaused(step):
+        # R2b: a GROUNDED predicate the actor did not cause (a no-op, a teleport, a
+        # target already met at the baseline) is not evidence.
+        detail = ", ".join(getattr(step, "channels", ()) or ())
+        return "RAN", f"UNCAUSED ({detail})" if detail else "UNCAUSED"
+    if goal_text is not None:
+        # STEP-13 goal authenticity: an at_position verify whose constant is not the
+        # user's parsed coordinate verified the actor's own landing. Fail-open when
+        # the goal or the verify is not a parseable coordinate.
         from vector_os_nano.vcli.cognitive.coord_goal import coord_goal_mismatch
 
         if coord_goal_mismatch(goal_text, sub_goal.verify):
-            return "RAN"
-    return "GROUNDED" if grounded else "RAN"
+            return "RAN", "the verified coordinate is not the commanded one"
+    return "GROUNDED", ""
+
+
+def step_reject_reason(
+    step: StepRecord, sub_goal: SubGoal, oracle_names: frozenset[str], goal_text: str | None = None,
+) -> str:
+    """Why *step* is not GROUNDED ("" when it is) — the same rules as
+    ``classify_step_evidence``, for the verdict's audit row."""
+    return _classify(step, sub_goal, oracle_names, goal_text)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -224,11 +255,19 @@ def _trace_to_dict(trace: ExecutionTrace) -> dict[str, Any]:
                 "actor_caused": getattr(
                     s, "actor_caused", ActorCaused.NOT_GRADED
                 ).value,
+                "attempt_of": getattr(s, "attempt_of", ""),
+                "superseded": getattr(s, "superseded", False),
+                "channels": list(getattr(s, "channels", ()) or ()),
+                "housekeeping": getattr(s, "housekeeping", False),
             }
             for s in trace.steps
         ],
         "success": trace.success,
         "total_duration_sec": trace.total_duration_sec,
+        "contract": list(getattr(trace, "contract", ()) or ()),
+        "contract_start": list(getattr(trace, "contract_start", ()) or ()),
+        "contract_end": list(getattr(trace, "contract_end", ()) or ()),
+        "intents": list(getattr(trace, "intents", ()) or ()),
     }
 
 
@@ -266,6 +305,10 @@ def _dict_to_trace(data: dict[str, Any]) -> ExecutionTrace:
             # R2b: deserialize the actor-causation grade; absent/unknown (older
             # traces) maps to NOT_GRADED -> legacy-equivalent (no downgrade).
             actor_caused=from_name(s.get("actor_caused")),
+            attempt_of=str(s.get("attempt_of", "") or ""),
+            superseded=bool(s.get("superseded", False)),
+            channels=tuple(str(c) for c in s.get("channels", []) or ()),
+            housekeeping=bool(s.get("housekeeping", False)),
         )
         for s in data.get("steps", []) or []
     )
@@ -274,6 +317,10 @@ def _dict_to_trace(data: dict[str, Any]) -> ExecutionTrace:
         steps=steps,
         success=bool(data.get("success", False)),
         total_duration_sec=float(data.get("total_duration_sec", 0.0)),
+        contract=tuple(str(c) for c in data.get("contract", []) or ()),
+        contract_start=tuple(bool(v) for v in data.get("contract_start", []) or ()),
+        contract_end=tuple(bool(v) for v in data.get("contract_end", []) or ()),
+        intents=tuple(str(c) for c in data.get("intents", []) or ()),
     )
 
 
@@ -307,72 +354,85 @@ def load_trace(path: str | Path) -> ExecutionTrace:
 
 
 # ---------------------------------------------------------------------------
-# Evidence
+# Evidence — attempt groups, the task contract, the turn gates
 # ---------------------------------------------------------------------------
 
 
-def evidence_passed(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool:
-    """True when the trace's success is backed by deterministic evidence.
+def attempt_key(expr: str | None) -> str:
+    """The normalized verify AST an attempt group is keyed on: whitespace, quote
+    style, parentheses and ``9`` vs ``9.0`` collapse; anything else (a different
+    predicate, other arguments) is a different sub-goal."""
+    s = (expr or "").strip()
+    try:
+        tree = ast.parse(s, mode="eval")
+    except SyntaxError:
+        return s
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and type(node.value) is int:
+            node.value = float(node.value)
+    return ast.dump(tree.body)
 
-    Single-sourced through ``classify_step_evidence`` (rule 3) and applied to BOTH
-    dev and robot worlds (the dishonest ``if is_robot: return True`` bypass is
-    GONE): every executed step that maps to a sub-goal must classify GROUNDED, and
-    there must be at least one such checked step (an empty trace fails). A step
-    classifies GROUNDED only when its verify actually consumes a world oracle in
-    *oracle_names* in a non-tautological way (or it is a legitimately-exempt
-    answer-only step); a sentinel ``""`` / ``"True"`` verify (the robot motor
-    default), an absent oracle, a tautology, or a VLM visual override classify RAN
-    and so do NOT pass the gate.
 
-    *oracle_names* MUST be the live verify-namespace callable names from
-    ``verify_oracle_names(agent, engine)`` — single-sourced from the SAME namespace
-    ``GoalVerifier`` uses; never a hand-authored copy. An empty set fails closed
-    (everything classifies RAN), so the moat only ever gets stricter (rule 5).
+def attempt_groups(trace: ExecutionTrace) -> list[list[int]]:
+    """The trace's attempt groups (step indices, in order), sorted by their latest.
 
-    Stage 5 (S5.2): a step whose sub-goal is explicitly ``answer_only`` (and routed
-    through the zero-I/O ``answer`` strategy) is a pure-conversation step that
-    carries no robot evidence BY DESIGN; ``classify_step_evidence`` exempts it from
-    the real-predicate requirement but still requires ``verify_result`` True and no
-    visual override. The exemption is keyed on the side-effect-free ``answer``
-    strategy, NOT the LLM-controlled ``answer_only`` flag alone, so an LLM cannot
-    launder a side-effecting step past the gate.
-
-    WHOLE-TRACE rule (stricter-only): a trace that did not succeed, a step with no
-    sub-goal to grade it against (a foreach child ``owner[i].tmpl`` — its resolved
-    verify is not in the tree), or a foreach node at all (zero iterations leave no
-    step behind) can never verify. The gate grades every step or none.
+    A step joins a group only when the producer opted it in (``attempt_of``) AND
+    the group's verify normalizes the same (``attempt_key``), so a producer can never
+    merge two predicates and a PASS of a different, easier predicate never supersedes
+    a FAIL. Every other step is its own group.
     """
-    if not trace.success:
-        return False
-    sg_by_name = {sg.name: sg for sg in trace.goal_tree.sub_goals}
-    if any(getattr(sg, "foreach", None) is not None for sg in trace.goal_tree.sub_goals):
-        return False
-    if any(s.sub_goal_name not in sg_by_name for s in trace.steps):
-        return False
-    checked = list(trace.steps)
-    if not checked:
-        return False
-    goal_text = trace.goal_tree.goal
-    all_grounded = all(
-        classify_step_evidence(s, sg_by_name[s.sub_goal_name], oracle_names, goal_text) == "GROUNDED"
-        for s in checked
-    )
-    if not all_grounded:
-        return False
-    # STEP-15 COORDINATE-GOAL TURN GATE (stricter-only). A turn whose NL goal targets a
-    # coordinate must actually VERIFY reaching it: >=1 checked step that BOTH classifies
-    # GROUNDED and whose verify is a bounded-tol literal ``at_position`` matching the
-    # commanded coord. Closes the wrong-predicate-type hole — a coordinate goal verified
-    # ENTIRELY with non-``at_position`` predicates (``facing(...)``,
-    # ``len(get_position())==3``): STEP-13's per-step mismatch downgrade fails OPEN on a
-    # non-``at_position`` verify, so every step stays GROUNDED and the coordinate is never
-    # asserted. The gate can only REJECT (all_grounded already held) and can't fake-pass
-    # (the matching step must itself be GROUNDED = actor-CAUSED + honest constant).
-    # SCOPED to a go2-coordinate world (``at_position`` in the live oracle set, rule 3),
-    # so dev / arm / answer worlds — whose goal text may incidentally contain an (x,y)
-    # pair — are never affected.
-    if "at_position" not in oracle_names:
-        return True
+    verify_of = {sg.name: sg.verify for sg in trace.goal_tree.sub_goals}
+    groups: dict[tuple[str, ...], list[int]] = {}
+    for i, s in enumerate(trace.steps):
+        verify = verify_of.get(s.sub_goal_name, "")
+        attempt = getattr(s, "attempt_of", "")
+        key = ("attempt", attempt, attempt_key(verify)) if attempt and verify else ("own", str(i))
+        groups.setdefault(key, []).append(i)
+    return sorted(groups.values(), key=lambda g: g[-1])
+
+
+def graded_indices(trace: ExecutionTrace) -> list[int]:
+    """Indices of the steps the gate grades: the LATEST attempt of every group.
+    Superseded rows stay in the trace as the audit of the attempts (FAIL -> retry ->
+    PASS)."""
+    return [g[-1] for g in attempt_groups(trace)]
+
+
+def _contract_reason(
+    trace: ExecutionTrace, graded: list[StepRecord], sg_by_name: dict[str, SubGoal],
+    ev: dict[int, StepEvidence], oracle_names: frozenset[str],
+) -> str:
+    """Why the turn's task contract is not met ("" when it is): every predicate must
+    be GT-provable here, False at turn start, True at turn end, and asserted by a
+    GROUNDED (actor-caused) graded step."""
+    from vector_os_nano.vcli.cognitive.object_goal import backs_contract, task_contract
+
+    contract = tuple(trace.contract)
+    # The spine recompiles the contract: a producer can never swap in a weaker one.
+    if contract != task_contract(trace.goal_tree.goal, oracle_names):
+        return "the task contract does not match the goal"
+    if len(trace.contract_start) != len(contract) or len(trace.contract_end) != len(contract):
+        return "task contract was not evaluated at turn start and end"
+    for item, was, now in zip(contract, trace.contract_start, trace.contract_end):
+        if classify_verify_expr(item, oracle_names) != "GROUNDED":
+            return f"task contract {item} is not provable in this world"
+        if was:
+            return f"already satisfied at turn start: {item}"
+        if not now:
+            return f"task contract not met at turn end: {item}"
+        if not any(ev[id(s)] == "GROUNDED" and backs_contract(item, sg_by_name[s.sub_goal_name].verify)
+                   for s in graded):
+            return f"no actor-caused step proves {item}"
+    return ""
+
+
+def _coordinate_reason(
+    graded: list[StepRecord], sg_by_name: dict[str, SubGoal], ev: dict[int, StepEvidence],
+    oracle_names: frozenset[str], goal_text: str,
+) -> str:
+    """STEP-15 coordinate gate: a goal naming a coordinate needs a GROUNDED graded step
+    whose verify necessarily asserts it (a facing-only / decoy turn never passes).
+    Scoped to a world with ``at_position``."""
     from vector_os_nano.vcli.cognitive.coord_goal import (
         at_position_const_matches,
         goal_has_coordinate_intent,
@@ -380,70 +440,112 @@ def evidence_passed(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool
         parse_goal_coord,
     )
 
+    if "at_position" not in oracle_names:
+        return ""
     goal_xy = parse_goal_coord(goal_text)
     if goal_xy is not None:
-        return any(
-            classify_step_evidence(s, sg_by_name[s.sub_goal_name], oracle_names, goal_text) == "GROUNDED"
-            and at_position_const_matches(sg_by_name[s.sub_goal_name].verify, goal_xy)
-            for s in checked
-        )
-    # Parse-evasion: a coordinate-shaped goal the regex cannot pin to a single (x, y)
-    # (paren-less "导航到 11,3", or >=2 distinct coords) must still not pass on a
-    # non-``at_position`` verify — require SOME GROUNDED bounded-tol literal at_position
-    # step (the coord can't be pinned, but the facing-only escape is closed). A go2 goal
-    # with NO coordinate intent (room name / "explore" / "turn") fails OPEN (unchanged).
+        ok = any(ev[id(s)] == "GROUNDED" and at_position_const_matches(sg_by_name[s.sub_goal_name].verify, goal_xy)
+                 for s in graded)
+        return "" if ok else f"no actor-caused step verifies at_position{goal_xy}"
     if goal_has_coordinate_intent(goal_text):
-        return any(
-            classify_step_evidence(s, sg_by_name[s.sub_goal_name], oracle_names, goal_text) == "GROUNDED"
-            and has_necessary_at_position(sg_by_name[s.sub_goal_name].verify)
-            for s in checked
-        )
-    return _object_goal_turn_ok(checked, sg_by_name, oracle_names, goal_text)
+        ok = any(ev[id(s)] == "GROUNDED" and has_necessary_at_position(sg_by_name[s.sub_goal_name].verify)
+                 for s in graded)
+        return "" if ok else "no actor-caused step verifies the commanded coordinate"
+    return ""
 
 
-def _object_goal_turn_ok(
-    checked: list[StepRecord],
-    sg_by_name: dict[str, SubGoal],
-    oracle_names: frozenset[str],
-    goal_text: str | None,
-) -> bool:
-    """D17 OBJECT-GOAL TURN GATE (stricter-only) — the grasp analogue of the STEP-15
-    coordinate turn gate above.
-
-    A turn whose NL goal commands a physical GRASP / PICK must actually PROVE physical
-    possession via a GT MANIPULATION oracle (``holding_object`` / ``placed_count``) the
-    actor cannot author — NOT via a self-authored file/scene/marker predicate. This
-    closes the fakeable-grasp false-green (D17): deepseek satisfied "抓前面的东西" by
-    ``file_write('grabbed.txt')`` then ``verify(file_exists('grabbed.txt'))`` — and
-    ``file_exists`` is a PREDICATE oracle (classifies GROUNDED) AND a non-robot predicate
-    (never actor-causation-graded), so every prior gate failed OPEN and the turn went
-    GROUNDED. Mirrors the D15/D16 coordinate turn gate exactly — present-but-not-
-    necessary decoys are rejected by the same necessity discipline (``object_goal``).
-
-    Like the coordinate gate, this can ONLY REJECT (``all_grounded`` already held above)
-    and can NEVER fake-pass: the satisfying step must ITSELF classify GROUNDED (actor-
-    CAUSED + honest oracle) AND carry a NECESSARY manipulation-oracle conjunct. So a real
-    grasp (``perception_grasp`` -> ``holding_object('banana')`` weld-CAUSED) stays GROUNDED;
-    a fabricated grasp (file/scene/marker) downgrades the whole turn to RAN.
-
-    SCOPED to a manipulation world (``holding_object`` in the live oracle set, rule 3),
-    so go2-coordinate / dev / g1-detect worlds — whose goal text may incidentally contain
-    a grasp word — never see this gate. FAIL-OPEN for any goal with no grasp/pick intent.
-    """
-    if "holding_object" not in oracle_names:
-        return True
+def _manipulation_reason(
+    trace: ExecutionTrace, graded: list[StepRecord], sg_by_name: dict[str, SubGoal],
+    ev: dict[int, StepEvidence], oracle_names: frozenset[str],
+) -> str:
+    """D17/D69 manipulation gate, independent of the coordinate gate: a goal (or a
+    dispatched gripper skill) with a manipulation intent needs a GROUNDED graded step
+    that necessarily asserts its proof oracle — ``holding_object`` for a grasp /
+    fetch (``placed_count`` never proves a grasp), a placement or release for a pure
+    place. Scoped to a world with ``holding_object``."""
     from vector_os_nano.vcli.cognitive.object_goal import (
-        goal_has_object_intent,
+        goal_intents,
         has_necessary_manip_oracle,
+        proof_oracles,
     )
 
-    if not goal_has_object_intent(goal_text):
-        return True
-    return any(
-        classify_step_evidence(s, sg_by_name[s.sub_goal_name], oracle_names, goal_text) == "GROUNDED"
-        and has_necessary_manip_oracle(sg_by_name[s.sub_goal_name].verify)
-        for s in checked
+    if "holding_object" not in oracle_names:
+        return ""
+    intents = set(goal_intents(trace.goal_tree.goal)) | set(getattr(trace, "intents", ()) or ())
+    names = proof_oracles(intents)
+    if not names:
+        return ""
+    ok = any(ev[id(s)] == "GROUNDED" and has_necessary_manip_oracle(sg_by_name[s.sub_goal_name].verify, names)
+             for s in graded)
+    return "" if ok else f"a {'/'.join(sorted(intents))} goal needs an actor-caused {'/'.join(sorted(names))} step"
+
+
+def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> str:
+    """Why the turn is NOT verified, or "" when it is — the ONE done-gate.
+
+    Whole-trace rules: the trace succeeded, every step maps to a sub-goal, no foreach
+    node, and at least one graded step. Graded = the latest attempt of each attempt
+    group (``graded_indices``); every graded action succeeded.
+
+    - Every graded step must classify GROUNDED, with ONE exception: under a task
+      contract (the producer compiled one from the goal), a row the producer marked
+      ``housekeeping`` (its whole chain read-only or a declared housekeeping action:
+      a trailing stop, where_am_i) may stay RAN unless its verify FAILED — and only
+      when EVERY row of its attempt group is housekeeping and succeeded. An
+      actuating row is never exempt, and a housekeeping row that superseded one
+      (stop -> the same re-verify) must GROUND on its own, so a sub-goal the
+      contract does not cover ("... then turn left") needs its own GROUNDED step.
+    - With a contract, each predicate must also be False at turn start, True at turn
+      end, and asserted by a GROUNDED graded step.
+
+    Then the coordinate and the manipulation gates run INDEPENDENTLY (both apply
+    when both intents are present). Every rule only rejects (rule 5).
+    """
+    if not trace.success:
+        return "the turn did not succeed"
+    sg_by_name = {sg.name: sg for sg in trace.goal_tree.sub_goals}
+    if any(getattr(sg, "foreach", None) is not None for sg in trace.goal_tree.sub_goals):
+        return "a foreach plan cannot be graded step by step"
+    if any(s.sub_goal_name not in sg_by_name for s in trace.steps):
+        return "a step has no sub-goal to grade it against"
+    groups = attempt_groups(trace)
+    graded = [trace.steps[g[-1]] for g in groups]
+    if not graded:
+        return "no checked step"
+    goal_text = trace.goal_tree.goal
+    ev: dict[int, StepEvidence] = {}
+    for s, group in zip(graded, groups):
+        sg = sg_by_name[s.sub_goal_name]
+        evidence, why = _classify(s, sg, oracle_names, goal_text)
+        ev[id(s)] = evidence
+        if evidence == "FAILED":
+            return f"{s.sub_goal_name}: {why}"
+        # A housekeeping row never stands in for an attempt it superseded: exempt
+        # only when EVERY row of its group is housekeeping and succeeded.
+        exempt = bool(trace.contract) and all(
+            getattr(trace.steps[j], "housekeeping", False) is True and trace.steps[j].success
+            for j in group
+        )
+        if exempt:
+            if sg.verify and not s.verify_result:
+                return f"{s.sub_goal_name}: {why}"
+        elif evidence != "GROUNDED":
+            return f"{s.sub_goal_name}: {why}"
+    if trace.contract:
+        why = _contract_reason(trace, graded, sg_by_name, ev, oracle_names)
+        if why:
+            return why
+    return (
+        _coordinate_reason(graded, sg_by_name, ev, oracle_names, goal_text)
+        or _manipulation_reason(trace, graded, sg_by_name, ev, oracle_names)
     )
+
+
+def evidence_passed(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool:
+    """True when the turn's success is backed by deterministic evidence (see
+    ``turn_reject_reason``, the single source). *oracle_names* MUST be the live
+    ``verify_oracle_names``; an empty set fails closed (everything RAN)."""
+    return not turn_reject_reason(trace, oracle_names)
 
 
 def step_evidence_ok(

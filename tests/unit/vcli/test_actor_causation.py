@@ -26,12 +26,18 @@ from vector_os_nano.vcli.cognitive.actor_causation import (
     grade,
     is_robot_predicate,
 )
+from vector_os_nano.vcli.cognitive.oracle_registry import OracleTag
 from vector_os_nano.vcli.cognitive.trace_store import classify_step_evidence
 from vector_os_nano.vcli.cognitive.types import StepRecord, SubGoal
 
-ROBOT_ORACLES = frozenset(
-    {"at_position", "facing", "visited", "holding_object", "arm_at_home"}
-)
+# The live evidence oracles with their @oracle tags (channel / transition), as
+# trace_store.verify_oracles returns them.
+_BASE = OracleTag(scope="robot", channel="base", transition="rise")
+ROBOT_ORACLES = {
+    "at_position": _BASE, "facing": _BASE, "visited": _BASE,
+    "holding_object": OracleTag(scope="robot", channel="gripper", transition="rise"),
+    "arm_at_home": OracleTag(scope="robot", channel="arm", transition="rise"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -453,10 +459,17 @@ def test_at_position_uncaused_after_pure_turn() -> None:
 # never NOT_GRADED, which would let a pre-existing state ground for free).
 # ---------------------------------------------------------------------------
 
-_WP10 = ROBOT_ORACLES | {
-    "in_room", "near_object", "in_view", "lifted", "kept_holding", "released",
-    "object_at", "object_on", "localized",
-}
+def _sim_oracle_tags() -> dict:
+    """The WP10 GT oracles with their REAL @oracle tags (vcli/worlds/sim_oracles)."""
+    from tests.harness.fake_gt import FakeGT, fake_namespace
+    from vector_os_nano.vcli.cognitive.oracle_registry import oracle_tags
+
+    agent = SimpleNamespace(_base=_FakeBase(0.0, 0.0))
+    ns = fake_namespace(agent, "go2_piper", gt=FakeGT(agent, objects={"pickable_bottle_green": [10.9, 3.0, 0.32]}))
+    return oracle_tags(ns, "robot")
+
+
+_WP10 = {**ROBOT_ORACLES, **_sim_oracle_tags()}
 
 
 @pytest.mark.parametrize("expr", [
@@ -486,7 +499,9 @@ def test_object_on_after_a_release_is_caused() -> None:
     assert grade(before, after, "lifted('mug')", _WP10) == ActorCaused.UNCAUSED
 
 
-def test_carry_needs_base_motion_kept_holding_alone_is_uncaused() -> None:
+def test_carrying_a_pre_held_object_never_causes_kept_holding() -> None:
+    # WP07 grades EVERY channel (spine:multi-channel-first-match): the carry's base
+    # motion no longer stands in for the gripper. The mug was held before the step.
     base, grip = _FakeBase(10.0, 3.0), _FakeGripper({"mug": True})
     before = capture(_agent(base=base, gripper=grip))
     after = capture(_agent(base=base, gripper=grip))
@@ -495,7 +510,8 @@ def test_carry_needs_base_motion_kept_holding_alone_is_uncaused() -> None:
     base.teleport(8.0, 3.0)
     after = capture(_agent(base=base, gripper=grip))
     expr = "kept_holding('mug') and near_object('user', 0.8)"
-    assert grade(before, after, expr, _WP10) == ActorCaused.CAUSED
+    assert grade(before, after, expr, _WP10) == ActorCaused.UNCAUSED
+    assert grade(before, after, "near_object('user', 0.8)", _WP10) == ActorCaused.CAUSED
 
 
 def test_in_view_is_caused_by_a_turn_or_a_walk_not_by_looking() -> None:

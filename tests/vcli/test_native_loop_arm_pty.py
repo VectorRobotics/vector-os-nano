@@ -26,7 +26,7 @@ never exercised:
     the goal — ``holding_object`` (was the requested object grasped), not a base
     position/heading oracle;
   - CAUSATION: a real grasp toggles the banana's weld constraint 0->1, which
-    R2b's ``_GRIPPER_PREDICATES`` grades CAUSED via ``gripper.weld_is_active()`` (a
+    its ``@oracle(channel="gripper", transition="rise")`` tag grades CAUSED via ``gripper.weld_is_active()`` (a
     fresh weld transition this step). This is a DISTINCT causation channel from the
     base steps (commanded |cmd| + pose displacement) — the gripper-weld channel.
 

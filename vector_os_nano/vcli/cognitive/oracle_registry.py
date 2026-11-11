@@ -20,6 +20,8 @@ from typing import Any, Callable, Mapping
 
 _SCOPES = frozenset({"robot", "dev"})
 _TRANSITIONS = frozenset({"rise", "fall", "level"})
+# Return domains: a bool, a non-negative count, or a closed numeric range (lo, hi).
+_DOMAINS = frozenset({"bool", "count"})
 
 
 @dataclass(frozen=True)
@@ -27,13 +29,16 @@ class OracleTag:
     """What a tagged oracle reads. ``scope`` decides evidence membership today;
     ``channel`` / ``transition`` describe which actor state change the predicate
     measures (rise = becomes true, fall = becomes false, level = state read) for the
-    causation grader; ``max_tol`` is the cap the oracle clamps a caller tolerance to.
+    causation grader; ``max_tol`` is the cap the oracle clamps a caller tolerance to;
+    ``domain`` is the return domain ("bool", "count", a numeric ``(lo, hi)`` range, or
+    None = unbounded) the classifier uses to reject a bound vacuous over it.
     """
 
     scope: str
     channel: str = "none"
     transition: str = "level"
     max_tol: float | None = None
+    domain: Any = None
 
 
 def oracle(
@@ -42,19 +47,31 @@ def oracle(
     channel: str = "none",
     transition: str = "level",
     max_tol: float | None = None,
+    domain: Any = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Tag a verify callable as a ground-truth oracle (sets ``fn.__oracle__``)."""
     if scope not in _SCOPES:
         raise ValueError(f"oracle scope {scope!r} not in {sorted(_SCOPES)}")
     if transition not in _TRANSITIONS:
         raise ValueError(f"oracle transition {transition!r} not in {sorted(_TRANSITIONS)}")
-    tag = OracleTag(scope=scope, channel=channel, transition=transition, max_tol=max_tol)
+    if not (domain is None or domain in _DOMAINS
+            or (isinstance(domain, tuple) and len(domain) == 2 and domain[0] < domain[1])):
+        raise ValueError(f"oracle domain {domain!r}: one of {sorted(_DOMAINS)}, (lo, hi) or None")
+    tag = OracleTag(scope=scope, channel=channel, transition=transition, max_tol=max_tol,
+                    domain=domain)
 
     def mark(fn: Callable[..., Any]) -> Callable[..., Any]:
         fn.__oracle__ = tag  # type: ignore[attr-defined]
         return fn
 
     return mark
+
+
+def oracle_tags(ns: Mapping[str, Any], scope: str | None = None) -> dict[str, OracleTag]:
+    """``{name: OracleTag}`` for the evidence oracles of *ns* (same rule as
+    ``evidence_names``) — what the causation grader reads channel/transition from."""
+    names = evidence_names(ns, scope)
+    return {n: ns[n].__oracle__ for n in names}
 
 
 def evidence_names(ns: Mapping[str, Any], scope: str | None = None) -> frozenset[str]:

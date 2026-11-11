@@ -59,14 +59,14 @@ def _safe_path(path: str) -> Path | None:
         return None
 
 
-@oracle(scope="dev")
+@oracle(scope="dev", domain="bool")
 def file_exists(path: str) -> bool:
     """True if *path* (relative to cwd) exists."""
     p = _safe_path(path)
     return bool(p is not None and p.exists())
 
 
-@oracle(scope="dev")
+@oracle(scope="dev", domain="bool")
 def path_contains(path: str, substr: str) -> bool:
     """True if the text file at *path* contains *substr* (bounded read)."""
     p = _safe_path(path)
@@ -81,7 +81,7 @@ def path_contains(path: str, substr: str) -> bool:
         return False
 
 
-@oracle(scope="dev")
+@oracle(scope="dev", domain="count")
 def grep_count(pattern: str, path: str = ".") -> int:
     """Count regex *pattern* matches in text files under *path* (bounded)."""
     root = _safe_path(path)

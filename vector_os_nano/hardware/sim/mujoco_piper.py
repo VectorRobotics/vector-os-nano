@@ -324,6 +324,9 @@ class MuJoCoPiper:
         start = rt.call(lambda _m, d: [float(d.ctrl[aid]) for aid in ids])
         # R2b: the commanded ctrl displacement (sum of |target - start|).
         commanded = sum(abs(g - s) for s, g in zip(start, goal))
+        from vector_os_nano.sim.runtime import ACTOR_EPOCH
+
+        counted = ACTOR_EPOCH.active
 
         def _write(_m: Any, d: Any, v: list[float]) -> None:
             if not stop.is_set():  # checked at the step boundary: never after stop()'s hold
@@ -342,7 +345,8 @@ class MuJoCoPiper:
             rt.wait_sim(dt, cancel=stop)
 
         self._ctrl_writes += 1
-        self._ctrl_motion += commanded * done
+        if counted:  # the actor's command only inside a producer-dispatched tool
+            self._ctrl_motion += commanded * done
         if self._preempted():
             logger.info("MuJoCoPiper.move_joints: preempted at %.0f%% of the move", 100 * done)
             return False
@@ -369,7 +373,8 @@ class MuJoCoPiper:
         """Cumulative commanded ctrl-displacement magnitude (R2b actor-causation).
 
         The running sum of ``sum(|target - start|)`` written by ``move_joints`` (a
-        preempted move counts only the part it wrote). The grader compares a
+        preempted move counts only the part it wrote) — only for moves started while
+        a producer-dispatched tool runs (``sim.runtime.ACTOR_EPOCH``). The grader compares a
         baseline snapshot (before a step) with a post snapshot (after) and treats a
         delta >= ``MOTION_EPS`` as "the actor commanded arm motion". A move_joints
         to the current pose adds zero. Monotonically non-decreasing.

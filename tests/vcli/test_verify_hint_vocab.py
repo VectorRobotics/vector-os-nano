@@ -9,7 +9,7 @@ PASSES the decompose validator — never model behaviour:
 
   1. ``Skill.to_schemas()`` surfaces each arm skill's declared ``verify_hint``
      (pick -> holding_object(), home -> arm_at_home(), detect ->
-     len(detect_objects()) > 0, place -> not holding_object()).
+     len(detect_objects()) > 0, place -> released()).
   2. ``build_decompose_vocab`` derives, world-agnostically:
        - per-strategy ``suggested verify:`` lines in strategy_params_help,
        - a few-shot example whose verify expression IS a skill's verify_hint,

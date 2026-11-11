@@ -15,6 +15,7 @@ Public exports:
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -925,7 +926,7 @@ class VectorEngine:
             ns["get_position"] = oracle(scope="robot", channel="base")(
                 lambda: tuple(base.get_position())
             )
-            ns["get_heading"] = oracle(scope="robot", channel="base")(
+            ns["get_heading"] = oracle(scope="robot", channel="base", domain=(-math.pi, math.pi))(
                 lambda: base.get_heading()
             )
         if sg:
@@ -1193,8 +1194,21 @@ class VectorEngine:
     @staticmethod
     def _verify_for_skill(skill_name: str, arg: str) -> str:
         """Generate a verify expression for a known skill."""
+        if skill_name == "navigate" and arg:
+            # A GT arrival at the room's layout point (nearest_room is the actor's own
+            # memory: never evidence). The tol keeps the arrival disc inside the
+            # room's floor box (a robot in the next room never passes), at the cap.
+            from vector_os_nano.sim.nav.coverage import room_layout
+            from vector_os_nano.vcli.cognitive.coord_goal import _MAX_ARRIVAL_TOL_M
+
+            layout = room_layout()
+            xy, box = layout["rooms"].get(arg), layout["boxes"].get(arg)
+            if not xy or not box:
+                return "True"
+            inset = min(xy[0] - box[0], box[2] - xy[0], xy[1] - box[1], box[3] - xy[1])
+            return f"at_position({xy[0]}, {xy[1]}, {math.floor(min(inset, _MAX_ARRIVAL_TOL_M) * 100) / 100})"
         _VERIFY_MAP: dict[str, str] = {
-            "navigate": "nearest_room() == '{arg}'" if arg else "True",
+            "navigate": "True",
             "explore": "True",  # async skill — launched = success, progress via events
             "patrol": "True",   # async skill — launched = success
             "look": "len(describe_scene()) > 0",

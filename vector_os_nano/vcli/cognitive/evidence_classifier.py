@@ -16,9 +16,13 @@ The grammar is an ALLOWLIST — anything not listed is RAN:
 - ``<term> <op> <literal>`` (either order, one comparison) where *term* is a STATE
   oracle call, an index of one (``get_position()[0]``) or ``len()`` of one, and op is
   ``==`` or an ordering against a number — except the vacuous lower bounds
-  ``>= c`` (c <= 0) / ``> c`` (c < 0) that every count satisfies;
+  ``>= c`` (c <= 0) / ``> c`` (c < 0) that every count satisfies, any compare a
+  COUNT (``len()`` or a count oracle) satisfies at its fail-safe 0
+  (``len(detect_objects()) < 1000``, ``placed_count() <= 1e9``), and any bound that
+  holds over a ranged oracle's whole domain (``get_heading() < 100``);
 - ``'<non-empty literal>' in <state oracle call>``;
-- ``and`` / ``or`` of grounded parts.
+- ``and`` / ``or`` of grounded parts — except a disjunction of ``facing`` arcs whose
+  union is the whole circle (true at every heading).
 
 Rejected by construction: value-absorbing wrappers (``|``, ``*0``, ``max``/``min``/
 ``abs``/``bool``…), ``is`` / ``is not``, ``!=``, ``not in``, ``not``, a bool predicate
@@ -36,6 +40,7 @@ metadata.
 from __future__ import annotations
 
 import ast
+import math
 from typing import Literal
 
 from vector_os_nano.vcli.cognitive.coord_goal import (
@@ -77,8 +82,14 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
 # on a bool is a tautology or a negation), and it is never a state term.
 # Every ``@oracle``-tagged ``-> bool`` callable MUST be here, else it gets the looser
 # state rules; test_spine_moat_corpus scans the tags and fails on drift.
-# ponytail: kernel lists until the @oracle tag grows a return kind.
+# ponytail: these lists copy the @oracle(domain=...) tags because the classifier gets
+# only names, not the live OracleTags; test_spine_moat_corpus pins tag == list. Read
+# the tags directly once classify_verify_expr takes the oracle dict.
 _BOOL_ORACLES: frozenset[str] = _PREDICATE_ORACLES
+# Return domains of the non-bool oracles (``@oracle(domain=...)``; test_spine_moat_corpus
+# pins tag == table). A count is >= 0 and 0 is its fail-safe value; a range is closed.
+_COUNT_ORACLES: frozenset[str] = frozenset({"grep_count"})
+_RANGE_ORACLES: dict[str, tuple[float, float]] = {"get_heading": (-math.pi, math.pi)}
 
 # Tolerance-taking predicates: positional index of ``tol`` and its cap (the cap the
 # oracle clamps to = its ``@oracle(max_tol=...)``). A literal tol above the cap, or a
@@ -170,6 +181,22 @@ def _state_term(node: ast.AST, oracle_names: frozenset[str]) -> bool:
     )
 
 
+def _term_domain(node: ast.AST, oracle_names: frozenset[str]) -> object:
+    """``"count"`` for ``len(<state>)`` or a count oracle, the ``(lo, hi)`` of a ranged
+    oracle, else None (unbounded / unknown)."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len":
+        return "count"
+    name = _oracle_call(node, oracle_names)
+    if name in _COUNT_ORACLES:
+        return "count"
+    return _RANGE_ORACLES.get(name or "")
+
+
+def _holds(op: ast.cmpop, value: float, bound: float) -> bool:
+    return {ast.Eq: value == bound, ast.Lt: value < bound, ast.LtE: value <= bound,
+            ast.Gt: value > bound, ast.GtE: value >= bound}[type(op)]
+
+
 def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
     if len(node.ops) != 1:
         return False  # chained compares
@@ -195,9 +222,15 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
         return isinstance(op, ast.Eq) and isinstance(right, ast.Constant) and right.value is True
     if not _state_term(left, oracle_names):
         return False
+    bound = _number(right)
+    domain = _term_domain(left, oracle_names)
+    if domain == "count" and bound is not None and _holds(op, 0.0, bound):
+        return False  # the fail-safe 0 satisfies it: an upper bound / `== 0` proves nothing
+    if isinstance(domain, tuple) and bound is not None and not isinstance(op, ast.Eq) \
+            and _holds(op, domain[0], bound) and _holds(op, domain[1], bound):
+        return False  # true over the oracle's whole domain
     if isinstance(op, ast.Eq):
         return True
-    bound = _number(right)
     if bound is None:
         return False  # an ordering against a non-number
     if isinstance(op, ast.GtE) and bound <= 0 or isinstance(op, ast.Gt) and bound < 0:
@@ -205,10 +238,44 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
     return True
 
 
+def _disjuncts(node: ast.AST) -> list[ast.AST]:
+    """The leaves of a (possibly parenthesised) ``or`` chain."""
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+        return [d for v in node.values for d in _disjuncts(v)]
+    return [node]
+
+
+def _facing_covers_circle(values: list[ast.AST], oracle_names: frozenset[str]) -> bool:
+    """True iff the ``facing(h, tol)`` disjuncts' arcs cover every heading (FG-3:
+    ``facing(0) or facing(1.57) or ...``). A missing tol counts as the cap."""
+    arcs = []
+    for v in values:
+        if _oracle_call(v, oracle_names) != "facing":
+            continue
+        kw = {k.arg: k.value for k in v.keywords}  # type: ignore[attr-defined]
+        h_node = v.args[0] if v.args else kw.get("heading")  # type: ignore[attr-defined]
+        t_node = v.args[1] if len(v.args) > 1 else kw.get("tol")  # type: ignore[attr-defined]
+        h = _number(h_node) if h_node is not None else None
+        tol = _number(t_node) if t_node is not None else _MAX_FACING_TOL_RAD
+        if h is None or tol is None:
+            continue
+        lo = (h - tol) % (2 * math.pi)
+        arcs += [(lo, lo + 2 * tol)] if lo + 2 * tol <= 2 * math.pi else \
+            [(lo, 2 * math.pi), (0.0, lo + 2 * tol - 2 * math.pi)]
+    reach = 0.0
+    for a, b in sorted(arcs):
+        if a > reach:
+            return False
+        reach = max(reach, b)
+    return reach >= 2 * math.pi
+
+
 def _is_grounded_node(node: ast.AST, oracle_names: frozenset[str]) -> bool:
     """True iff *node*'s truth is decided by an oracle value against an author
     literal, with nothing that can absorb or invert it (see the module grammar)."""
     if isinstance(node, ast.BoolOp):
+        if isinstance(node.op, ast.Or) and _facing_covers_circle(_disjuncts(node), oracle_names):
+            return False
         return bool(node.values) and all(_is_grounded_node(v, oracle_names) for v in node.values)
     if isinstance(node, ast.Compare):
         return _grounded_compare(node, oracle_names)

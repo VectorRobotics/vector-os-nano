@@ -74,8 +74,9 @@ class PlaceSkill:
     # for a retry or a slow IK solve. GoalExecutor floors the step timeout at this value
     # (R2-2) so a completed place is never falsely marked timeout under a live viewer.
     typical_duration_sec: float = 45.0
-    # Success predicate this skill is verified against (single-source for the planner).
-    # A place RELEASES the held object, so the gripper ends empty: released() is GT
+    # Success predicate this skill is verified against (single-source for the planner,
+    # auto-verified by the native runner). A place RELEASES the held object, so the
+    # gripper ends empty: released() is GT
     # (no weld active) and grades CAUSED only by a release this step.
     verify_hint: str = "released()"
     failure_modes: list[str] = ["no_arm", "ik_unreachable", "move_failed"]

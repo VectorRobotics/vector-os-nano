@@ -114,6 +114,7 @@ class MobilePlaceSkill:
     """
 
     name: str = "mobile_place"
+    verify_hint: str = "released()"
     description: str = (
         "Walk the dog to a reachable pose near a target location / receptacle, "
         "then release the held object with a top-down drop. (source: world_model)"

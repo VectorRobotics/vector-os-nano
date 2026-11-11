@@ -204,6 +204,21 @@ class StepRecord:
     # byte-unaffected (rule 6). Stored as the ENUM (serialized via its ``.value``).
     # Additive + LAST + defaulted ``NOT_GRADED`` (frozen-safe).
     actor_caused: "ActorCaused" = field(default_factory=lambda: ActorCaused.NOT_GRADED)
+    # WP07 attempt semantics (additive, rule 6). ``attempt_of`` opts the step into an
+    # attempt group: steps with the same ``attempt_of`` AND the same normalized verify
+    # are attempts at one sub-goal, and only the LATEST is graded (the spine computes
+    # this itself — ``trace_store.graded_steps``; "" = its own group, never
+    # superseded). ``superseded`` is that computation recorded for display/audit (a
+    # FAIL row stays in the trace). ``channels`` is the per-call causation detail
+    # (``"base:at_position:CAUSED"``, ``"auto-verify"``) for the audit row.
+    attempt_of: str = ""
+    superseded: bool = False
+    channels: tuple[str, ...] = ()
+    # The producer recorded that every tool of the step's chain was read-only or a
+    # declared housekeeping action (``stop``). Only such a row may stay un-GROUNDED
+    # under a met task contract, and only when its whole attempt group is housekeeping;
+    # the default (False) is an actuating row (fail closed).
+    housekeeping: bool = False
 
 
 @dataclass(frozen=True)
@@ -226,3 +241,13 @@ class ExecutionTrace:
     model: str = ""
     refused: tuple[str, ...] = ()
     cancelled: bool = False
+    # WP07 turn-level task contract (additive): the GT predicates the NL goal compiles
+    # to (``object_goal.task_contract``) and their values at turn start / turn end.
+    # Each must be False at the start (else "already satisfied", never GROUNDED) and
+    # True at the end. ``intents`` adds manipulation intents the producer derived from
+    # the skills it dispatched ("grasp" / "place") to the ones the goal text names.
+    contract: tuple[str, ...] = ()
+    contract_start: tuple[bool, ...] = ()
+    contract_end: tuple[bool, ...] = ()
+    intents: tuple[str, ...] = ()
+    scene: str = ""  # the sim the turn ran in ("go2_piper@go2_room"), display only
