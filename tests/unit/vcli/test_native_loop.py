@@ -758,8 +758,11 @@ class _NavBase(_FakeBase):
         return True
 
 
+_CAN = "pickable_can_red"  # the manifest binds "红色的罐子" / "red can" to it
+
+
 class _HeldArm:
-    """An arm whose one object 'can' rises to the EE once grasped."""
+    """An arm whose one object, the apartment's red can, rises to the EE once grasped."""
 
     _connected = True
 
@@ -767,7 +770,7 @@ class _HeldArm:
         self.held = False
 
     def get_object_positions(self):
-        return {"can": [0.0, 0.0, 0.3] if self.held else [0.6, 0.6, 0.02]}
+        return {_CAN: [0.0, 0.0, 0.3] if self.held else [0.6, 0.6, 0.02]}
 
     def get_joint_positions(self):
         return [0.0] * 6
@@ -784,7 +787,7 @@ class _WeldGripper:
         return self._arm.held
 
     def weld_is_active(self) -> dict:
-        return {"can": self._arm.held}
+        return {_CAN: self._arm.held}
 
 
 class _Skill:
@@ -822,7 +825,7 @@ def _make_arm_agent(*skills_fn):
 
 
 def _grasp(arm):
-    return _Skill("grasp_fake", lambda: setattr(arm, "held", True), verify_hint="holding_object()")
+    return _Skill("grasp_fake", lambda: setattr(arm, "held", True), verify_hint="holding_object({object})")
 
 
 def _stop(arm):
@@ -845,55 +848,55 @@ def test_reverify_after_a_housekeeping_action_is_graded_against_the_group_baseli
     verify holding. The second verify is an attempt of the same sub-goal, graded
     against the baseline before the grasp, so it is CAUSED and the turn verifies."""
     backend = FakeToolScriptBackend.from_tool_script([
-        tool_turn(("grasp_fake", {"object": "can"})),
-        tool_turn(("verify", {"expr": "holding_object('can')"})),
+        tool_turn(("grasp_fake", {"object": "red can"})),
+        tool_turn(("verify", {"expr": "holding_object('red can')"})),
         tool_turn(("stop", {})),
-        tool_turn(("verify", {"expr": "holding_object('can')"})),
+        tool_turn(("verify", {"expr": "holding_object('red can')"})),
         tool_turn(("finish", {})),
     ])
     agent, _arm = _make_arm_agent(_grasp, _stop)
     eng = _make_engine(agent, backend)
-    trace = eng.run_turn_native("拿起那个罐子", session=_session())
-    assert trace.contract == ("holding_object()",)
+    trace = eng.run_turn_native("拿起红色的罐子", session=_session())
+    assert trace.contract == (f"holding_object('{_CAN}')",)
     assert (trace.contract_start, trace.contract_end) == ((False,), (True,))
     assert [s.superseded for s in trace.steps] == [True, False]
     assert trace.steps[1].actor_caused is ActorCaused.CAUSED
     assert trace.intents == ("grasp",)  # a dispatched gripper skill is a manipulation
     report = _verdict(agent, eng, trace)
     assert report.verified is True, report.reject_reason
-    assert report.contract == ("holding_object()",)
+    assert report.contract == (f"holding_object('{_CAN}')",)
 
 
 def test_auto_post_verify_proves_an_action_the_model_did_not_verify() -> None:
     """Graft (c): the skill's verify_hint runs right after it; the finish is accepted
     without a nudge and the auto-verify is the step's GROUNDED, CAUSED evidence."""
     backend = FakeToolScriptBackend.from_tool_script([
-        tool_turn(("grasp_fake", {"object": "can"})),
+        tool_turn(("grasp_fake", {"object": "red can"})),
         tool_turn(("finish", {})),
     ])
     agent, _arm = _make_arm_agent(_grasp)
     eng = _make_engine(agent, backend)
     session = _session()
-    trace = eng.run_turn_native("拿起那个罐子", session=session)
+    trace = eng.run_turn_native("拿起红色的罐子", session=session)
     (step,) = trace.steps
-    assert trace.goal_tree.sub_goals[0].verify == "holding_object()"
+    assert trace.goal_tree.sub_goals[0].verify == "holding_object('red can')"
     assert step.channels[0] == "auto-verify" and step.actor_caused is ActorCaused.CAUSED
     assert _verdict(agent, eng, trace).verified is True
-    assert any("auto-verify holding_object() -> PASS" in r for r in _tool_results(session))
+    assert any("auto-verify holding_object('red can') -> PASS" in r for r in _tool_results(session))
 
 
 def test_a_model_verify_takes_the_place_of_the_auto_verify() -> None:
     backend = FakeToolScriptBackend.from_tool_script([
-        tool_turn(("grasp_fake", {"object": "can"})),
-        tool_turn(("verify", {"expr": "holding_object('can')"})),
+        tool_turn(("grasp_fake", {"object": "red can"})),
+        tool_turn(("verify", {"expr": "holding_object('red can')"})),
         tool_turn(("finish", {})),
     ])
     agent, _arm = _make_arm_agent(_grasp)
     eng = _make_engine(agent, backend)
-    trace = eng.run_turn_native("拿起那个罐子", session=_session())
+    trace = eng.run_turn_native("拿起红色的罐子", session=_session())
     (step,) = trace.steps
-    assert trace.goal_tree.sub_goals[0].verify == "holding_object('can')"
-    assert step.result_data["auto_verify"] == {"expr": "holding_object()", "result": True}
+    assert trace.goal_tree.sub_goals[0].verify == "holding_object('red can')"
+    assert step.result_data["auto_verify"] == {"expr": "holding_object('red can')", "result": True}
 
 
 def _probe_script():
@@ -934,14 +937,14 @@ def test_mutation_probe_refusal(monkeypatch) -> None:
 def test_a_failed_skill_is_recorded_with_its_message() -> None:
     """producers:native-step-collapses-result: the ToolResult is kept (rule 4)."""
     backend = FakeToolScriptBackend.from_tool_script([
-        tool_turn(("grasp_fake", {"object": "can"})),
-        tool_turn(("verify", {"expr": "holding_object('can')"})),
+        tool_turn(("grasp_fake", {"object": "red can"})),
+        tool_turn(("verify", {"expr": "holding_object('red can')"})),
         tool_turn(("finish", {})),
     ])
     agent, _arm = _make_arm_agent(
         lambda arm: _Skill("grasp_fake", lambda: None, "holding_object()", fail="ik_unreachable"))
     eng = _make_engine(agent, backend)
-    trace = eng.run_turn_native("拿起那个罐子", session=_session())
+    trace = eng.run_turn_native("拿起红色的罐子", session=_session())
     (step,) = trace.steps
     assert step.success is False and "ik_unreachable" in step.error
     assert step.result_data["is_error"] is True and "ik_unreachable" in step.result_data["content"]
@@ -992,13 +995,13 @@ def test_an_auto_verified_step_keeps_its_own_result_after_a_failed_read() -> Non
         return read
 
     backend = FakeToolScriptBackend.from_tool_script([
-        tool_turn(("grasp_fake", {"object": "can"})),
+        tool_turn(("grasp_fake", {"object": "red can"})),
         tool_turn(("look_fake", {})),
         tool_turn(("finish", {})),
     ])
     agent, _arm = _make_arm_agent(_grasp, _broken_read)
     eng = _make_engine(agent, backend)
-    trace = eng.run_turn_native("拿起那个罐子", session=_session())
+    trace = eng.run_turn_native("拿起红色的罐子", session=_session())
     (step,) = trace.steps
     assert step.success is True and step.result_data["tool"] == "grasp_fake"
     assert step.strategy == "grasp_fake"
