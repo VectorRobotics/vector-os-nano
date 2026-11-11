@@ -25,6 +25,7 @@ progress.md
 MUJOCO_LOG.TXT
 mjmodel.mjb
 *.npz
+!/tests/hardware/sim/golden/*.npz
 *.ply
 /lib/
 
