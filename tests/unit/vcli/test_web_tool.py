@@ -228,3 +228,24 @@ def test_total_time_is_capped_for_dripped_headers_and_chunk_lines(
     res = _fetch(server + route)
     assert res.is_error and "timed out" in res.content, res.content
     assert time.monotonic() - t0 < 3.0
+
+
+def test_total_time_is_capped_when_it_expires_during_connect(
+    server: str, server_is_public: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deadline fires while the TCP connect is still running (a delayed SYN-ACK),
+    before there is a socket to shut down; the header drip after it must not run on."""
+    import time
+
+    real_connect = socket.create_connection
+
+    def slow_connect(*a: Any, **kw: Any) -> socket.socket:
+        time.sleep(1.2)  # past the 1.0 s cap
+        return real_connect(*a, **kw)
+
+    monkeypatch.setattr(web_tool, "_TOTAL_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(web_tool.socket, "create_connection", slow_connect)
+    t0 = time.monotonic()
+    res = _fetch(server + "/drip-hdr")
+    assert res.is_error and "timed out" in res.content, res.content
+    assert time.monotonic() - t0 < 3.0

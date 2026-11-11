@@ -86,25 +86,40 @@ def _public_address(host: str, port: int) -> str:
     return str(infos[0][4][0])
 
 
+def _expose(conn: Any, sock: socket.socket) -> socket.socket:
+    """Hand *sock* to the deadline timer (raw_sock); if the deadline already passed
+    while there was nothing to shut down (inside connect), stop here."""
+    conn.raw_sock = sock
+    if conn.expired.is_set():
+        raise TimeoutError
+    return sock
+
+
 class _PinnedHTTPConnection(http.client.HTTPConnection):
     """Connects to the pre-checked address while keeping the URL's Host header."""
 
-    def __init__(self, host: str, port: int, ip: str, timeout: float) -> None:
+    def __init__(self, host: str, port: int, ip: str, timeout: float,
+                 expired: threading.Event) -> None:
         super().__init__(host, port, timeout=timeout)
-        self._ip = ip
+        self._ip, self.expired = ip, expired
 
     def connect(self) -> None:
-        self.sock = self.raw_sock = socket.create_connection((self._ip, self.port), self.timeout)
+        self.sock = _expose(self, socket.create_connection((self._ip, self.port), self.timeout))
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    def __init__(self, host: str, port: int, ip: str, timeout: float) -> None:
+    def __init__(self, host: str, port: int, ip: str, timeout: float,
+                 expired: threading.Event) -> None:
         super().__init__(host, port, timeout=timeout, context=ssl.create_default_context())
-        self._ip = ip
+        self._ip, self.expired = ip, expired
 
     def connect(self) -> None:
-        sock = socket.create_connection((self._ip, self.port), self.timeout)
-        self.sock = self.raw_sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        sock = _expose(self, socket.create_connection((self._ip, self.port), self.timeout))
+        # Handshake after exposing the TLS socket, so a shutdown at the deadline aborts it.
+        tls = self._context.wrap_socket(sock, server_hostname=self.host,
+                                        do_handshake_on_connect=False)
+        self.sock = _expose(self, tls)
+        tls.do_handshake()
 
 
 def _fetch(url: str) -> tuple[bytes, bool]:
@@ -122,10 +137,10 @@ def _fetch(url: str) -> tuple[bytes, bool]:
         if remaining <= 0:
             raise TimeoutError
         cls = _PinnedHTTPSConnection if parts.scheme == "https" else _PinnedHTTPConnection
-        conn = cls(parts.hostname, port, ip, timeout=remaining)
         # The socket timeout is per recv; a server dripping header or chunk-size bytes
         # keeps every recv short. The deadline is enforced by shutting the socket down.
         expired = threading.Event()
+        conn = cls(parts.hostname, port, ip, timeout=remaining, expired=expired)
 
         def _expire(conn: http.client.HTTPConnection = conn) -> None:
             expired.set()
