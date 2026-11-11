@@ -28,15 +28,22 @@ def fetch_command(embodiment_id: str) -> str:
     return f"python scripts/fetch_assets.py {embodiment_id}"
 
 
-def problems(spec: AssetsSpec, folder: Path) -> list[str]:
-    """Every file of *spec* that is missing from *folder* or fails its sha256."""
-    out = []
+MISSING, MISMATCH = "missing", "does not match its pinned sha256"
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def problems(spec: AssetsSpec, folder: Path) -> dict[str, str]:
+    """``{file: MISSING | MISMATCH}`` for every file of *spec* not verified in *folder*."""
+    out = {}
     for rel, digest in spec.sha256.items():
         path = folder / rel
         if not path.is_file():
-            out.append(f"{rel} missing")
-        elif hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-            out.append(f"{rel} does not match its pinned sha256")
+            out[rel] = MISSING
+        elif sha256(path) != digest:
+            out[rel] = MISMATCH
     return out
 
 
@@ -52,9 +59,10 @@ def asset_dir(cfg: EmbodimentConfig) -> Path:
     folder = fetched_dir(cfg.assets)
     bad = problems(cfg.assets, folder)
     if bad:
+        rel, why = next(iter(bad.items()))
         more = f" and {len(bad) - 1} more" if len(bad) > 1 else ""
         raise AssetsMissing(
             f"{cfg.id} cannot start: its model and policy are not shipped and {folder} "
-            f"does not hold them ({bad[0]}{more}); fetch them with: {fetch_command(cfg.id)}"
+            f"does not hold them ({rel} {why}{more}); fetch them with: {fetch_command(cfg.id)}"
         )
     return folder
