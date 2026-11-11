@@ -107,7 +107,7 @@ ray-based clearance would have graded a resting object as lifted (so the AABB ru
   deliver and place-on-surface; G1 stand / walk / navigate; stop + Ctrl-C; MCP stdio smoke; slash
   commands.
 - **A3 honest** — 0 false GROUNDED: moat corpus (vacuous compares, verify probes) green; the
-  independent `tools/gt_grade.py` audit over the e2e tier reports none, on both backends.
+  independent `scripts/gt_grade.py` audit over the e2e tier reports none, on both backends.
 - **A4 one of everything** — one producer, one runtime builder (REPL / `-p` / MCP), one session
   path, one grasp + one place for the mobile arm, one GroundTruth, one driver per morphology class.
 - **A5 cross-sim** — the conformance suite is green on MuJoCo and PyBullet; body poses agree to
@@ -139,20 +139,21 @@ ray-based clearance would have graded a resting object as lifted (so the AABB ru
 |---|---|---|---|
 | I1 | 1 | fast-forward `wave4j-int2` (3 gate reds) | merged f3f1276, verified (sim 10/10, E5 + E10 green) |
 | I23 | 1 | merge `wave3-wp11` (perception + memory) and `wave3-wp14` (native persona / context / lifecycle) | merged f07070a; verified round 2 (hermetic 231/231, sim 51/51, e2e 11/11); 52 ledger rows closed |
-| I4 | 1 | land `wave2-wp07` (spine S2) + bind the task contract to the manifest + close the probe hole + vacuous-compare corpus | running |
-| R3 | 1 | tool security: `rg` argv, resolved-path guard + credential deny-list, `web_fetch` asks + redirect checks | 5 verification rounds each found a new bypass in the dev-oracle directory walk and the home-relative credential roots; coordinator decision: shrink the surface (file-only dev oracles, credential names matched by path component anywhere, `is_global` addresses) — R3c running |
-| S2 | 1b | the contract, standalone, on both engines (new files only): `interfaces/`, `sim/scene/{reader, canonical}`, `sim/backends/{mujoco, pybullet}/world.py`, `tests/conformance/` (kinematic + inertial parity, every binding sentence, oracle-parity battery, go2 walking on PyBullet) | implemented (95 conformance tests green on both engines; parity ≤ 9.4e-7 m); verifier's mutation tests found 5 weak tests, fix round 1 running |
+| I4 | 1 | land `wave2-wp07` (spine S2) + bind the task contract to the manifest + close the probe hole + vacuous-compare corpus | implemented; all three tiers green; 3 verification rounds each found a manipulation goal that grounds without the task (last: a place whose destination the manifest cannot resolve decays to `released`); coordinator decision: the binding fails closed by default (a place compiles `released` only for a pure release) — I4c running |
+| R3 | 1 | tool security: `rg` argv, ONE resolved-path guard (credential names refused by path component anywhere, project-root auto-allow, else ask), `bash` in its own process group, `web_fetch` asks + every hop public + capped, dev verify oracles read one regular file per call (no directory walk) | merged 2eeb6c6 after the surface was shrunk (R3c); verified; post-merge hermetic 234/234, sim 51/51, e2e 10/11 (the E10 carry scenario alternates: a fixed 1.2 m walk leaves 0.1 m of margin; the I4 branch replaces it); 9 ledger rows closed; 5 minor follow-ups → R8a |
+| S2 | 1b | the contract, standalone, on both engines (new files only): `interfaces/`, `sim/scene/{reader, canonical}`, `sim/backends/{mujoco, pybullet}/world.py`, `tests/conformance/` (kinematic + inertial parity, every binding sentence, oracle-parity battery, go2 walking on PyBullet) | implemented (conformance green on both engines; parity ≤ 9.4e-7 m); verification rounds 1–2 found weak tests and a contact-threshold gap on MuJoCo (closed with a probe copy); fix round 2 in verification |
 | R1 | 2 | ONE producer: delete the legacy producer + IntentRouter + primitives + playground + `vector-eval` + their tests | open |
-| R2 | 2 | skills hygiene: no auto-appended home (it drops a held object), dead skills deleted (mobile_pick / mobile_place / place_region / terminal_dock / the ROS door-chain), coordinate navigation succeeds only on the planner's result, a named grasp fails loud without its detector, SO-101 defaults no longer registered on other bodies | open |
+| R2 | 2 | skills hygiene: no auto-appended home (it drops a held object), dead skills deleted (mobile_pick / mobile_place / place_region / terminal_dock / the ROS door-chain), coordinate navigation succeeds only on the planner's result, a named grasp fails loud without its detector, SO-101 defaults no longer registered on other bodies | open (same lane as R1, after it) |
 | S1 | 2 | MuJoCo runs on the contract: golden traces first; `SimRuntime` over `PhysicsWorld`; `fn(model, data)` → `fn(world)`; `sim/grasp.py`; the one `GroundTruth` | open |
+| R8a | 2 | periphery sweep (independent of the rest): `tools/` deleted (`gt_grade` → `scripts/`), dead scripts, `.mcp.json`, the dead ROS runtime and diagnostics tools, machine paths and kill-by-name, `.gitignore` anchoring, the `[dev]` extra, a throwaway HOME for every gate tier, test hygiene + `known_reds`, NOTICE, a hermetic CI workflow + a fresh-clone attempt, the tool-security follow-ups | running |
 | S3 | 3 | generic Arm / Gripper / Camera; the `piper` body on both backends; go2_piper's arm moved over; SO-101 on the generic drivers (or the documented fallback); no ground truth through any actor-side method | open |
 | R5 | 3 | split `cli.py`; ONE `build_runtime`; slash-command table; explicit credentials (no borrowed OAuth) | open |
 | S4 | 4 | generic LeggedBase + policies (convex_mpc, torchscript, sinusoidal); go2 on both backends; G1 on MuJoCo with skills + causation; posture persistence | open |
-| R4 | 4 | fetch closure: one place skill for the mobile arm, carry, deliver; e2e fetch + place | open |
+| R4 | 4 | manipulation closure: ONE grasp + ONE place for every arm on the generic drivers (the SO-101 and Piper skill families become one pack), carry, deliver, one object store (`WorldModel` deleted); e2e fetch + place | open |
 | R6 | 4 | MCP server on `build_runtime` + native producer; SDK 2.x; stdio / loopback; verdict returned | open |
 | S5 | 5 | session × backend × embodiment × world: NL selection with honest errors, the one scene compile, `compose:`, capability-bound skill packs + derived persona, a robot added by manifest only | open |
 | C1 | 5 | config + file interfaces: `schemas/` (robot, world, user, env, paths), `$VECTOR_HOME`, robot and world folders, asset fetch script, perception weight provisioning | open |
-| R8 | 5 | packaging + hygiene: pyproject (`[pybullet]` extra), `.gitignore`, dead periphery, NOTICE, gate honesty, CI, the layering ratchet at zero | open |
+| R8 | 5 | final packaging: wheel contents, `config/` and the external-navigation files into the package, extras layout, real-hardware extra, the layering ratchet at zero | open |
 | R9 | 6 | docs: README, getting-started, ARCHITECTURE, STATUS, DECISIONS, add-a-simulator / add-a-robot guides, CHANGELOG, version | open |
 | DC | 6 | dead-code and structure sweep: static reachability, unused functions, duplicate helpers, the 800-line rule, stale tests | open |
 | REL | 6 | final acceptance A1–A11, adversarial review of the whole diff, tag `v1.0.0` (local) | open |
