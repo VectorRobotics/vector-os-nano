@@ -5,7 +5,7 @@
 
 No sim, no nav stack — a real SceneGraph (the object position source of truth)
 plus a fake base that records navigate_to calls. The real-sim e2e is covered by
-tools/verify_localize_scenegraph.py + the bare-cli fetch flow.
+tests/e2e_repl/test_e11_perception_memory.py + the bare-cli fetch flow.
 """
 from __future__ import annotations
 
