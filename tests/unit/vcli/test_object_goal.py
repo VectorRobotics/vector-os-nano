@@ -68,7 +68,7 @@ _DEV_ORACLES = frozenset({"file_exists", "path_contains"})
         (None, False),
     ],
 )
-def test_goal_has_object_intent(goal, expected) -> None:
+def test_goal_intents_name_a_manipulation(goal, expected) -> None:
     assert bool(goal_intents(goal)) is expected
 
 
