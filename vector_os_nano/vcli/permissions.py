@@ -15,7 +15,9 @@ Check order (mirrors Claude Code's hasPermissionsToUseTool):
        --no-permission may override)
     4. Tool check_permissions() returning "allow" → allow
     5. Session always-allow → allow
-    6. Read-only auto-allow
+    6. Read-only auto-allow — only for a tool WITHOUT its own check_permissions();
+       a tool's explicit "ask" (e.g. a read outside the project root) is never
+       overridden by its read-only flag
     7. Tool check_permissions() returning "ask" → ask
     8. Default             → ask
 """
@@ -97,8 +99,8 @@ class PermissionContext:
         if tool_name in self.session_allow:
             return PermissionResult("allow")
 
-        # 6. Read-only auto-allow
-        if hasattr(tool, "is_read_only") and tool.is_read_only(params):
+        # 6. Read-only auto-allow — never over the tool's own explicit "ask".
+        if tool_perm is None and hasattr(tool, "is_read_only") and tool.is_read_only(params):
             return PermissionResult("allow")
 
         # 7. Propagate tool-specific "ask" (reuse result from step 2)

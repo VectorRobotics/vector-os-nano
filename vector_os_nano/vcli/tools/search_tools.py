@@ -3,7 +3,8 @@
 
 """vcli search tools — GlobTool and GrepTool for the agentic harness.
 
-Both tools are read-only and concurrency-safe.
+Both tools are read-only; a call inside the project needs no prompt and is concurrency-safe,
+anything else asks (see file_tools.read_permission) and runs alone.
 
 GlobTool: find files matching a glob pattern using pathlib, sorted by mtime (newest first).
 GrepTool: search file contents via ripgrep (rg) with Python re fallback.
@@ -16,7 +17,23 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, tool
+from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, tool
+from vector_os_nano.vcli.tools.file_tools import _within, is_protected, read_permission, real_path
+
+
+def _search_root(params: dict[str, Any], context: ToolContext) -> Path:
+    return real_path(str(params.get("path") or context.cwd), context.cwd)
+
+
+def _needs_no_prompt(params: dict[str, Any]) -> bool:
+    return read_permission(str(params.get("path") or "."), None).behavior == "allow"
+
+
+def _readable(path: str | Path, root: Path) -> bool:
+    """A file found under *root* may be read: not protected, and its real path
+    stays inside the root the permission was granted for (no symlink escape)."""
+    real = Path(os.path.realpath(path))
+    return not is_protected(real) and _within(real, root)
 
 
 # ---------------------------------------------------------------------------
@@ -39,12 +56,23 @@ class GlobTool:
     }
 
     def is_concurrency_safe(self, params: dict[str, Any]) -> bool:  # noqa: D401
-        return True
+        # Only a call that needs no prompt may run in a parallel batch (prompts from
+        # several threads at once would interleave on the terminal).
+        return _needs_no_prompt(params)
+
+    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
+        return read_permission(str(params.get("path") or context.cwd), context)
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         pattern: str = params["pattern"]
-        search_path = Path(params.get("path", str(context.cwd)))
+        search_path = _search_root(params, context)
         limit: int = int(params.get("limit", 200))
+
+        if is_protected(search_path):
+            return ToolResult(content=f"Access denied: {search_path} is a protected path.", is_error=True)
+        # The pattern must not climb out of the approved root ("../../.ssh/*").
+        if ".." in Path(pattern).parts:
+            return ToolResult(content="Error: '..' is not allowed in a glob pattern; set path instead.", is_error=True)
 
         try:
             matches = list(search_path.glob(pattern))
@@ -86,12 +114,20 @@ class GrepTool:
     }
 
     def is_concurrency_safe(self, params: dict[str, Any]) -> bool:  # noqa: D401
-        return True
+        # Only a call that needs no prompt may run in a parallel batch (prompts from
+        # several threads at once would interleave on the terminal).
+        return _needs_no_prompt(params)
+
+    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
+        return read_permission(str(params.get("path") or context.cwd), context)
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         pattern: str = params["pattern"]
-        search_path = Path(params.get("path", str(context.cwd)))
+        search_path = _search_root(params, context)
         limit: int = int(params.get("limit", 100))
+
+        if is_protected(search_path):
+            return ToolResult(content=f"Access denied: {search_path} is a protected path.", is_error=True)
 
         matches = self._run_rg(pattern, search_path, limit)
         if matches is None:
@@ -108,10 +144,17 @@ class GrepTool:
     # ------------------------------------------------------------------
 
     def _run_rg(self, pattern: str, path: Path, limit: int) -> list[str] | None:
-        """Run ripgrep and return lines, or None if rg is not available."""
+        """Run ripgrep and return lines, or None if rg is not available.
+
+        The model's pattern goes in after ``-e`` and the path after ``--``, so
+        neither can ever be parsed as an rg option (``--pre=CMD`` runs CMD);
+        ``--no-config`` keeps RIPGREP_CONFIG_PATH out too. ``--null`` puts a NUL
+        after each file name so every hit is filtered through the path guard.
+        """
         try:
             proc = subprocess.run(
-                ["rg", "--no-heading", "-n", pattern, str(path)],
+                ["rg", "--no-config", "--no-heading", "--with-filename", "--null", "-n",
+                 "-e", pattern, "--", str(path)],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -119,8 +162,14 @@ class GrepTool:
             if proc.returncode not in (0, 1):
                 # rg not found or hard error — fall back
                 return None
-            lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
-            return lines[:limit]
+            lines: list[str] = []
+            for ln in proc.stdout.splitlines():
+                fname, sep, rest = ln.partition("\0")
+                if sep and _readable(fname, path):
+                    lines.append(f"{fname}:{rest}")
+                    if len(lines) >= limit:
+                        break
+            return lines
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return None
 
@@ -146,6 +195,8 @@ class GrepTool:
         for fpath in targets:
             if len(results) >= limit:
                 break
+            if not _readable(fpath, path):
+                continue
             try:
                 text = fpath.read_text(encoding="utf-8", errors="replace")
             except OSError:

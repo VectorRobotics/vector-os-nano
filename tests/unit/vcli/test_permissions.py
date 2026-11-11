@@ -90,17 +90,24 @@ class TestPermissionContext:
         assert result.behavior == "ask"
 
     def test_allow_rule_for_read_only(self) -> None:
-        """Read-only tool auto-allows without prompting."""
+        """A read-only tool with no check of its own auto-allows without prompting."""
         from vector_os_nano.vcli.permissions import PermissionContext
 
-        ctx = PermissionContext()
-        tool = _make_tool(
-            "read_file",
-            is_read_only_result=True,
-            check_permissions_result="ask",
-        )
-        result = ctx.check(tool, {})
-        assert result.behavior == "allow"
+        class _ReadOnly:
+            name = "read_file"
+
+            def is_read_only(self, params: dict[str, Any]) -> bool:
+                return True
+
+        assert PermissionContext().check(_ReadOnly(), {}).behavior == "allow"
+
+    def test_read_only_never_overrides_the_tools_own_ask(self) -> None:
+        """R3: a read-only tool that ASKS (file_read outside the project, web_fetch)
+        must prompt; the read-only flag used to turn that ask into a silent allow."""
+        from vector_os_nano.vcli.permissions import PermissionContext
+
+        tool = _make_tool("read_file", is_read_only_result=True, check_permissions_result="ask")
+        assert PermissionContext().check(tool, {}).behavior == "ask"
 
     def test_always_allow_persists_in_session(self) -> None:
         """After add_always_allow('bash'), subsequent check returns allow."""
@@ -194,10 +201,10 @@ class TestPermissionContext:
         tool_session = _make_tool("x", check_permissions_result="ask", is_read_only_result=True)
         assert ctx3.check(tool_session, {}).behavior == "allow"
 
-        # 4. Read-only allows when no session entry
+        # 4. Read-only does NOT override the tool's own ask (R3)
         ctx4 = PermissionContext()
         tool_ro = _make_tool("x", check_permissions_result="ask", is_read_only_result=True)
-        assert ctx4.check(tool_ro, {}).behavior == "allow"
+        assert ctx4.check(tool_ro, {}).behavior == "ask"
 
         # 5. Default ask when nothing matches
         ctx5 = PermissionContext()
