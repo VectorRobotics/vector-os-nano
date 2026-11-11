@@ -275,7 +275,8 @@ def test_sim_preflight_skips_the_tier_with_one_reason(tmp_path) -> None:
     assert r.returncode == 0, out[-3000:]
     assert "2 skipped" in out, out[-3000:]
     reasons = [ln for ln in r.stdout.splitlines() if ln.startswith("SKIPPED")]
-    assert len(reasons) == 1 and "sim preflight: no offscreen GL" in reasons[0], out[-3000:]
+    # ONE aggregated reason that names the GL cause (it also names unprovisioned weights, if any)
+    assert len(reasons) == 1 and "sim preflight: " in reasons[0] and "no offscreen GL" in reasons[0], out[-3000:]
 
 
 def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:

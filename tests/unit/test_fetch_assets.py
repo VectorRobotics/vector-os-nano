@@ -115,11 +115,12 @@ def test_weights_prefetch_reads_the_package_table(monkeypatch, capsys) -> None:
     from vector_os_nano.perception import weights
 
     got = []
-    monkeypatch.setattr(weights, "local_dir", lambda w: got.append(w) or f"/cache/{w.repo_id}")
+    monkeypatch.setattr(weights, "resolve", lambda ws: got.append(ws) or [f"/cache/{w.repo_id}" for w in ws])
     assert _load_script().main(["--weights"]) == 0
-    assert tuple(got) == weights.default_stack()
-    monkeypatch.setattr(weights, "local_dir", lambda w: (_ for _ in ()).throw(
-        weights.WeightsUnavailable(f"{w} missing")))
+    assert got == [weights.default_stack()]  # one call: one notice for everything missing
+    assert "yonigozlan/EdgeTAM-hf@c266ce5: /cache/yonigozlan/EdgeTAM-hf" in capsys.readouterr().out
+    monkeypatch.setattr(weights, "resolve", lambda ws: (_ for _ in ()).throw(
+        weights.WeightsUnavailable(f"{ws[0]} missing")))
     assert _load_script().main(["--weights"]) == 1
     assert "missing" in capsys.readouterr().err
 

@@ -105,12 +105,14 @@ def fetch_weights() -> int:
     """The default perception stack's pinned weights, into the Hugging Face cache."""
     from vector_os_nano.perception import weights
 
-    for w in weights.default_stack():
-        try:
-            print(f"{w}: {weights.local_dir(w)}")
-        except weights.WeightsUnavailable as exc:
-            print(exc, file=sys.stderr)
-            return 1
+    stack = weights.default_stack()
+    try:
+        dirs = weights.resolve(stack)
+    except weights.WeightsUnavailable as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    for w, path in zip(stack, dirs):
+        print(f"{w}: {path}")
     return 0
 
 

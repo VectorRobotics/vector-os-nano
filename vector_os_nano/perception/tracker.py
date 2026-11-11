@@ -27,7 +27,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from vector_os_nano.perception.weights import Weights, local_dir
+from vector_os_nano.perception.weights import Weights, resolve
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,13 @@ class EdgeTAMTracker:
         buffer_size: Max vision feature cache size (sliding window).
     """
 
-    WEIGHTS = Weights("yonigozlan/EdgeTAM-hf", "c266ce53b3fc00f0f495b583f6a116c4e57f53bb")
+    WEIGHTS = (
+        Weights("yonigozlan/EdgeTAM-hf", "c266ce53b3fc00f0f495b583f6a116c4e57f53bb"),
+        # transformers builds a default EdgeTAM config while loading, which reads the
+        # timm backbone's config.json by "main" (measured: transformers 5.18).
+        Weights("timm/repvit_m1.dist_in1k", "55e64695f26bb1711730f916e557b464fb46478d",
+                files=("config.json",), ref="main"),
+    )
 
     def __init__(
         self,
@@ -91,8 +97,8 @@ class EdgeTAMTracker:
 
         self._dtype = self._select_dtype(self._device, torch)
 
-        path = local_dir(self.WEIGHTS)  # raises WeightsUnavailable with the pre-fetch command
-        logger.info("Loading EdgeTAM %s on %s", self.WEIGHTS, self._device)
+        path, _backbone = resolve(self.WEIGHTS)  # raises WeightsUnavailable with the pre-fetch command
+        logger.info("Loading EdgeTAM %s on %s", self.WEIGHTS[0], self._device)
         self._processor = Sam2VideoProcessor.from_pretrained(path)
         self._model = EdgeTamVideoModel.from_pretrained(path).to(self._device, dtype=self._dtype)
         self._model.eval()
