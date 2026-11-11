@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from rich.console import Console
@@ -1427,27 +1427,26 @@ def run_one_turn(args: Any) -> int:
     producer, prints the model's own words, then builds a frozen ``VerdictReport``
     from the EXISTING gate (never a second opinion). Under ``--json`` it emits
     exactly one stdout line ``VECTOR_VERDICT {<json>}`` (all Rich output is already
-    routed to stderr by ``main``): the report plus ``acted``, whether a
+    routed to stderr by ``main``): the report, whose ``acted`` says whether a
     side-effecting tool ran.
 
     Exit codes: 0 = verified, or a chat turn (no action, no verify: nothing claimed);
     2 = ran, not verified; 1 = error / no trace.
     """
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
-    from vector_os_nano.vcli.verdict import EXIT_VERIFIED, VERDICT_SENTINEL, VerdictReport
+    from vector_os_nano.vcli.verdict import EXIT_VERIFIED, VerdictReport
 
     prompt = args.print_prompt or ""
     emit_json = bool(getattr(args, "json", False))
 
-    def _emit(report: "VerdictReport", *, acted: bool = False, chat: bool = False) -> int:
+    def _emit(report: "VerdictReport", *, chat: bool = False) -> int:
         if emit_json:
             # The ONE machine line on real stdout (Rich/banner are on stderr).
-            line = json.dumps({**report.to_dict(), "acted": acted}, ensure_ascii=False)
-            print(f"{VERDICT_SENTINEL} {line}", flush=True)
+            print(report.to_sentinel_line(), flush=True)
         else:
             console.print(
                 f"[{TEAL}]verdict[/] {report.evidence} verified={report.verified} "
-                f"acted={acted} ({report.n_grounded}/{report.n_steps} grounded) "
+                f"acted={report.acted} ({report.n_grounded}/{report.n_steps} grounded) "
                 f"goal={report.goal_check}"
             )
         return EXIT_VERIFIED if chat else report.exit_code()
@@ -1490,8 +1489,9 @@ def run_one_turn(args: Any) -> int:
         oracle_names = verify_oracle_names(agent, engine)
         report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
     except Exception as exc:  # noqa: BLE001
-        report = VerdictReport.no_trace(goal=prompt, error=f"verdict failed: {exc}")
-    return _emit(report, acted=_trace_acted(trace))
+        report = replace(VerdictReport.no_trace(goal=prompt, error=f"verdict failed: {exc}"),
+                         acted=_trace_acted(trace))
+    return _emit(report)
 
 
 def _provider_display(api_key: str, provider: str, base_url: str | None) -> str:
