@@ -139,7 +139,14 @@ class SimStartTool:
                 content=f"{prefix}Failed to start {spec.embodiment} simulation: {exc}",
                 is_error=True,
             )
-        rebind_world(app, session)
+        try:
+            rebind_world(app, session)
+        except Exception as exc:  # noqa: BLE001 — a body the engine cannot bind must not run
+            session.stop()
+            return ToolResult(
+                content=f"{prefix}Stopped the new {spec.embodiment} simulation: binding it failed: {exc}",
+                is_error=True,
+            )
         return ToolResult(content=f"{prefix}Started {spec.embodiment} simulation, {session.summary()}")
 
     @staticmethod

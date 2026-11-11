@@ -27,17 +27,11 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Callable
 
-import re
-
 from rich.console import Console
-from rich.live import Live
-from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
-from rich.syntax import Syntax
 from rich.table import Table
-from rich.text import Text
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -48,8 +42,8 @@ from prompt_toolkit.styles import Style as PTStyle
 
 from vector_os_nano.vcli.backends import create_backend
 from vector_os_nano.vcli.cognitive import abort as _abort
-from vector_os_nano.vcli.engine import VectorEngine, TurnResult
-from vector_os_nano.vcli.native_loop import LIFECYCLE_TOOLS, should_attempt_native
+from vector_os_nano.vcli.engine import VectorEngine
+from vector_os_nano.vcli.native_loop import LIFECYCLE_TOOLS
 from vector_os_nano.vcli.session import (
     Session,
     create_session,
@@ -58,9 +52,7 @@ from vector_os_nano.vcli.session import (
     load_session,
 )
 from vector_os_nano.vcli.permissions import PermissionContext
-from vector_os_nano.vcli.prompt import build_system_prompt
-from vector_os_nano.vcli.turn_status import TurnStatus
-from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_all_tools, discover_categorized_tools
+from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_categorized_tools
 from vector_os_nano.core.run_dir import run_path
 
 logger = logging.getLogger(__name__)
@@ -69,7 +61,6 @@ console = Console()
 VERSION = "0.1.0"
 
 TEAL = "#00b4b4"
-DIM_TEAL = "#006666"
 
 EXIT_COMMANDS: frozenset[str] = frozenset({"quit", "exit", "q"})
 
@@ -111,7 +102,6 @@ SLASH_COMMANDS: list[tuple[str, str, bool]] = [
     ("clear", "Reset conversation", False),
     ("clear_memory", "Clear scene graph (forget all explored rooms/objects)", False),
     ("reset", "Reset robot pose (stand up after tip-over, sim only)", False),
-    ("scenario", "Show or enter a playground scenario  (/scenario <id>)", True),
     ("sessions", "List saved sessions", False),
     ("quit", "Exit", False),
 ]
@@ -201,78 +191,6 @@ PT_STYLE = PTStyle.from_dict({
 V_LABEL = f"[bold {TEAL}] ⠣⡠⠃ [/]"
 
 
-# ---------------------------------------------------------------------------
-# Response rendering — code block highlighting + path coloring
-# ---------------------------------------------------------------------------
-
-_CODE_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
-_PATH_RE = re.compile(r"(?<!\w)(/[\w./\-_]+\.\w+)")
-_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
-
-
-def render_response(text: str, width: int = 80) -> Panel:
-    """Render V's response with syntax-highlighted code blocks and paths."""
-    parts = _CODE_BLOCK_RE.split(text)
-
-    group = Text()
-    i = 0
-    while i < len(parts):
-        if i + 2 < len(parts) and (i % 3) == 0:
-            _append_highlighted_text(group, parts[i])
-            i += 1
-            lang = parts[i] or "text"
-            code = parts[i + 1]
-            i += 2
-            group.append("\n")
-            for line in code.splitlines():
-                group.append(f"  {line}\n", style="#88c0d0")
-        else:
-            _append_highlighted_text(group, parts[i])
-            i += 1
-
-    return Panel(
-        group,
-        title=V_LABEL,
-        title_align="left",
-        border_style=TEAL,
-        padding=(0, 1),
-        width=width,
-    )
-
-
-def _strip_markdown(raw: str) -> str:
-    """Strip markdown formatting that should not appear in terminal output."""
-    # Bold: **text** or __text__
-    raw = re.sub(r"\*\*(.+?)\*\*", r"\1", raw)
-    raw = re.sub(r"__(.+?)__", r"\1", raw)
-    # Italic: *text* (single)
-    raw = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", raw)
-    # Headers: # ## ###
-    raw = re.sub(r"^#{1,3}\s+", "", raw, flags=re.MULTILINE)
-    # Horizontal rules
-    raw = re.sub(r"^---+\s*$", "", raw, flags=re.MULTILINE)
-    return raw
-
-
-def _append_highlighted_text(target: Text, raw: str) -> None:
-    """Append text with file paths in teal and `inline code` highlighted."""
-    raw = _strip_markdown(raw)
-    last = 0
-    # Merge path and inline code patterns, process in order
-    for m in re.finditer(r"(?P<path>(?<!\w)/[\w./\-_]+\.\w+)|(?P<code>`[^`]+`)", raw):
-        if m.start() > last:
-            target.append(raw[last:m.start()])
-        if m.group("path"):
-            target.append(m.group("path"), style=f"bold {TEAL}")
-        elif m.group("code"):
-            # Strip backticks
-            code_text = m.group("code")[1:-1]
-            target.append(code_text, style="#88c0d0")
-        last = m.end()
-    if last < len(raw):
-        target.append(raw[last:])
-
-
 # Last response storage for /copy
 _last_response: str = ""
 
@@ -294,16 +212,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--embodiment", default=None, choices=embodiment_ids(), metavar="ID",
         help="Start with this embodiment's simulation (--sim = so101, --sim-go2 = go2). "
         f"One of: {', '.join(embodiment_ids())}",
-    )
-    parser.add_argument(
-        "--scenario",
-        default=None,
-        metavar="ID",
-        help=(
-            "Start in a named playground scenario (e.g. 'tabletop'). When set it "
-            "selects the playground world (and its verify predicates) instead of "
-            "the agent-driven default. Unknown ids fail loud with the valid set."
-        ),
     )
     parser.add_argument(
         "--headless",
@@ -336,77 +244,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "2=ran-not-verified / 1=error|no-trace."
         ),
     )
-    parser.add_argument(
-        "--native-loop",
-        action="store_true",
-        default=None,
-        help=(
-            "Campaign #13 M1 (default OFF): run the -p turn through the frontier-model "
-            "NATIVE TOOL-USE producer (engine.run_turn_native) instead of the legacy "
-            "decompose plan. The verdict block is unchanged. Also enableable via "
-            "VECTOR_NATIVE_LOOP=1."
-        ),
-    )
-    parser.add_argument(
-        "--native-first",
-        action="store_true",
-        default=None,
-        help=(
-            "STEP 5 native-attempt-then-fallback (default OFF): in the -p turn, ATTEMPT "
-            "the native tool-use producer first; if it took NO action (could not route "
-            "the goal) FALL BACK to the legacy decompose plan. A SEPARATE additive mode "
-            "from --native-loop. Also enableable via VECTOR_NATIVE_FIRST=1."
-        ),
-    )
     return parser.parse_args(argv)
-
-
-def _native_loop_enabled(args: Any) -> bool:
-    """True iff the M1 native tool-use path is selected (flag OR env, default OFF).
-
-    Single source for the strangler-fig flag: ``--native-loop`` on the CLI OR
-    ``VECTOR_NATIVE_LOOP=1`` in the env. Default OFF — every existing path is
-    byte-identical when neither is set.
-    """
-    if getattr(args, "native_loop", None):
-        return True
-    return os.environ.get("VECTOR_NATIVE_LOOP", "").strip() in ("1", "true", "True")
-
-
-def _native_first_enabled(args: Any) -> bool:
-    """True iff STEP 5 native-attempt-then-fallback is selected (flag OR env, default OFF).
-
-    A SEPARATE, additive mode from ``_native_loop_enabled``: ``--native-first`` on the
-    CLI OR ``VECTOR_NATIVE_FIRST=1`` in the env. Default OFF — every existing path is
-    byte-identical when neither this nor ``--native-loop`` is set. This reader does NOT
-    consult the native-loop flag/env, so the two modes stay independent.
-    """
-    if getattr(args, "native_first", None):
-        return True
-    return os.environ.get("VECTOR_NATIVE_FIRST", "").strip() in ("1", "true", "True")
-
-
-def _print_native_enabled() -> bool:
-    """PRINT-PATH CUTOVER (S5b): native is the DEFAULT producer on the ``-p`` path.
-
-    Mirrors the owner-approved REPL cutover (``_repl_native_enabled``) on the
-    NON-interactive acceptance entrypoint: ``run_one_turn`` ATTEMPTS the native
-    tool-use producer first, then FALLS BACK to the legacy decompose+execute when
-    native took NO action — so bare ``vector-cli -p`` + natural language exercises the
-    redesign by default (CLAUDE.md North Star "Acceptance interface"), the same way
-    the interactive REPL already does. Default ON; ``VECTOR_PRINT_NATIVE`` in
-    {0, false, off, no} forces the pure-legacy ``-p`` path (byte-identical to the
-    pre-cutover behavior) — a reversible escape hatch. The explicit ``--native-first``
-    flag / ``VECTOR_NATIVE_FIRST`` stays an INDEPENDENT force-on reader (default OFF,
-    unchanged) so its documented semantics are preserved; this is the additional
-    default-ON knob, NOT a change to that flag's default.
-    """
-    return os.environ.get("VECTOR_PRINT_NATIVE", "").strip().lower() not in (
-        "0",
-        "false",
-        "off",
-        "no",
-    )
 
 
 def _flush_turn_state(session: Any, app_state: dict[str, Any]) -> None:
@@ -443,52 +281,20 @@ def _gait_backend(agent: Any) -> str:
     return str(getattr(getattr(agent, "_base", None), "gait_backend", "") or "")
 
 
-def _native_trace_acted(trace: Any) -> bool:
-    """True iff the native producer OWNS the turn: it ran any side-effecting tool.
+def _trace_acted(trace: Any) -> bool:
+    """True iff the turn ran a side-effecting tool (``actions_dispatched``)."""
+    return int(getattr(trace, "actions_dispatched", 0) or 0) > 0
 
-    ``trace.actions_dispatched`` counts every side-effecting dispatch — verified or
-    not, interrupted or not — so a turn that moved the robot is never handed to the
-    legacy planner to run again (no double execution). A recorded step with a
-    producing ``strategy`` also counts: a verified chain, or a read the model
-    answered from (the REPL prints that answer; the read never runs twice). Only a
-    turn that called no tool (could not route the goal) may fall back. Pure +
-    defensive: ``None`` -> False.
+
+def _chat_turn(trace: Any) -> bool:
+    """A turn that made no claim: no action, no verify, no refusal, no stop, no LLM error.
+
+    Its only steps (if any) are reads the model answered from, never verified.
     """
-    if int(getattr(trace, "actions_dispatched", 0) or 0) > 0:
-        return True
-    steps = getattr(trace, "steps", None) or ()
-    return any((getattr(s, "strategy", "") or "").strip() for s in steps)
-
-
-def _native_owns_turn(trace: Any) -> bool:
-    """The native result is final: it acted, the permission gate refused what it
-    tried (no second producer re-attempts it), the owner stopped the turn (a stop
-    landing during native's LLM call must not hand the command to the legacy
-    planner), or the LLM itself is unavailable (the legacy producer would only hit
-    the same dead model)."""
-    return trace is not None and (
-        _native_trace_acted(trace)
-        or bool(getattr(trace, "refused", ()))
-        or bool(getattr(trace, "cancelled", False))
-        or bool(getattr(trace, "llm_error", ""))
-    )
-
-
-def _repl_native_enabled() -> bool:
-    """REPL CUTOVER (2026-06-19, owner-approved): native is the DEFAULT REPL turn path.
-
-    The interactive ``vector-cli`` REPL attempts the frontier-model NATIVE TOOL-USE
-    producer first (then falls back to the legacy planner) so the owner's ONLY
-    acceptance interface — bare ``vector-cli`` + natural language — exercises the
-    redesign (CLAUDE.md North Star -> "Acceptance interface"). Default ON.
-    ``VECTOR_REPL_NATIVE`` in {0, false, off, no} forces the pure-legacy REPL
-    (byte-identical to the pre-cutover turn path) — a reversible escape hatch.
-    """
-    return os.environ.get("VECTOR_REPL_NATIVE", "").strip().lower() not in (
-        "0",
-        "false",
-        "off",
-        "no",
+    return not (
+        _trace_acted(trace)
+        or any(sg.verify for sg in trace.goal_tree.sub_goals)
+        or trace.refused or trace.cancelled or trace.llm_error
     )
 
 
@@ -501,34 +307,33 @@ def _lifecycle_lines(entries: list[dict[str, Any]]) -> list[str]:
             if r.get("tool_use_id") in ids and r.get("content")]
 
 
-def _repl_attempt_native(
+def _repl_turn(
     engine: Any,
     user_input: str,
     session: Any,
     app_state: dict[str, Any],
     console: Any,
-) -> bool:
-    """Attempt the native tool-use producer for ONE REPL turn (the cutover path).
+) -> None:
+    """Run ONE REPL turn through the native producer and render it.
 
-    Returns True iff the native producer OWNS the turn (it acted, was refused, was
-    stopped, or the LLM is down): the honest verdict — single-sourced from the SAME
-    gate the ``-p`` path uses (``VerdictReport.from_trace``; the loop NEVER computes
-    ``verified``) — is rendered into the REPL conversation. Returns False iff native
-    took NO action: its entries are removed from the session again and the caller
-    falls THROUGH to the legacy routing (no half-action, no double side-effect).
+    The model's own last words are shown; then, for a turn that claimed something
+    (acted, verified, was refused, stopped or lost its LLM), its steps and the honest
+    verdict — single-sourced from the SAME gate the ``-p`` path uses
+    (``VerdictReport.from_trace``; the loop NEVER computes ``verified``). A chat turn
+    is the model's text alone.
 
     The turn runs on the REAL session, so a follow-up turn sees what this one did
     ("把绿色瓶子拿过来" then "再把它放到餐桌上": 'it' resolves). A sim started by
     the turn rebinds ``engine._vgg_agent``, so the verdict is graded on the body the
     turn ended on.
     """
+    global _last_response
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
     from vector_os_nano.vcli.verdict import VerdictReport
 
     n0 = len(session._entries)
 
-    # Suppress ROS2/subprocess stderr noise during the turn (the REPL does the same
-    # around its legacy turn); restore unconditionally.
+    # Suppress ROS2/subprocess stderr noise during the turn; restore unconditionally.
     _saved_stderr = sys.stderr
     trace: Any = None
     try:
@@ -552,14 +357,10 @@ def _repl_attempt_native(
                     return ask_permission(name, params)
                 finally:
                     _status.start()
-            try:
-                trace = engine.run_turn_native(
-                    user_input, agent=getattr(engine, "_vgg_agent", None), session=session,
-                    app_state=app_state, on_progress=_on_progress, ask_permission=_ask,
-                )
-            except Exception as exc:  # noqa: BLE001 — raised before any action: safe to fall back
-                logger.debug("native attempt failed before acting: %s", exc)
-                trace = None
+            trace = engine.run_turn_native(
+                user_input, agent=getattr(engine, "_vgg_agent", None), session=session,
+                app_state=app_state, on_progress=_on_progress, ask_permission=_ask,
+            )
     finally:
         if sys.stderr is not _saved_stderr:
             try:
@@ -568,26 +369,23 @@ def _repl_attempt_native(
                 pass
         sys.stderr = _saved_stderr
 
-    if not _native_owns_turn(trace):
-        # The fallback producer starts from a clean transcript; the attempt's token
-        # usage STAYS on the session: it is the spend counter (/usage), and those
-        # tokens were billed whether or not the transcript keeps the attempt.
-        del session._entries[n0:]
-        return False  # native could not route -> caller falls back to legacy
-
     turn = session._entries[n0:]
+    # The model's own last words (the README summary, the test run's outcome): shown,
+    # then the steps and the verdict, which are the evidence.
+    answer = session.last_assistant_text(n0)
+    if len(session._entries) > 50:
+        session.compact(keep_recent=12)
     agent = getattr(engine, "_vgg_agent", None)  # the body the turn ended on
     sub_goals = list(getattr(trace.goal_tree, "sub_goals", ()) or ())
     steps = list(getattr(trace, "steps", ()) or ())
-    # The model's own last words (the README summary, the test run's outcome): shown,
-    # then the steps and the verdict, which are the evidence.
-    answer = next((e.get("text") or "" for e in reversed(turn)
-                   if e.get("type") == "assistant" and (e.get("text") or "").strip()), "").strip()
     console.print()
     for line in _lifecycle_lines(turn):
         console.print(f"  [{TEAL}]▸[/] [dim]{escape(line)}[/]")
     if answer:
+        _last_response = answer
         console.print(escape(answer))
+    if _chat_turn(trace):
+        return
     for refusal in getattr(trace, "refused", ()) or ():
         console.print(f"  [{TEAL}]▸[/] [red]refused[/] {escape(refusal)}")
     for i, s in enumerate(steps):
@@ -603,8 +401,7 @@ def _repl_attempt_native(
             f"  [{TEAL}]▸[/] {chain} → verify {verify_expr} {mark} [dim](actor={actor})[/]"
         )
 
-    # A turn that only started / stopped a sim made no claim: nothing to grade.
-    if steps or trace.refused or trace.cancelled or trace.llm_error:
+    if steps or trace.refused or trace.cancelled or trace.llm_error:  # a sim start/stop alone claims nothing
         try:
             oracle_names = verify_oracle_names(agent, engine)
             report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
@@ -620,9 +417,6 @@ def _repl_attempt_native(
         except Exception as exc:  # noqa: BLE001 — fail closed (display only)
             console.print(f"  [yellow]verdict unavailable:[/] {exc}")
 
-    if len(session._entries) > 50:  # the legacy path's bound, for the native transcript too
-        session.compact(keep_recent=12)
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -805,18 +599,12 @@ def _load_logo_lines() -> list[str]:
         return []
 
 
-def format_banner(model: str, agent: Any = None, scenario: str | None = None) -> str:
-    """Return banner info text (testable, no side effects).
-
-    When a playground ``scenario`` is active, its name is surfaced on its own
-    line so a user can see at a glance which preset scene the session is in.
-    """
+def format_banner(model: str, agent: Any = None) -> str:
+    """Return banner info text (testable, no side effects)."""
     lines = [
         f"Vector CLI v{VERSION}",
         f"Model: {model}",
     ]
-    if scenario:
-        lines.append(f"Scenario: {scenario}")
     if agent is not None:
         arm = getattr(agent, "_arm", None)
         base = getattr(agent, "_base", None)
@@ -828,13 +616,8 @@ def format_banner(model: str, agent: Any = None, scenario: str | None = None) ->
     return "\n".join(lines)
 
 
-def print_banner(
-    model: str, provider: str, agent: Any = None, scenario: str | None = None
-) -> None:
-    """Print startup banner with braille logo (auto-scales to terminal width).
-
-    When a playground ``scenario`` is active its name is shown in the info line.
-    """
+def print_banner(model: str, provider: str, agent: Any = None) -> None:
+    """Print startup banner with braille logo (auto-scales to terminal width)."""
     import shutil
     term_w = shutil.get_terminal_size().columns
     logo_lines = _load_logo_lines()
@@ -857,8 +640,6 @@ def print_banner(
     time.sleep(0.15)
 
     info_parts = [f"Model: {model}", f"Provider: {provider}"]
-    if scenario:
-        info_parts.append(f"Scenario: {scenario}")
     if agent is not None:
         arm = getattr(agent, "_arm", None)
         base = getattr(agent, "_base", None)
@@ -898,87 +679,6 @@ def ask_permission(tool_name: str, params: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Hardware init
 # ---------------------------------------------------------------------------
-
-
-def _resolve_active_world(args: argparse.Namespace, agent: Any) -> Any:
-    """Select the active world, honouring an explicit playground ``--scenario``.
-
-    Precedence:
-      1. ``--scenario <id>`` selected -> the playground world for that scenario
-         WINS. Loading the playground package (an explicit, user-requested track)
-         registers its scenarios into the world registry via the lazy hook; we
-         then resolve the named world. The kernel still never hard-imports the
-         playground — this import only happens because the user asked for it.
-      2. Otherwise -> ``resolve_world(agent)`` (exactly today's behaviour:
-         a connected agent selects the robot world, else the default dev world).
-
-    Fails loud on an unknown scenario id with the valid set — never a silent
-    fallback to another world.
-    """
-    from vector_os_nano.vcli.worlds import resolve_world, resolve_world_named
-
-    scenario = getattr(args, "scenario", None)
-    if not scenario:
-        return resolve_world(agent)
-
-    # Explicit playground track: importing the package runs register_scenarios(),
-    # wiring the scenario factories into the process-wide world registry.
-    import vector_os_nano.playground  # noqa: F401  (side-effect: register scenarios)
-
-    try:
-        return resolve_world_named(scenario)
-    except KeyError as exc:
-        # Surface the fail-loud message (valid set included) to the user, then
-        # re-raise so an unknown scenario id never silently degrades to a default.
-        console.print(f"[red]Unknown scenario:[/red] {exc}")
-        raise
-
-
-def enter_scenario(scenario_id: str, app_state: dict[str, Any]) -> Any:
-    """Switch the LIVE session into the playground ``scenario_id`` (mid-session).
-
-    This is the conversational / ``/scenario`` counterpart to the ``--scenario``
-    launch flag: it makes the playground reachable WITHOUT relaunching. Loading
-    the playground package (an explicit, user-requested track) registers its
-    scenarios into the world registry via the lazy hook; we then resolve the
-    named world, swap it into ``app_state`` and re-init the engine's VGG layer so
-    the playground verify predicates take effect on the next decompose.
-
-    The kernel still never hard-imports the playground — this import only happens
-    because the user asked for it (one-way dependency intact).
-
-    Returns the resolved world. Fails loud (``KeyError`` with the valid set) on an
-    unknown scenario id — never a silent fallback to another world.
-    """
-    from vector_os_nano.vcli.worlds import resolve_world_named
-
-    # Explicit playground track: importing the package runs register_scenarios().
-    import vector_os_nano.playground  # noqa: F401  (side-effect: register scenarios)
-
-    world = resolve_world_named(scenario_id)  # KeyError -> fail loud, caller reports
-
-    app_state["world"] = world
-    app_state["scenario"] = getattr(world, "name", scenario_id)
-
-    # Re-init VGG so the verifier namespace picks up the playground predicates.
-    # Best-effort: a missing engine (no API key yet) or init failure must not
-    # crash the REPL — the world swap still stands for the next engine init.
-    engine = app_state.get("engine")
-    if engine is not None:
-        try:
-            engine.init_vgg(
-                agent=app_state.get("agent"),
-                skill_registry=app_state.get("skill_registry"),
-                on_vgg_step=app_state.get("vgg_step_callback"),
-                on_vgg_step_view=app_state.get("vgg_step_view_callback"),
-                world=world,
-                tool_permission_resolver=app_state.get("tool_permission_resolver"),
-                # Mirror the launch path: learning tier (persist_dir) is dev-world only.
-                persist_dir=(Path.home() / ".vector") if not world.is_robot() else None,
-            )
-        except Exception as exc:  # noqa: BLE001 — display path, never crash REPL
-            logger.warning("init_vgg after scenario switch failed: %s", exc)
-    return world
 
 
 def _requested_embodiment(args: argparse.Namespace) -> str | None:
@@ -1370,28 +1070,6 @@ def _handle_slash_command(
         console.print(tbl)
         console.print()
 
-    elif cmd == "scenario":
-        app = app_state or {}
-        if not args_rest:
-            # No id -> show the active scenario (or that none is active).
-            active = app.get("scenario")
-            if active:
-                console.print(f"[{TEAL}]  Active scenario:[/] {active}")
-            else:
-                console.print("[dim]  No playground scenario active.[/]")
-            console.print("[dim]  Switch with: /scenario <id>[/]")
-        else:
-            scenario_id = args_rest[0]
-            try:
-                world = enter_scenario(scenario_id, app)
-            except KeyError as exc:
-                # Fail loud with the valid set — never a silent fallback.
-                console.print(f"[red]  Unknown scenario:[/red] {exc}")
-            else:
-                console.print(
-                    f"[green]  Entered scenario:[/] {getattr(world, 'name', scenario_id)}"
-                )
-
     else:
         console.print(f"[yellow]  Unknown: /{cmd}[/]  (type / + Tab)")
 
@@ -1597,45 +1275,24 @@ def create_backend_with_fake_seam(
 ) -> Any:
     """Create the LLM backend, with a TEST-ONLY deterministic injection seam.
 
-    By default this is byte-identical to ``create_backend`` — the production path
-    is unchanged. The ONLY override is gated on the env var
-    ``VECTOR_FAKE_LLM=<json-path>``: when set, the network LLM is replaced by a
-    ``FakeBackend`` that returns a canned decompose-plan response read from that
-    JSON file (see ``tests/harness/fake_backend.py``). This replaces ONLY the
-    network call — the REAL decomposer / validator / skill / GoalVerifier /
-    evidence-gate / verdict all still run, so a canned plan whose step verifies
-    ``"True"`` STILL classifies RAN and the verdict is honest. The seam never
-    bypasses any verify / permission layer.
-
-    Absent the env var, ``create_backend`` is called unchanged.
+    Production is ``create_backend``. The ONLY override is gated on the env var
+    ``VECTOR_FAKE_LLM_TOOLS=<json-path>``: a ``FakeToolScriptBackend``
+    (``tests/harness/fake_backend.py``) replays a script of native tool_use turns in
+    place of the network model. Every tool, verify, permission and verdict is still
+    the product's own.
     """
-    # M1 native-loop seam: a SCRIPT of native tool_use turns (not a decompose plan).
-    # Gated on its own env var so the legacy plan seam stays byte-identical.
     tools_path = os.environ.get("VECTOR_FAKE_LLM_TOOLS")
     if tools_path:
+        # TEST-ONLY import (lazy, gated on the env var): production never reaches it.
         from tests.harness.fake_backend import FakeToolScriptBackend
 
         return FakeToolScriptBackend.from_json_file(tools_path)
-    fake_path = os.environ.get("VECTOR_FAKE_LLM")
-    if fake_path:
-        # TEST-ONLY import (lazy, gated on the env var) — production never reaches
-        # this branch, so it never imports the test harness. The repo root is on
-        # sys.path when cli is run as a module from the project dir.
-        from tests.harness.fake_backend import FakeBackend
-
-        return FakeBackend.from_json_file(fake_path)
     return create_backend(provider=provider, api_key=api_key, model=model, base_url=base_url)
 
 
 @dataclass
 class TurnContext:
-    """Everything cli.main's REPL (and a non-interactive turn) needs to run.
-
-    Built ONCE by ``_build_turn_context`` from the shared setup that used to live
-    inline in ``main()`` (credentials -> agent -> world -> registry -> session ->
-    system prompt -> engine -> init_vgg). The REPL unpacks it into the SAME local
-    names it used before (byte-identical loop); ``run_one_turn`` reuses it verbatim.
-    """
+    """Everything the REPL (and a non-interactive ``-p`` turn) needs to run."""
 
     args: Any
     api_key: str
@@ -1643,43 +1300,29 @@ class TurnContext:
     model: str
     base_url: str | None
     agent: Any
-    world: Any
     registry: Any
-    permissions: Any
     session: Any
-    system_prompt: Any
-    robot_ctx_provider: Any
-    intent_router: Any
-    hooks: Any
     engine: "VectorEngine | None"
     app_state: dict[str, Any]
 
 
-def _build_turn_context(
-    args: Any,
-    *,
-    on_vgg_step: "Callable[[Any], None] | None" = None,
-    on_vgg_step_view: "Callable[[dict[str, Any]], None] | None" = None,
-    tool_permission_resolver: "Callable[[str, dict[str, Any]], str] | None" = None,
-) -> TurnContext:
+def _build_turn_context(args: Any) -> TurnContext:
     """Shared setup for BOTH the REPL and a non-interactive ``-p`` turn.
 
-    Identical to the block that used to live inline in ``main()`` (cli.py setup
-    1271-1486). The display callbacks are injected so the REPL can pass its live
-    step renderers while a headless turn passes None (no-op). The LLM backend is
-    built through ``create_backend_with_fake_seam`` so a ``VECTOR_FAKE_LLM`` test
-    run drives the REAL cli.main with a deterministic plan.
+    Credentials -> agent (a sim when one was requested) -> tool registry -> session
+    -> engine, bound to the agent and its world. The LLM backend is built through
+    ``create_backend_with_fake_seam`` so a scripted test run drives the REAL
+    cli.main. A bind failure raises; the caller reports it.
     """
-    # Resolve API key + provider from CLI flags > env vars > config file
     from vector_os_nano.vcli.config import resolve_credentials
+    from vector_os_nano.vcli.worlds import resolve_world
+
     api_key, provider, model, base_url = resolve_credentials(
         cli_api_key=args.api_key,
         cli_base_url=args.base_url,
         cli_model=args.model,
     )
-
-    no_key = not api_key
-    if no_key:
+    if not api_key:
         # Each console.print is parsed independently — markup tags must balance
         # within a single call (rich does not span tags across print calls).
         console.print("[yellow]No API key configured.[/]")
@@ -1687,14 +1330,8 @@ def _build_turn_context(
         console.print("[dim]  /login anthropic  enter Anthropic API key[/dim]")
         console.print("[dim]  /login openrouter enter OpenRouter key[/dim]\n")
 
-    # Agent (optional hardware) + active world. An explicit --scenario selects a
-    # playground world (its verify predicates win); otherwise a connected agent
-    # selects the robot world, else the default cross-platform "dev" world. The
-    # resolved world flows into init_vgg(world=...) below, which sets engine._world
-    # BEFORE the verifier namespace is built, so the merge picks up its predicates.
     sim_session = _init_agent(args)
     agent = sim_session.agent if sim_session is not None else None
-    world = _resolve_active_world(args, agent)
 
     # Tools (categorized registry for scalable tool management)
     registry: CategorizedToolRegistry = CategorizedToolRegistry()
@@ -1710,17 +1347,7 @@ def _build_turn_context(
         from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
         for skill_tool in wrap_skills(agent):
             registry.register(skill_tool, category="robot")
-    else:
-        # Dev world: hide robot/diag/system tools. The 'sim' category (start/stop
-        # _simulation) stays enabled so the user can spin up a sim conversationally
-        # ("start the arm sim").
-        for _c in ("robot", "diag", "system"):
-            registry.disable_category(_c)
 
-    # Permissions
-    permissions = PermissionContext(no_permission=args.no_permission)
-
-    # Session
     session: Session
     if args.resume is not None:
         if args.resume == "latest":
@@ -1737,60 +1364,21 @@ def _build_turn_context(
     else:
         session = create_session(metadata={"model": model})
 
-    # System prompt (with live robot context)
-    robot_ctx_provider = None
-    try:
-        from vector_os_nano.vcli.robot_context import RobotContextProvider
-        robot_ctx_provider = RobotContextProvider.for_agent(agent)
-    except ImportError:
-        pass
-    system_prompt = build_system_prompt(
-        agent=agent, cwd=Path.cwd(), robot_context=robot_ctx_provider, world=world
-    )
-
-    # Wrap in DynamicSystemPrompt so robot state refreshes each turn
-    try:
-        from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
-        system_prompt = DynamicSystemPrompt(system_prompt, robot_ctx_provider)
-    except ImportError:
-        pass
-
-    # Intent router + hooks
-    intent_router = None
-    hooks = None
-    try:
-        from vector_os_nano.vcli.intent_router import IntentRouter
-        intent_router = IntentRouter()
-    except ImportError:
-        pass
-    try:
-        from vector_os_nano.vcli.hooks import ToolHookRegistry
-        hooks = ToolHookRegistry()
-    except ImportError:
-        pass
-
-    # Explore event streaming — wired via _setup_explore_events on first explore
+    # Explore event streaming (the go2 explore skill's background progress lines).
     _setup_explore_events(console)
 
-    # Backend + engine (deferred if no API key — /login can set it up). The
-    # backend is built through the fake-LLM seam (production-identical unless
-    # VECTOR_FAKE_LLM is set) at the SINGLE create_backend site.
+    # Backend + engine (deferred if no API key — /login can set it up).
     engine: VectorEngine | None = None
     if api_key:
         backend = create_backend_with_fake_seam(
             provider=provider, api_key=api_key, model=model, base_url=base_url
         )
         engine = VectorEngine(
-            backend=backend, registry=registry, system_prompt=system_prompt,
-            permissions=permissions, intent_router=intent_router, hooks=hooks,
+            backend=backend, registry=registry,
+            permissions=PermissionContext(no_permission=args.no_permission),
         )
+        engine.bind(agent, resolve_world(agent))
 
-    # Mutable app state
-    _spatial_memory = getattr(agent, "_spatial_memory", None) if agent else None
-    _skill_registry = getattr(agent, "_skill_registry", None) if agent else None
-    # An explicit --scenario selected a playground world; its name doubles as the
-    # active scenario id (banner + mid-session /scenario read/write this).
-    _active_scenario = getattr(args, "scenario", None) or None
     app_state: dict[str, Any] = {
         "agent": agent,
         "registry": registry,
@@ -1799,171 +1387,78 @@ def _build_turn_context(
         "provider": provider,
         "api_key": api_key,
         "base_url": base_url,
-        "scene_graph": _spatial_memory,
-        "skill_registry": _skill_registry,
-        "robot_ctx_provider": robot_ctx_provider,
-        "world": world,
-        "scenario": _active_scenario,
+        "scene_graph": getattr(agent, "_spatial_memory", None),
+        "skill_registry": getattr(agent, "_skill_registry", None),
         "sim_session": sim_session,
     }
-    # Headless: an ``ask`` is denied unless the caller passes a resolver (or
-    # --no-permission makes the PermissionContext allow) — never a stdin prompt.
-    app_state["tool_permission_resolver"] = tool_permission_resolver
-
-    # VGG cognitive layer (optional) — init through the SAME path as the REPL so
-    # the verifier namespace / oracle set is identical whether interactive or not.
-    if engine is not None:
-        try:
-            engine.init_vgg(
-                agent=agent,
-                skill_registry=_skill_registry,
-                on_vgg_step=on_vgg_step,
-                on_vgg_step_view=on_vgg_step_view,
-                world=world,
-                tool_permission_resolver=app_state["tool_permission_resolver"],
-                persist_dir=(Path.home() / ".vector") if not world.is_robot() else None,
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
     return TurnContext(
-        args=args,
-        api_key=api_key,
-        provider=provider,
-        model=model,
-        base_url=base_url,
-        agent=agent,
-        world=world,
-        registry=registry,
-        permissions=permissions,
-        session=session,
-        system_prompt=system_prompt,
-        robot_ctx_provider=robot_ctx_provider,
-        intent_router=intent_router,
-        hooks=hooks,
-        engine=engine,
-        app_state=app_state,
+        args=args, api_key=api_key, provider=provider, model=model, base_url=base_url,
+        agent=agent, registry=registry, session=session, engine=engine, app_state=app_state,
     )
 
 
 def run_one_turn(args: Any) -> int:
     """Run ONE turn for ``args.print_prompt`` non-interactively and return an exit code.
 
-    This is the machine-checkable acceptance entrypoint (R2a). It reuses the SAME
-    shared setup the REPL uses (``_build_turn_context``), runs the turn
-    SYNCHRONOUSLY via ``engine.vgg_execute`` (never on a background thread — an
-    in-flight trace would emit a verdict on incomplete evidence), then builds
-    a frozen ``VerdictReport`` from the EXISTING
-    ``evidence_passed(trace, verify_oracle_names(agent, engine))`` (never a second
-    opinion). Under ``--json`` it emits exactly one stdout line
-    ``VECTOR_VERDICT {<json>}`` (sentinel) with all Rich/banner output already
-    routed to stderr by ``main``.
+    The machine-checkable acceptance entrypoint. It reuses the REPL's setup
+    (``_build_turn_context``), runs the turn SYNCHRONOUSLY through the native
+    producer, prints the model's own words, then builds a frozen ``VerdictReport``
+    from the EXISTING gate (never a second opinion). Under ``--json`` it emits
+    exactly one stdout line ``VECTOR_VERDICT {<json>}`` (all Rich output is already
+    routed to stderr by ``main``): the report plus ``acted``, whether a
+    side-effecting tool ran.
 
-    Exit codes: 0 = verified, 2 = ran (not verified), 1 = error / no trace.
+    Exit codes: 0 = verified, or a chat turn (no action, no verify: nothing claimed);
+    2 = ran, not verified; 1 = error / no trace.
     """
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
-    from vector_os_nano.vcli.verdict import VerdictReport
+    from vector_os_nano.vcli.verdict import EXIT_VERIFIED, VERDICT_SENTINEL, VerdictReport
 
-    prompt = args.print_prompt
+    prompt = args.print_prompt or ""
     emit_json = bool(getattr(args, "json", False))
 
-    def _emit(report: "VerdictReport") -> int:
+    def _emit(report: "VerdictReport", *, acted: bool = False, chat: bool = False) -> int:
         if emit_json:
             # The ONE machine line on real stdout (Rich/banner are on stderr).
-            print(report.to_sentinel_line(), flush=True)
+            line = json.dumps({**report.to_dict(), "acted": acted}, ensure_ascii=False)
+            print(f"{VERDICT_SENTINEL} {line}", flush=True)
         else:
             console.print(
-                f"[{TEAL}]verdict[/] {report.evidence} "
-                f"verified={report.verified} ({report.n_grounded}/{report.n_steps} grounded)"
+                f"[{TEAL}]verdict[/] {report.evidence} verified={report.verified} "
+                f"acted={acted} ({report.n_grounded}/{report.n_steps} grounded)"
             )
-        return report.exit_code()
+        return EXIT_VERIFIED if chat else report.exit_code()
 
     try:
         ctx = _build_turn_context(args)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Setup error:[/] {exc}")
-        return _emit(VerdictReport.no_trace(goal=prompt or "", error=str(exc)))
+        return _emit(VerdictReport.no_trace(goal=prompt, error=str(exc)))
 
     engine = ctx.engine
     if engine is None:
         console.print("[yellow]No API key. Use /login to authenticate first.[/]")
-        return _emit(VerdictReport.no_trace(goal=prompt or "", error="no engine (no API key)"))
+        return _emit(VerdictReport.no_trace(goal=prompt, error="no engine (no API key)"))
 
     # P0 stop: the registered stop skill's words, no LLM call.
-    if engine.is_stop(prompt or ""):
+    if engine.is_stop(prompt):
         _p0_stop(engine, prompt, ctx.app_state, ctx.session)
         return _emit(VerdictReport.no_trace(goal=prompt, error="stopped (P0, no LLM call)"))
 
-    # S5b PRINT-PATH CUTOVER native-attempt-then-fallback (DEFAULT ON via
-    # _print_native_enabled; also forced by --native-first / VECTOR_NATIVE_FIRST):
-    # ATTEMPT the native producer first; if it DISPATCHED an action skill (routed the
-    # goal) emit its verdict — otherwise it took NO action (zero skills dispatched ->
-    # no half-action side-effects) and we FALL THROUGH to the EXISTING legacy
-    # decompose+execute+verdict block below. Strictly ADDITIVE: a goal native cannot
-    # route (e.g. the VECTOR_FAKE_LLM decompose-plan seam yields no tool_calls) falls
-    # through to the byte-identical legacy verdict, so only goals native CAN route
-    # change producer. VECTOR_PRINT_NATIVE in {0,false,off,no} forces the pure-legacy
-    # -p path (reversible escape hatch). The fallback's vgg_decompose(prompt) uses the
-    # RAW prompt, independent of any session text the native attempt may have appended.
-    # The DEFAULT-ON print cutover must NOT pre-empt an EXPLICIT --native-loop (pure
-    # native, no fallback) — defer to block 2 in that case; an explicit --native-first
-    # still wins (preserving every prior flag behavior). So block 1 fires on: explicit
-    # --native-first, OR the default cutover when --native-loop is NOT explicitly set.
-    if _native_first_enabled(args) or (
-        _print_native_enabled() and not _native_loop_enabled(args)
-    ):
-        # ask_permission=None: headless denies every 'ask' (--no-permission allows).
-        try:
-            trace = engine.run_turn_native(
-                prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session,
-                app_state=ctx.app_state,
-            )
-        except Exception:  # noqa: BLE001 — raised before any action: safe to fall back
-            trace = None
-        if _native_owns_turn(trace):
-            try:
-                agent = getattr(engine, "_vgg_agent", None)
-                oracle_names = verify_oracle_names(agent, engine)
-                report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
-            except Exception as exc:  # noqa: BLE001
-                report = VerdictReport.no_trace(goal=prompt or "", error=f"verdict failed: {exc}")
-            return _emit(report)
-        # Native dispatched NOTHING -> fall through to the legacy block (no return here).
-
-    # M1 strangler-fig (flag-gated, default OFF): the frontier-model NATIVE
-    # TOOL-USE producer assembles the trace instead of the legacy decompose plan.
-    # The verdict block below is UNCHANGED — the native producer hands the SAME
-    # ExecutionTrace shape to the SAME VerdictReport.from_trace gate.
-    if _native_loop_enabled(args):
-        try:
-            trace = engine.run_turn_native(
-                prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session,
-                app_state=ctx.app_state,
-            )
-        except Exception as exc:  # noqa: BLE001
-            return _emit(VerdictReport.no_trace(goal=prompt or "", error=f"native loop failed: {exc}"))
-        try:
-            agent = getattr(engine, "_vgg_agent", None)
-            oracle_names = verify_oracle_names(agent, engine)
-            report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
-        except Exception as exc:  # noqa: BLE001
-            report = VerdictReport.no_trace(goal=prompt or "", error=f"verdict failed: {exc}")
-        return _emit(report)
-
-    # Decompose + execute SYNCHRONOUSLY. A non-VGG (chat / tool_use) route yields
-    # no GoalTree -> no deterministic trace -> NO_TRACE (fail closed, exit 1).
+    n0 = len(ctx.session._entries)
+    # ask_permission=None: headless denies every 'ask' (--no-permission allows).
     try:
-        goal_tree = engine.vgg_decompose(prompt)
+        trace = engine.run_turn_native(
+            prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session,
+            app_state=ctx.app_state,
+        )
     except Exception as exc:  # noqa: BLE001
-        return _emit(VerdictReport.no_trace(goal=prompt or "", error=f"decompose failed: {exc}"))
-
-    if goal_tree is None:
-        return _emit(VerdictReport.no_trace(goal=prompt or "", error="not a VGG turn (no trace)"))
-
-    try:
-        trace = engine.vgg_execute(goal_tree)  # SYNC: the verdict reads a finished trace
-    except Exception as exc:  # noqa: BLE001
-        return _emit(VerdictReport.no_trace(goal=goal_tree.goal, error=f"execute failed: {exc}"))
+        return _emit(VerdictReport.no_trace(goal=prompt, error=f"native turn failed: {exc}"))
+    answer = ctx.session.last_assistant_text(n0)
+    if answer:
+        console.print(escape(answer))
+    if _chat_turn(trace):
+        return _emit(VerdictReport.no_trace(goal=prompt), chat=True)
 
     # Build the verdict from the EXISTING gate, single-sourced from the SAME
     # namespace GoalVerifier uses. Fail CLOSED on any error reading the gate.
@@ -1972,9 +1467,26 @@ def run_one_turn(args: Any) -> int:
         oracle_names = verify_oracle_names(agent, engine)
         report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
     except Exception as exc:  # noqa: BLE001
-        report = VerdictReport.no_trace(goal=goal_tree.goal, error=f"verdict failed: {exc}")
+        report = VerdictReport.no_trace(goal=prompt, error=f"verdict failed: {exc}")
+    return _emit(report, acted=_trace_acted(trace))
 
-    return _emit(report)
+
+def _provider_display(api_key: str, provider: str, base_url: str | None) -> str:
+    """The banner's provider label (the auth source for a Claude subscription)."""
+    from vector_os_nano.vcli.config import load_claude_oauth
+
+    oauth = load_claude_oauth()
+    if oauth and api_key == oauth.get("accessToken"):
+        return f"Claude {oauth.get('subscriptionType', 'auth')}"
+    if provider == "openrouter":
+        return "OpenRouter"
+    if base_url and "deepseek" in base_url:
+        return "DeepSeek"
+    if provider == "openai_compat":
+        return "OpenAI-compatible"
+    if base_url and "localhost" in base_url:
+        return f"Local ({base_url})"
+    return "Anthropic"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1995,14 +1507,10 @@ def main(argv: list[str] | None = None) -> None:
             console = Console(stderr=True)
         _code = run_one_turn(args)
         # The verdict line is already flushed to stdout and the exit code is
-        # decided. A live sim (--sim/--sim-go2) leaves a MuJoCo physics daemon
-        # thread + ROS2 stack running whose interpreter-teardown can SIGABRT/segv
-        # AFTER the verdict — corrupting the process exit code so it no longer
-        # matches the (already-correct) verdict. For a single-use non-interactive
-        # turn there is nothing to gracefully shut down, so exit HARD with the
-        # decided code (after flushing) to keep the harness invariant
-        # ``verified == (exit_code == 0)`` honest. Interactive / non-sim turns are
-        # unaffected (no daemon to crash). os._exit skips atexit/GC by design.
+        # decided. A live sim leaves a MuJoCo physics daemon thread + ROS2 stack
+        # running whose interpreter-teardown can SIGABRT/segv AFTER the verdict,
+        # corrupting the exit code. For a single-use turn there is nothing to
+        # gracefully shut down, so exit HARD with the decided code (after flushing).
         # os._exit skips atexit: stop every session first (its nav pgids included),
         # the flag's and one the turn launched by NL alike.
         from vector_os_nano.sim.session import stop_all
@@ -2015,245 +1523,14 @@ def main(argv: list[str] | None = None) -> None:
             os._exit(_code)
         sys.exit(_code)
 
-    # Resolve API key + provider from CLI flags > env vars > config file
-    from vector_os_nano.vcli.config import resolve_credentials
-    api_key, provider, model, base_url = resolve_credentials(
-        cli_api_key=args.api_key,
-        cli_base_url=args.base_url,
-        cli_model=args.model,
-    )
-
-    no_key = not api_key
-    if no_key:
-        # Each console.print is parsed independently — markup tags must balance
-        # within a single call (rich does not span tags across print calls).
-        console.print("[yellow]No API key configured.[/]")
-        console.print("[dim]  /login claude     auto-detect Claude Code subscription[/dim]")
-        console.print("[dim]  /login anthropic  enter Anthropic API key[/dim]")
-        console.print("[dim]  /login openrouter enter OpenRouter key[/dim]\n")
-
-    # Agent (optional hardware) + active world. An explicit --scenario selects a
-    # playground world (its verify predicates win); otherwise a connected agent
-    # selects the robot world, else the default cross-platform "dev" world. The
-    # resolved world flows into init_vgg(world=...) below, which sets engine._world
-    # BEFORE the verifier namespace is built, so the merge picks up its predicates.
-    sim_session = _init_agent(args)
-    agent = sim_session.agent if sim_session is not None else None
-    world = _resolve_active_world(args, agent)
-
-    # Tools (categorized registry for scalable tool management)
-    registry: CategorizedToolRegistry = CategorizedToolRegistry()
-    tools_list, cat_map = discover_categorized_tools()
-    for t in tools_list:
-        cat = "default"
-        for c, names in cat_map.items():
-            if t.name in names:
-                cat = c
-                break
-        registry.register(t, category=cat)
-    if agent is not None:
-        from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
-        for skill_tool in wrap_skills(agent):
-            registry.register(skill_tool, category="robot")
-    else:
-        # Dev world: hide robot/diag/system tools. The 'sim' category (start/stop
-        # _simulation) stays enabled so the user can spin up a sim conversationally
-        # ("start the arm sim").
-        for _c in ("robot", "diag", "system"):
-            registry.disable_category(_c)
-
-    # Permissions
-    permissions = PermissionContext(no_permission=args.no_permission)
-
-    # Session
-    session: Session
-    if args.resume is not None:
-        if args.resume == "latest":
-            loaded = get_latest_session()
-            if loaded is None:
-                console.print("[dim]No previous session, starting new.[/dim]")
-                session = create_session(metadata={"model": model})
-            else:
-                session = loaded
-                console.print(f"[dim]Resumed: {session.session_id}[/dim]")
-        else:
-            session = load_session(args.resume)
-            console.print(f"[dim]Resumed: {session.session_id}[/dim]")
-    else:
-        session = create_session(metadata={"model": model})
-
-    # System prompt (with live robot context)
-    robot_ctx_provider = None
     try:
-        from vector_os_nano.vcli.robot_context import RobotContextProvider
-        robot_ctx_provider = RobotContextProvider.for_agent(agent)
-    except ImportError:
-        pass
-    system_prompt = build_system_prompt(
-        agent=agent, cwd=Path.cwd(), robot_context=robot_ctx_provider, world=world
-    )
+        ctx = _build_turn_context(args)
+    except Exception as exc:  # noqa: BLE001 — a body the engine cannot bind: fail loud
+        console.print(f"[red]Setup error:[/] {exc}")
+        sys.exit(2)
+    engine, session, registry, app_state = ctx.engine, ctx.session, ctx.registry, ctx.app_state
 
-    # Wrap in DynamicSystemPrompt so robot state refreshes each turn
-    try:
-        from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
-        system_prompt = DynamicSystemPrompt(system_prompt, robot_ctx_provider)
-    except ImportError:
-        pass
-
-    # Intent router + hooks
-    intent_router = None
-    hooks = None
-    try:
-        from vector_os_nano.vcli.intent_router import IntentRouter
-        intent_router = IntentRouter()
-    except ImportError:
-        pass
-    try:
-        from vector_os_nano.vcli.hooks import ToolHookRegistry
-        hooks = ToolHookRegistry()
-    except ImportError:
-        pass
-
-    # Explore event streaming — wired via _setup_explore_events on first explore
-    _setup_explore_events(console)
-
-    # Backend + engine (deferred if no API key — /login can set it up). Built
-    # through the SINGLE fake-LLM seam (production-identical unless VECTOR_FAKE_LLM
-    # is set) so the REPL and the non-interactive -p path share one create_backend
-    # site (the seam is byte-identical to create_backend in production).
-    engine: VectorEngine | None = None
-    if api_key:
-        backend = create_backend_with_fake_seam(
-            provider=provider, api_key=api_key, model=model, base_url=base_url
-        )
-        engine = VectorEngine(
-            backend=backend, registry=registry, system_prompt=system_prompt,
-            permissions=permissions, intent_router=intent_router, hooks=hooks,
-        )
-
-    # Mutable app state
-    _spatial_memory = getattr(agent, "_spatial_memory", None) if agent else None
-    _skill_registry = getattr(agent, "_skill_registry", None) if agent else None
-    # An explicit --scenario selected a playground world; its name doubles as the
-    # active scenario id (banner + mid-session /scenario read/write this).
-    _active_scenario = getattr(args, "scenario", None) or None
-    app_state: dict[str, Any] = {
-        "agent": agent,
-        "registry": registry,
-        "engine": engine,
-        "model": model,
-        "provider": provider,
-        "api_key": api_key,
-        "base_url": base_url,
-        "scene_graph": _spatial_memory,
-        "skill_registry": _skill_registry,
-        "robot_ctx_provider": robot_ctx_provider,
-        "world": world,
-        "scenario": _active_scenario,
-        "sim_session": sim_session,
-    }
-
-    # VGG cognitive layer (optional)
-    _vgg_step_idx = [0]
-    _vgg_total = [0]
-
-    def _vgg_step_display(step: Any) -> None:
-        """Print VGG step progress to console — human-readable."""
-        _vgg_step_idx[0] += 1
-        idx = _vgg_step_idx[0]
-        total = _vgg_total[0]
-        name = getattr(step, "sub_goal_name", "?")
-        strategy = getattr(step, "strategy", "?")
-        success = getattr(step, "success", False)
-        dur = getattr(step, "duration_sec", 0.0)
-        fallback = getattr(step, "fallback_used", False)
-        err = getattr(step, "error", "")
-
-        prefix = f"[{idx}/{total}]" if total > 0 else ""
-
-        if success:
-            console.print(f"  [{TEAL}]>[/] {prefix} {name} [green]done[/] [dim]{dur:.1f}s[/]")
-        elif err == "aborted":
-            console.print(f"  [{TEAL}]>[/] {prefix} {name} [yellow]aborted[/]")
-        else:
-            # Translate common errors to friendly messages
-            friendly = err
-            if "No rooms learned" in err or "room_not_explored" in err:
-                friendly = "no map yet — run explore first"
-            elif "navigation_failed" in err or "timed out" in err:
-                friendly = "navigation timed out"
-            elif "Skill not found" in err:
-                friendly = f"skill not available: {strategy}"
-            fb_tag = " [dim](tried fallback)[/]" if fallback else ""
-            console.print(f"  [{TEAL}]>[/] {prefix} {name} [red]failed[/] — {friendly}{fb_tag} [dim]{dur:.1f}s[/]")
-
-    # Observation surface (INC8): make the verified loop VISIBLE. The per-step
-    # EXPORT VIEW (JSON-safe dict) is rendered to a readable line carrying the
-    # sub-goal, strategy, verify predicate and a stable RAN/FAILED marker. Runs
-    # alongside _vgg_step_display (best-effort) — never affects execution. The
-    # verify predicate lives on the active goal tree's sub_goals; the REPL loop
-    # refreshes this map when it decomposes each task.
-    _vgg_verify_by_name: dict[str, str] = {}
-
-    def _vgg_step_view_display(view: dict[str, Any]) -> None:
-        """Render one per-step EXPORT VIEW (sub-goal/strategy/verify/RAN-FAILED)."""
-        try:
-            from vector_os_nano.vcli.cognitive.observation import render_step_view
-            verify = _vgg_verify_by_name.get(view.get("sub_goal_name"))
-            line = render_step_view(view, verify)
-            # The live view is ungraded (evidence is graded on the whole trace in the
-            # run snapshot), so it renders [RAN]/[FAILED] and is never green.
-            colour = "yellow" if view.get("success") else "red"
-            # markup=False: the rendered line carries literal [RAN]/[FAILED]
-            # markers that must NOT be parsed as rich style tags.
-            console.print(f"    VGG {line}", style=colour, markup=False)
-        except Exception:  # noqa: BLE001 — display must never break the loop
-            pass
-
-    # Stored so SimStartTool / a mid-session /scenario switch can reuse the real
-    # step + view displays when they re-init VGG.
-    app_state["vgg_step_callback"] = _vgg_step_display
-    app_state["vgg_step_view_callback"] = _vgg_step_view_display
-    # Stored so a mid-session /scenario switch (enter_scenario) re-inits VGG with the
-    # SAME interactive permission prompt the launch path uses — otherwise switching
-    # from a dev world would silently lose the prompt.
-    app_state["tool_permission_resolver"] = lambda n, p: ask_permission(n, p)
-
-    try:
-        engine.init_vgg(
-            agent=agent,
-            skill_registry=_skill_registry,
-            on_vgg_step=_vgg_step_display,
-            on_vgg_step_view=_vgg_step_view_display,
-            world=world,
-            tool_permission_resolver=lambda n, p: ask_permission(n, p),
-            # Learning tier (stats + templates) is dev-world only: keep the robot
-            # decompose/execute path byte-identical and avoid cross-world stats
-            # contamination (a dev 'tool_call' record must not promote onto a
-            # robot sub-goal that has no ToolDispatcher).
-            persist_dir=(Path.home() / ".vector") if not world.is_robot() else None,
-        )
-        if engine._vgg_enabled:
-            console.print(f"[dim]  VGG cognitive layer: enabled[/dim]")
-    except Exception:
-        pass
-
-    # Banner — detect auth source for display
-    from vector_os_nano.vcli.config import load_claude_oauth
-    _oauth = load_claude_oauth()
-    if _oauth and api_key == _oauth.get("accessToken"):
-        provider_display = f"Claude {_oauth.get('subscriptionType', 'auth')}"
-    elif provider == "openrouter":
-        provider_display = "OpenRouter"
-    elif base_url and "deepseek" in base_url:
-        provider_display = "DeepSeek"
-    elif provider == "openai_compat":
-        provider_display = "OpenAI-compatible"
-    elif base_url and "localhost" in base_url:
-        provider_display = f"Local ({base_url})"
-    else:
-        provider_display = "Anthropic"
-    print_banner(model, provider_display, agent, scenario=_active_scenario)
+    print_banner(ctx.model, _provider_display(ctx.api_key, ctx.provider, ctx.base_url), ctx.agent)
     console.print(f"[dim]Session: {session.session_id}[/dim]\n")
 
     # REPL setup
@@ -2282,7 +1559,6 @@ def main(argv: list[str] | None = None) -> None:
         style=PT_STYLE,
     )
 
-    _tool_start_times: dict[str, float] = {}
     # Ctrl-C UX (R2-4): a ^C during a turn stops it and returns to the prompt (it
     # never exits); two consecutive ^C AT THE PROMPT exit cleanly.
     interrupt_pending = False
@@ -2292,400 +1568,6 @@ def main(argv: list[str] | None = None) -> None:
     pending_input: list[str] = []
 
     try:
-        def _engine_turn(user_input: str) -> None:
-            # Every turn ATTEMPTS the native tool-use producer first (no keyword gate:
-            # the model routes by the tool descriptions, sim launch included). If it
-            # OWNS the turn its honest verdict is rendered; if it took NO action (chat,
-            # a goal it could not route) the turn falls through to the legacy routing
-            # below. VECTOR_REPL_NATIVE=0 forces the pure-legacy REPL (reversible).
-            if _repl_native_enabled() and should_attempt_native(
-                user_input, agent=getattr(engine, "_vgg_agent", None), engine=engine
-            ):
-                if _repl_attempt_native(engine, user_input, session, app_state, console):
-                    return
-                # native took NO action -> fall through to legacy routing (unchanged).
-
-            try:
-                # Single in-place progress region for the whole turn. A reasoning
-                # model (DeepSeek) streams NO text for several seconds while it
-                # thinks; the region shows one calm "thinking…" status that resolves
-                # into the streamed answer — it is paused/cleared before any
-                # tool-execution line is printed so box frames never stack and the
-                # prompt is not duplicated.
-                _turn_started = time.monotonic()
-
-                def _status_content(text: str, elapsed: float, is_thinking: bool) -> Panel:
-                    if is_thinking:
-                        dots = "." * (int(elapsed) % 4)
-                        label = f"thinking{dots}" + (
-                            f"  [dim]{elapsed:.0f}s[/]" if elapsed >= 1 else ""
-                        )
-                        return Panel(
-                            Text.from_markup(label, style="dim italic"),
-                            title=V_LABEL,
-                            title_align="left",
-                            border_style=DIM_TEAL,
-                            padding=(0, 1),
-                            width=min(console.width, 80),
-                        )
-                    return Panel(
-                        text,
-                        title=V_LABEL,
-                        title_align="left",
-                        border_style=TEAL,
-                        padding=(0, 1),
-                        width=min(console.width, 80),
-                    )
-
-                status = TurnStatus(
-                    content_factory=_status_content,
-                    live_factory=lambda renderable: Live(
-                        renderable,
-                        console=console,
-                        refresh_per_second=8,
-                        transient=True,
-                    ),
-                )
-
-                def on_text(chunk: str) -> None:
-                    status.update_text(chunk)
-
-                def on_reasoning(_chunk: str) -> None:
-                    # Hidden reasoning trace: keep the "thinking…" status alive with
-                    # an elapsed counter; never rendered as answer text.
-                    status.thinking(time.monotonic() - _turn_started)
-
-                def _format_tool_display(name: str, p: dict[str, Any]) -> str:
-                    """Context-aware tool call display."""
-                    if name == "file_read":
-                        path = p.get("file_path", "")
-                        short = path.split("/")[-1] if "/" in path else path
-                        offset = p.get("offset", 0)
-                        limit = p.get("limit", "")
-                        loc = f":{offset}-{offset + limit}" if offset and limit else ""
-                        return f"[dim]read[/] {short}{loc}"
-                    if name == "file_edit":
-                        path = p.get("file_path", "")
-                        short = path.split("/")[-1] if "/" in path else path
-                        old = str(p.get("old_string", ""))[:30]
-                        new = str(p.get("new_string", ""))[:30]
-                        return f"[dim]edit[/] {short}: [red]{old}[/] [dim]→[/] [green]{new}[/]"
-                    if name == "file_write":
-                        path = p.get("file_path", "")
-                        short = path.split("/")[-1] if "/" in path else path
-                        return f"[dim]write[/] {short}"
-                    if name == "bash":
-                        cmd = str(p.get("command", ""))[:60]
-                        return f"[dim]$[/] {cmd}"
-                    if name == "navigate":
-                        room = p.get("room", "?")
-                        return f"[dim]navigate →[/] {room}"
-                    if name == "explore":
-                        return "[dim]explore[/] starting background exploration"
-                    if name in ("walk", "turn", "stand", "sit", "lie_down", "stop"):
-                        parts = [name]
-                        if p.get("direction"):
-                            parts.append(str(p["direction"]))
-                        if p.get("distance"):
-                            parts.append(f"{p['distance']}m")
-                        if p.get("angle"):
-                            parts.append(f"{p['angle']}°")
-                        return "[dim]" + " ".join(parts) + "[/]"
-                    if name == "skill_reload":
-                        return f"[dim]reload[/] {p.get('skill_name', '?')}"
-                    if name == "scene_graph_query":
-                        qt = p.get("query_type", "?")
-                        room = p.get("room", "")
-                        return f"[dim]scene_graph[/] {qt}" + (f" ({room})" if room else "")
-                    if name in ("ros2_topics", "ros2_nodes"):
-                        action = p.get("action", "?")
-                        topic = p.get("topic", p.get("node", ""))
-                        return f"[dim]{name}[/] {action}" + (f" {topic}" if topic else "")
-                    if name == "ros2_log":
-                        return f"[dim]log[/] {p.get('log_name', '?')}"
-                    if name in ("glob", "grep"):
-                        pattern = p.get("pattern", "")[:40]
-                        return f"[dim]{name}[/] {pattern}"
-                    if name == "nav_state":
-                        return "[dim]nav_state[/]"
-                    if name == "terrain_status":
-                        return "[dim]terrain_status[/]"
-                    if name == "start_simulation":
-                        return f"[dim]sim start[/] {p.get('embodiment', '?')}"
-                    # Fallback: generic display
-                    if p:
-                        items = [f"{k}={str(v)[:20]}" for k, v in list(p.items())[:2]]
-                        return f"[dim]{name}[/]({', '.join(items)})"
-                    return f"[dim]{name}[/]"
-
-                def _format_result_summary(name: str, result: Any) -> str:
-                    """Extract key info from tool result for display."""
-                    if result.is_error:
-                        content = result.content or ""
-                        # Show first line of error + suggested action
-                        lines = content.split("\n")
-                        msg = lines[0][:60]
-                        suggested = next((l for l in lines if l.startswith("Suggested:")), "")
-                        if suggested:
-                            return f"  [dim]{msg}[/]\n    [yellow]{suggested}[/]"
-                        return f"  [dim]{msg}[/]"
-
-                    if name in ("start_simulation", "stop_simulation"):
-                        return f"  [dim]▸ {(result.content or '').splitlines()[0][:200]}[/]"
-                    meta = result.metadata if hasattr(result, "metadata") else {}
-                    if not meta:
-                        return ""
-
-                    # Navigate: show arrival info
-                    if name == "navigate":
-                        room = meta.get("room", "")
-                        state = meta.get("robot_state_after", {})
-                        pos = state.get("position", [])
-                        if room and pos:
-                            return f"  [dim]▸ 到达 {room} ({pos[0]}, {pos[1]})[/]"
-                        if room:
-                            return f"  [dim]▸ 到达 {room}[/]"
-                    # Explore: show status
-                    if name == "explore":
-                        status = meta.get("status", "")
-                        rooms = meta.get("rooms_visited", meta.get("all_rooms", []))
-                        if rooms:
-                            return f"  [dim]▸ {len(rooms)} rooms discovered[/]"
-                    # Where am i
-                    if name == "where_am_i":
-                        room = meta.get("room", "")
-                        pos = meta.get("position", [])
-                        if room:
-                            return f"  [dim]▸ {room} ({pos[0]}, {pos[1]})[/]" if pos else f"  [dim]▸ {room}[/]"
-                    # Motor skills: show post-state
-                    state = meta.get("robot_state_after", {})
-                    if state:
-                        room = state.get("room", "")
-                        pos = state.get("position", [])
-                        if room and pos:
-                            return f"  [dim]▸ pos=({pos[0]}, {pos[1]}) room={room}[/]"
-
-                    return ""
-
-                _tool_displays: dict[str, str] = {}
-
-                def on_tool_start(name: str, p: dict[str, Any]) -> None:
-                    _tool_start_times[name] = time.monotonic()
-                    _tool_displays[name] = _format_tool_display(name, p)
-
-                def on_tool_end(name: str, result: Any) -> None:
-                    elapsed = time.monotonic() - _tool_start_times.pop(name, time.monotonic())
-                    display = _tool_displays.pop(name, name)
-                    tag = "[green]ok[/]" if not result.is_error else "[red]fail[/]"
-                    summary = _format_result_summary(name, result)
-                    # Pause the live region BEFORE printing — printing into an active
-                    # Live interleaves with its redraw and re-stacks the box frame.
-                    with status.paused():
-                        console.print(f"  [{TEAL}]▸[/] {display} {tag} [dim]{elapsed:.1f}s[/]")
-                        if summary:
-                            console.print(summary)
-
-                    # Hook explore event callback after sim/explore tools run
-                    if name in ("start_simulation", "explore"):
-                        _setup_explore_events(console)
-
-                # --- Routing (Stage 5, S5.4 cut-over) ---
-                # The keyword gate is now an OPTIMIZATION HINT, not a correctness
-                # fork: classify_intent (the single, observable decision the unified
-                # controller uses) decides only the RENDERING shape here.
-                #   * vgg route  -> the async plan renderer below (CLI stays
-                #     responsive; this IS the unified plan path: vgg_decompose ->
-                #     vgg_execute, deterministic verify + replan).
-                #   * tool_use route -> run_turn_unified, which produces the answer
-                #     via the ReAct loop AND closes the loop with a verified
-                #     answer-only trace (chat is verified too; the moat is intact).
-                # VECTOR_LEGACY_TURN=1 restores the exact pre-cutover fork
-                # (vgg_decompose-then-run_turn) for one release as a fallback.
-                _legacy_turn = os.environ.get("VECTOR_LEGACY_TURN") == "1"
-                if _legacy_turn:
-                    goal_tree = engine.vgg_decompose(user_input)
-                else:
-                    goal_tree = (
-                        engine.vgg_decompose(user_input)
-                        if engine.classify_intent(user_input).use_vgg
-                        else None
-                    )
-                if _abort.is_abort_requested():
-                    return  # the owner stopped this turn: nothing else runs for it
-                if goal_tree is not None:
-                    # Show plan BEFORE execution
-                    console.print()
-                    console.print(f"  [{TEAL}]>[/] [bold]VGG[/] {goal_tree.goal}")
-                    for i, sg in enumerate(goal_tree.sub_goals, 1):
-                        dep = f" (after {', '.join(sg.depends_on)})" if sg.depends_on else ""
-                        strat = f" [dim]via {sg.strategy}[/]" if sg.strategy else ""
-                        console.print(f"  [{TEAL}]>[/]   [{i}/{len(goal_tree.sub_goals)}] {sg.name} — {sg.description}{strat}{dep}")
-                    console.print()
-
-                    # Reset step counter for callback
-                    _vgg_step_idx[0] = 0
-                    _vgg_total[0] = len(goal_tree.sub_goals)
-                    # Refresh the verify-predicate map the per-step view renderer
-                    # reads (INC8) — keyed by sub_goal name for this plan.
-                    _vgg_verify_by_name.clear()
-                    _vgg_verify_by_name.update(
-                        {sg.name: sg.verify for sg in goal_tree.sub_goals}
-                    )
-
-                    # Execute async — CLI remains responsive
-                    def _on_vgg_complete(trace: Any) -> None:
-                        n_steps = len(trace.steps)
-                        n_ok = sum(1 for s in trace.steps if s.success)
-                        dur = trace.total_duration_sec
-                        # Evidence gate: a successful run only counts as *verified*
-                        # when its steps actually consume a live verify-namespace
-                        # oracle (world-agnostic now — the robot bypass is gone).
-                        # oracle_names single-sourced from the SAME namespace
-                        # GoalVerifier uses. Fail CLOSED (not verified) on any error
-                        # so the moat never silently passes.
-                        try:
-                            from vector_os_nano.vcli.cognitive.trace_store import (
-                                evidence_passed,
-                                verify_oracle_names,
-                            )
-                            _oracle_names = verify_oracle_names(
-                                getattr(engine, "_vgg_agent", None), engine
-                            )
-                            _evidence = evidence_passed(trace, _oracle_names)
-                        except Exception:  # noqa: BLE001
-                            _evidence = False
-                        if trace.success and _evidence:
-                            console.print(f"  [{TEAL}]>[/] [green]all {n_steps} steps done[/] [dim]{dur:.1f}s[/]")
-                        elif trace.success:
-                            console.print(f"  [{TEAL}]>[/] [yellow]completed without verifiable evidence[/] — {n_steps} steps ran [dim]{dur:.1f}s[/]")
-                        elif n_ok > 0:
-                            console.print(f"  [{TEAL}]>[/] [yellow]{n_ok}/{n_steps} steps done[/], rest failed [dim]{dur:.1f}s[/]")
-                        else:
-                            console.print(f"  [{TEAL}]>[/] [red]task failed[/] — 0/{n_steps} steps succeeded [dim]{dur:.1f}s[/]")
-
-                        # Observation surface (INC8): show the full verified loop
-                        # — goal tree + per-step PASS/FAIL + any replan notes +
-                        # outcome — from the run snapshot (pure EXPORT VIEW; never
-                        # re-derived from frozen types). Best-effort display.
-                        try:
-                            from vector_os_nano.vcli.cognitive.observation import (
-                                render_run_snapshot,
-                            )
-                            snapshot = engine.vgg_run_snapshot(trace)
-                            for snap_line in render_run_snapshot(snapshot).splitlines():
-                                # markup=False: literal [GROUNDED]/[RAN]/[FAILED] markers.
-                                console.print(f"  {snap_line}", style="dim", markup=False)
-                        except Exception:  # noqa: BLE001 — display only
-                            pass
-
-                        # Record in session
-                        step_summary = "\n".join(
-                            f"  {s.sub_goal_name}: {'ok' if s.success else 'FAILED'}"
-                            + (f" ({s.error})" if s.error else "")
-                            for s in trace.steps
-                        )
-                        session.append_user(user_input)
-                        session.append_assistant(
-                            f"[VGG executed]\nGoal: {trace.goal_tree.goal}\n"
-                            f"Result: {'success' if trace.success else 'partial failure'}\n"
-                            f"Steps:\n{step_summary}"
-                        )
-
-                    # Synchronous on the turn worker: the REPL thread keeps reading
-                    # input (stop / Ctrl-C), and only one turn drives the robot.
-                    _on_vgg_complete(engine.vgg_execute(goal_tree))
-                    return
-
-                # --- Normal tool_use path ---
-                # Pause the live region around any interactive permission prompt so
-                # the prompt is not drawn into (and duplicated by) the live box.
-                def _ask_permission_paused(n: str, p: dict[str, Any]) -> str:
-                    with status.paused():
-                        return ask_permission(n, p)
-
-                # Suppress ROS2/subprocess log noise during engine turn
-                _saved_stderr = sys.stderr
-                try:
-                    sys.stderr = open(os.devnull, "w")
-                except OSError:
-                    pass
-                try:
-                    status.start()  # one live region for the whole turn
-                    if _legacy_turn:
-                        # Legacy fallback (VECTOR_LEGACY_TURN=1): the open ReAct loop
-                        # with no closed-loop verify — kept one release.
-                        turn_result: TurnResult = engine.run_turn(
-                            user_message=user_input,
-                            session=session,
-                            agent=app_state.get("agent"),
-                            on_text=on_text,
-                            on_tool_start=on_tool_start,
-                            on_tool_end=on_tool_end,
-                            ask_permission=_ask_permission_paused,
-                            app_state=app_state,
-                            on_reasoning=on_reasoning,
-                        )
-                    else:
-                        # Unified controller: the ReAct loop produces the answer
-                        # (streaming, permissions, tool hooks, P0 stop all preserved
-                        # by run_turn underneath) and the harness wraps it in a
-                        # verified answer-only trace — closing the loop for chat too.
-                        turn_result = engine.run_turn_unified(
-                            user_message=user_input,
-                            session=session,
-                            agent=app_state.get("agent"),
-                            on_text=on_text,
-                            on_tool_start=on_tool_start,
-                            on_tool_end=on_tool_end,
-                            ask_permission=_ask_permission_paused,
-                            app_state=app_state,
-                            on_reasoning=on_reasoning,
-                        )
-                finally:
-                    # Stop/clear the single region BEFORE printing the final answer,
-                    # so the box never stacks and the prompt is not duplicated.
-                    status.stop()
-                    sys.stderr = _saved_stderr
-
-                # Final response: highlighted panel with braille V title
-                global _last_response
-                if turn_result.text:
-                    _last_response = turn_result.text.strip()
-                    console.print()  # spacing before response
-                    console.print(render_response(
-                        _last_response,
-                        width=min(console.width, 80),
-                    ))
-
-                # Auto-compact (summarize old context instead of truncating)
-                if len(session._entries) > 50:
-                    before, after = session.compact(keep_recent=12)
-                    console.print(f"[dim]  compacted {before} -> {after} entries (old context summarized)[/dim]")
-
-                # Token usage (show in/out breakdown)
-                if turn_result.usage:
-                    u = turn_result.usage
-                    if u.input_tokens or u.output_tokens:
-                        console.print(f"[dim]  in={u.input_tokens:,} out={u.output_tokens:,}[/]")
-                console.print()
-
-            except Exception as exc:
-                err_str = str(exc)
-                if "429" in err_str or "rate_limit" in err_str:
-                    current_model = app_state.get("model", "?")
-                    console.print(f"[yellow]  Rate limited on {current_model}.[/]")
-                    console.print(f"[dim]  Try: /model claude-haiku-4-5 (lower rate limit)[/dim]")
-                elif "401" in err_str or "authentication" in err_str.lower():
-                    console.print(f"[yellow]  Authentication failed. Use /login to reconfigure.[/]")
-                elif "404" in err_str or "not_found" in err_str:
-                    console.print(f"[yellow]  Model not found: {app_state.get('model', '?')}[/]")
-                    console.print(f"[dim]  Try: /model claude-haiku-4-5[/dim]")
-                else:
-                    console.print(f"[red]Error:[/] {exc}")
-                if args.verbose:
-                    import traceback
-                    traceback.print_exc()
-
         while True:
             _flush_turn_state(session, app_state)  # a segfault loses at most one turn
             # ---- Read input ----
@@ -2743,7 +1625,7 @@ def main(argv: list[str] | None = None) -> None:
                 console.print(f"[yellow]No API key. Use /login to authenticate first.[/]")
                 continue
 
-            # P0 stop: the REGISTERED stop skill's own words, before any producer —
+            # P0 stop: the REGISTERED stop skill's own words, before the producer —
             # zero LLM calls, < 100 ms. Like any turn it runs on a worker thread while
             # this thread keeps reading input: a typed stop / Ctrl-C stops it mid-turn
             # (a Ctrl-C during the stop's speed report never exits the REPL), and
@@ -2751,7 +1633,7 @@ def main(argv: list[str] | None = None) -> None:
             if engine.is_stop(user_input):
                 turn = lambda: _p0_stop(engine, user_input, app_state, session)  # noqa: E731
             else:
-                turn = lambda: _engine_turn(user_input)  # noqa: E731
+                turn = lambda: _repl_turn(engine, user_input, session, app_state, console)  # noqa: E731
             typed_next = _run_turn_busy(engine, turn, app_state)
             if typed_next:
                 pending_input.append(typed_next)

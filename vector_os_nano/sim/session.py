@@ -16,7 +16,7 @@ grasp number came from it), chosen by the embodiment manifest
   base), kills only the process groups this session spawned and unregisters its
   atexit hook.
 * :func:`rebind_world` is the ONE path that points the REPL at a session (or at
-  no session): skill tools, tool categories, world, system prompt and VGG.
+  no session): the engine binding (agent + world) and the skill tools.
 """
 from __future__ import annotations
 
@@ -625,18 +625,18 @@ def _launch_ros2_stack(go2: Any, *, gui: bool) -> Callable[[], None]:
 
 
 def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
-    """Point the REPL at *session* (or at none): tools, world, prompt and VGG.
+    """Point the REPL at *session* (or at none): the engine binding, then the skill tools.
 
-    Used by start/stop_simulation (the CLI startup builds the same state). An
-    active playground scenario keeps its world; otherwise the agent picks it.
+    Used by start/stop_simulation (the CLI startup builds the same state). The engine
+    is bound first: a bind failure raises before anything else changed.
     """
-    from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
-    from vector_os_nano.vcli.prompt import build_system_prompt
-    from vector_os_nano.vcli.robot_context import RobotContextProvider
     from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
     from vector_os_nano.vcli.worlds import resolve_world
 
     agent = session.agent if session is not None else None
+    engine = app_state.get("engine")
+    if engine is not None:
+        engine.bind(agent, resolve_world(agent))
     sg = getattr(agent, "_spatial_memory", None)
     skill_registry = getattr(agent, "_skill_registry", None)
     app_state.update(sim_session=session, agent=agent, scene_graph=sg,
@@ -650,36 +650,3 @@ def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
         if agent is not None:
             for t in wrap_skills(agent):
                 registry.register(t, category="robot")
-        for cat in ("robot", "diag", "system"):
-            if agent is not None:
-                registry.enable_category(cat)
-            else:
-                registry.disable_category(cat)
-
-    world = app_state.get("world") if app_state.get("scenario") else resolve_world(agent)
-    app_state["world"] = world
-
-    engine = app_state.get("engine")
-    if engine is None:
-        return
-    provider = RobotContextProvider.for_agent(agent)
-    app_state["robot_ctx_provider"] = provider
-    engine._system_prompt = DynamicSystemPrompt(
-        build_system_prompt(agent=agent, cwd=Path.cwd(), robot_context=provider, world=world),
-        provider,
-    )
-    # The native path reads engine._vgg_agent: never leave it on a torn-down body,
-    # even if init_vgg below bails out early.
-    engine._vgg_agent = agent
-    try:
-        engine.init_vgg(
-            agent=agent,
-            skill_registry=skill_registry,
-            on_vgg_step=app_state.get("vgg_step_callback"),
-            on_vgg_step_view=app_state.get("vgg_step_view_callback"),
-            world=world,
-            tool_permission_resolver=app_state.get("tool_permission_resolver"),
-            persist_dir=(Path.home() / ".vector") if not world.is_robot() else None,
-        )
-    except Exception as exc:  # noqa: BLE001 — the REPL keeps the tool_use path
-        logger.warning("init_vgg after sim rebind failed: %s", exc)

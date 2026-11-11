@@ -81,7 +81,7 @@ class DetectorCapability:
         # ``detect`` sub-goal perceive WITHOUT any kernel/cognitive change. Stays
         # None for dev/CI; ``_resolve_rgb`` then falls back to the payload/context.
         self._perception = perception
-        # COLD-TURN rebind (R37 Task B): register_capabilities runs at init_vgg,
+        # COLD-TURN rebind (R37 Task B): register_capabilities runs at engine.bind,
         # BEFORE a mid-session NL `启动 go2 带机械臂` boots the arm — so the agent's
         # ``_perception`` is None at bind time and a snapshot would stay None forever.
         # Hold the AGENT instead and pull its LIVE ``_perception`` lazily at invoke

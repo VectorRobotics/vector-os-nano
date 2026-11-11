@@ -138,6 +138,11 @@ class Session:
         self._entries.append({"type": "tool_result", "results": results, "ts": self._now()})
         self.updated_at = self._now()
 
+    def last_assistant_text(self, since: int = 0) -> str:
+        """The model's last non-empty words among the entries after the first *since*."""
+        return next((e["text"].strip() for e in reversed(self._entries[since:])
+                     if e.get("type") == "assistant" and (e.get("text") or "").strip()), "")
+
     def add_usage(self, usage: TokenUsage) -> None:
         self.token_usage = self.token_usage.add(usage)
         self.updated_at = self._now()
