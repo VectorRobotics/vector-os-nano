@@ -60,14 +60,17 @@ _EMBEDS_V4 = tuple(ipaddress.ip_network(n) for n in (
     "64:ff9b::/96",      # NAT64
 ))
 # is_global says True for these, yet they never reach a public host: the 6to4 relay
-# anycast, deprecated site-local, and v4-compatible ::/96 (refused whatever it embeds).
-_NEVER_PUBLIC = tuple(ipaddress.ip_network(n) for n in ("192.88.99.0/24", "fec0::/10", "::/96"))
+# anycast, deprecated site-local, and IETF-reserved ::/8 (v4-compatible ::/96 included,
+# refused whatever it embeds); only the _EMBEDS_V4 forms inside ::/8 are judged by
+# their inner IPv4 address instead.
+_NEVER_PUBLIC = tuple(ipaddress.ip_network(n) for n in ("192.88.99.0/24", "fec0::/10", "::/8"))
 
 
 def _is_public(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """True only for a globally routable unicast address. An IPv6 address that
     embeds an IPv4 one must be public on both readings (outer and inner)."""
-    if not addr.is_global or addr.is_multicast or any(addr in n for n in _NEVER_PUBLIC):
+    embeds = any(addr in n for n in _EMBEDS_V4)
+    if not addr.is_global or addr.is_multicast or (any(addr in n for n in _NEVER_PUBLIC) and not embeds):
         return False
     if isinstance(addr, ipaddress.IPv6Address):
         inner = addr.sixtofour or next(

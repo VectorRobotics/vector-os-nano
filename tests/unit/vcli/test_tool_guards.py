@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -142,8 +143,8 @@ def test_read_inside_project_is_allowed_outside_asks(box: dict[str, Path]) -> No
     cwd = box["project"]
     assert _decide(FileReadTool(), {"file_path": "main.py"}, cwd) == "allow"
     assert _decide(FileReadTool(), {"file_path": str(box["outside"] / "notes.txt")}, cwd) == "ask"
-    # .vector is a credential-store component: all of it is refused, not only config.yaml
-    assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, cwd) == "deny"
+    # only .vector's credential files are refused (R3CV-2); its other files are outside: ask
+    assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, cwd) == "ask"
 
 
 def test_a_symlink_out_of_the_project_asks(box: dict[str, Path]) -> None:
@@ -155,7 +156,7 @@ def test_a_symlink_out_of_the_project_asks(box: dict[str, Path]) -> None:
 def test_home_as_the_project_root_never_auto_allows(box: dict[str, Path]) -> None:
     (box["home"] / "notes.md").write_text("plain\n")
     assert _decide(FileReadTool(), {"file_path": "~/notes.md"}, box["home"]) == "ask"
-    assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, box["home"]) == "deny"
+    assert _decide(FileReadTool(), {"file_path": "~/.vector/personality.md"}, box["home"]) == "ask"
 
 
 @pytest.mark.parametrize("pseudo", ["/proc", "/proc/self", "/sys", "/dev"])
@@ -421,7 +422,7 @@ def test_another_users_credentials_are_refused_with_home_elsewhere(homes: Path, 
         assert gv.verify(expr) is False, expr
     for tool in (GrepTool(), GlobTool()):
         assert _decide(tool, {"pattern": "*", "path": path}, homes) == "deny"
-    if rel.count("/") == 1 and not rel.startswith((".claude", ".cache")):   # a credential dir
+    if rel.split("/")[0] in (".aws", ".ssh", ".gnupg"):   # a whole-component credential dir
         store = path.rsplit("/", 1)[0]
         for tool in (GrepTool(), GlobTool()):
             assert _decide(tool, {"pattern": "*", "path": store}, homes) == "deny", store
@@ -493,3 +494,73 @@ def test_grep_fallback_skips_a_fifo(box: dict[str, Path], no_rg: None) -> None:
     t.join(timeout=10)
     assert not t.is_alive(), "grep blocked opening a FIFO"
     assert "main.py" in out[0].content
+
+
+# ---------------------------------------------------------------------------
+# R3 verification follow-ups (R3CV-1..3, 5; R3CV-4 is in test_web_tool.py)
+# ---------------------------------------------------------------------------
+
+def test_a_root_holding_any_accounts_home_never_auto_allows(tmp_path: Path, monkeypatch) -> None:
+    """R3CV-1: cwd holds bob's home (a passwd entry) and $HOME is elsewhere: bob's
+    unlisted credentials (.cargo/credentials.toml) must ask, never auto-allow."""
+    from vector_os_nano.vcli.tools import file_tools
+
+    bob = tmp_path / "home" / "bob"
+    (bob / ".cargo").mkdir(parents=True)
+    (bob / ".cargo" / "credentials.toml").write_text(f"token = {SECRET}\n")
+    monkeypatch.setenv("HOME", str(tmp_path / "root"))
+    monkeypatch.setattr(file_tools.pwd, "getpwall", lambda: [SimpleNamespace(pw_dir=str(bob))])
+    for cwd in (tmp_path / "home", bob):
+        assert _decide(FileReadTool(), {"file_path": str(bob / ".cargo" / "credentials.toml")}, cwd) == "ask"
+    (bob / "proj").mkdir()
+    assert _decide(FileReadTool(), {"file_path": str(bob / "proj" / "a.py")}, bob / "proj") == "allow"
+
+
+def test_content_free_dir_names_refuse_only_their_credentials(box: dict[str, Path]) -> None:
+    """R3CV-2: an in-project .docker/Dockerfile is code (readable); the credential file
+    inside .docker / .kube / .azure / .vector is refused by consecutive components."""
+    project = box["project"]
+    readable = (".docker/Dockerfile", ".kube/README.md", ".azure/pipelines.yml", ".vector/VECTOR.md")
+    refused = (".docker/config.json", ".kube/config", ".azure/accessTokens.json",
+               ".azure/msal_token_cache.json", ".azure/service_principal_entries.json",
+               ".vector/config.yaml", ".vector/oauth_credentials.json",
+               ".vector/sessions/s1.json", ".vector/traces/t1.jsonl")
+    for rel in readable + refused:
+        (project / rel).parent.mkdir(parents=True, exist_ok=True)
+        (project / rel).write_text(f"x {SECRET}\n")
+    for rel in readable:
+        assert _decide(FileReadTool(), {"file_path": rel}, project) == "allow", rel
+    for rel in refused:
+        assert _decide(FileReadTool(), {"file_path": rel}, project) == "deny", rel
+    (box["home"] / ".vector" / "VECTOR.md").write_text("notes\n")
+    assert _decide(FileReadTool(), {"file_path": "~/.vector/VECTOR.md"}, project) == "ask"
+    assert _decide(FileReadTool(), {"file_path": "~/.vector/config.yaml"}, project) == "deny"
+
+
+def test_a_unicode_case_variant_of_a_credential_dir_is_refused(box: dict[str, Path]) -> None:
+    """R3CV-3: lower() leaves U+017F (long s) alone, casefold() folds it to 's': on a
+    case-insensitive volume .ſsh IS .ssh."""
+    variant = box["project"] / ".ſsh" / "id_ed25519_backup"
+    variant.parent.mkdir()
+    variant.write_text(SECRET)
+    assert _decide(FileReadTool(), {"file_path": str(variant)}, box["project"]) == "deny"
+
+
+def test_the_dev_oracle_decides_and_reads_on_one_resolution(box: dict[str, Path], monkeypatch) -> None:
+    """R3CV-5: a path that resolves to a plain file when the permission is decided and
+    to a credential when it is read (a symlink swap in between) must not leak."""
+    from vector_os_nano.vcli.tools import file_tools
+    from vector_os_nano.vcli.worlds import dev
+
+    benign = box["project"] / "main.py"
+    secret = box["home"] / ".vector" / "config.yaml"
+    calls: list[str] = []
+
+    def swapping(path_str: str, cwd: Any = None) -> Path:
+        calls.append(path_str)
+        return benign if len(calls) == 1 else secret
+
+    monkeypatch.setattr(file_tools, "real_path", swapping)
+    monkeypatch.setattr(dev, "real_path", swapping)
+    assert dev.path_contains("main.py", "def main")  # it read what it decided on
+    assert len(calls) == 1

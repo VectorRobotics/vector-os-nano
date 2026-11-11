@@ -11,7 +11,9 @@ Public exports:
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import os
+import pwd
 import re
 from pathlib import Path
 from typing import Any
@@ -27,14 +29,20 @@ from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolRe
 # Credential stores are matched by PATH COMPONENT anywhere, case-insensitively, not
 # under one $HOME: a cwd that holds several users' homes is covered without knowing
 # who the users are. Refused outright, whatever the permission mode.
-_SECRET_DIRS: frozenset[str] = frozenset({
-    ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".vector", ".azure", ".git",
-})
-_SECRET_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset({
+# Whole components: everything under them is secret.
+_SECRET_DIRS: frozenset[str] = frozenset({".ssh", ".aws", ".gnupg", ".git"})
+# Consecutive components (directory, name glob): only the credential inside a
+# directory whose name alone says nothing (an in-project .docker/Dockerfile is code).
+_SECRET_DIR_PAIRS: tuple[tuple[str, str], ...] = (
     (".config", "gh"), (".config", "gcloud"),
     (".claude", ".credentials.json"),                                   # Claude credentials
     ("huggingface", "token"), ("huggingface", "stored_tokens"), (".huggingface", "token"),
-})
+    (".docker", "config.json"), (".kube", "config"),
+    (".azure", "accesstokens.json"), (".azure", "msal_token_cache.*"),
+    (".azure", "service_principal_entries.json"),
+    (".vector", "config.yaml"), (".vector", "oauth_credentials.json"),
+    (".vector", "sessions"), (".vector", "traces"),
+)
 _SECRET_FILES: frozenset[str] = frozenset({
     ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials", ".claude.json",
     ".bash_history", ".zsh_history", ".python_history",
@@ -60,22 +68,27 @@ def real_path(path_str: str, cwd: Any = None) -> Path:
     return Path(os.path.realpath(p))
 
 
+def _fold(path: Any) -> Path:
+    """Case-folded (casefold, not lower: a Unicode variant of .ssh folds to .ssh too)."""
+    return Path(str(path).casefold())
+
+
 def is_protected(path: Path) -> bool:
     """True when the REAL *path* is a credential store, a secret file or inside .git.
     Compared case-insensitively (a harmless false positive on Linux): on macOS or
     Windows .AWS/credentials and .GIT/config ARE the real secrets."""
-    low = Path(str(path).lower())
+    low = _fold(path)
     parts = low.parts
     if _SECRET_DIRS.intersection(parts) or low.name in _SECRET_FILES:
         return True
-    if _SECRET_DIR_PAIRS.intersection(zip(parts, parts[1:])):
+    if any(a == d and fnmatch.fnmatchcase(b, n) for a, b in zip(parts, parts[1:]) for d, n in _SECRET_DIR_PAIRS):
         return True
     if _SECRET_NAME_RE.match(low.name) and not low.name.endswith(_ENV_TEMPLATE_SUFFIXES):
         return True
     # All of this user's ~/.claude (session transcripts, not only credentials), and /etc secrets.
     roots = [os.path.join(os.path.realpath(Path.home()), ".claude")]
     roots += [os.path.realpath(p) for p in _SYSTEM_SECRETS]
-    return any(low.is_relative_to(r.lower()) for r in roots)
+    return any(low.is_relative_to(_fold(r)) for r in roots)
 
 
 def project_root(context: Any) -> Path:
@@ -84,14 +97,16 @@ def project_root(context: Any) -> Path:
 
 
 def in_project(path: Path, root: Path) -> bool:
-    """The REAL *path* lies inside *root*, and root is neither $HOME, an ancestor of it
-    (/, /home, /Users), nor inside a pseudo-fs (/proc, /sys, /dev). The root test is
-    case-insensitive like is_protected (cwd=/users holds /Users/alice on macOS); the
-    containment test stays exact, so case folding never widens what auto-allows."""
-    low = Path(str(root).lower())
-    home = Path(os.path.realpath(Path.home()).lower())
+    """The REAL *path* lies inside *root*, and root is neither any account's home
+    ($HOME or a passwd home), an ancestor of one (/, /home, /Users), nor inside a
+    pseudo-fs (/proc, /sys, /dev): a cwd holding several homes asks, whoever $HOME
+    is. The root test is case-insensitive like is_protected (cwd=/users holds
+    /Users/alice on macOS); the containment test stays exact, so case folding never
+    widens what auto-allows."""
+    low = _fold(root)
+    homes = {_fold(os.path.realpath(h)) for h in [Path.home(), *(e.pw_dir for e in pwd.getpwall())] if h}
     pseudo = any(low.is_relative_to(p) for p in ("/proc", "/sys", "/dev"))
-    return not (pseudo or low == home or low in home.parents) and path.is_relative_to(root)
+    return not (pseudo or any(low == h or low in h.parents for h in homes)) and path.is_relative_to(root)
 
 
 def read_permission(path_str: str, context: Any) -> PermissionResult:
@@ -99,12 +114,17 @@ def read_permission(path_str: str, context: Any) -> PermissionResult:
 
     deny  — the real path is protected (credential deny-list, .git);
     allow — the real path lies inside the project root (in_project);
-    ask   — anything else ($HOME, an ancestor of it or a pseudo-fs as the root never auto-allows).
+    ask   — anything else (an account's home, an ancestor of one or a pseudo-fs as the root never auto-allows).
     """
     root = project_root(context)
-    path = real_path(path_str, root)
+    return resolved_permission(real_path(path_str, root), root, path_str)
+
+
+def resolved_permission(path: Path, root: Path, shown: str) -> PermissionResult:
+    """read_permission on an already-resolved *path*: a caller that then reads decides
+    and reads on the same resolution (no second realpath a symlink swap could redirect)."""
     if is_protected(path):
-        return PermissionResult("deny", f"{path_str} is a protected path")
+        return PermissionResult("deny", f"{shown} is a protected path")
     if in_project(path, root):
         return PermissionResult("allow")
     return PermissionResult("ask", f"Read {path} (outside the project {root})?")
