@@ -283,7 +283,7 @@ class TestExploreNonBlocking:
         _mod._explore_running = False
         _explore_cancel.clear()
 
-    def test_tare_stop_is_scoped_to_our_own_descendants(self):
+    def test_tare_stop_is_scoped_to_our_own_descendants(self, monkeypatch):
         """stop_tare_only finds TARE by name only below this process: never a
         machine-wide pkill (other projects' planners), and never a no-op either
         (TARE kept publishing /way_point after cancel)."""
@@ -292,6 +292,7 @@ class TestExploreNonBlocking:
 
         from vector_os_nano.skills.go2.explore import _own_descendants_named
 
+        monkeypatch.setenv("VECTOR_NAV_STACK", "1")  # the external stack's switch
         sleeper = "import time; time.sleep(60)"
         spawner = (
             "import subprocess, sys; "

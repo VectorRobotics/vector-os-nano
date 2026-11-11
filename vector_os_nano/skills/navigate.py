@@ -21,7 +21,6 @@ from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.core.run_dir import run_path
 from vector_os_nano.sim.nav.follow import NavResult, arrival_radius
 
 logger = logging.getLogger(__name__)
@@ -308,15 +307,6 @@ class NavigateSkill:
 
         _cancel_exploration()
 
-        # Ensure nav flag exists so bridge path follower is armed
-        try:
-            import os
-            if not os.path.exists(run_path("vector_nav_active")):
-                with open(run_path("vector_nav_active"), "w") as fh:
-                    fh.write("1")
-        except Exception:
-            pass
-
         if not callable(getattr(context.base, "navigate_to", None)):
             return SkillResult(
                 success=False,
@@ -375,18 +365,8 @@ class NavigateSkill:
                 diagnosis_code="navigation_failed",
             )
 
-        # A running exploration would otherwise freeze (its nav flag is removed
-        # below) while is_exploring() stays True (skills-nav:missed2).
+        # A running exploration would otherwise keep driving (skills-nav:missed2).
         _cancel_exploration()
-
-        # Ensure the bridge path follower is armed (same as the room path).
-        try:
-            import os
-            if not os.path.exists(run_path("vector_nav_active")):
-                with open(run_path("vector_nav_active"), "w") as fh:
-                    fh.write("1")
-        except Exception:
-            pass
 
         logger.info("[NAV] Coordinate goal -> navigate_to(%.2f, %.2f) via FAR", tx, ty)
 
@@ -396,19 +376,7 @@ class NavigateSkill:
 
         nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress)
 
-        # HOLD at the goal. navigate_to leaves the dog under the planner/TARE,
-        # which keeps publishing /way_point and DRIFTS the dog away from the goal
-        # (observed: dog wandered to (7.7, 4.5) before the next skill perceived).
-        # A downstream manipulation step needs the dog STATIONARY at the table, so
-        # disarm the nav flag and stop the base now. (Symmetric with how a stop
-        # command clears the flag; the proxy's loops treat the missing flag as
-        # "no active nav".)
-        try:
-            import os
-            if os.path.exists(run_path("vector_nav_active")):
-                os.remove(run_path("vector_nav_active"))
-        except Exception:
-            pass
+        # HOLD at the goal: a downstream manipulation step needs the dog stationary.
         try:
             if callable(getattr(base, "stop", None)):
                 base.stop()

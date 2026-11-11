@@ -84,10 +84,18 @@ def _own_descendants_named(name: str, root: int | None = None) -> list[int]:
 
     TARE runs inside the nav-stack launch this CLI started, a descendant in another
     process group. Matching by name only among OUR descendants never touches (or
-    mistakes for ours) another project's planner on a shared machine.
+    mistakes for ours) another project's planner on a shared machine. That stack is
+    the opt-in external path: without VECTOR_NAV_STACK nothing is scanned, and
+    without a Linux /proc nothing can be found.
     """
+    if not os.environ.get("VECTOR_NAV_STACK"):
+        return []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return []
     children: dict[int, list[int]] = {}
-    for entry in os.listdir("/proc"):
+    for entry in entries:
         if not entry.isdigit():
             continue
         try:
@@ -454,8 +462,8 @@ class ExploreSkill:
                 return SkillResult(
                     success=False, diagnosis_code="no_backend",
                     error_message=(
-                        "TARE is not running in this session (it needs VECTOR_NAV_STACK); "
-                        "explore with backend='coverage' instead."
+                        "TARE is not running in this session (it needs VECTOR_NAV_STACK and a "
+                        "Linux /proc to find it); explore with backend='coverage' instead."
                     ),
                 )
             _explore_cancel.clear()

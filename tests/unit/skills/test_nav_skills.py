@@ -358,6 +358,7 @@ def test_nav_stack_detection_ignores_processes_that_are_not_ours(monkeypatch):
 
     from vector_os_nano.skills.go2 import explore
 
+    monkeypatch.setenv("VECTOR_NAV_STACK", "1")  # the external stack's switch
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "localPlanner"])
     try:
         assert explore.is_nav_stack_running()  # our child: ours
@@ -367,3 +368,50 @@ def test_nav_stack_detection_ignores_processes_that_are_not_ours(monkeypatch):
     finally:
         other.kill()
         other.wait()
+
+
+def test_the_external_nav_path_is_off_without_its_switch(monkeypatch):
+    """skills-nav:explore-proc-linux-only: every explore and every prompt build scanned
+    /proc, raising off Linux. Without VECTOR_NAV_STACK nothing is scanned."""
+    import os
+
+    from vector_os_nano.skills.go2 import explore
+
+    scanned, real = [], os.listdir
+    monkeypatch.delenv("VECTOR_NAV_STACK", raising=False)
+    monkeypatch.setattr(os, "listdir", lambda p=".": (scanned.append(p) if p == "/proc" else None) or real(p))
+    assert not explore._tare_running() and not explore.is_nav_stack_running()
+    res = explore.ExploreSkill().execute({}, SkillContext(base=Teleport(10.0, 3.0), services={"spatial_memory": _sg()}))
+    assert res.success and res.result_data["backend"] == "coverage"
+    assert scanned == []
+
+
+def test_no_proc_reads_as_not_running_never_a_crash(monkeypatch):
+    import os
+
+    from vector_os_nano.skills.go2 import explore
+
+    real = os.listdir
+
+    def no_proc(p="."):
+        if p == "/proc":
+            raise FileNotFoundError(p)  # macOS
+        return real(p)
+
+    monkeypatch.setenv("VECTOR_NAV_STACK", "1")
+    monkeypatch.setattr(os, "listdir", no_proc)
+    assert not explore._tare_running()
+
+
+def test_in_process_navigation_writes_no_flag_file(tmp_path):
+    """skills-nav:nav-flag-armed-never-disarmed: the room path armed a run-dir flag
+    (machine-global /tmp by default) that nothing in-process reads, never disarmed."""
+    from vector_os_nano.skills.navigate import NavigateSkill
+
+    base = MagicMock()
+    base.get_position.return_value = [10.0, 3.0, 0.3]
+    base.navigate_to.return_value = _nav(True, "arrived", (17.0, 2.5))
+    ctx = SkillContext(base=base, services={"spatial_memory": _sg()})
+    NavigateSkill().execute({"room": "kitchen"}, ctx)
+    NavigateSkill().execute({"x": 1.0, "y": 1.0}, ctx)
+    assert list(tmp_path.iterdir()) == []
