@@ -3,9 +3,9 @@
 
 """Pixel + depth -> world projection through the EXACT camera pose.
 
-Pinhole intrinsics from the camera's vertical FOV and the frame's actual shape,
-pixel -> camera frame (OpenCV: x right, y down, z forward), and camera -> world
-through MuJoCo's ``cam_xpos``/``cam_xmat`` (columns right, up, -forward). There is
+Pinhole intrinsics from the camera's vertical FOV and the frame's actual shape
+(pixels -> camera frame is pointcloud.rgbd_to_pointcloud_fast; OpenCV axes: x right,
+y down, z forward), and camera -> world through MuJoCo's ``cam_xpos``/``cam_xmat`` (columns right, up, -forward). There is
 no robot-pose approximation: a world point needs the camera pose of its pixels.
 """
 from __future__ import annotations
@@ -27,24 +27,6 @@ def mujoco_intrinsics(width: int = 320, height: int = 240, vfov_deg: float = 42.
     return CameraIntrinsics(
         fx=fy, fy=fy, cx=width / 2.0, cy=height / 2.0, width=int(width), height=int(height),
     )
-
-
-def pixel_to_camera(
-    u: float,
-    v: float,
-    depth_m: float,
-    intrinsics: CameraIntrinsics,
-) -> tuple[float, float, float]:
-    """Project a pixel (u, v) at depth_m to camera-frame 3D point.
-
-    Camera frame: Z forward, X right, Y down (OpenCV convention).
-
-    Returns (x_cam, y_cam, z_cam) in metres.
-    """
-    z = depth_m
-    x = (u - intrinsics.cx) * z / intrinsics.fx
-    y = (v - intrinsics.cy) * z / intrinsics.fy
-    return (x, y, z)
 
 
 def camera_to_world(
