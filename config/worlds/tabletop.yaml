@@ -7,9 +7,9 @@ boxes: {}
 doors: {}
 
 surfaces:
-  table: {body: table, box: [-0.10, -0.25, 0.50, 0.25], height: 0.02}
+  table: {body: table, box: [-0.10, -0.25, 0.50, 0.25], height: 0.02, aliases: [桌子, 桌面]}
   # The drop-zone (right-front of the table), a region on the table top.
-  tray:  {body: table, box: [0.20, 0.0, 0.50, 0.25], height: 0.02}
+  tray:  {body: table, box: [0.20, 0.0, 0.50, 0.25], height: 0.02, aliases: [drop zone, 托盘]}
 
 pickables:
   banana:      {category: banana,      colour: yellow, surface: table, aliases: [banana, 香蕉]}

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import re
+from typing import Any
 
 from vector_os_nano.vcli.cognitive.coord_goal import parse_goal_coord
 
@@ -124,10 +125,25 @@ def _asserted_calls(node: ast.AST) -> list[ast.Call]:
     return []
 
 
-def backs_contract(item: str, verify: str | None) -> bool:
+def _manifest(world_id: str) -> Any:
+    """The world manifest ``config/worlds/<world_id>.yaml`` (pure data: what the world
+    contains and what NL calls it, never where it is), or None."""
+    if not world_id:
+        return None
+    from vector_os_nano.vcli.worlds.world_manifest import WorldManifestError, load_world
+
+    try:
+        return load_world(world_id)
+    except WorldManifestError:
+        return None
+
+
+def backs_contract(item: str, verify: str | None, world_id: str = "") -> bool:
     """True iff *verify* asserts the contract *item*: a coordinate item needs the
     same necessary ``at_position`` (coord_goal); any other item a necessary call to
-    the same oracle — with the same literal arguments when the item names any."""
+    the same oracle whose leading positional arguments name the same things as the
+    item's (an object by any name the world manifest resolves to it); a trailing
+    tolerance is the verify's own (the contract's end value is read at the default)."""
     from vector_os_nano.vcli.cognitive.coord_goal import _const_number, at_position_const_matches
 
     want, node = _parse(item), _parse(verify)
@@ -136,39 +152,60 @@ def backs_contract(item: str, verify: str | None) -> bool:
     if want.func.id == "at_position":
         xy = [_const_number(a) for a in want.args[:2]]
         return len(xy) == 2 and None not in xy and at_position_const_matches(verify, (xy[0], xy[1]))
+    world = _manifest(world_id)
+
+    def canon(arg: ast.AST) -> Any:
+        if not isinstance(arg, ast.Constant):
+            return ast.dump(arg)
+        v = arg.value
+        return (world.resolve(v) or v) if world is not None and isinstance(v, str) else v
+
     return any(
-        c.func.id == want.func.id and (not want.args or ast.dump(c) == ast.dump(want))
+        c.func.id == want.func.id and len(c.args) >= len(want.args)
+        and all(canon(a) == canon(b) for a, b in zip(want.args, c.args))
         for c in _asserted_calls(node)
     )
 
 
-def task_contract(goal_text: str | None, oracle_names: frozenset[str]) -> tuple[str, ...]:
-    """Compile the NL goal into its END-STATE ground-truth predicates (WP07).
+def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id: str = "") -> tuple[str, ...]:
+    """Compile the NL goal into its END-STATE ground-truth predicates (WP07, I4).
 
-    - fetch (拿过来 / bring ...) -> ``kept_holding()`` and ``near_object('user')``:
-      delivered = still held, at the user. Until the world binds those oracles the
-      contract is unprovable, so a fetch is never GROUNDED on a grasp alone.
-    - grasp (拿起 / pick up ...)  -> ``holding_object()`` (the model's own verify names
-      the object; the world manifest will bind it here).
-    - a pure coordinate goal      -> ``at_position(x, y)``. With a manipulation intent
-      the coordinate is a waypoint, not an end state; the coordinate gate checks it.
-    - place: none yet (``object_on(obj, surface)`` needs the manifest's surfaces).
+    The object and surface are bound through the world manifest *world_id* (the
+    object the goal names, ``WorldManifest.resolve``; the surface,
+    ``resolve_surface``), never from ground truth:
 
-    Scoped to the world's oracles (rule 3): a world without ``holding_object`` /
-    ``at_position`` gets no manipulation / coordinate contract (dev, g1-detect). A
-    manipulation goal never falls back to its coordinate (a go2-only "go to (3,0) and
-    grab the can" is not a navigation contract): no contract, so every graded step
-    must ground.
+    - place naming a surface (放到餐桌上 / put it on the dining table) ->
+      ``object_on(obj, surface)``; a place naming no surface compiles none (the
+      manipulation gate still needs a release / placement step);
+    - fetch (拿过来 / bring ...) -> ``kept_holding(obj)`` and ``near_object('user')``:
+      delivered = held, never dropped this turn, at the user. kept_holding is caused
+      only by a grasp in this turn (its ``window="turn"`` tag), and each item must be
+      False at turn start: an object already held, or dropped during the carry, never
+      grounds a fetch;
+    - grasp (拿起 / pick up ...) -> ``holding_object(obj)`` (``holding_object()``, any
+      object, when the goal names none the manifest resolves);
+    - a pure coordinate goal -> ``at_position(x, y)``. With a manipulation intent the
+      coordinate is a waypoint, not an end state; the coordinate gate checks it.
+
+    An object the manifest cannot resolve ("bring it to me", two bottles) binds
+    ``None``: that item is no ground-truth evidence, so the turn fails closed. Scoped
+    to the world's oracles (rule 3): a world without ``holding_object`` /
+    ``at_position`` gets no manipulation / coordinate contract (dev). A manipulation
+    goal never falls back to its coordinate: no contract, so every graded step must
+    ground.
     """
     intents = goal_intents(goal_text)
     if intents:
         if "holding_object" not in oracle_names:
             return ()
+        world = _manifest(world_id)
+        obj = world.resolve(goal_text) if world is not None else None
+        if "place" in intents:
+            surface = world.resolve_surface(goal_text) if world is not None else None
+            return (f"object_on({obj!r}, {surface!r})",) if surface else ()
         if "fetch" in intents:
-            return ("kept_holding()", "near_object('user')")
-        if "grasp" in intents and "place" not in intents:
-            return ("holding_object()",)
-        return ()
+            return (f"kept_holding({obj!r})", "near_object('user')")
+        return (f"holding_object({obj!r})" if obj else "holding_object()",)
     xy = parse_goal_coord(goal_text)
     if xy is not None and "at_position" in oracle_names:
         return (f"at_position({xy[0]}, {xy[1]})",)

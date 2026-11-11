@@ -251,3 +251,6 @@ class ExecutionTrace:
     contract_end: tuple[bool, ...] = ()
     intents: tuple[str, ...] = ()
     scene: str = ""  # the sim the turn ran in ("go2_piper@go2_room"), display only
+    # The world manifest id the contract bound its object / surface through
+    # (``config/worlds/<id>.yaml``); the spine recompiles the contract against it.
+    world: str = ""

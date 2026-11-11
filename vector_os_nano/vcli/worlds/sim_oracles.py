@@ -252,10 +252,12 @@ def build_namespace(
             name = obj(target)
             return welded(name) and gt.clearance(name) >= max(LIFT_M, float(dz))
 
-        @oracle(scope="robot", channel="gripper", transition="rise", domain="bool")
+        @oracle(scope="robot", channel="gripper", transition="rise", domain="bool", window="turn")
         @_safe(False)
         def kept_holding(target: Any) -> bool:
-            """Held now AND its weld never dropped since the turn started."""
+            """Held now AND its weld never dropped since the turn started. Caused only
+            by a grasp in THIS turn (window="turn"): an object already held when the
+            turn began never proves a fetch."""
             name = obj(target)
             t0, _wall = turn_start()
             dropped = any(n == name and not on for _t, n, on in gt.weld_events(since=t0))

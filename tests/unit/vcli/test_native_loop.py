@@ -1169,16 +1169,5 @@ def test_a_dispatched_release_skill_is_a_place_intent() -> None:
     assert _verdict(agent, eng, trace).verified is False
 
 
-def test_the_contract_start_fails_closed_on_an_unevaluable_predicate() -> None:
-    """A predicate the verifier cannot evaluate at turn start reads as already
-    satisfied, never as 'not yet', so it can never be the turn's F->T."""
-    backend = FakeToolScriptBackend.from_tool_script([
-        tool_turn(("grasp_fake", {"object": "can"})),
-        tool_turn(("finish", {})),
-    ])
-    agent, _arm = _make_arm_agent(_grasp)
-    eng = _make_engine(agent, backend)
-    trace = eng.run_turn_native("把那个罐子拿过来", session=_session())
-    assert trace.contract == ("kept_holding()", "near_object('user')")
-    assert trace.contract_start == (True, True)
-    assert _verdict(agent, eng, trace).verified is False
+# test_the_contract_start_fails_closed_on_an_unevaluable_predicate moved to
+# test_task_contract_binding.py (I4): its fetch contract now binds the manifest object.

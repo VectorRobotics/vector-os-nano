@@ -385,13 +385,17 @@ def _call_caused(name: str, call: ast.Call, channel: str, want: str,
 
 def grade_channels(
     baseline: ActorBaseline | None, post: ActorBaseline, verify: str, oracles: Any,
+    turn_baseline: ActorBaseline | None = None,
 ) -> tuple[ActorCaused, tuple[str, ...]]:
     """Grade EVERY robot-channel oracle call in *verify* (no first match).
 
     CAUSED iff each call was caused on its own channel between *baseline* and *post*
     (``_call_caused``): the base/arm commanded motion inside the actor's tools and
     moved, the gripper made the weld transition the call's polarity asks for, and a
-    base target was not already met at the baseline (F->T). The per-call detail
+    base target was not already met at the baseline (F->T). A call whose tag has
+    ``window="turn"`` (kept_holding) is judged from *turn_baseline* (captured when the
+    turn started) instead: a grasp anywhere in this turn causes it, an object held
+    before the turn never does. The per-call detail
     (``"gripper:holding_object:CAUSED"``) is returned for the audit row. *oracles*
     maps the live evidence names to their ``@oracle`` tags (or the tagged callables).
     Fail closed: no baseline, no robot call, or an unreadable channel grade UNCAUSED.
@@ -401,17 +405,25 @@ def grade_channels(
         return ActorCaused.UNCAUSED, ("no baseline",)
     if not calls:
         return ActorCaused.UNCAUSED, ()
+
+    def caused(name: str, call: ast.Call, channel: str, want: str) -> bool:
+        b = turn_baseline if getattr(_tag(oracles, name), "window", "step") == "turn" else baseline
+        return b is not None and _call_caused(name, call, channel, want, b, post)
+
     detail = tuple(
-        f"{channel}:{name}:{'CAUSED' if _call_caused(name, call, channel, want, baseline, post) else 'UNCAUSED'}"
+        f"{channel}:{name}:{'CAUSED' if caused(name, call, channel, want) else 'UNCAUSED'}"
         for name, call, channel, want in calls
     )
-    caused = all(d.endswith(":CAUSED") for d in detail)
-    return (ActorCaused.CAUSED if caused else ActorCaused.UNCAUSED), detail
+    ok = all(d.endswith(":CAUSED") for d in detail)
+    return (ActorCaused.CAUSED if ok else ActorCaused.UNCAUSED), detail
 
 
-def grade(baseline: ActorBaseline | None, post: ActorBaseline, verify: str, oracles: Any) -> ActorCaused:
+def grade(
+    baseline: ActorBaseline | None, post: ActorBaseline, verify: str, oracles: Any,
+    turn_baseline: ActorBaseline | None = None,
+) -> ActorCaused:
     """``grade_channels`` without the per-call detail."""
-    return grade_channels(baseline, post, verify, oracles)[0]
+    return grade_channels(baseline, post, verify, oracles, turn_baseline)[0]
 
 
 def is_robot_predicate(verify: str, oracles: Any) -> bool:

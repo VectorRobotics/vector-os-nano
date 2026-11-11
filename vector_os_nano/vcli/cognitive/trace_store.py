@@ -268,6 +268,7 @@ def _trace_to_dict(trace: ExecutionTrace) -> dict[str, Any]:
         "contract_start": list(getattr(trace, "contract_start", ()) or ()),
         "contract_end": list(getattr(trace, "contract_end", ()) or ()),
         "intents": list(getattr(trace, "intents", ()) or ()),
+        "world": str(getattr(trace, "world", "") or ""),
     }
 
 
@@ -321,6 +322,7 @@ def _dict_to_trace(data: dict[str, Any]) -> ExecutionTrace:
         contract_start=tuple(bool(v) for v in data.get("contract_start", []) or ()),
         contract_end=tuple(bool(v) for v in data.get("contract_end", []) or ()),
         intents=tuple(str(c) for c in data.get("intents", []) or ()),
+        world=str(data.get("world", "") or ""),
     )
 
 
@@ -407,20 +409,21 @@ def _contract_reason(
     GROUNDED (actor-caused) graded step."""
     from vector_os_nano.vcli.cognitive.object_goal import backs_contract, task_contract
 
-    contract = tuple(trace.contract)
+    contract, world = tuple(trace.contract), str(getattr(trace, "world", "") or "")
     # The spine recompiles the contract: a producer can never swap in a weaker one.
-    if contract != task_contract(trace.goal_tree.goal, oracle_names):
+    if contract != task_contract(trace.goal_tree.goal, oracle_names, world):
         return "the task contract does not match the goal"
     if len(trace.contract_start) != len(contract) or len(trace.contract_end) != len(contract):
         return "task contract was not evaluated at turn start and end"
     for item, was, now in zip(contract, trace.contract_start, trace.contract_end):
         if classify_verify_expr(item, oracle_names) != "GROUNDED":
-            return f"task contract {item} is not provable in this world"
+            return (f"task contract {item}: the goal names no object the world resolves"
+                    if "None" in item else f"task contract {item} is not provable in this world")
         if was:
             return f"already satisfied at turn start: {item}"
         if not now:
             return f"task contract not met at turn end: {item}"
-        if not any(ev[id(s)] == "GROUNDED" and backs_contract(item, sg_by_name[s.sub_goal_name].verify)
+        if not any(ev[id(s)] == "GROUNDED" and backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)
                    for s in graded):
             return f"no actor-caused step proves {item}"
     return ""
@@ -531,7 +534,14 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
                 return f"{s.sub_goal_name}: {why}"
         elif evidence != "GROUNDED":
             return f"{s.sub_goal_name}: {why}"
-    if trace.contract:
+    # A producer that grades attempts (``attempt_of``: the native runner) must carry
+    # the contract the goal compiles to: dropping it (or compiling it against another
+    # body's oracles) can never skip the check. The legacy executor (no attempt_of,
+    # deleted in R1) predates contracts and keeps the coordinate / manipulation gates.
+    from vector_os_nano.vcli.cognitive.object_goal import task_contract
+
+    expected = task_contract(goal_text, oracle_names, str(getattr(trace, "world", "") or ""))
+    if trace.contract or (expected and any(getattr(s, "attempt_of", "") for s in trace.steps)):
         why = _contract_reason(trace, graded, sg_by_name, ev, oracle_names)
         if why:
             return why

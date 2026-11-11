@@ -68,7 +68,8 @@ def _trace(goal: str, *rows, contract=(), start=(), end=(), intents=(), success=
 def test_fail_then_caused_pass_of_the_same_predicate_verifies() -> None:
     t = _trace("走到坐标 (9.0,3.0)",
                _row("at_position(9.0, 3.0)", vr=False),
-               _row("at_position(9, 3)"))           # 9 == 9.0: the same predicate
+               _row("at_position(9, 3)"),           # 9 == 9.0: the same predicate
+               contract=("at_position(9.0, 3.0)",), start=(False,), end=(True,))
     assert evidence_passed(t, GO2), turn_reject_reason(t, GO2)
     report = VerdictReport.from_trace(t, GO2)
     assert [s.superseded for s in report.per_step] == [True, False]
@@ -111,7 +112,7 @@ def test_rows_without_attempt_of_are_never_superseded() -> None:
 
 def test_a_failed_action_superseded_by_a_successful_retry_verifies() -> None:
     t = _trace("走到坐标 (9.0,3.0)", _row("at_position(9.0, 3.0)", ok=False, vr=False),
-               _row("at_position(9.0, 3.0)"))
+               _row("at_position(9.0, 3.0)"), contract=("at_position(9.0, 3.0)",), start=(False,), end=(True,))
     assert evidence_passed(t, GO2)
 
 
@@ -133,10 +134,12 @@ def test_go_to_and_grab_with_a_vacuous_grasp_verify_is_not_verified() -> None:
     """spine:object-gate-skipped (FG-5): the coordinate branch no longer returns
     before the manipulation gate."""
     t = _trace("go to (2,3) and grab the can",
-               _row("at_position(2, 3)"), _row("in_view('can')", caused=ActorCaused.NOT_GRADED))
+               _row("at_position(2, 3)"), _row("in_view('can')", caused=ActorCaused.NOT_GRADED),
+               contract=("holding_object()",), start=(False,), end=(True,))
     assert not evidence_passed(t, MANIP)
     assert "holding_object" in turn_reject_reason(t, MANIP)
-    honest = _trace("go to (2,3) and grab the can", _row("at_position(2, 3)"), _row("holding_object('can')"))
+    honest = _trace("go to (2,3) and grab the can", _row("at_position(2, 3)"), _row("holding_object('can')"),
+                    contract=("holding_object()",), start=(False,), end=(True,))
     assert evidence_passed(honest, MANIP)
 
 
@@ -276,12 +279,13 @@ def test_facing_already_met_at_the_baseline_is_uncaused() -> None:
 @pytest.mark.parametrize("goal, names, contract", [
     ("走到坐标 (9.0,3.0)", GO2, ("at_position(9.0, 3.0)",)),
     ("拿起绿色的瓶子", MANIP, ("holding_object()",)),
-    ("把绿色瓶子拿过来", MANIP, ("kept_holding()", "near_object('user')")),
-    ("bring me the red can", MANIP, ("kept_holding()", "near_object('user')")),
+    # no world manifest here: the fetch object cannot bind (test_task_contract_binding)
+    ("把绿色瓶子拿过来", MANIP, ("kept_holding(None)", "near_object('user')")),
+    ("bring me the red can", MANIP, ("kept_holding(None)", "near_object('user')")),
     ("go to (2,3) and grab the can", MANIP, ("holding_object()",)),  # the coord is a waypoint
     ("go to (3,0) and grab the red can", GO2, ()),   # no grasp proof here: never a nav contract
     ("走到 (3,0) 把罐子拿过来", GO2, ()),
-    ("把香蕉放到盒子里", MANIP, ()),                                    # place: needs object_on
+    ("把香蕉放到盒子里", MANIP, ()),                       # place: no manifest surface named
     ("去厨房", MANIP, ()),
     ("bring me the README", frozenset({"file_exists"}), ()),           # dev world: no contract
 ])
@@ -302,10 +306,11 @@ def test_contract_not_met_at_turn_end_is_not_verified() -> None:
 
 
 def test_a_fetch_is_unprovable_until_the_world_binds_delivery() -> None:
-    """'grasp-only verifies 拿过来' is closed structurally: no kept_holding/near_object."""
+    """'grasp-only verifies 拿过来' is closed structurally: with no world manifest the
+    fetch object cannot bind, so the contract is no evidence."""
     t = _trace("把绿色瓶子拿过来", _row("holding_object('b')"),
-               contract=("kept_holding()", "near_object('user')"), start=(False, False), end=(False, False))
-    assert "not provable in this world" in turn_reject_reason(t, MANIP)
+               contract=("kept_holding(None)", "near_object('user')"), start=(False, False), end=(False, False))
+    assert "names no object" in turn_reject_reason(t, MANIP)
 
 
 def test_a_met_contract_needs_a_caused_step_that_asserts_it() -> None:
@@ -457,7 +462,7 @@ def test_mutation_f_to_t_guard(monkeypatch) -> None:
 
 def test_mutation_attempt_causation_guard(monkeypatch) -> None:
     t = _trace("走到坐标 (9.0,3.0)", _row("at_position(9.0, 3.0)", vr=False),
-               _row("at_position(9.0, 3.0)", caused=U))
+               _row("at_position(9.0, 3.0)", caused=U), contract=("at_position(9.0, 3.0)",), start=(False,), end=(True,))
     assert not evidence_passed(t, GO2)
     monkeypatch.setattr(ts, "_actor_uncaused", lambda step: False)
     assert evidence_passed(t, GO2)
@@ -465,15 +470,15 @@ def test_mutation_attempt_causation_guard(monkeypatch) -> None:
 
 def test_mutation_attempt_key_guard(monkeypatch) -> None:
     t = _trace("走到坐标 (9.0,3.0)", _row("at_position(9.0, 3.0)", vr=False),
-               _row("at_position(9.0, 3.0, 2.0)"))
+               _row("at_position(9.0, 3.0, 2.0)"), contract=("at_position(9.0, 3.0)",), start=(False,), end=(True,))
     assert not evidence_passed(t, GO2)
     monkeypatch.setattr(ts, "attempt_key", lambda expr: "")  # every predicate one group
     assert evidence_passed(t, GO2)
 
 
 def test_mutation_manipulation_gate(monkeypatch) -> None:
-    t = _trace("go to (2,3) and grab the can",
-               _row("at_position(2, 3)"), _row("in_view('can')", caused=ActorCaused.NOT_GRADED))
+    t = _trace("那个绿色的东西", _row("in_view('can')", caused=ActorCaused.NOT_GRADED),
+               intents=("grasp",))
     assert not evidence_passed(t, MANIP)
     monkeypatch.setattr(ts, "_manipulation_reason", lambda *a: "")
     assert evidence_passed(t, MANIP)

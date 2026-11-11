@@ -500,6 +500,9 @@ class NativeStepRunner:
         # Resolves an "ask" permission (the REPL's prompt). None denies: the
         # headless default — only --no-permission (PermissionContext) allows.
         self._ask = ask_permission
+        # The actor state when the turn (or its current body) started: a turn-window
+        # oracle (kept_holding) is caused only by a transition since then.
+        self._turn_baseline: Any = actor_causation.capture(agent)
 
         # Per-step accumulator: the producing action chain (skill names) + the
         # capture baseline taken BEFORE the first skill of the current step.
@@ -714,6 +717,7 @@ class NativeStepRunner:
         self._motor_tools = motor_tools
         self._ctx.agent = agent
         self._group_baselines.clear()
+        self._turn_baseline = actor_causation.capture(agent)
 
     def _record(
         self, expr: str, verify_result: bool, actor_caused: Any, channels: tuple[str, ...],
@@ -869,7 +873,7 @@ class NativeStepRunner:
                 return actor_causation.ActorCaused.NOT_GRADED, ()
             post = actor_causation.capture(self._agent)
             baseline = self._group_baseline(key) or self._baseline
-            return actor_causation.grade_channels(baseline, post, expr, self._oracles)
+            return actor_causation.grade_channels(baseline, post, expr, self._oracles, self._turn_baseline)
         except Exception as exc:  # noqa: BLE001
             logger.debug("native_loop: grade(%r) raised: %s", expr, exc)
             return actor_causation.ActorCaused.NOT_GRADED, ()
@@ -881,7 +885,7 @@ class NativeStepRunner:
     def build_trace(
         self, goal: str, *, llm_error: str = "", model: str = "", cancelled: bool = False,
         contract: tuple[str, ...] = (), contract_start: tuple[bool, ...] = (),
-        contract_end: tuple[bool, ...] = (), scene: str = "",
+        contract_end: tuple[bool, ...] = (), scene: str = "", world: str = "",
     ) -> ExecutionTrace:
         """Assemble the ExecutionTrace from the recorded (chain -> verify) steps.
 
@@ -912,6 +916,7 @@ class NativeStepRunner:
             contract_end=tuple(contract_end),
             intents=tuple(sorted(self.intents)),
             scene=scene,
+            world=world,
         )
 
 
@@ -1074,7 +1079,7 @@ def _run_turn_native(
     ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
     cancel: Any = None,
 ) -> ExecutionTrace:
-    from vector_os_nano.sim.session import mark_turn
+    from vector_os_nano.sim.session import mark_turn, session_for
 
     token = cancel if cancel is not None else _abort.new_run()
     agent = body[0]
@@ -1096,6 +1101,23 @@ def _run_turn_native(
             mark_turn(body[0], "end", user_message)
             body[0] = new
             mark_turn(new, "start", user_message)
+        _compile_contract()  # the goal against the new body (the spine grades that one)
+
+    turn: dict[str, Any] = {"contract": (), "start": (), "world": ""}
+
+    def _compile_contract() -> None:
+        """The turn-level task contract (WP07): GT end-state predicates the goal
+        compiles to against the body's oracles, its object / surface bound through the
+        body's world manifest; read now (each must be False) and again at turn end
+        (each must be True)."""
+        world = str(getattr(getattr(session_for(body[0]), "world", None), "id", "") or "")
+        contract = task_contract(user_message, oracle_names, world)
+        # Fail closed: the verifier maps an oracle error to False, so ask for ``not``
+        # — an error at the start then reads as "already satisfied", never as "not yet".
+        turn.update(contract=contract, world=world,
+                    start=tuple(not runner._check(f"not ({c})") for c in contract))
+        if contract:
+            _emit("Task contract: " + " and ".join(contract))
 
     backend = getattr(engine, "_backend", None)
     if backend is None:
@@ -1103,12 +1125,6 @@ def _run_turn_native(
         return runner.build_trace(user_message)
     model = _model_id(backend)
     _append_user(session, user_message)
-    # The turn-level task contract (WP07): GT end-state predicates compiled from the
-    # goal, read now (each must be False) and again at turn end (each must be True).
-    contract = task_contract(user_message, oracle_names)
-    # Fail closed: the verifier maps an oracle error to False, so ask for ``not``
-    # — an error at the start then reads as "already satisfied", never as "not yet".
-    contract_start = tuple(not runner._check(f"not ({c})") for c in contract)
 
     # Progress feedback (D9 #2 perceived latency): the user's "load 好几秒" is the
     # opaque wait during the synchronous LLM round-trips. Stream the model's text
@@ -1123,8 +1139,7 @@ def _run_turn_native(
         except Exception:  # noqa: BLE001 — progress is best-effort, never fatal
             pass
 
-    if contract:
-        _emit("Task contract: " + " and ".join(contract))
+    _compile_contract()
     _narration: list[str] = []
 
     def _on_text(chunk: str) -> None:
@@ -1257,8 +1272,9 @@ def _run_turn_native(
 
     return runner.build_trace(
         user_message, llm_error=llm_error, model=model, cancelled=token.cancelled,
-        contract=contract, contract_start=contract_start,
-        contract_end=tuple(runner._check(c) for c in contract), scene=sim_id(body[0]),
+        contract=turn["contract"], contract_start=turn["start"],
+        contract_end=tuple(runner._check(c) for c in turn["contract"]), scene=sim_id(body[0]),
+        world=turn["world"],
     )
 
 

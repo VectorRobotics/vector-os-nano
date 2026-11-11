@@ -22,6 +22,10 @@ _SCOPES = frozenset({"robot", "dev"})
 _TRANSITIONS = frozenset({"rise", "fall", "level"})
 # Return domains: a bool, a non-negative count, or a closed numeric range (lo, hi).
 _DOMAINS = frozenset({"bool", "count"})
+# The window a transition is judged over: the step (default), or the whole turn for an
+# oracle whose truth is itself turn-scoped (kept_holding: never dropped since the turn
+# started), so the actor caused it only by a transition since the turn began.
+_WINDOWS = frozenset({"step", "turn"})
 
 
 @dataclass(frozen=True)
@@ -31,7 +35,8 @@ class OracleTag:
     measures (rise = becomes true, fall = becomes false, level = state read) for the
     causation grader; ``max_tol`` is the cap the oracle clamps a caller tolerance to;
     ``domain`` is the return domain ("bool", "count", a numeric ``(lo, hi)`` range, or
-    None = unbounded) the classifier uses to reject a bound vacuous over it.
+    None = unbounded) the classifier uses to reject a bound vacuous over it; ``window``
+    is what the transition is judged over ("step" or "turn").
     """
 
     scope: str
@@ -39,6 +44,7 @@ class OracleTag:
     transition: str = "level"
     max_tol: float | None = None
     domain: Any = None
+    window: str = "step"
 
 
 def oracle(
@@ -48,6 +54,7 @@ def oracle(
     transition: str = "level",
     max_tol: float | None = None,
     domain: Any = None,
+    window: str = "step",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Tag a verify callable as a ground-truth oracle (sets ``fn.__oracle__``)."""
     if scope not in _SCOPES:
@@ -57,8 +64,10 @@ def oracle(
     if not (domain is None or domain in _DOMAINS
             or (isinstance(domain, tuple) and len(domain) == 2 and domain[0] < domain[1])):
         raise ValueError(f"oracle domain {domain!r}: one of {sorted(_DOMAINS)}, (lo, hi) or None")
+    if window not in _WINDOWS:
+        raise ValueError(f"oracle window {window!r} not in {sorted(_WINDOWS)}")
     tag = OracleTag(scope=scope, channel=channel, transition=transition, max_tol=max_tol,
-                    domain=domain)
+                    domain=domain, window=window)
 
     def mark(fn: Callable[..., Any]) -> Callable[..., Any]:
         fn.__oracle__ = tag  # type: ignore[attr-defined]
