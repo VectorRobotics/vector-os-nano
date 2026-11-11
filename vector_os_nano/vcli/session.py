@@ -208,7 +208,7 @@ class Session:
     # Reconstruct Anthropic API message list
     # ------------------------------------------------------------------
 
-    def to_messages(self) -> list[dict[str, Any]]:
+    def to_messages(self, tool_names: Any = None) -> list[dict[str, Any]]:
         """Convert entries to Anthropic API role/content format.
 
         Drops orphaned tool_results — a tool_result with no open preceding
@@ -222,9 +222,22 @@ class Session:
         exception mid-dispatch) — gets a synthetic ``is_error`` "interrupted"
         tool_result right where the next entry (or the end) closes its window, so
         the session never bricks on a dangling tool_use either.
+
+        *tool_names* (the caller's tool list): a tool_use naming a tool outside it
+        (another producer's, e.g. native's verify/finish) is sent as TEXT with its
+        result instead (so the model never sees a call to a tool it was not given;
+        whether a provider would reject one is unverified), so the turn's memory
+        survives; its tool_result is then an
+        orphan and dropped, and an assistant entry that follows merges into that
+        text-only assistant message, so roles still alternate.
         """
         messages: list[dict[str, Any]] = []
         open_tool_use_ids: list[str] = []
+        results = {r.get("tool_use_id"): r.get("content") for e in self._entries
+                   if e.get("type") == "tool_result" for r in e.get("results") or ()}
+
+        def _foreign(b: Any) -> bool:
+            return tool_names is not None and isinstance(b, dict) and b.get("name") not in tool_names
 
         def _interrupted(ids: list[str]) -> list[dict[str, Any]]:
             return [{"type": "tool_result", "tool_use_id": tid,
@@ -248,8 +261,18 @@ class Session:
                 if entry.get("text"):
                     content.append({"type": "text", "text": entry["text"]})
                 tool_use = entry.get("tool_use") or []
+                content.extend(
+                    {"type": "text", "text": f"[{b.get('name')}({json.dumps(b.get('input') or {}, ensure_ascii=False)})"
+                                             f" -> {results.get(b.get('id'), '(no result)')}]"}
+                    for b in tool_use if _foreign(b)
+                )
+                tool_use = [b for b in tool_use if not _foreign(b)]
                 content.extend(tool_use)
-                if content:
+                if content and messages and messages[-1]["role"] == "assistant":
+                    # The previous assistant went text-only (its foreign tool_use became
+                    # text, its result dropped): merge, so roles still alternate.
+                    messages[-1]["content"].extend(content)
+                elif content:
                     messages.append({"role": "assistant", "content": content})
                 open_tool_use_ids.extend(
                     b["id"] for b in tool_use if isinstance(b, dict) and "id" in b

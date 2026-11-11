@@ -30,10 +30,10 @@ from vector_os_nano.skills.utils.approach_pose import compute_approach_pose
 
 logger = logging.getLogger(__name__)
 
-# An object whose stored coord is within this of the origin on BOTH axes is
-# treated as "not localized yet" (the merge_object x=y=0.0 default), mirroring
-# pick.py's abs()>0.01 guard.
-_COORD_EPS_M: float = 0.01
+
+def _localized(o: Any) -> bool:
+    """The instance has a position (the scene graph stores None until localized)."""
+    return getattr(o, "x", None) is not None and getattr(o, "y", None) is not None
 
 # We navigate to a STANDOFF this far in front of the object (toward the robot),
 # never the object centre: the object is an inflated obstacle to the planner
@@ -133,15 +133,11 @@ class NavigateToObjectSkill:
             )
 
         matches = sg.find_objects_by_category(obj_name)
-        localized = [
-            o for o in matches
-            if abs(getattr(o, "x", 0.0)) > _COORD_EPS_M
-            or abs(getattr(o, "y", 0.0)) > _COORD_EPS_M
-        ]
+        localized = [o for o in matches if _localized(o)]
 
         if not localized:
             if matches:
-                # Known category but no usable position yet (stored at 0,0).
+                # Known category but no usable position yet (never localized).
                 return SkillResult(
                     success=False,
                     error_message=(
@@ -171,7 +167,7 @@ class NavigateToObjectSkill:
             ),
         )
         ox, oy = float(target_obj.x), float(target_obj.y)
-        oz = float(getattr(target_obj, "z", 0.0))
+        oz = float(getattr(target_obj, "z", None) or 0.0)
 
         # Compute a reachable standoff in front of the object (toward the robot);
         # the object centre itself is inside an inflated obstacle and unreachable.
@@ -199,6 +195,7 @@ class NavigateToObjectSkill:
         final_pos = context.base.get_position()
         rd.update({
             "object": obj_name,
+            "object_id": getattr(target_obj, "object_id", ""),  # the scene-graph instance
             "matched_category": target_obj.category,
             "object_world": [round(ox, 3), round(oy, 3)],
             "standoff": [round(sx, 3), round(sy, 3)],
@@ -218,11 +215,7 @@ class NavigateToObjectSkill:
     def _available_categories(sg: Any) -> str:
         """Comma-joined list of distinct localized object categories, for errors."""
         try:
-            cats = sorted({
-                o.category for o in getattr(sg, "_objects", {}).values()
-                if abs(getattr(o, "x", 0.0)) > _COORD_EPS_M
-                or abs(getattr(o, "y", 0.0)) > _COORD_EPS_M
-            })
+            cats = sorted({o.category for o in sg.find_objects_by_category("") if _localized(o)})
             return ", ".join(cats) if cats else "none"
         except Exception:  # noqa: BLE001
             return "unknown"

@@ -209,12 +209,18 @@ class TestDetectSkillMergeLogic:
 
         world = WorldModel()
         detections = [Detection(label="apple", bbox=(50, 50, 150, 150), confidence=0.85)]
-        ctx = _make_detect_context(world, detections)
+        tracked = [TrackedObject(track_id=1, label="apple", bbox_2d=(50, 50, 150, 150),
+                                 pose=Pose3D(x=0.2, y=0.0, z=0.05), confidence=0.85)]
+        ctx = _make_detect_context(world, detections, tracked)
 
         skill = DetectSkill()
         skill.execute({"query": "apple"}, ctx)
 
         assert world.get_object("apple_0") is not None, "apple_0 must be created for new object"
+        # a 2D-only detection (no tracked pose) never enters the world model
+        DetectSkill().execute({"query": "pear"}, _make_detect_context(
+            world, [Detection(label="pear", bbox=(1, 1, 9, 9), confidence=0.8)]))
+        assert world.get_objects_by_label("pear") == []
 
     def test_detect_updates_position_on_merge(self):
         """banana_0 at (0.1, 0.1, 0.0) → detect with pose (0.2, 0.2, 0.3) → position updated."""

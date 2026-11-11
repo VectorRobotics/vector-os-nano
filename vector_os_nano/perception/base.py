@@ -14,6 +14,15 @@ import numpy as np
 from vector_os_nano.core.types import CameraIntrinsics, Detection, TrackedObject
 
 
+def detect_query(perception: object, query: str) -> list[Detection]:
+    """2D boxes for *query*: ``detect(query)`` on a streaming pipeline, else
+    ``detect_in`` on ONE ``capture()`` of a snapshot perception (Go2GraspPerception)."""
+    detect = getattr(perception, "detect", None)
+    if detect is not None:
+        return detect(query)
+    return perception.detect_in(perception.capture().rgb, query)  # type: ignore[attr-defined]
+
+
 @runtime_checkable
 class PerceptionProtocol(Protocol):
     """Structural protocol for perception backends.

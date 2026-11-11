@@ -58,6 +58,14 @@ class RoutingPerception:
         ]
         self.calls: list[str] = []
 
+    def capture(self):
+        from vector_os_nano.sim.runtime import RGBDFrame
+        return RGBDFrame(rgb=self._color, depth=self._depth, seg=None, K=_INTR,
+                         cam_pos=_CAM_XPOS, cam_mat=_CAM_XMAT, sim_time=0.0, camera="d435_rgb")
+
+    def detect_in(self, rgb, query):
+        return self.detect(query)
+
     def get_color_frame(self):
         return self._color
 

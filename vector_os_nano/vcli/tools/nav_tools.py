@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, tool
+from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, live_agent, tool
 from vector_os_nano.core.run_dir import run_path
 
 
@@ -132,3 +132,65 @@ class TerrainStatusTool:
 
     def is_concurrency_safe(self, params: dict[str, Any]) -> bool:
         return True
+
+
+# ---------------------------------------------------------------------------
+# GoToRoomTool
+# ---------------------------------------------------------------------------
+
+
+@tool(
+    name="go_to_room",
+    description=(
+        "Walk the robot to a ROOM by name, in any language (e.g. 'kitchen', '厨房', "
+        "'dining room'): a free floor point inside it from the house map, reached "
+        "through the obstacle-avoiding planner. Then call verify(in_room('<room>'))."
+    ),
+    read_only=False,
+    permission="ask",
+)
+class GoToRoomTool:
+    """Room name -> the map's free point in it (else the SceneGraph's learned centre)
+    -> the robot's own ``navigate`` skill on that coordinate."""
+
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "room": {"type": "string", "description": "Room name, any language (kitchen / 厨房)."},
+        },
+        "required": ["room"],
+    }
+
+    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
+        from vector_os_nano.sim.session import is_sim_agent
+
+        return PermissionResult("allow" if is_sim_agent(live_agent(context)) else "ask")
+
+    def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
+        from vector_os_nano.skills.navigate import _get_room_center_from_memory, _resolve_room
+        from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+        from vector_os_nano.vcli.worlds.world_manifest import world_of
+
+        agent = live_agent(context)
+        if agent is None:
+            return ToolResult(content="No robot connected. Use start_simulation first.", is_error=True)
+        name = str(params.get("room", "")).strip()
+        world = world_of(agent)
+        rooms = dict(world.rooms) if world is not None else {}
+        sg = getattr(agent, "_spatial_memory", None)
+        room = name if name in rooms else _resolve_room(name)
+        target = rooms.get(room) if room else None
+        if target is None and room and sg is not None:
+            target = _get_room_center_from_memory(sg, room)
+        if target is None:
+            known = sorted(rooms) or (sorted(r.room_id for r in sg.get_all_rooms()) if sg is not None else [])
+            return ToolResult(content=f"Unknown room {name!r}. Rooms: {', '.join(known) or 'none known'}.",
+                              is_error=True)
+        nav = agent._skill_registry.get("navigate")
+        if nav is None:
+            return ToolResult(content="This robot has no navigate skill.", is_error=True)
+        res = SkillWrapperTool(nav, agent).execute({"x": target[0], "y": target[1]}, context)
+        content = f"go_to_room({room}) -> ({target[0]}, {target[1]}): {res.content}"
+        if not res.is_error:
+            content += f"\nCall verify(in_room('{room}')) to confirm."
+        return ToolResult(content=content, is_error=res.is_error, metadata=res.metadata)

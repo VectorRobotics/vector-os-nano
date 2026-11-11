@@ -100,7 +100,7 @@ def query_objects(room: str = "") -> list[dict]:
         room: Room name filter. Empty string = all rooms.
 
     Returns:
-        List of {"name": str, "room": str, "x": float, "y": float} dicts.
+        List of {"name": str, "room": str, "x": float | None, "y": float | None} dicts.
 
     Raises:
         RuntimeError: If no SceneGraph is connected.
@@ -119,8 +119,8 @@ def query_objects(room: str = "") -> list[dict]:
         {
             "name": getattr(o, "category", str(o)),
             "room": getattr(o, "room_id", ""),
-            "x": float(getattr(o, "x", 0.0)),
-            "y": float(getattr(o, "y", 0.0)),
+            "x": getattr(o, "x", None),  # None: seen but not localized
+            "y": getattr(o, "y", None),
         }
         for o in raw
     ]

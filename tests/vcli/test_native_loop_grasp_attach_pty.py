@@ -7,7 +7,6 @@ The owner's acceptance face, driven on a PTY with NO flags (the D97 failure mode
 was this test hand-building the rig instead of using the product launcher):
 
     vector> 启动 go2 仿真 带机械臂 无窗口
-      ▸ sim start go2_piper ok
       ▸ Started go2_piper simulation, ready in …            (E1: within 90 s)
     vector> 拿起绿色的瓶子
       ▸ perception_grasp → verify holding_object('pickable_bottle_green') ✓
@@ -38,7 +37,7 @@ _LAUNCH = "启动 go2 仿真 带机械臂 无窗口"
 _READY = re.compile(r"Started go2_piper simulation, ready in ([0-9.]+)s: MuJoCoGo2 \+ MuJoCoPiper")
 
 _SCRIPT = {"turns": [
-    # turn 1 (legacy tool_use path: "仿真" bypasses the planner)
+    # turn 1 (native since WP14: every REPL turn; start_simulation is a lifecycle tool)
     {"tool_calls": [{"name": "start_simulation",
                      "input": {"embodiment": "go2_piper", "gui": False}}]},
     {"text": "go2_piper is up."},
@@ -75,7 +74,8 @@ def _launch_then_grasp(grasp_line: str, timeout_sec: float, *, live: bool = Fals
 @pytest.mark.capability
 def test_bare_cli_nl_launch_go2_piper_then_grasp_grounds() -> None:
     evidence, verified, t = _launch_then_grasp("拿起绿色的瓶子", 420, tool_script=_SCRIPT)
-    assert "sim start go2_piper ok" in t
+    # the native turn prints the start_simulation result line (WP14 _lifecycle_lines)
+    assert "▸ Started go2_piper simulation, ready in" in t
     assert "perception_grasp → verify holding_object('pickable_bottle_green')" in t
     assert (evidence, verified) == ("GROUNDED", "True"), t[-3000:]
 

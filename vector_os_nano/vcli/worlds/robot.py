@@ -34,6 +34,85 @@ def _agent_has_camera(agent: Any) -> bool:
     return resolve_capability_profile(agent).camera
 
 
+def task_policy(agent: Any) -> str:
+    """How THIS body does physical tasks, composed from its manifests and skills.
+
+    The embodiment manifest decides which lines apply (base, arm + gripper), the
+    world manifest supplies the map (rooms, support surfaces, where the user is)
+    and a line naming a skill appears only when that skill is registered. Nothing
+    here is ground truth: the map is configuration, object positions come from
+    perception (the per-turn [Robot State] block).
+    """
+    from vector_os_nano.embodiments.capability_profile import resolve_capability_profile
+    from vector_os_nano.vcli.worlds.world_manifest import world_of
+
+    if agent is None:
+        return ""
+    caps = resolve_capability_profile(agent)
+    registry = getattr(agent, "_skill_registry", None)
+    skills = set(registry.list_skills()) if registry is not None else set()
+    world = world_of(agent)
+    lines = ["Task policy for this body (each goal: the action, then its verify):"]
+    if caps.has_base:
+        lines.append(
+            "- Reach a coordinate with navigate(x, y): it plans around obstacles. Use walk only for a "
+            "short relative step the user asked for. Verify at_position(x, y)."
+        )
+        if world is not None and world.rooms:
+            lines.append(
+                f"- Reach a room with go_to_room(room), then verify in_room('<room>'). Rooms: {', '.join(world.rooms)}."
+            )
+    grasp = next((s for s in ("perception_grasp", "pick") if s in skills), "")
+    if caps.has_gripper and grasp:
+        if "look" in skills:
+            search = "look (it localizes the objects the camera sees)"
+            if caps.has_base and "explore" in skills:
+                search += "; still unknown: go_to_room to a likely room and look again, or explore"
+            lines.append(
+                "- Know where an object is before you grasp it. The [Robot State] block lists the objects "
+                f"you have localized; a target that is not there is unknown: find it with {search}."
+            )
+            lines.append(
+                "- Perception names things in its own words: a green bottle may be listed as a 'green "
+                "cylinder'. Match by colour and shape, and query a detector with the user's words."
+            )
+        if caps.has_base and "navigate_to_object" in skills:
+            lines.append(
+                "- A known object more than about 1.5 m away: navigate_to_object first, then grasp."
+            )
+        lines.append(
+            f"- An object in view and within reach: grasp it with {grasp} (no other pick skill), naming "
+            "it as the user did, then verify holding_object('<object>')."
+        )
+        if caps.has_base and world is not None and world.user is not None:
+            ux, uy = world.user
+            lines.append(
+                f"- 拿过来 / bring / fetch = grasp it, then carry it to the user: navigate({ux}, {uy}), "
+                "then verify near_object('user') and kept_holding('<object>')."
+            )
+        place = next((s for s in ("mobile_place", "place_top_down") if s in skills), "")
+        if place and world is not None and world.surfaces:
+            tops = "; ".join(
+                f"{n} centre ({(s.box[0] + s.box[2]) / 2:.2f}, {(s.box[1] + s.box[3]) / 2:.2f}) top {s.height:.2f} m"
+                for n, s in world.surfaces.items()
+            )
+            lines.append(
+                f"- 放 / put / place it on a surface: {place} with target_xyz = [centre x, centre y, top], "
+                f"then verify object_on('<object>', '<surface>'). Surfaces: {tops}."
+            )
+        lines.append(
+            "- Name an object in a verify the way the user did, e.g. holding_object('绿色瓶子') or "
+            "holding_object('green bottle'); 'it' / '它' is the object of the earlier turn."
+        )
+    if len(lines) == 1:
+        return ""
+    lines.append(
+        "- A skill that fails twice for the same reason will not succeed a third time: stop and "
+        "report why. Do not read or debug code in the middle of a physical task."
+    )
+    return "\n".join(lines)
+
+
 class RobotWorld:
     """Adapter for the robot domain (Go2 / SO-101 / Piper)."""
 
@@ -42,8 +121,9 @@ class RobotWorld:
     def is_robot(self) -> bool:
         return True
 
-    def persona_blocks(self) -> tuple[str, str]:
-        return ROBOT_ROLE_PROMPT, ROBOT_TOOL_INSTRUCTIONS
+    def persona_blocks(self, agent: Any = None) -> tuple[str, str]:
+        policy = task_policy(agent)
+        return ROBOT_ROLE_PROMPT, ROBOT_TOOL_INSTRUCTIONS + ("\n" + policy if policy else "")
 
     def register_tools(self, registry: Any, agent: Any) -> None:
         # Robot/diag/sim tools are registered by the CLI from discover_*; skill

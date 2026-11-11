@@ -64,7 +64,7 @@ class PlaygroundWorld:
         # Both arm and base scenarios drive (simulated) robot hardware.
         return True
 
-    def persona_blocks(self) -> tuple[str, str]:
+    def persona_blocks(self, agent: Any = None) -> tuple[str, str]:
         # Reuse the robot persona for now; a playground-specific persona is a
         # later increment if the tabletop task needs distinct tool instructions.
         return ROBOT_ROLE_PROMPT, ROBOT_TOOL_INSTRUCTIONS

@@ -1,18 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""VLM-powered look skills for the Go2 quadruped robot.
+"""Look skills for a camera-bearing base: what is around, where, in which room.
 
-Two skills:
-- LookSkill: capture frame, call describe_scene + identify_room, record to SpatialMemory.
-- DescribeSceneSkill: detailed VLM scene description with optional query.
+- LookSkill: the detector looks for the world's own objects (its manifest
+  vocabulary) on ONE RGB-D snapshot and every hit that localizes goes on the map;
+  a VLM, when there is one, adds a caption, a room hint and more names to look for.
+- DescribeSceneSkill: a detailed VLM description (optionally of one query).
+
+Both go through :func:`observe_scene`, which explore's discovery uses too. Only
+LOCALIZED objects are ever stored (never a name at a made-up position); the room
+is the floor box the robot stands in, the VLM's room label only a hint resolved
+against the known rooms; looking never counts as visiting a room.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
-
-import numpy as np  # noqa: F401 — used by callers for frame type
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
@@ -21,201 +25,157 @@ from vector_os_nano.perception.object_localizer import localize_objects_3d
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# LookSkill
-# ---------------------------------------------------------------------------
+class ObserveFailed(Exception):
+    """observe_scene could not look (``code``: camera_failed / vlm_failed)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def observe_scene(
+    base: Any,
+    perception: Any,
+    memory: Any,
+    vlm: Any,
+    names: list[str],
+    *,
+    query: str | None = None,
+) -> dict[str, Any]:
+    """Look once and record what localized; returns the observation as result_data.
+
+    One snapshot (``perception.capture()``, else the base's RGB frame with nothing
+    to localize against). The detector looks for *names* plus whatever the VLM
+    names (``query`` asks the VLM for that only). Localized objects go into
+    *memory* via ``observe_with_viewpoint``; un-localized names are reported under
+    ``unlocalized`` and never stored.
+    """
+    try:
+        frame = perception.capture() if callable(getattr(perception, "capture", None)) else None
+        rgb = frame.rgb if frame is not None else base.get_camera_frame()
+    except Exception as exc:  # noqa: BLE001
+        raise ObserveFailed("camera_failed", f"Camera capture failed: {exc}") from exc
+    pos, heading = base.get_position(), float(base.get_heading())
+
+    scene = room_id = None
+    seen: dict[str, Any] = {}  # VLM name -> its DetectedObject
+    if vlm is not None:
+        try:
+            if query:
+                seen = {o.name: o for o in vlm.find_objects(rgb, query) if o.name}
+            else:
+                scene, room_id = vlm.describe_scene(rgb), vlm.identify_room(rgb)
+                seen = {o.name: o for o in scene.objects if o.name}
+        except Exception as exc:  # noqa: BLE001
+            raise ObserveFailed("vlm_failed", f"VLM inference failed: {exc}") from exc
+
+    asked = list(dict.fromkeys([*names, *seen]))
+    found = localize_objects_3d(perception, asked, frame) if frame is not None and asked else []
+    x, y = float(pos[0]), float(pos[1])
+    room = _room_of(memory, x, y, getattr(room_id, "room", None))
+    summary = scene.summary if scene is not None else (
+        f"Seen (detector{', no VLM' if vlm is None else ''}): "
+        f"{', '.join(r.label for r in found) or 'nothing localized'}."
+    )
+    if memory is not None and hasattr(memory, "observe_with_viewpoint"):
+        try:
+            memory.observe_with_viewpoint(
+                room, x, y, heading, [],
+                # only a scene caption describes the room (never a query, never a list)
+                scene.summary if scene is not None and not query else "",
+                detected_objects=[(r.label, r.x, r.y, r.z) for r in found],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[LOOK] spatial memory update failed: %s", exc)
+    localized = {r.label for r in found}
+    return {
+        "room": room,
+        "summary": summary,
+        "details": getattr(scene, "details", ""),
+        "room_confidence": float(getattr(room_id, "confidence", 0.0) or 0.0),
+        "room_reasoning": getattr(room_id, "reasoning", ""),
+        "objects": [
+            {
+                "name": r.label,
+                "description": getattr(seen.get(r.label), "description", ""),
+                "confidence": round(r.score, 3),
+                "world_x": r.x, "world_y": r.y, "world_z": r.z,
+                "segmenter": r.segmenter,
+            }
+            for r in found
+        ],
+        "unlocalized": [n for n in seen if n not in localized],
+    }
+
+
+def _room_of(memory: Any, x: float, y: float, hint: str | None) -> str:
+    """The room (x, y) stands in; the VLM's *hint* only when it names a known room."""
+    from vector_os_nano.skills.navigate import _detect_current_room, _resolve_room
+
+    inside = memory.room_at(x, y) if callable(getattr(memory, "room_at", None)) else None
+    if inside:
+        return inside
+    if hint and hint != "unknown" and memory is not None:
+        resolved = _resolve_room(hint, memory)
+        if resolved:
+            return resolved
+    return _detect_current_room(x, y, sg=memory)
+
+
+def _world_vocabulary(context: SkillContext) -> list[str]:
+    """The names of the objects in this world (its manifest), or [] outside a sim world."""
+    world_id = (context.config or {}).get("world")
+    if not world_id:
+        return []
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+    return load_world(world_id).vocabulary()
 
 
 @skill(
-    aliases=[
-        "look",
-        "看",
-        "看看",
-        "看一下",
-        "看一看",
-        "what do you see",
-        "describe",
-    ],
+    aliases=["look", "看", "看看", "看一下", "看一看", "what do you see", "describe"],
     direct=False,
     actuates=False,
 )
 class LookSkill:
-    """Look around and describe what the robot sees using VLM."""
+    """Look around: localize the world's objects (and the VLM's) on one snapshot."""
 
     name: str = "look"
-    description: str = "Look around and describe what the robot sees using VLM."
+    description: str = (
+        "Look at what the camera sees: the detector localizes the world's objects "
+        "(and a VLM, if configured, captions the scene and suggests the room); every "
+        "object that localizes goes on the map with its world position."
+    )
     parameters: dict = {}
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"scene_observed": True}
-    failure_modes: list[str] = [
-        "no_base",
-        "no_vlm",
-        "camera_failed",
-        "vlm_failed",
-    ]
+    failure_modes: list[str] = ["no_base", "no_vlm", "camera_failed", "vlm_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Capture a camera frame, run VLM scene description and room ID."""
         if context.base is None:
-            logger.error("[LOOK] No base connected")
-            return SkillResult(
-                success=False,
-                error_message="No base connected",
-                diagnosis_code="no_base",
-            )
-
+            return SkillResult(success=False, error_message="No base connected",
+                               diagnosis_code="no_base")
         vlm = context.services.get("vlm")
-        # Without a VLM, look for the world's own objects by name: the detector
-        # localizes each one it finds (the VLM only adds a caption and a room guess).
         vocab = _world_vocabulary(context)
-        if vlm is None and not vocab:
-            logger.error("[LOOK] VLM service not available")
+        if vlm is None and not (vocab and context.perception is not None):
             return SkillResult(
-                success=False,
-                error_message="VLM service not available",
-                diagnosis_code="no_vlm",
+                success=False, diagnosis_code="no_vlm",
+                error_message="Nothing to look with: no VLM, and no detector over a world vocabulary",
             )
-
-        # Capture frame and pose
         try:
-            frame: np.ndarray = context.base.get_camera_frame()
-        except Exception as exc:
-            logger.error("[LOOK] get_camera_frame failed: %s", exc)
-            return SkillResult(
-                success=False,
-                error_message=f"Camera capture failed: {exc}",
-                diagnosis_code="camera_failed",
-            )
-
-        pos = context.base.get_position()
-        heading = context.base.get_heading()
-
-        # Run VLM
-        try:
-            scene = vlm.describe_scene(frame) if vlm is not None else None
-            room_id = vlm.identify_room(frame) if vlm is not None else None
-        except Exception as exc:
-            logger.error("[LOOK] VLM call failed: %s", exc)
-            return SkillResult(
-                success=False,
-                error_message=f"VLM inference failed: {exc}",
-                diagnosis_code="vlm_failed",
-            )
-
-        room: str = (
-            room_id.room if room_id is not None and room_id.room != "unknown"
-            else _fallback_room(context)
-        )
-
-        # Record room visit to spatial memory with detected objects.
-        # observe_with_viewpoint expects `objects: list[str]` (names), NOT
-        # DetectedObject instances — the latter trips a `.lower()` call deep
-        # in the scene-graph merge pipeline.
-        object_names: list[str] = [obj.name for obj in scene.objects] if scene else list(vocab)
-
-        # Attempt to lift each object to its accurate world position via the
-        # depth→world pipeline.  Falls back gracefully to names-only when
-        # perception is unavailable or returns no usable depth points.
-        world_positions: dict[str, tuple[float, float, float]] = {}
-        if context.perception is not None:
-            try:
-                loc_results = localize_objects_3d(context.perception, object_names)
-                world_positions = {label: (x, y, z) for label, x, y, z in loc_results}
-            except Exception as exc:
-                logger.debug("[LOOK] object localization failed: %s", exc)
-        if scene is None:  # no VLM: only what the detector actually localized was seen
-            object_names = [n for n in object_names if n in world_positions]
-
-        spatial_memory = context.services.get("spatial_memory")
-        if spatial_memory is not None:
-            try:
-                if hasattr(spatial_memory, "observe_with_viewpoint"):
-                    # Build detected_objects from ONLY the successfully-localized
-                    # objects (those with a real world XY).  An UN-localized
-                    # object is never given a fake (0, 0) position — that would
-                    # pollute the scene graph and be mistaken downstream
-                    # (navigate_to_object / pick use an abs(x)>0.01 or abs(y)>0.01
-                    # localized-check) for a known position at the origin.
-                    # Un-localized names are re-recorded (with a real position)
-                    # on the next look/explore once depth yields a usable point.
-                    # observe_with_viewpoint takes (category, obj_x, obj_y) 2-D tuples.
-                    detected_objects: list[tuple[str, float, float]] | None = None
-                    if world_positions:
-                        detected_objects = [
-                            (name, world_positions[name][0], world_positions[name][1])
-                            for name in object_names
-                            if name in world_positions
-                        ]
-                    spatial_memory.observe_with_viewpoint(
-                        room, float(pos[0]), float(pos[1]),
-                        float(heading), object_names, scene.summary if scene else "",
-                        detected_objects=detected_objects,
-                    )
-                else:
-                    spatial_memory.visit(room, float(pos[0]), float(pos[1]))
-            except Exception as exc:
-                logger.warning("[LOOK] spatial_memory update failed: %s", exc)
-
-        if scene is None:
-            from types import SimpleNamespace
-
-            scene = SimpleNamespace(
-                summary=f"Seen (detector, no VLM): {', '.join(object_names) or 'nothing known'}.",
-                details="", objects=[SimpleNamespace(name=n, description="", confidence=1.0)
-                                     for n in object_names],
-            )
-            room_id = SimpleNamespace(room=room, confidence=0.0)
-        logger.info(
-            "[LOOK] room=%s confidence=%.2f objects=%d summary=%s",
-            room, room_id.confidence, len(scene.objects), scene.summary,
-        )
-
-        # Return plain dicts (JSON-serialisable) rather than frozen
-        # DetectedObject dataclass instances so downstream consumers
-        # (YAML persist, LLM tool responses) don't trip on class lookup.
-        # Include world coordinates when available so the agent/tool response
-        # surfaces real positions rather than zeros.
-        objects_data: list[dict[str, Any]] = [
-            {
-                "name": obj.name,
-                "description": obj.description,
-                "confidence": obj.confidence,
-                **(
-                    {
-                        "world_x": world_positions[obj.name][0],
-                        "world_y": world_positions[obj.name][1],
-                        "world_z": world_positions[obj.name][2],
-                    }
-                    if obj.name in world_positions
-                    else {}
-                ),
-            }
-            for obj in scene.objects
-        ]
-        return SkillResult(
-            success=True,
-            result_data={
-                "room": room,
-                "summary": scene.summary,
-                "details": scene.details,
-                "room_confidence": room_id.confidence,
-                "objects": objects_data,
-            },
-        )
-
-
-# ---------------------------------------------------------------------------
-# DescribeSceneSkill
-# ---------------------------------------------------------------------------
+            data = observe_scene(context.base, context.perception,
+                                 context.services.get("spatial_memory"), vlm, vocab)
+        except ObserveFailed as exc:
+            logger.error("[LOOK] %s", exc)
+            return SkillResult(success=False, error_message=str(exc), diagnosis_code=exc.code)
+        logger.info("[LOOK] room=%s localized=%d %s", data["room"], len(data["objects"]),
+                    [o["name"] for o in data["objects"]])
+        return SkillResult(success=True, result_data=data)
 
 
 @skill(
-    aliases=[
-        "describe scene",
-        "描述场景",
-        "描述环境",
-    ],
+    aliases=["describe scene", "描述场景", "描述环境"],
     direct=False,
     actuates=False,
 )
@@ -234,218 +194,28 @@ class DescribeSceneSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"scene_observed": True}
-    failure_modes: list[str] = [
-        "no_base",
-        "no_vlm",
-        "camera_failed",
-        "vlm_failed",
-    ]
+    failure_modes: list[str] = ["no_base", "no_vlm", "camera_failed", "vlm_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Capture a camera frame and run a detailed VLM scene analysis.
-
-        When ``params["query"]`` is provided, delegates to
-        ``vlm.find_objects(frame, query)`` and returns matching objects.
-        Otherwise runs the full describe_scene + identify_room pipeline.
-
-        Args:
-            params: May contain an optional ``query`` string.
-            context: SkillContext with base and vlm service attached.
-
-        Returns:
-            SkillResult with result_data containing scene analysis fields.
-        """
+        """The VLM's description (or its answer to ``query``); what it names is
+        localized on the same snapshot and only localized objects are stored."""
         if context.base is None:
-            logger.error("[DESCRIBE_SCENE] No base connected")
-            return SkillResult(
-                success=False,
-                error_message="No base connected",
-                diagnosis_code="no_base",
-            )
-
+            return SkillResult(success=False, error_message="No base connected",
+                               diagnosis_code="no_base")
         vlm = context.services.get("vlm")
         if vlm is None:
-            logger.error("[DESCRIBE_SCENE] VLM service not available")
-            return SkillResult(
-                success=False,
-                error_message="VLM service not available",
-                diagnosis_code="no_vlm",
-            )
-
-        # Capture frame.
-        try:
-            frame: np.ndarray = context.base.get_camera_frame()
-        except Exception as exc:
-            logger.error("[DESCRIBE_SCENE] get_camera_frame failed: %s", exc)
-            return SkillResult(
-                success=False,
-                error_message=f"Camera capture failed: {exc}",
-                diagnosis_code="camera_failed",
-            )
-
+            return SkillResult(success=False, error_message="VLM service not available",
+                               diagnosis_code="no_vlm")
         query: str | None = params.get("query") or None
-
+        try:
+            data = observe_scene(context.base, context.perception,
+                                 context.services.get("spatial_memory"), vlm, [], query=query)
+        except ObserveFailed as exc:
+            logger.error("[DESCRIBE_SCENE] %s", exc)
+            return SkillResult(success=False, error_message=str(exc), diagnosis_code=exc.code)
         if query is not None:
-            # Query mode — use find_objects for targeted search.
-            return self._run_find_objects(frame, query, context, vlm)
-
-        # Full description mode.
-        return self._run_full_description(frame, context, vlm)
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    def _run_find_objects(
-        self,
-        frame: np.ndarray,
-        query: str,
-        context: SkillContext,
-        vlm: Any,
-    ) -> SkillResult:
-        """Run find_objects for a targeted query and return matching objects."""
-        try:
-            found = vlm.find_objects(frame, query)
-        except Exception as exc:
-            logger.error("[DESCRIBE_SCENE] find_objects failed: %s", exc)
-            return SkillResult(
-                success=False,
-                error_message=f"VLM inference failed: {exc}",
-                diagnosis_code="vlm_failed",
-            )
-
-        objects_data: list[dict[str, Any]] = [
-            {
-                "name": obj.name,
-                "description": obj.description,
-                "confidence": obj.confidence,
-            }
-            for obj in found
-        ]
-
-        # Record to SpatialMemory if available.
-        room: str = _fallback_room(context)
-        spatial_memory = context.services.get("spatial_memory")
-        if spatial_memory is not None and objects_data:
-            object_names: list[str] = [obj.name for obj in found]
-            try:
-                spatial_memory.observe(room, object_names, f"query: {query}")
-            except Exception as exc:
-                logger.warning(
-                    "[DESCRIBE_SCENE] spatial_memory.observe failed: %s", exc
-                )
-
-        logger.info(
-            "[DESCRIBE_SCENE] query=%r found=%d objects",
-            query,
-            len(found),
-        )
-
-        return SkillResult(
-            success=True,
-            result_data={
-                "query": query,
-                "objects": objects_data,
-                "count": len(found),
-            },
-        )
-
-    def _run_full_description(
-        self,
-        frame: np.ndarray,
-        context: SkillContext,
-        vlm: Any,
-    ) -> SkillResult:
-        """Run full scene description + room identification."""
-        try:
-            scene = vlm.describe_scene(frame)
-            room_id = vlm.identify_room(frame)
-        except Exception as exc:
-            logger.error("[DESCRIBE_SCENE] VLM call failed: %s", exc)
-            return SkillResult(
-                success=False,
-                error_message=f"VLM inference failed: {exc}",
-                diagnosis_code="vlm_failed",
-            )
-
-        room: str = room_id.room if room_id.room != "unknown" else _fallback_room(context)
-
-        # Record to SpatialMemory if available.
-        spatial_memory = context.services.get("spatial_memory")
-        if spatial_memory is not None:
-            object_names: list[str] = [obj.name for obj in scene.objects]
-            try:
-                spatial_memory.observe(room, object_names, scene.summary)
-            except Exception as exc:
-                logger.warning(
-                    "[DESCRIBE_SCENE] spatial_memory.observe failed: %s", exc
-                )
-
-        objects_data: list[dict[str, Any]] = [
-            {
-                "name": obj.name,
-                "description": obj.description,
-                "confidence": obj.confidence,
-            }
-            for obj in scene.objects
-        ]
-
-        logger.info(
-            "[DESCRIBE_SCENE] room=%s confidence=%.2f objects=%d",
-            room,
-            room_id.confidence,
-            len(scene.objects),
-        )
-
-        return SkillResult(
-            success=True,
-            result_data={
-                "room": room,
-                "summary": scene.summary,
-                "objects": objects_data,
-                "details": scene.details,
-                "room_confidence": room_id.confidence,
-                "room_reasoning": room_id.reasoning,
-            },
-        )
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-
-def _world_vocabulary(context: SkillContext) -> list[str]:
-    """The names of the objects in this world (its manifest), or [] outside a sim world."""
-    world_id = (context.config or {}).get("world")
-    if not world_id:
-        return []
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
-
-    return load_world(world_id).vocabulary()
-
-
-def _fallback_room(context: SkillContext) -> str:
-    """Best-effort room name from positional data when VLM returns 'unknown'.
-
-    Uses the robot's current XY position and the SceneGraph nearest_room
-    heuristic.  Returns "unknown" if position or SceneGraph is unavailable.
-
-    Args:
-        context: SkillContext with optional base and spatial_memory service.
-
-    Returns:
-        Room name string.
-    """
-    if context.base is None:
-        return "unknown"
-    try:
-        from vector_os_nano.skills.navigate import _detect_current_room
-        pos = context.base.get_position()
-        x = float(pos[0])
-        y = float(pos[1])
-        sg = context.services.get("spatial_memory") if context.services else None
-        return _detect_current_room(x, y, sg=sg)
-    except Exception as exc:
-        logger.debug("[look] _fallback_room position unavailable: %s", exc)
-        return "unknown"
+            return SkillResult(success=True, result_data={
+                "query": query, "objects": data["objects"], "unlocalized": data["unlocalized"],
+                "count": len(data["objects"]) + len(data["unlocalized"]),
+            })
+        return SkillResult(success=True, result_data=data)

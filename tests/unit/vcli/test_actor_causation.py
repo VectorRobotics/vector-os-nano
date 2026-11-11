@@ -510,21 +510,16 @@ def test_in_view_is_caused_by_a_turn_or_a_walk_not_by_looking() -> None:
 # INT2: localized is graded on the perception channel. A look is read-only (it never
 # actuates), so the no-action rule graded every look -> localized UNCAUSED (E10 RAN),
 # while an unrelated walk let a map entry from an earlier step ground (NOT_GRADED).
+# I23: the channel is WP11's (SceneGraph.observation_count); INT2's cases write the
+# belief the way it counts it (a localized merge_object), not by add_object.
 
-def _sg_agent(*objs):
+def _sg_agent(*seed: tuple[float, float]):
     from vector_os_nano.core.scene_graph import SceneGraph
 
     sg = SceneGraph()
-    for o in objs:
-        sg.add_object(o)
+    for x, y in seed:
+        sg.merge_object("green bottle", "", "", x=x, y=y)
     return SimpleNamespace(_base=None, _arm=None, _gripper=None, _spatial_memory=sg), sg
-
-
-def _bottle(x: float = 10.9, seen: float = 1.0):
-    from vector_os_nano.core.scene_graph import ObjectNode
-
-    return ObjectNode(object_id="obj_g", category="bottle", x=x, y=3.0,
-                      attributes={"color": "green"}, first_seen=seen)
 
 
 def test_localized_is_graded_on_the_perception_channel() -> None:
@@ -535,18 +530,68 @@ def test_localized_is_graded_on_the_perception_channel() -> None:
 def test_localized_caused_only_by_a_belief_write_this_step() -> None:
     agent, sg = _sg_agent()
     before = capture(agent)
-    sg.add_object(_bottle())  # the look observed it this step
+    sg.merge_object("green bottle", "", "", x=10.9, y=3.0)  # the look observed it this step
     assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.CAUSED
-    agent, sg = _sg_agent(_bottle())
+    agent, sg = _sg_agent((10.9, 3.0))
     before = capture(agent)
-    sg.add_object(_bottle(x=10.95))  # re-observed: the instance moved
+    sg.merge_object("green bottle", "", "", x=10.95, y=3.0)  # re-observed: the instance moved
     assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.CAUSED
 
 
 def test_localized_from_memory_is_uncaused() -> None:
-    agent, sg = _sg_agent(_bottle())  # on the map before the step began
+    agent, sg = _sg_agent((10.9, 3.0))  # on the map before the step began
     before = capture(agent)
     assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
     assert grade(None, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
     no_map = SimpleNamespace(_base=None, _arm=None, _gripper=None, _spatial_memory=None)
     assert grade(capture(no_map), capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+
+
+def test_localized_add_object_is_not_a_perceive() -> None:
+    # I23 (stricter than INT2's row diff): inserting a node by hand (a restore, a tool
+    # write) is not a localized observation, so it never causes localized.
+    from vector_os_nano.core.scene_graph import ObjectNode
+
+    agent, sg = _sg_agent()
+    before = capture(agent)
+    sg.add_object(ObjectNode(object_id="obj_g", category="green bottle", x=10.9, y=3.0))
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+
+
+# ---------------------------------------------------------------------------
+# WP11: localized is graded on the PERCEPTION channel — caused only by a localized
+# observation written this step, never by memory (adversarial cases first).
+# ---------------------------------------------------------------------------
+
+
+def _perceiver():
+    from vector_os_nano.core.scene_graph import SceneGraph
+
+    agent = _agent()
+    agent._spatial_memory = SceneGraph()
+    return agent
+
+
+def test_localized_from_memory_alone_is_uncaused() -> None:
+    agent = _perceiver()
+    agent._spatial_memory.merge_object("green bottle", "hallway", "vp", x=10.88, y=3.0)
+    before = capture(agent)  # the step starts with the object already on the map
+    assert is_robot_predicate("localized('green bottle')", _WP10)
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+    agent._spatial_memory.merge_object("sofa", "hallway", "vp")  # a name with no position
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+    agent._spatial_memory.clear()
+    agent._spatial_memory.load()  # nothing persisted: still nothing perceived this step
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.UNCAUSED
+
+
+def test_localized_after_a_perceive_wrote_the_belief_is_caused() -> None:
+    agent = _perceiver()
+    before = capture(agent)
+    agent._spatial_memory.merge_object("green bottle", "hallway", "vp", x=10.88, y=3.0)
+    assert grade(before, capture(agent), "localized('green bottle')", _WP10) == ActorCaused.CAUSED
+
+
+def test_localized_without_a_belief_or_a_baseline_fails_closed() -> None:
+    assert grade(None, capture(_perceiver()), "localized('x')", _WP10) == ActorCaused.UNCAUSED
+    assert grade(capture(_agent()), capture(_agent()), "localized('x')", _WP10) == ActorCaused.UNCAUSED

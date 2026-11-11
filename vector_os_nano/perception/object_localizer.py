@@ -1,175 +1,172 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Reusable 3D object localizer — depth+mask centroid lifted to world frame.
+"""Object localizer — named objects on ONE RGB-D snapshot, lifted to world points.
 
-Routes object name queries through the existing (correct) depth→world pipeline:
+    snapshot (RGBDFrame) -> grounding-dino on THAT frame -> segment the box ->
+    nearest depth cluster (grasp_point.object_points) -> plausibility gates ->
+    world point; results of different queries on one spot are deduplicated.
 
-    grounding-dino detect → EdgeTAM segment → grasp_point_from_rgbd → Pose3D
+Every query is detected on the same captured frame, so its box, depth and camera
+pose are of one instant (a box from a later re-render is never projected through
+an earlier pose). A detection becomes a position only if it is plausibly a
+graspable object THERE: a confident box of sane shape, at a sane range and height,
+the size of an object (not a wall or a sofa), standing in front of what surrounds
+it, and of the colour the query names. Anything else is dropped, never stored.
 
-This is the SysNav-style masked-cloud centroid approach: detect each object
-by name, segment the bounding box to get a tight mask, project the masked
-depth pixels through the proven camera→world transform, and return the
-world-frame centroid.  The pipeline reuses grasp_point_from_rgbd exactly —
-no re-implementation of projection.
-
-Used by the look skill to fill accurate (x, y) coordinates in the scene
-graph instead of the 0.0, 0.0 defaults that placed every object at room
-centre.
-
-GUARD contract: if perception is None or lacks any required method, returns
-[].  Per-object failures are silently skipped (debug-logged) so one bad
-detection can never kill the sweep.  This function NEVER raises.
+GUARD contract: an unusable perception (None or missing a method) gives [];
+per-query failures are skipped (debug-logged). This function NEVER raises.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NamedTuple
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Methods the perception object must expose for localization to run.
-_REQUIRED_METHODS = (
-    "detect",
-    "segment",
-    "get_color_frame",
-    "get_depth_frame",
-    "get_intrinsics",
-    "get_camera_pose",
-)
+_REQUIRED_METHODS = ("capture", "detect_in", "segment")
+
+# --- plausibility gates (a graspable object seen by the head camera) ----------
+_MIN_SCORE = {"default": 0.30}          # detector score floor, per vocabulary noun
+_MAX_EXTENT_M = {"default": 0.35}       # object size (p5-p95 span of its points), per noun
+_DEPTH_RANGE_M = (0.2, 5.0)             # median depth of the object's points
+_Z_BAND_M = (-0.05, 1.8)                # world height of the object's points
+_ASPECT = (0.15, 6.7)                   # box width / height
+_BEHIND_M, _MIN_BEHIND_FRAC = 0.05, 0.2  # >=20% of the box's surround lies >=5 cm behind it
+_DEDUPE_M = 0.06                        # two queries on one spot: the higher score wins
+
+
+class Localized(NamedTuple):
+    label: str           # the caller's query (its handle), not the detector's label
+    x: float
+    y: float
+    z: float
+    score: float
+    segmenter: str | None
 
 
 def _perception_is_usable(perception: Any) -> bool:
-    """Return True only if *perception* exposes every required method."""
-    if perception is None:
-        return False
-    for m in _REQUIRED_METHODS:
-        if not callable(getattr(perception, m, None)):
-            return False
-    return True
+    return perception is not None and all(
+        callable(getattr(perception, m, None)) for m in _REQUIRED_METHODS
+    )
 
 
 def capture_rgbd(perception: Any) -> tuple[Any, Any, Any, Any, Any]:
-    """``(rgb, depth, intrinsics, cam_xpos, cam_xmat)`` of ONE camera instant.
-
-    Uses the backend's atomic ``capture()`` (an RGBDFrame: pixels, depth and pose
-    of one sim time, intrinsics from the actual shape) when it has one; else the
-    four separate getters.
-    """
-    cap = getattr(perception, "capture", None)
-    if callable(cap):
-        f = cap()
-        return f.rgb, f.depth, f.K, f.cam_pos, f.cam_mat
-    cam_xpos, cam_xmat = perception.get_camera_pose()[:2]
-    return (perception.get_color_frame(), perception.get_depth_frame(),
-            perception.get_intrinsics(), cam_xpos, cam_xmat)
+    """``(rgb, depth, intrinsics, cam_xpos, cam_xmat)`` of ONE camera instant."""
+    f = perception.capture()
+    return f.rgb, f.depth, f.K, f.cam_pos, f.cam_mat
 
 
 def detect_on(perception: Any, rgb: Any, query: str) -> Any:
-    """Detections on *rgb* itself when the backend can, so box and depth share a frame."""
-    fn = getattr(perception, "detect_in", None)
-    return fn(rgb, query) if callable(fn) else perception.detect(query)
+    """Detections on *rgb* itself, so box and depth share a frame."""
+    return perception.detect_in(rgb, query)
+
+
+def _behind_fraction(depth: np.ndarray, bbox: Any, d: float) -> float | None:
+    """Fraction of the valid depth in a ring around *bbox* lying >= _BEHIND_M behind *d*."""
+    h, w = depth.shape[:2]
+    x1, y1, x2, y2 = (float(v) for v in bbox)
+    px, py = max(4.0, 0.25 * (x2 - x1)), max(4.0, 0.25 * (y2 - y1))
+    X1, Y1 = int(max(0, x1 - px)), int(max(0, y1 - py))
+    X2, Y2 = int(min(w, x2 + px)), int(min(h, y2 + py))
+    ring = np.zeros((h, w), dtype=bool)
+    ring[Y1:Y2, X1:X2] = True
+    # the box itself, 1 px generous (its edge pixels are the object's own)
+    ring[max(0, int(y1) - 1):int(y2) + 2, max(0, int(x1) - 1):int(x2) + 2] = False
+    vals = depth[ring & (depth > 0)]
+    return None if vals.size < 10 else float(np.mean(vals > d + _BEHIND_M))
+
+
+def implausible(
+    det: Any, mask: np.ndarray, cam_pts: np.ndarray, world_pts: np.ndarray,
+    depth: np.ndarray, rgb: np.ndarray, *, noun: str | None, colour: str | None,
+) -> str | None:
+    """Why *det* is not a graspable object where it projects, or None if it is."""
+    from vector_os_nano.perception.front_object import colour_matches
+
+    floor = _MIN_SCORE.get(noun or "", _MIN_SCORE["default"])
+    if float(det.confidence) < floor:
+        return f"score {float(det.confidence):.2f} < {floor:.2f}"
+    x1, y1, x2, y2 = (float(v) for v in det.bbox)
+    if x2 <= x1 or y2 <= y1 or not _ASPECT[0] <= (x2 - x1) / (y2 - y1) <= _ASPECT[1]:
+        return f"box {det.bbox} is a sliver"
+    d = float(np.median(cam_pts[:, 2]))
+    if not _DEPTH_RANGE_M[0] <= d <= _DEPTH_RANGE_M[1]:
+        return f"depth {d:.2f} m outside {_DEPTH_RANGE_M}"
+    z = float(np.median(world_pts[:, 2]))
+    if not _Z_BAND_M[0] <= z <= _Z_BAND_M[1]:
+        return f"height {z:.2f} m outside {_Z_BAND_M}"
+    span = float(np.max(np.percentile(world_pts, 95, axis=0) - np.percentile(world_pts, 5, axis=0)))
+    cap = _MAX_EXTENT_M.get(noun or "", _MAX_EXTENT_M["default"])
+    if span > cap:
+        return f"extent {span:.2f} m > {cap:.2f} m (not an object of this size)"
+    behind = _behind_fraction(depth, det.bbox, d)
+    if behind is not None and behind < _MIN_BEHIND_FRAC:
+        return f"flush with its surroundings ({behind:.0%} behind): a surface, not an object"
+    if colour and colour_matches(rgb, mask, colour) is False:
+        return f"not {colour}"
+    return None
 
 
 def localize_objects_3d(
     perception: Any,
     queries: list[str],
-) -> list[tuple[str, float, float, float]]:
-    """Localize each query string to a world-frame (x, y, z) position.
+    frame: Any = None,
+) -> list[Localized]:
+    """Localize each query on ONE snapshot (*frame*, else a fresh ``capture()``).
 
-    For each query:
-      1. Run the open-vocab detector (grounding-dino) on the live RGB frame.
-      2. For the highest-confidence detection, segment the bbox (EdgeTAM /
-         box-rect fallback) to get a binary mask.
-      3. Feed depth + mask + intrinsics + camera pose through
-         grasp_point_from_rgbd to obtain a world-frame Pose3D.
-      4. Emit (label, float(x), float(y), float(z)).
-
-    Results are keyed by the input QUERY string (the caller's handle), not the
-    detector's returned label — grounding-dino returns labels like "a green
-    bottle" for the query "green bottle", and callers map their requested name
-    back to a position.  Each distinct query is localized once, using the
-    highest-confidence detection that yields a valid world point.
-
-    Args:
-        perception: A Go2GraspPerception-like object with the required API.
-            Pass None (or an object missing a method) to get [] with no error.
-        queries: List of natural-language object name strings to detect.
-
-    Returns:
-        List of (label, x, y, z) for successfully localised objects.  May be
-        shorter than *queries* (failed detections are silently dropped).
-        Returns [] if perception is unusable or all detections fail.
+    Per query: the highest-scoring detection whose mask yields a plausible object
+    point (see :func:`implausible`). Results are keyed by the QUERY (the caller's
+    handle: grounding-dino labels "a green bottle" for "green bottle"); two
+    queries that land on one spot keep only the higher-scoring one.
     """
     if not _perception_is_usable(perception):
-        logger.debug(
-            "[OBJ-LOC] perception not usable (None or missing method) — returning []"
-        )
+        logger.debug("[OBJ-LOC] perception not usable (None or missing a method)")
         return []
 
-    from vector_os_nano.perception.grasp_point import grasp_point_from_rgbd
+    from vector_os_nano.perception.grasp_point import grasp_point_from_points, object_points
+    from vector_os_nano.perception.vocab import vocab
 
-    # Capture ONE camera instant (reused across all queries): the boxes, depth and
-    # pose all come from it, so the back-projection uses the pose of its pixels.
     try:
-        color, depth, intrinsics, cam_xpos, cam_xmat = capture_rgbd(perception)
-    except Exception as exc:
-        logger.debug("[OBJ-LOC] failed to capture frames/pose: %s", exc)
+        f = frame if frame is not None else perception.capture()
+        rgb, depth, K, cam_pos, cam_mat = f.rgb, f.depth, f.K, f.cam_pos, f.cam_mat
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[OBJ-LOC] capture failed: %s", exc)
         return []
 
-    results: dict[str, tuple[str, float, float, float]] = {}
-
-    for query in queries:
-        # Key results by the QUERY (the caller's handle), NOT the detector's
-        # returned label.  grounding-dino returns strings like "a green bottle"
-        # for the query "green bottle", and callers (e.g. the look skill) map
-        # their requested NAME -> position.  Keying by det.label silently breaks
-        # that mapping and stores objects at (0, 0) — the real-sim bug this
-        # contract guards against.  Each distinct query is localized once.
-        if query in results:
-            continue
+    found: list[Localized] = []
+    for query in dict.fromkeys(queries):  # each distinct query once, in order
         try:
-            detections = detect_on(perception, color, query)
-        except Exception as exc:
+            detections = perception.detect_in(rgb, query)
+        except Exception as exc:  # noqa: BLE001
             logger.debug("[OBJ-LOC] detect(%r) failed: %s", query, exc)
             continue
-
-        if not detections:
-            logger.debug("[OBJ-LOC] no detections for %r", query)
-            continue
-
-        # detections are sorted by confidence descending (grounding-dino contract);
-        # take the highest-confidence detection that yields a valid world point.
-        for det in detections:
+        noun, colour = vocab().noun(query), vocab().colour(query)
+        for det in detections or []:
             try:
-                mask = perception.segment(color, det.bbox)
-                if mask is None:
-                    logger.debug("[OBJ-LOC] segment returned None for %r", query)
+                mask = perception.segment(rgb, det.bbox)
+                pts = None if mask is None else object_points(depth, rgb, mask, K, cam_pos, cam_mat)
+                if pts is None:
                     continue
-
-                world = grasp_point_from_rgbd(
-                    depth, color, mask, intrinsics, cam_xpos, cam_xmat
-                )
-                if world is None:
-                    logger.debug(
-                        "[OBJ-LOC] grasp_point_from_rgbd returned None for %r "
-                        "(too few depth points in mask)",
-                        query,
-                    )
+                why = implausible(det, mask, *pts, depth, rgb, noun=noun, colour=colour)
+                if why:
+                    logger.info("[OBJ-LOC] %r box %s rejected: %s", query,
+                                [round(float(v)) for v in det.bbox], why)
                     continue
-
-                results[query] = (query, float(world.x), float(world.y), float(world.z))
-                logger.debug(
-                    "[OBJ-LOC] localised %r → (%.3f, %.3f, %.3f)",
-                    query, world.x, world.y, world.z,
-                )
-                # Found a good point for this query; move to the next.
-                break
-
-            except Exception as exc:
-                logger.debug(
-                    "[OBJ-LOC] per-object localization failed for %r: %s", query, exc
-                )
+                gp = grasp_point_from_points(*pts, cam_pos, cam_mat)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[OBJ-LOC] %r: %s", query, exc)
                 continue
+            found.append(Localized(query, gp.x, gp.y, gp.z, float(det.confidence),
+                                   getattr(perception, "last_segmenter", None)))
+            break
 
-    return list(results.values())
+    kept: list[Localized] = []
+    for r in sorted(found, key=lambda r: -r.score):
+        if all(np.hypot(r.x - k.x, r.y - k.y) > _DEDUPE_M for k in kept):
+            kept.append(r)
+        else:
+            logger.info("[OBJ-LOC] %r dropped: the same spot as a better-scoring query", r.label)
+    return [r for r in found if r in kept]

@@ -42,6 +42,8 @@ def apt():
     ("a red stool", None),                       # a colour + scenery names furniture
     ("红色的凳子", None),
     ("红色的东西", "pickable_can_red"),
+    ("grab the red can, not the green bottle", None),  # two objects named: ambiguous
+    ("把红色罐子旁边的绿色瓶子拿来", None),
     ("unicorn", None),
     ("", None),
 ])

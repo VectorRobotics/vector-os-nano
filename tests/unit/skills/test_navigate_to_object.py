@@ -5,7 +5,7 @@
 
 No sim, no nav stack — a real SceneGraph (the object position source of truth)
 plus a fake base that records navigate_to calls. The real-sim e2e is covered by
-tools/verify_localize_scenegraph.py + the bare-cli fetch flow.
+tests/e2e_repl/test_e11_perception_memory.py + the bare-cli fetch flow.
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ class _FakeBase:
         pass
 
 
-def _sg_with(objects: list[tuple[str, float, float]]) -> SceneGraph:
+def _sg_with(objects: list[tuple[str, float | None, float | None]]) -> SceneGraph:
     """Build a SceneGraph holding the given (category, x, y) objects."""
     sg = SceneGraph()
     for i, (cat, x, y) in enumerate(objects):
@@ -110,7 +110,7 @@ def test_object_not_found_lists_available():
 def test_object_known_but_not_localized():
     """A category present but stored at (0,0) => not localized yet."""
     base = _FakeBase()
-    sg = _sg_with([("green bottle", 0.0, 0.0)])
+    sg = _sg_with([("green bottle", None, None)])
     res = NavigateToObjectSkill().execute({"object": "green bottle"}, _ctx(base, sg))
     assert not res.success
     assert res.diagnosis_code == "object_not_localized"

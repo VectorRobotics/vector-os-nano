@@ -647,7 +647,9 @@ class PickSkill:
 
         # First: detect to get 2D bbox, then track to get 3D pose from depth
         try:
-            detections = context.perception.detect(query)
+            from vector_os_nano.perception.base import detect_query
+
+            detections = detect_query(context.perception, query)
         except Exception as exc:
             logger.warning("[PICK] Initial detect failed: %s", exc)
             return None

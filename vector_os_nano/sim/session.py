@@ -41,7 +41,8 @@ _READY_SIM_S = 0.5
 _STALL_S = 3.0
 
 # Frame-source methods a base must expose for Go2GraspPerception to localize.
-_GO2_PERCEPTION_FRAME_METHODS = ("get_camera_frame", "get_depth_frame", "get_camera_pose")
+# Perception reads ONE atomic RGB-D frame (rgb + depth + seg + pose) from the base.
+_GO2_PERCEPTION_FRAME_METHODS = ("get_rgbd_frame",)
 
 
 @dataclass(frozen=True)
@@ -360,13 +361,39 @@ def _build_go2_perception(base: Any, *, width: int, height: int) -> Any:
     return Go2GraspPerception(base, width=width, height=height)
 
 
+def _perception_note(agent: Any) -> str:
+    """The startup capability line: which models perception will actually use."""
+    from vector_os_nano.perception.rynnbrain import RynnBrainDetector
+    from vector_os_nano.perception.tracker import EdgeTAMTracker
+
+    import importlib.util
+
+    # ponytail: the device the detector WILL use, without importing torch at sim start
+    # (that inits CUDA and spawns ldconfig); the load logs the real one ("[GDINO] loaded on").
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES") not in ("", "-1")
+    if importlib.util.find_spec("torch") is None:
+        device = "unavailable (no torch)"
+    else:
+        device = "cuda" if visible and Path("/proc/driver/nvidia/version").exists() else "cpu"
+    perception, vlm = getattr(agent, "_perception", None), getattr(agent, "_vlm", None)
+    vlm_s = "none" if vlm is None else f"{'local' if vlm._local else 'openrouter'}:{vlm._model}"
+    return (
+        f"perception: detector=grounding-dino@{device}, "
+        f"segmenter={'edgetam' if EdgeTAMTracker.weights_available() else 'box_rect'}, "
+        f"self_mask={'yes' if getattr(perception, 'has_self_mask', False) else 'no'}, "
+        f"vlm={vlm_s}, rynnbrain={'up' if RynnBrainDetector().available() else 'down'}"
+    )
+
+
 def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.scene_graph import SceneGraph
     from vector_os_nano.hardware.sim.mujoco_go2 import _ROOM_XML, MuJoCoGo2
     from vector_os_nano.skills.go2 import get_go2_skills
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     cfg, spec = session.config, session.spec
+    world = load_world(cfg.world) if cfg.world else None
     width, height = _camera_size(cfg)
     base = MuJoCoGo2(
         gui=spec.gui, room=True, backend=str(cfg.policy.spec.get("backend", "auto")),
@@ -402,21 +429,29 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
 
         register_manipulation_skills(agent)
 
-    if api_key:
+    # The scene VLM is optional naming sugar: an OpenRouter key OR a local server
+    # (VECTOR_VLM_URL, e.g. Ollama). Discovery never needs it.
+    if api_key or os.environ.get("VECTOR_VLM_URL"):
         try:
             from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
 
-            agent._vlm = Go2VLMPerception(config={"api_key": api_key})
+            agent._vlm = Go2VLMPerception(config={
+                "api_key": api_key, "rooms": sorted(world.rooms) if world else [],
+                **(user_cfg.get("vlm") or {}),
+            })
         except Exception as exc:  # noqa: BLE001 — VLM is optional
             logger.info("[sim] Go2VLMPerception unavailable: %s", exc)
             agent._vlm = None
 
-    # Spatial memory is keyed by WORLD (the room scene), shared by every body
-    # that stands in it, never mixed across worlds.
-    sg_path = Path.home() / ".vector_os_nano" / _ROOM_XML.stem / "scene_graph.yaml"
+    # Spatial memory is keyed by WORLD (shared by every body that stands in it,
+    # never mixed across worlds) under $HOME (a benchmark trial's own HOME isolates
+    # it). The world's rooms are seeded from its manifest, fixed at their centres.
+    sg_path = Path.home() / ".vector_os_nano" / "worlds" / (cfg.world or _ROOM_XML.stem) / "scene_graph.yaml"
     sg_path.parent.mkdir(parents=True, exist_ok=True)
-    agent._spatial_memory = SceneGraph(persist_path=str(sg_path))
+    agent._spatial_memory = SceneGraph(persist_path=str(sg_path), resolve=world.resolve if world else None)
     agent._spatial_memory.load()
+    if world is not None:
+        agent._spatial_memory.load_layout(str(world.path))
 
     if cfg.nav.get("explorer") == "tare":
         if not os.environ.get("VECTOR_NAV_STACK"):
@@ -427,6 +462,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
+    session.notes.append(_perception_note(agent))  # last: the explore note stays up front
     return agent
 
 
@@ -601,8 +637,6 @@ def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
     from vector_os_nano.vcli.worlds import resolve_world
 
     agent = session.agent if session is not None else None
-    base = getattr(agent, "_base", None)
-    arm = getattr(agent, "_arm", None)
     sg = getattr(agent, "_spatial_memory", None)
     skill_registry = getattr(agent, "_skill_registry", None)
     app_state.update(sim_session=session, agent=agent, scene_graph=sg,
@@ -628,7 +662,7 @@ def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
     engine = app_state.get("engine")
     if engine is None:
         return
-    provider = RobotContextProvider(base=base, scene_graph=sg, arm=arm)
+    provider = RobotContextProvider.for_agent(agent)
     app_state["robot_ctx_provider"] = provider
     engine._system_prompt = DynamicSystemPrompt(
         build_system_prompt(agent=agent, cwd=Path.cwd(), robot_context=provider, world=world),

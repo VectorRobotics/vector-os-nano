@@ -83,14 +83,12 @@ class WorldManifest:
         for name in self.pickables:
             if q == name.lower():
                 return name
-        hits = sorted(
-            ((len(a), n) for n, p in self.pickables.items() for a in p.aliases if _has(q, a)),
-            reverse=True,
-        )
-        if hits and (len(hits) == 1 or hits[0][0] > hits[1][0] or hits[0][1] == hits[1][1]):
-            return hits[0][1]
+        hits = [(a.lower(), n) for n, p in self.pickables.items() for a in p.aliases if _has(q, a)]
         if hits:
-            return None  # two different objects' aliases of equal length: ambiguous
+            best_alias, best = max(hits, key=lambda h: len(h[0]))
+            # Two objects named ("the red can, not the green bottle"): ambiguous,
+            # unless the other name is only part of the longer one ("cup" in "yellow cup").
+            return best if all(n == best or a in best_alias for a, n in hits) else None
         colours = {c for c, ws in self.colours.items() if any(_has(q, w) for w in ws)}
         cats = {c for c, ws in self.categories.items() if any(_has(q, w) for w in ws)}
         if not colours or any(_has(q, w) for w in self.scenery):
@@ -165,6 +163,17 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
         path=path,
         scenery=tuple(str(w) for w in (vocab.get("scenery") or ())),
     )
+
+
+def world_of(agent: Any) -> WorldManifest | None:
+    """The manifest of the world *agent* stands in (its config names it), or None.
+
+    The same lookup skills use (``SkillContext.config['world']``): what the map
+    says, never ground truth.
+    """
+    cfg = getattr(agent, "_config", None)
+    world_id = cfg.get("world") if isinstance(cfg, dict) else None
+    return load_world(str(world_id)) if world_id else None
 
 
 @functools.lru_cache(maxsize=8)

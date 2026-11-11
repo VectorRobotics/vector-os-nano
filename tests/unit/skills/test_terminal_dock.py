@@ -275,6 +275,14 @@ class _PerceiveSpy:
         self.perceived = True
         return None
 
+    def capture(self):
+        from types import SimpleNamespace
+        self.perceived = True
+        return SimpleNamespace(rgb=None, depth=None, K=None, cam_pos=None, cam_mat=None)
+
+    def detect_in(self, rgb, query):
+        return self.detect(query)
+
     def get_color_frame(self):
         self.perceived = True
         return None

@@ -358,8 +358,7 @@ def _compute_object_position(
     """Compute world position for an object marker.
 
     Priority order:
-    1. If the object has world coordinates (obj.x, obj.y are non-zero),
-       use them directly.
+    1. If the object is localized (obj.x, obj.y are not None), use them.
     2. If a viewpoint is available, place objects in a cluster 2m along the
        viewpoint heading (heuristic for VLM detections).
     3. Fall back to room center.
@@ -370,7 +369,7 @@ def _compute_object_position(
     margin = 0.5
 
     # --- Best path: detector provided world coordinates via depth projection.
-    if obj.x != 0.0 or obj.y != 0.0:
+    if obj.x is not None and obj.y is not None:
         ox, oy = obj.x, obj.y
         if bounds:
             x0, y0, x1, y1 = bounds

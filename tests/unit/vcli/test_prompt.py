@@ -332,6 +332,25 @@ class TestVectorMd:
         combined = " ".join(b["text"] for b in result)
         assert "Project Context" in combined
 
+    def test_another_agents_files_are_opt_in(self, tmp_path: Path, monkeypatch) -> None:
+        """cli-entry:robot-persona-wrong-launch-instructions: a repo's CLAUDE.md /
+        AGENTS.md is not the robot's system prompt unless VECTOR_PROJECT_CONTEXT=1."""
+        (tmp_path / "CLAUDE.md").write_text("# Developer constitution")
+        monkeypatch.delenv("VECTOR_PROJECT_CONTEXT", raising=False)
+        assert "Developer constitution" not in " ".join(b["text"] for b in _build(cwd=tmp_path))
+        monkeypatch.setenv("VECTOR_PROJECT_CONTEXT", "1")
+        assert "Developer constitution" in " ".join(b["text"] for b in _build(cwd=tmp_path))
+
+
+def test_robot_persona_launches_by_tool_and_states_no_skill_count() -> None:
+    """cli-entry:robot-persona-wrong-launch-instructions: start_simulation is the launch
+    path, bash is ruled out, and no hardcoded skill count or stale pick advice remains."""
+    from vector_os_nano.vcli.prompt import ROBOT_TOOL_INSTRUCTIONS as text
+
+    assert "start_simulation(embodiment=" in text and "Never launch a sim with bash" in text
+    assert "22 skills" not in text and "launch_explore.sh" not in text
+    assert "Always detect/scan before attempting pick" not in text
+
 
 # ---------------------------------------------------------------------------
 # No-agent handling

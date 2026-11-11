@@ -13,6 +13,8 @@ GT pose, so a grader can re-check the tour from outside.
 
 The base is any in-process base with ``navigate_to``/``walk``/``get_position``/
 ``get_heading``; ``cancel`` (``is_set()``) stops the tour between and inside legs.
+``observe`` (optional) is called after every look turn, the base standing still:
+explore's object discovery.
 """
 from __future__ import annotations
 
@@ -60,12 +62,14 @@ class CoverageExplorer:
         cancel: Any = None,
         on_event: Callable[[str, dict], None] | None = None,
         log_path: str | None = None,
+        observe: Callable[[], None] | None = None,
     ) -> None:
         self.base = base
         self.layout = layout or room_layout()
         self.cancel = cancel if cancel is not None else _AbortFlag()
         self.on_event = on_event or (lambda _e, _d: None)
         self.log_path = log_path or run_path(LOG_NAME)
+        self.observe = observe
         self.visited: list[str] = []
         self.failed: dict[str, str] = {}
 
@@ -93,6 +97,8 @@ class CoverageExplorer:
             done, _res = turn_by(self.base, 2 * math.pi / turns, vyaw=float(cfg["look_vyaw"]),
                                  tol=math.radians(float(cfg["look_tol_deg"])), cancel=self.cancel)
             ok = ok and done
+            if done and self.observe is not None:
+                self.observe()
         return ok
 
     def run(self) -> dict[str, Any]:

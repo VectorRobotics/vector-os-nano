@@ -128,6 +128,24 @@ def test_all_noisy_namespaces_quieted_non_verbose():
         )
 
 
+def test_explore_events_follow_the_console_stream(capsys):
+    """cli-entry:explore-events-stdout-in-json: under ``-p --json`` the console is on
+    stderr, so explore progress must be too — stdout carries only the verdict line."""
+    from rich.console import Console
+
+    from vector_os_nano.skills.go2 import explore
+
+    saved = explore._on_event
+    try:
+        cli._setup_explore_events(Console(stderr=True))
+        explore._emit("started", {"total_rooms": 8})
+    finally:
+        explore.set_event_callback(saved)
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "Exploration started (8 rooms" in out.err
+
+
 def test_all_noisy_namespaces_restored_verbose():
     """--verbose restores all quieted namespaces to NOTSET."""
     # Simulate prior non-verbose quieting on all namespaces.

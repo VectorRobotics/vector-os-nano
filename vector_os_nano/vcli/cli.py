@@ -49,6 +49,7 @@ from prompt_toolkit.styles import Style as PTStyle
 from vector_os_nano.vcli.backends import create_backend
 from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.engine import VectorEngine, TurnResult
+from vector_os_nano.vcli.native_loop import LIFECYCLE_TOOLS, should_attempt_native
 from vector_os_nano.vcli.session import (
     Session,
     create_session,
@@ -491,34 +492,13 @@ def _repl_native_enabled() -> bool:
     )
 
 
-def _intent_actionable(engine: Any, user_input: str) -> bool:
-    """OPTIMIZATION HINT (NOT a correctness fork — rule 1; mirrors cli.py routing).
-
-    The native producer costs an LLM round-trip; attempting it on PURE CHAT or
-    sim-management turns ("启动 go2 仿真", "switch to arm") would waste one before the
-    no-action fallback. ``classify_intent`` is the SAME observable hint the REPL
-    already uses to pick the render shape — here it only decides whether to ATTEMPT
-    native, never the verdict. An action-shaped turn (``use_vgg``) attempts native;
-    everything else goes straight to the unchanged tool_use path (where SimStartTool
-    + embodiment-switch live). On any classify error -> attempt native (fail OPEN to
-    the redesign, never silently skip it; a no-op then falls back to legacy anyway).
-    """
-    try:
-        if engine.classify_intent(user_input).use_vgg:
-            return True
-        # A non-robot (dev) world acts only through the code tools, and the keyword
-        # router knows no dev verbs: attempt native there unless the turn is a
-        # system command (sim launch: native has no sim tools) or a question — a
-        # turn native cannot act on costs one round-trip, then falls through.
-        world = getattr(engine, "_world", None)
-        router = getattr(engine, "_intent_router", None)
-        if world is None or world.is_robot():
-            return False
-        return router is None or not (
-            router.is_system_command(user_input) or router.is_question(user_input)
-        )
-    except Exception:  # noqa: BLE001
-        return True
+def _lifecycle_lines(entries: list[dict[str, Any]]) -> list[str]:
+    """The first line of every start/stop_simulation result among *entries* (in order)."""
+    ids = {b.get("id") for e in entries if e.get("type") == "assistant"
+           for b in (e.get("tool_use") or ()) if b.get("name") in LIFECYCLE_TOOLS}
+    return [str(r.get("content") or "").splitlines()[0][:200] for e in entries
+            if e.get("type") == "tool_result" for r in e.get("results") or ()
+            if r.get("tool_use_id") in ids and r.get("content")]
 
 
 def _repl_attempt_native(
@@ -530,28 +510,22 @@ def _repl_attempt_native(
 ) -> bool:
     """Attempt the native tool-use producer for ONE REPL turn (the cutover path).
 
-    Returns True iff the native producer DISPATCHED an action skill (it OWNS the
-    turn): the honest verdict — single-sourced from the SAME gate the ``-p`` path
-    uses (``VerdictReport.from_trace``; the loop NEVER computes ``verified``) — is
-    rendered into the REPL conversation and a CLEAN one-line summary is appended to
-    the REAL session for follow-up context. Returns False iff native took NO action
-    (could not route the goal) -> the caller falls THROUGH to the unchanged legacy
-    routing (no half-action, no double side-effect).
+    Returns True iff the native producer OWNS the turn (it acted, was refused, was
+    stopped, or the LLM is down): the honest verdict — single-sourced from the SAME
+    gate the ``-p`` path uses (``VerdictReport.from_trace``; the loop NEVER computes
+    ``verified``) — is rendered into the REPL conversation. Returns False iff native
+    took NO action: its entries are removed from the session again and the caller
+    falls THROUGH to the legacy routing (no half-action, no double side-effect).
 
-    Runs SYNCHRONOUSLY, like the existing tool_use path: the legged/arm sim animates
-    in its own window, so a blocking turn reads as "do it, then tell me if it
-    worked" and the verdict prints in order before the next prompt. A SCRATCH session
-    isolates the native ReAct scaffolding (verify/finish tool calls + tool_results)
-    from the persistent REPL session (step-5 finding b: persistent-session
-    pollution); the world/embodiment state lives on ``engine._vgg_agent``, not in
-    session text, so the scratch session loses no routing context — and an embodiment
-    switch done on a prior (legacy) turn is already reflected on the engine.
+    The turn runs on the REAL session, so a follow-up turn sees what this one did
+    ("把绿色瓶子拿过来" then "再把它放到餐桌上": 'it' resolves). A sim started by
+    the turn rebinds ``engine._vgg_agent``, so the verdict is graded on the body the
+    turn ended on.
     """
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
     from vector_os_nano.vcli.verdict import VerdictReport
 
-    agent = getattr(engine, "_vgg_agent", None)
-    scratch = create_session(metadata={"native_scratch": True})
+    n0 = len(session._entries)
 
     # Suppress ROS2/subprocess stderr noise during the turn (the REPL does the same
     # around its legacy turn); restore unconditionally.
@@ -580,8 +554,8 @@ def _repl_attempt_native(
                     _status.start()
             try:
                 trace = engine.run_turn_native(
-                    user_input, agent=agent, session=scratch, app_state=app_state,
-                    on_progress=_on_progress, ask_permission=_ask,
+                    user_input, agent=getattr(engine, "_vgg_agent", None), session=session,
+                    app_state=app_state, on_progress=_on_progress, ask_permission=_ask,
                 )
             except Exception as exc:  # noqa: BLE001 — raised before any action: safe to fall back
                 logger.debug("native attempt failed before acting: %s", exc)
@@ -595,15 +569,23 @@ def _repl_attempt_native(
         sys.stderr = _saved_stderr
 
     if not _native_owns_turn(trace):
+        # The fallback producer starts from a clean transcript; the attempt's token
+        # usage STAYS on the session: it is the spend counter (/usage), and those
+        # tokens were billed whether or not the transcript keeps the attempt.
+        del session._entries[n0:]
         return False  # native could not route -> caller falls back to legacy
 
+    turn = session._entries[n0:]
+    agent = getattr(engine, "_vgg_agent", None)  # the body the turn ended on
     sub_goals = list(getattr(trace.goal_tree, "sub_goals", ()) or ())
     steps = list(getattr(trace, "steps", ()) or ())
     # The model's own last words (the README summary, the test run's outcome): shown,
     # then the steps and the verdict, which are the evidence.
-    answer = next((e.get("text") or "" for e in reversed(getattr(scratch, "_entries", ()))
+    answer = next((e.get("text") or "" for e in reversed(turn)
                    if e.get("type") == "assistant" and (e.get("text") or "").strip()), "").strip()
     console.print()
+    for line in _lifecycle_lines(turn):
+        console.print(f"  [{TEAL}]▸[/] [dim]{escape(line)}[/]")
     if answer:
         console.print(escape(answer))
     for refusal in getattr(trace, "refused", ()) or ():
@@ -621,37 +603,25 @@ def _repl_attempt_native(
             f"  [{TEAL}]▸[/] {chain} → verify {verify_expr} {mark} [dim](actor={actor})[/]"
         )
 
-    verified = False
-    try:
-        oracle_names = verify_oracle_names(agent, engine)
-        report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
-        verified = bool(report.verified)
-        color = "green" if verified else "yellow"
-        gait = f" gait={report.gait_backend}" if report.gait_backend else ""
-        console.print(
-            f"  [{TEAL}]verdict[/] {report.evidence} "
-            f"[{color}]verified={report.verified}[/] "
-            f"[dim]({report.n_grounded}/{report.n_steps} grounded){gait}[/]"
-        )
-        if report.llm_unavailable:
-            console.print(f"  [yellow]{escape(report.error)}[/] [dim](infrastructure, not an agent failure)[/]")
-    except Exception as exc:  # noqa: BLE001 — fail closed (display only)
-        console.print(f"  [yellow]verdict unavailable:[/] {exc}")
+    # A turn that only started / stopped a sim made no claim: nothing to grade.
+    if steps or trace.refused or trace.cancelled or trace.llm_error:
+        try:
+            oracle_names = verify_oracle_names(agent, engine)
+            report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
+            color = "green" if report.verified else "yellow"
+            gait = f" gait={report.gait_backend}" if report.gait_backend else ""
+            console.print(
+                f"  [{TEAL}]verdict[/] {report.evidence} "
+                f"[{color}]verified={report.verified}[/] "
+                f"[dim]({report.n_grounded}/{report.n_steps} grounded){gait}[/]"
+            )
+            if report.llm_unavailable:
+                console.print(f"  [yellow]{escape(report.error)}[/] [dim](infrastructure, not an agent failure)[/]")
+        except Exception as exc:  # noqa: BLE001 — fail closed (display only)
+            console.print(f"  [yellow]verdict unavailable:[/] {exc}")
 
-    # Append a CLEAN summary to the REAL session (not the native scaffolding) so a
-    # follow-up turn has context, mirroring the legacy VGG path's session record.
-    try:
-        summary = "\n".join(
-            f"  {(sg.verify or '?')}: {'PASS' if st.verify_result else 'FAIL'}"
-            for sg, st in zip(sub_goals, steps)
-        )
-        session.append_user(user_input)
-        session.append_assistant(
-            f"[native executed]\nGoal: {user_input}\nVerified: {verified}\n{summary}"
-            + (f"\n{answer}" if answer else "")
-        )
-    except Exception:  # noqa: BLE001 — session record is best-effort
-        pass
+    if len(session._entries) > 50:  # the legacy path's bound, for the native transcript too
+        session.compact(keep_recent=12)
     return True
 
 
@@ -1280,14 +1250,8 @@ def _handle_slash_command(
         agent_obj = app_state.get("agent") if app_state else None
         if agent_obj is not None:
             sm = getattr(agent_obj, "_spatial_memory", None)
-            if sm is not None:
-                persist_path = getattr(sm, "_persist_path", None) or _sg_path
-                from vector_os_nano.core.scene_graph import SceneGraph
-                new_sg = SceneGraph(persist_path=persist_path)
-                agent_obj._spatial_memory = new_sg
-                base = getattr(agent_obj, "_base", None)
-                if base is not None and hasattr(base, "_scene_graph"):
-                    base._scene_graph = new_sg
+            if sm is not None and hasattr(sm, "clear"):
+                sm.clear()  # in place: skills, oracles and the base keep this instance
                 cleared = True
 
         # Always delete the persist file(s) (works even without agent); a running
@@ -1451,17 +1415,22 @@ def _setup_explore_events(console: Any) -> None:
     """Hook exploration background events into console output.
 
     Uses print() instead of console.print() because explore events fire
-    from a background thread — Rich Console is not thread-safe.
+    from a background thread — Rich Console is not thread-safe. Lines go to the
+    console's own stream: stderr under ``-p --json``, whose stdout carries only
+    the verdict line.
     """
     try:
         from vector_os_nano.skills.go2.explore import set_event_callback
     except ImportError:
         return
 
+    def _out(line: str) -> None:
+        print(line, file=console.file, flush=True)
+
     def _on_explore_event(event_type: str, data: dict) -> None:
         if event_type == "started":
             total = data.get("total_rooms", 8)
-            print(f"  >> Exploration started ({total} rooms to discover)")
+            _out(f"  >> Exploration started ({total} rooms to discover)")
 
         elif event_type == "room_entered":
             room = data.get("room", "?")
@@ -1470,7 +1439,7 @@ def _setup_explore_events(console: Any) -> None:
             elapsed = data.get("elapsed_sec", 0)
             label = _ROOM_LABELS.get(room, room)
             bar = f"[{'#' * visited}{'.' * (total - visited)}]"
-            print(f"  >> {label} {bar} {visited}/{total} ({elapsed}s)")
+            _out(f"  >> {label} {bar} {visited}/{total} ({elapsed}s)")
 
         elif event_type == "status":
             elapsed = data.get("elapsed_sec", 0)
@@ -1478,26 +1447,26 @@ def _setup_explore_events(console: Any) -> None:
             total = data.get("total", 8)
             room = data.get("current_room", "?")
             pos = data.get("position", [0, 0])
-            print(f"  .. {elapsed}s | {rooms}/{total} rooms | at {room} ({pos[0]}, {pos[1]})")
+            _out(f"  .. {elapsed}s | {rooms}/{total} rooms | at {room} ({pos[0]}, {pos[1]})")
 
         elif event_type in ("completed", "complete"):
             rooms = data.get("rooms", [])
             reason = data.get("reason", "")
             elapsed = data.get("elapsed_sec", 0)
             if reason == "tare_finished":
-                print(f"  >> Exploration complete ({elapsed}s, TARE: all frontiers covered). {len(rooms)} rooms.")
+                _out(f"  >> Exploration complete ({elapsed}s, TARE: all frontiers covered). {len(rooms)} rooms.")
             else:
-                print(f"  >> Exploration complete ({elapsed}s). {len(rooms)} rooms.")
+                _out(f"  >> Exploration complete ({elapsed}s). {len(rooms)} rooms.")
 
         elif event_type == "stopped":
             reason = data.get("reason", "unknown")
             rooms = data.get("rooms", [])
             if reason == "cancelled":
-                print(f"  >> Exploration stopped. {len(rooms)} rooms so far.")
+                _out(f"  >> Exploration stopped. {len(rooms)} rooms so far.")
             elif reason == "robot_fell":
-                print("  >> Robot fell! Exploration aborted.")
+                _out("  >> Robot fell! Exploration aborted.")
             else:
-                print(f"  >> Exploration {reason} — {len(rooms)} rooms.")
+                _out(f"  >> Exploration {reason} — {len(rooms)} rooms.")
 
     set_event_callback(_on_explore_event)
 
@@ -1772,10 +1741,7 @@ def _build_turn_context(
     robot_ctx_provider = None
     try:
         from vector_os_nano.vcli.robot_context import RobotContextProvider
-        base = getattr(agent, "_base", None) if agent else None
-        sg = getattr(agent, "_spatial_memory", None) if agent else None
-        arm = getattr(agent, "_arm", None) if agent else None
-        robot_ctx_provider = RobotContextProvider(base=base, scene_graph=sg, arm=arm)
+        robot_ctx_provider = RobotContextProvider.for_agent(agent)
     except ImportError:
         pass
     system_prompt = build_system_prompt(
@@ -1949,7 +1915,8 @@ def run_one_turn(args: Any) -> int:
         # ask_permission=None: headless denies every 'ask' (--no-permission allows).
         try:
             trace = engine.run_turn_native(
-                prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session
+                prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session,
+                app_state=ctx.app_state,
             )
         except Exception:  # noqa: BLE001 — raised before any action: safe to fall back
             trace = None
@@ -1970,7 +1937,8 @@ def run_one_turn(args: Any) -> int:
     if _native_loop_enabled(args):
         try:
             trace = engine.run_turn_native(
-                prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session
+                prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session,
+                app_state=ctx.app_state,
             )
         except Exception as exc:  # noqa: BLE001
             return _emit(VerdictReport.no_trace(goal=prompt or "", error=f"native loop failed: {exc}"))
@@ -2118,10 +2086,7 @@ def main(argv: list[str] | None = None) -> None:
     robot_ctx_provider = None
     try:
         from vector_os_nano.vcli.robot_context import RobotContextProvider
-        base = getattr(agent, "_base", None) if agent else None
-        sg = getattr(agent, "_spatial_memory", None) if agent else None
-        arm = getattr(agent, "_arm", None) if agent else None
-        robot_ctx_provider = RobotContextProvider(base=base, scene_graph=sg, arm=arm)
+        robot_ctx_provider = RobotContextProvider.for_agent(agent)
     except ImportError:
         pass
     system_prompt = build_system_prompt(
@@ -2328,22 +2293,14 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         def _engine_turn(user_input: str) -> None:
-            # CUTOVER (2026-06-19, owner-approved): native-attempt-then-fallback is the
-            # REPL's DEFAULT turn path, so bare `vector-cli` + natural language runs the
-            # redesign's NATIVE TOOL-USE producer (CLAUDE.md North Star "Acceptance
-            # interface"). For an action-shaped turn, ATTEMPT native first; if it
-            # DISPATCHED an action it OWNS the turn (its honest verdict is rendered).
-            # If it took NO action (could not route — e.g. "启动 go2 仿真", embodiment
-            # switch, chat) FALL THROUGH to the UNCHANGED legacy routing below, so sim
-            # launch + NL embodiment switch keep working via the untouched tool_use
-            # path. VECTOR_REPL_NATIVE=0 forces the pure-legacy REPL (reversible).
-            # native OWNS navigation too (CEO architecture call 2026-06-19: the
-            # model-driven producer is the correct design; the hardcoded legacy planner
-            # is being strangled, not retreated to). Obstacle-AVOIDANCE for native nav
-            # (route through the nav-stack instead of the open-loop walk) and LATENCY
-            # are tracked native improvements (see docs/ARCHITECTURE.md), NOT reasons to
-            # fall back to legacy.
-            if _repl_native_enabled() and _intent_actionable(engine, user_input):
+            # Every turn ATTEMPTS the native tool-use producer first (no keyword gate:
+            # the model routes by the tool descriptions, sim launch included). If it
+            # OWNS the turn its honest verdict is rendered; if it took NO action (chat,
+            # a goal it could not route) the turn falls through to the legacy routing
+            # below. VECTOR_REPL_NATIVE=0 forces the pure-legacy REPL (reversible).
+            if _repl_native_enabled() and should_attempt_native(
+                user_input, agent=getattr(engine, "_vgg_agent", None), engine=engine
+            ):
                 if _repl_attempt_native(engine, user_input, session, app_state, console):
                     return
                 # native took NO action -> fall through to legacy routing (unchanged).

@@ -135,13 +135,22 @@ class VLMDetector:
         logger.info("Using Moondream Cloud API")
 
     def _setup_station(self) -> None:
-        """Connect to Moondream Station on localhost."""
+        """Connect to Moondream Station on localhost (fails loud when it is not there)."""
+        import httpx
+
         self._use_station = True
+        try:
+            httpx.get(_STATION_ENDPOINT, timeout=2.0)
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                f"No Moondream backend: Station at {_STATION_ENDPOINT} is not reachable ({exc}); "
+                "set MOONDREAM_MODEL (local weights) or MOONDREAM_API_KEY (cloud), or start Station"
+            ) from exc
         logger.info("Using Moondream Station at %s", _STATION_ENDPOINT)
         try:
             import moondream as md  # type: ignore[import]
             self._client = md.vl(api_key="local", endpoint=_STATION_ENDPOINT)
-        except Exception:
+        except Exception:  # noqa: BLE001 — detect still works over HTTP; caption/query say why not
             self._client = None
 
     # ------------------------------------------------------------------
@@ -216,6 +225,7 @@ class VLMDetector:
         """
         pil_image = self._to_pil(image)
         length = length or self._cfg.caption_length
+        self._require_client("caption")
         if self._local:
             result = self._client.caption(pil_image, length=length)  # type: ignore[union-attr]
         else:
@@ -236,6 +246,7 @@ class VLMDetector:
             Answer string.
         """
         pil_image = self._to_pil(image)
+        self._require_client("query")
         if self._local:
             result = self._client.query(pil_image, question=prompt)  # type: ignore[union-attr]
             if isinstance(result, dict):
@@ -251,6 +262,10 @@ class VLMDetector:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _require_client(self, what: str) -> None:
+        if self._client is None:
+            raise RuntimeError(f"Moondream {what} needs the moondream package (pip install moondream)")
+
     def _to_pil(self, image: np.ndarray):
         """Convert numpy image to PIL Image, handling BGR->RGB if needed."""
         from PIL import Image as PILImage  # lazy
@@ -260,25 +275,21 @@ class VLMDetector:
         return PILImage.fromarray(img)
 
     def _station_detect(self, pil_image, query: str) -> list[dict]:
-        """Call Moondream Station detect API directly via HTTP.
+        """Call Moondream Station detect API directly via HTTP (httpx).
 
-        Bypasses the SDK detect() which has known bugs (same pattern as
-        moondream.py _station_detect).
+        Bypasses the SDK detect() which has known bugs. A failed call raises (an
+        error is never reported as "nothing detected").
         """
-        try:
-            import requests  # type: ignore[import]
-        except ImportError:
-            logger.error("requests package required for Station mode. Install: pip install requests")
-            return []
-
         from io import BytesIO
+
+        import httpx
 
         buf = BytesIO()
         pil_image.save(buf, format="PNG")
         img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         try:
-            resp = requests.post(
+            resp = httpx.post(
                 f"{_STATION_ENDPOINT}/detect",
                 json={
                     "image_url": f"data:image/png;base64,{img_b64}",
@@ -288,19 +299,17 @@ class VLMDetector:
             )
             resp.raise_for_status()
             data = resp.json()
-            if isinstance(data, dict):
-                return (
-                    data.get("objects")
-                    or data.get("detections")
-                    or data.get("result")
-                    or data.get("data")
-                    or []
-                )
-            if isinstance(data, list):
-                return data
-        except Exception as exc:
-            logger.error("Moondream Station detect failed: %s", exc)
-        return []
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Moondream Station detect failed: {exc}") from exc
+        if isinstance(data, dict):
+            return (
+                data.get("objects")
+                or data.get("detections")
+                or data.get("result")
+                or data.get("data")
+                or []
+            )
+        return data if isinstance(data, list) else []
 
     @contextlib.contextmanager
     def _timeout(self):

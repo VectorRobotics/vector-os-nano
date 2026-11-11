@@ -77,7 +77,9 @@ class DetectSkill:
 
         # Step 1: VLM 2D detection
         try:
-            detections = context.perception.detect(query)
+            from vector_os_nano.perception.base import detect_query
+
+            detections = detect_query(context.perception, query)
         except Exception as exc:
             logger.error("[DETECT] Perception error: %s", exc)
             return SkillResult(
@@ -184,17 +186,19 @@ class DetectSkill:
                     has_3d = True
                     logger.info("[DETECT] %s: camera(%.3f,%.3f,%.3f) (no calibration)", det.label, x, y, z)
 
-            obj = ObjectState(
-                object_id=obj_id,
-                label=label,
-                x=x,
-                y=y,
-                z=z,
-                confidence=det.confidence,
-                state="on_table",
-                last_seen=now,
-            )
-            context.world_model.add_object(obj)
+            # Only a real 3D pose enters the world model: a 2D-only box stored at
+            # (0, 0, 0) was later picked "there" (skills-manip:detect-zero-sentinel-pollution).
+            if has_3d:
+                context.world_model.add_object(ObjectState(
+                    object_id=obj_id,
+                    label=label,
+                    x=x,
+                    y=y,
+                    z=z,
+                    confidence=det.confidence,
+                    state="on_table",
+                    last_seen=now,
+                ))
 
             summary = {
                 "object_id": obj_id,

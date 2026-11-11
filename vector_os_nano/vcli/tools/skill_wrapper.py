@@ -12,10 +12,11 @@ Public API:
 """
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
 
-from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
+from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, live_agent
 
 # JSON Schema type mapping from Python / skill type names.
 _TYPE_MAP: dict[str, str] = {
@@ -27,7 +28,15 @@ _TYPE_MAP: dict[str, str] = {
     "number": "number",
     "bool": "boolean",
     "boolean": "boolean",
+    "list": "array",
+    "tuple": "array",
+    "array": "array",
+    "dict": "object",
+    "object": "object",
 }
+
+# Declared parameter keys that are JSON Schema too: passed to the model unchanged.
+_SCHEMA_KEYS: tuple[str, ...] = ("enum", "default", "items", "minItems", "maxItems")
 
 
 class SkillWrapperTool:
@@ -76,6 +85,7 @@ class SkillWrapperTool:
                 prop["type"] = _TYPE_MAP.get(str(raw_type), "string")
                 if "description" in info:
                     prop["description"] = info["description"]
+                prop.update({k: info[k] for k in _SCHEMA_KEYS if k in info})
                 # A parameter is required when it has no default and is not
                 # explicitly marked required=False.
                 has_default = "default" in info
@@ -95,28 +105,68 @@ class SkillWrapperTool:
     # Tool Protocol implementation
     # ------------------------------------------------------------------
 
+    def _live(self, context: ToolContext) -> tuple[Any, Any] | str:
+        """(agent, skill) to run NOW, or why there is none.
+
+        The agent is the REPL's live one (``app_state['agent']``): a sim switch inside
+        a turn rebinds it, while ``context.agent`` was fixed when the turn started.
+        The skill is the agent's registered instance, so a ``skill_reload`` takes
+        effect at once.
+        """
+        agent = live_agent(context)
+        if agent is None:
+            if "agent" in (context.app_state or {}):
+                return "No robot is connected (the simulation was stopped). Use start_simulation first."
+            agent = self._agent
+        registry = getattr(agent, "_skill_registry", None)
+        skill = registry.get(self.name) if registry is not None else None
+        if skill is None and agent is self._agent:
+            skill = self._skill
+        if skill is None:
+            return f"Skill '{self.name}' is not available on the connected robot."
+        return agent, skill
+
+    def _coerce(self, params: dict[str, Any]) -> dict[str, Any]:
+        """A JSON-string array for an array parameter becomes the list it spells."""
+        out = dict(params)
+        for key, prop in self.input_schema.get("properties", {}).items():
+            if prop.get("type") == "array" and isinstance(out.get(key), str):
+                try:
+                    value = json.loads(out[key])
+                except ValueError:
+                    continue
+                if isinstance(value, list):
+                    out[key] = value
+        return out
+
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         """Execute the wrapped skill and translate SkillResult -> ToolResult."""
-        agent = context.agent if context.agent is not None else self._agent
-        auto_steps = getattr(self._skill, "__skill_auto_steps__", None)
+        live = self._live(context)
+        if isinstance(live, str):
+            return ToolResult(content=live, is_error=True)
+        agent, skill = live
+        params = self._coerce(params)
+        auto_steps = getattr(skill, "__skill_auto_steps__", None)
         if auto_steps:
             # Multi-step skill (e.g. pick = scan->detect->pick): run through the
             # agent so the auto_steps prerequisites execute. Returns ExecutionResult.
             result = agent.execute_skill(self.name, params)
         else:
             skill_ctx = agent._build_context()
-            result = self._skill.execute(params, skill_ctx)
+            result = skill.execute(params, skill_ctx)
         agent._sync_robot_state()
+
+        # A copy: the skill's own (frozen) result is never mutated.
+        result_data: dict[str, Any] = dict(getattr(result, "result_data", None) or {})
+        if not result_data:
+            # auto_steps skills return an ExecutionResult; the skill's own
+            # output lives in the last trace step, not on the top-level result.
+            _trace = getattr(result, "trace", None)
+            if _trace:
+                result_data = dict(getattr(_trace[-1], "result_data", None) or {})
 
         if result.success:
             content = f"Skill '{self.name}' succeeded."
-            result_data: dict[str, Any] = getattr(result, "result_data", None) or {}
-            if not result_data:
-                # auto_steps skills return an ExecutionResult; the skill's own
-                # output lives in the last trace step, not on the top-level result.
-                _trace = getattr(result, "trace", None)
-                if _trace:
-                    result_data = getattr(_trace[-1], "result_data", None) or {}
             if result_data:
                 content += f"\nData: {result_data}"
             # Append robot state after motor skills for verification
@@ -138,17 +188,20 @@ class SkillWrapperTool:
             or getattr(result, "failure_reason", None)
             or f"Skill '{self.name}' failed."
         )
-        diag = getattr(result, "diagnosis_code", None)
+        diag = getattr(result, "diagnosis_code", None) or result_data.get("diagnosis")
         if diag:
             error_msg += f" ({diag})"
             hint = _RECOVERY_HINTS.get(diag)
             if hint:
                 error_msg += f"\nSuggested: {hint}"
+        if result_data:
+            error_msg += f"\nData: {result_data}"
         if self._is_motor:
             post = self._get_post_state(agent)
             if post:
+                result_data["robot_state_after"] = post
                 error_msg += f"\nCurrent state: {post}"
-        return ToolResult(content=error_msg, is_error=True)
+        return ToolResult(content=error_msg, is_error=True, metadata=result_data)
 
     def _get_post_state(self, agent: Any) -> dict[str, Any] | None:
         """Snapshot robot state after skill execution."""

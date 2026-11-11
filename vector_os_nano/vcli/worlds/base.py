@@ -65,8 +65,12 @@ class World(Protocol):
         """True if this world drives physical/simulated robot hardware."""
         ...
 
-    def persona_blocks(self) -> tuple[str, str]:
-        """Return (role_prompt, tool_instructions) static persona text."""
+    def persona_blocks(self, agent: Any = None) -> tuple[str, str]:
+        """Return (role_prompt, tool_instructions) persona text.
+
+        With the connected *agent*, a world may compose its task policy from that
+        body's manifests (the robot world does); the text stays static per body.
+        """
         ...
 
     def register_tools(self, registry: Any, agent: Any) -> None:

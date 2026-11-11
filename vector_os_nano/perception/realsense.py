@@ -27,8 +27,7 @@ from vector_os_nano.core.types import CameraIntrinsics
 
 logger = logging.getLogger(__name__)
 
-# D405 defaults from camera.launch.py
-_DEFAULT_SERIAL = "335122270413"
+# D405 defaults from camera.launch.py (the serial comes from config camera.serial)
 _DEFAULT_WIDTH = 640
 _DEFAULT_HEIGHT = 480
 _DEFAULT_FPS = 30
@@ -51,7 +50,7 @@ class RealSenseCamera:
 
     def __init__(
         self,
-        serial: str = _DEFAULT_SERIAL,
+        serial: str | None = None,  # None / "" = the first connected device
         resolution: tuple[int, int] = (_DEFAULT_WIDTH, _DEFAULT_HEIGHT),
         fps: int = _DEFAULT_FPS,
         warmup_frames: int = 30,

@@ -61,12 +61,15 @@ def test_default_personality_curbs_over_eager_tool_use():
     assert "do not read files" in d or "do not run commands" in d
 
 
-def test_project_context_recognizes_agents_md(tmp_path):
+def test_project_context_recognizes_agents_md(tmp_path, monkeypatch):
+    # Another agent's file is opt-in (cli-entry:robot-persona-wrong-launch-instructions).
+    monkeypatch.setenv("VECTOR_PROJECT_CONTEXT", "1")
     (tmp_path / "AGENTS.md").write_text("agents-rules-here", encoding="utf-8")
     assert "agents-rules-here" in prompt._load_vector_md(tmp_path)
 
 
-def test_project_context_recognizes_claude_md(tmp_path):
+def test_project_context_recognizes_claude_md(tmp_path, monkeypatch):
+    monkeypatch.setenv("VECTOR_PROJECT_CONTEXT", "1")
     (tmp_path / "CLAUDE.md").write_text("claude-rules-here", encoding="utf-8")
     assert "claude-rules-here" in prompt._load_vector_md(tmp_path)
 
