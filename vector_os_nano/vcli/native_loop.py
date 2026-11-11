@@ -452,8 +452,7 @@ def _finish_tool_schema() -> dict[str, Any]:
 
 def actor_state(agent: Any) -> Any:
     """The causation baseline of *agent*: its drivers' motion counters, the true pose of
-    its sim session (none outside a sim: every robot channel then fails closed).
-    Shared by both producers (the legacy GoalExecutor too)."""
+    its sim session (none outside a sim: every robot channel then fails closed)."""
     from vector_os_nano.sim.session import session_for
 
     return actor_causation.capture(agent, session_for(agent))
