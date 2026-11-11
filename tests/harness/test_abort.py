@@ -5,9 +5,7 @@
 
 Covers:
 - abort module API (request, clear, is_requested, wait_or_abort)
-- P0 stop bypass in VectorEngine
-- GoalExecutor abort check
-- VGGHarness abort check
+- P0 stop bypass in VectorEngine (the REPL and -p call it before the producer)
 - StopSkill triggers abort
 """
 from __future__ import annotations
@@ -112,7 +110,7 @@ def _engine_with_stop_skill(backend):
     reg = SkillRegistry()
     reg.register(StopSkill())
     engine = VectorEngine(backend=backend)
-    engine._vgg_agent = SimpleNamespace(_skill_registry=reg)
+    engine._agent = SimpleNamespace(_skill_registry=reg)
     return engine
 
 
@@ -127,27 +125,22 @@ class TestP0StopBypass:
         session.append_assistant = MagicMock()
 
         start = time.monotonic()
-        result = engine.run_turn("stop", session)
+        assert engine.is_stop("stop")
+        engine._emergency_stop("stop", session)
         elapsed = time.monotonic() - start
 
-        assert result.text == "Stopped."
+        session.append_assistant.assert_called_once_with("Stopped.", None)
         assert elapsed < 0.5  # must be fast, no LLM call
         backend.call.assert_not_called()  # LLM never called
 
     def test_chinese_stop_bypasses(self):
         from unittest.mock import MagicMock
 
-        backend = MagicMock()
-        engine = _engine_with_stop_skill(backend)
-        session = MagicMock()
-        session.append_user = MagicMock()
-        session.append_assistant = MagicMock()
-
+        engine = _engine_with_stop_skill(MagicMock())
         for word in ["停", "停下", "halt", "freeze", "别动", "停止", "停！", "Stop!", "停下。"]:
-            result = engine.run_turn(word, session)
-            assert result.text == "Stopped.", f"Failed for: {word}"
-            backend.call.assert_not_called()
+            assert engine.is_stop(word), f"Failed for: {word}"
         assert not engine.is_stop("停？")  # a question about stopping is not a stop
+        assert not engine.is_stop("hello")
 
     def test_stop_words_are_the_registered_stop_skills_aliases(self):
         """Single source (producers:stop-not-p0): no hand-written kernel list."""
@@ -162,142 +155,9 @@ class TestP0StopBypass:
         )
         assert VectorEngine(backend=MagicMock()).stop_words() == frozenset()  # no robot
 
-    def test_non_stop_goes_to_llm(self):
-        from unittest.mock import MagicMock
-        from vector_os_nano.vcli.engine import VectorEngine
-        from vector_os_nano.vcli.session import Session
-
-        backend = MagicMock()
-        response = MagicMock()
-        response.text = "Hello"
-        response.tool_calls = []
-        response.stop_reason = "end_turn"
-        response.usage = MagicMock()
-        response.usage.input_tokens = 0
-        response.usage.output_tokens = 0
-        response.usage.cache_read_tokens = 0
-        response.usage.cache_creation_tokens = 0
-        backend.call.return_value = response
-
-        engine = VectorEngine(backend=backend)
-        session = MagicMock(spec=Session)
-        session.append_user = MagicMock()
-        session.append_assistant = MagicMock()
-        session.append_tool_results = MagicMock()
-        session.to_messages = MagicMock(return_value=[])
-        session.add_usage = MagicMock()
-
-        engine.run_turn("hello", session)
-        backend.call.assert_called_once()  # LLM was called
-
 
 # ---------------------------------------------------------------------------
-# 3. GoalExecutor respects abort
-# ---------------------------------------------------------------------------
-
-class TestGoalExecutorAbort:
-    def test_aborted_before_first_step(self):
-        from unittest.mock import MagicMock
-        from vector_os_nano.vcli.cognitive.abort import clear_abort, request_abort
-        from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
-        from vector_os_nano.vcli.cognitive.types import GoalTree, SubGoal
-
-        clear_abort()
-        request_abort()
-
-        executor = GoalExecutor(
-            strategy_selector=MagicMock(),
-            verifier=MagicMock(),
-        )
-        tree = GoalTree(
-            goal="test",
-            sub_goals=(
-                SubGoal(name="s1", description="step 1", verify="True"),
-                SubGoal(name="s2", description="step 2", verify="True"),
-            ),
-        )
-        trace = executor.execute(tree)
-        assert not trace.success
-        assert len(trace.steps) == 1
-        assert trace.steps[0].error == "aborted"
-        clear_abort()
-
-    def test_not_aborted_runs_normally(self):
-        from unittest.mock import MagicMock
-        from vector_os_nano.vcli.cognitive.abort import clear_abort
-        from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
-        from vector_os_nano.vcli.cognitive.types import GoalTree, SubGoal
-
-        clear_abort()
-
-        selector = MagicMock()
-        result_mock = MagicMock()
-        result_mock.executor_type = "skill"
-        result_mock.name = "test_skill"
-        result_mock.params = {}
-        selector.select.return_value = result_mock
-
-        verifier = MagicMock()
-        verifier.verify.return_value = True
-
-        skill_mock = MagicMock()
-        skill_result = MagicMock()
-        skill_result.success = True
-        skill_result.error_message = ""
-        skill_result.result_data = {}
-        skill_mock.execute.return_value = skill_result
-
-        registry = MagicMock()
-        registry.get.return_value = skill_mock
-
-        context_mock = MagicMock()
-
-        executor = GoalExecutor(
-            strategy_selector=selector,
-            verifier=verifier,
-            skill_registry=registry,
-            build_context=lambda: context_mock,
-        )
-        tree = GoalTree(
-            goal="test",
-            sub_goals=(
-                SubGoal(name="s1", description="step 1", verify="True"),
-            ),
-        )
-        trace = executor.execute(tree)
-        assert trace.success
-        clear_abort()
-
-
-# ---------------------------------------------------------------------------
-# 4. VGGHarness respects abort
-# ---------------------------------------------------------------------------
-
-class TestVGGHarnessAbort:
-    def test_abort_skips_execution(self):
-        from unittest.mock import MagicMock
-        from vector_os_nano.vcli.cognitive.abort import clear_abort, request_abort
-        from vector_os_nano.vcli.cognitive.vgg_harness import VGGHarness
-        from vector_os_nano.vcli.cognitive.types import GoalTree, SubGoal
-
-        clear_abort()
-        request_abort()
-
-        harness = VGGHarness(
-            decomposer=MagicMock(),
-            executor=MagicMock(),
-        )
-        tree = GoalTree(
-            goal="test",
-            sub_goals=(SubGoal(name="s1", description="step 1", verify="True"),),
-        )
-        trace = harness.run("test", "", goal_tree=tree)
-        assert not trace.success
-        clear_abort()
-
-
-# ---------------------------------------------------------------------------
-# 5. StopSkill triggers abort
+# 3. StopSkill triggers abort
 # ---------------------------------------------------------------------------
 
 class TestStopSkillAbort:

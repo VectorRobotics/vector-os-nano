@@ -54,42 +54,7 @@ class TestSubGoal:
 
     def test_subgoal_defaults(self) -> None:
         sg = SubGoal(name="x", description="d", verify="True")
-        assert sg.timeout_sec == 30.0
-        assert sg.depends_on == ()
         assert sg.strategy == ""
-        assert sg.strategy_params == {}
-        assert sg.fail_action == ""
-
-    def test_subgoal_custom_fields(self) -> None:
-        sg = SubGoal(
-            name="reach_kitchen",
-            description="Go to kitchen",
-            verify="nearest_room() == 'kitchen'",
-            timeout_sec=60.0,
-            depends_on=("init",),
-            strategy="navigate",
-            strategy_params={"speed": 0.5},
-            fail_action="wait",
-        )
-        assert sg.name == "reach_kitchen"
-        assert sg.timeout_sec == 60.0
-        assert sg.depends_on == ("init",)
-        assert sg.strategy == "navigate"
-        assert sg.strategy_params == {"speed": 0.5}
-        assert sg.fail_action == "wait"
-
-    def test_subgoal_strategy_params_default_is_empty_dict(self) -> None:
-        sg1 = SubGoal(name="a", description="b", verify="True")
-        sg2 = SubGoal(name="c", description="d", verify="True")
-        # Each instance gets its own dict — not the same object
-        assert sg1.strategy_params == {}
-        assert sg2.strategy_params == {}
-
-    def test_subgoal_frozen_strategy_params(self) -> None:
-        """strategy_params field itself cannot be replaced on the frozen instance."""
-        sg = SubGoal(name="x", description="d", verify="True")
-        with pytest.raises((AttributeError, TypeError)):
-            sg.strategy_params = {"new": 1}  # type: ignore[misc]
 
 
 class TestGoalTree:
@@ -106,11 +71,6 @@ class TestGoalTree:
         assert len(gt.sub_goals) == 2
         assert gt.sub_goals[0].name == "a"
         assert gt.sub_goals[1].name == "b"
-
-    def test_goaltree_context_snapshot_default(self) -> None:
-        sg = SubGoal(name="x", description="d", verify="True")
-        gt = GoalTree(goal="g", sub_goals=(sg,))
-        assert gt.context_snapshot == ""
 
     def test_goaltree_empty_subgoals(self) -> None:
         gt = GoalTree(goal="nothing", sub_goals=())
@@ -138,7 +98,6 @@ class TestStepRecord:
             duration_sec=2.3,
         )
         assert sr.error == ""
-        assert sr.fallback_used is False
 
     def test_steprecord_with_error(self) -> None:
         sr = StepRecord(
@@ -148,10 +107,8 @@ class TestStepRecord:
             verify_result=False,
             duration_sec=5.0,
             error="Timeout",
-            fallback_used=True,
         )
         assert sr.error == "Timeout"
-        assert sr.fallback_used is True
 
 
 class TestExecutionTrace:

@@ -39,8 +39,7 @@ def _dev_engine(backend: Any, *tools: Any, permissions: Any = None) -> Any:
     for t in tools:
         reg.register(t, category="code")
     eng = VectorEngine(backend=backend, registry=reg, permissions=permissions or PermissionContext())
-    eng.init_vgg(agent=None, skill_registry=None, world=DevWorld())
-    eng._vgg_agent = None
+    eng.bind(None, DevWorld())
     return eng
 
 
@@ -80,7 +79,7 @@ def test_a_denied_tool_is_never_executed() -> None:
     trace = eng.run_turn_native("run it", session=_session())
     assert spy.calls == 0
     assert trace.refused == ("bash: scripted",) and trace.actions_dispatched == 0
-    assert cli._native_owns_turn(trace)  # no second producer re-attempts a refused call
+    assert not cli._chat_turn(trace)  # a refusal is shown with its verdict, never re-run
 
 
 def test_rm_rf_root_is_blocked_by_the_bash_deny_list_on_the_native_path(monkeypatch) -> None:
@@ -123,7 +122,7 @@ def test_headless_denies_an_ask_tool_unless_granted(tmp_path, monkeypatch) -> No
 
 def test_a_side_effecting_capability_is_surfaced_and_asks_first() -> None:
     """S6: every registered capability is a native tool; one that acts asks first."""
-    from vector_os_nano.vcli.cognitive.capabilities import CapabilityRegistry
+    from vector_os_nano.vcli.cognitive.capabilities.registry import CapabilityRegistry
     from vector_os_nano.vcli.native_loop import _build_motor_tools
 
     calls: list[dict] = []
@@ -133,8 +132,6 @@ def test_a_side_effecting_capability_is_surfaced_and_asks_first() -> None:
         invoke=lambda payload, ctx: calls.append(payload) or SimpleNamespace(success=True, output={}),
     )
     eng = _dev_engine(_script(tool_turn(("vla_grasp", {"target": "can"})), tool_turn(end=True)))
-    assert "chat" in eng._capability_registry.names()  # the dev world's chat LLM...
-    assert "chat" not in _build_motor_tools(None, eng)  # ...is the model itself: no nested call
     eng._capability_registry = CapabilityRegistry()
     eng._capability_registry.register(cap)
     assert "vla_grasp" in _build_motor_tools(None, eng)
@@ -245,7 +242,7 @@ def test_the_answer_wrap_never_clears_a_stop_on_a_background_run() -> None:
     t.start()
     ready.wait(5)
     eng._emergency_stop("停", _session())
-    eng.run_turn_unified("你好", _session())  # a chat turn while the plan unwinds
+    eng.run_turn_native("你好", session=_session())  # a chat turn while the plan unwinds
     check.set()
     t.join(5)
     assert seen == [True]
@@ -262,7 +259,7 @@ def test_the_p0_stop_runs_the_stop_skill_and_never_homes_the_arm() -> None:
     agent = SimpleNamespace(_skill_registry=reg, _build_context=lambda: None,
                             execute_skill=lambda *a, **k: ran.append("execute_skill(stop, then home)"))
     eng = VectorEngine(backend=None)
-    eng._vgg_agent = agent
+    eng._agent = agent
     eng._emergency_stop("停", None)
     assert ran == ["stop"]
 
@@ -320,7 +317,7 @@ class _StopLandsMidCall:
 
 def test_a_stop_during_the_llm_call_owns_the_turn_and_runs_nothing() -> None:
     """The stop cancels native before it dispatched anything: no tool runs, and the
-    stopped turn is owned (never handed to the legacy planner to run after the stop)."""
+    stopped turn is graded (its verdict shows the stop; nothing re-runs it)."""
     agent, base = _make_agent()
     walks: list[Any] = []
     base.walk = lambda *a: walks.append(a) or True
@@ -328,35 +325,26 @@ def test_a_stop_during_the_llm_call_owns_the_turn_and_runs_nothing() -> None:
     trace = _make_engine(agent, backend).run_turn_native("往前走一米", session=_session())
     assert walks == [] and backend.calls == 1
     assert trace.cancelled and trace.actions_dispatched == 0
-    assert cli._native_owns_turn(trace)
+    assert not cli._chat_turn(trace)
 
 
 def test_a_stop_anywhere_in_a_turn_stops_every_run_the_turn_starts_later() -> None:
-    """A stop landing between two runs of one turn (native answered, then the legacy
-    plan starts) still stops the later run; the next turn starts clean."""
+    """A stop landing between two runs of one turn still stops the later run; the
+    next turn starts clean."""
     eng = _dev_engine(_script())
     with abort.turn():
         with eng.actuating_run():
-            pass  # native's run: the model answered, nothing dispatched
+            pass  # the first run: nothing dispatched
         abort.request_abort()
-        with eng.actuating_run() as legacy:
-            assert legacy.cancelled and abort.is_abort_requested()
+        with eng.actuating_run() as later:
+            assert later.cancelled and abort.is_abort_requested()
     with abort.turn():
         with eng.actuating_run() as nxt:
             assert not nxt.cancelled
 
 
-def test_a_stop_during_a_react_llm_call_runs_none_of_its_tool_calls() -> None:
-    spy = _SpyTool("bash", "allow")
-    eng = _dev_engine(_StopLandsMidCall(tool_turn(("bash", {"command": "echo hi"}))), spy)
-    s = _session()
-    eng.run_turn("run it", s)
-    assert spy.calls == 0
-    _assert_well_formed(s.to_messages())  # the unanswered tool_use is closed, not dangling
-
-
-def test_a_stop_from_a_react_tool_runs_none_of_the_rest_of_its_batch() -> None:
-    """The REPL turn runs on a worker, so a stop never raises inside the ReAct
+def test_a_stop_from_a_tool_runs_none_of_the_rest_of_its_batch() -> None:
+    """The REPL turn runs on a worker, so a stop never raises inside the native
     dispatch loop: the batch itself must stop at the first tool after the stop."""
 
     class _StopsTheTurn(_SpyTool):
@@ -368,9 +356,10 @@ def test_a_stop_from_a_react_tool_runs_none_of_the_rest_of_its_batch() -> None:
     eng = _dev_engine(_script(tool_turn(("bash", {"command": "A"}), ("file_write", {"command": "B"}))), a, b)
     s = _session()
     with abort.turn():
-        result = eng.run_turn("A then B", s)
-    assert (a.calls, b.calls) == (1, 0)
-    assert [tc.result.content for tc in result.tool_calls] == ["ran", "Stopped: not run."]
+        trace = eng.run_turn_native("A then B", session=s)
+    assert (a.calls, b.calls) == (1, 0) and trace.cancelled
+    results = [r["content"] for e in s._entries if e["type"] == "tool_result" for r in e["results"]]
+    assert results == ["ran", "Stopped: not run."]
     _assert_well_formed(s.to_messages())
 
 
@@ -405,7 +394,7 @@ def test_an_llm_failure_after_an_action_returns_the_partial_trace() -> None:
     assert trace.actions_dispatched == 1
     assert "503" in trace.llm_error and trace.model == "fake-model-1"
     assert trace.steps[-1].strategy == "walk" and trace.steps[-1].success is False
-    assert cli._native_owns_turn(trace)  # the caller must not re-run it
+    assert not cli._chat_turn(trace)  # graded, never re-run
     report = VerdictReport.from_trace(trace, verify_oracle_names(agent, None))
     assert report.llm_unavailable and report.model == "fake-model-1"
     assert report.exit_code() == 1 and not report.verified
@@ -424,34 +413,87 @@ def test_an_llm_failure_after_a_verified_step_never_verifies_the_cut_short_plan(
     assert report.llm_unavailable and report.exit_code() == 1
 
 
-@pytest.mark.parametrize("owned", ["acted", "cancelled"])
-def test_p_path_never_hands_an_acted_turn_to_the_legacy_planner(monkeypatch, owned) -> None:
-    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
+def _p_turn(monkeypatch, capsys, trace: Any, answer: str = "") -> tuple[int, dict]:
+    """Run cli.run_one_turn --json over a fake engine returning *trace*; (exit, verdict)."""
+    import json
 
-    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0,
-                           actions_dispatched=int(owned == "acted"), cancelled=owned == "cancelled")
-    decomposed: list[str] = []
-    engine = SimpleNamespace(
-        _vgg_agent=None, is_stop=lambda t: False,
-        run_turn_native=lambda *a, **k: acted,
-        vgg_decompose=lambda p: decomposed.append(p),
-    )
+    seen: dict[str, Any] = {}
+
+    def run_turn_native(prompt: str, **kw: Any) -> Any:
+        seen.update(kw)
+        kw["session"].append_user(prompt)
+        kw["session"].append_assistant(answer)
+        return trace
+
+    engine = SimpleNamespace(_agent=None, is_stop=lambda t: False, run_turn_native=run_turn_native)
     monkeypatch.setattr(cli, "_build_turn_context",
-                        lambda args: SimpleNamespace(engine=engine, session=None, app_state={}))
-    code = cli.run_one_turn(SimpleNamespace(print_prompt="walk 1 m", json=False, native_loop=False, native_first=False))
-    assert decomposed == []  # vgg_decompose never invoked
-    assert code != 0
+                        lambda args: SimpleNamespace(engine=engine, session=_session(), app_state={}))
+    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
+    code = cli.run_one_turn(SimpleNamespace(print_prompt="walk 1 m", json=True))
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("VECTOR_VERDICT "))
+    assert "ask_permission" not in seen  # cli-entry:missed3: -p never prompts on stdin
+    return code, json.loads(line.split(" ", 1)[1])
 
 
 @pytest.mark.parametrize("owned", ["acted", "cancelled"])
-def test_repl_native_attempt_owns_an_unverified_acted_turn(monkeypatch, owned) -> None:
+def test_p_path_grades_an_acted_or_stopped_turn(monkeypatch, capsys, owned) -> None:
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
+
+    trace = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0,
+                           actions_dispatched=int(owned == "acted"), cancelled=owned == "cancelled")
+    code, verdict = _p_turn(monkeypatch, capsys, trace)
+    assert code != 0 and verdict["verified"] is False
+    assert verdict["acted"] is (owned == "acted")
+
+
+def test_p_path_chat_turn_exits_0_with_acted_false(monkeypatch, capsys) -> None:
+    """A -p turn with no action and no verify is the model's answer: exit 0, no claim."""
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
+
+    trace = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0)
+    code, verdict = _p_turn(monkeypatch, capsys, trace, answer="你好！")
+    assert code == 0
+    assert verdict["acted"] is False and verdict["verified"] is False
+    assert verdict["evidence"] == "NO_TRACE" and verdict["error"] == "" and verdict["n_steps"] == 0
+
+
+def test_p_path_a_task_sentence_without_an_action_is_a_failed_goal_not_chat(monkeypatch, capsys) -> None:
+    """A goal that compiled a task contract claims an end state: a turn where the model
+    only talks is graded (goal failed, exit 2), never exit 0 as a chat."""
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
+
+    trace = ExecutionTrace(GoalTree(goal="走到坐标 (1.0, 0.0)", sub_goals=()), (), False, 0.0,
+                           contract=("at_position(1.0, 0.0)",), contract_start=(False,), contract_end=(False,))
+    code, verdict = _p_turn(monkeypatch, capsys, trace, answer="好的")
+    assert code == 2 and verdict["verified"] is False and verdict["acted"] is False
+    assert verdict["goal_check"] == "failed" and verdict["contract"] == ["at_position(1.0, 0.0)"]
+
+
+def test_p_path_a_verify_without_an_action_is_graded_not_chat(monkeypatch, capsys) -> None:
+    """A verify the model made is a claim: graded (RAN, exit 2), never exit 0 as a chat."""
+    from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord, SubGoal
+
+    sg = SubGoal(name="native_step_0", description="d", verify="at_position(1.0, 2.0)")
+    step = StepRecord("native_step_0", "", True, True, 0.0, actor_caused=ActorCaused.UNCAUSED)
+    trace = ExecutionTrace(GoalTree(goal="g", sub_goals=(sg,)), (step,), True, 0.0)
+    code, verdict = _p_turn(monkeypatch, capsys, trace)
+    assert code == 2 and verdict["acted"] is False and verdict["evidence"] == "RAN"
+
+
+@pytest.mark.parametrize("owned", ["acted", "cancelled"])
+def test_repl_turn_renders_the_verdict_of_an_unverified_acted_turn(owned) -> None:
+    import io
+
     from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
 
     acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0,
                            actions_dispatched=int(owned == "acted"), cancelled=owned == "cancelled")
-    engine = SimpleNamespace(_vgg_agent=None, run_turn_native=lambda *a, **k: acted)
-    monkeypatch.setattr(cli, "create_session", lambda **k: _session())
-    assert cli._repl_attempt_native(engine, "walk", _session(), {}, cli.Console(file=open(os.devnull, "w")))
+    engine = SimpleNamespace(_agent=None, run_turn_native=lambda *a, **k: acted)
+    out = io.StringIO()
+    cli._repl_turn(engine, "walk", _session(), {}, cli.Console(file=out, width=200))
+    if owned == "cancelled":
+        assert "verified=False" in out.getvalue()
 
 
 @pytest.mark.parametrize("tool", ["file_read", "bash"])
@@ -472,9 +514,7 @@ def test_a_dev_turn_native_owns_shows_the_models_answer(tmp_path, monkeypatch, t
                       permissions=PermissionContext(no_permission=True))
     monkeypatch.setattr(cli, "create_session", lambda **k: _session())
     out = io.StringIO()
-    owned = cli._repl_attempt_native(eng, "总结一下 README.md 的内容", _session(), {},
-                                     cli.Console(file=out, width=200))
-    assert owned  # one producer: the read or the run never runs twice
+    cli._repl_turn(eng, "总结一下 README.md 的内容", _session(), {}, cli.Console(file=out, width=200))
     assert "README 说这是一个 agent runtime。" in out.getvalue(), out.getvalue()
     if tool == "file_read":
         assert backend._cursor == 2  # the read, the answer: no 'verify' nudges
@@ -541,7 +581,7 @@ def test_without_the_opt_in_an_llm_outage_is_an_infrastructure_verdict(monkeypat
     trace = _make_engine(agent, _DiesAfter()).run_turn_native("hi", session=_session())
     report = VerdictReport.from_trace(trace, frozenset())
     assert report.llm_unavailable and report.evidence == "NO_TRACE" and report.exit_code() == 1
-    assert cli._native_owns_turn(trace)  # the legacy producer would hit the same dead model
+    assert not cli._chat_turn(trace)  # shown as an infrastructure verdict, not as a chat
 
 
 # ---------------------------------------------------------------------------
@@ -749,8 +789,8 @@ def test_a_session_with_a_dangling_tool_use_resumes(tmp_path) -> None:
     s.append_assistant("", [{"type": "tool_use", "id": "t1", "name": "walk", "input": {}},
                             {"type": "tool_use", "id": "t2", "name": "turn", "input": {}}])
     # Ctrl-C landed mid-dispatch: no tool_result was ever appended.
-    result = VectorEngine(backend=_StrictBackend()).run_turn("what happened?", s)
-    assert result.text == "ok"
+    VectorEngine(backend=_StrictBackend()).run_turn_native("what happened?", session=s)
+    assert s.last_assistant_text() == "ok"
     msgs = s.to_messages()
     _assert_well_formed(msgs)
     synthetic = [b for b in msgs[2]["content"] if b.get("tool_use_id") in ("t1", "t2")]
@@ -768,25 +808,6 @@ def test_a_partly_answered_tool_use_is_completed_in_the_same_message() -> None:
     assert [b["tool_use_id"] for b in msgs[-1]["content"]] == ["a", "b"]
 
 
-def test_a_chat_turn_that_ran_a_side_effecting_tool_is_not_verified() -> None:
-    """producers:missed3: the answer-only wrap vouched for a turn that moved/wrote."""
-    from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
-    from vector_os_nano.vcli.session import TokenUsage
-
-    class _ReAct:
-        def __init__(self) -> None:
-            self.n = 0
-
-        def call(self, **kw: Any) -> LLMResponse:
-            self.n += 1
-            calls = [LLMToolCall(id="t1", name="deploy", input={})] if self.n == 1 else []
-            return LLMResponse(text="done", tool_calls=calls, stop_reason="end_turn", usage=TokenUsage())
-
-    eng = _dev_engine(_ReAct(), _SpyTool("deploy", "allow"))
-    result = eng.run_turn_unified("hello there", _session())
-    assert result.tool_calls and result.verified is False
-
-
 def test_navigate_is_not_rerun_when_the_base_raises_a_type_error_mid_way() -> None:
     """producers:missed4: ANY TypeError re-ran navigate_to without a timeout."""
     from vector_os_nano.vcli.native_loop import _NativeBaseNavigateTool
@@ -802,13 +823,11 @@ def test_navigate_is_not_rerun_when_the_base_raises_a_type_error_mid_way() -> No
     assert result.is_error and calls == [(1.0, 2.0)]
 
 
-def test_every_repl_turn_reaches_native_and_the_dev_world_can_launch_a_sim() -> None:
-    """producers:keyword-gate-default-producer + docs-vs-code:repl-keyword-gate-english-fetch:
-    no keyword router decides whether native runs. The dev world's native toolset holds
-    the sim lifecycle, so '启动 go2 仿真' is the model's to route, like a dev write; a
-    robot world attempts 'please bring me the red bottle', which the router skipped."""
-    from vector_os_nano.vcli.intent_router import IntentRouter
-    from vector_os_nano.vcli.native_loop import _build_motor_tools, should_attempt_native
+def test_the_dev_world_can_launch_a_sim() -> None:
+    """producers:keyword-gate-default-producer: no keyword router decides anything; the
+    dev world's native toolset holds the sim lifecycle, so '启动 go2 仿真' is the
+    model's to route, like a dev write."""
+    from vector_os_nano.vcli.native_loop import _build_motor_tools
     from vector_os_nano.vcli.tools import discover_categorized_tools
     from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
 
@@ -818,24 +837,6 @@ def test_every_repl_turn_reaches_native_and_the_dev_world_can_launch_a_sim() -> 
         registry.register(t, category=next((c for c, ns in cats.items() if t.name in ns), "default"))
     dev = SimpleNamespace(_registry=registry)
     assert {"start_simulation", "stop_simulation"} <= set(_build_motor_tools(None, dev))
-    for line in ("在 /tmp/vos_e0 写一个 hello.txt", "启动 go2 仿真 无窗口", "这个仓库是做什么的？"):
-        assert should_attempt_native(line, agent=None, engine=dev), line
-    assert IntentRouter().should_use_vgg("please bring me the red bottle") is False  # the old gate
-    robot = SimpleNamespace(_base=None, _arm=None, _perception=None, _skill_registry=None)
-    assert should_attempt_native("please bring me the red bottle", agent=robot, engine=dev)
-    assert "_intent_actionable" not in vars(cli)
-
-
-def test_headless_turn_context_never_resolves_permissions_on_stdin(monkeypatch, tmp_path) -> None:
-    """cli-entry:missed3: -p defaulted the legacy tool resolver to an stdin prompt."""
-    from vector_os_nano.vcli import config
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(config, "resolve_credentials", lambda **k: ("", "anthropic", "m", None))
-    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
-    args = cli.parse_args(["-p", "hi", "--json"])
-    ctx = cli._build_turn_context(args)
-    assert ctx.app_state["tool_permission_resolver"] is None
 
 
 def test_the_chat_llm_key_is_never_handed_to_the_vlm(monkeypatch) -> None:
@@ -855,20 +856,3 @@ def test_the_chat_llm_key_is_never_handed_to_the_vlm(monkeypatch) -> None:
     start = cli._init_agent
     start(args)
     assert seen.get("vlm_api_key") in (None, "")
-
-
-# ---------------------------------------------------------------------------
-# Fail loud on verify-fn drift in a robot world (graft h, rule 8)
-# ---------------------------------------------------------------------------
-
-
-def test_preflight_fails_loud_on_a_verify_fn_no_embodiment_provides() -> None:
-    from vector_os_nano.vcli.engine import VectorEngine
-
-    selector = SimpleNamespace(_registered_skill_names=lambda: None, _capability_names=frozenset())
-    eng = VectorEngine(backend=None)
-    lazy = {"verify_functions": frozenset({"nearest_room"})}  # embodiment-conditional
-    eng._preflight_validate_world(lazy, selector, {}, "robot", True, is_robot=True)
-    drift = {"verify_functions": frozenset({"holding_objekt"})}
-    with pytest.raises(ValueError, match="holding_objekt"):
-        eng._preflight_validate_world(drift, selector, {}, "robot", True, is_robot=True)

@@ -23,7 +23,6 @@ import pytest
 from vector_os_nano.vcli.cognitive.actor_causation import (
     ActorCaused,
     capture,
-    from_name,
     grade,
     is_robot_predicate,
 )
@@ -233,7 +232,7 @@ def test_holding_no_transition_is_uncaused() -> None:
 
 
 # ---------------------------------------------------------------------------
-# misc — predicate detection + enum (de)serialization round-trip
+# misc — predicate detection
 # ---------------------------------------------------------------------------
 
 
@@ -245,176 +244,6 @@ def test_is_robot_predicate_detection() -> None:
     # A robot predicate ABSENT from the live oracle set is not graded.
     assert is_robot_predicate("at_position(1, 2)", frozenset()) is False
 
-
-def test_from_name_roundtrip_and_legacy() -> None:
-    for c in ActorCaused:
-        assert from_name(c.value) is c
-        assert from_name(c) is c
-    # Unknown / missing (legacy trace) -> NOT_GRADED.
-    assert from_name(None) is ActorCaused.NOT_GRADED
-    assert from_name("garbage") is ActorCaused.NOT_GRADED
-
-
-# ---------------------------------------------------------------------------
-# trace_store serialization round-trips the actor_caused enum (v4 schema)
-# ---------------------------------------------------------------------------
-
-
-def test_trace_serialization_roundtrips_actor_caused(tmp_path) -> None:
-    from vector_os_nano.vcli.cognitive.trace_store import load_trace, save_trace
-    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
-
-    sg = SubGoal(name="walk", description="d", verify="at_position(11.0, 3.0)", strategy="walk_forward")
-    step = StepRecord(
-        sub_goal_name="walk", strategy="walk_forward", success=True,
-        verify_result=True, duration_sec=0.1, actor_caused=ActorCaused.UNCAUSED,
-    )
-    trace = ExecutionTrace(
-        goal_tree=GoalTree(goal="g", sub_goals=(sg,)), steps=(step,),
-        success=True, total_duration_sec=0.1,
-    )
-    path = save_trace(trace, tmp_path / "t.json")
-    reloaded = load_trace(path)
-    assert reloaded.steps[0].actor_caused is ActorCaused.UNCAUSED
-
-
-def test_legacy_trace_without_field_loads_as_not_graded(tmp_path) -> None:
-    # An older on-disk trace (no actor_caused key) must load NOT_GRADED -> legacy.
-    import json
-
-    from vector_os_nano.vcli.cognitive.trace_store import load_trace
-
-    payload = {
-        "schema_version": 3,
-        "goal_tree": {"goal": "g", "sub_goals": [
-            {"name": "walk", "description": "d", "verify": "at_position(11.0, 3.0)",
-             "strategy": "walk_forward"}]},
-        "steps": [{"sub_goal_name": "walk", "strategy": "walk_forward",
-                   "success": True, "verify_result": True, "duration_sec": 0.1}],
-        "success": True, "total_duration_sec": 0.1,
-    }
-    p = tmp_path / "legacy.json"
-    p.write_text(json.dumps(payload))
-    reloaded = load_trace(p)
-    assert reloaded.steps[0].actor_caused is ActorCaused.NOT_GRADED
-
-
-# ---------------------------------------------------------------------------
-# Executor integration — the executor threads the grade into the StepRecord
-# ---------------------------------------------------------------------------
-
-
-class _VerifierOverFrozenAgent:
-    """A minimal GoalVerifier: evaluate() reads at_position over the LIVE agent.
-
-    Exposes ``_namespace`` (so the executor single-sources oracle names from it)
-    and ``evaluate`` / ``verify`` using the real go2 oracle bound to the live base.
-    """
-
-    def __init__(self, agent) -> None:
-        from tests.harness.fake_gt import fake_namespace
-
-        self._namespace = {"at_position": fake_namespace(agent, "go2")["at_position"]}
-
-    def evaluate(self, expr: str):
-        val = eval(expr, {"__builtins__": {}}, dict(self._namespace))  # noqa: S307 - test only
-        return bool(val), val
-
-    def verify(self, expr: str) -> bool:
-        return self.evaluate(expr)[0]
-
-
-class _MovingPrimitives(dict):
-    """Primitive namespace whose 'walk_forward' commands + displaces the base."""
-
-    def __init__(self, base) -> None:
-        super().__init__()
-        self._base = base
-        self["walk_forward"] = self._walk
-
-    def _walk(self, **_):
-        self._base.command(0.3)
-        self._base.teleport(11.0, 3.0)
-        return True
-
-
-def _executor_for(agent, primitives) -> "object":
-    from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
-    from vector_os_nano.vcli.cognitive.strategy_selector import StrategySelector
-
-    return GoalExecutor(
-        strategy_selector=StrategySelector(),
-        verifier=_VerifierOverFrozenAgent(agent),
-        primitives=primitives,
-        agent=agent,
-    )
-
-
-def test_executor_threads_caused_on_honest_walk() -> None:
-    from tests.harness.fake_gt import bind_fake_sim
-    from vector_os_nano.vcli.cognitive.types import GoalTree
-
-    base = _FakeBase(10.0, 3.0, cmd_motion=0.0)
-    agent = _agent(base=base)
-    session = bind_fake_sim(agent, "go2")  # the pose half of a baseline is the session's truth
-    try:
-        ex = _executor_for(agent, _MovingPrimitives(base))
-        sg = SubGoal(name="walk", description="向前走", verify="at_position(11.0, 3.0)", strategy="walk_forward")
-        trace = ex.execute(GoalTree(goal="g", sub_goals=(sg,)))
-    finally:
-        session.close()
-    assert trace.steps[0].success is True
-    assert trace.steps[0].actor_caused is ActorCaused.CAUSED
-    # And the gate agrees it is GROUNDED.
-    assert classify_step_evidence(trace.steps[0], sg, ROBOT_ORACLES) == "GROUNDED"
-
-
-def test_executor_without_a_sim_session_fails_closed_on_an_honest_walk() -> None:
-    """No sim session: no ground-truth pose, so even an honest walk is UNCAUSED."""
-    from vector_os_nano.vcli.cognitive.types import GoalTree
-
-    base = _FakeBase(10.0, 3.0, cmd_motion=0.0)
-    agent = _agent(base=base)
-    ex = _executor_for(agent, _MovingPrimitives(base))
-    sg = SubGoal(name="walk", description="向前走", verify="at_position(11.0, 3.0)", strategy="walk_forward")
-    trace = ex.execute(GoalTree(goal="g", sub_goals=(sg,)))
-    assert trace.steps[0].actor_caused is ActorCaused.UNCAUSED
-    assert classify_step_evidence(trace.steps[0], sg, ROBOT_ORACLES) == "RAN"
-
-
-def test_executor_threads_uncaused_on_noop() -> None:
-    from vector_os_nano.vcli.cognitive.types import GoalTree
-
-    # Base already AT (10,3); verify targets (10,3) -> true@baseline, no command.
-    base = _FakeBase(10.0, 3.0, cmd_motion=0.0)
-    agent = _agent(base=base)
-    noop = dict(walk_forward=lambda **_: True)  # a primitive that does NOTHING
-    ex = _executor_for(agent, noop)
-    sg = SubGoal(name="stand", description="原地", verify="at_position(10.0, 3.0)", strategy="walk_forward")
-    trace = ex.execute(GoalTree(goal="g", sub_goals=(sg,)))
-    assert trace.steps[0].success is True  # verify passes (already there)
-    assert trace.steps[0].actor_caused is ActorCaused.UNCAUSED
-    # The moat downgrades it: a no-op is NOT grounded.
-    assert classify_step_evidence(trace.steps[0], sg, ROBOT_ORACLES) == "RAN"
-
-
-def test_executor_no_agent_stays_not_graded() -> None:
-    from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
-    from vector_os_nano.vcli.cognitive.strategy_selector import StrategySelector
-    from vector_os_nano.vcli.cognitive.types import GoalTree
-
-    base = _FakeBase(10.0, 3.0, cmd_motion=0.0)
-    agent = _agent(base=base)
-    # agent=None disables grading -> the step stays NOT_GRADED (legacy).
-    ex = GoalExecutor(
-        strategy_selector=StrategySelector(),
-        verifier=_VerifierOverFrozenAgent(agent),
-        primitives=dict(walk_forward=lambda **_: True),
-        agent=None,
-    )
-    sg = SubGoal(name="stand", description="原地", verify="at_position(10.0, 3.0)", strategy="walk_forward")
-    trace = ex.execute(GoalTree(goal="g", sub_goals=(sg,)))
-    assert trace.steps[0].actor_caused is ActorCaused.NOT_GRADED
 
 
 # ---------------------------------------------------------------------------

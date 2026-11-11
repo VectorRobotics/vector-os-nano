@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""REPL CUTOVER acceptance — drive the REAL interactive vector-cli REPL by NL on go2 sim.
+"""REPL acceptance — drive the REAL interactive vector-cli REPL by NL on go2 sim.
 
 The owner's ONLY test interface is bare ``vector-cli`` + natural language. This pins
-the cutover ON THE REAL SIM through the ACTUAL interactive REPL (not ``-p``, not a
+the native producer ON THE REAL SIM through the ACTUAL interactive REPL (not ``-p``, not a
 hand-built engine script): a natural-language nav command must route to the NATIVE
 tool-use producer, drive the real go2 in MuJoCo, and render the HONEST moat verdict in
 the conversation. Deterministic via the ``VECTOR_FAKE_LLM_TOOLS`` seam (the real
@@ -23,7 +23,7 @@ import re
 import pytest
 
 # go2 starts at (10, 3); a 1.0 m backward walk reaches within at_position tol of
-# (9, 3) (the same honest-walk script the trichotomy / native-first -p tests use).
+# (9, 3) (the same honest-walk script the trichotomy -p test uses).
 _WALK_SCRIPT = {
     "turns": [
         {"tool_calls": [
@@ -43,15 +43,14 @@ def test_repl_native_walk_routes_to_native_on_go2_sim(sim_cleanup) -> None:
     from tests.harness.pty_cli import run_repl_session
 
     result = run_repl_session(
-        ["走到坐标 (9.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT, native=True,
-        timeout_sec=240,
+        ["走到坐标 (9.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT, timeout_sec=240,
     )
     text = result.text
     assert not result.timed_out, text[-2500:]
 
     # The NL command reached the REPL.
     assert "走到坐标" in text, f"command not echoed; transcript:\n{result.transcript[:2000]}"
-    # The CUTOVER engaged: native (not the legacy planner) handled the turn.
+    # The native producer handled the turn.
     # (The first spinner frame, "native working…", is only drawn if the fake LLM's
     # first tool call takes longer than Rich's 80 ms refresh; the per-call progress
     # lines "native <tool> …" / "native finishing" always are.)
@@ -69,29 +68,3 @@ def test_repl_native_walk_routes_to_native_on_go2_sim(sim_cleanup) -> None:
     assert "verified=True" in text, f"verdict not verified; transcript:\n{text[-2500:]}"
 
 
-@pytest.mark.sim
-@pytest.mark.cli_main
-@pytest.mark.capability
-def test_repl_legacy_env_does_not_attempt_native(sim_cleanup) -> None:
-    """VECTOR_REPL_NATIVE=0 forces the pure-legacy REPL — native is NEVER attempted.
-
-    The reversible escape hatch: with the cutover disabled, a nav command must NOT show
-    the native producer's "working…" spinner / "actor=CAUSED" verdict (it runs the
-    legacy VGG planner instead). Proves the cutover is gated and reversible on the real
-    product, not just in unit tests.
-    """
-    pytest.importorskip("mujoco")
-    from tests.harness.pty_cli import run_repl_session
-
-    result = run_repl_session(
-        ["走到坐标 (9.0,3.0)"], sim_go2=True, tool_script=_WALK_SCRIPT,
-        native=False,  # VECTOR_REPL_NATIVE=0
-        timeout_sec=240,
-    )
-    text = result.text
-    assert not result.timed_out, text[-2500:]
-    # POSITIVE legacy marker: the legacy planner rendered its plan for the command
-    # (an absence-only check also passed when the REPL hung at boot).
-    assert re.search(r"VGG .*走到坐标", text), f"legacy plan not rendered:\n{text[-2500:]}"
-    # The native cutover path's signatures must be ABSENT (legacy planner handled it).
-    assert "actor=CAUSED" not in text, "native verdict rendered despite VECTOR_REPL_NATIVE=0"

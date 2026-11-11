@@ -15,10 +15,7 @@ REPLACE-NOT-REBUILD, enforced BY CONSTRUCTION (review fix 5):
     This module imports ONLY the honest spine — ``actor_causation``,
     ``trace_store`` (the verdict + oracle names live one hop further), the
     GoalVerifier namespace builder (via the engine, passed in), and
-    ``SkillWrapperTool``. It MUST NOT import ``goal_decomposer`` / ``goal_executor``
-    / ``strategy_selector`` / ``vgg_harness``. ``tests/unit/vcli/test_native_loop
-    _import_firewall.py`` FAILS if any of those appear in this module's imports.
-    The runner's ONLY logic is: capture baseline -> dispatch the skill via
+    ``SkillWrapperTool``. The runner's ONLY logic is: capture baseline -> dispatch the skill via
     SkillWrapperTool -> evaluate verify via the live GoalVerifier -> grade via
     ``actor_causation.grade`` -> append ONE StepRecord. The MODEL owns
     decompose / route / replan — there is NO replan / iteration / "landed-short"
@@ -31,7 +28,7 @@ StepRecord granularity (review fix 2): EXACTLY ONE StepRecord per
 appends the StepRecord, binding the just-run skill calls as the producing action
 and the model's expr as the SubGoal.verify.
 
-Capture/grade timing (review fix 3), mirroring ``GoalExecutor._execute_sub_goal``:
+Capture/grade timing (review fix 3):
 the actor-causation baseline is captured immediately BEFORE the first skill call
 of a step; the grade reads a FRESH post-capture immediately AFTER evaluating that
 step's verify expr. A re-verify of the same predicate (an attempt group, WP07) that
@@ -62,6 +59,7 @@ from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.cognitive import actor_causation
 from vector_os_nano.sim.runtime import ACTOR_EPOCH
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
+from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 from vector_os_nano.vcli.cognitive.object_goal import task_contract, unbound_reason
 from vector_os_nano.vcli.cognitive.trace_store import attempt_key, graded_indices, verify_oracles
 from vector_os_nano.vcli.cognitive.types import (
@@ -71,6 +69,7 @@ from vector_os_nano.vcli.cognitive.types import (
     SubGoal,
 )
 from vector_os_nano.vcli.permissions import PermissionContext
+from vector_os_nano.vcli.prompt import user_prompt_files
 from vector_os_nano.vcli.tool_execution import execute_resolved_tool, resolve_permission
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
 from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
@@ -92,8 +91,8 @@ _MAX_NATIVE_TURNS = 24
 _MAX_VERIFY_NUDGES = 2
 
 # The registry category whose tools are the kernel's domain-general ACTION surface
-# (file_read/file_write/file_edit/bash/glob/grep — see tools.__init__._TOOL_CATEGORIES
-# and worlds.dev.DEV_TOOL_ALLOWLIST, which is this category). The native loop offers
+# (file_read/file_write/file_edit/bash/glob/grep — see tools.__init__._TOOL_CATEGORIES).
+# The native loop offers
 # these as motor tools alongside the world's skills, so the dev world (no robot agent,
 # hence no wrapped skills) can still ACT — and the robot world gains the same code
 # tools. World-agnostic BY CONSTRUCTION: native asks the ENGINE'S registry for its
@@ -122,16 +121,6 @@ LIFECYCLE_TOOLS: frozenset[str] = frozenset({"start_simulation", "stop_simulatio
 # reaches a file oracle another way; this prong removes the easy path by construction.
 _MUTATING_CODE_TOOLS: frozenset[str] = frozenset({"file_write", "file_edit", "bash"})
 
-# at_position tolerance (metres) — single-sourced for the system-prompt vocab from
-# the go2 oracle so the model's verify expr and the verifier agree. Read live with
-# a safe fallback so this module never hard-depends on the oracle's private const.
-def _at_position_tol() -> float:
-    try:
-        from vector_os_nano.vcli.worlds.sim_oracles import _AT_POSITION_TOL_M
-        return float(_AT_POSITION_TOL_M)
-    except Exception:  # noqa: BLE001
-        return 0.5
-
 
 # D9 #1 — the avoidance NAVIGATION route.
 _NAV_TIMEOUT_S = 60.0
@@ -141,9 +130,7 @@ def _agent_base(context: ToolContext) -> Any:
     """The connected mobile base from the tool context's agent (the WIRED accessor).
 
     The ``walk`` skill, the verify oracles, and actor-causation all reach the live base
-    via ``agent._base`` — the standalone ``vcli/primitives`` layer is NOT wired in the
-    product (``init_primitives`` is never called; its ``_ctx`` is None). So native must
-    use ``agent._base`` too, never ``primitives.navigation/locomotion``.
+    via ``agent._base``, so native does too.
     """
     agent = getattr(context, "agent", None)
     return getattr(agent, "_base", None)
@@ -398,26 +385,34 @@ class _NativeCapabilityTool:
 # ---------------------------------------------------------------------------
 
 
-def _verify_tool_schema(oracle_names: frozenset[str]) -> dict[str, Any]:
+def _oracle_line(name: str, fn: Any) -> str:
+    """``name(args): <first paragraph of the oracle's docstring>`` — what the model reads."""
+    try:
+        params = inspect.signature(fn).parameters.values()
+        sig = str(inspect.Signature([p.replace(annotation=inspect.Parameter.empty) for p in params]))
+    except (TypeError, ValueError):
+        sig = "(...)"
+    doc = " ".join((inspect.getdoc(fn) or "").split("\n\n")[0].split())
+    return f"{name}{sig}: {doc}" if doc else f"{name}{sig}"
+
+
+def _verify_tool_schema(namespace: dict[str, Any], oracle_names: frozenset[str]) -> dict[str, Any]:
     """Anthropic-shaped schema for the synthetic ``verify(expr)`` tool.
 
-    The description single-sources the registry-derived verify vocab (the live
-    oracle names + the ``at_position`` tol semantics) so the model's verify expr is
-    grounded in the SAME namespace ``verify_oracle_names`` reads (review fix 6).
+    The predicates are listed from ONE source: for every evidence oracle of the
+    active world (``verify_oracle_names``), its signature and the first paragraph of
+    its own docstring, read off the SAME namespace the verifier evaluates.
     """
-    names = ", ".join(sorted(oracle_names)) if oracle_names else "(none)"
-    tol = _at_position_tol()
+    lines = "\n".join(f"- {_oracle_line(n, namespace[n])}" for n in sorted(oracle_names) if n in namespace)
     desc = (
         "Check a deterministic post-condition predicate against real world state, "
         "then bind it as this step's verification. Call this AFTER the action skill(s) "
         "that should have achieved the goal. The predicate is evaluated by an "
         "independent verifier over real sensor/sim ground truth — it cannot be faked. "
-        f"Available predicate oracles: {names}. "
-        f"at_position(x, y, tol={tol}) is True when the robot's planar position is "
-        f"within tol metres of (x, y) (tol defaults to {tol}). "
-        "Pass the FULL predicate as 'expr', e.g. at_position(2.0, 0.0). After a retry, "
-        "verify the SAME predicate again: the latest attempt counts, and a different, "
-        "easier predicate never replaces a FAIL. Each verify must follow an action."
+        "Pass the FULL predicate expression as 'expr' (combine predicates with and / "
+        "or / not). After a retry, verify the SAME predicate again: the latest attempt "
+        "counts, and a different, easier predicate never replaces a FAIL. Each verify "
+        "must follow an action. Predicates:\n" + (lines or "(none)")
     )
     return {
         "name": VERIFY_TOOL,
@@ -566,8 +561,8 @@ class NativeStepRunner:
     def dispatch_skill(self, name: str, params: dict[str, Any]) -> ToolResult:
         """Gate, then run a motor/skill tool; open a step if needed.
 
-        Every dispatch goes through the SAME permission seam the ReAct and VGG tool
-        paths use (``resolve_permission``): an intrinsic deny (the bash deny-list, a
+        Every dispatch goes through the permission gate (``resolve_permission``):
+        an intrinsic deny (the bash deny-list, a
         protected path) never runs; an ``ask`` runs only on an explicit yes from the
         resolver (None denies — the headless default). A denied call is not an action.
 
@@ -580,7 +575,6 @@ class NativeStepRunner:
             return ToolResult(content=f"Unknown tool '{name}'.", is_error=True)
         decision = resolve_permission(
             tool, params, self._ctx, self._ctx.permissions or PermissionContext(), self._ask,
-            swallow_check_errors=True, swallow_always_allow_errors=True,
         )
         if not decision.allowed:
             why = decision.reason if decision.kind == "deny" else (
@@ -1061,7 +1055,7 @@ def run_turn_native(
     """
     from vector_os_nano.sim.session import mark_turn
 
-    agent = agent if agent is not None else getattr(engine, "_vgg_agent", None)
+    agent = agent if agent is not None else getattr(engine, "_agent", None)
     body = [agent]  # the body the turn drives now: a lifecycle tool rebinds it
     mark_turn(agent, "start", user_message)
     try:
@@ -1082,10 +1076,12 @@ def _bind_body(engine: Any, agent: Any) -> tuple[Any, dict[str, Any], dict[str, 
     classifies every predicate RAN). The motor tool-set is the world's skills + the
     registry's tools; the synthetic verify/finish are handled in-loop, never dispatched.
     """
-    verifier = _build_verifier(engine, agent)
+    builder = getattr(engine, "_build_verifier_namespace", None)
+    namespace = builder(agent) if builder is not None else {}
     oracles = verify_oracles(agent, engine)
     motor_tools = _build_motor_tools(agent, engine)
-    return verifier, oracles, motor_tools, _native_tool_schemas(motor_tools, frozenset(oracles))
+    schemas = _native_tool_schemas(motor_tools, namespace, frozenset(oracles))
+    return GoalVerifier(namespace), oracles, motor_tools, schemas
 
 
 def _run_turn_native(
@@ -1114,7 +1110,7 @@ def _run_turn_native(
         verifier and oracle names, and the sim's turn marks move to it."""
         nonlocal oracle_names, tool_schemas
         app = ctx.app_state
-        new = app.get("agent") if app is not None and "agent" in app else getattr(engine, "_vgg_agent", None)
+        new = app.get("agent") if app is not None and "agent" in app else getattr(engine, "_agent", None)
         verifier, oracles, motor_tools, tool_schemas = _bind_body(engine, new)
         oracle_names = frozenset(oracles)
         runner.rebind(new, verifier, oracles, motor_tools)
@@ -1309,24 +1305,6 @@ def _run_turn_native(
 # ---------------------------------------------------------------------------
 
 
-def _build_verifier(engine: Any, agent: Any) -> Any:
-    """Build a live GoalVerifier over the engine's verify namespace.
-
-    Reuses the EXISTING namespace builder so the verify sandbox is byte-identical
-    to the one the spine uses. Reuses the already-wired GoalVerifier on the engine's
-    goal executor when present (same namespace), else constructs a fresh one.
-    """
-    from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
-
-    executor = getattr(engine, "_goal_executor", None)
-    live = getattr(executor, "_verifier", None)
-    if live is not None and hasattr(live, "verify"):
-        return live
-    builder = getattr(engine, "_build_verifier_namespace", None)
-    ns = builder(agent) if builder is not None else {}
-    return GoalVerifier(ns)
-
-
 def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
     """Assemble the loop's ACTION surface: the world's skills + the engine's code tools.
 
@@ -1337,8 +1315,7 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
        ``navigate`` route below. When ``agent`` is None (the dev world), this source is
        empty.
     2. The engine registry's ``code``-category tools (file_read/file_write/file_edit/
-       bash/glob/grep) — the kernel's domain-general action surface, the SAME tools the
-       legacy dev path dispatches via ``DEV_TOOL_ALLOWLIST`` + ``ToolDispatcher``. These
+       bash/glob/grep) — the kernel's domain-general action surface. These
        are real ``Tool`` objects whose ``.execute(params, ctx)`` is the interface
        ``dispatch_skill`` already calls, so they slot in directly. This is what lets the
        dev world (no agent -> no skills) ACT, and adds the code tools to the robot world
@@ -1389,8 +1366,6 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
     # not the classical DetectSkill).
     cap_names: set[str] = set()
     for cap in _registered_capabilities(engine):
-        if getattr(cap, "kind", "") == "chat":
-            continue  # the model driving this loop IS the chat route: no nested LLM call
         tool = _NativeDetectTool(cap) if getattr(cap, "kind", "") == "detector" else _NativeCapabilityTool(cap)
         tools[tool.name] = tool
         cap_names.add(tool.name)
@@ -1410,45 +1385,11 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
     return tools
 
 
-def should_attempt_native(user_input: str, *, agent: Any, engine: Any) -> bool:
-    """REGISTRY-DRIVEN native-attempt hint (S5c) — the replacement for the keyword router.
-
-    The native producer routes by the MODEL reading tool DESCRIPTIONS, not a keyword
-    table — so the only PRE-gate question ("is it worth attempting native?") collapses
-    to "does this world expose any actionable tool the model could dispatch?". That is
-    derived SINGLE-SOURCE from ``_build_motor_tools`` (the EXACT toolset the native loop
-    offers; Rule 3), never from ``IntentRouter._RULES`` / ``should_use_vgg`` keyword sets.
-
-    FAIL-OPEN by design: when the world is actionable, attempt native and let the model
-    decide routing — a goal it cannot route falls back to legacy on no-action (a wasted
-    LLM call, NEVER a missed command). This makes the hint a SAFE SUPERSET of the keyword
-    ``should_use_vgg`` **WITHIN AN ACTIONABLE WORLD** (proven in
-    tests/vcli/test_native_routing_hint.py): for every input the keyword router routes to
-    VGG, this also attempts — so S8 can rewire the gate sites off ``should_use_vgg`` onto
-    this with no missed routing. The superset is SCOPED to an actionable world by
-    construction: in a TOOLLESS world (``_build_motor_tools`` empty — a sensorless/dev path)
-    this returns False even for an action-shaped command, which is CORRECT (nothing for the
-    model to route to; the keyword router's VGG attempt would only fail there too). The
-    trivial-input threshold MATCHES ``should_use_vgg`` exactly (``len(user_input) < 2`` on the
-    RAW input — NOT stripped — so a 1-char-after-strip command like "去 " that ``should_use_vgg``
-    accepts is not silently dropped; the earlier ``len(strip())`` was an off-by-strip MISS,
-    D79). A toolset-build error fails OPEN to native. The REPL gates on this (WP14): every
-    world now offers the sim lifecycle, so in practice every non-trivial turn attempts native.
-    """
-    if not user_input or len(user_input) < 2:
-        return False
-    try:
-        tools = _build_motor_tools(agent, engine)
-    except Exception:  # noqa: BLE001 — fail OPEN to native; never silently skip the redesign
-        return True
-    return len(tools) >= 1
-
-
 def _registered_capabilities(engine: Any) -> list[Any]:
     """Every Capability in the ENGINE's CapabilityRegistry (``engine._capability_registry``).
 
-    The engine owns the registry the world populated at init (the same one the
-    GoalExecutor routes through), so the native loop surfaces the EXACT instances —
+    The engine owns the registry the world populated at bind, so the native loop
+    surfaces the EXACT instances —
     never a fresh construction (rule 3). No registry / a lookup failure -> none.
     """
     registry = getattr(engine, "_capability_registry", None)
@@ -1468,9 +1409,8 @@ def _registry_tools(engine: Any, category: str) -> dict[str, Any]:
     so the native loop offers the EXACT action surface the kernel registered (no
     duplicate construction, no hand-authored allowlist here — single-sourced from the
     registry, rule 3). Defensive: a registry without the categorized API, a missing
-    category, or any lookup failure yields an empty set. Disabled categories are
-    still surfaced on purpose: the loop's tool-set is independent of the chat-path
-    category gating (the caller gates robot tools on a connected agent).
+    category, or any lookup failure yields an empty set (the caller gates robot tools
+    on a connected agent).
     """
     registry = getattr(engine, "_registry", None)
     if registry is None:
@@ -1492,7 +1432,7 @@ def _registry_tools(engine: Any, category: str) -> dict[str, Any]:
 
 
 def _native_tool_schemas(
-    motor_tools: dict[str, Any], oracle_names: frozenset[str]
+    motor_tools: dict[str, Any], namespace: dict[str, Any], oracle_names: frozenset[str]
 ) -> list[dict[str, Any]]:
     """The Anthropic-shaped tool schemas the model is offered for a native turn."""
     schemas: list[dict[str, Any]] = []
@@ -1504,7 +1444,7 @@ def _native_tool_schemas(
                 "input_schema": getattr(tool, "input_schema", {"type": "object", "properties": {}}),
             }
         )
-    schemas.append(_verify_tool_schema(oracle_names))
+    schemas.append(_verify_tool_schema(namespace, oracle_names))
     schemas.append(_finish_tool_schema())
     return schemas
 
@@ -1535,16 +1475,14 @@ _KERNEL_RULES = (
 def _native_system_prompt(engine: Any, oracle_names: frozenset[str], agent: Any = None) -> list[dict[str, Any]]:
     """The native system prompt: kernel loop rules + the world's persona + world state.
 
-    The verify vocab is the SAME live oracle set ``verify_oracle_names`` reads (review
-    fix 6). The world persona (``engine._world.persona_blocks(agent)``) carries the
-    body's task policy; the ``[Robot State]`` block is the actor's belief right now
+    The verify vocab is the SAME live oracle set ``verify_oracle_names`` reads; each
+    predicate's signature and meaning is in the verify tool's description. The world persona (``engine._world.persona_blocks(agent)``) carries the
+    body's task policy; the user's own prompt files follow it (``user_prompt_files``); the ``[Robot State]`` block is the actor's belief right now
     (pose, room, gripper, localized objects, nav/explore backend), rebuilt for every
     round-trip. Nothing here names a ground-truth object.
     """
     names = ", ".join(sorted(oracle_names)) if oracle_names else "(none)"
     text = _KERNEL_RULES + f"Available verify predicate oracles: {names}."
-    if "at_position" in oracle_names:
-        text += f" at_position(x, y, tol={_at_position_tol()}) is True within tol metres of (x, y)."
     blocks = [{"type": "text", "text": text}]
     world = getattr(engine, "_world", None)
     if world is not None:
@@ -1552,6 +1490,7 @@ def _native_system_prompt(engine: Any, oracle_names: frozenset[str], agent: Any 
             blocks += [{"type": "text", "text": t.strip()} for t in world.persona_blocks(agent) if t]
         except Exception as exc:  # noqa: BLE001 — the kernel rules still stand
             logger.warning("native_loop: world persona unavailable: %s", exc)
+    blocks += [{"type": "text", "text": t} for t in user_prompt_files()]
     if agent is not None:
         from vector_os_nano.vcli.robot_context import RobotContextProvider
 

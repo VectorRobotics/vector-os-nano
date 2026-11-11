@@ -3,9 +3,8 @@
 
 """Per-run cancellation: one ``CancelToken`` per run, behind the old module facade.
 
-A run (a native turn, a VGG execute, a ReAct turn) owns ONE token, bound to the
-thread that runs it. Blocking loops (VGGHarness, GoalExecutor, navigate, walk,
-explore) poll ``is_abort_requested()`` / ``wait_or_abort()``, which read the
+A run (a native turn) owns ONE token, bound to the thread that runs it. Blocking
+loops (navigate, walk, explore) poll ``is_abort_requested()`` / ``wait_or_abort()``, which read the
 CALLING thread's token. A stop (``request_abort``) cancels every live token at
 once — stop means stop everything. Starting a new run (``new_run`` /
 ``clear_abort``) binds a FRESH token to the calling thread and never un-cancels

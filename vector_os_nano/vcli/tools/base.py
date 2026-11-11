@@ -205,7 +205,7 @@ def tool(
 
 
 class ToolRegistry:
-    """Collects Tool instances and provides look-up and schema export."""
+    """Collects Tool instances and provides look-up."""
 
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
@@ -222,20 +222,6 @@ class ToolRegistry:
         """Return sorted list of registered tool names."""
         return sorted(self._tools.keys())
 
-    def to_anthropic_schemas(self) -> list[dict[str, Any]]:
-        """Return tool definitions in the Anthropic tool-use format."""
-        schemas: list[dict[str, Any]] = []
-        for t in self._tools.values():
-            schema = getattr(t, "__tool_input_schema__", None) or t.input_schema
-            schemas.append(
-                {
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": schema,
-                }
-            )
-        return schemas
-
 
 # ---------------------------------------------------------------------------
 # CategorizedToolRegistry
@@ -245,15 +231,13 @@ class ToolRegistry:
 class CategorizedToolRegistry(ToolRegistry):
     """Tool registry with category-based organization.
 
-    Extends ToolRegistry — all existing APIs work unchanged.
-    Categories allow grouping tools (code, robot, diag, system) and
-    enabling/disabling entire groups at runtime.
+    Categories group tools (code, sim, robot, diag, system); the native loop picks
+    its action surface by category (``native_loop._registry_tools``).
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._categories: dict[str, list[str]] = {}
-        self._disabled: set[str] = set()
 
     def register(self, tool_instance: Any, category: str = "default") -> None:  # type: ignore[override]
         super().register(tool_instance)
@@ -267,47 +251,6 @@ class CategorizedToolRegistry(ToolRegistry):
         for names in self._categories.values():
             if name in names:
                 names.remove(name)
-
-    def enable_category(self, category: str) -> None:
-        """Re-enable a previously disabled category."""
-        self._disabled.discard(category)
-
-    def disable_category(self, category: str) -> None:
-        """Disable a category — its tools are excluded from to_anthropic_schemas()."""
-        self._disabled.add(category)
-
-    def is_category_enabled(self, category: str) -> bool:
-        """Return True if the category is currently enabled."""
-        return category not in self._disabled
-
-    def to_anthropic_schemas(self, categories: list[str] | None = None) -> list[dict[str, Any]]:
-        """Return schemas filtered by categories.
-
-        Args:
-            categories: If provided, only include tools from these categories.
-                        If None, include all tools from enabled categories
-                        (default behavior — backward compatible).
-        """
-        if categories is not None:
-            # Explicit category filter (from intent router). Disabled categories
-            # are still excluded so disable_category() is authoritative on both
-            # the routed and the default paths (e.g. robot tools off in dev world).
-            allowed: set[str] = set()
-            for cat in categories:
-                if cat in self._disabled:
-                    continue
-                allowed.update(self._categories.get(cat, []))
-            disabled_tools: set[str] = set()
-            for cat in self._disabled:
-                disabled_tools.update(self._categories.get(cat, []))
-            allowed -= disabled_tools
-            return [s for s in super().to_anthropic_schemas() if s["name"] in allowed]
-
-        # Default: exclude disabled categories
-        disabled_tools: set[str] = set()
-        for cat in self._disabled:
-            disabled_tools.update(self._categories.get(cat, []))
-        return [s for s in super().to_anthropic_schemas() if s["name"] not in disabled_tools]
 
     def list_categories(self) -> dict[str, list[str]]:
         """Return a copy of the {category: [tool_names]} mapping."""

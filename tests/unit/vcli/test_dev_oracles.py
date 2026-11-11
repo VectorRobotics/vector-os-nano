@@ -191,35 +191,12 @@ def test_root_or_proc_as_cwd_is_no_probe_of_the_process_environment(monkeypatch,
 
 
 def test_the_model_is_told_one_file_per_call() -> None:
-    sigs = dev.DEV_VOCAB.verify_fn_signatures
+    """The verify tool shows each oracle's signature + first docstring paragraph."""
+    from vector_os_nano.vcli.native_loop import _oracle_line
+
+    lines = {n: _oracle_line(n, f) for n, f in dev_verify_namespace().items()}
     for name in ("grep_count", "path_contains"):
-        assert "One file per call" in sigs[name] and "'and' the calls together" in sigs[name]
-        assert "directory" in sigs[name]
-    assert "path: str = " not in sigs["grep_count"]          # no default path
-    assert "not file_exists" in sigs["file_exists"]
-
-
-def test_the_oracle_error_reaches_the_step_failure_reason(tmp_path: Path, monkeypatch) -> None:
-    from vector_os_nano.vcli.cognitive.goal_executor import GoalExecutor
-    from vector_os_nano.vcli.cognitive.strategy_selector import StrategyResult
-    from vector_os_nano.vcli.cognitive.types import SubGoal
-
-    (tmp_path / ".env").write_text("K=v\n")
-    monkeypatch.chdir(tmp_path)
-
-    class _Noop:
-        def select(self, sub_goal: SubGoal) -> StrategyResult:
-            return StrategyResult("primitive", "noop", {})
-
-    ex = GoalExecutor(_Noop(), GoalVerifier(dev_verify_namespace()),
-                      primitives={"noop": lambda: True})
-
-    def run(verify: str) -> str:
-        sg = SubGoal(name="s", description="d", verify=verify)
-        step = ex._execute_sub_goal(sg)
-        assert step.success is False and step.failure_class == "verify_fail"
-        return step.error
-
-    reason = run("grep_count('K', '.env') == 0")
-    assert reason.startswith("verification failed: PermissionError") and ".env" in reason
-    assert run("1 == 2") == "verification failed"      # a plain False carries no stale error
+        assert "One file per call" in lines[name] and "'and' the calls together" in lines[name]
+        assert "directory" in lines[name]
+    assert lines["grep_count"].startswith("grep_count(pattern, path): ")  # no default path
+    assert "not file_exists" in lines["file_exists"]

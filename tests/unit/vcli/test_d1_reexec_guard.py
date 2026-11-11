@@ -7,8 +7,6 @@ Verifies:
 - _maybe_reexec_under_mjpython never calls os.execve during pytest
 - _wants_window logic (--sim / --sim-go2 / --headless combinations)
 - --headless flag is present in parse_args; --gui is removed
-- intent_router routes headless phrases to sim category
-- intent_router does not send headless phrases through VGG
 - sim_tool schema: gui default is True
 - sim_tool._viewer_available() returns True on non-macOS
 """
@@ -146,39 +144,6 @@ def test_reexec_guard_skips_when_already_reexecd(monkeypatch):
         _maybe_reexec_under_mjpython(_make_args(sim=True))
 
     assert not execve_called
-
-
-# ---------------------------------------------------------------------------
-# intent_router — headless phrases
-# ---------------------------------------------------------------------------
-
-
-def test_headless_routes_to_sim():
-    from vector_os_nano.vcli.intent_router import IntentRouter
-    router = IntentRouter()
-    result = router.route("start arm sim headless")
-    assert result is not None
-    assert "sim" in result
-
-
-def test_wuwindow_routes_to_sim():
-    from vector_os_nano.vcli.intent_router import IntentRouter
-    router = IntentRouter()
-    result = router.route("启动仿真无窗口")
-    assert result is not None
-    assert "sim" in result
-
-
-def test_headless_not_vgg():
-    from vector_os_nano.vcli.intent_router import IntentRouter
-    router = IntentRouter()
-    assert router.should_use_vgg("start arm sim headless") is False
-
-
-def test_no_window_not_vgg():
-    from vector_os_nano.vcli.intent_router import IntentRouter
-    router = IntentRouter()
-    assert router.should_use_vgg("start arm sim no window") is False
 
 
 # ---------------------------------------------------------------------------
