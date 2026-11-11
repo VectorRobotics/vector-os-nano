@@ -11,7 +11,7 @@ surface. It imports nothing from vector_os_nano — no oracle, classifier or man
 code — so a bug in the verify spine cannot also hide here (A2: the benchmark audits
 every GROUNDED verdict against this).
 
-    python tools/gt_grade.py --dump run.jsonl --object pickable_bottle_green [--surface dining_table]
+    python scripts/gt_grade.py --dump run.jsonl --object pickable_bottle_green [--surface dining_table]
 
 Prints one JSON line per turn: {"turn", "goal", "moved_m", "delivered", "object_on"}.
 """

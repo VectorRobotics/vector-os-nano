@@ -43,6 +43,19 @@ _DEAD: dict[str, str] = {
     "scripts/launch_explore.sh": "periphery B-1/B-2 (hardcoded /home/yusen, cp into the shared nav stack)",
     "vector_os_nano/hardware/sim/mjcf/g1/g1.xml": "35 absolute /home/yusen mesh paths, unreferenced",
     "vector_os_nano/hardware/sim/mjcf/piper/scene.xml": "unused menagerie demo",
+    # R8a periphery sweep (scripts/gt_grade.py is the one survivor of tools/)
+    "tools": "periphery:tools-kill-by-name-and-rosm (pkill -9 -f mujoco, rosm nuke), "
+             "periphery:tools-stale-ik-probes, periphery:tools-bypass-product-fixed-tmp",
+    "sim.sh": "cli-entry:alias-scripts-redundant",
+    "scripts/vector-sim": "cli-entry:alias-scripts-redundant (.venv-nano fallback)",
+    "scripts/harness_run.py": "periphery:scripts-dead-dev-tools (a second gate)",
+    "scripts/add_spdx_headers.py": "periphery:scripts-dead-dev-tools",
+    ".mcp.json": "docs-packaging:dotmcp-hardcoded-paths (/home/<user> paths, a personal server)",
+    "vector_os_nano/hardware/ros2/runtime.py": "periphery:hw-ros2-runtime-dead",
+    "config/far_go2_indoor.yaml": "periphery:config-dead-planner-yamls (no launcher reads it)",
+    "config/local_planner_go2.yaml": "periphery:config-dead-planner-yamls (no launcher reads it)",
+    "tests/e2e": "tests-gate-e2e:e2e-dir-stale-direct-api (a hand-built rig, not the bare REPL)",
+    "foxglove/launch_foxglove.sh": "periphery:foxglove-check-before-source (open_foxglove launches the bridge itself)",
 }
 
 # dotted modules nothing may import (or import_module) any more
@@ -53,7 +66,7 @@ _DEAD_MODULES = {
               "sensors.lidar360", "sensors.pano360", "sensors.gt_odom")
 } | {
     "vector_os_nano.integrations", "vector_os_nano.ros2", "vector_os_nano.core.nav_client",
-    "vector_os_nano.vcli.tools.sysnav_sim_tool",
+    "vector_os_nano.vcli.tools.sysnav_sim_tool", "vector_os_nano.hardware.ros2.runtime",
 }
 
 
@@ -68,7 +81,7 @@ def _dead(name: str) -> bool:
 
 def test_nothing_imports_a_dead_module() -> None:
     hits = []
-    for top in ("vector_os_nano", "scripts", "tools", "tests"):
+    for top in ("vector_os_nano", "scripts", "tests"):
         for p in sorted((_REPO / top).rglob("*.py")):
             if p.resolve() == Path(__file__).resolve():
                 continue
