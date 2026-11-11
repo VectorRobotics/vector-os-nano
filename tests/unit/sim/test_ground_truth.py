@@ -73,6 +73,32 @@ def test_attach_events_fail_closed_when_the_log_was_truncated(rt) -> None:
     assert [p for _t, _n, p in gt.attach_events(since=first)] == [None]  # fully covered
 
 
+def test_raw_weld_writes_in_one_drained_batch_each_log(tmp_path) -> None:
+    """Adversarial: two jobs that flip the weld by a raw ``eq_active`` write (the SO-101
+    gripper's way), drained by the stepper in ONE batch, still log both transitions."""
+    path = tmp_path / "gt.xml"
+    path.write_text(_XML)
+    rt = SimRuntime(MuJoCoWorld(compiled_scene(path, robot_root="robot", grasp_pairs=[("hand", "box")])),
+                    threaded=True, paced=False, name="gt_batch")
+    sc = rt.world.scene
+    try:
+        rt.start()
+        with rt.paused(), rt.lock:  # the parked stepper drains only after both are queued
+            on = rt.submit(lambda w: w.data.eq_active.__setitem__(0, 1))
+            off = rt.submit(lambda w: w.data.eq_active.__setitem__(0, 0))
+        on.result(5.0), off.result(5.0)
+        assert [p for _t, _c, p in rt.attach_log] == [sc.body("hand"), None]
+    finally:
+        rt.close()
+
+
+def test_a_job_cannot_set_attributes_on_the_world_it_is_handed(rt) -> None:
+    """Jobs see the world through the runtime's logging view: a stray attribute write
+    fails loud instead of landing on the view and silently doing nothing."""
+    with pytest.raises(AttributeError):
+        rt.call(lambda w: setattr(w, "attach", None))
+
+
 def _stub_gt(parent: str) -> SimpleNamespace:
     """A GroundTruth that says the green bottle is gripped by both Piper fingers, 10 cm
     up, attached to *parent*."""

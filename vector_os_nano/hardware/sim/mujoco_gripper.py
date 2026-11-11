@@ -13,7 +13,7 @@ alignment issues with 5-DOF arms). It is the documented exception to the
 world-side grasp decision (sim/grasp.py): the SO-101 jaws are visual only (no
 collision), so this driver keeps welding by proximity and writes the weld itself,
 inside a runtime job; the runtime logs the change from ``world.attached()`` (derived
-from ``eq_active``) at the next publish. Every step goes through the arm's runtime.
+from ``eq_active``) when that job ends. Every step goes through the arm's runtime.
 """
 from __future__ import annotations
 

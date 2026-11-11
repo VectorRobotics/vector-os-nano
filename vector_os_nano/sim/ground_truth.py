@@ -85,8 +85,8 @@ class GroundTruth:
     def attach_events(self, since: float = -math.inf) -> list[tuple[float, str, str | None]]:
         """``(sim_time, object, parent or None for a detach)`` after *since*, oldest first.
 
-        From the runtime's attachment log (every grasp / release logs at call time, any
-        other change at the next publish; a read publishes first). Fails closed (raises)
+        From the runtime's attachment log (every attach / detach logs at call time, a
+        raw engine write when its job ends; a read publishes first). Fails closed (raises)
         when the log no longer reaches back to *since*: an event may have been dropped.
         """
         self._rt.call(lambda _w: None)

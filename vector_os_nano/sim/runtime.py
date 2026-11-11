@@ -23,9 +23,10 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
   Renders and rays go to the world itself (``world.render`` / ``world.raycast``,
   callable from any thread: the backend copies the state it observes).
 * **Attachments.** :meth:`grasp` / :meth:`release` run the world-side grasp
-  decision (``sim/grasp.py``) at a step boundary; every change of
-  ``world.attached()`` is logged with its sim time (:attr:`attach_log`) when the
-  grasp or release call makes it, and any other change at the next publish.
+  decision (``sim/grasp.py``) at a step boundary. Jobs and controllers get the
+  world through :class:`_LoggingWorld`, so every ``attach`` / ``detach`` is logged
+  with its sim time (:attr:`attach_log`) at call time, two inside one job included;
+  a change made around them (a raw engine write) is logged when its job ends.
 * **Sim time.** :meth:`wait_sim` waits for SIM seconds, so a timed motion means
   the same thing at any real-time ratio.
 * **Failure is loud.** :meth:`call` gives up after ``_CALL_TIMEOUT_S`` of wall time
@@ -121,6 +122,30 @@ class ActorEpoch:
 ACTOR_EPOCH = ActorEpoch()
 
 
+class _LoggingWorld:
+    """The world as jobs and controllers see it: ``attach`` / ``detach`` log at call
+    time; everything else is the world's own. Setting an attribute fails loud."""
+
+    __slots__ = ("_rt",)
+
+    def __init__(self, rt: SimRuntime) -> None:
+        object.__setattr__(self, "_rt", rt)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._rt.world, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(f"a job cannot set {name!r} on the world it is handed")
+
+    def attach(self, parent: int, child: int) -> None:
+        self._rt.world.attach(parent, child)
+        self._rt._note_attachments()
+
+    def detach(self, child: int) -> None:
+        self._rt.world.detach(child)
+        self._rt._note_attachments()
+
+
 class SimRuntime:
     """Owns one ``world``: one stepper, step-boundary mutations, snapshots."""
 
@@ -157,10 +182,11 @@ class SimRuntime:
         self._stepper: int | None = None  # ident of the thread stepping right now
         self._steps = 0
         # Attachment transition log: (sim_time, child body, parent body or None for a
-        # detach) per change of world.attached(), appended at every publish
-        # (GroundTruth.weld_events reads it).
+        # detach) per attach / detach call, and per change of world.attached() a job or
+        # tick made around them (GroundTruth.attach_events reads it).
         self.attach_log: collections.deque[tuple[float, int, int | None]] = collections.deque(maxlen=4096)
         self._attached = world.attached()
+        self._view = _LoggingWorld(self)
         self._snap = self._take_snapshot()
         self._rt_mark = (time.monotonic(), world.time())
         self._rt_ratio = 0.0
@@ -283,14 +309,14 @@ class SimRuntime:
 
     def grasp(self, spec: _grasp.GraspSpec) -> int | None:
         """The grasp decision at a step boundary: the attached body, or None."""
-        return self.call(lambda w: self._noted(_grasp.grasp(w, spec)))
+        return self.call(lambda w: _grasp.grasp(w, spec))
 
     def release(self, parent: int) -> list[int]:
         """Detach what *parent* holds, at a step boundary; returns what is still attached."""
-        return self.call(lambda w: self._noted(_grasp.release(w, parent)))
+        return self.call(lambda w: _grasp.release(w, parent))
 
     def attachments(self) -> dict[int, int]:
-        """``{child: parent}`` as of the last publish (or grasp / release call)."""
+        """``{child: parent}`` as of the last attach / detach call or job end."""
         return dict(self._attached)
 
     @contextlib.contextmanager
@@ -392,10 +418,6 @@ class SimRuntime:
                     self.attach_log.append((t, child, now.get(child)))
             self._attached = now
 
-    def _noted(self, result: Any) -> Any:
-        self._note_attachments()  # at call time: a release and a re-grasp in one batch both log
-        return result
-
     def _run(self, jobs: list[tuple[Callable[[PhysicsWorld], Any], Future]]) -> None:
         """Apply mutations, publish the new state, THEN resolve their futures."""
         done: list[tuple[Future, bool, Any]] = []
@@ -403,9 +425,10 @@ class SimRuntime:
             if not fut.set_running_or_notify_cancel():
                 continue
             try:
-                done.append((fut, True, fn(self.world)))
+                done.append((fut, True, fn(self._view)))
             except BaseException as exc:  # noqa: BLE001 — delivered to the submitter
                 done.append((fut, False, exc))
+            self._note_attachments()  # per job: two jobs in one batch never cancel out
         if done:
             self._publish()
         for fut, ok, val in done:
@@ -422,7 +445,7 @@ class SimRuntime:
         self._drain()
         ctrl = controller or self._controller
         if ctrl is not None:
-            ctrl(self.world)
+            ctrl(self._view)
         self.world.step(self.substeps)
         self._steps += self.substeps
         self._publish()

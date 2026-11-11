@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from tests.conformance.test_battery import Arm, _settled
+from vector_os_nano.sim import grasp as g
 from vector_os_nano.sim.runtime import SimRuntime
 
 pytestmark = pytest.mark.sim
@@ -64,5 +65,27 @@ def test_grasp_and_release_log_at_call_time(backend, load, battery_scene):
         assert rt.release(arm.hand) == [] and rt.attachments() == {}
         assert rt.grasp(arm.spec) == box  # re-grasped at the same instant: both changes logged
         assert list(rt.attach_log) == [(t, box, arm.hand), (t, box, None), (t, box, arm.hand)]
+    finally:
+        rt.close()
+
+
+def test_every_attach_and_detach_inside_one_job_is_logged(backend, load, battery_scene):
+    """Adversarial: a detach and a re-attach inside ONE job leave the attachments as they
+    were, yet both transitions are logged; so is a release + attach through sim/grasp,
+    and a re-attach to the same parent changes nothing and logs nothing."""
+    sc = battery_scene
+    w = _settled(load, backend, sc)
+    arm = Arm(w, sc)
+    _jaw, box = arm.grip()
+    rt = SimRuntime(w, threaded=False, paced=False, name="conf")
+    try:
+        t = rt.sim_time
+        rt.call(lambda w: w.attach(arm.hand, box))
+        rt.call(lambda w: (w.detach(box), w.attach(arm.hand, box)))
+        rt.call(lambda w: (g.release(w, arm.hand), w.attach(arm.hand, box)))
+        rt.call(lambda w: w.attach(arm.hand, box))  # already held by that parent: no event
+        held, free = (t, box, arm.hand), (t, box, None)
+        assert list(rt.attach_log) == [held, free, held, free, held]
+        assert rt.attachments() == {box: arm.hand}
     finally:
         rt.close()
