@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vector-os-nano"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Natural language robot arm control SDK"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -122,6 +122,9 @@ dev = [
 [project.scripts]
 vector-os-mcp = "vector_os_nano.mcp.server:main_sync"
 vector-cli = "vector_os_nano.vcli.cli:main"
+
+[tool.hatch.version]
+path = "vector_os_nano/version.py"  # the one version source
 
 [tool.hatch.build.targets.wheel]
 packages = ["vector_os_nano"]

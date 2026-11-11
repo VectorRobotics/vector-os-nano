@@ -14,8 +14,8 @@ from rich.console import Console
 from rich.markup import escape
 
 from vector_os_nano.vcli.native_loop import LIFECYCLE_TOOLS
+from vector_os_nano.version import __version__
 
-VERSION = "0.1.0"
 
 
 console = Console()
@@ -76,7 +76,7 @@ def _lifecycle_lines(entries: list[dict[str, Any]]) -> list[str]:
 def print_banner(creds: Any, agent: Any = None) -> None:
     """Print the startup banner: name, version, model, provider and the body."""
     console.print()
-    console.print(f"[bold {TEAL}]Vector OS Nano[/] [dim]v{VERSION}[/]")
+    console.print(f"[bold {TEAL}]Vector OS Nano[/] [dim]v{__version__}[/]")
 
     info_parts = [f"Model: {creds.model}", f"Provider: {creds.provider}"]
     if agent is not None:

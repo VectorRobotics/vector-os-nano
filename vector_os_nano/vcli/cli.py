@@ -26,10 +26,13 @@ from vector_os_nano.vcli.repl import _p0_stop, run_repl
 from vector_os_nano.vcli.runtime import build_runtime, run_turn
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    from vector_os_nano.version import __version__
+
     parser = argparse.ArgumentParser(
         prog="vector-cli",
         description="Vector CLI — Agentic CLI for Vector OS Nano",
     )
+    parser.add_argument("--version", action="version", version=f"vector-cli {__version__}")
     parser.add_argument("--sim", action="store_true", help="Start with MuJoCo arm simulation")
     parser.add_argument("--sim-go2", action="store_true", help="Start with Go2 quadruped simulation")
     from vector_os_nano.embodiments.registry import embodiment_ids
