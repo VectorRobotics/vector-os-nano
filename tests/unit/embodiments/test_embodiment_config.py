@@ -140,7 +140,7 @@ def test_g1_sensors() -> None:
 
 def test_g1_policy_and_capabilities() -> None:
     cfg = load_embodiment_config("g1")
-    assert cfg.policy.ref == "assets/g1_gait/motion.pt"
+    assert cfg.policy.ref == "motion.pt"  # relative to the asset folder
     # 47-obs / 12-action / 50 Hz (decimation 10 @ 0.002 s) / gait 0.8 s.
     assert cfg.policy.spec["num_obs"] == 47
     assert cfg.policy.spec["num_actions"] == 12

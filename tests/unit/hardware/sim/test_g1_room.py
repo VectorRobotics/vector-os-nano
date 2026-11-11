@@ -34,7 +34,7 @@ def _ensure_scene() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_scene_compiles_with_pick_table_and_g1_pelvis() -> None:
+def test_scene_compiles_with_pick_table_and_g1_pelvis(g1_assets) -> None:
     """The compiled scene must contain both room geometry and g1 robot."""
     import mujoco
 
@@ -67,7 +67,7 @@ def test_scene_compiles_with_pick_table_and_g1_pelvis() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_g1_head_camera_in_compiled_model() -> None:
+def test_g1_head_camera_in_compiled_model(g1_assets) -> None:
     """The compiled scene must contain the g1_head_rgb camera."""
     import mujoco
 
@@ -88,7 +88,7 @@ def test_g1_head_camera_in_compiled_model() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_g1_self_geom_set_nonempty() -> None:
+def test_g1_self_geom_set_nonempty(g1_assets) -> None:
     """_build_robot_geom_set must find at least one g1_* body geom."""
     import mujoco
     from vector_os_nano.hardware.sim.mujoco_g1 import (
@@ -131,7 +131,7 @@ def test_g1_is_a_startable_embodiment() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_walk_forward_displacement() -> None:
+def test_walk_forward_displacement(g1_assets) -> None:
     """walk(vx=0.5, duration=2.0) must move the robot >0.3 m forward without falling.
 
     This is the key R2 correctness test: verifies the policy gait works in the

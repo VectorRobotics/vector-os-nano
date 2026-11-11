@@ -112,11 +112,15 @@ def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
     # Per-run HOME: a compiled template / session / history from a prior run must
     # never leak into this one, and the developer's real ~/.vector stays untouched.
     # Model weights are a read-only shared cache, not run state: keep finding them
-    # (the detector loads offline from the HF cache, never the network).
+    # (perception loads its pinned weights from the HF cache).
     env.setdefault("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
-    env.setdefault("VECTOR_MODEL_DIR", str(Path.home() / ".cache" / "vector_os" / "models"))
     home = tempfile.mkdtemp(prefix=home_prefix)
     env["HOME"] = home
+    # So are the robot assets scripts/fetch_assets.py provisioned (linked, never written).
+    provisioned = Path.home() / ".vector" / "assets"
+    if provisioned.is_dir():
+        (Path(home) / ".vector").mkdir()
+        (Path(home) / ".vector" / "assets").symlink_to(provisioned)
     return env, home
 
 

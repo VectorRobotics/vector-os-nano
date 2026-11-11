@@ -225,6 +225,18 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         pytest.skip(f"sim preflight: {sim_preflight()}")
 
 
+@pytest.fixture
+def g1_assets() -> Path:
+    """The provisioned G1 asset folder, else a visible skip naming the fetch command."""
+    from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
+    from vector_os_nano.embodiments.config import load_embodiment_config
+
+    try:
+        return asset_dir(load_embodiment_config("g1"))
+    except AssetsMissing as exc:
+        pytest.skip(str(exc))
+
+
 # A test that signals its own process (SIGINT to os.getpid()) runs in a child pytest:
 # a late or stray signal then ends only that child, never the run.
 _OWN_PROCESS_CHILD = "VECTOR_TEST_OWN_PROCESS_CHILD"

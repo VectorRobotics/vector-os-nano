@@ -81,8 +81,9 @@ def test_e11_look_localizes_remembers_and_resolves_zh_en_to_one_instance(tmp_pat
     obs = _observations(log1)
     # the start line the model relays carries the perception capability line
     started = next(o for o in obs if "Started go2_piper simulation" in o)
-    assert re.search(r"perception: detector=grounding-dino@\w+, segmenter=(edgetam|box_rect), "
-                     r"self_mask=yes, vlm=none, rynnbrain=(up|down)", started), started
+    assert re.search(r"perception: detector=grounding-dino@\w+ \(cached\), segmenter=edgetam \(cached\), "
+                     r"self_mask=yes, vlm=none \(no OPENROUTER_API_KEY or VECTOR_VLM_URL\), "
+                     r"rynnbrain=(up|down)", started), started
     ids = _ids(obs)
     assert len(ids) == 2 and ids[0] == ids[1], f"zh and en names went to different instances: {ids}"
 
