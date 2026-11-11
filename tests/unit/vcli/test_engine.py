@@ -605,3 +605,40 @@ class TestSessionIntegration:
         assert result.usage.input_tokens == 300
         assert result.usage.output_tokens == 125
         assert result.usage.cache_read_tokens == 5
+
+
+def test_legacy_turn_never_sends_a_tool_use_absent_from_its_tool_list() -> None:
+    """I23: the native turn (with its synthetic verify/finish tool_use) lives in the
+    real session; a later legacy turn must not send those blocks (the API 400s on a
+    tool_use naming a tool absent from ``tools``). The exchange survives as text."""
+    from vector_os_nano.vcli.backends.openai_compat import convert_messages
+
+    registry = ToolRegistry()
+    registry.register(make_read_only_tool("file_read"))
+    engine, mock_backend = make_engine(registry=registry)
+    session = make_session()
+    session.append_user("找到绿色瓶子")
+    session.append_assistant("", [
+        {"type": "tool_use", "id": "l1", "name": "file_read", "input": {"path": "a"}},
+        {"type": "tool_use", "id": "v1", "name": "verify", "input": {"expr": "localized('green bottle')"}},
+    ])
+    session.append_tool_results([
+        {"tool_use_id": "l1", "content": "a-text"},
+        {"tool_use_id": "v1", "content": "verify localized('green bottle') -> True"},
+    ])
+    session.append_assistant("", [{"type": "tool_use", "id": "f1", "name": "finish", "input": {}}])
+    session.append_tool_results([{"tool_use_id": "f1", "content": "finished"}])
+    mock_backend.call.return_value = make_llm_response(text="hi")
+
+    engine.run_turn("你好", session)
+
+    sent = mock_backend.call.call_args.kwargs["messages"]
+    names = {t["name"] for t in mock_backend.call.call_args.kwargs["tools"]}
+    blocks = [b for m in sent if isinstance(m["content"], list) for b in m["content"]]
+    used = {b["id"]: b["name"] for b in blocks if b.get("type") == "tool_use"}
+    assert used == {"l1": "file_read"} and set(used.values()) <= names
+    assert [b["tool_use_id"] for b in blocks if b.get("type") == "tool_result"] == ["l1"]
+    text = " ".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+    assert "localized('green bottle') -> True" in text and "finish" in text
+    roles = [m["role"] for m in convert_messages(sent, "")]
+    assert all(a != b or a == "tool" for a, b in zip(roles, roles[1:])), roles

@@ -957,7 +957,7 @@ def _run_turn_native(
             if token.cancelled:
                 runner.record_abort("aborted")
                 break
-            messages = _to_messages(session)
+            messages = _to_messages(session, tool_schemas)
             _narration.clear()  # fresh "thinking" tail per round-trip
             try:
                 backend, response = _call_llm(backend, dict(
@@ -1351,9 +1351,10 @@ def _append_tool_results(session: Any, result_dicts: list[dict[str, Any]]) -> No
         session.append_tool_results(result_dicts)
 
 
-def _to_messages(session: Any) -> list[dict[str, Any]]:
+def _to_messages(session: Any, tool_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if session is not None and hasattr(session, "to_messages"):
-        return session.to_messages()
+        # A legacy turn's tool_use (bash, file_read...) absent from this list goes as text.
+        return session.to_messages(tool_names={t.get("name") for t in tool_schemas})
     return []
 
 

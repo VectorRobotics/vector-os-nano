@@ -1570,8 +1570,6 @@ class VectorEngine:
             if abort_event.is_set():
                 break
 
-            messages = session.to_messages()
-
             # Intent routing: select relevant tool categories
             if self._intent_router is not None and hasattr(self._registry, "to_anthropic_schemas"):
                 categories = self._intent_router.route(user_message)
@@ -1581,6 +1579,8 @@ class VectorEngine:
                     tools = self._registry.to_anthropic_schemas()
             else:
                 tools = self._registry.to_anthropic_schemas()
+            # A tool_use for a tool absent from THIS call (native's verify/finish) goes as text.
+            messages = session.to_messages(tool_names={t.get("name") for t in tools})
 
             # Backend handles streaming, format conversion, and retry
             # Only forward on_reasoning when a caller actually wants the heartbeat,

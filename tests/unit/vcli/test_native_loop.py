@@ -631,3 +631,27 @@ def test_turns_share_the_real_session() -> None:
     assert any(b.get("name") == "walk" for m in second_turn_first_call if m["role"] == "assistant"
                for b in m["content"] if isinstance(b, dict))
     assert session.token_usage.input_tokens == 400 and session.token_usage.output_tokens == 28
+
+
+def test_native_never_sends_a_legacy_tool_use_absent_from_its_tools() -> None:
+    """I23: native and legacy share the real session; a legacy turn's bash tool_use is
+    not a native tool, so native sends it as text (an API 400 otherwise)."""
+    seen: list[tuple[list, set]] = []
+
+    class _Recorder:
+        def call(self, messages, tools, **_kw):
+            seen.append((list(messages), {t["name"] for t in tools}))
+            return LLMResponse(text="", stop_reason="end_turn")
+
+    session = _session()
+    session.append_user("ls")
+    session.append_assistant("", [{"type": "tool_use", "id": "x1", "name": "bash", "input": {"command": "ls"}}])
+    session.append_tool_results([{"tool_use_id": "x1", "content": "README.md"}])
+    agent, _ = _make_agent(0.0, 0.0)
+    _make_engine(agent, _Recorder()).run_turn_native("往前走一米", session=session)
+
+    messages, names = seen[0]
+    blocks = [b for m in messages if isinstance(m["content"], list) for b in m["content"]]
+    assert "bash" not in names
+    assert not [b for b in blocks if b.get("type") in ("tool_use", "tool_result")]
+    assert any("README.md" in b.get("text", "") for b in blocks)
