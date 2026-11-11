@@ -103,9 +103,11 @@ Binding semantics (the conformance suite tests each sentence on every backend):
   refreshes kinematics and collision detection.
 - `contacts(body)` = bodies with at least one contact point at signed distance ≤ 1e-3 m, as of the
   last `step` or `reset`.
-- `attach(parent, child)` holds the child rigidly at its CURRENT pose relative to the parent. Only
-  pairs in `scene.grasp_pairs`; anything else is a `KeyError` listing them. `detach` of a free child
-  is a no-op.
+- `attach(parent, child)` holds the child rigidly at its pose relative to the parent as of the last
+  `step` or `reset` (MuJoCo anchors at the kinematics the last step computed, one physics step
+  behind `q`; current after a reset: today's behaviour, kept bit for bit). Only pairs in
+  `scene.grasp_pairs`; anything else is a `KeyError` listing them. `detach` of a free child is a
+  no-op; attaching a child to the parent that already holds it is no transition.
 - `raycast`: unit directions; returns distance (−1 = miss) and the hit body (−1). The geometry tested
   is the engine's own (MuJoCo: visible geoms; PyBullet: collision shapes), so lidar is
   backend-specific by design and is never evidence.
@@ -119,20 +121,24 @@ Binding semantics (the conformance suite tests each sentence on every backend):
 ### 3.2 World side (one implementation each, never pluggable)
 
 - `sim/runtime.py` — `SimRuntime(world)`: one stepper thread or lockstep, `submit(fn(world))` /
-  `call` at a step boundary, `paused()`, `wait_sim`, the per-tick controller hook, a published
-  `(sim_time, step, q, qd)` snapshot for lock-free reads.
-- `sim/grasp.py` — the grasp decision: jaws servoed by the driver; `grasp(spec)` attaches only when
-  every finger body touches the same free body and the jaws are held open ≥ `min_opening`;
-  `release`; every attach / detach is logged at call time. **No driver, skill or perception module
-  calls `attach` / `detach`.**
+  `call` at a step boundary (a call times out after 5 s; once the stepper is dead every later call
+  fails loud with the reason), `paused()`, `wait_sim`, the per-tick controller hook, a published
+  `(sim_time, step, q, qd)` snapshot for lock-free reads, `grasp(spec)` / `release(parent)` /
+  `attachments()`, and the attachment log: every `attach` / `detach` a job or a controller makes is
+  logged with its sim time at the moment of the call (two inside one job are two events).
+- `sim/grasp.py` — the grasp decision: jaws servoed by the driver; `grasp(world, spec)` attaches only
+  when every finger body touches the same free body and the jaws are held open ≥ `min_opening`;
+  `release`. Its only entry points are `SimRuntime.grasp(spec)` / `release(parent)`. **No driver,
+  skill or perception module calls `attach` / `detach`.**
 - `sim/ground_truth.py` — ONE concrete class (no Protocol): `sim_time`, `base_pose`,
-  `object_positions`, `object_speed`, `joint_positions`, `attached_to(name)`,
+  `object_positions`, `object_speed`, `joint_positions`, `attachments()`, `attached_to(name)`,
   `attach_events(since)` (fail-closed when the log is truncated), `contacts`, `clearance` (today's
-  rule over canonical shape AABBs: lowest point minus the highest colliding non-robot shape top
-  under it, 1 cm support epsilon), `visible_pixels` (segmentation render). Composite predicates read
-  one instant in one call.
-- Causation baselines (pose, arm joints, attachments) come from ground truth; only the
-  commanded-motion counters come from the drivers. A baseline from another session never causes.
+  rule over canonical shape AABBs of the published state: lowest point minus the highest colliding
+  non-robot shape top under it, 1 cm support epsilon), `visible_pixels` (segmentation render).
+  Composite predicates read one instant in one call. No driver constructs or holds one.
+- Causation baselines (pose, arm joints, attachments) come from the session's ground truth
+  (`capture(agent, session)`, stamped with the session's uid); only the commanded-motion counters
+  come from the drivers. A baseline from another session never causes.
 
 ### 3.3 Actor side — what skills and perception may touch
 
