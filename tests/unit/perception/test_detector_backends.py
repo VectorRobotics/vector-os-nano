@@ -49,6 +49,7 @@ def test_an_unknown_backend_fails_loud_with_the_valid_set():
 
 
 def test_rynnbrain_down_is_a_clear_failure_not_a_crash():
+    pytest.importorskip("PIL", reason="pillow ([perception] extra): rynnbrain encodes the frame first")
     cap = DetectorCapability(perception=_Snap(), rynnbrain=RynnBrainDetector("http://127.0.0.1:9", timeout=0.5))
     res = cap.invoke({"query": "green bottle", "backend": "rynnbrain"}, None)
     assert not res.success and "not reachable" in res.error and "grounding-dino" in res.error
@@ -61,6 +62,7 @@ def test_rynnbrain_reply_is_scaled_from_thousandths_to_pixels():
 
 
 def test_native_detect_tool_passes_the_backend_and_names_it():
+    pytest.importorskip("PIL", reason="pillow ([perception] extra): rynnbrain encodes the frame first")
     from vector_os_nano.vcli.native_loop import _NativeDetectTool
 
     gd, rb = _Det("a can"), _Det("can")

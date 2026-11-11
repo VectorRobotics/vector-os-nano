@@ -21,6 +21,8 @@ pytest.importorskip("pinocchio")
 
 from vector_os_nano.third_party.convex_mpc.centroidal_mpc import CentroidalMPC  # noqa: E402
 
+pytestmark = pytest.mark.own_process  # every test here SIGINTs its own process
+
 
 @pytest.fixture
 def sigints():

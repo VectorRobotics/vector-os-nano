@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-"""tools/gt_grade.py — the independent per-turn GT grader, and the session's
+"""scripts/gt_grade.py — the independent per-turn GT grader, and the session's
 VECTOR_GT_DUMP lines it reads (written at every turn start / end)."""
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-_TOOL = Path(__file__).resolve().parents[3] / "tools" / "gt_grade.py"
+_TOOL = Path(__file__).resolve().parents[2] / "scripts" / "gt_grade.py"
 sys.path.insert(0, str(_TOOL.parent))
 import gt_grade  # noqa: E402
 

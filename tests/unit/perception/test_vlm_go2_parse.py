@@ -8,7 +8,9 @@ import io
 
 import numpy as np
 import pytest
-from PIL import Image
+
+pytest.importorskip("PIL", reason="pillow ([perception] extra) not installed")
+from PIL import Image  # noqa: E402
 
 from vector_os_nano.perception import vlm_go2
 from vector_os_nano.perception.vlm_go2 import Go2VLMPerception, _parse_json_response, _parse_objects

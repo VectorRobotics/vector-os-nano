@@ -21,7 +21,7 @@ from typing import Any
 
 from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 from vector_os_nano.vcli.prompt import DEV_ROLE_PROMPT, DEV_TOOL_INSTRUCTIONS
-from vector_os_nano.vcli.tools.file_tools import in_project, project_root, read_permission, real_path
+from vector_os_nano.vcli.tools.file_tools import in_project, project_root, real_path, resolved_permission
 
 # A predicate runs inside the GoalVerifier 5s sandbox: one bounded file per call.
 _MAX_BYTES_PER_FILE = 1_000_000
@@ -38,10 +38,11 @@ def _read_file(path: str) -> str:
     directory, a missing path, a non-regular file (FIFO, socket) or one over the size
     cap. Returning False/0 would make 'not path_contains(...)' or
     'grep_count(...) == 0' verify True on a file that was never examined."""
-    perm = read_permission(path, None)
+    root = project_root(None)
+    p = real_path(path, root)  # resolved ONCE: the decision and the read use this path
+    perm = resolved_permission(p, root, path)
     if perm.behavior != "allow":
         raise PermissionError(f"verify may not read {path}: {perm.reason}")
-    p = real_path(path)
     if not p.is_file():
         if not p.exists():
             raise FileNotFoundError(f"verify found no file {path}: state absence with not file_exists(...)")

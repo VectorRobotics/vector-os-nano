@@ -225,6 +225,30 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         pytest.skip(f"sim preflight: {sim_preflight()}")
 
 
+# A test that signals its own process (SIGINT to os.getpid()) runs in a child pytest:
+# a late or stray signal then ends only that child, never the run.
+_OWN_PROCESS_CHILD = "VECTOR_TEST_OWN_PROCESS_CHILD"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
+    if pyfuncitem.get_closest_marker("own_process") is None or os.environ.get(_OWN_PROCESS_CHILD):
+        return None
+    cfg = pyfuncitem.config
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rs", "--rootdir", str(cfg.rootpath),
+         *(["-c", str(cfg.inipath)] if cfg.inipath else []), f"{cfg.rootpath}/{pyfuncitem.nodeid}"],
+        env={**os.environ, _OWN_PROCESS_CHILD: "1"}, cwd=cfg.invocation_params.dir,
+        capture_output=True, text=True, timeout=600,
+    )
+    if r.returncode == 0:  # one exact nodeid: it passed, or it skipped (rc 5 if it was not found)
+        skipped = [ln for ln in r.stdout.splitlines() if ln.startswith("SKIPPED")]
+        if skipped:
+            pytest.skip(skipped[0])
+        return True
+    pytest.fail(f"own process (rc={r.returncode}):\n{(r.stdout + r.stderr)[-3000:]}", pytrace=False)
+
+
 # ---------------------------------------------------------------------------
 # Collection: known reds, live gating, auto sim, the R2a capability gate.
 # ---------------------------------------------------------------------------

@@ -53,7 +53,8 @@ dependencies = [
 
 # Simulation: MuJoCo (the primary, cross-platform sim backend)
 sim = [
-    "mujoco>=3.0",
+    "mujoco>=3.3",  # MjSpec.attach (scene_builder.build_room_scene); absent in 3.2.7
+    "opencv-python>=4.8",  # perception/front_object: the sim go2 grasp's salient-blob resolver
 ]
 
 # Perception: VLM detection + EdgeTAM tracker + pointcloud (no robot/USB deps).
@@ -93,10 +94,11 @@ ros2 = [
 
 mcp = [
     "mcp>=1.0",
+    "pillow>=10",  # mcp/resources encodes camera frames as PNG
 ]
 
 # Go2 quadruped locomotion: Pinocchio kinematics + CasADi for MPC
-go2 = ["casadi>=3.6", "pin>=3.0"]
+go2 = ["casadi>=3.6", "pin>=3.0", "scipy>=1.11"]  # scipy: the vendored convex_mpc imports it
 
 # Second physics backend (sim/backends/pybullet). No cp312 wheel: it builds from
 # source (g++ + python3-dev). MuJoCo stays required: it is the scene compiler.
@@ -114,7 +116,7 @@ all = [
 dev = [
     "pytest>=7.0",
     "pytest-cov",
-    "lark",
+    "pytest-timeout",  # scripts/gate.sh passes --timeout; tests use @pytest.mark.timeout
 ]
 
 [project.scripts]
@@ -143,4 +145,5 @@ markers = [
     "capability: a claimed product capability; MUST also carry @pytest.mark.cli_main so it is verified through the real product, never a bypass script",
     "sim: builds a MuJoCo sim (auto-added per file by tests/conftest.py); gated by the session sim_preflight",
     "slow: long-running test (minutes); deselect with -m 'not slow'",
+    "own_process: signals its own process; tests/conftest.py runs it in a child pytest",
 ]

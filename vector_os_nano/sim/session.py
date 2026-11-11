@@ -85,7 +85,7 @@ def mark_turn(agent: Any, phase: str, goal: str = "") -> None:
 
 def _append_gt_dump(path: str, s: "SimSession", phase: str, goal: str) -> None:
     """One JSON line of GT: base pose, every object's pose + weld, the world's
-    surfaces and user location (everything tools/gt_grade.py needs, no oracle code)."""
+    surfaces and user location (everything scripts/gt_grade.py needs, no oracle code)."""
     import json
 
     gt, world = s.gt, s.world
@@ -232,7 +232,7 @@ class SimSession:
     def mark_turn(self, phase: str, goal: str = "") -> None:
         """A REPL turn starts / ends: record its start (kept_holding, localized) and,
         with ``VECTOR_GT_DUMP=<file>``, append one GT line for the independent grader
-        (tools/gt_grade.py)."""
+        (scripts/gt_grade.py)."""
         if self.gt is None:
             return
         if phase == "start":

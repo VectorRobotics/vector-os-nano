@@ -28,9 +28,6 @@ class TestDiscoverAllTools:
         names = {t.name for t in tools}
         expected_new = {
             "scene_graph_query",
-            "ros2_topics",
-            "ros2_nodes",
-            "ros2_log",
             "nav_state",
             "terrain_status",
             "skill_reload",
@@ -77,15 +74,13 @@ class TestDiscoverCategorizedTools:
         assert missing == set(), f"'code' category missing: {missing}"
 
     def test_categories_diag(self) -> None:
-        """'diag' category contains ros2_topics, ros2_nodes, ros2_log, nav_state, terrain_status."""
+        """'diag' is exactly nav_state and terrain_status (the ROS diagnostic tools are deleted)."""
         from vector_os_nano.vcli.tools import discover_categorized_tools
 
         _, categories = discover_categorized_tools()
         assert "diag" in categories
         diag_tools = set(categories["diag"])
-        expected = {"ros2_topics", "ros2_nodes", "ros2_log", "nav_state", "terrain_status"}
-        missing = expected - diag_tools
-        assert missing == set(), f"'diag' category missing: {missing}"
+        assert diag_tools == {"nav_state", "terrain_status"}
 
     def test_categories_system(self) -> None:
         """'system' holds robot infra; sim lifecycle lives in its own 'sim' category."""

@@ -6,7 +6,7 @@
 #
 #   scripts/gate.sh <hermetic|sim|e2e|all> [extra pytest args...]
 #
-#   hermetic  everything not marked sim/live_llm; throwaway HOME, no LLM keys
+#   hermetic  everything not marked sim/live_llm; no LLM keys
 #   sim       tests marked sim (auto-marked by file/fixture in tests/conftest.py); the
 #             session sim_preflight skips the tier with ONE reason if this box
 #             cannot run MuJoCo (no EGL, missing weights, scene does not compile)
@@ -27,7 +27,8 @@
 #      ROS_DOMAIN_ID=<n> (unset or 0 -> random 60-89; 0 is where other stacks live)
 #      VECTOR_LIVE_LLM=1 keeps the LLM keys and also runs live_llm tests (billed)
 #
-# Safe on a shared box: memory-capped cgroup, own ROS domain (random 60-89), and the
+# Safe on a shared box: memory-capped cgroup, own ROS domain (random 60-89), a
+# throwaway HOME for every tier (model caches read from the real one), and the
 # suite fails any test that runs rosm/pkill/killall or leaves a child process.
 set -o pipefail
 TIER=${1:?usage: scripts/gate.sh <hermetic|sim|e2e|all> [pytest args...]}
@@ -69,9 +70,12 @@ if [ "$LIVE" != 1 ]; then
   for k in $(env | grep -oE '^(DEEPSEEK_|OPENROUTER_|ANTHROPIC_|OPENAI_|VECTOR_LLM_)[A-Za-z0-9_]*'); do unset "$k"; done
   unset VECTOR_PROVIDER
 fi
-if [ "$TIER" = hermetic ] && [ -z "${GATE_HOME_SET:-}" ]; then
-  # A throwaway HOME: nothing reads or writes the real ~/.vector; HF cache kept.
-  export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface} GATE_HOME_SET=1
+if [ -z "${GATE_HOME_SET:-}" ]; then
+  # Every tier: a throwaway HOME, so nothing reads or writes the real ~/.vector (or
+  # ~/.vector_os_nano, ~/.cache/vector_os_nano). The model weights stay found, read
+  # only: the real HF cache offline, the real VECTOR_MODEL_DIR.
+  export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface} HF_HUB_OFFLINE=1 GATE_HOME_SET=1
+  export VECTOR_MODEL_DIR=${VECTOR_MODEL_DIR:-$HOME/.cache/vector_os/models}
   GATE_HOME=$(mktemp -d -t vos_gate_home_XXXX) || exit 2
   trap 'rm -rf "$GATE_HOME"' EXIT
   HOME=$GATE_HOME; export HOME

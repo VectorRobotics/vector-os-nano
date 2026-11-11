@@ -653,6 +653,7 @@ def _until(cond: Any, timeout: float = 5.0) -> None:
         time.sleep(0.01)
 
 
+@pytest.mark.own_process
 @pytest.mark.parametrize("stdin_idle", [False, True])
 def test_ctrl_c_mid_turn_stops_and_never_exits(typed, monkeypatch, sigints, stdin_idle) -> None:
     """A Ctrl-C lands wherever the REPL thread is — reading stdin, or waiting on the
@@ -670,6 +671,7 @@ def test_ctrl_c_mid_turn_stops_and_never_exits(typed, monkeypatch, sigints, stdi
     assert eng.stops and set(eng.stops) == {"interrupt"}
 
 
+@pytest.mark.own_process
 def test_ctrl_c_during_a_stops_speed_report_never_exits(typed, sigints) -> None:
     """The REPL runs a P0 stop like any turn: a panicked Ctrl-C while the stop measures
     the base speed (~1 sim-s) stops again and never escapes the REPL."""

@@ -1,0 +1,27 @@
+# The hermetic gate tier on a fresh clone. The sim and e2e tiers need EGL, model
+# weights and a ROS-free MuJoCo box: they run locally (scripts/gate.sh sim | e2e).
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  hermetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install (editable, no torch stack)
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -e ".[sim,go2,ik,mcp,dev]"
+      - name: Hermetic tier
+        run: scripts/gate.sh hermetic
+        env:
+          GATE_OUT: gate-out
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: gate-out
+          path: gate-out

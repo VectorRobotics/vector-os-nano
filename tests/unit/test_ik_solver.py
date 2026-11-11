@@ -4,22 +4,17 @@
 """Unit tests for vector_os_nano.hardware.so101.ik_solver — TDD RED phase.
 
 Tests require pinocchio. If not installed, entire module is skipped.
-All tests use the SO-101 URDF from the known vector_ws location.
+All tests use the bundled SO-101 URDF (hardware/urdf/so101.urdf).
 """
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 pinocchio = pytest.importorskip("pinocchio", reason="pinocchio not installed")
 
-URDF_PATH = str(
-    Path.home() / "Desktop" / "vector_ws" / "src" / "so101_description"
-    / "urdf" / "so101_new_calib.urdf"
-)
 
 # Home pose from skill_node_v2 — known-good configuration
 HOME_JOINTS = [-0.014, -1.238, 0.562, 0.858, 0.311]
@@ -28,11 +23,7 @@ HOME_JOINTS = [-0.014, -1.238, 0.562, 0.858, 0.311]
 @pytest.fixture(scope="module")
 def ik():
     from vector_os_nano.hardware.so101.ik_solver import IKSolver
-    if not Path(URDF_PATH).exists():
-        # The shipped urdf/so101.urdf cannot load (package:// meshes); the calibrated
-        # URDF lives in an external ROS workspace (tests:hardcoded-machine-paths).
-        pytest.skip(f"external SO-101 URDF not present: {URDF_PATH}")
-    return IKSolver(urdf_path=URDF_PATH)
+    return IKSolver()  # the bundled URDF: no external ROS workspace needed
 
 
 class TestFKHomePose:

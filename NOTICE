@@ -11,64 +11,47 @@ You may obtain a copy of the License at
     http://www.apache.org/licenses/LICENSE-2.0
 
 ------------------------------------------------------------------------
-Third-party components
+Bundled third-party material (each under its own license)
 ------------------------------------------------------------------------
 
-This product bundles or depends on the following third-party software,
-each under its own license. The corresponding licenses can be obtained
-from the upstream projects.
+Robot models and meshes:
+  - Unitree Go2 MJCF and meshes (go2.xml, 16 OBJ meshes), from MuJoCo Menagerie
+        unitree_go2 (https://github.com/google-deepmind/mujoco_menagerie);
+        joint/geom defaults tuned locally.
+        BSD-3-Clause, Copyright (c) 2016-2022 HangZhou YuShu TECHNOLOGY CO.,LTD.
+        ("Unitree Robotics"). License: vector_os_nano/hardware/sim/mjcf/go2/LICENSE
+  - AgileX PiPER MJCF and meshes, from MuJoCo Menagerie agilex_piper.
+        MIT, Copyright (c) 2024 RosenYin.
+        License: vector_os_nano/hardware/sim/mjcf/piper/LICENSE
+  - SO-101 arm URDF and STL meshes (so101.urdf = so101_new_calib), from
+        TheRobotStudio SO-ARM100 (https://github.com/TheRobotStudio/SO-ARM100).
+        Apache-2.0. Files: vector_os_nano/hardware/urdf/so101.urdf,
+        vector_os_nano/hardware/urdf/meshes/*so101*.stl, *sts3215*.stl
 
-Runtime dependencies (PyPI):
-  - numpy            (BSD 3-Clause)
-  - pyserial         (BSD 3-Clause)
-  - httpx            (BSD 3-Clause)
-  - pyyaml           (MIT)
-  - anthropic        (MIT)
-  - openai           (Apache-2.0)
-  - opencv-python    (Apache-2.0)
-  - open3d           (MIT)
-  - pyrealsense2     (Apache-2.0)
-  - pinocchio        (BSD 2-Clause)
-  - mujoco           (Apache-2.0)
-  - ultralytics      (AGPL-3.0)            -- optional, perception extra
+Scene assets:
+  - Furniture meshes (OBJ/MTL, some split per material), from the Kenney
+        Furniture Kit (https://kenney.nl/assets/furniture-kit). CC0 1.0.
+        Files: vector_os_nano/hardware/sim/mjcf/go2/assets/furniture/*.obj, *.mtl
+  - Furniture textures (metal0-4, stone0-4, wood0-4 .png), from furniture_sim
+        common/textures (https://github.com/vikashplus/furniture_sim).
+        Apache-2.0. Files: vector_os_nano/hardware/sim/mjcf/go2/assets/furniture/*.png
 
-Vendored source (copied into this repository, original license kept beside it):
+Vendored source:
   - go2-convex-mpc (https://github.com/elijah-waichong-chan/go2-convex-mpc)
-        @ 1c63c6a, MIT License, vector_os_nano/third_party/convex_mpc/
-        Local changes: numpy>=2 shape fixes (compute_com_x_vec -> (12,),
-        compute_current_mask -> (4,)); kinematics-only URDF load via
-        pin.buildModelFromUrdf (bundled go2_description.urdf, no meshes).
+        @ 1c63c6a, MIT, Copyright (c) 2025 Elijah Chan,
+        vector_os_nano/third_party/convex_mpc/ (license beside it), with its
+        go2_description.urdf. Local changes: numpy>=2 shape fixes
+        (compute_com_x_vec -> (12,), compute_current_mask -> (4,));
+        kinematics-only URDF load via pin.buildModelFromUrdf (no meshes).
 
-Hardware / firmware integrations referenced under their original licenses:
-  - Unitree Go2 SDK (unitree_sdk2)         -- BSD-3-Clause (Unitree)
-  - AgileX Piper assets via mujoco_menagerie (Apache-2.0)
-  - LeRobot SO-ARM100 assets               (Apache-2.0)
-
-Some third-party assets (e.g. MuJoCo Menagerie meshes) ship under their
-own attribution requirements. Their original LICENSE files are kept
-alongside the assets in this repository.
+Python dependencies are installed from PyPI under their own licenses (see
+pyproject.toml); none is redistributed here. Model weights (GroundingDINO,
+EdgeTAM) are downloaded by the user from their upstream hubs.
 
 ------------------------------------------------------------------------
-Referenced (NOT bundled) sibling lab projects
+Referenced, not bundled
 ------------------------------------------------------------------------
-
-The following projects are consumed at runtime via ROS2 topic interfaces.
-Their sources are NOT included in this repository, NOT redistributed,
-and NOT a derivative work of this Apache 2.0 release. Users install them
-into separate ROS2 workspaces under their own license terms.
-
-  - SysNav (https://github.com/zwandering/SysNav)
-        License: PolyForm-Noncommercial-1.0.0
-        Authors: Haokun Zhu, Zongtai Li, Zihan Liu, Kevin Guo,
-                 Zhengzhi Lin, Yuxin Cai, Guofei Chen, Chen Lv,
-                 Wenshan Wang, Jean Oh, Ji Zhang
-        Affiliations: Carnegie Mellon University, New York University,
-                      Nanyang Technological University
-        Paper: arXiv 2603.06914 (2026)
-        Use:   Vector OS Nano subscribes to SysNav's
-               tare_planner/ObjectNodeList and tare_planner/RoomNodeList
-               topics through the apache-2.0 adapter at
-               vector_os_nano/integrations/sysnav_bridge/.
 
   - Vector Navigation Stack (https://github.com/VectorRobotics/vector_navigation_stack)
-        Same lab — referenced via FAR / TARE planner ROS2 topics.
+        Optional TARE / FAR navigation, launched from a separate checkout named
+        by $VECTOR_NAV_STACK and reached over ROS2 topics. Not redistributed.

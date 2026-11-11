@@ -372,3 +372,17 @@ def test_dead_reckoning_no_door_data_returns_error() -> None:
 
     assert result.success is False
     assert "explore" in result.error_message.lower()
+
+
+def test_resolve_room_aliases_and_fuzzy_match() -> None:
+    """Chinese and spaced aliases resolve to the room id; a partial name matches the
+    one room it names (moved from the deleted tests/e2e direct-API file)."""
+    from vector_os_nano.skills.navigate import _fuzzy_room_match
+
+    assert _resolve_room("主卧") == "master_bedroom"
+    assert _resolve_room("master bedroom") == "master_bedroom"
+    assert _resolve_room("客厅") == "living_room"
+    assert _resolve_room("nonexistent") is None
+    rooms = ["living_room", "kitchen", "master_bedroom", "guest_bedroom", "hallway"]
+    assert _fuzzy_room_match("master room", rooms) == "master_bedroom"
+    assert _fuzzy_room_match("guest", rooms) == "guest_bedroom"
