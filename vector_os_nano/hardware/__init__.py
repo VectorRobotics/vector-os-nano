@@ -3,7 +3,7 @@
 
 """Hardware abstraction layer.
 
-Contains ArmProtocol, GripperProtocol, and BaseProtocol definitions plus
+Contains the BaseProtocol definition plus
 concrete implementations (SO-101, MuJoCo sim, etc.).
 """
 from vector_os_nano.hardware.base import BaseProtocol

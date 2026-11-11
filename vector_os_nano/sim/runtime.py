@@ -49,7 +49,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from vector_os_nano.interfaces.physics import PhysicsWorld
+from vector_os_nano.interfaces.physics import GraspSpec, PhysicsWorld
 from vector_os_nano.sim import grasp as _grasp
 
 logger = logging.getLogger(__name__)
@@ -307,7 +307,7 @@ class SimRuntime:
             raise RuntimeError(f"{self.name}: no step boundary within {timeout:.1f} s "
                                f"(stalled physics stepper)") from None
 
-    def grasp(self, spec: _grasp.GraspSpec) -> int | None:
+    def grasp(self, spec: GraspSpec) -> int | None:
         """The grasp decision at a step boundary: the attached body, or None."""
         return self.call(lambda w: _grasp.grasp(w, spec))
 

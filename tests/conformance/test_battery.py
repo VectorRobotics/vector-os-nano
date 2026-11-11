@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from tests.conformance.rig import clearance, ik
+from vector_os_nano.interfaces.physics import GraspSpec
 from vector_os_nano.sim import grasp as g
 from vector_os_nano.sim.scene import canonical
 
@@ -36,7 +37,7 @@ class Arm:
         self.site = int(scene.model.site("ee_site").id)
         self.fingers = {scene.body("link7"), scene.body("link8")}
         self.hand = scene.body("link6")
-        self.spec = g.GraspSpec(weld_body=self.hand, finger_bodies=tuple(sorted(self.fingers)),
+        self.spec = GraspSpec(weld_body=self.hand, finger_bodies=tuple(sorted(self.fingers)),
                                 jaw_joint=self.jaw, closed=0.0, min_opening=0.005)
 
     def move(self, pos: np.ndarray, jaw: float, steps: int = 750) -> None:

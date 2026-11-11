@@ -14,22 +14,10 @@ detach at call time. No driver, skill or perception module calls
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 
-from vector_os_nano.interfaces.physics import PhysicsWorld
+from vector_os_nano.interfaces.physics import GraspSpec, PhysicsWorld
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class GraspSpec:
-    """One gripper, in canonical ids (from the manifest's ``arm.gripper`` block)."""
-
-    weld_body: int                    # the body a gripped object is attached to
-    finger_bodies: tuple[int, ...]    # every one must touch the object
-    jaw_joint: int                    # its q minus ``closed`` is the jaw opening
-    closed: float
-    min_opening: float                # held at least this far open by the object
 
 
 def grasp(world: PhysicsWorld, spec: GraspSpec) -> int | None:

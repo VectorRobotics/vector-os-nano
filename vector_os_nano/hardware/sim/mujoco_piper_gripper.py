@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from vector_os_nano.sim.grasp import GraspSpec
+from vector_os_nano.interfaces.physics import GraspSpec
 
 if TYPE_CHECKING:  # pragma: no cover
     from vector_os_nano.embodiments.config import GripperSpec
