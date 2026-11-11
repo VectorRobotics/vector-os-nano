@@ -8,7 +8,8 @@ Each model class names its ``WEIGHTS``: one :class:`Weights` (``repo_id`` + a pi
 Not cached and fetching allowed: fetched on first use after ONE notice (what, how
 big, where, and that ``HF_HUB_OFFLINE=1`` forbids it). Not cached and
 ``HF_HUB_OFFLINE=1``: :class:`WeightsUnavailable` with the pre-fetch command.
-Nothing here writes ``HF_HUB_OFFLINE`` or any other variable.
+A load (:func:`loading`) holds huggingface_hub's offline flag for its own duration
+only; nothing here writes ``HF_HUB_OFFLINE`` or any other environment variable.
 """
 from __future__ import annotations
 
@@ -17,7 +18,6 @@ import logging
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
-from unittest import mock
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +103,11 @@ def loading(ws: tuple[Weights, ...]):
 
     paths = resolve(ws)
     # ponytail: process-wide for the load's duration; a hub call on another thread meanwhile reads the cache only.
-    with mock.patch.object(constants, "HF_HUB_OFFLINE", True):
+    was, constants.HF_HUB_OFFLINE = constants.HF_HUB_OFFLINE, True
+    try:
         yield paths
+    finally:
+        constants.HF_HUB_OFFLINE = was
 
 
 def local_dir(w: Weights) -> str:

@@ -146,6 +146,18 @@ def test_a_failed_fetch_is_one_honest_error(hub, monkeypatch) -> None:
         weights.local_dir(W)
 
 
+def test_a_load_holds_the_hub_offline_only_while_it_runs(hub, monkeypatch) -> None:
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", False)
+    hub(cached=True)
+    with weights.loading((W,)) as (path,):
+        assert path.endswith(W.revision) and huggingface_hub.is_offline_mode()
+    assert not huggingface_hub.is_offline_mode()
+    with pytest.raises(RuntimeError, match="load failed"), weights.loading((W,)):
+        raise RuntimeError("load failed")
+    assert not huggingface_hub.is_offline_mode()  # a failed load does not leave the process offline
+
+
 def test_the_models_load_from_the_resolved_snapshot_or_raise(monkeypatch) -> None:
     pytest.importorskip("transformers")
     def unavailable(ws):
