@@ -51,6 +51,7 @@ import logging
 import math
 import os
 import re
+import string
 import threading
 import time
 from dataclasses import replace
@@ -61,7 +62,7 @@ from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.cognitive import actor_causation
 from vector_os_nano.sim.runtime import ACTOR_EPOCH
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
-from vector_os_nano.vcli.cognitive.object_goal import task_contract
+from vector_os_nano.vcli.cognitive.object_goal import task_contract, unbound_reason
 from vector_os_nano.vcli.cognitive.trace_store import attempt_key, graded_indices, verify_oracles
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
@@ -647,6 +648,13 @@ class NativeStepRunner:
             return None  # a placeholder the call did not fill
         if re.search(r"<\w+>", bound) or classify_verify_expr(bound, self._oracle_names) != "GROUNDED":
             return None
+        # An object the world manifest cannot resolve binds nothing (no evidence), never a guess.
+        from vector_os_nano.sim.session import session_for
+
+        world = getattr(session_for(self._agent), "world", None)
+        used = {f for _, f, _, _ in string.Formatter().parse(hint) if f}
+        if world is not None and any(isinstance(params[f], str) and world.resolve(params[f]) is None for f in used):
+            return None
         return bound
 
     def _note_intents(self, tool: Any) -> None:
@@ -1107,7 +1115,7 @@ def _run_turn_native(
             mark_turn(new, "start", user_message)
         _compile_contract()  # the goal against the new body (the spine grades that one)
 
-    turn: dict[str, Any] = {"contract": (), "start": (), "world": ""}
+    turn: dict[str, Any] = {"contract": (), "start": (), "world": "", "note": ""}
 
     def _compile_contract() -> None:
         """The turn-level task contract (WP07): GT end-state predicates the goal
@@ -1120,8 +1128,13 @@ def _run_turn_native(
         # — an error at the start then reads as "already satisfied", never as "not yet".
         turn.update(contract=contract, world=world,
                     start=tuple(not runner._check(f"not ({c})") for c in contract))
-        if contract:
-            _emit("Task contract: " + " and ".join(contract))
+        # The same lines reach the model (a system block, I4c): it verifies the bound
+        # object and surface itself, or asks the user when a slot did not bind.
+        lines = [f"Task contract: {' and '.join(contract)}"] if contract else []
+        lines += [f"Unbound: {c}: {why}" for c in contract if (why := unbound_reason(c, user_message, world))]
+        turn["note"] = "\n".join(lines)
+        for line in lines:
+            _emit(line)
 
     backend = getattr(engine, "_backend", None)
     if backend is None:
@@ -1186,7 +1199,8 @@ def _run_turn_native(
                     messages=messages,
                     tools=tool_schemas,
                     # Rebuilt per round-trip: the [Robot State] block follows the body.
-                    system=_native_system_prompt(engine, oracle_names, body[0]),
+                    system=_native_system_prompt(engine, oracle_names, body[0])
+                    + ([{"type": "text", "text": turn["note"]}] if turn["note"] else []),
                     max_tokens=getattr(engine, "_max_tokens", 4096),
                     on_text=_on_text if on_progress is not None else None,
                 ))

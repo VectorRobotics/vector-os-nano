@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import re
+import unicodedata
 from typing import Any
 
 from vector_os_nano.vcli.cognitive.coord_goal import parse_goal_coord
@@ -45,9 +46,9 @@ _INTENT_RES: dict[str, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
     "place": re.compile(
-        r"(?<![播开释解])放(?![松弃心大映假学电过])"
-        r"|(?<!the )(?<!a )(?<!this )(?<!that )\bplace\b|\bput\b|\bdrop\b"
-        r"|\bset\s+(?:it\s+|that\s+|this\s+)?down\b",
+        r"(?<![播开释解])放(?![松弃心大映假学电过])|松开|松手|丢下|扔下"
+        r"|(?<!the )(?<!a )(?<!this )(?<!that )\bplace\b|\bput\b|\bdrop\b|\brelease\b|\blet\s+go\b"
+        r"|\bset\s+(?:[\w']+\s+){0,4}?down\b",
         re.IGNORECASE,
     ),
 }
@@ -173,6 +174,68 @@ def backs_contract(item: str, verify: str | None, world_id: str = "") -> bool:
     )
 
 
+# A place goal is a PURE release only when the whole goal is one of these closed forms
+# (optionally after a grasp clause): nothing left over that could name a destination.
+# Every other place goal names one (I4c), so an unlisted phrasing fails closed.
+_RELEASE_FORMS = tuple(re.compile(p) for p in (
+    r"put (?P<o>.+?) down", r"put down (?P<o>.+)", r"set (?P<o>.+?) down", r"set down (?P<o>.+)",
+    r"drop (?P<o>.+)", r"release (?P<o>.+)", r"let go(?: of (?P<o>.+))?",
+    r"(?:(?:拿起|抓起|捡起|拿住|抓住)(?P<g>.+?))?(?:把(?P<o>.+?))?(?:放下|放开|松开|松手|放手|丢下|扔下)来?",
+    r"(?:放下|放开|松开|丢下|扔下)(?P<o>.+)",
+))
+_GRASP_FORMS = tuple(re.compile(p) for p in (
+    r"pick up (?P<o>.+)", r"pick (?P<o>.+?) up", r"grab (?P<o>.+)", r"grasp (?P<o>.+)",
+    r"(?:拿起|抓起|捡起|拿住|抓住)(?P<o>.+)",
+))
+_THEN = re.compile(r"\s*(?:,?\s*and then\s|,?\s*and\s|,?\s*then\s|[,，、;；]|然后|再)\s*")
+_PRONOUNS = frozenset({"it", "that", "this", "them", "它", "这个", "那个"})
+
+
+def _names_only_an_object(world: Any, phrase: str | None) -> bool:
+    """*phrase* is a pronoun or exactly an object name of *world* (a body name, an
+    alias, or colour / category words), with nothing else in it."""
+    x = re.sub(r"^(?:(?:the|a|an|this|that|my)\s+|这个|那个|这|那)", "", (phrase or "").strip())
+    if x in _PRONOUNS or x in {n.lower() for n in world.pickables} | {
+            a.lower() for p in world.pickables.values() for a in p.aliases}:
+        return True
+    words = [*(w for ws in world.colours.values() for w in ws), *(p.colour for p in world.pickables.values())]
+    cats = [*(w for ws in world.categories.values() for w in ws), *(p.category for p in world.pickables.values())]
+    alt = lambda ws: "|".join(sorted({re.escape(w.lower()) for w in ws}, key=len, reverse=True)) or "(?!)"  # noqa: E731
+    return bool(x) and re.fullmatch(rf"(?:(?:{alt(words)})\s?色?的?)?\s?(?:(?:{alt(cats)})子?)?", x) is not None
+
+
+def _pure_release(world: Any, goal_text: str) -> bool:
+    """The goal is only a release (put it down / 放下 / 把 X 放下 ...), optionally after a
+    grasp of the same object: a closed list, so a phrasing nobody listed is NOT one."""
+    text = unicodedata.normalize("NFKC", goal_text).lower().strip()
+    text = re.sub(r"[\s.!?。！？~～]+$", "", re.sub(r"^(?:please\s+|请|帮我)", "", text))
+    *grasps, last = _THEN.split(text)
+
+    def fits(forms: tuple[re.Pattern[str], ...], clause: str) -> bool:
+        m = next((m for rx in forms if (m := rx.fullmatch(clause))), None)
+        return m is not None and all(_names_only_an_object(world, v) for v in m.groupdict().values() if v)
+
+    return fits(_RELEASE_FORMS, last) and all(fits(_GRASP_FORMS, g) for g in grasps)
+
+
+def unbound_reason(item: str, goal_text: str | None, world_id: str = "") -> str:
+    """Why contract *item* is no evidence ("" when every slot bound): which slot of the
+    goal the world does not resolve (the object, or a place's destination), the goal's
+    words, and what the world has to choose from."""
+    call = _parse(item)
+    if not isinstance(call, ast.Call):
+        return ""
+    world = _manifest(world_id)
+    slots = ("object", "destination") if item.startswith("object_on(") else ("object",)
+    for slot, arg in zip(slots, call.args):
+        if not (isinstance(arg, ast.Constant) and arg.value is None):
+            continue
+        has = (world.vocabulary() if slot == "object" else sorted(world.surfaces)) if world is not None else []
+        listed = f"; {'objects' if slot == 'object' else 'surfaces'}: {', '.join(has)}" if has else ""
+        return f"the goal {goal_text!r} names no {slot} the world resolves{listed}"
+    return ""
+
+
 def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id: str = "") -> tuple[str, ...]:
     """Compile the NL goal into its END-STATE ground-truth predicates (WP07, I4).
 
@@ -180,9 +243,11 @@ def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id:
     object the goal names, ``WorldManifest.resolve``; the surface,
     ``resolve_surface``), never from ground truth:
 
-    - place naming a surface (放到餐桌上 / put it on the dining table) ->
-      ``object_on(obj, surface)``; a place naming none (put it down) ->
-      ``released(obj)``: out of the hand at turn end (I4F1-D3). A pick-and-place
+    - place -> ``object_on(obj, surface)``, the surface the manifest resolves from the
+      goal, or None (unknown to the world, or several fit: "the table" in a house of
+      tables) -- fails closed, never decays to a release (I4c). Only a PURE release
+      (``_pure_release``: put it down / 放下 / 把 X 放下 ..., optionally after a grasp)
+      -> ``released(obj)``: out of the hand at turn end (I4F1-D3). A pick-and-place
       starts released, so trace_store exempts it from False-at-start only after a
       grounded grasp of the same object; a world without a manifest compiles none;
     - fetch (拿过来 / bring ...) -> ``kept_holding(obj)`` and ``near_object('user')``:
@@ -212,8 +277,9 @@ def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id:
         if "place" in intents:
             if world is None:
                 return ()
-            surface = world.resolve_surface(goal_text)
-            return (f"object_on({obj!r}, {surface!r})" if surface else f"released({obj!r})",)
+            if _pure_release(world, goal_text or ""):
+                return (f"released({obj!r})",)
+            return (f"object_on({obj!r}, {world.resolve_surface(goal_text)!r})",)
         if "fetch" in intents:
             return (f"kept_holding({obj!r})", "near_object('user')")
         # a manifest binds the object or None (fails closed: "the apple", two bottles)

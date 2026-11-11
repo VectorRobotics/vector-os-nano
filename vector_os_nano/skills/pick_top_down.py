@@ -131,7 +131,7 @@ class PickTopDownSkill:
     """Top-down grasp with the Piper arm on Go2. See module docstring."""
 
     name: str = "pick_top_down"
-    verify_hint: str = "holding_object()"
+    verify_hint: str = "holding_object({object_label})"
     description: str = (
         "Pick up an object with the Piper arm using a top-down grasp. "
         "Object world pose is read from the world model by object_id or "

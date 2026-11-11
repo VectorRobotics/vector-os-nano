@@ -41,9 +41,10 @@ GREEN = "pickable_bottle_green"
     ("把绿色瓶子放到餐桌上", (f"object_on('{GREEN}', 'dining_table')",)),
     ("put the yellow cup on the coffee table", ("object_on('pickable_cup_yellow', 'coffee_table')",)),
     ("拿起绿色瓶子放到茶几上", (f"object_on('{GREEN}', 'coffee_table')",)),
-    # a bare "table" names none of the four surfaces: the bottle out of the hand
-    # at turn end (I4F1-D3; before, no contract at all)
-    ("把绿色瓶子放到桌子上", (f"released('{GREEN}')",)),
+    # a bare "table" names none of the four surfaces: the destination binds None and
+    # fails closed (I4c; before I4F2 it decayed to released, so a drop anywhere grounded)
+    ("把绿色瓶子放到桌子上", (f"object_on('{GREEN}', None)",)),
+    # a pure release: the bottle out of the hand at turn end (I4F1-D3)
     ("put the green bottle down", (f"released('{GREEN}')",)),
     ("put the can down", ("released(None)",)),
     # unresolvable object: None binds, the item is no evidence (fails closed)
@@ -313,12 +314,15 @@ def test_a_goal_never_grounds_on_another_caused_predicate(goal, verify) -> None:
     assert turn_reject_reason(_one_row(goal, verify), APT) != ""
 
 
-def test_a_place_naming_no_surface_still_needs_a_release_or_placement() -> None:
+def test_a_place_naming_no_surface_the_world_resolves_fails_closed() -> None:
+    """I4F2-D1: "the table" fits four surfaces, so the destination binds None; a release
+    (or any other proof) never stands in for the placement."""
     t = _one_row("place the red can on the table", "at_position(10.9, 3.0)")
-    assert t.contract == ("released('pickable_can_red')",)
-    assert "released" in turn_reject_reason(t, APT)
-    assert turn_reject_reason(_one_row("place the red can on the table", "released('red can')"), APT) == ""
-    # "the can" names no one object: the release contract binds None and fails closed
+    assert t.contract == ("object_on('pickable_can_red', None)",)
+    assert "names no destination" in turn_reject_reason(t, APT)
+    assert "names no destination" in turn_reject_reason(
+        _one_row("place the red can on the table", "released('red can')"), APT)
+    # "the can" names no one object: the object slot is the one reported
     assert "names no object" in turn_reject_reason(_one_row("place the can on the table", "released('red can')"), APT)
 
 
@@ -344,30 +348,39 @@ def _rows(goal, verifies, *, intents=()):
                           contract_end=(True,) * n, intents=tuple(intents), world="apartment")
 
 
-@pytest.mark.parametrize("goal", [
-    "拿起绿色瓶子放到桌子上",
-    "pick up the green bottle and put it down",
-    "pick up the green bottle and place it on the table",
-])
-def test_pick_and_place_is_not_proven_by_a_hold(goal) -> None:
+def test_pick_and_place_is_not_proven_by_a_hold() -> None:
+    goal = "pick up the green bottle and put it down"
     t = _rows(goal, [f"holding_object('{GREEN}')"])
     assert "released" in turn_reject_reason(t, APT), t.contract
     both = _rows(goal, [f"holding_object('{GREEN}')", "released('green bottle')"])
     assert turn_reject_reason(both, APT) == ""
 
 
+@pytest.mark.parametrize("goal", ["拿起绿色瓶子放到桌子上", "pick up the green bottle and place it on the table"])
+def test_a_pick_and_place_to_an_unresolved_destination_is_never_proven(goal) -> None:
+    """I4c: the end state of a pick-and-place is object_on; "the table" binds None, so
+    neither the hold nor the hold plus a release proves it."""
+    assert _rows(goal, []).contract == (f"object_on('{GREEN}', None)",)
+    for verifies in ([f"holding_object('{GREEN}')"], [f"holding_object('{GREEN}')", "released('green bottle')"]):
+        assert "names no destination" in turn_reject_reason(_rows(goal, verifies), APT)
+
+
 def test_a_pure_place_with_a_dispatched_grasp_needs_both_proofs() -> None:
-    hold = _rows("place the red can on the table", ["holding_object('red can')"], intents=("grasp",))
+    # a pure release (I4c: "on the table" names a destination the world does not resolve)
+    hold = _rows("put the red can down", ["holding_object('red can')"], intents=("grasp",))
     assert "released" in turn_reject_reason(hold, APT)
-    place = _rows("place the red can on the table", ["released('red can')"], intents=("grasp",))
+    place = _rows("put the red can down", ["released('red can')"], intents=("grasp",))
     assert "holding_object/kept_holding/lifted" in turn_reject_reason(place, APT)
-    both = _rows("place the red can on the table", ["holding_object('red can')", "released('red can')"],
+    both = _rows("put the red can down", ["holding_object('red can')", "released('red can')"],
                  intents=("grasp",))
     assert turn_reject_reason(both, APT) == ""
 
 
-@pytest.mark.parametrize("goal", ["把绿色瓶子放到桌子上", "put the green bottle down"])
-def test_a_place_goal_that_only_grasped_is_rejected_through_the_runner(goal) -> None:
+@pytest.mark.parametrize("goal, contract, why", [
+    ("把绿色瓶子放到桌子上", f"object_on('{GREEN}', None)", "names no destination"),  # I4c
+    ("put the green bottle down", f"released('{GREEN}')", "released"),
+])
+def test_a_place_goal_that_only_grasped_is_rejected_through_the_runner(goal, contract, why) -> None:
     from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
     from vector_os_nano.sim.session import session_for
 
@@ -383,8 +396,8 @@ def test_a_place_goal_that_only_grasped_is_rejected_through_the_runner(goal) -> 
     eng = _make_engine(agent, backend)
     trace = eng.run_turn_native(goal, session=_session())
     rep = _verdict(agent, eng, trace)
-    assert trace.contract == (f"released('{GREEN}')",) and "grasp" in trace.intents, (trace.contract, trace.intents)
-    assert rep.verified is False and "released" in rep.reject_reason, rep.reject_reason
+    assert trace.contract == (contract,) and "grasp" in trace.intents, (trace.contract, trace.intents)
+    assert rep.verified is False and why in rep.reject_reason, rep.reject_reason
 
 
 @pytest.mark.parametrize("goal, verify", [

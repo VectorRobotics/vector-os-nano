@@ -407,7 +407,7 @@ def _contract_reason(
     """Why the turn's task contract is not met ("" when it is): every predicate must
     be GT-provable here, False at turn start, True at turn end, and asserted by a
     GROUNDED (actor-caused) graded step."""
-    from vector_os_nano.vcli.cognitive.object_goal import _HOLD, backs_contract, task_contract
+    from vector_os_nano.vcli.cognitive.object_goal import _HOLD, backs_contract, task_contract, unbound_reason
 
     contract, world = tuple(trace.contract), str(getattr(trace, "world", "") or "")
 
@@ -422,8 +422,8 @@ def _contract_reason(
         return "task contract was not evaluated at turn start and end"
     for item, was, now in zip(contract, trace.contract_start, trace.contract_end):
         if classify_verify_expr(item, oracle_names) != "GROUNDED":
-            return (f"task contract {item}: the goal names no object the world resolves"
-                    if "None" in item else f"task contract {item} is not provable in this world")
+            why = unbound_reason(item, trace.goal_tree.goal, world)
+            return f"task contract {item}: {why}" if why else f"task contract {item} is not provable in this world"
         proofs = proven_at(item)
         # A pick-and-place starts released: that is no evidence unless a grounded grasp
         # of the same object precedes the release proof (I4F1-D3).
