@@ -287,12 +287,15 @@ def _trace_acted(trace: Any) -> bool:
 
 
 def _chat_turn(trace: Any) -> bool:
-    """A turn that made no claim: no action, no verify, no refusal, no stop, no LLM error.
+    """A turn that made no claim: no task contract, no action, no verify, no refusal,
+    no stop, no LLM error.
 
-    Its only steps (if any) are reads the model answered from, never verified.
+    Its only steps (if any) are reads the model answered from, never verified. A goal
+    that compiled a task contract names an end state, so its turn is always graded.
     """
     return not (
-        _trace_acted(trace)
+        trace.contract
+        or _trace_acted(trace)
         or any(sg.verify for sg in trace.goal_tree.sub_goals)
         or trace.refused or trace.cancelled or trace.llm_error
     )
@@ -416,7 +419,8 @@ def _repl_turn(
             f"  [{TEAL}]▸[/] {chain} → verify {verify_expr} {mark} [dim](actor={actor}{sup})[/]"
         )
 
-    if steps or trace.refused or trace.cancelled or trace.llm_error:  # a sim start/stop alone claims nothing
+    # A sim start/stop alone claims nothing; a task contract always does.
+    if steps or trace.contract or trace.refused or trace.cancelled or trace.llm_error:
         try:
             oracle_names = verify_oracle_names(agent, engine)
             report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))

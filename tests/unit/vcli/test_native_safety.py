@@ -457,6 +457,18 @@ def test_p_path_chat_turn_exits_0_with_acted_false(monkeypatch, capsys) -> None:
     assert verdict["evidence"] == "NO_TRACE" and verdict["error"] == "" and verdict["n_steps"] == 0
 
 
+def test_p_path_a_task_sentence_without_an_action_is_a_failed_goal_not_chat(monkeypatch, capsys) -> None:
+    """A goal that compiled a task contract claims an end state: a turn where the model
+    only talks is graded (goal failed, exit 2), never exit 0 as a chat."""
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
+
+    trace = ExecutionTrace(GoalTree(goal="走到坐标 (1.0, 0.0)", sub_goals=()), (), False, 0.0,
+                           contract=("at_position(1.0, 0.0)",), contract_start=(False,), contract_end=(False,))
+    code, verdict = _p_turn(monkeypatch, capsys, trace, answer="好的")
+    assert code == 2 and verdict["verified"] is False and verdict["acted"] is False
+    assert verdict["goal_check"] == "failed" and verdict["contract"] == ["at_position(1.0, 0.0)"]
+
+
 def test_p_path_a_verify_without_an_action_is_graded_not_chat(monkeypatch, capsys) -> None:
     """A verify the model made is a claim: graded (RAN, exit 2), never exit 0 as a chat."""
     from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused

@@ -152,6 +152,21 @@ def test_chat_turn_renders_the_models_text_and_no_claim(monkeypatch) -> None:
     assert cli._last_response == "I see no green bottle; explore first."
 
 
+def test_a_task_sentence_the_model_only_answered_is_a_goal_not_met(monkeypatch) -> None:
+    """A sentence that compiled a task contract is a task, never a chat: the model's
+    words alone show the verdict with the goal not met (charter 3.5)."""
+    _stub_oracle(monkeypatch)
+    goal = "走到坐标 (3.0, 7.5)"
+    trace = ExecutionTrace(goal_tree=GoalTree(goal=goal, sub_goals=()), steps=(), success=False,
+                           total_duration_sec=0.0, contract=("at_position(3.0, 7.5)",),
+                           contract_start=(False,), contract_end=(False,))
+    console = _FakeConsole()
+    cli._repl_turn(_FakeEngine(trace, answer="好的，我这就过去。"), goal, _FakeSession(), {}, console)
+    assert "好的，我这就过去。" in console.text
+    assert "verified=False" in console.text and "goal=failed" in console.text
+    assert "goal not met:" in console.text
+
+
 def test_a_verify_without_an_action_is_a_claim_and_grades_honestly(monkeypatch) -> None:
     """A verify-only turn claims something: its step and an unverified verdict show."""
     _stub_oracle(monkeypatch)
