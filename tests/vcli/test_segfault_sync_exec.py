@@ -37,7 +37,7 @@ def _turn_thread(monkeypatch, *, mjpython: bool, viewer: object) -> threading.Th
     monkeypatch.setattr(vm, "running_under_mjpython", lambda: mjpython)
     monkeypatch.setattr(cli, "_read_line", lambda timeout: None)  # nobody types
     eng = _make_engine()
-    eng._vgg_agent = SimpleNamespace(_arm=SimpleNamespace(_viewer=viewer))
+    eng._agent = SimpleNamespace(_arm=SimpleNamespace(_viewer=viewer))
     ran: list[threading.Thread] = []
     cli._run_turn_busy(eng, lambda: ran.append(threading.current_thread()), {})
     assert len(ran) == 1
@@ -78,19 +78,19 @@ def test_has_live_viewer_detection() -> None:
     eng = _make_engine()
 
     # Live arm viewer (_viewer attr).
-    eng._vgg_agent = SimpleNamespace(_arm=SimpleNamespace(_viewer=object()))
+    eng._agent = SimpleNamespace(_arm=SimpleNamespace(_viewer=object()))
     assert eng._has_live_viewer() is True
 
     # Live base viewer (public `viewer` attr).
-    eng._vgg_agent = SimpleNamespace(_base=SimpleNamespace(viewer=object()))
+    eng._agent = SimpleNamespace(_base=SimpleNamespace(viewer=object()))
     assert eng._has_live_viewer() is True
 
     # No agent connected.
-    eng._vgg_agent = None
+    eng._agent = None
     assert eng._has_live_viewer() is False
 
     # Arm + base present but both viewers None.
-    eng._vgg_agent = SimpleNamespace(
+    eng._agent = SimpleNamespace(
         _arm=SimpleNamespace(_viewer=None),
         _base=SimpleNamespace(_viewer=None, viewer=None),
     )

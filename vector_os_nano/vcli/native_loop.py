@@ -1046,7 +1046,7 @@ def run_turn_native(
     """
     from vector_os_nano.sim.session import mark_turn
 
-    agent = agent if agent is not None else getattr(engine, "_vgg_agent", None)
+    agent = agent if agent is not None else getattr(engine, "_agent", None)
     body = [agent]  # the body the turn drives now: a lifecycle tool rebinds it
     mark_turn(agent, "start", user_message)
     try:
@@ -1101,7 +1101,7 @@ def _run_turn_native(
         verifier and oracle names, and the sim's turn marks move to it."""
         nonlocal oracle_names, tool_schemas
         app = ctx.app_state
-        new = app.get("agent") if app is not None and "agent" in app else getattr(engine, "_vgg_agent", None)
+        new = app.get("agent") if app is not None and "agent" in app else getattr(engine, "_agent", None)
         verifier, oracles, motor_tools, tool_schemas = _bind_body(engine, new)
         oracle_names = frozenset(oracles)
         runner.rebind(new, verifier, oracles, motor_tools)

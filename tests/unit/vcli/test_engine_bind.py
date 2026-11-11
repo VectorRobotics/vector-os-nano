@@ -56,7 +56,7 @@ def test_registry_basics() -> None:
 def test_bind_dev_world() -> None:
     eng = VectorEngine(backend=MagicMock())
     eng.bind(None, DevWorld())
-    assert eng._vgg_agent is None and isinstance(eng._world, DevWorld)
+    assert eng._agent is None and isinstance(eng._world, DevWorld)
     assert eng._capability_registry is not None and len(eng._capability_registry) == 0
     assert set(eng._build_verifier_namespace(None)) == {"file_exists", "grep_count", "path_contains"}
 
@@ -98,11 +98,11 @@ def test_a_failed_bind_raises_and_keeps_the_previous_binding(world: _World) -> N
     """legacy-cognitive:B19 / producers:init-vgg-partial-state: nothing is half-replaced."""
     eng = VectorEngine(backend=MagicMock())
     eng.bind(None, DevWorld())
-    before = (eng._vgg_agent, eng._world, eng._capability_registry)
+    before = (eng._agent, eng._world, eng._capability_registry)
     agent = object()
     with pytest.raises(RuntimeError):
         eng.bind(agent, world)
-    assert (eng._vgg_agent, eng._world, eng._capability_registry) == before
+    assert (eng._agent, eng._world, eng._capability_registry) == before
 
 
 def test_bind_names_the_members_a_world_lacks() -> None:
@@ -119,7 +119,7 @@ def test_a_good_bind_commits_all_three() -> None:
     eng = VectorEngine(backend=MagicMock())
     agent = object()
     eng.bind(agent, _World())
-    assert eng._vgg_agent is agent and isinstance(eng._world, _World)
+    assert eng._agent is agent and isinstance(eng._world, _World)
     assert eng._capability_registry.names() == frozenset({"probe_cap"})
 
 

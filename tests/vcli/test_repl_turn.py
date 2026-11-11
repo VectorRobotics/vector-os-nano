@@ -88,7 +88,7 @@ def _FakeSession() -> Session:
 
 class _FakeEngine:
     def __init__(self, trace: object, *, answer: str = "") -> None:
-        self._vgg_agent = None
+        self._agent = None
         self._trace = trace
         self._answer = answer
         self.native_calls = 0

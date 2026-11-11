@@ -338,7 +338,7 @@ def _repl_turn(
 
     The turn runs on the REAL session, so a follow-up turn sees what this one did
     ("把绿色瓶子拿过来" then "再把它放到餐桌上": 'it' resolves). A sim started by
-    the turn rebinds ``engine._vgg_agent``, so the verdict is graded on the body the
+    the turn rebinds ``engine._agent``, so the verdict is graded on the body the
     turn ended on.
     """
     global _last_response
@@ -375,7 +375,7 @@ def _repl_turn(
                 finally:
                     _status.start()
             trace = engine.run_turn_native(
-                user_input, agent=getattr(engine, "_vgg_agent", None), session=session,
+                user_input, agent=getattr(engine, "_agent", None), session=session,
                 app_state=app_state, on_progress=_on_progress, ask_permission=_ask,
             )
     finally:
@@ -392,7 +392,7 @@ def _repl_turn(
     answer = session.last_assistant_text(n0)
     if len(session._entries) > 50:
         session.compact(keep_recent=12)
-    agent = getattr(engine, "_vgg_agent", None)  # the body the turn ended on
+    agent = getattr(engine, "_agent", None)  # the body the turn ended on
     sub_goals = list(getattr(trace.goal_tree, "sub_goals", ()) or ())
     steps = list(getattr(trace, "steps", ()) or ())
     console.print()
@@ -1471,7 +1471,7 @@ def run_one_turn(args: Any) -> int:
     # ask_permission=None: headless denies every 'ask' (--no-permission allows).
     try:
         trace = engine.run_turn_native(
-            prompt, agent=getattr(engine, "_vgg_agent", None), session=ctx.session,
+            prompt, agent=getattr(engine, "_agent", None), session=ctx.session,
             app_state=ctx.app_state,
         )
     except Exception as exc:  # noqa: BLE001
@@ -1485,7 +1485,7 @@ def run_one_turn(args: Any) -> int:
     # Build the verdict from the EXISTING gate, single-sourced from the SAME
     # namespace GoalVerifier uses. Fail CLOSED on any error reading the gate.
     try:
-        agent = getattr(engine, "_vgg_agent", None)
+        agent = getattr(engine, "_agent", None)
         oracle_names = verify_oracle_names(agent, engine)
         report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
     except Exception as exc:  # noqa: BLE001

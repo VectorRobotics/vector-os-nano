@@ -259,7 +259,7 @@ def test_the_p0_stop_runs_the_stop_skill_and_never_homes_the_arm() -> None:
     agent = SimpleNamespace(_skill_registry=reg, _build_context=lambda: None,
                             execute_skill=lambda *a, **k: ran.append("execute_skill(stop, then home)"))
     eng = VectorEngine(backend=None)
-    eng._vgg_agent = agent
+    eng._agent = agent
     eng._emergency_stop("停", None)
     assert ran == ["stop"]
 
@@ -425,7 +425,7 @@ def _p_turn(monkeypatch, capsys, trace: Any, answer: str = "") -> tuple[int, dic
         kw["session"].append_assistant(answer)
         return trace
 
-    engine = SimpleNamespace(_vgg_agent=None, is_stop=lambda t: False, run_turn_native=run_turn_native)
+    engine = SimpleNamespace(_agent=None, is_stop=lambda t: False, run_turn_native=run_turn_native)
     monkeypatch.setattr(cli, "_build_turn_context",
                         lambda args: SimpleNamespace(engine=engine, session=_session(), app_state={}))
     monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
@@ -489,7 +489,7 @@ def test_repl_turn_renders_the_verdict_of_an_unverified_acted_turn(owned) -> Non
 
     acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0,
                            actions_dispatched=int(owned == "acted"), cancelled=owned == "cancelled")
-    engine = SimpleNamespace(_vgg_agent=None, run_turn_native=lambda *a, **k: acted)
+    engine = SimpleNamespace(_agent=None, run_turn_native=lambda *a, **k: acted)
     out = io.StringIO()
     cli._repl_turn(engine, "walk", _session(), {}, cli.Console(file=out, width=200))
     if owned == "cancelled":

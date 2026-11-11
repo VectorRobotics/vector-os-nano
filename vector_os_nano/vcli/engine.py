@@ -53,7 +53,7 @@ class VectorEngine:
         self._max_tokens: int = max_tokens
 
         # Set by bind(): the body, its world and the world's routable capabilities.
-        self._vgg_agent: Any = None
+        self._agent: Any = None
         self._world: Any = None
         self._capability_registry: CapabilityRegistry | None = None
 
@@ -79,7 +79,7 @@ class VectorEngine:
         capabilities = CapabilityRegistry()
         world.register_capabilities(capabilities, agent, self._backend)
         world.build_verify_namespace(agent)
-        self._vgg_agent, self._world, self._capability_registry = agent, world, capabilities
+        self._agent, self._world, self._capability_registry = agent, world, capabilities
 
     def _build_verifier_namespace(self, agent: Any) -> dict[str, Any]:
         """The verify namespace for *agent*: the active world's predicates, nothing else.
@@ -110,7 +110,7 @@ class VectorEngine:
         caller's thread the viewer owner. Duck-types the connected agent's arm/base
         for a live viewer handle (no world import, no embodiment branch).
         """
-        agent = self._vgg_agent
+        agent = self._agent
         if agent is None:
             return False
         for attr in ("_arm", "_base"):
@@ -133,7 +133,7 @@ class VectorEngine:
         ``session`` None (a stop typed while a turn runs on another thread) skips the
         session record, so the stop never races the running turn's session writes.
         """
-        _agent = agent or self._vgg_agent
+        _agent = agent or self._agent
         # The motors first: no skill context to build, no run to wake (BaseProtocol.stop
         # is ungated and lets a moving body brake while its walk still holds the token).
         try:
@@ -164,7 +164,7 @@ class VectorEngine:
         Single-sourced from the skill (never a second hand-written list); no stop
         skill registered (no robot) -> none.
         """
-        reg = getattr(self._vgg_agent, "_skill_registry", None)
+        reg = getattr(self._agent, "_skill_registry", None)
         stop = reg.get("stop") if reg is not None else None
         if stop is None:
             return frozenset()
@@ -229,7 +229,7 @@ class VectorEngine:
             return _run(
                 self,
                 user_message,
-                agent=agent if agent is not None else self._vgg_agent,
+                agent=agent if agent is not None else self._agent,
                 session=session,
                 app_state=app_state,
                 on_progress=on_progress,

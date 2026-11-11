@@ -674,7 +674,7 @@ def test_lifecycle_tool_rebinds_the_turn_to_the_new_body() -> None:
     trace = eng.run_turn_native("start go2 and walk 2 m", session=_session(), app_state=app_state)
 
     new_agent = app_state["agent"]
-    assert new_agent is not None and eng._vgg_agent is new_agent
+    assert new_agent is not None and eng._agent is new_agent
     assert trace.actions_dispatched == 2  # the start + the walk: nothing re-runs either
     assert [s.strategy for s in trace.steps] == ["walk"]  # the start opens no graded step
     assert trace.steps[0].actor_caused is ActorCaused.CAUSED

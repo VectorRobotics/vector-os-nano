@@ -110,7 +110,7 @@ def _engine_with_stop_skill(backend):
     reg = SkillRegistry()
     reg.register(StopSkill())
     engine = VectorEngine(backend=backend)
-    engine._vgg_agent = SimpleNamespace(_skill_registry=reg)
+    engine._agent = SimpleNamespace(_skill_registry=reg)
     return engine
 
 
