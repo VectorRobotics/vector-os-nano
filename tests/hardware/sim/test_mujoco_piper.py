@@ -163,24 +163,29 @@ def test_move_joints_wrong_length_raises(sim):
 
 def test_move_joints_writes_ctrl(sim):
     piper = sim["piper"]
-    data = piper._go2._mj.data
     target = [0.1, 0.2, -0.3, 0.0, 0.0, 0.0]
     # move with a tiny duration — we only care that ctrl gets set, not that
     # the actuators reach the target.
     piper.move_joints(target, duration=0.1)
-    time.sleep(0.05)
-    for i, aid in enumerate(piper._arm_actuator_ids):
-        # ctrl will be at the final interpolated target at end of move
-        assert abs(float(data.ctrl[aid]) - target[i]) < 1e-4
+    ids = list(piper._arm_actuator_ids)
+    ctrl = piper._go2.runtime.call(lambda w: w.data.ctrl[ids].copy())  # at a step boundary
+    # ctrl is at the final interpolated target at the end of the move
+    np.testing.assert_allclose(ctrl, target, atol=1e-4)
 
 
 def test_stop_holds_current_position(sim):
+    """stop() writes the joint positions of its own step boundary as the set-points:
+    read at that same boundary (the stepper parked), they are equal bit for bit."""
     piper = sim["piper"]
-    piper.stop()
-    # After stop, ctrl targets == current qpos for the arm joints
-    data = piper._go2._mj.data
-    for adr, aid in zip(piper._arm_joint_qpos_adr, piper._arm_actuator_ids):
-        assert abs(float(data.ctrl[aid]) - float(data.qpos[adr])) < 1e-3
+    rt = piper._go2.runtime
+    piper.move_joints([0.3, 0.6, -0.5, 0.0, 0.2, 0.0], duration=0.2)  # still settling
+    qadr, ids = list(piper._arm_joint_qpos_adr), list(piper._arm_actuator_ids)
+    with rt.paused():
+        t = rt.sim_time
+        piper.stop()
+        ctrl, q, t_read = rt.call(lambda w: (w.data.ctrl[ids].copy(), w.data.qpos[qadr].copy(), w.time()))
+    assert t_read == t  # no tick between stop() and the read
+    assert np.array_equal(ctrl, q)
 
 
 # ---------------------------------------------------------------------------

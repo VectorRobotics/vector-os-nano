@@ -40,8 +40,7 @@ class Rig:
     def __init__(self) -> None:
         world = MuJoCoWorld(compiled_scene(
             _build_room_scene_xml(with_arm=True), robot_root="base_link", grasp_pairs=_grasp_pairs(True)))
-        m, d = world.model, world.data
-        self.m, self.d = m, d
+        m = self.m = world.model
         self.L = DofLayout(m, "base_link", 12)
         jq = lambda n: int(m.jnt_qposadr[m.joint(n).id])  # noqa: E731
         self.arm_adr = [jq(f"piper_joint{i}") for i in range(1, 7)]
@@ -52,7 +51,7 @@ class Rig:
         self.rt = SimRuntime(world, threaded=False, paced=False, name="oracle_test")
         self.rt.call(self._pin)
         self.rt.step(300, controller=self._pin)  # objects settle into resting contact
-        self.qpos0 = d.qpos.copy()
+        self.qpos0 = self.rt.snapshot().q.copy()
         self.gt = GroundTruth(self.rt)
         self.turn = (-math.inf, -math.inf)
         self.sg: SceneGraph | None = None
@@ -104,13 +103,18 @@ class Rig:
     def grasp_pose(self, jaw: float) -> np.ndarray:
         """Arm at the top-down seed; returns the point between the two finger pads."""
         self.arm, self.jaw = list(_GRASP_SEED), 0.035
-        self.rt.call(self._pin)
         pads = []
         for body in ("piper_link7", "piper_link8"):
             bid = self.m.body(body).id
             gs = [g for g in range(self.m.ngeom) if self.m.geom_bodyid[g] == bid
                   and (self.m.geom_contype[g] or self.m.geom_conaffinity[g])]
-            pads.append(np.mean([self.d.geom_xpos[g] for g in gs], axis=0))
+            pads.append(gs)
+
+        def pin_and_read(w):  # at a step boundary
+            self._pin(w)
+            return [np.mean([w.data.geom_xpos[g] for g in gs], axis=0) for gs in pads]
+
+        pads = self.rt.call(pin_and_read)
         self.jaw = jaw
         return (pads[0] + pads[1]) / 2.0
 
@@ -305,13 +309,17 @@ def test_so101_tabletop_oracles() -> None:
 
     world = MuJoCoWorld(compiled_scene(
         _DEFAULT_SCENE_XML, robot_root="base_link", grasp_pairs=inactive_welds(_DEFAULT_SCENE_XML)))
-    m, d = world.model, world.data
+    m = world.model
     stance = registry.load("so101").stance
-    for j, v in stance.items():
-        d.qpos[m.jnt_qposadr[m.joint(j).id]] = v
     rt = SimRuntime(world, threaded=False, paced=False, name="so101_test")
+
+    def at_home(w) -> None:
+        for j, v in stance.items():
+            w.data.qpos[m.jnt_qposadr[m.joint(j).id]] = v
+        mj.mj_forward(w.model, w.data)
+
     try:
-        rt.call(lambda w: mj.mj_forward(w.model, w.data))
+        rt.call(at_home)
         ns = rig_namespace(rt, "so101")
         assert "at_position" not in ns  # fixed base: no base oracles
         assert ns["arm_at_home"]()

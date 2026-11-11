@@ -69,9 +69,9 @@ def test_main_thread_pump_starts_no_daemon(monkeypatch):
         assert go2._drive_mode == vm.MAIN_THREAD_PUMP
         assert not any(t.name == "mujoco_go2_physics" for t in threading.enumerate())
         # Physics is now caller-driven: the pump advances sim time.
-        t0 = float(go2._mj.data.time)
+        t0 = go2.get_sim_time()
         go2.step(5)
-        assert float(go2._mj.data.time) > t0
+        assert go2.get_sim_time() > t0
     finally:
         go2.disconnect()
 
@@ -109,11 +109,11 @@ def test_walk_pumps_physics_on_caller_thread_in_pump_mode(monkeypatch):
     go2.connect()
     try:
         assert not any(t.name == "mujoco_go2_physics" for t in threading.enumerate())
-        t0 = float(go2._mj.data.time)
+        t0 = go2.get_sim_time()
         go2.walk(vx=0.3, vy=0.0, vyaw=0.0, duration=0.05)
         # walk() pumped step() for duration + settle -> sim time advanced even
         # though no background daemon exists.
-        assert float(go2._mj.data.time) > t0 + 0.1
+        assert go2.get_sim_time() > t0 + 0.1
     finally:
         go2.disconnect()
 
