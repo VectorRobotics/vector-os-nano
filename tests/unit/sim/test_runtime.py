@@ -194,3 +194,42 @@ def test_lockstep_runs_are_bitwise_identical(scene, monkeypatch) -> None:
     a, b = _scripted_run(scene), _scripted_run(scene)
     assert np.array_equal(a, b), (a, b)
     assert a[2] < 1.0, "the ball should have fallen"
+
+
+def test_call_times_out_when_the_stepper_stalls(scene) -> None:
+    """sim-runtime:call-has-no-timeout — a stalled stepper (a hung controller) never
+    hangs a caller: call() raises, naming the runtime, and the job never runs late."""
+    gate, ran = threading.Event(), []
+    r = SimRuntime(MuJoCoWorld(scene), controller=lambda w: gate.wait(), name="stalled", paced=False)
+    r.start()
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(RuntimeError, match="stalled"):
+            r.call(lambda w: ran.append(1), timeout=0.3)
+        assert time.monotonic() - t0 < 2.0
+        gate.set()
+        assert r.wait_sim(0.05) and ran == []  # cancelled, not applied after the caller gave up
+    finally:
+        gate.set()
+        r.close()
+
+
+def test_a_dead_stepper_fails_every_later_call_loudly(scene) -> None:
+    """sim-runtime:stepper-death-is-silent — after the physics thread dies, the runtime
+    never degrades to caller-stepped: every call, wait and step raises its reason."""
+    def boom(w) -> None:
+        raise ValueError("solver exploded")
+
+    r = SimRuntime(MuJoCoWorld(scene), controller=boom, name="dying", paced=False)
+    r.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while r.daemon_alive and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not r.daemon_alive and "solver exploded" in r.dead_reason
+        for poke in (lambda: r.call(lambda w: None), lambda: r.wait_sim(0.01), lambda: r.step(1),
+                     lambda: r.sim_time):
+            with pytest.raises(RuntimeError, match="solver exploded"):
+                poke()
+    finally:
+        r.close()

@@ -28,6 +28,9 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
   grasp or release call makes it, and any other change at the next publish.
 * **Sim time.** :meth:`wait_sim` waits for SIM seconds, so a timed motion means
   the same thing at any real-time ratio.
+* **Failure is loud.** :meth:`call` gives up after ``_CALL_TIMEOUT_S`` of wall time
+  (a stalled stepper never hangs a caller), and once the stepper thread has died
+  every later call, wait, step and ``sim_time`` read raises its :attr:`dead_reason`.
 * **Actor epoch.** :data:`ACTOR_EPOCH` marks when commanded motion belongs to a
   producer-dispatched tool (see :class:`ActorEpoch`).
 """
@@ -61,6 +64,8 @@ _PARKED_POLL_S = 0.005
 # than real time before a wait gives up (a dead physics thread never hangs it).
 _MIN_REALTIME = 0.05
 _MIN_WALL_CAP_S = 5.0
+# How long call() waits for a step boundary before it gives up on a stalled stepper.
+_CALL_TIMEOUT_S = 5.0
 _RT_LOG_EVERY_S = 60.0
 
 Controller = Callable[[PhysicsWorld], None]
@@ -148,6 +153,7 @@ class SimRuntime:
         self._pauses = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.dead_reason: str | None = None  # why the stepper thread died (None: it did not)
         self._stepper: int | None = None  # ident of the thread stepping right now
         self._steps = 0
         # Attachment transition log: (sim_time, child body, parent body or None for a
@@ -206,8 +212,13 @@ class SimRuntime:
     # reads
     # ------------------------------------------------------------------
 
+    def _alive(self) -> None:
+        if self.dead_reason is not None:
+            raise RuntimeError(self.dead_reason)
+
     @property
     def sim_time(self) -> float:
+        self._alive()
         return self._snap.sim_time
 
     def snapshot(self) -> SimSnapshot:
@@ -233,8 +244,8 @@ class SimRuntime:
         Never wait on the Future while holding :attr:`lock` from another thread.
         """
         fut: Future = Future()
-        if self._stop.is_set():
-            fut.set_exception(RuntimeError(f"{self.name}: runtime closed"))
+        if self._stop.is_set() or self.dead_reason is not None:
+            fut.set_exception(RuntimeError(self.dead_reason or f"{self.name}: runtime closed"))
             return fut
         if not self.daemon_alive or threading.get_ident() == self._stepper:
             with self.lock:
@@ -253,11 +264,22 @@ class SimRuntime:
             except IndexError:
                 return
             if fut.set_running_or_notify_cancel():
-                fut.set_exception(RuntimeError(f"{self.name}: runtime closed"))
+                fut.set_exception(RuntimeError(self.dead_reason or f"{self.name}: runtime closed"))
 
-    def call(self, fn: Callable[[PhysicsWorld], Any]) -> Any:
-        """``submit(fn).result()``: a read or mutation at a step boundary."""
-        return self.submit(fn).result()
+    def call(self, fn: Callable[[PhysicsWorld], Any], timeout: float = _CALL_TIMEOUT_S) -> Any:
+        """``submit(fn).result()``: a read or mutation at a step boundary.
+
+        Raises RuntimeError when no step boundary comes within *timeout* wall seconds
+        (the job is cancelled unless it already started; then it is waited for).
+        """
+        fut = self.submit(fn)
+        try:
+            return fut.result(timeout)
+        except TimeoutError:
+            if not fut.cancel():
+                return fut.result()
+            raise RuntimeError(f"{self.name}: no step boundary within {timeout:.1f} s "
+                               f"(stalled physics stepper)") from None
 
     def grasp(self, spec: _grasp.GraspSpec) -> int | None:
         """The grasp decision at a step boundary: the attached body, or None."""
@@ -293,6 +315,7 @@ class SimRuntime:
         ``controller`` overrides the installed one for these ticks only (e.g. a
         posture ramp).
         """
+        self._alive()
         with self.paused():
             prev, self._stepper = self._stepper, threading.get_ident()
             try:
@@ -314,7 +337,8 @@ class SimRuntime:
 
         Caller-stepped mode steps the physics here. Returns False when *cancel*
         (anything with ``is_set()``) fires, the runtime closes, or the wall-clock
-        safety cap passes (physics slower than ``_MIN_REALTIME`` or dead).
+        safety cap passes (physics slower than ``_MIN_REALTIME``); raises when the
+        stepper thread has died.
         """
         target = self.sim_time + max(0.0, float(seconds))
         cap = wall_timeout if wall_timeout is not None else max(
@@ -424,12 +448,14 @@ class SimRuntime:
                         self._tick(None)
                     else:
                         self._drain()
-                except BaseException:  # fail loud: a dead stepper must never be silent
-                    logger.exception("%s: physics stepper died at sim_time=%.3f",
-                                     self.name, self.sim_time)
-                    # ponytail: a submit racing this exact instant can still wait
-                    # forever; later submits see daemon_alive False and run inline.
-                    self._fail_pending()
+                except BaseException as exc:  # fail loud: a dead stepper must never be silent
+                    t = self._snap.sim_time
+                    logger.exception("%s: physics stepper died at sim_time=%.3f", self.name, t)
+                    self.dead_reason = (f"{self.name}: the physics stepper died at sim_time={t:.3f}: "
+                                        f"{type(exc).__name__}: {exc}")
+                    self._fail_pending()  # a submit racing this instant times out in call()
+                    with self._published:
+                        self._published.notify_all()
                     raise
             if not stepped:
                 self._wake.wait(_PARKED_POLL_S)
