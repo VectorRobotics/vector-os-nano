@@ -66,10 +66,11 @@ class TestDevPredicates:
     def test_path_traversal_blocked(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
         ns = dev_verify_namespace()
-        # Escaping cwd must be rejected (observational predicates only).
-        assert ns["file_exists"]("../../../../etc/hosts") is False
-        # Refused reads raise (GoalVerifier -> False), so a negated predicate
-        # cannot verify True vacuously either.
+        # Escaping cwd must be rejected (observational predicates only). Refused
+        # paths raise (GoalVerifier -> False), so a negated predicate cannot
+        # verify True vacuously either.
+        with pytest.raises(PermissionError):
+            ns["file_exists"]("../../../../etc/hosts")
         with pytest.raises(PermissionError):
             ns["grep_count"]("root", "..")
         with pytest.raises(PermissionError):
@@ -77,6 +78,7 @@ class TestDevPredicates:
         from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 
         assert GoalVerifier(ns).verify("not path_contains('../../etc/hosts', 'localhost')") is False
+        assert GoalVerifier(ns).verify("not file_exists('../../no/such/file')") is False
 
 # ---------------------------------------------------------------------------
 # World resolution + persona
