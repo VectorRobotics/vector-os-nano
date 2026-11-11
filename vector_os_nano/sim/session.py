@@ -392,15 +392,16 @@ def _perception_note(agent: Any) -> str:
 
 def _skill_pack(embodiment: str) -> list:
     """The skills a body is offered: arm skills only on an arm, base skills only on a
-    base (the table S5 replaces with capability binding)."""
+    base, a stop on every body (the table S5 replaces with capability binding)."""
     from vector_os_nano.skills import get_piper_skills, get_so101_skills
     from vector_os_nano.skills.go2 import get_go2_skills
+    from vector_os_nano.skills.go2.stop import StopSkill
 
     return {
         "so101": get_so101_skills,
         "go2": get_go2_skills,
         "go2_piper": lambda: [*get_go2_skills(), *get_piper_skills()],
-        "g1": list,  # its locomotion pack is S4's
+        "g1": lambda: [StopSkill()],  # its locomotion pack is S4's
     }[embodiment]()
 
 

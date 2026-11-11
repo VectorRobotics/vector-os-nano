@@ -54,3 +54,13 @@ def test_so101_offers_no_base_skill() -> None:
 
 def test_g1_offers_no_arm_skill() -> None:
     assert not _tools("g1") & (_SO101 | _PIPER)
+
+
+@pytest.mark.parametrize("embodiment", registry.embodiment_ids())
+def test_every_body_offers_the_stop_its_p0_phrase_needs(embodiment: str) -> None:
+    """producers:stop-skill-go2-only: 'stop' on so101 went to the model."""
+    from vector_os_nano.vcli.engine import VectorEngine
+
+    eng = VectorEngine(backend=None)
+    eng._agent = Agent(config={}, skills=_skill_pack(embodiment))
+    assert "stop" in _tools(embodiment) and eng.is_stop("停") and eng.is_stop("stop")

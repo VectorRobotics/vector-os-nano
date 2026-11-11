@@ -223,7 +223,7 @@ class TestPlaceSkillSchema:
 # get_so101_skills
 # ---------------------------------------------------------------------------
 
-_SO101_SET = {"home", "scan", "describe", "detect", "pick", "place", "handover",
+_SO101_SET = {"stop", "home", "scan", "describe", "detect", "pick", "place", "handover",
               "gripper_open", "gripper_close", "wave"}
 
 

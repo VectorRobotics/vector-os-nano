@@ -65,30 +65,46 @@ class TestStopSkill:
         assert result.success
         base.set_velocity.assert_called_once_with(0.0, 0.0, 0.0)
 
-    def test_stop_no_base(self):
-        ctx = _make_context(base=None)
-        result = StopSkill().execute({}, ctx)
-
+    def test_stop_with_nothing_to_stop(self):
+        result = StopSkill().execute({}, SkillContext())
         assert not result.success
-        assert result.diagnosis_code == "no_base"
+        assert result.diagnosis_code == "nothing_to_stop"
 
     def test_stop_result_data(self):
         base = _make_base()
         ctx = _make_context(base)
         result = StopSkill().execute({}, ctx)
 
-        assert result.result_data == {"stopped": True}
+        assert result.result_data == {"stopped": ["base"]}
 
-    def test_stop_tolerates_set_velocity_exception(self):
-        """If the base stop raises, stop logs it and does not propagate the
-        exception unhandled, so success=True is the expected outcome."""
+    def test_stop_halts_an_arm_only_body(self):
+        """producers:stop-skill-go2-only: an arm-only body (so101) has a stop too."""
+        arm = MagicMock()
+        result = StopSkill().execute({}, SkillContext(arm=arm))
+        assert result.success and result.result_data == {"stopped": ["arm"]}
+        arm.stop.assert_called_once_with()
+
+    def test_stop_halts_base_and_arm(self):
+        arm, base = MagicMock(), _make_base()
+        result = StopSkill().execute({}, SkillContext(arm=arm, base=base))
+        assert result.result_data == {"stopped": ["base", "arm"]}
+        base.stop.assert_called_once_with() and arm.stop.assert_called_once_with()
+
+    def test_a_failed_halt_is_reported_never_success(self):
+        """The base stop raised: the stop says so (it used to report success)."""
         base = _make_base()
         base.stop.side_effect = RuntimeError("motor fault")
-        ctx = _make_context(base)
+        result = StopSkill().execute({}, _make_context(base))
+        assert not result.success and result.diagnosis_code == "stop_failed"
+        assert "motor fault" in result.result_data["failed"]["base"]
 
-        # Should not raise; set_velocity failure is logged and swallowed
-        result = StopSkill().execute({}, ctx)
-        assert result.success  # command was still issued
+    def test_stop_creates_no_ros_node(self):
+        """skills-nav:stop-oneshot-ros-node: no one-shot publisher on the P0 path."""
+        import inspect
+
+        from vector_os_nano.skills.go2 import stop
+
+        assert "rclpy" not in inspect.getsource(stop)
 
 
 # ===========================================================================

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from vector_os_nano.skills.describe import DescribeSkill
 from vector_os_nano.skills.detect import DetectSkill
+from vector_os_nano.skills.go2.stop import StopSkill
 from vector_os_nano.skills.gripper import GripperCloseSkill, GripperOpenSkill
 from vector_os_nano.skills.handover import HandoverSkill
 from vector_os_nano.skills.home import HomeSkill
@@ -31,8 +32,9 @@ __all__ = [
 
 
 def get_so101_skills() -> list:
-    """One instance of each SO-101 arm skill (the fixed 5-DoF arm)."""
+    """One instance of each SO-101 arm skill (the fixed 5-DoF arm), and its stop."""
     return [
+        StopSkill(),
         HomeSkill(),
         ScanSkill(),
         DescribeSkill(),
