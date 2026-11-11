@@ -2,8 +2,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
-dist/
-build/
+/dist/
+/build/
 *.egg
 .eggs/
 .pytest_cache/
@@ -11,63 +11,61 @@ build/
 .env
 .venv/
 .venv-nano/
+/venv/
 .sdd*/
 agents/devlog/
 progress.md
-vector_os_nano/hardware/sim/mjcf/go2/scene_flat.xml
-vector_os_nano/hardware/sim/mjcf/go2/scene_room.xml
-# go2+Piper + g1 generated room scenes (regenerated on every connect / by the scene-builder
-# test; were churning the tree on each sim round — R8/D78). Source = go2_room.xml template +
-# build_room_scene(); these are pure build artifacts.
-vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml
-vector_os_nano/hardware/sim/mjcf/g1/scene_g1_12dof_room.xml
-venv/
 *.log
 .mypy_cache/
 .ruff_cache/
+.coverage
 *.urdf.bak
-config/workspace_calibration.yaml
-config/user.yaml
+*.orig
+*.rej
+MUJOCO_LOG.TXT
+mjmodel.mjb
 *.npz
 *.ply
-# Note: vector_os_nano/ is the SOURCE PACKAGE, not a venv. Do NOT ignore it.
-test_run.py
-test_hardware.py
-test_llm.py
-test_cli.py
-test_full_pipeline.py
-test_agent_hardware.py
-test_ik.py
-mjmodel.mjb
-mjmodel.mjb
-# Vector CLI OAuth credentials
-.vector/
-oauth_credentials.json
-.gitnexus
-.claude/
-.webui_secret_key
-lib/
-MUJOCO_LOG.TXT
-.coverage
+/lib/
 
-# stale generated MuJoCo scenes (machine-specific abs paths; runtime gen lives in mjcf/go2/)
+# Generated MuJoCo scenes (rebuilt on every connect / by the scene-builder test from
+# go2_room.xml + build_room_scene(); pure build artifacts).
+vector_os_nano/hardware/sim/mjcf/go2/scene_flat.xml
+vector_os_nano/hardware/sim/mjcf/go2/scene_room.xml
+vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml
+vector_os_nano/hardware/sim/mjcf/g1/scene_g1_12dof_room.xml
 vector_os_nano/hardware/sim/scene_room.xml
 vector_os_nano/hardware/sim/scene_room_piper.xml
 vector_os_nano/hardware/sim/scene_flat.xml
 
-# internal/deferred design notes (kept on disk, not shipped)
+# Per-machine config and credentials
+config/workspace_calibration.yaml
+config/user.yaml
+.vector/
+oauth_credentials.json
+.webui_secret_key
+
+# Root-level scratch scripts
+/test_run.py
+/test_hardware.py
+/test_llm.py
+/test_cli.py
+/test_full_pipeline.py
+/test_agent_hardware.py
+/test_ik.py
+
+# Internal design notes (kept on disk, not shipped)
 docs/pick_top_down_known_issues.md
 docs/pick_top_down_spec.md
 
-# agent loop / session working state (not repo content)
-scratch/
+# Agent / editor working state
+.gitnexus
+.claude/
+/scratch/
 .hermes/
 
-# sim smoke-test / nav output dumps (build artifacts — not repo content)
-artifacts/
-assets/
-robot_mode.txt
-tools/grasp_reliability.log
-tools/go2piper_grasp_reliability.log
-tools/go2piper_grasp_reliability_postnudge.log
-tools/grasp_reliability_postnudge.log
+# Downloaded assets (G1 gait model + policy) and sim / nav output dumps, repo root only:
+# the package's own MJCF meshes live under vector_os_nano/**/assets/ and are tracked.
+/assets/
+/artifacts/
+/robot_mode.txt

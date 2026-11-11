@@ -153,6 +153,30 @@ def test_machine_path_guard_matches_any_account(line: str, hit: bool) -> None:
     assert bool(re.search(_MACHINE_PATH, line)) is hit
 
 
+def _tracked_but_ignored(repo: Path) -> list[str]:
+    return subprocess.run(["git", "ls-files", "-i", "-c", "--exclude-standard"], cwd=repo,
+                          capture_output=True, text=True, check=True).stdout.split()
+
+
+def test_no_tracked_file_is_ignored() -> None:
+    """docs-packaging:gitignore-assets-hides-meshes — an unanchored `assets/` matched
+    the 232 tracked package meshes; hatchling honours .gitignore, so the wheel shipped
+    none of them and a new mesh was silently left untracked."""
+    assert not _tracked_but_ignored(_REPO)
+
+
+def test_tracked_but_ignored_detects_a_swallowed_mesh(tmp_path) -> None:
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(git + ["init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "pkg" / "assets").mkdir(parents=True)
+    (tmp_path / "pkg" / "assets" / "base.obj").write_text("v 0 0 0\n")
+    (tmp_path / ".gitignore").write_text("assets/\n")
+    subprocess.run(git + ["add", "-f", "pkg/assets/base.obj", ".gitignore"], cwd=tmp_path, check=True)
+    assert _tracked_but_ignored(tmp_path) == ["pkg/assets/base.obj"]
+    (tmp_path / ".gitignore").write_text("/assets/\n")
+    assert _tracked_but_ignored(tmp_path) == []
+
+
 def test_no_vacuous_tests() -> None:
     """tests:vacuous-tests — a test whose body is only a docstring/pass, or whose
     assert ends in `or True`, passes whatever the product does."""
