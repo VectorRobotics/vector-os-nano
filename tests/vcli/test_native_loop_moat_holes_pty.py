@@ -277,12 +277,12 @@ def test_or_decoy_non_necessary_at_position_flips_to_ran(sim_cleanup) -> None:
     step = r.verdict["per_step"][0]
     assert step["evidence"] == "RAN"
     # The OR genuinely evaluates True (the decoy disjunct) and the walk is a real
-    # CAUSED walk — only the necessity gate (matching at_position is not a gating conjunct)
-    # downgrades it, at the per-step level (coord_goal_mismatch) as well as the turn gate.
+    # CAUSED walk. Since I4 (G3) a disjunction is never evidence, so the classifier
+    # rejects it first; the necessity gate (coord_goal_mismatch) still stands behind it.
     assert step["verify_result"] is True
     assert step["strategy"] == "walk"
     assert step["actor_caused"] == "CAUSED"
-    assert step["reject_reason"] == "the verified coordinate is not the commanded one"
+    assert step["reject_reason"] == "the verify is not ground-truth evidence"
 
 
 # (G) WP07 rework (verifier P8): a housekeeping stop re-verifying the SAME text supersedes

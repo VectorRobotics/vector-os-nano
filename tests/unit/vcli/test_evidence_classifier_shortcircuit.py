@@ -62,10 +62,8 @@ def test_truthy_constant_shortcircuit_is_ran(expr: str) -> None:
         "facing(1.5708)",
         "path_contains('out.txt', 'ready')",
         "file_exists('out.txt')",
-        "at_position(11, 3) or at_position(12, 3)",   # every operand oracle-gated
         "at_position(11, 3) and facing(0.0)",
-        "placed_count() == 2",
-        "'table' in describe_scene()",
+        "placed_count((0.0, 0.0, 0.5, 0.5)) == 2",   # a state read naming its goal
     ],
 )
 def test_legitimate_oracle_gated_expr_stays_grounded(expr: str) -> None:
@@ -125,7 +123,7 @@ def test_membership_constant_container_shortcircuit_is_ran(expr: str) -> None:
 @pytest.mark.parametrize(
     "expr",
     [
-        "'table' in describe_scene()",     # the documented LEGIT form
+        "'table' in describe_scene('front')",     # the LEGIT form: a read that names its goal
     ],
 )
 def test_membership_against_oracle_container_stays_grounded(expr: str) -> None:
@@ -180,8 +178,10 @@ def test_callable_wrapper_and_reduction_shortcircuit_is_ran(expr: str) -> None:
 @pytest.mark.parametrize(
     "expr",
     [
-        "get_position()[0] < 5.0",          # an index over a state oracle preserves its value
-        "placed_count() == 2",
+        # an index over a state oracle preserves its value — when the read names its
+        # goal (I4 G3: a bare read like get_position()[0] < 5.0 is never evidence)
+        "placed_count((0.0, 0.0, 0.5, 0.5))[0] < 5.0",
+        "placed_count((0.0, 0.0, 0.5, 0.5)) == 2",
     ],
 )
 def test_truth_bearing_oracle_compare_stays_grounded(expr: str) -> None:

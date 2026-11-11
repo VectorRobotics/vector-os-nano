@@ -139,6 +139,26 @@ CORPUS_RAN: list[str] = [
     "this is not valid python (",
     # sandbox-escape shaped (also blocked by the verifier grammar)
     "().__class__.__mro__",
+    # I4 G3 (spine:vacuous-state-compare-grounds): a compare on a bare state READ (no
+    # argument names a goal) holds almost anywhere / everywhere
+    "get_position()[0] < 1000",
+    "get_position()[1] >= -1e9",
+    "get_heading() > -10",
+    "get_heading() < 1.0",
+    "get_position()[0] < 5.0",
+    "len(get_position()) == 3",
+    "get_position()[0] < 1000 and get_heading() > -10",
+    "at_position(11, 3) and get_position()[0] < 1000",   # one vacuous conjunct is enough
+    "placed_count() == 2",
+    "len(detect_objects()) > 0",
+    "len(detect_objects()) >= 1",
+    "'table' in describe_scene()",
+    "detect_objects() == ['banana']",
+    # ... and a disjunction hedges between goals: never the task's one end state
+    "in_room('living_room') or in_room('kitchen')",
+    "at_position(11, 3) or at_position(12, 3)",
+    "facing(0.0) or facing(3.14)",
+    "holding_object('banana') or released('banana')",
 ]
 
 # ---------------------------------------------------------------------------
@@ -161,28 +181,19 @@ HONEST_GROUNDED: list[str] = [
     "object_on('green bottle', 'dining_table')",
     "localized('green bottle')",
     "at_position(11, 3) and facing(0.0)",
-    "at_position(11, 3) or at_position(12, 3)",     # every disjunct oracle-gated
     "holding_object('banana')",                     # arm grasp
     "holding_object()",
     "arm_at_home()",
     "holding_object('banana') and arm_at_home()",
-    "placed_count() == 2",
     "placed_count((0.0, 0.0, 0.5, 0.5)) >= 1",
-    "len(detect_objects()) > 0",
-    "len(detect_objects()) >= 1",
-    "'table' in describe_scene()",
-    "get_position()[0] < 5.0",
     "at_position(11, 3) == True",
     "at_position(10.0, 3.0, 2.0)",                  # tol exactly at the cap
     "at_position(x=11, y=3, tol=0.3)",
     "facing(0.52, 0.78)",                           # just under 45 deg
     "facing(0.0, tol=0.5)",
-    "detect_objects() == ['banana']",
     "object_on('green bottle', 'pick_table') == True",
     "released()",                            # WP07: the positive release predicate
     "released('banana')",
-    "get_heading() < 1.0",                   # a real bound inside the heading range
-    "facing(0.0) or facing(3.14)",           # two arcs never cover the circle
 ]
 
 
@@ -249,6 +260,22 @@ def test_mutation_vacuous_compare_guard(monkeypatch) -> None:
     monkeypatch.setattr(ec, "_grounded_compare", _loose_compare)
     flipped = [e for e in CORPUS_RAN if classify_verify_expr(e, ROBOT_ORACLES) == "GROUNDED"]
     assert "len(detect_objects()) >= 0" in flipped
+
+
+def test_mutation_goal_bearing_guard(monkeypatch) -> None:
+    """I4 G3: switch off the goal-bearing check (a compare on any state read grounds,
+    as before) and the vacuous state compares flip to GROUNDED."""
+    monkeypatch.setattr(ec, "_goal_bearing", lambda term: True)
+    flipped = [e for e in CORPUS_RAN if classify_verify_expr(e, ROBOT_ORACLES) == "GROUNDED"]
+    assert {"get_position()[0] < 1000", "get_position()[0] < 5.0", "len(get_position()) == 3"} <= set(flipped)
+
+
+def test_mutation_disjunction_guard(monkeypatch) -> None:
+    """I4 G3: let a disjunction of grounded parts ground (as before) and the room /
+    coordinate hedges flip to GROUNDED."""
+    monkeypatch.setattr(ec, "_hedge", lambda node: False)
+    flipped = [e for e in CORPUS_RAN if classify_verify_expr(e, ROBOT_ORACLES) == "GROUNDED"]
+    assert {"in_room('living_room') or in_room('kitchen')", "at_position(11, 3) or at_position(12, 3)"} <= set(flipped)
 
 
 def test_scope_filter_keeps_dev_predicates_out_of_robot_evidence() -> None:
@@ -474,13 +501,13 @@ def test_tolerance_is_clamped_in_oracle() -> None:
 # spine.md FG-8): the gate grades every step or none. Each case isolates one guard.
 # ---------------------------------------------------------------------------
 
-_DETECT_ONLY = frozenset({"detect_objects"})
+_DETECT_ONLY = frozenset({"in_view"})
 
 
 def _detect_trace(extra_sub_goals=(), extra_steps=(), success=True):  # noqa: ANN001, ANN202
     from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord, SubGoal
 
-    detect = SubGoal(name="detect", description="detect", verify="len(detect_objects()) > 0")
+    detect = SubGoal(name="detect", description="detect", verify="in_view('cube')")
     return ExecutionTrace(
         goal_tree=GoalTree(goal="list the objects on the table", sub_goals=(detect, *extra_sub_goals)),
         steps=(StepRecord("detect", "detect_skill", True, True, 0.1), *extra_steps),

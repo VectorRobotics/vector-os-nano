@@ -293,9 +293,10 @@ def test_turn_gate_world_blind_non_go2_worlds_untouched() -> None:
     assert evidence_passed(_trace("write (3,4) to file out.txt", [
         ("path_contains('out.txt','x')", "tool", True, _CA()),
     ]), _DEV) is True
+    # a place is proven by a release / placement (I4 proof set), never by a hold
     assert evidence_passed(_trace("place the cube at (0.5,0.3)", [
-        ("holding_object('cube')", "pick", True, _CA()),
-    ]), _ARM) is True
+        ("released('cube')", "place", True, _CA()),
+    ]), _ARM | {"released"}) is True
 
 
 def test_turn_gate_dummy_at_position_must_be_grounded() -> None:
@@ -354,7 +355,9 @@ def test_turn_gate_keeps_honest_necessary_conjunctions() -> None:
         "at_position(11,3) and facing(1,0)",
         "at_position(11,3) and at_position(99,99)",
         "at_position(11,3) and in_room('kitchen')",
-        "at_position(11,3) and (in_room(0,0) or facing(1,0))",
         "at_position(x=11, y=3)",
     ):
         assert evidence_passed(_trace("走到坐标 (11,3)", [(verify, "walk", True, _CA())]), _GO2) is True, verify
+    # I4 G3: a hedged conjunct is no evidence even beside the necessary at_position
+    hedged = "at_position(11,3) and (in_room(0,0) or facing(1,0))"
+    assert evidence_passed(_trace("走到坐标 (11,3)", [(hedged, "walk", True, _CA())]), _GO2) is False

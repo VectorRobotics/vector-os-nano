@@ -13,16 +13,23 @@ The grammar is an ALLOWLIST — anything not listed is RAN:
 - a bare PREDICATE-oracle call with literal arguments (``at_position(2.0, 0.0)``,
   ``holding_object('banana')``, ``arm_at_home()``);
 - ``<predicate>(...) == True``;
-- ``<term> <op> <literal>`` (either order, one comparison) where *term* is a STATE
-  oracle call, an index of one (``get_position()[0]``) or ``len()`` of one, and op is
+- ``<term> <op> <literal>`` (either order, one comparison) where *term* is a
+  GOAL-BEARING STATE oracle call (one with a literal argument that names the goal:
+  ``grep_count('TODO', 'a.py')``), an index of one or ``len()`` of one, and op is
   ``==`` or an ordering against a number — except the vacuous lower bounds
   ``>= c`` (c <= 0) / ``> c`` (c < 0) that every count satisfies, any compare a
   COUNT (``len()`` or a count oracle) satisfies at its fail-safe 0
-  (``len(detect_objects()) < 1000``, ``placed_count() <= 1e9``), and any bound that
-  holds over a ranged oracle's whole domain (``get_heading() < 100``);
-- ``'<non-empty literal>' in <state oracle call>``;
-- ``and`` / ``or`` of grounded parts — except a disjunction of ``facing`` arcs whose
-  union is the whole circle (true at every heading).
+  (``grep_count('x', '.') <= 1e9``), and any bound that holds over a ranged oracle's
+  whole domain;
+- ``'<non-empty literal>' in <goal-bearing state oracle call>``;
+- ``and`` of grounded parts.
+
+A bare state READ (``get_position()``, ``get_heading()``: no argument) names no goal,
+so no compare on it grounds (``get_position()[0] < 1000`` is true almost anywhere,
+``get_heading() > -10`` everywhere); the goal-bearing predicate (``at_position``,
+``facing``) is the evidence. A disjunction never grounds: ``or`` hedges between goals
+(``in_room('a') or in_room('kitchen')``, arcs or discs that cover the whole domain),
+and the spine cannot tell which disjunct was the task.
 
 Rejected by construction: value-absorbing wrappers (``|``, ``*0``, ``max``/``min``/
 ``abs``/``bool``…), ``is`` / ``is not``, ``!=``, ``not in``, ``not``, a bool predicate
@@ -33,9 +40,8 @@ value), and a literal tolerance above its cap (``at_position(0, 0, 1e6)``, FG-3)
 
 SCOPE (honest — do not overclaim): this is STRUCTURAL. It does not prove the literal
 is the TASK's goal (coord_goal / object_goal turn gates do that for coordinate and
-grasp goals), nor that the actor caused the state (actor_causation), nor catch a
-shape-trivial compare (``len(get_position()) == 3``) — that needs oracle return-type
-metadata.
+grasp goals; the task contract for fetch / place too), nor that the actor caused the
+state (actor_causation).
 """
 from __future__ import annotations
 
@@ -207,6 +213,7 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
             _literal(lit)
             and not (isinstance(lit, ast.Constant) and lit.value == "")
             and _state_call(right, oracle_names)
+            and _goal_bearing(right)
         )
     if not isinstance(op, (ast.Eq, *_ORDERING)):
         return False  # is / is not / != / not in: satisfied by almost anything
@@ -220,7 +227,7 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
         # A bool oracle: only `== True` (the bare call); `== False` is a negation
         # and an ordering on a bool is a tautology for some constant.
         return isinstance(op, ast.Eq) and isinstance(right, ast.Constant) and right.value is True
-    if not _state_term(left, oracle_names):
+    if not (_state_term(left, oracle_names) and _goal_bearing(left)):
         return False
     bound = _number(right)
     domain = _term_domain(left, oracle_names)
@@ -238,43 +245,26 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
     return True
 
 
-def _disjuncts(node: ast.AST) -> list[ast.AST]:
-    """The leaves of a (possibly parenthesised) ``or`` chain."""
-    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
-        return [d for v in node.values for d in _disjuncts(v)]
-    return [node]
+def _goal_bearing(term: ast.AST) -> bool:
+    """The state oracle call under *term* (the call, ``call[i]`` or ``len(call)``)
+    names its goal with a literal argument; a bare read (``get_position()``) does not."""
+    if isinstance(term, ast.Subscript):
+        term = term.value
+    elif isinstance(term, ast.Call) and isinstance(term.func, ast.Name) and term.func.id == "len":
+        term = term.args[0]
+    return isinstance(term, ast.Call) and bool(term.args or term.keywords)
 
 
-def _facing_covers_circle(values: list[ast.AST], oracle_names: frozenset[str]) -> bool:
-    """True iff the ``facing(h, tol)`` disjuncts' arcs cover every heading (FG-3:
-    ``facing(0) or facing(1.57) or ...``). A missing tol counts as the cap."""
-    arcs = []
-    for v in values:
-        if _oracle_call(v, oracle_names) != "facing":
-            continue
-        kw = {k.arg: k.value for k in v.keywords}  # type: ignore[attr-defined]
-        h_node = v.args[0] if v.args else kw.get("heading")  # type: ignore[attr-defined]
-        t_node = v.args[1] if len(v.args) > 1 else kw.get("tol")  # type: ignore[attr-defined]
-        h = _number(h_node) if h_node is not None else None
-        tol = _number(t_node) if t_node is not None else _MAX_FACING_TOL_RAD
-        if h is None or tol is None:
-            continue
-        lo = (h - tol) % (2 * math.pi)
-        arcs += [(lo, lo + 2 * tol)] if lo + 2 * tol <= 2 * math.pi else \
-            [(lo, 2 * math.pi), (0.0, lo + 2 * tol - 2 * math.pi)]
-    reach = 0.0
-    for a, b in sorted(arcs):
-        if a > reach:
-            return False
-        reach = max(reach, b)
-    return reach >= 2 * math.pi
+def _hedge(node: ast.AST) -> bool:
+    """A disjunction: it hedges between goals, so it never grounds."""
+    return isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)
 
 
 def _is_grounded_node(node: ast.AST, oracle_names: frozenset[str]) -> bool:
     """True iff *node*'s truth is decided by an oracle value against an author
     literal, with nothing that can absorb or invert it (see the module grammar)."""
     if isinstance(node, ast.BoolOp):
-        if isinstance(node.op, ast.Or) and _facing_covers_circle(_disjuncts(node), oracle_names):
+        if _hedge(node):
             return False
         return bool(node.values) and all(_is_grounded_node(v, oracle_names) for v in node.values)
     if isinstance(node, ast.Compare):
