@@ -128,9 +128,8 @@ class RobotWorld:
 
         Every predicate reads the session's ground truth (``vcli/worlds/sim_oracles``),
         never an agent or device attribute. Real hardware / no session contributes
-        nothing, so every verify there grades RAN. The engine merges this over its
-        own bindings, so the GT ``get_position`` / ``get_heading`` replace its
-        agent-read ones in a sim.
+        nothing, so every verify there grades RAN. This is the engine's whole verify
+        namespace: the kernel adds no predicate of its own.
         """
         from vector_os_nano.sim.session import session_for
 

@@ -4,7 +4,7 @@
 """Vector CLI — interactive REPL entry point.
 
 Ties together VectorEngine, Session, PermissionContext, and all tools
-into an interactive agent loop with V's personality.
+into an interactive agent loop.
 
     python -m vector_os_nano.vcli.cli [options]
     # or via console_scripts: vector-cli [options]

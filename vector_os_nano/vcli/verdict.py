@@ -4,7 +4,7 @@
 """verdict — the machine-checkable acceptance signal for a single cli.main turn.
 
 This is the acceptance INSTRUMENT for the orchestration redesign. The honest
-verdict the engine already computes for a VGG run
+verdict the engine already computes for a native run
 (``evidence_passed(trace, verify_oracle_names(agent, engine))``) previously NEVER
 escaped cli.main as a machine signal — the REPL only ``console.print``ed Rich
 prose. ``VerdictReport`` turns that exact same computation into a frozen,
@@ -46,7 +46,7 @@ VERDICT_SENTINEL = "VECTOR_VERDICT"
 #   GROUNDED — verified: success backed by deterministic, oracle-consuming evidence.
 #   RAN      — the turn ran (some/all steps succeeded) but carries NO grounded evidence.
 #   FAILED   — the trace did not succeed (>=1 step failed / aborted).
-#   NO_TRACE — no VGG trace was produced (e.g. a chat-only / tool_use turn, or error).
+#   NO_TRACE — no trace was produced (a chat turn, or an error before the turn ran).
 EVIDENCE_GROUNDED = "GROUNDED"
 EVIDENCE_RAN = "RAN"
 EVIDENCE_FAILED = "FAILED"
@@ -199,7 +199,7 @@ class VerdictReport:
 
     @classmethod
     def no_trace(cls, goal: str = "", error: str = "") -> "VerdictReport":
-        """A fail-closed verdict for a turn that produced NO VGG trace.
+        """A fail-closed verdict for a turn that produced NO trace.
 
         A chat-only / tool_use turn (or an error before any trace) has no
         deterministic per-step evidence to grade, so it can NEVER be verified.

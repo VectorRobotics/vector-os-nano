@@ -25,8 +25,8 @@ class CapabilityResult:
     """Outcome of a capability invocation.
 
     ``success`` reports only that the capability *ran* and produced output; the
-    sub-goal's deterministic ``verify`` predicate, evaluated separately by the
-    GoalExecutor, decides whether the step actually succeeded.
+    step's deterministic ``verify`` predicate, evaluated separately by the native
+    loop's verifier, decides whether the step actually succeeded.
     """
 
     success: bool

@@ -15,7 +15,7 @@ from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
 
 @dataclass(frozen=True)
 class SubGoal:
-    """A single verifiable step in a goal decomposition tree."""
+    """One (action chain -> verify) step of a native turn."""
 
     name: str
     description: str
@@ -25,7 +25,7 @@ class SubGoal:
 
 @dataclass(frozen=True)
 class GoalTree:
-    """Full decomposition of a high-level task into ordered SubGoals."""
+    """The turn's goal and its steps, in order."""
 
     goal: str
     sub_goals: tuple[SubGoal, ...]
