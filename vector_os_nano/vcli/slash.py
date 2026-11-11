@@ -185,23 +185,21 @@ def _clear(rt: Any, args: list[str]) -> None:
 
 
 def _clear_memory(rt: Any, args: list[str]) -> None:
-    """Forget the running body's rooms and objects: the scene graph is cleared IN PLACE
-    (every holder — skills, oracles, the robot-state prompt — keeps the same object)
-    and its file and the terrain map are deleted."""
+    """Forget the explored rooms and objects: the running body's scene graph is cleared
+    IN PLACE (every holder — skills, oracles, the robot-state prompt — keeps the same
+    object), and its file and the terrain map are deleted."""
     from vector_os_nano.vcli.tools.nav_tools import _TERRAIN_PATH
 
     sg = rt.app_state.get("scene_graph")
-    if sg is None:
-        console.print("[dim]  No running body has a scene graph (start a simulation first).[/dim]")
-        return
-    sg.clear()
+    if sg is not None:
+        sg.clear()
     for path in (getattr(sg, "_persist_path", None), _TERRAIN_PATH):
         if path:
             try:
                 os.remove(path)
             except FileNotFoundError:
                 pass
-    console.print("[dim]  Scene graph cleared. All rooms/objects forgotten.[/dim]")
+    console.print("[dim]  Memory cleared: rooms, objects and the terrain map are forgotten.[/dim]")
 
 
 def _reset(rt: Any, args: list[str]) -> None:

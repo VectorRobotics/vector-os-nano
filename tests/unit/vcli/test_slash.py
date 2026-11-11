@@ -31,6 +31,9 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(config, "_CONFIG_PATH", tmp_path / ".vector" / "config.yaml")
+    from vector_os_nano.vcli.tools import nav_tools
+
+    monkeypatch.setattr(nav_tools, "_TERRAIN_PATH", str(tmp_path / "terrain_map.npz"))
     monkeypatch.delenv("VECTOR_FAKE_LLM_TOOLS", raising=False)
     for var in ("DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(var, raising=False)
