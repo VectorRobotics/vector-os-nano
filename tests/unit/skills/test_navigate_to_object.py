@@ -15,6 +15,7 @@ import pytest
 
 from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph
 from vector_os_nano.core.skill import SkillContext
+from vector_os_nano.sim.nav.follow import NavResult
 from vector_os_nano.skills.navigate_to_object import (
     NavigateToObjectSkill,
     _VICINITY_CLEARANCE_M,
@@ -44,9 +45,9 @@ class _FakeBase:
         return 0.0
 
     def navigate_to(self, x: float, y: float, timeout: float | None = None,
-                    on_progress: Any = None, **kw) -> bool:
+                    on_progress: Any = None, **kw) -> NavResult:
         self.nav_calls.append((x, y))
-        return True
+        return NavResult(reached=True, reason="arrived", target=[x, y])
 
     def set_velocity(self, vx: float, vy: float, vyaw: float) -> None:
         pass

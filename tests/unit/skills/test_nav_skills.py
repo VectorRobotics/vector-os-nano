@@ -99,7 +99,7 @@ def test_coordinate_navigate_cancels_a_running_exploration_and_stops_via_stop():
 
     bare = MagicMock(spec=["get_position", "navigate_to", "set_velocity"])
     bare.get_position.return_value = [1.0, 1.0, 0.3]
-    bare.navigate_to.return_value = True
+    bare.navigate_to.return_value = _nav(True, "arrived", (1.0, 1.0))
     NavigateSkill().execute({"x": 1.0, "y": 1.0}, SkillContext(base=bare))
     bare.set_velocity.assert_called_once_with(0.0, 0.0, 0.0)
 

@@ -81,13 +81,9 @@ _ROOM_ALIASES: dict[str, str] = {
 
 _MIN_VISIT_COUNT: int = 1  # trust SceneGraph position after first visit
 
-# Coordinate-goal navigation (R38). A cross-room FAR leg takes ~30-50 s over the
-# lidar terrain map (probe v2: 32 s clean, 41 s through furniture), so the nav
-# budget must exceed that or the dog times out mid-drive. The VICINITY radius is
-# the step-success threshold (generous: FAR arrival radius 0.8 m + margin) — NOT
-# the honest arrival grade, which is the at_position(tol 0.5 m) verify oracle.
+# Coordinate-goal navigation (R38). A cross-room leg takes ~30-50 s, so the nav
+# budget must exceed that or the dog times out mid-drive.
 _COORD_NAV_TIMEOUT_S: float = 90.0
-_COORD_VICINITY_RADIUS_M: float = 1.5
 
 
 # ---------------------------------------------------------------------------
@@ -362,12 +358,12 @@ class NavigateSkill:
         coord: tuple[float, float],
         context: SkillContext,
     ) -> SkillResult:
-        """Drive the base to a world coordinate via the FAR planner (navigate_to).
+        """Drive the base to a world coordinate via its planner (navigate_to).
 
-        Used for a coordinate navigate goal (no SceneGraph room). Honest: the
-        step's success is the planner's own arrival verdict and the actual landing
-        position is reported; the at_position verify oracle (RAN) is what grades the
-        step. If the base lacks navigate_to (no nav stack) we fail loud.
+        Used for a coordinate navigate goal (no SceneGraph room). The step succeeds
+        only when the planner's own ``NavResult`` says it arrived; an aborted, fallen,
+        stalled or unreachable run fails with that reason, wherever it stopped. If the
+        base lacks navigate_to (no planner) we fail loud.
         """
         base = context.base
         tx, ty = coord
@@ -398,12 +394,7 @@ class NavigateSkill:
             print(f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed)}s",
                   file=sys.stderr, flush=True)
 
-        try:
-            nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress)
-        except TypeError:
-            # A base whose navigate_to does not accept the extra kwargs.
-            nav = navigate_to(tx, ty)
-        ok = bool(nav)
+        nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress)
 
         # HOLD at the goal. navigate_to leaves the dog under the planner/TARE,
         # which keeps publishing /way_point and DRIFTS the dog away from the goal
@@ -428,29 +419,18 @@ class NavigateSkill:
 
         pos = base.get_position()
         dist = _distance(pos[0], pos[1], tx, ty)
-        # The skill SUCCEEDS when it ran and the dog is in the goal's VICINITY — FAR
-        # may time out / not raise its arrival flag yet still leave the dog close
-        # (it drives over a lidar terrain map at variable speed). Step success only
-        # gates whether DEPENDENTS run; the honest arrival grade is the at_position
-        # verify oracle (RAN, tol 0.5 m). So we use a GENEROUS vicinity radius here
-        # (the FAR arrival radius 0.8 m + margin) — not a strict re-check — to avoid
-        # falsely failing the chain when the dog is geometrically at the table but
-        # FAR's bool timed out. Genuinely-far (FAR couldn't route) -> still fail loud.
-        arrived = ok or dist <= _COORD_VICINITY_RADIUS_M
+        arrived = bool(nav)
         return SkillResult(
             success=arrived,
             error_message="" if arrived else (
-                f"navigate_to({tx}, {ty}) did not reach the goal vicinity "
-                f"(ended {dist:.1f} m away)"),
-            diagnosis_code=None if arrived else "navigation_failed",
+                f"navigate_to({tx}, {ty}) failed: {nav.reason} (ended {dist:.1f} m away)"),
+            diagnosis_code="" if arrived else "navigation_failed",
             result_data={
                 "target": [round(tx, 1), round(ty, 1)],
                 "position": [round(pos[0], 1), round(pos[1], 1)],
                 "distance_to_target": round(dist, 1),
-                "far_confirmed": ok,
-                "mode": "planner_coord" if isinstance(nav, NavResult) else "proxy_coord",
-                **({"reason": nav.reason, "target_planned": nav["target"]}
-                   if isinstance(nav, NavResult) else {}),
+                "reason": nav.reason,
+                "target_planned": nav.get("target"),
             },
         )
 
