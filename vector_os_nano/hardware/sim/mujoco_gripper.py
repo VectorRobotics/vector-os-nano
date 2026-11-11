@@ -80,26 +80,6 @@ class MuJoCoGripper:
         """Return True if an object is currently welded to the gripper."""
         return self._held_object is not None
 
-    def weld_is_active(self) -> dict[str, bool]:
-        """Return ``{welded-body-name -> data.eq_active[i] != 0}`` (R2b).
-
-        Reads the REAL constraint state off ``data.eq_active`` (the live physics
-        truth a grasp toggles 0->1), keyed by the welded BODY name resolved via
-        ``model.eq_obj2id -> mj_id2name`` — the SAME per-weld resolution
-        ``_try_grasp`` uses (gripper.py:128-129). Target-aware: the actor-causation
-        grader compares this body-keyed map across a step and treats a body that
-        went 0->1 as a fresh grasp BY THE ACTOR, so a wrong-object weld toggled
-        for the wrong target does not satisfy ``holding_object(target)``.
-
-        Fail-safe: any error (disconnected, no model) yields ``{}`` — an empty map
-        is ungradable (grades NOT_GRADED / UNCAUSED), never a spurious CAUSED.
-        """
-        if not getattr(self._arm, "_connected", False):
-            return {}
-        rt = self._arm.runtime
-        scene, held = rt.world.scene, rt.attachments()
-        return {scene.body_name(c): held.get(c) == p for p, c in scene.grasp_pairs}
-
     def get_position(self) -> float:
         """Return normalised gripper position (1.0=open, 0.0=closed)."""
         return 1.0 if self._is_open else 0.0

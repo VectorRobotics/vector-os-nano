@@ -180,21 +180,11 @@ class MuJoCoPiperGripper:
         body name) counts.
         """
         held = self._held_object
-        if held is None or (name is not None and str(name).strip().lower() != held.lower()):
+        if not self._connected or held is None or (
+                name is not None and str(name).strip().lower() != held.lower()):
             return False
-        return bool(self.weld_is_active().get(held, False))
-
-    def weld_is_active(self) -> dict[str, bool]:
-        """``{graspable body name -> attached to this gripper}`` as the runtime last
-        published it — the SAME body-keyed map MuJoCoGripper exposes, read by
-        actor_causation (_capture_gripper) for the 0->1 fresh-grasp transition.
-        Fail-safe ``{}``.
-        """
-        if not self._connected:
-            return {}
-        rt, parent = self._go2.runtime, self._grasp.weld_body
-        scene, held = rt.world.scene, rt.attachments()
-        return {scene.body_name(c): held.get(c) == parent for p, c in scene.grasp_pairs if p == parent}
+        rt = self._go2.runtime
+        return rt.attachments().get(rt.world.scene.body(held)) == self._grasp.weld_body
 
     def get_position(self) -> float:
         """Normalized jaw position: 0.0 closed, 1.0 fully open."""
