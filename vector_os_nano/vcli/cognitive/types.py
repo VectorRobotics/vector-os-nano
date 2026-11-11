@@ -1,79 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""VGG cognitive layer — frozen dataclasses.
+"""The trace the native producer records and the spine grades — frozen dataclasses.
 
-All types are immutable (frozen=True) to ensure safe sharing across
-async executor threads without defensive copying.
+All types are immutable (frozen=True) to ensure safe sharing across threads
+without defensive copying.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
-
-# --------------------------------------------------------------------------
-# Failure taxonomy (W2.4) — a small CLOSED set of lowercase, world-agnostic
-# class strings, plus "" for success / no-failure. This is a DETERMINISTIC
-# typed signal derived ONLY from already-available execution evidence
-# (exception type, the step's diagnosis, the verify-vs-execute distinction) —
-# NO new model call. It lets observation-driven replan branch on the failure
-# CLASS instead of an opaque stringified error (e.g. timeout -> a shorter
-# strategy; ik_fail -> an alternate grasp pose); the LLM does the adapting.
-#
-# Kept embodiment-neutral on purpose: ``ik_fail`` is named after the GENERIC
-# unreachable-target failure mode, not the arm — any world that surfaces an
-# ``ik_unreachable``/``unreachable`` diagnosis maps to it.
-# --------------------------------------------------------------------------
-
-FailureClass = Literal[
-    "",            # success / no failure
-    "timeout",     # the step exceeded its (floored) wall-clock limit
-    "verify_fail", # executed without error but the deterministic verify was False
-    "ik_fail",     # an unreachable-target / IK diagnosis (e.g. ik_unreachable)
-    "tool_error",  # a kernel-tool dispatch / permission / allowlist failure
-    "exec_error",  # any other execution failure (selector/skill raised, generic)
-]
-
-# The closed set, for validation + tests. Excludes "" (the success sentinel).
-FAILURE_CLASSES: frozenset[str] = frozenset(
-    {"timeout", "verify_fail", "ik_fail", "tool_error", "exec_error"}
-)
-
-# Diagnosis substrings (lowercased) that indicate an unreachable-target / IK
-# failure, regardless of embodiment. Matched as substrings so "ik_unreachable",
-# "unreachable", etc. all classify as ``ik_fail``.
-_IK_DIAGNOSIS_MARKERS: tuple[str, ...] = ("ik_unreachable", "unreachable", "ik_fail")
-
-
-def classify_exec_failure(
-    *,
-    executor_type: str = "",
-    diagnosis: str = "",
-) -> str:
-    """Classify a NON-timeout, NON-verify execution failure deterministically.
-
-    Used for the ``exec_success is False`` path (the strategy ran but reported a
-    failure, e.g. a skill returned ``success=False`` with a ``diagnosis``, or the
-    tool/capability branch failed). Derived ONLY from already-available signals —
-    the executor_type of the resolved strategy and the step's machine-readable
-    ``diagnosis`` — so there is NO new model call.
-
-    Mapping (most specific wins):
-      - a diagnosis naming an unreachable-target / IK failure -> ``ik_fail``
-      - the kernel-``tool`` executor branch                   -> ``tool_error``
-      - anything else                                         -> ``exec_error``
-
-    The caller owns the timeout (-> ``timeout``) and verify-miss
-    (-> ``verify_fail``) paths; this helper never returns those or ``""``.
-    """
-    diag = (diagnosis or "").strip().lower()
-    if diag and any(marker in diag for marker in _IK_DIAGNOSIS_MARKERS):
-        return "ik_fail"
-    if executor_type == "tool":
-        return "tool_error"
-    return "exec_error"
 
 
 @dataclass(frozen=True)
@@ -135,17 +72,6 @@ class SubGoal:
     # defaulted False so every existing constructor and non-answer plan is
     # byte-unaffected.
     answer_only: bool = False
-    # Fail-loud marker for a HALLUCINATED strategy (rule 8). When the decomposer
-    # validates a step whose explicit ``strategy`` is not in the world's known set,
-    # it clears ``strategy`` to "" (so existing pure-check routing is unaffected)
-    # AND records the offending name here. A non-empty value tells the selector to
-    # resolve this step to the LOUD ``invalid`` route (clear, named error + valid
-    # set) instead of silently re-routing the cleared step through keyword/registry
-    # matching to a phantom skill or the opaque ``unmatched`` fallback. Empty (the
-    # default) means "no hallucination" — every existing constructor and every
-    # legitimately strategy-less (pure-check / foreach owner) plan is byte-
-    # unaffected. Additive + LAST + defaulted (frozen-safe, rule 6).
-    cleared_strategy: str = ""
 
 
 @dataclass(frozen=True)
@@ -155,12 +81,6 @@ class GoalTree:
     goal: str
     sub_goals: tuple[SubGoal, ...]
     context_snapshot: str = ""
-    # Validator feedback (Stage 2b): human-readable notes about strategies or
-    # sub_goals the decomposer DROPPED during validation (e.g. an unknown
-    # strategy cleared to ""). The harness threads these into the next replan's
-    # decompose context so the LLM stops repeating the hallucination. Additive +
-    # keyword-default so existing positional constructors are unaffected.
-    validation_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -182,17 +102,6 @@ class StepRecord:
     # {"output": <strategy output dict>, "verify_value": <raw verify value>}.
     # Additive + keyword-default so existing positional constructors are unaffected.
     result_data: dict = field(default_factory=dict)
-    # W2.4 — DETERMINISTIC typed failure class for a FAILED step (one of
-    # FAILURE_CLASSES; "" for a success/no-failure step). Derived ONLY from
-    # already-available evidence (timeout vs verify-miss vs execution failure,
-    # plus the step's machine-readable ``diagnosis`` and executor_type) — NO new
-    # model call. The harness threads this into the replan/re-decompose context so
-    # the re-plan (LLM) can branch on the failure CLASS instead of parsing the
-    # opaque ``error`` string. SECURITY (rule 10): a bounded enum string ONLY —
-    # never raw exception detail, file paths, or secrets. Additive + LAST +
-    # defaulted "" so every existing positional/keyword constructor is
-    # byte-unaffected (rule 6).
-    failure_class: str = ""
     # R2b — TRI-STATE actor-causation grade (NOT bool|None). Whether the ACTOR
     # caused this step's GROUNDED state change: CAUSED (commanded motion via the
     # instrumented ctrl path AND the pose changed), UNCAUSED (a satisfied-at-baseline
