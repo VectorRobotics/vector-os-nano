@@ -72,13 +72,52 @@ def test_sleep_guard_catches_every_patch_form(line: str) -> None:
     assert re.search(_SLEEP_PATCH, line)
 
 
+def _tracked_text() -> list[tuple[str, list[str]]]:
+    """Every tracked text file, except the docs (docs/, README.md, CLAUDE.md): those
+    are excluded only until the release's final docs pass rewrites them."""
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=_REPO, capture_output=True, check=False).stdout
+    files = []
+    for rel in out.decode().split("\0"):
+        p = _REPO / rel
+        if not rel or rel.startswith("docs/") or rel in ("README.md", "CLAUDE.md") or p == _SELF or not p.is_file():
+            continue
+        data = p.read_bytes()
+        if b"\0" not in data:
+            files.append((rel, data.decode("utf-8", "replace").splitlines()))
+    assert files, "not a git checkout: the tree-wide guards have nothing to scan"
+    return files
+
+
+def _tracked_offenders(pattern: str, skip: tuple[str, ...] = ()) -> list[str]:
+    rx = re.compile(pattern)
+    return [f"{rel}:{i}: {line.strip()[:120]}" for rel, lines in _tracked_text() if rel not in skip
+            for i, line in enumerate(lines, 1) if rx.search(line)]
+
+
+# A kill by name or a machine-wide teardown, as a Python argv / string or a shell command.
+_KILL = r"""\[\s*["'](rosm|pkill|killall|fuser)["']|(^|[;&|"'])\s*(sudo\s+)?(pkill|killall|rosm\s+nuke|fuser\s+-k)\b"""
+
+
 def test_no_machine_wide_kill_commands() -> None:
-    """tests:pty-harness-timeouts-and-kill — `rosm nuke` / pkill took down other
-    projects' stacks. Kill only your own process group (tests/harness/sim_cleanup.py)."""
-    assert not _offenders(
-        r"""\[\s*["'](rosm|pkill|killall)["']|["'](pkill|killall) -|["']rosm nuke""",
-        skip=("tests/conftest.py",),  # the shims that fail those calls
-    )
+    """tests:pty-harness-timeouts-and-kill, periphery:tools-kill-by-name-and-rosm —
+    `rosm nuke` / pkill took down other projects' stacks. Kill only your own process
+    group (tests/harness/sim_cleanup.py). Every tracked file, not only tests."""
+    assert not _tracked_offenders(_KILL, skip=("tests/conftest.py",))  # the shims that fail those calls
+
+
+@pytest.mark.parametrize("line, hit", [
+    ('subprocess.run(["pkill", "-9", "-f", "verify_fetch_flow"])', True),
+    ("subprocess.run(\"pkill -9 -f '[m]ujoco' 2>/dev/null || true\", shell=True)", True),
+    ('subprocess.run(["rosm", "nuke", "--yes"])', True),
+    ("  killall -9 ros2", True),
+    ("trap 'fuser -k 8765/tcp' EXIT", True),
+    ("ok || pkill -f tare", True),
+    ("# own group under `set -m`). Never pkill by name or wipe /dev/shm", False),
+    ("Replaces the old ``rosm nuke --yes`` / ``pkill -f`` teardowns", False),
+    ('"tools": "periphery:tools-kill-by-name-and-rosm (pkill -9 -f mujoco, rosm nuke)"', False),
+])
+def test_kill_guard_catches_invocations_not_prose(line: str, hit: bool) -> None:
+    assert bool(re.search(_KILL, line)) is hit
 
 
 def test_no_import_time_env_writes() -> None:
@@ -88,21 +127,30 @@ def test_no_import_time_env_writes() -> None:
                           skip=("tests/conftest.py",))
 
 
-_MACHINE_PATH = r"/home/yusen/|~/Desktop/vector_(navigation_stack|os_nano)\b"
+_MACHINE_PATH = r"""/(home|Users)/[A-Za-z0-9_][\w.-]*/|~/Desktop\b|["']Desktop["']"""
 
 
-def test_no_hardcoded_machine_paths() -> None:
-    """tests:hardcoded-machine-paths — harness tests read ~/Desktop/vector_navigation_stack
-    and ~/Desktop/vector_os_nano (another machine's clone) and failed instead of skipping;
-    scripts hardcoded /home/yusen. An external checkout comes from its env var
-    (VECTOR_NAV_STACK via scripts/nav_env.sh), never a path baked into the source."""
-    scripts = [
-        f"{p.relative_to(_REPO)}:{i}: {line.strip()}"
-        for p in sorted((_REPO / "scripts").iterdir()) if p.is_file()
-        for i, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
-        if re.search(_MACHINE_PATH, line)
-    ]
-    assert not _offenders(_MACHINE_PATH) + scripts
+def test_no_machine_paths_in_tracked_files() -> None:
+    """tests:hardcoded-machine-paths, docs-vs-code:go2piper-abs-mesh-paths,
+    tests-gate-e2e:hygiene-guard-blind-to-this-machine-and-dotfiles — harness tests read
+    ~/Desktop/vector_navigation_stack, 98 /home/yusen mesh paths broke the go2+Piper
+    scene, a tracked .mcp.json named another user's checkout. No tracked file (code,
+    scripts, configs, MJCF, tests, dotfiles) names any account's home: an external
+    checkout comes from its env var (VECTOR_NAV_STACK via scripts/nav_env.sh)."""
+    assert not _tracked_offenders(_MACHINE_PATH)
+
+
+@pytest.mark.parametrize("line, hit", [
+    ('"command": "/home/yusen/Desktop/vector_os_nano/.venv/bin/python"', True),
+    ('<mesh file="/home/alice/robots/go2/base_0.obj"/>', True),
+    ("ROOT=/Users/bob/src/nav", True),
+    ('Path.home() / "Desktop" / "vector_ws"', True),
+    ("cd ~/Desktop/vector_navigation_stack", True),
+    ('GlobTool().execute({"pattern": "../home/.ssh/*"})', False),
+    ("os.path.expanduser('~/.vector/config.yaml')", False),
+])
+def test_machine_path_guard_matches_any_account(line: str, hit: bool) -> None:
+    assert bool(re.search(_MACHINE_PATH, line)) is hit
 
 
 def test_no_vacuous_tests() -> None:
@@ -124,25 +172,6 @@ def test_no_vacuous_tests() -> None:
                     and any(isinstance(v, ast.Constant) and v.value is True for v in node.test.values)):
                 bad.append(f"{p.relative_to(_REPO)}:{node.lineno}: assert ... or True")
     assert not bad, bad
-
-
-def _tracked_assets() -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files", "*.xml", "*.yaml", "*.yml", "*.urdf"],
-        cwd=_REPO, capture_output=True, text=True, check=False,
-    ).stdout.split()
-    return out or ["<no git checkout>"]
-
-
-@pytest.mark.parametrize("asset", _tracked_assets())
-def test_no_absolute_home_paths_in_committed_assets(asset: str) -> None:
-    """docs-vs-code:go2piper-abs-mesh-paths — 98 /home/yusen mesh paths made the
-    go2+Piper scene uncompilable on any other machine."""
-    if asset.startswith("<"):
-        pytest.skip("not a git checkout")
-    text = (_REPO / asset).read_text(encoding="utf-8", errors="replace")
-    hits = [ln.strip()[:120] for ln in text.splitlines() if "/home/" in ln]
-    assert not hits, f"{asset}: {len(hits)} absolute /home/ path(s), e.g. {hits[0]}"
 
 
 def test_ros_python_ahead_of_the_venv_is_detected() -> None:
