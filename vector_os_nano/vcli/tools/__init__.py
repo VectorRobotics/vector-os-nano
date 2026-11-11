@@ -35,7 +35,7 @@ def discover_all_tools() -> list:
     """
     from vector_os_nano.vcli.tools.bash_tool import BashTool
     from vector_os_nano.vcli.tools.file_tools import FileEditTool, FileReadTool, FileWriteTool
-    from vector_os_nano.vcli.tools.robot import RobotStatusTool, WorldQueryTool
+    from vector_os_nano.vcli.tools.robot import RobotStatusTool
     from vector_os_nano.vcli.tools.search_tools import GlobTool, GrepTool
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
     from vector_os_nano.vcli.tools.web_tool import WebFetchTool
@@ -52,7 +52,6 @@ def discover_all_tools() -> list:
         BashTool(),
         GlobTool(),
         GrepTool(),
-        WorldQueryTool(),
         RobotStatusTool(),
         SimStartTool(),
         SimStopTool(),
@@ -73,7 +72,7 @@ def discover_all_tools() -> list:
 _TOOL_CATEGORIES: dict[str, list[str]] = {
     "code": ["file_read", "file_write", "file_edit", "bash", "glob", "grep"],
     "general": ["web_fetch"],
-    "robot": ["world_query", "scene_graph_query", "go_to_room"],
+    "robot": ["scene_graph_query", "go_to_room"],
     "diag": ["nav_state", "terrain_status"],
     # Sim lifecycle: kept enabled even in the dev (no-robot) world so the user can
     # spin up a sim conversationally ("start the arm sim").

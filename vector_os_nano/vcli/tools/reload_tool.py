@@ -18,7 +18,7 @@ import logging
 import sys
 from typing import Any
 
-from vector_os_nano.vcli.tools.base import ToolResult, ToolContext, tool
+from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, live_agent, tool
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +47,9 @@ class SkillReloadTool:
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         skill_name: str = params["skill_name"]
 
-        # Locate skill registry — prefer app_state, fall back to agent attribute.
-        registry = None
-        if context.app_state and "skill_registry" in context.app_state:
-            registry = context.app_state["skill_registry"]
-        elif context.agent and hasattr(context.agent, "_skill_registry"):
-            registry = context.agent._skill_registry
-
+        # The live agent's registry: the one the skill tools resolve from at call time
+        # (a registry cached at REPL start goes stale after a sim switch).
+        registry = getattr(live_agent(context), "_skill_registry", None)
         if registry is None:
             return ToolResult(content="No skill registry available.", is_error=True)
 
@@ -110,6 +106,15 @@ class SkillReloadTool:
         except Exception as exc:  # noqa: BLE001
             return ToolResult(
                 content=f"Failed to re-register {skill_name}: {exc}",
+                is_error=True,
+            )
+        if registry.get(skill_name) is not new_instance:
+            return ToolResult(
+                content=(
+                    f"Reloaded {module_name}.{class_name}, but '{skill_name}' still resolves "
+                    f"to the old skill (the new class registers as "
+                    f"'{getattr(new_instance, 'name', '?')}'): the reload did not take effect."
+                ),
                 is_error=True,
             )
 

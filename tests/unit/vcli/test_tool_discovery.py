@@ -108,7 +108,7 @@ class TestDiscoverCategorizedTools:
         assert "web_fetch" not in set(categories.get("system", []))
 
     def test_categories_robot(self) -> None:
-        """'robot' category contains scene_graph_query (world_query may also be here)."""
+        """'robot' category contains scene_graph_query, the one object/scene query tool."""
         from vector_os_nano.vcli.tools import discover_categorized_tools
 
         _, categories = discover_categorized_tools()

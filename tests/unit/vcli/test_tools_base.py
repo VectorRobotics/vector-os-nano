@@ -312,7 +312,7 @@ class TestDiscoverAllTools:
             assert hasattr(tool_instance, "execute"), f"Missing execute on {tool_instance!r}"
 
     def test_known_tool_names_present(self) -> None:
-        """All eight canonical tool names are present in the returned list."""
+        """The canonical tool names are present in the returned list."""
         from vector_os_nano.vcli.tools import discover_all_tools
 
         expected_names = {
@@ -322,7 +322,6 @@ class TestDiscoverAllTools:
             "bash",
             "glob",
             "grep",
-            "world_query",
             "robot_status",
         }
         actual_names = {t.name for t in discover_all_tools()}
