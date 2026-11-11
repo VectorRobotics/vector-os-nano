@@ -17,7 +17,6 @@ from vector_os_nano.core.types import SkillResult
         "release", "let go",
         "张开", "松开", "打开",
     ],
-    direct=True,
 )
 class GripperOpenSkill:
     """Open the gripper / release held object."""
@@ -48,7 +47,6 @@ class GripperOpenSkill:
         "grip", "clench",
         "夹紧", "合上", "关闭",
     ],
-    direct=True,
 )
 class GripperCloseSkill:
     """Close the gripper."""

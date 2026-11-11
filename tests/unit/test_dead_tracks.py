@@ -95,6 +95,10 @@ _DEAD: dict[str, str] = {
     "vector_os_nano/vcli/hooks.py": "cli-entry:hooks-without-registrants, producers:hooks-never-registered",
     "vector_os_nano/vcli/turn_status.py": "the ReAct turn's live region (run_turn is gone)",
     "vector_os_nano/vcli/dynamic_prompt.py": "the ReAct turn's system prompt (run_turn is gone)",
+    # R2: the hidden mini-planner (a skill runs alone; the model sequences the rest).
+    "vector_os_nano/core/executor.py":
+        "core:auto-home-eats-tool-payload, core:diagnosis-code-lost-in-executor, core:executor-no-cancel, "
+        "core:executor-uncaught-errors, skills-manip:home-after-detect-drops-held-object",
 }
 
 # dotted modules nothing may import (or import_module) any more
@@ -116,7 +120,7 @@ _DEAD_MODULES = {
 } | {
     "vector_os_nano.vcli." + m
     for m in ("intent_router", "primitives", "eval_runner", "hooks", "turn_status", "dynamic_prompt")
-} | {"vector_os_nano.playground"}
+} | {"vector_os_nano.playground", "vector_os_nano.core.executor"}
 
 # R1: names of the deleted producer that nothing may define again (one producer).
 _DEAD_ENGINE_API = (

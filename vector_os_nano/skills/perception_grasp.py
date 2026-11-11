@@ -504,7 +504,6 @@ def _approach_and_seat(base: Any, grasp_xy: tuple[float, float]) -> bool:
         "抓", "拿", "抓起", "抓住", "抓取", "拿起", "取",
         "grab", "grasp", "pick up", "pick",
     ],
-    direct=False,
 )
 class PerceptionGraspSkill:
     """Perceive a target (VLM->EdgeTAM->depth pointcloud) and grasp it."""

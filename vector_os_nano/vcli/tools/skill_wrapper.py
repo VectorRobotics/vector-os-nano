@@ -151,25 +151,11 @@ class SkillWrapperTool:
         if isinstance(live, str):
             return ToolResult(content=live, is_error=True)
         agent, skill = live
-        params = self._coerce(params)
-        auto_steps = getattr(skill, "__skill_auto_steps__", None)
-        if auto_steps:
-            # Multi-step skill (e.g. pick = scan->detect->pick): run through the
-            # agent so the auto_steps prerequisites execute. Returns ExecutionResult.
-            result = agent.execute_skill(self.name, params)
-        else:
-            skill_ctx = agent._build_context()
-            result = skill.execute(params, skill_ctx)
+        result = skill.execute(self._coerce(params), agent._build_context())
         agent._sync_robot_state()
 
         # A copy: the skill's own (frozen) result is never mutated.
         result_data: dict[str, Any] = dict(getattr(result, "result_data", None) or {})
-        if not result_data:
-            # auto_steps skills return an ExecutionResult; the skill's own
-            # output lives in the last trace step, not on the top-level result.
-            _trace = getattr(result, "trace", None)
-            if _trace:
-                result_data = dict(getattr(_trace[-1], "result_data", None) or {})
 
         if result.success:
             content = f"Skill '{self.name}' succeeded."
@@ -189,11 +175,7 @@ class SkillWrapperTool:
             return ToolResult(content=content, metadata=result_data)
 
         # Failure with diagnosis + recovery hint
-        error_msg = (
-            getattr(result, "error_message", None)
-            or getattr(result, "failure_reason", None)
-            or f"Skill '{self.name}' failed."
-        )
+        error_msg = result.error_message or f"Skill '{self.name}' failed."
         diag = getattr(result, "diagnosis_code", None) or result_data.get("diagnosis")
         if diag:
             error_msg += f" ({diag})"

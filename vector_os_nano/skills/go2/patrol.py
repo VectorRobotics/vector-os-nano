@@ -128,7 +128,6 @@ def _extract_description(look_result: SkillResult) -> str:
         "check all rooms",
         "检查所有房间",
     ],
-    direct=False,
 )
 class PatrolSkill:
     """Patrol all rooms in the house, navigating to each and describing what is seen."""

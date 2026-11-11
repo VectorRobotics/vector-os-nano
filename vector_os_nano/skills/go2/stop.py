@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 @skill(
     aliases=["stop", "停", "停下", "halt", "freeze", "别动", "停止"],
-    direct=True,
 )
 class StopSkill:
     """Emergency stop -- immediately halt all movement."""

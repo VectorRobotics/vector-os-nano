@@ -18,14 +18,13 @@ import logging
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.skills.scan import scan_first
 
 logger = logging.getLogger(__name__)
 
 
 @skill(
     aliases=["describe", "what do you see", "看到什么", "描述", "有什么", "桌上有什么", "识别一下"],
-    direct=False,
-    auto_steps=["scan", "describe"],
 )
 class DescribeSkill:
     """Capture camera frame and use VLM to describe the scene.
@@ -64,6 +63,9 @@ class DescribeSkill:
                 error_message="No perception backend available",
                 result_data={"diagnosis": "no_perception"},
             )
+        scan_failed = scan_first(context, "describe")
+        if scan_failed is not None:
+            return scan_failed
 
         question: str = params.get("question", "").strip()
 

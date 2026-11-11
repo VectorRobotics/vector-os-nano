@@ -381,7 +381,6 @@ def _exploration_loop(base: Any) -> None:
         "explore", "探索", "自主探索",
         "explore the house", "look around", "四处看看",
     ],
-    direct=False,
 )
 class ExploreSkill:
     """Explore the house (coverage tour by default; TARE when our stack runs)."""

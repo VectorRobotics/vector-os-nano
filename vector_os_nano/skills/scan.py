@@ -24,7 +24,6 @@ _SCAN_DURATION: float = 3.0
 
 @skill(
     aliases=["look", "observe", "看看", "扫描", "看一下"],
-    direct=True,
 )
 class ScanSkill:
     """Move arm to scan position for workspace observation.
@@ -118,3 +117,19 @@ class ScanSkill:
             success=True,
             result_data={"joint_values": list(scan_joints), "diagnosis": "ok"},
         )
+
+
+def scan_first(context: SkillContext, caller: str) -> SkillResult | None:
+    """The scan prerequisite of a perceiving skill: the arm moves out of the camera's
+    view before it looks. None when the arm reached the scan pose (or there is no arm),
+    else the caller's own failure naming the phase."""
+    if context.arm is None:
+        return None
+    scan = ScanSkill().execute({}, context)
+    if scan.success:
+        return None
+    return SkillResult(
+        success=False,
+        error_message=f"{caller}: moving to the scan pose failed: {scan.error_message}",
+        result_data={**scan.result_data, "phase": "scan"},
+    )

@@ -8,7 +8,6 @@ This is the ONE class users interact with. It wires together:
 - Perception pipeline
 - Skill registry
 - World model
-- Task executor
 """
 from __future__ import annotations
 
@@ -16,9 +15,8 @@ import logging
 from typing import Any
 
 from vector_os_nano.core.config import load_config
-from vector_os_nano.core.executor import TaskExecutor
 from vector_os_nano.core.skill import Skill, SkillContext, SkillRegistry
-from vector_os_nano.core.types import ExecutionResult
+from vector_os_nano.core.types import SkillResult
 from vector_os_nano.core.world_model import WorldModel
 
 logger = logging.getLogger(__name__)
@@ -132,9 +130,6 @@ class Agent:
             for skill in skills:
                 self._skill_registry.register(skill)
 
-        # ---- Executor -------------------------------------------------------
-        self._executor = TaskExecutor()
-
         # ---- Lazy-init state ------------------------------------------------
         self._ik_solver: Any = None
         self._calibration: Any = None
@@ -206,94 +201,21 @@ class Agent:
         if self._perception is not None and hasattr(self._perception, "disconnect"):
             self._perception.disconnect()
 
-    def execute_skill(
-        self,
-        skill_name: str,
-        params: dict | None = None,
-        on_message: Any = None,
-        on_step: Any = None,
-        on_step_done: Any = None,
-    ) -> ExecutionResult:
-        """Execute a skill directly with structured parameters.
+    def execute_skill(self, skill_name: str, params: dict | None = None) -> SkillResult:
+        """Run ONE registered skill with structured parameters and return its own result.
 
-        Bypasses string parsing and alias matching — ideal for MCP tool calls
-        where params are already structured (e.g., object_label, mode).
-
-        If the skill has auto_steps, builds a plan with the correct params
-        for each step. Otherwise executes the single skill directly.
+        No plan, no prerequisite expansion, nothing appended: a skill that needs a
+        prerequisite calls it itself, and the caller (the model) sequences the rest.
         """
-        from vector_os_nano.core.types import TaskPlan, TaskStep
-
-        params = params or {}
         skill_obj = self._skill_registry.get(skill_name)
         if skill_obj is None:
-            return ExecutionResult(
-                success=False, status="failed",
-                failure_reason=f"Unknown skill: {skill_name}",
+            return SkillResult(
+                success=False,
+                error_message=f"Unknown skill: {skill_name}",
+                result_data={"diagnosis": "unknown_skill"},
             )
-
-        # Determine object query from params (for detect step in auto_steps)
-        object_query = (
-            params.get("object_label")
-            or params.get("object_id")
-            or params.get("query")
-            or ""
-        )
-
-        # Build steps: use auto_steps if available, otherwise single skill
-        raw_auto = getattr(skill_obj, "__skill_auto_steps__", [])
-        auto_steps = list(raw_auto) if raw_auto else [skill_name]
-        steps = []
-        for i, step_skill in enumerate(auto_steps):
-            step_params: dict = {}
-            if step_skill == skill_name:
-                # Pass ALL original params to the target skill
-                step_params = dict(params)
-            elif step_skill == "detect" and object_query:
-                # Pass specific query to detect step so VLM returns matching labels.
-                # "all objects" causes label mismatches in world model fallback.
-                step_params = {"query": object_query}
-            steps.append(TaskStep(
-                step_id=f"s{i+1}",
-                skill_name=step_skill,
-                parameters=step_params,
-                depends_on=[f"s{i}"] if i > 0 else [],
-                preconditions=[],
-                postconditions=[],
-            ))
-
-        # Add home at end if not already there — but NOT when:
-        # - pick mode='hold' (HomeSkill opens gripper, would drop held object)
-        # - gripper_close / gripper_open (HomeSkill opens gripper, overrides state)
-        # - home itself
-        skip_home = (
-            (skill_name == "pick" and params.get("mode") == "hold")
-            or skill_name in ("gripper_close", "gripper_open", "home")
-        )
-        if not skip_home and (not steps or steps[-1].skill_name != "home"):
-            steps.append(TaskStep(
-                step_id=f"s{len(steps)+1}",
-                skill_name="home",
-                parameters={},
-                depends_on=[f"s{len(steps)}"],
-                preconditions=[],
-                postconditions=[],
-            ))
-
-        goal = f"{skill_name} {object_query}".strip()
-        plan = TaskPlan(goal=goal, steps=steps)
-
-        if on_message:
-            step_names = [s.skill_name for s in steps]
-            on_message(f"Executing: {' → '.join(step_names)}")
-
-        context = self._build_context()
-        result = self._executor.execute(
-            plan, self._skill_registry, context,
-            on_step=on_step, on_step_done=on_step_done,
-        )
+        result = skill_obj.execute(dict(params or {}), self._build_context())
         self._sync_robot_state()
-
         return result
 
     def register_skill(self, skill: Skill) -> None:

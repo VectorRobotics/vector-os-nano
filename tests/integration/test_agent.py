@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from vector_os_nano.core.types import TaskPlan, TaskStep, SkillResult
+from vector_os_nano.core.types import SkillResult
 from vector_os_nano.core.skill import Skill, SkillContext, SkillRegistry
 from vector_os_nano.core.world_model import WorldModel
 

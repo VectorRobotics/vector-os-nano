@@ -20,8 +20,6 @@ def test_to_schemas_includes_failure_modes():
         effects = {}
         failure_modes = ["no_arm", "ik_unreachable"]
         __skill_aliases__ = []
-        __skill_direct__ = False
-        __skill_auto_steps__ = []
 
         def execute(self, params, context):
             pass
@@ -46,8 +44,6 @@ def test_to_schemas_omits_empty_failure_modes():
         effects = {}
         failure_modes = []
         __skill_aliases__ = []
-        __skill_direct__ = False
-        __skill_auto_steps__ = []
 
         def execute(self, params, context):
             pass
@@ -70,8 +66,6 @@ def test_to_schemas_backward_compat_no_failure_modes():
         effects = {}
         # No failure_modes attribute!
         __skill_aliases__ = []
-        __skill_direct__ = False
-        __skill_auto_steps__ = []
 
         def execute(self, params, context):
             pass

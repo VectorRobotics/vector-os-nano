@@ -7,8 +7,9 @@ Each skill declares (the model routes by the skill's description; nothing matche
 user text against these):
 - aliases: words/phrases for it (Chinese + English); the stop skill's are the P0
   stop phrases
-- direct: unread (no keyword router remains)
-- auto_steps: default skill chain for common patterns (e.g. scan→detect→pick)
+- actuates: whether it moves the robot
+
+A skill that needs a prerequisite calls it itself; the model sequences the rest.
 """
 from __future__ import annotations
 
@@ -31,8 +32,6 @@ def skill(
     cls=None,
     *,
     aliases: list[str] | None = None,
-    direct: bool = False,
-    auto_steps: list[str] | None = None,
     actuates: bool = True,
 ):
     """Decorator that marks a class as a skill with routing metadata.
@@ -40,9 +39,6 @@ def skill(
     Args:
         aliases: Words/phrases for this skill (multi-language); the stop skill's
                  are the P0 stop phrases.
-        direct: Unread since the keyword router was deleted.
-        auto_steps: Default skill chain. E.g. ["scan", "detect", "pick"]
-                    means this skill auto-expands to that sequence.
         actuates: Whether the skill moves the robot (base, arm, gripper). Fail
                   closed: an undeclared skill actuates. A read-only perception /
                   status skill declares ``actuates=False``. Actuating skills are
@@ -50,29 +46,19 @@ def skill(
 
     Example::
 
-        @skill(aliases=["grab", "抓", "拿"], auto_steps=["scan", "detect", "pick"])
-        class PickSkill:
-            name = "pick"
-            description = "Pick up an object"
-            ...
-
-        @skill(aliases=["close", "grip", "夹紧"], direct=True)
+        @skill(aliases=["close", "grip", "夹紧"])
         class GripperCloseSkill:
             name = "gripper_close"
             ...
     """
     def wrapper(cls):
         cls.__skill_aliases__ = aliases or []
-        cls.__skill_direct__ = direct
-        cls.__skill_auto_steps__ = auto_steps or []
         cls.__skill_actuates__ = bool(actuates)
         return cls
 
     if cls is not None:
         # Called without arguments: @skill
         cls.__skill_aliases__ = []
-        cls.__skill_direct__ = False
-        cls.__skill_auto_steps__ = []
         cls.__skill_actuates__ = True
         return cls
 
@@ -297,12 +283,11 @@ class SkillRegistry:
     def to_schemas(self) -> list[dict]:
         """Serialize all skill schemas for LLM planner context.
 
-        Includes aliases, auto_steps, and failure_modes metadata for richer LLM context.
+        Includes aliases and failure_modes metadata for richer LLM context.
         """
         schemas: list[dict] = []
         for s in self._skills.values():
             aliases = getattr(s, '__skill_aliases__', [])
-            auto = getattr(s, '__skill_auto_steps__', [])
             failure_modes = getattr(s, 'failure_modes', [])
             schema = {
                 "name": s.name,
@@ -318,8 +303,6 @@ class SkillRegistry:
             }
             if aliases:
                 schema["aliases"] = aliases
-            if auto:
-                schema["auto_steps"] = auto
             if failure_modes:
                 schema["failure_modes"] = failure_modes
             schemas.append(schema)

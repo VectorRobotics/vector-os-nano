@@ -44,7 +44,6 @@ class TestStopSkill:
     def test_metadata(self):
         s = StopSkill()
         assert s.name == "stop"
-        assert s.__skill_direct__ is True
         assert "stop" in s.__skill_aliases__
         assert "停" in s.__skill_aliases__
         assert "halt" in s.__skill_aliases__
@@ -200,9 +199,6 @@ class TestExploreSkillMetadata:
         assert "探索" in aliases
         assert "look around" in aliases
         assert "四处看看" in aliases
-
-    def test_not_direct(self):
-        assert ExploreSkill.__skill_direct__ is False
 
     def test_only_parameter_is_the_backend(self):
         params = ExploreSkill().parameters

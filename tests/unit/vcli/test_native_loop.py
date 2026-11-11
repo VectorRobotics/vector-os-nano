@@ -75,7 +75,7 @@ class _FakeBase:
 
 
 class _FakeWalkSkill:
-    """Minimal Skill-protocol walk: drives base.walk, no auto_steps."""
+    """Minimal Skill-protocol walk: drives base.walk."""
 
     name = "walk"
     description = "Walk the quadruped forward by a given distance (moves the base)."

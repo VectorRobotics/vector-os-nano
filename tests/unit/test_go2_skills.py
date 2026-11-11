@@ -107,7 +107,6 @@ class TestStanceSkills:
         from vector_os_nano.skills.go2.stance import StandSkill
         ctx = _make_go2_context()
         skill = StandSkill()
-        assert skill.__class__.__skill_direct__  # direct skill
         result = skill.execute({}, ctx)
         assert result.success
         ctx.base.stand.assert_called_once()
@@ -116,7 +115,6 @@ class TestStanceSkills:
         from vector_os_nano.skills.go2.stance import SitSkill
         ctx = _make_go2_context()
         skill = SitSkill()
-        assert skill.__class__.__skill_direct__
         result = skill.execute({}, ctx)
         assert result.success
         ctx.base.sit.assert_called_once()
@@ -125,7 +123,6 @@ class TestStanceSkills:
         from vector_os_nano.skills.go2.stance import LieDownSkill
         ctx = _make_go2_context()
         skill = LieDownSkill()
-        assert skill.__class__.__skill_direct__
         result = skill.execute({}, ctx)
         assert result.success
         ctx.base.lie_down.assert_called_once()

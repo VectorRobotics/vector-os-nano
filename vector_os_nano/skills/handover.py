@@ -31,7 +31,6 @@ _DEFAULT_HOME_JOINTS: list[float] = [-0.014, -1.238, 0.562, 0.858, 0.311]
 
 @skill(
     aliases=["give", "hand over", "给我", "递给我", "给", "拿给我", "交给我"],
-    direct=False,
 )
 class HandoverSkill:
     """Hand a held object to the user by rotating and releasing.

@@ -31,7 +31,6 @@ _PAUSE: float = 0.15
 
 @skill(
     aliases=["wave", "hello", "hi", "greet", "招手", "打招呼", "挥手", "你好"],
-    direct=True,
 )
 class WaveSkill:
     """Wave the robot arm to greet the user."""

@@ -50,7 +50,6 @@ _DEFAULT_SPEED: float = 0.3      # m/s
 
 @skill(
     aliases=["walk", "go", "move", "走", "走路", "往前走", "前进", "后退"],
-    direct=False,
 )
 class WalkSkill:
     """Move the Go2 quadruped in a given direction for a given distance."""

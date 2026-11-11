@@ -16,6 +16,7 @@ import time
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.core.world_model import ObjectState
+from vector_os_nano.skills.scan import scan_first
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,6 @@ _GENERIC_QUERIES: frozenset[str] = frozenset({"all objects", "all", "objects", "
 
 @skill(
     aliases=["find", "search", "检测", "识别", "找一下"],
-    direct=False,
-    auto_steps=["scan", "detect"],
 )
 class DetectSkill:
     """Detect objects using VLM + depth for 3D positions.
@@ -71,6 +70,9 @@ class DetectSkill:
                 error_message="No perception backend available",
                 result_data={"diagnosis": "no_perception"},
             )
+        scan_failed = scan_first(context, "detect")
+        if scan_failed is not None:
+            return scan_failed
 
         query: str = params.get("query", "all objects")
         logger.info("[DETECT] Running detection for query: %r", query)

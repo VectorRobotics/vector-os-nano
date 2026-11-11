@@ -83,7 +83,6 @@ _LIFT_DURATION: float = 2.0
 
 @skill(
     aliases=["put", "drop", "放", "放下", "放到", "放置", "put down"],
-    direct=False,
 )
 class PlaceTopDownSkill:
     """Release a held object at a target location using a top-down drop.

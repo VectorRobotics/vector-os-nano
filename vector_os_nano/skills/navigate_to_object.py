@@ -68,7 +68,6 @@ def _accept_object_name(params: dict) -> str:
         "navigate to object",
         "go to object",
     ],
-    direct=False,
 )
 class NavigateToObjectSkill:
     """Navigate the robot to the vicinity of a known object, by name.

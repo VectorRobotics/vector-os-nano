@@ -53,7 +53,6 @@ _DEFAULT_HOME_JOINTS: list[float] = [-0.014, -1.238, 0.562, 0.858, 0.311]
 
 @skill(
     aliases=["put", "put down", "放", "放下", "放到", "放置", "放在"],
-    direct=False,
 )
 class PlaceSkill:
     """Place a held object at a named location or coordinates.

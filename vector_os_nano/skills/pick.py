@@ -35,6 +35,7 @@ import numpy as np
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.skills.calibration import camera_to_base, load_calibration
+from vector_os_nano.skills.scan import scan_first
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +88,6 @@ SIM_PICK_CONFIG: dict = {"hardware_offsets": False, "z_offset": 0.0}
 
 @skill(
     aliases=["grab", "grasp", "take", "抓", "拿", "抓起", "抓住", "抓取", "拿起", "取"],
-    direct=False,
-    auto_steps=["scan", "detect", "pick"],
 )
 class PickSkill:
     """Pick up an object from the workspace.
@@ -154,9 +153,8 @@ class PickSkill:
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Execute pick with retry logic.
 
-        On failure between retries the arm returns to home before the next
-        attempt.  The world model is NOT updated on success — the executor
-        calls world_model.apply_skill_effects() after execute() returns.
+        Every attempt starts at the scan pose (pick's own prerequisite: the arm is
+        out of the camera's view before it looks); at least one attempt runs.
 
         Args:
             params: optional object_id or object_label.
@@ -173,19 +171,16 @@ class PickSkill:
                 result_data={"diagnosis": "no_arm"},
             )
 
-        max_retries: int = (
+        max_retries = max(1, int(
             context.config.get("skills", {}).get("pick", {}).get("max_retries", _DEFAULT_MAX_RETRIES)
-        )
-        home_joints: list[float] = (
-            context.config.get("skills", {}).get("home", {}).get("joint_values", _DEFAULT_HOME_JOINTS)
-        )
+        ))
 
         last_error: str = "unknown error"
         last_diagnosis: str = "unknown"
         last_result_data: dict = {}
         for attempt in range(1, max_retries + 1):
             logger.info("[PICK] Attempt %d/%d", attempt, max_retries)
-            result = self._single_pick_attempt(params, context)
+            result = scan_first(context, "pick") or self._single_pick_attempt(params, context)
             if result.success:
                 return result
             last_error = result.error_message
@@ -199,11 +194,6 @@ class PickSkill:
             if last_diagnosis in _NO_RETRY_DIAGNOSES:
                 logger.info("[PICK] %s — target not detectable; not retrying", last_diagnosis)
                 break
-
-            if attempt < max_retries:
-                logger.info("[PICK] Returning home for retry ...")
-                context.arm.move_joints(home_joints, duration=_HOME_DURATION)
-                time.sleep(1.0)
 
         # Merge retry metadata into the last attempt's result_data so callers
         # can inspect both the failure diagnosis and retry statistics.

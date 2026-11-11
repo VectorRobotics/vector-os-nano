@@ -20,7 +20,6 @@ _HOME_DURATION: float = 3.0
 
 @skill(
     aliases=["go home", "reset", "回家", "归位", "复位", "回到初始位置"],
-    direct=True,
 )
 class HomeSkill:
     """Move arm to home position and open gripper.

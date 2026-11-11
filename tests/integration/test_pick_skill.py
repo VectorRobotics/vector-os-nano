@@ -333,6 +333,15 @@ class TestPickRetryOnFailure:
         assert not result.success
         assert "1" in result.error_message or "attempt" in result.error_message.lower()
 
+    def test_zero_max_retries_still_makes_one_attempt(self):
+        """skills-manip:pick-retry-unbound: max_retries=0 raised UnboundLocalError."""
+        arm = MockArm()
+        arm.move_return = False
+        ctx = make_context(arm=arm, world_model=self.wm,
+                           config={"skills": {"pick": {"max_retries": 0}}})
+        result = self.skill.execute({"object_id": "cup_0"}, ctx)
+        assert not result.success and result.result_data["attempts"] == 1
+
 
 # ---------------------------------------------------------------------------
 # test_pick_ik_failure

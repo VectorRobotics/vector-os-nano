@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 @skill(
     aliases=["stand", "站", "站起来", "起立"],
-    direct=True,
 )
 class StandSkill:
     """Command the Go2 to stand up from any posture."""
@@ -65,7 +64,6 @@ class StandSkill:
 
 @skill(
     aliases=["sit", "坐", "坐下"],
-    direct=True,
 )
 class SitSkill:
     """Command the Go2 to sit down."""
@@ -112,7 +110,6 @@ class SitSkill:
 
 @skill(
     aliases=["lie down", "lie", "趴", "趴下", "躺下"],
-    direct=True,
 )
 class LieDownSkill:
     """Command the Go2 to lie down (prone posture)."""

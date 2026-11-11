@@ -125,7 +125,6 @@ def _normalise_color_keyword(label: str) -> str | None:
         "grab", "grasp", "take", "pick",
         "抓", "拿", "抓起", "抓住", "抓取", "拿起", "取",
     ],
-    direct=False,
 )
 class PickTopDownSkill:
     """Top-down grasp with the Piper arm on Go2. See module docstring."""

@@ -41,7 +41,6 @@ def normalize_direction(value: object, aliases: dict[str, str]) -> str | None:
 
 @skill(
     aliases=["turn", "rotate", "转", "转弯", "转向", "左转", "右转"],
-    direct=False,
 )
 class TurnSkill:
     """Rotate the Go2 quadruped left or right by a given angle."""
