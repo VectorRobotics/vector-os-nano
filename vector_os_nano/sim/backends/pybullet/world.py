@@ -187,7 +187,6 @@ class PyBulletWorld:
         self._build_actuation()
         self._build_collision_filter()
         self._constraints: dict[int, tuple[int, int]] = {}   # child -> (parent, constraint id)
-        self._contacts: dict[int, frozenset[int]] | None = None
         self._qref: dict[int, np.ndarray] = {}  # free joint -> last quaternion published or written
         self.reset(m.qpos0)
 
@@ -420,13 +419,15 @@ class PyBulletWorld:
         ]
 
     def _build_collision_filter(self) -> None:
-        """MuJoCo's never-collide pairs (same weld, weld parent, <exclude>) as pair filters."""
-        places: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        """MuJoCo's never-collide pairs (same weld, weld parent, <exclude>) as pair filters
+        for stepping, and kept as ``_apart`` for contacts()."""
+        self._places: dict[int, list[tuple[int, int]]] = defaultdict(list)  # canonical body -> its Bullet shapes
         for (uid, link), b in self._body_at.items():
-            places[b].append((uid, link))
-        for a, b in reader.no_collide_pairs(self.scene.model):
-            for ua, la in places[a]:
-                for ub, lb in places[b]:
+            self._places[b].append((uid, link))
+        self._apart = reader.no_collide_pairs(self.scene.model)
+        for a, b in self._apart:
+            for ua, la in self._places[a]:
+                for ub, lb in self._places[b]:
                     if a in self._link or b in self._link:  # two static bodies never collide anyway
                         self._p.setCollisionFilterPair(ua, ub, la, lb, 0)
 
@@ -448,7 +449,6 @@ class PyBulletWorld:
                 self._apply_forces()
                 p.stepSimulation()
                 self._steps += 1
-        self._contacts = None
 
     def _apply_forces(self) -> None:
         """Re-issued before every physics step: Bullet clears torques and forces after one."""
@@ -524,7 +524,6 @@ class PyBulletWorld:
             for a in self._motor.values():
                 self._ctrl[a.id] = 0.0
             p.performCollisionDetection()
-        self._contacts = None
 
     # -- actuation -----------------------------------------------------------
 
@@ -555,18 +554,22 @@ class PyBulletWorld:
     # -- contact and attachment ----------------------------------------------
 
     def contacts(self, body: int) -> frozenset[int]:
-        if self._contacts is None:
-            pairs: dict[int, set[int]] = defaultdict(set)
-            with self._lock:
-                points = self._p.getContactPoints()
-            for c in points:
-                if c[8] <= CONTACT_DISTANCE_M:
-                    a, b = self._body_at[(c[1], c[3])], self._body_at[(c[2], c[4])]
-                    if a != b:
-                        pairs[a].add(b)
-                        pairs[b].add(a)
-            self._contacts = {k: frozenset(v) for k, v in pairs.items()}
-        return self._contacts.get(int(body), frozenset())
+        # A distance query over the shapes whose broadphase boxes come within the threshold,
+        # not getContactPoints: Bullet keeps a separated point only inside its per-shape
+        # breaking threshold, under 1 mm for small shapes (a 2 cm cylinder reads nothing at
+        # 0.2 mm). getClosestPoints ignores the collision filter, so MuJoCo's never-collide
+        # pairs are dropped here. Stepping is untouched.
+        body, p, out = int(body), self._p, set()
+        with self._lock:
+            for ua, la in self._places.get(body, ()):
+                lo, hi = p.getAABB(ua, la)
+                near = p.getOverlappingObjects([v - CONTACT_DISTANCE_M for v in lo], [v + CONTACT_DISTANCE_M for v in hi])
+                for ub, lb in near or ():
+                    b = self._body_at[(ub, lb)]
+                    if (b != body and b not in out and (min(b, body), max(b, body)) not in self._apart
+                            and p.getClosestPoints(ua, ub, CONTACT_DISTANCE_M, la, lb)):
+                        out.add(b)
+        return frozenset(out)
 
     def _com(self, body: int) -> tuple[list[float], list[float]]:
         uid, link = self._link[body]
