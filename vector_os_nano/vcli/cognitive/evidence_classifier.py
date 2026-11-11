@@ -13,12 +13,23 @@ The grammar is an ALLOWLIST — anything not listed is RAN:
 - a bare PREDICATE-oracle call with literal arguments (``at_position(2.0, 0.0)``,
   ``holding_object('banana')``, ``arm_at_home()``);
 - ``<predicate>(...) == True``;
-- ``<term> <op> <literal>`` (either order, one comparison) where *term* is a STATE
-  oracle call, an index of one (``get_position()[0]``) or ``len()`` of one, and op is
+- ``<term> <op> <literal>`` (either order, one comparison) where *term* is a
+  GOAL-BEARING STATE oracle call (one with a literal argument that names the goal:
+  ``grep_count('TODO', 'a.py')``), an index of one or ``len()`` of one, and op is
   ``==`` or an ordering against a number — except the vacuous lower bounds
-  ``>= c`` (c <= 0) / ``> c`` (c < 0) that every count satisfies;
-- ``'<non-empty literal>' in <state oracle call>``;
-- ``and`` / ``or`` of grounded parts.
+  ``>= c`` (c <= 0) / ``> c`` (c < 0) that every count satisfies, any compare a
+  COUNT (``len()`` or a count oracle) satisfies at its fail-safe 0
+  (``grep_count('x', '.') <= 1e9``), and any bound that holds over a ranged oracle's
+  whole domain;
+- ``'<non-empty literal>' in <goal-bearing state oracle call>``;
+- ``and`` of grounded parts.
+
+A bare state READ (``get_position()``, ``get_heading()``: no argument) names no goal,
+so no compare on it grounds (``get_position()[0] < 1000`` is true almost anywhere,
+``get_heading() > -10`` everywhere); the goal-bearing predicate (``at_position``,
+``facing``) is the evidence. A disjunction never grounds: ``or`` hedges between goals
+(``in_room('a') or in_room('kitchen')``, arcs or discs that cover the whole domain),
+and the spine cannot tell which disjunct was the task.
 
 Rejected by construction: value-absorbing wrappers (``|``, ``*0``, ``max``/``min``/
 ``abs``/``bool``…), ``is`` / ``is not``, ``!=``, ``not in``, ``not``, a bool predicate
@@ -29,13 +40,13 @@ value), and a literal tolerance above its cap (``at_position(0, 0, 1e6)``, FG-3)
 
 SCOPE (honest — do not overclaim): this is STRUCTURAL. It does not prove the literal
 is the TASK's goal (coord_goal / object_goal turn gates do that for coordinate and
-grasp goals), nor that the actor caused the state (actor_causation), nor catch a
-shape-trivial compare (``len(get_position()) == 3``) — that needs oracle return-type
-metadata.
+grasp goals; the task contract for fetch / place too), nor that the actor caused the
+state (actor_causation).
 """
 from __future__ import annotations
 
 import ast
+import math
 from typing import Literal
 
 from vector_os_nano.vcli.cognitive.coord_goal import (
@@ -77,8 +88,14 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
 # on a bool is a tautology or a negation), and it is never a state term.
 # Every ``@oracle``-tagged ``-> bool`` callable MUST be here, else it gets the looser
 # state rules; test_spine_moat_corpus scans the tags and fails on drift.
-# ponytail: kernel lists until the @oracle tag grows a return kind.
+# ponytail: these lists copy the @oracle(domain=...) tags because the classifier gets
+# only names, not the live OracleTags; test_spine_moat_corpus pins tag == list. Read
+# the tags directly once classify_verify_expr takes the oracle dict.
 _BOOL_ORACLES: frozenset[str] = _PREDICATE_ORACLES
+# Return domains of the non-bool oracles (``@oracle(domain=...)``; test_spine_moat_corpus
+# pins tag == table). A count is >= 0 and 0 is its fail-safe value; a range is closed.
+_COUNT_ORACLES: frozenset[str] = frozenset({"grep_count"})
+_RANGE_ORACLES: dict[str, tuple[float, float]] = {"get_heading": (-math.pi, math.pi)}
 
 # Tolerance-taking predicates: positional index of ``tol`` and its cap (the cap the
 # oracle clamps to = its ``@oracle(max_tol=...)``). A literal tol above the cap, or a
@@ -170,6 +187,22 @@ def _state_term(node: ast.AST, oracle_names: frozenset[str]) -> bool:
     )
 
 
+def _term_domain(node: ast.AST, oracle_names: frozenset[str]) -> object:
+    """``"count"`` for ``len(<state>)`` or a count oracle, the ``(lo, hi)`` of a ranged
+    oracle, else None (unbounded / unknown)."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len":
+        return "count"
+    name = _oracle_call(node, oracle_names)
+    if name in _COUNT_ORACLES:
+        return "count"
+    return _RANGE_ORACLES.get(name or "")
+
+
+def _holds(op: ast.cmpop, value: float, bound: float) -> bool:
+    return {ast.Eq: value == bound, ast.Lt: value < bound, ast.LtE: value <= bound,
+            ast.Gt: value > bound, ast.GtE: value >= bound}[type(op)]
+
+
 def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
     if len(node.ops) != 1:
         return False  # chained compares
@@ -180,6 +213,7 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
             _literal(lit)
             and not (isinstance(lit, ast.Constant) and lit.value == "")
             and _state_call(right, oracle_names)
+            and _goal_bearing(right)
         )
     if not isinstance(op, (ast.Eq, *_ORDERING)):
         return False  # is / is not / != / not in: satisfied by almost anything
@@ -193,11 +227,17 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
         # A bool oracle: only `== True` (the bare call); `== False` is a negation
         # and an ordering on a bool is a tautology for some constant.
         return isinstance(op, ast.Eq) and isinstance(right, ast.Constant) and right.value is True
-    if not _state_term(left, oracle_names):
+    if not (_state_term(left, oracle_names) and _goal_bearing(left)):
         return False
+    bound = _number(right)
+    domain = _term_domain(left, oracle_names)
+    if domain == "count" and bound is not None and _holds(op, 0.0, bound):
+        return False  # the fail-safe 0 satisfies it: an upper bound / `== 0` proves nothing
+    if isinstance(domain, tuple) and bound is not None and not isinstance(op, ast.Eq) \
+            and _holds(op, domain[0], bound) and _holds(op, domain[1], bound):
+        return False  # true over the oracle's whole domain
     if isinstance(op, ast.Eq):
         return True
-    bound = _number(right)
     if bound is None:
         return False  # an ordering against a non-number
     if isinstance(op, ast.GtE) and bound <= 0 or isinstance(op, ast.Gt) and bound < 0:
@@ -205,10 +245,27 @@ def _grounded_compare(node: ast.Compare, oracle_names: frozenset[str]) -> bool:
     return True
 
 
+def _goal_bearing(term: ast.AST) -> bool:
+    """The state oracle call under *term* (the call, ``call[i]`` or ``len(call)``)
+    names its goal with a literal argument; a bare read (``get_position()``) does not."""
+    if isinstance(term, ast.Subscript):
+        term = term.value
+    elif isinstance(term, ast.Call) and isinstance(term.func, ast.Name) and term.func.id == "len":
+        term = term.args[0]
+    return isinstance(term, ast.Call) and bool(term.args or term.keywords)
+
+
+def _hedge(node: ast.AST) -> bool:
+    """A disjunction: it hedges between goals, so it never grounds."""
+    return isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)
+
+
 def _is_grounded_node(node: ast.AST, oracle_names: frozenset[str]) -> bool:
     """True iff *node*'s truth is decided by an oracle value against an author
     literal, with nothing that can absorb or invert it (see the module grammar)."""
     if isinstance(node, ast.BoolOp):
+        if _hedge(node):
+            return False
         return bool(node.values) and all(_is_grounded_node(v, oracle_names) for v in node.values)
     if isinstance(node, ast.Compare):
         return _grounded_compare(node, oracle_names)

@@ -114,8 +114,9 @@ class PickSkill:
     # is never falsely marked timeout under a live MuJoCo viewer (R2-2).
     typical_duration_sec: float = 45.0
     # Success predicate this skill is verified against (single-source for the
-    # planner; kernel rules 3 + 5). References the arm verify namespace.
-    verify_hint: str = "holding_object()"
+    # planner; kernel rules 3 + 5), bound from the call's object_label by the native
+    # runner. References the arm verify namespace.
+    verify_hint: str = "holding_object({object_label})"
     parameters: dict = {
         "object_id": {
             "type": "string",

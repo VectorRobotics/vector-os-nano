@@ -19,10 +19,7 @@ from __future__ import annotations
 import pytest
 
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
-from vector_os_nano.vcli.cognitive.object_goal import (
-    goal_has_object_intent,
-    has_necessary_manip_oracle,
-)
+from vector_os_nano.vcli.cognitive.object_goal import goal_intents, has_necessary_manip_oracle
 from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
@@ -65,14 +62,14 @@ _DEV_ORACLES = frozenset({"file_exists", "path_contains"})
         ("导航到客厅", False),
         ("explore the room", False),
         ("detect the red object", False),
-        ("把两个放到盒子里", False),           # place-only, no grasp verb
+        ("把两个放到盒子里", True),            # place is a manipulation intent too (WP07)
         ("turn left", False),
         ("", False),
         (None, False),
     ],
 )
-def test_goal_has_object_intent(goal, expected) -> None:
-    assert goal_has_object_intent(goal) is expected
+def test_goal_intents_name_a_manipulation(goal, expected) -> None:
+    assert bool(goal_intents(goal)) is expected
 
 
 @pytest.mark.parametrize(
@@ -82,6 +79,7 @@ def test_goal_has_object_intent(goal, expected) -> None:
         ("holding_object()", True),
         ("holding_object('banana') and arm_at_home()", True),  # and-conjunct gates
         ("placed_count() == 1", False),                         # a placement never proves a grasp
+        ("released('banana')", False),
         ("object_on('banana', 'tray')", False),
         ("lifted('banana')", True),                             # held clear of its support
         ("kept_holding('banana') and near_object('user')", True),
@@ -193,8 +191,8 @@ def test_release_negation_is_not_grounded() -> None:
 @pytest.mark.parametrize(
     "goal, verify, strategy, actor, oracles",
     [
-        # place-only goal (no grasp word) — gate fails open, unchanged
-        ("把两个放到盒子里", "placed_count() == 2", "place", ActorCaused.NOT_GRADED, _ARM_ORACLES),
+        # place-only goal proven by a placement (D69: a placement proves a place)
+        ("把两个放到盒子里", "object_on('banana', 'tray')", "place", ActorCaused.CAUSED, _ARM_ORACLES),
         # coordinate nav (go2, no holding_object oracle) — gate never fires
         ("走到坐标 (11,3)", "at_position(11, 3)", "navigate", ActorCaused.CAUSED, _GO2_ORACLES),
         # dev file task — gate never fires (no holding_object oracle)

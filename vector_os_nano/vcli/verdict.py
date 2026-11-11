@@ -32,7 +32,10 @@ from typing import Any
 
 from vector_os_nano.vcli.cognitive.trace_store import (
     classify_step_evidence,
-    evidence_passed,
+    goal_check,
+    graded_indices,
+    step_reject_reason,
+    turn_reject_reason,
 )
 
 # Fixed stdout sentinel a harness scans for. NEVER changed lightly — it is the
@@ -65,6 +68,12 @@ class StepVerdict:
     verify: str
     verify_result: bool
     evidence: str  # GROUNDED | RAN | FAILED (from classify_step_evidence)
+    # WP07 audit (additive): the causation grade, why the step is not GROUNDED ("" when
+    # it is; trace_store.step_reject_reason), and whether a later attempt of the same
+    # sub-goal superseded it (then the gate does not grade it; the row stays as audit).
+    actor_caused: str = "NOT_GRADED"
+    reject_reason: str = ""
+    superseded: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,6 +101,17 @@ class VerdictReport:
     # outcome, not an agent failure — a bench excludes it, and exit_code() says error.
     llm_unavailable: bool = False
     model: str = ""  # backend model id that drove the turn ("" when unknown)
+    # WP07 (additive): why the turn is not verified ("" when it is; the gate's own
+    # trace_store.turn_reject_reason), whether any side-effecting tool ran, the sim the
+    # turn ran in, and the task contract the goal compiled to.
+    reject_reason: str = ""
+    acted: bool = False
+    scene: str = ""
+    contract: tuple[str, ...] = ()
+    # Charter 3.5 (additive): whether the user's end state was machine-checked --
+    # "proven" | "failed" | "unchecked" (trace_store.goal_check), never merged into
+    # ``verified``. A consumer that needs "the task is done" reads goal_check == "proven".
+    goal_check: str = "unchecked"
 
     # ------------------------------------------------------------------
     # Construction — the ONLY supported way to build a verdict from a run.
@@ -103,18 +123,22 @@ class VerdictReport:
     ) -> "VerdictReport":
         """Build a verdict from an ExecutionTrace using the EXISTING gate.
 
-        ``verified`` is delegated VERBATIM to ``evidence_passed`` (no second
-        opinion). Per-step ``evidence`` is delegated to ``classify_step_evidence``.
-        ``n_grounded`` counts the steps the classifier calls GROUNDED. The
-        top-level ``evidence`` summarizes: GROUNDED iff verified, else FAILED if
-        the trace did not succeed, else RAN.
+        ``verified`` is delegated VERBATIM to the gate (``turn_reject_reason`` is
+        ``evidence_passed``'s single source; no second opinion). Per-step
+        ``evidence`` is delegated to ``classify_step_evidence``. ``n_steps`` /
+        ``n_grounded`` count the GRADED steps (the latest attempt of each sub-goal);
+        superseded attempts stay in ``per_step`` as audit. The top-level
+        ``evidence`` summarizes: GROUNDED iff verified, else FAILED if the trace did
+        not succeed, else RAN.
         """
         sg_by_name = {sg.name: sg for sg in trace.goal_tree.sub_goals}
-        verified = bool(evidence_passed(trace, oracle_names))
+        reject_reason = turn_reject_reason(trace, oracle_names)
+        verified = not reject_reason
+        graded = set(graded_indices(trace))
 
         per_step: list[StepVerdict] = []
         n_grounded = 0
-        for s in trace.steps:
+        for i, s in enumerate(trace.steps):
             sg = sg_by_name.get(s.sub_goal_name)
             if sg is None:
                 # A step with no matching sub-goal cannot be classified by the
@@ -122,10 +146,12 @@ class VerdictReport:
                 # toward GROUNDED, mirroring evidence_passed which ignores it).
                 ev = EVIDENCE_RAN if s.success else EVIDENCE_FAILED
                 verify_str = ""
+                why = "no sub-goal to grade it against"
             else:
                 ev = classify_step_evidence(s, sg, oracle_names, trace.goal_tree.goal)
                 verify_str = sg.verify
-            if ev == EVIDENCE_GROUNDED:
+                why = step_reject_reason(s, sg, oracle_names, trace.goal_tree.goal)
+            if ev == EVIDENCE_GROUNDED and i in graded:
                 n_grounded += 1
             per_step.append(
                 StepVerdict(
@@ -135,6 +161,9 @@ class VerdictReport:
                     verify=verify_str,
                     verify_result=bool(s.verify_result),
                     evidence=ev,
+                    actor_caused=getattr(getattr(s, "actor_caused", None), "value", "NOT_GRADED"),
+                    reject_reason=why,
+                    superseded=i not in graded,
                 )
             )
 
@@ -153,7 +182,7 @@ class VerdictReport:
             success=bool(trace.success),
             evidence=top_evidence,
             goal=trace.goal_tree.goal,
-            n_steps=len(trace.steps),
+            n_steps=len(graded),
             n_grounded=n_grounded,
             oracle_names=tuple(sorted(oracle_names)),
             per_step=tuple(per_step),
@@ -161,6 +190,11 @@ class VerdictReport:
             error=f"LLM unavailable: {llm_error}" if llm_error else "",
             llm_unavailable=bool(llm_error),
             model=str(getattr(trace, "model", "") or ""),
+            reject_reason=reject_reason,
+            acted=bool(getattr(trace, "actions_dispatched", 0)),
+            scene=str(getattr(trace, "scene", "") or ""),
+            contract=tuple(getattr(trace, "contract", ()) or ()),
+            goal_check=goal_check(trace, oracle_names)[0],
         )
 
     @classmethod
@@ -190,6 +224,7 @@ class VerdictReport:
         """A plain JSON-safe dict (frozen dataclasses -> dicts, tuples -> lists)."""
         d = asdict(self)
         d["oracle_names"] = list(self.oracle_names)
+        d["contract"] = list(self.contract)
         d["per_step"] = [asdict(s) for s in self.per_step]
         return d
 

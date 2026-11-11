@@ -34,8 +34,14 @@ and the model's expr as the SubGoal.verify.
 Capture/grade timing (review fix 3), mirroring ``GoalExecutor._execute_sub_goal``:
 the actor-causation baseline is captured immediately BEFORE the first skill call
 of a step; the grade reads a FRESH post-capture immediately AFTER evaluating that
-step's verify expr, NEVER spanning a later step's actions (else the go2 daemon's
-between-turn motion folds into the causation grade).
+step's verify expr. A re-verify of the same predicate (an attempt group, WP07) that
+retried or only re-checked the latest attempt is graded against that attempt's
+baseline; after any other action it is graded on its own step. Only the actor's own
+tools count as commanded motion (``ACTOR_EPOCH``).
+
+Turn contract (WP07): the goal compiles to GT predicates (``task_contract``),
+printed as "Task contract: ..." before the first model call and evaluated at turn
+start and turn end; the spine requires each False -> True.
 """
 from __future__ import annotations
 
@@ -44,14 +50,20 @@ import json
 import logging
 import math
 import os
+import re
+import string
 import threading
 import time
+from dataclasses import replace
 from typing import Any, Callable
 
 from vector_os_nano.vcli.backends.types import LLMResponse
 from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.cognitive import actor_causation
-from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
+from vector_os_nano.sim.runtime import ACTOR_EPOCH
+from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
+from vector_os_nano.vcli.cognitive.object_goal import task_contract, unbound_reason
+from vector_os_nano.vcli.cognitive.trace_store import attempt_key, graded_indices, verify_oracles
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     GoalTree,
@@ -141,14 +153,18 @@ class _NativeBaseNavigateTool:
     """Coordinate navigation through the nav-stack AVOIDANCE route (D9 #1).
 
     ``execute`` calls the connected base's ``navigate_to(x, y)``: the in-process
-    planner (vgraph + pure-pursuit follower) routes around the scene's obstacles and
-    streams velocity while holding skill control, so its commands are counted by
-    actor-causation and an ``at_position`` verify can grade CAUSED. This is the
-    obstacle avoidance the open-loop ``walk`` lacks. Duck-typed like a ``Tool`` so
-    ``dispatch_skill`` runs it uniformly.
+    planner (vgraph + the one sim-time follower) plans around the scene's obstacles and
+    blocks until arrival, a stop, or timeout. This is the obstacle avoidance the
+    open-loop ``walk`` lacks. The follower streams velocity inside the producer's
+    ``ACTOR_EPOCH`` (the dispatch is open), so its commanded motion counts and a
+    ``navigate`` step's ``at_position`` verify grades CAUSED when the base really moved
+    there (closes D14's "nav RAN-only"); an external TARE/FAR follower driving the base
+    between tools is never counted. ``verify_hint`` auto-verifies the target after it
+    returns. Duck-typed like a ``Tool`` so ``dispatch_skill`` runs it uniformly.
     """
 
     name = "navigate"
+    verify_hint = "at_position({x}, {y})"
     description = (
         "Go to a world coordinate (x, y) using the navigation PLANNER, which AVOIDS "
         "obstacles (lidar + local planner). Use this to REACH a place/coordinate. After "
@@ -399,7 +415,9 @@ def _verify_tool_schema(oracle_names: frozenset[str]) -> dict[str, Any]:
         f"Available predicate oracles: {names}. "
         f"at_position(x, y, tol={tol}) is True when the robot's planar position is "
         f"within tol metres of (x, y) (tol defaults to {tol}). "
-        "Pass the FULL predicate as 'expr', e.g. at_position(2.0, 0.0)."
+        "Pass the FULL predicate as 'expr', e.g. at_position(2.0, 0.0). After a retry, "
+        "verify the SAME predicate again: the latest attempt counts, and a different, "
+        "easier predicate never replaces a FAIL. Each verify must follow an action."
     )
     return {
         "name": VERIFY_TOOL,
@@ -410,7 +428,11 @@ def _verify_tool_schema(oracle_names: frozenset[str]) -> dict[str, Any]:
                 "expr": {
                     "type": "string",
                     "description": "The deterministic verify predicate to evaluate.",
-                }
+                },
+                "goal_id": {
+                    "type": "string",
+                    "description": "Optional: a short id of the sub-goal this verify proves.",
+                },
             },
             "required": ["expr"],
         },
@@ -436,10 +458,27 @@ def _finish_tool_schema() -> dict[str, Any]:
 class NativeStepRunner:
     """Assemble an ExecutionTrace from a native tool-use turn loop.
 
-    Holds the live GoalVerifier namespace + oracle names + the motor tool-set, and
-    the per-step accumulator (the action chain + its capture baseline). The MODEL
-    issues the tool calls; this runner only dispatches, verifies, grades, and
+    Holds the live GoalVerifier namespace + oracle names/tags + the motor tool-set,
+    and the per-step accumulator (the action chain + its capture baseline). The
+    MODEL issues the tool calls; this runner only dispatches, verifies, grades, and
     records — never decides what to do next.
+
+    WP07 bookkeeping (no planning):
+    - attempt groups: a verify is keyed by its normalized AST (+ an optional model
+      ``goal_id``); a re-verify of the same predicate supersedes the earlier row (the
+      spine grades the latest only — ``trace_store.graded_indices``) and is graded
+      against the group's baseline only when it retried or re-checked the latest
+      attempt (``_group_baseline``), else on its own step;
+    - a step FAILED when any side-effecting tool of its chain reported an error, not
+      only its last tool;
+    - auto post-verify: an actuating tool whose ``verify_hint`` binds from its call
+      params is checked right after it runs; that check closes the step unless the
+      model verifies first (then the model's predicate is the step's — but a FAILED
+      auto-verify of another predicate stays its own row);
+    - probe refusal: a model verify with no action since its last verify is refused
+      unevaluated (no GT bit leak);
+    - every dispatch runs inside ``ACTOR_EPOCH.tool()``, so only the actor's own
+      commanded motion counts toward causation.
     """
 
     def __init__(
@@ -450,15 +489,21 @@ class NativeStepRunner:
         motor_tools: dict[str, Any],
         tool_context: ToolContext,
         ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
+        oracles: dict[str, Any] | None = None,
     ) -> None:
         self._agent = agent
         self._verifier = verifier
         self._oracle_names = oracle_names
+        # {name: OracleTag}: the channel / transition the causation grader reads.
+        self._oracles = oracles if oracles is not None else {}
         self._motor_tools = motor_tools
         self._ctx = tool_context
         # Resolves an "ask" permission (the REPL's prompt). None denies: the
         # headless default — only --no-permission (PermissionContext) allows.
         self._ask = ask_permission
+        # The actor state when the turn (or its current body) started: a turn-window
+        # oracle (kept_holding) is caused only by a transition since then.
+        self._turn_baseline: Any = actor_causation.capture(agent)
 
         # Per-step accumulator: the producing action chain (skill names) + the
         # capture baseline taken BEFORE the first skill of the current step.
@@ -466,7 +511,23 @@ class NativeStepRunner:
         self._baseline: Any = None
         self._step_open: bool = False
         self._step_acted: bool = False  # a side-effecting tool ran this step
+        # Every tool of the step's chain is read-only or a declared housekeeping
+        # action (stop): the row may stay un-GROUNDED when another row proved the turn
+        # (trace_store.turn_reject_reason), and a re-verify after it only re-checks.
+        self._housekeeping: bool = True
         self._last_ok: bool = True      # the chain's last tool did not report an error
+        self._acting: set[str] = set()  # the step's side-effecting tools
+        self._acting_failed: bool = False  # one of them reported an error
+        self._last_result: ToolResult | None = None
+        # The auto post-verify of the last actuating tool, until the step closes.
+        self._pending: dict[str, Any] | None = None
+        # Probe refusal: a model verify needs a side-effecting action since the last.
+        self._acted_since_verify: bool = True
+        # attempt group -> (the baseline its LATEST attempt was graded against, that
+        # attempt's side-effecting tools). See ``_group_baseline``.
+        self._group_baselines: dict[tuple[str, str], tuple[Any, frozenset[str]]] = {}
+        # Manipulation intents of the dispatched skills ("grasp" / "place").
+        self.intents: set[str] = set()
 
         # Side-effecting tool calls over the whole turn: nonzero means the turn
         # acted, so no other producer may re-run it (no double execution).
@@ -482,14 +543,12 @@ class NativeStepRunner:
 
     @property
     def has_unverified_action(self) -> bool:
-        """True iff a SIDE-EFFECTING tool ran for the current step but no verify has
-        closed it — i.e. the model is about to finish/stop WITHOUT proving the action
-        achieved the goal (D23: weak models skip verify on easy tasks, yielding an
-        empty, ungraded trace). Used to nudge a model-authored verify before accepting
-        finish. A read (file_read, detect, where_am_i) changes nothing, so it is never
-        nudged: the model answers from it.
+        """True iff a SIDE-EFFECTING tool ran for the current step and nothing proved
+        it yet — neither a model verify nor an auto post-verify (D23: weak models skip
+        verify on easy tasks). A read (file_read, detect, where_am_i) changes nothing,
+        so it is never nudged: the model answers from it.
         """
-        return self._step_acted
+        return self._step_acted and self._pending is None
 
     # ------------------------------------------------------------------
     # Skill dispatch (capture baseline before the first skill of a step)
@@ -524,87 +583,134 @@ class NativeStepRunner:
                               is_error=True)
         if name in LIFECYCLE_TOOLS:
             # The body is about to change: a chain on the old one is never verified now.
-            if self._step_open:
-                self.record_unverified()
+            self.close_chain()
             self.actions_dispatched += 1
             return execute_resolved_tool(
                 tool, params, self._ctx, error_prefix=f"Tool '{name}' raised",
                 on_error=lambda _n, exc: logger.debug("native_loop: %r raised: %s", name, exc),
             )
-        if not self._step_open:
-            # First skill of a fresh step -> capture the causation baseline NOW.
-            self._baseline = actor_causation.capture(self._agent)
-            self._step_open = True
-        self._chain.append(name)
         try:
             read_only = bool(tool.is_read_only(params))
         except Exception:  # noqa: BLE001 — no/broken declaration: fail closed (it acts)
             read_only = False
         if not read_only:
+            self._flush_pending()  # an auto-verified step closes before the next action
+        if not self._step_open:
+            # First skill of a fresh step -> capture the causation baseline NOW.
+            self._baseline = actor_causation.capture(self._agent)
+            self._step_open = True
+        self._chain.append(name)
+        hint = None
+        if not read_only and getattr(tool, "housekeeping", False) is not True:
+            self._housekeeping = False
+        if not read_only:
             self.actions_dispatched += 1
             self._step_acted = True
-        result = execute_resolved_tool(
-            tool, params, self._ctx, error_prefix=f"Skill '{name}' raised",
-            on_error=lambda _n, exc: logger.debug("native_loop: skill %r raised: %s", name, exc),
-        )
+            self._acted_since_verify = True
+            self._acting.add(name)
+            hint = self._bound_hint(tool, params)
+            self._note_intents(tool)
+        before = self._check(hint) if hint else None  # F->T: the hint at the baseline
+        with ACTOR_EPOCH.tool():
+            result = execute_resolved_tool(
+                tool, params, self._ctx, error_prefix=f"Skill '{name}' raised",
+                on_error=lambda _n, exc: logger.debug("native_loop: skill %r raised: %s", name, exc),
+            )
         self._last_ok = not result.is_error
+        self._acting_failed |= result.is_error and not read_only
+        self._last_result = result
+        if hint and self._last_ok:
+            ok = self._check(hint)
+            caused, channels = self._grade(hint)
+            # F->T for THIS action — unless it re-attempts a group whose earlier attempt
+            # made it true: then the group baseline (in _grade) is the judge.
+            if before and self._group_baseline(("native", attempt_key(hint))) is None:
+                caused, channels = actor_causation.ActorCaused.UNCAUSED, ("already true before the action",)
+            # The auto check belongs to THIS tool: keep its own result for the record
+            # (a later read in the same step must not stand in for it).
+            self._pending = {"expr": hint, "ok": ok, "caused": caused, "channels": channels,
+                             "data": self._result_data(), "chain": len(self._chain)}
+            result = ToolResult(
+                content=f"{result.content}\nauto-verify {hint} -> {verify_word(ok)}",
+                is_error=result.is_error, metadata=result.metadata,
+            )
         return result
+
+    def _bound_hint(self, tool: Any, params: dict[str, Any]) -> str | None:
+        """The tool's ``verify_hint`` bound from its call params, if it binds to a GT
+        evidence predicate (``at_position({x}, {y})`` -> ``at_position(2.0, 3.0)``)."""
+        hint = str(getattr(tool, "verify_hint", "") or "").strip()
+        if not hint or hint == "True":
+            return None
+        try:
+            bound = hint.format_map({k: repr(v) for k, v in (params or {}).items()})
+        except (KeyError, IndexError, ValueError):
+            return None  # a placeholder the call did not fill
+        if re.search(r"<\w+>", bound) or classify_verify_expr(bound, self._oracle_names) != "GROUNDED":
+            return None
+        # An object the world manifest cannot resolve binds nothing (no evidence), never a guess.
+        from vector_os_nano.sim.session import session_for
+
+        world = getattr(session_for(self._agent), "world", None)
+        used = {f for _, f, _, _ in string.Formatter().parse(hint) if f}
+        if world is not None and any(isinstance(params[f], str) and world.resolve(params[f]) is None for f in used):
+            return None
+        return bound
+
+    def _note_intents(self, tool: Any) -> None:
+        """A dispatched skill whose hint names a gripper oracle is a manipulation:
+        a rising one (holding) a grasp, a falling / level one (release, placement) a place.
+        A skill whose spec releases what is held (``effects['held_object'] = None``:
+        gripper_open, handover) is a place even without a hint."""
+        effects = getattr(tool, "effects", None)
+        if isinstance(effects, dict) and "held_object" in effects and effects["held_object"] is None:
+            self.intents.add("place")
+        for _name, _call, channel, want in actor_causation.robot_calls(
+            str(getattr(tool, "verify_hint", "") or ""), self._oracles
+        ):
+            if channel == "gripper":
+                self.intents.add("grasp" if want == "rise" else "place")
+
+    def _check(self, expr: str) -> bool:
+        try:
+            return bool(self._verifier.verify(expr))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("native_loop: verify(%r) raised: %s", expr, exc)
+            return False
 
     # ------------------------------------------------------------------
     # The verify-tool HANDLER — appends EXACTLY ONE StepRecord per pair
     # ------------------------------------------------------------------
 
-    def handle_verify(self, expr: str) -> ToolResult:
+    def handle_verify(self, expr: str, goal_id: str = "") -> ToolResult:
         """Evaluate *expr* via the live GoalVerifier, grade causation, record ONE step.
 
-        This is the heart of the granularity contract (review fix 2): the
-        (action-chain -> verify) pair becomes ONE StepRecord whose SubGoal.verify is
-        the model's expr and whose strategy is the producing action chain. The loop
+        The (action-chain -> verify) pair becomes ONE StepRecord whose SubGoal.verify
+        is the model's expr and whose strategy is the producing action chain. A verify
+        with no action since the model's last one is refused unevaluated. The loop
         NEVER computes verified — the spine does, from this trace.
         """
         expr = (expr or "").strip()
-        # Evaluate the predicate via the SAME GoalVerifier sandbox the spine uses.
-        try:
-            verify_result = bool(self._verifier.verify(expr))
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("native_loop: verify(%r) raised: %s", expr, exc)
-            verify_result = False
-
-        # Grade actor-causation with a FRESH post-capture, immediately after the
-        # verify read (review fix 3) — only for a graded robot predicate, else
-        # NOT_GRADED (legacy-equivalent). The baseline was captured before this
-        # step's first skill; if no skill ran (a verify-only NO-OP step), baseline
-        # is None -> grade fail-closed UNCAUSED for a robot predicate.
-        actor_caused = self._grade(expr)
-
-        strategy = self._chain[-1] if self._chain else ""
-        step_name = f"native_step_{self._step_idx}"
-        self._step_idx += 1
-
-        sub_goal = SubGoal(
-            name=step_name,
-            description=f"native: {' -> '.join(self._chain) or '(no action)'} | verify {expr}",
-            verify=expr,
-            strategy=strategy,
-        )
-        # The step "ran" (success) iff its producing action — the LAST tool of the
-        # chain — did not report an error; a pure check (no tool) records
-        # success=True so the gate keys on GROUNDED/RAN (a NO-OP reaches the verdict
-        # as RAN, not FAILED). A failed skill followed by a true verify is FAILED,
-        # never GROUNDED: the skill's own failure is not discarded.
-        step = StepRecord(
-            sub_goal_name=step_name,
-            strategy=strategy,
-            success=self._last_ok if self._chain else True,
-            verify_result=verify_result,
-            duration_sec=0.0,
-            error="" if (self._last_ok or not self._chain) else f"{strategy} reported an error",
-            actor_caused=actor_caused,
-        )
-        self._sub_goals.append(sub_goal)
-        self._steps.append(step)
-        self._close_step()
-
+        if not self._acted_since_verify:
+            return ToolResult(
+                content=(f"verify({expr}) refused: no action ran since your last verify. "
+                         "Act first; a verify alone cannot change the world."),
+                is_error=True,
+            )
+        self._acted_since_verify = False
+        auto = self._pending
+        if auto is not None and not auto["ok"] and attempt_key(auto["expr"]) != attempt_key(expr):
+            # The model may ADD a verify, never replace a FAILED auto-verify of a
+            # different predicate: that FAIL is its own graded row.
+            self._flush_pending()
+            auto = None
+        self._pending = None  # the model's own predicate is this step's verify
+        verify_result = self._check(expr)
+        actor_caused, channels = self._grade(expr, goal_id)
+        data = self._result_data()
+        if auto is not None:
+            data["auto_verify"] = {"expr": auto["expr"], "result": auto["ok"]}
+        self._record(expr, verify_result, actor_caused, channels, goal_id, data)
         return ToolResult(
             content=(
                 f"verify({expr}) -> {verify_word(verify_result)} "
@@ -612,11 +718,76 @@ class NativeStepRunner:
             )
         )
 
-    def rebind(self, agent: Any, verifier: Any, oracle_names: frozenset[str], motor_tools: dict[str, Any]) -> None:
-        """A lifecycle tool switched the body: later steps run, verify and grade on *agent*."""
-        self._agent, self._verifier, self._oracle_names = agent, verifier, oracle_names
+    def rebind(self, agent: Any, verifier: Any, oracles: dict[str, Any], motor_tools: dict[str, Any]) -> None:
+        """A lifecycle tool switched the body: later steps run, verify and grade on *agent*
+        (an attempt baseline of the old body never grades the new one)."""
+        self._agent, self._verifier = agent, verifier
+        self._oracles, self._oracle_names = oracles, frozenset(oracles)
         self._motor_tools = motor_tools
         self._ctx.agent = agent
+        self._group_baselines.clear()
+        self._turn_baseline = actor_causation.capture(agent)
+
+    def _record(
+        self, expr: str, verify_result: bool, actor_caused: Any, channels: tuple[str, ...],
+        goal_id: str, data: dict[str, Any], note: str = "verify", failed: bool | None = None,
+    ) -> None:
+        strategy = self._chain[-1] if self._chain else ""
+        step_name = f"native_step_{self._step_idx}"
+        self._step_idx += 1
+        self._sub_goals.append(SubGoal(
+            name=step_name,
+            description=f"native: {' -> '.join(self._chain) or '(no action)'} | {note} {expr}",
+            verify=expr,
+            strategy=strategy,
+        ))
+        # The step "ran" (success) iff no side-effecting tool of its chain and not its
+        # LAST tool reported an error; a pure check (no tool) records success=True so
+        # the gate keys on GROUNDED/RAN. A failed skill followed by a read and a true
+        # verify is FAILED, never GROUNDED: the skill's own failure is kept, with its
+        # message, in error / result_data (rule 4).
+        if failed is None:
+            failed = self._acting_failed or (bool(self._chain) and not self._last_ok)
+        key = (goal_id or "native", attempt_key(expr))
+        if self._baseline is not None and not self._rechecks(key):  # a new attempt of the group
+            self._group_baselines[key] = (self._group_baseline(key) or self._baseline,
+                                          frozenset(self._acting))
+        self._steps.append(StepRecord(
+            sub_goal_name=step_name,
+            strategy=strategy,
+            success=not failed,
+            verify_result=verify_result,
+            duration_sec=0.0,
+            error=str(data.get("content", ""))[:300] if failed else "",
+            result_data=data,
+            actor_caused=actor_caused,
+            attempt_of=goal_id or "native",
+            channels=channels,
+            housekeeping=self._housekeeping,
+        ))
+        self._close_step()
+
+    def _result_data(self) -> dict[str, Any]:
+        """The producing tool's own result (content, is_error, data) for the record."""
+        res = self._last_result
+        if res is None or not self._chain:
+            return {}
+        out: dict[str, Any] = {"tool": self._chain[-1], "content": str(res.content)[:2000],
+                               "is_error": bool(res.is_error)}
+        if isinstance(getattr(res, "metadata", None), dict) and res.metadata:
+            out["output"] = res.metadata
+        return out
+
+    def _flush_pending(self) -> None:
+        """Record a pending auto post-verify as its step's verify (the model did not
+        verify the action itself)."""
+        auto, self._pending = self._pending, None
+        if auto is not None:
+            del self._chain[auto["chain"]:]  # reads after the action are not its producer
+            # The hinted tool succeeded (else no auto-verify), but an earlier actuating
+            # tool of the same step may not have: the row is FAILED then.
+            self._record(auto["expr"], auto["ok"], auto["caused"], ("auto-verify", *auto["channels"]),
+                         "", auto["data"], note="auto-verify", failed=self._acting_failed)
 
     def _close_step(self) -> None:
         # Reset the action chain + baseline for the next pair. NEVER carry a baseline
@@ -625,20 +796,51 @@ class NativeStepRunner:
         self._baseline = None
         self._step_open = False
         self._step_acted = False
+        self._housekeeping = True
         self._last_ok = True
+        self._acting = set()
+        self._acting_failed = False
+        self._last_result = None
+
+    def _rechecks(self, key: tuple[str, str]) -> bool:
+        """This step only re-checks the group's latest attempt: its chain is all
+        read-only or declared housekeeping (a stop), which changes no task state."""
+        return key in self._group_baselines and self._housekeeping and bool(self._chain)
+
+    def _group_baseline(self, key: tuple[str, str]) -> Any:
+        """The baseline a re-verify of the attempt group *key* is graded against, or
+        None (graded on its own step).
+
+        A RETRY (this step re-ran one of the latest attempt's side-effecting tools) or
+        a RE-CHECK (``_rechecks``) is graded against the baseline the latest attempt
+        was, so a FAIL -> navigate -> PASS recovery counts the whole motion. After any
+        other action — a different one, a no-op — the re-verify is graded on its own
+        step and never inherits an earlier attempt's motion; that attempt then becomes
+        the group's latest, so a later stop cannot launder it either.
+        """
+        entry = self._group_baselines.get(key)
+        if entry is None:
+            return None
+        return entry[0] if entry[1] & self._acting or self._rechecks(key) else None
 
     def record_abort(self, reason: str) -> None:
         """Close the turn with ONE failed step: it was stopped (or its LLM died).
 
         The unverified action chain (if any) is its producing strategy, so an
         interrupted action is on the record — never silently dropped — and grades
-        FAILED (success=False), never GROUNDED.
+        FAILED (success=False), never GROUNDED. Its auto post-verify is dropped: the
+        aborted row is that action's record.
         """
+        self._pending = None
         self._record_open(reason, success=False)
 
-    def record_unverified(self) -> None:
-        """Record the open chain as a step the model never verified (grades RAN at best)."""
-        self._record_open("not verified", success=self._last_ok)
+    def close_chain(self) -> None:
+        """At turn end (or before a lifecycle tool switches the body): an auto-verified
+        step is recorded; an open chain the model never verified is on the record as an
+        unproven step (grades RAN at best)."""
+        self._flush_pending()
+        if self._step_open:
+            self._record_open("not verified", success=self._last_ok and not self._acting_failed)
 
     def _record_open(self, reason: str, *, success: bool) -> None:
         step_name = f"native_step_{self._step_idx}"
@@ -652,63 +854,65 @@ class NativeStepRunner:
         ))
         self._steps.append(StepRecord(
             sub_goal_name=step_name, strategy=strategy, success=success,
-            verify_result=False, duration_sec=0.0, error=reason,
+            verify_result=False, duration_sec=0.0, error=reason, result_data=self._result_data(),
+            housekeeping=self._housekeeping,
         ))
         self._close_step()
 
-    def _grade(self, expr: str) -> "actor_causation.ActorCaused":
-        """Grade actor-causation for the just-verified step (R2b + step-9 semantics).
+    def _grade(self, expr: str, goal_id: str = "") -> tuple[Any, tuple[str, ...]]:
+        """Grade actor-causation for the just-verified step.
 
-        ROBOT predicate (base/arm/gripper, graded live in the oracle set): a fresh
-        post-capture vs the step's entry baseline -> CAUSED / UNCAUSED (mirrors
-        ``GoalExecutor._grade_actor_causation``). A robot-predicate step whose
-        baseline is None (no skill ran) grades UNCAUSED (grade fail-closes).
+        ROBOT predicate (a call to a base / arm / gripper / perception oracle): a fresh
+        post-capture vs the step's baseline -> CAUSED / UNCAUSED, per channel. A retry
+        or a re-check of the attempt group's latest attempt is graded against that
+        attempt's baseline instead (``_group_baseline``). No baseline (no skill ran) grades
+        UNCAUSED (grade fail-closes).
 
-        NON-ROBOT predicate (dev / state oracle — ``file_exists`` / ``path_contains``
-        / a ``get_position()`` compare): actor-causation has no displacement metric,
-        so step-9 ties grounding to whether the ACTOR ACTED this step. If NO action
-        skill was dispatched (``self._chain`` empty), the verify reads pre-existing /
-        ambient state the actor did not cause -> UNCAUSED (the spine R2b downgrade in
-        ``classify_step_evidence`` then flips an otherwise-GROUNDED predicate to RAN),
-        closing the verify-only dev/state NO-OP hole (2026-06-19 review). If ≥1 action
-        skill ran -> NOT_GRADED (legacy-equivalent; the action plausibly produced the
-        state — e.g. file_write -> path_contains stays GROUNDED). Goal AUTHENTICITY of
-        the verify (does the constant match the task goal; an action + a trivial-but-
-        true compare like ``len(get_position())==3``) remains the deepest residual,
-        deferred — it needs the real task goal, not a structural check.
+        NON-ROBOT predicate (a dev / state oracle): no displacement to attribute, so
+        grounding is tied to whether the ACTOR ACTED this step — no side-effecting
+        action -> UNCAUSED (the verify reads ambient state), else NOT_GRADED.
 
         Fail-safe to NOT_GRADED on any unexpected error (never raises).
         """
+        key = (goal_id or "native", attempt_key(expr))
         try:
-            if not actor_causation.is_robot_predicate(expr, self._oracle_names):
-                # No side-effecting action this step (nothing, or only read-only
-                # tools like file_read) -> the actor caused nothing.
+            if not actor_causation.is_robot_predicate(expr, self._oracles):
                 if not self._step_acted:
-                    return actor_causation.ActorCaused.UNCAUSED
-                return actor_causation.ActorCaused.NOT_GRADED
+                    return actor_causation.ActorCaused.UNCAUSED, ("no action this step",)
+                return actor_causation.ActorCaused.NOT_GRADED, ()
             post = actor_causation.capture(self._agent)
-            return actor_causation.grade(self._baseline, post, expr, self._oracle_names)
+            baseline = self._group_baseline(key) or self._baseline
+            from vector_os_nano.sim.session import session_for
+
+            world = getattr(session_for(self._agent), "world", None)  # a gripper target resolves through it
+            return actor_causation.grade_channels(baseline, post, expr, self._oracles, self._turn_baseline, world)
         except Exception as exc:  # noqa: BLE001
             logger.debug("native_loop: grade(%r) raised: %s", expr, exc)
-            return actor_causation.ActorCaused.NOT_GRADED
+            return actor_causation.ActorCaused.NOT_GRADED, ()
 
     # ------------------------------------------------------------------
     # Trace assembly
     # ------------------------------------------------------------------
 
     def build_trace(
-        self, goal: str, *, llm_error: str = "", model: str = "", cancelled: bool = False
+        self, goal: str, *, llm_error: str = "", model: str = "", cancelled: bool = False,
+        contract: tuple[str, ...] = (), contract_start: tuple[bool, ...] = (),
+        contract_end: tuple[bool, ...] = (), scene: str = "", world: str = "",
     ) -> ExecutionTrace:
         """Assemble the ExecutionTrace from the recorded (chain -> verify) steps.
 
-        ``success`` is True iff at least one step was recorded AND none failed —
-        the structural success flag the verdict reads (the moat is GROUNDED/RAN, not
-        this flag). An empty trace (no verify ever called) is success=False, so the
-        verdict gate fails closed (no checked step -> not verified).
+        ``success`` is True iff at least one step was recorded AND every GRADED step
+        (the latest attempt of each sub-goal) succeeded — the structural success flag
+        the verdict reads (the moat is GROUNDED/RAN, not this flag). A superseded
+        attempt is marked for the audit row. An empty trace (no verify ever called) is
+        success=False, so the verdict gate fails closed.
         """
-        steps = tuple(self._steps)
-        success = bool(steps) and all(s.success for s in steps)
         goal_tree = GoalTree(goal=goal, sub_goals=tuple(self._sub_goals))
+        probe = ExecutionTrace(goal_tree=goal_tree, steps=tuple(self._steps), success=False,
+                               total_duration_sec=0.0)
+        graded = set(graded_indices(probe))
+        steps = tuple(s if i in graded else replace(s, superseded=True) for i, s in enumerate(self._steps))
+        success = bool(steps) and all(steps[i].success for i in graded)
         return ExecutionTrace(
             goal_tree=goal_tree,
             steps=steps,
@@ -719,6 +923,12 @@ class NativeStepRunner:
             model=model,
             refused=tuple(self.refused),
             cancelled=cancelled,
+            contract=tuple(contract),
+            contract_start=tuple(contract_start),
+            contract_end=tuple(contract_end),
+            intents=tuple(sorted(self.intents)),
+            scene=scene,
+            world=world,
         )
 
 
@@ -855,18 +1065,18 @@ def run_turn_native(
         mark_turn(body[0], "end", user_message)
 
 
-def _bind_body(engine: Any, agent: Any) -> tuple[Any, frozenset[str], dict[str, Any], list[dict[str, Any]]]:
-    """Everything a turn derives from its body: (verifier, oracle names, tools, schemas).
+def _bind_body(engine: Any, agent: Any) -> tuple[Any, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """Everything a turn derives from its body: (verifier, oracles, tools, schemas).
 
-    The verifier + oracle names are single-sourced from the SAME namespace the spine
-    reads (rule 3); fail closed on any error (an empty oracle set classifies every
-    predicate RAN). The motor tool-set is the world's skills + the registry's tools;
-    the synthetic verify/finish are handled in-loop, never dispatched.
+    The verifier + oracles ({name: OracleTag}) are single-sourced from the SAME
+    namespace the spine reads (rule 3); fail closed on any error (an empty oracle set
+    classifies every predicate RAN). The motor tool-set is the world's skills + the
+    registry's tools; the synthetic verify/finish are handled in-loop, never dispatched.
     """
     verifier = _build_verifier(engine, agent)
-    oracle_names = verify_oracle_names(agent, engine)
+    oracles = verify_oracles(agent, engine)
     motor_tools = _build_motor_tools(agent, engine)
-    return verifier, oracle_names, motor_tools, _native_tool_schemas(motor_tools, oracle_names)
+    return verifier, oracles, motor_tools, _native_tool_schemas(motor_tools, frozenset(oracles))
 
 
 def _run_turn_native(
@@ -881,13 +1091,14 @@ def _run_turn_native(
     ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
     cancel: Any = None,
 ) -> ExecutionTrace:
-    from vector_os_nano.sim.session import mark_turn
+    from vector_os_nano.sim.session import mark_turn, session_for
 
     token = cancel if cancel is not None else _abort.new_run()
     agent = body[0]
-    verifier, oracle_names, motor_tools, tool_schemas = _bind_body(engine, agent)
+    verifier, oracles, motor_tools, tool_schemas = _bind_body(engine, agent)
+    oracle_names = frozenset(oracles)
     ctx = _build_tool_context(agent, session, app_state, engine, token)
-    runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx, ask_permission)
+    runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx, ask_permission, oracles)
 
     def _rebind() -> None:
         """A lifecycle tool succeeded: the next round-trip sees the new body's tools,
@@ -895,12 +1106,35 @@ def _run_turn_native(
         nonlocal oracle_names, tool_schemas
         app = ctx.app_state
         new = app.get("agent") if app is not None and "agent" in app else getattr(engine, "_vgg_agent", None)
-        verifier, oracle_names, motor_tools, tool_schemas = _bind_body(engine, new)
-        runner.rebind(new, verifier, oracle_names, motor_tools)
+        verifier, oracles, motor_tools, tool_schemas = _bind_body(engine, new)
+        oracle_names = frozenset(oracles)
+        runner.rebind(new, verifier, oracles, motor_tools)
         if new is not body[0]:
             mark_turn(body[0], "end", user_message)
             body[0] = new
             mark_turn(new, "start", user_message)
+        _compile_contract()  # the goal against the new body (the spine grades that one)
+
+    turn: dict[str, Any] = {"contract": (), "start": (), "world": "", "note": ""}
+
+    def _compile_contract() -> None:
+        """The turn-level task contract (WP07): GT end-state predicates the goal
+        compiles to against the body's oracles, its object / surface bound through the
+        body's world manifest; read now (each must be False) and again at turn end
+        (each must be True)."""
+        world = str(getattr(getattr(session_for(body[0]), "world", None), "id", "") or "")
+        contract = task_contract(user_message, oracle_names, world)
+        # Fail closed: the verifier maps an oracle error to False, so ask for ``not``
+        # — an error at the start then reads as "already satisfied", never as "not yet".
+        turn.update(contract=contract, world=world,
+                    start=tuple(not runner._check(f"not ({c})") for c in contract))
+        # The same lines reach the model (a system block, I4c): it verifies the bound
+        # object and surface itself, or asks the user when a slot did not bind.
+        lines = [f"Task contract: {' and '.join(contract)}"] if contract else []
+        lines += [f"Unbound: {c}: {why}" for c in contract if (why := unbound_reason(c, user_message, world))]
+        turn["note"] = "\n".join(lines)
+        for line in lines:
+            _emit(line)
 
     backend = getattr(engine, "_backend", None)
     if backend is None:
@@ -922,6 +1156,7 @@ def _run_turn_native(
         except Exception:  # noqa: BLE001 — progress is best-effort, never fatal
             pass
 
+    _compile_contract()
     _narration: list[str] = []
 
     def _on_text(chunk: str) -> None:
@@ -964,14 +1199,15 @@ def _run_turn_native(
                     messages=messages,
                     tools=tool_schemas,
                     # Rebuilt per round-trip: the [Robot State] block follows the body.
-                    system=_native_system_prompt(engine, oracle_names, body[0]),
+                    system=_native_system_prompt(engine, oracle_names, body[0])
+                    + ([{"type": "text", "text": turn["note"]}] if turn["note"] else []),
                     max_tokens=getattr(engine, "_max_tokens", 4096),
                     on_text=_on_text if on_progress is not None else None,
                 ))
             except Exception as exc:  # noqa: BLE001 — infrastructure, not the agent
                 llm_error = f"{type(exc).__name__}: {exc}"
                 logger.warning("native_loop: LLM unavailable: %s", llm_error)
-                if runner._step_open or runner._steps:
+                if runner._step_open or runner._steps or runner._pending:
                     # The plan was cut short: an earlier verified step never makes
                     # the interrupted turn a success.
                     runner.record_abort(f"LLM unavailable: {llm_error}")
@@ -1026,7 +1262,7 @@ def _run_turn_native(
                 if tc.name == VERIFY_TOOL:
                     expr = str((tc.input or {}).get("expr", ""))
                     _emit(f"verify {expr[:56]}")
-                    res = runner.handle_verify(expr)
+                    res = runner.handle_verify(expr, str((tc.input or {}).get("goal_id", "") or ""))
                 else:
                     _emit(f"{tc.name} {_progress_args(tc.input)}".strip())
                     res = _dispatch(tc.name, dict(tc.input or {}))
@@ -1038,21 +1274,24 @@ def _run_turn_native(
             turns += 1
             if finished:
                 break
-        else:
-            if token.cancelled:
-                runner.record_abort("aborted")
+        else:  # the round-trip cap ran out before the model finished: say so, on the record
+            runner.record_abort("aborted" if token.cancelled else f"turn cap reached ({max_turns} model round-trips)")
     except Exception as exc:  # noqa: BLE001 — a producer bug after an action: own the turn
         if not runner.actions_dispatched:
             raise
         logger.warning("native_loop: turn failed after %d action(s): %s", runner.actions_dispatched, exc)
         runner.record_abort(f"producer error: {type(exc).__name__}: {exc}")
-    if runner._step_open:
-        # The model never verified its last tool chain (a read it answered from, or
-        # an action once the nudges are spent): on the record as an unproven step,
-        # never silently dropped.
-        runner.record_unverified()
+    # An auto-verified action is recorded; a chain the model never verified (a read it
+    # answered from, or an action once the nudges are spent) is on the record as an
+    # unproven step, never silently dropped.
+    runner.close_chain()
+    from vector_os_nano.sim.session import sim_id
+
     return runner.build_trace(
-        user_message, llm_error=llm_error, model=model, cancelled=token.cancelled
+        user_message, llm_error=llm_error, model=model, cancelled=token.cancelled,
+        contract=turn["contract"], contract_start=turn["start"],
+        contract_end=tuple(runner._check(c) for c in turn["contract"]), scene=sim_id(body[0]),
+        world=turn["world"],
     )
 
 
@@ -1084,11 +1323,10 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
 
     Two sources, both world-agnostic by construction:
 
-    1. ``wrap_skills(agent)`` — the world's robot skills (``walk`` etc.). ``navigate``
-       is intentionally NOT surfaced as a step strategy: its cmd_vel is GATED OUT of
-       the actor-causation counter, so offering it would false-FAIL an honest move. We
-       drop it by construction (the acceptance pins per-step strategy == 'walk', never
-       'navigate'). When ``agent`` is None (the dev world), this source is empty.
+    1. ``wrap_skills(agent)`` — the world's robot skills (``walk`` etc.). The world's
+       room ``navigate`` skill (door-chain walk) is replaced by the coordinate
+       ``navigate`` route below. When ``agent`` is None (the dev world), this source is
+       empty.
     2. The engine registry's ``code``-category tools (file_read/file_write/file_edit/
        bash/glob/grep) — the kernel's domain-general action surface, the SAME tools the
        legacy dev path dispatches via ``DEV_TOOL_ALLOWLIST`` + ``ToolDispatcher``. These
@@ -1125,8 +1363,9 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
         tools.update({n: t for n, t in _registry_tools(engine, _ROBOT_TOOL_CATEGORY).items()
                       if not getattr(t, "_is_skill_wrapper", False)})
     # Source 3 (D9 #1): the avoidance NAVIGATION route, only for a world with a mobile
-    # base: the base's planner routes around obstacles, holding skill control, so the
-    # move is counted for actor-causation. The arm/dev worlds (no base) do not get it.
+    # base: the base's planner routes around obstacles; its follower's commands count as
+    # the actor's (ACTOR_EPOCH), so a navigate that arrived grades CAUSED. The arm/dev
+    # worlds (no base) do not get it.
     # The base gate is single-sourced (Rule 11) onto the capability resolver.
     from vector_os_nano.embodiments.capability_profile import resolve_capability_profile
 
@@ -1274,7 +1513,7 @@ _KERNEL_RULES = (
     "- The action that should achieve a goal is the last tool call before its verify; a "
     "task with several goals verifies each after its own action.\n"
     "- A FAIL means the goal is not met: recover (repeat the action or take a better one), "
-    "then verify again. Never finish while a goal's latest verify is FAIL; if you cannot "
+    "then verify the SAME predicate again. Never finish while a goal's latest verify is FAIL; if you cannot "
     "recover, say why and stop.\n"
     "- A read-only tool (status, memory, perception) changes nothing: answer from it, no "
     "verify needed.\n"

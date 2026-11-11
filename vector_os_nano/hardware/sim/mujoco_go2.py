@@ -46,7 +46,7 @@ from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.embodiments.dof_layout import DofLayout
 from vector_os_nano.sim.nav import vgraph as vg
 from vector_os_nano.sim.nav.follow import NavResult, follow
-from vector_os_nano.sim.runtime import RGBDFrame, SimRuntime
+from vector_os_nano.sim.runtime import ACTOR_EPOCH, RGBDFrame, SimRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -477,16 +477,13 @@ class MuJoCoGo2:
         self._skill_ctrl_until: float = 0.0
         self._skill_ctrl_tid: int = 0
 
-        # R2b actor-causation instrumentation. Bumped in set_velocity ONLY for
-        # writes that pass the skill-exclusive ``_gated`` guard (an UNGATED command —
-        # i.e. one issued by a walk()/turn() skill on the token thread, or by any
-        # caller when no skill holds the token). ``_cmd_writes`` is the count;
-        # ``_cmd_motion`` is the cumulative |vx|+|vy|+|vyaw| MAGNITUDE — the signal
-        # the grader keys on, so a terminal set_velocity(0,0,0) stop (a write, zero
-        # magnitude) never satisfies causation. A GATED write (the bridge/nav
-        # cmd_vel path, rejected before reaching the actuators) is NOT counted, so
-        # the live navigate route reads as zero commanded motion (scoped OUT — see
-        # actor_causation docstring). Read via ``cmd_motion()`` (snapshot value).
+        # Actor-causation instrumentation. Bumped in set_velocity for writes that
+        # pass the skill-exclusive ``_gated`` guard WHILE a producer-dispatched tool
+        # runs (sim.runtime.ACTOR_EPOCH): walk/turn and the in-process navigate
+        # follower count; a bridge/TARE/background-explore write between tools does
+        # not. ``_cmd_motion`` is the cumulative |vx|+|vy|+|vyaw| MAGNITUDE — the
+        # signal the grader keys on, so a terminal set_velocity(0,0,0) stop (a write,
+        # zero magnitude) never satisfies causation. Read via ``cmd_motion()``.
         self._cmd_writes: int = 0
         self._cmd_motion: float = 0.0
 
@@ -944,18 +941,19 @@ class MuJoCoGo2:
             cvy = float(np.clip(vy, -_VY_MAX, _VY_MAX))
             cvyaw = float(np.clip(vyaw, -_VYAW_MAX, _VYAW_MAX))
             self._cmd_vel = (cvx, cvy, cvyaw)
-            # R2b: count this UNGATED command and accumulate its magnitude. A
-            # stop (0,0,0) adds a write but zero magnitude, so it never satisfies
-            # the grader's MOTION_EPS threshold (which keys on _cmd_motion).
+            # Count the actor's command: only inside a producer-dispatched tool. A
+            # stop (0,0,0) adds zero magnitude, so it never satisfies MOTION_EPS.
             self._cmd_writes += 1
-            self._cmd_motion += abs(cvx) + abs(cvy) + abs(cvyaw)
+            if ACTOR_EPOCH.active:
+                self._cmd_motion += abs(cvx) + abs(cvy) + abs(cvyaw)
 
     def cmd_motion(self) -> float:
-        """Cumulative UNGATED commanded-velocity magnitude (R2b actor-causation).
+        """Cumulative commanded-velocity magnitude of the ACTOR (actor-causation).
 
         The sum of ``|vx|+|vy|+|vyaw|`` over every ``set_velocity`` call that passed
-        the skill-exclusive gate (a real motor command — a walk()/turn() skill's
-        own writes, or any write when no skill holds the token). The grader takes a
+        the skill-exclusive gate while a producer-dispatched tool ran
+        (``ACTOR_EPOCH``): a walk()/turn() skill's writes and the in-process
+        ``navigate_to`` follower's, never autonomous drift between tools. The grader takes a
         baseline snapshot before a step and a post snapshot after, treating a
         delta >= ``MOTION_EPS`` as "the actor commanded motion". A terminal
         ``set_velocity(0,0,0)`` adds nothing to this sum, so a step that only

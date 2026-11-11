@@ -52,7 +52,7 @@ def _read_file(path: str) -> str:
     return p.read_text(encoding="utf-8", errors="ignore")
 
 
-@oracle(scope="dev")
+@oracle(scope="dev", domain="bool")
 def file_exists(path: str) -> bool:
     """True if *path* (relative to cwd) exists. Existence is not content, so a
     protected path inside the project may be asked about; anything read_permission
@@ -64,13 +64,13 @@ def file_exists(path: str) -> bool:
     return p.exists()
 
 
-@oracle(scope="dev")
+@oracle(scope="dev", domain="bool")
 def path_contains(path: str, substr: str) -> bool:
     """True if the regular file at *path* contains *substr*."""
     return substr in _read_file(path)
 
 
-@oracle(scope="dev")
+@oracle(scope="dev", domain="count")
 def grep_count(pattern: str, path: str) -> int:
     """Number of regex *pattern* matches in the regular file at *path*."""
     return len(re.compile(pattern).findall(_read_file(path)))

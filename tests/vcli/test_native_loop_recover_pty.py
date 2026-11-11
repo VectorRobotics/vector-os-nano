@@ -22,23 +22,13 @@ let the test set over-claim the recover pillar):
                             (no infinite loop; max_turns=24 never reached) -> all
                             steps RAN / verified False / exit 2.
     (d) GENUINE IN-TURN     walk-short -> verify FAIL -> walk-again -> verify PASS ->
-        RECOVERY            finish records [RAN, GROUNDED]. The all-GROUNDED gate
-        (FAIL-CLOSED)       (trace_store.evidence_passed 355-362) FAILS CLOSED on the
-                            recorded FAIL row -> verified False / exit 2, EVEN THOUGH
-                            the robot genuinely recovered (step-1 GROUNDED => the 2nd
-                            walk was actor-CAUSED and reached the target read off
-                            unauthored qpos).
-
-  WHAT IS DELIBERATELY NOT CLAIMED: a deterministic recover-to-verified-True. By the
-  moat architecture (native_loop records one StepRecord per verify with NO dedup,
-  271-293; evidence_passed requires EVERY checked step GROUNDED), an honestly-recorded
-  in-turn FAIL->PASS recovery grades RAN. Making it verified=True would require a
-  per-sub-goal latest-verify gate that lets a later PASS overwrite a recorded FAIL —
-  that is LOOSER, and rule 5 (verify only ever gets stricter) forbids it. The spine
-  stays BYTE-UNCHANGED. Recover-to-verified-True is therefore demonstrated ONLY where
-  the LIVE model verifies ONCE after recovering: ``test_native_loop_multistep_live_pty``.
-  Goal-authenticity of the verify constant (does (9,3) match the real task goal)
-  remains the documented deferred residual — STEP 11 does not close it.
+        RECOVERY            finish. WP07 attempt semantics: the re-verify of the SAME
+        (VERIFIED)          predicate is the latest attempt of that sub-goal, graded
+                            against the baseline before the FIRST walk; it is
+                            actor-CAUSED and GROUNDED, so the turn verifies. The FAIL
+                            row stays in the verdict as a superseded attempt (audit).
+                            A PASS of a different, easier predicate never supersedes,
+                            and an UNCAUSED PASS never verifies (test_spine_s2).
 
 SIM DISCIPLINE: serialized (one sim), headless, MuJoCo closed + the child process group reaped after each
 case via the ``sim_cleanup`` fixture (the generated scene xml is untracked). Do NOT parallelize with
@@ -82,7 +72,7 @@ _NEVER_SUCCEEDS_SCRIPT = {
     ]
 }
 
-# (d) GENUINE IN-TURN RECOVERY: short walk FAILs, recovery walk REACHES -> [RAN, GROUNDED].
+# (d) GENUINE IN-TURN RECOVERY: short walk FAILs, recovery walk REACHES -> verified.
 _GENUINE_RECOVERY_SCRIPT = {
     "turns": [
         {"tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": 0.3, "speed": 0.3}}]},
@@ -154,26 +144,19 @@ def test_native_recovery_never_succeeds_terminates_ran_not_verified(sim_cleanup)
 
 
 # ---------------------------------------------------------------------------
-# (d) GENUINE IN-TURN RECOVERY — records [RAN, GROUNDED], FAILS CLOSED to verified False
+# (d) GENUINE IN-TURN RECOVERY — FAIL -> retry -> PASS on the same predicate verifies
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.sim
 @pytest.mark.cli_main
 @pytest.mark.capability
-def test_native_inturn_recovery_is_fail_closed_not_verified(sim_cleanup) -> None:
-    """THE headline honest invariant. A genuine in-turn recovery (walk-short ->
-    verify FAIL -> walk-again -> verify PASS -> finish) records exactly [RAN, GROUNDED].
-    The all-GROUNDED moat gate FAILS CLOSED on the recorded FAIL row -> verified False
-    / exit 2, EVEN THOUGH the robot really recovered. step-1 GROUNDED proves the
-    recovery was genuine: the spine grants GROUNDED only when the verify PASSed AND the
-    step was actor-CAUSED (real commanded motion + real displacement reaching the target
-    read off unauthored qpos) — so this is a real flip, fail-closed, never a false green.
-
-    This DOCUMENTS the moat's fail-closed-on-recovery behavior as an asserted invariant
-    rather than an unstated gap. Recover-to-verified-True lives in the LIVE test
-    (test_native_loop_multistep_live_pty), where the model verifies once after recovering.
-    """
+def test_native_inturn_recovery_is_verified(sim_cleanup) -> None:
+    """The recover pillar (north-star #4), WP07: walk-short -> verify FAIL ->
+    walk-again -> verify PASS -> finish verifies. The PASS is the latest attempt of the
+    same sub-goal and is actor-CAUSED against the baseline before the first walk (real
+    commanded motion + displacement read off unauthored qpos); the FAIL row stays in
+    the verdict, marked superseded (tests:recover-pinned-unverifiable)."""
     r = run_cli_turn(
         "走到坐标 (9.0,3.0)",
         sim_go2=True,
@@ -181,14 +164,15 @@ def test_native_inturn_recovery_is_fail_closed_not_verified(sim_cleanup) -> None
         extra_args=["--headless", "--native-loop"],
         tool_script=_GENUINE_RECOVERY_SCRIPT,
     )
-    assert r.verified is False, f"a recorded-FAIL recovery must fail closed; got {r.verdict}"
-    assert r.exit_code == 2, f"fail-closed recovery must exit 2; got {r.exit_code}"
-    assert r.evidence == "RAN", f"got evidence={r.evidence}"
+    assert r.verified is True, f"a genuine recovery must verify; got {r.verdict}"
+    assert r.exit_code == 0 and r.evidence == "GROUNDED", r.verdict
     per_step = r.verdict["per_step"]
     assert len(per_step) == 2, f"expected exactly [short-FAIL, recovery-PASS]; got {len(per_step)}"
-    # step 0 — the short walk that landed short: a real recorded FAIL (the row the gate keys on).
-    assert per_step[0]["evidence"] == "RAN" and per_step[0]["verify_result"] is False
-    assert per_step[0]["strategy"] == "walk"
-    # step 1 — the recovery walk that REACHED: GROUNDED => actor-CAUSED (genuine flip, not a no-op).
+    # step 0 — the short walk that landed short: a real FAIL, kept as a superseded attempt.
+    assert per_step[0]["verify_result"] is False and per_step[0]["superseded"] is True
+    assert per_step[0]["strategy"] == "walk" and per_step[0]["reject_reason"] == "verify FAIL"
+    # step 1 — the recovery walk that REACHED: GROUNDED, actor-CAUSED (a genuine flip).
     assert per_step[1]["evidence"] == "GROUNDED" and per_step[1]["verify_result"] is True
+    assert per_step[1]["actor_caused"] == "CAUSED" and per_step[1]["superseded"] is False
     assert per_step[1]["strategy"] == "walk"
+    assert r.verdict["n_steps"] == 1 and r.verdict["contract"] == ["at_position(9.0, 3.0)"]

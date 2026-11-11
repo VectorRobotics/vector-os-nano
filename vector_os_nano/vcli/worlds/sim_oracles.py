@@ -113,20 +113,20 @@ def build_namespace(
     # ---------------------------------------------------------------- base
     if gt.has_base:
 
-        @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_ARRIVAL_TOL_M)
+        @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_ARRIVAL_TOL_M, domain="bool")
         @_safe(False)
         def at_position(x: Any, y: Any, tol: Any = _AT_POSITION_TOL_M) -> bool:
             """Base within *tol* m (xy) of (x, y)."""
             bx, by, _z, _yaw = gt.base_pose()
             return math.dist((bx, by), (float(x), float(y))) <= _clamp(tol, _MAX_ARRIVAL_TOL_M)
 
-        @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_FACING_TOL_RAD)
+        @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_FACING_TOL_RAD, domain="bool")
         @_safe(False)
         def facing(heading: Any, tol: Any = _FACING_TOL_RAD) -> bool:
             """Base yaw within *tol* rad of *heading* (wraps across +/-pi)."""
             return _angle_delta(gt.base_pose()[3], float(heading)) <= _clamp(tol, _MAX_FACING_TOL_RAD)
 
-        @oracle(scope="robot", channel="base", transition="rise")
+        @oracle(scope="robot", channel="base", transition="rise", domain="bool")
         @_safe(False)
         def in_room(room: Any) -> bool:
             """Base inside the named room's floor box (world manifest)."""
@@ -134,7 +134,7 @@ def build_namespace(
             bx, by, _z, _yaw = gt.base_pose()
             return x0 <= bx <= x1 and y0 <= by <= y1
 
-        @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_NEAR_M)
+        @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_NEAR_M, domain="bool")
         @_safe(False)
         def near_object(name: Any, r: Any = _NEAR_OBJECT_M) -> bool:
             """Base within *r* m (xy) of a scene object, or of the user ('user')."""
@@ -153,7 +153,7 @@ def build_namespace(
             """Base (x, y, z) — a state read."""
             return tuple(gt.base_pose()[:3])
 
-        @oracle(scope="robot", channel="base")
+        @oracle(scope="robot", channel="base", domain=(-math.pi, math.pi))
         @_safe(None)
         def get_heading() -> float:
             """Base yaw (rad) — a state read."""
@@ -166,7 +166,7 @@ def build_namespace(
     cam = _camera(cfg)
     if cam is not None:
 
-        @oracle(scope="robot", channel="base", transition="rise")
+        @oracle(scope="robot", channel="base", transition="rise", domain="bool")
         @_safe(False)
         def in_view(target: Any) -> bool:
             """Object visible in the robot's camera right now (segmentation render)."""
@@ -174,7 +174,7 @@ def build_namespace(
 
         ns["in_view"] = in_view
 
-    @oracle(scope="robot", channel="perception", transition="rise", max_tol=_MAX_LOCALIZED_M)
+    @oracle(scope="robot", channel="perception", transition="rise", max_tol=_MAX_LOCALIZED_M, domain="bool")
     @_safe(False)
     def localized(target: Any, tol: Any = _LOCALIZED_M) -> bool:
         """The actor's SceneGraph has an instance of *target*, observed this turn,
@@ -205,7 +205,7 @@ def build_namespace(
         joints = tuple(arm.joints) if arm else tuple(cfg.stance)
         home = tuple(arm.home) if arm else tuple(cfg.stance.values())
 
-        @oracle(scope="robot", channel="arm", transition="rise")
+        @oracle(scope="robot", channel="arm", transition="rise", domain="bool")
         @_safe(False)
         def arm_at_home() -> bool:
             """Every arm joint within 0.1 rad of the manifest home pose."""
@@ -235,7 +235,7 @@ def build_namespace(
             return (not welded(name) and not (gt.contacts(name) & gt.robot_bodies)
                     and gt.object_speed(name) < _REST_SPEED)
 
-        @oracle(scope="robot", channel="gripper", transition="rise")
+        @oracle(scope="robot", channel="gripper", transition="rise", domain="bool")
         @_safe(False)
         def holding_object(target: Any = None) -> bool:
             """Object welded to the gripper AND gripped by every finger AND lifted
@@ -244,7 +244,7 @@ def build_namespace(
                 return held(obj(target))
             return any(held(n) for n, on in gt.weld_active().items() if on)
 
-        @oracle(scope="robot", channel="gripper", transition="rise")
+        @oracle(scope="robot", channel="gripper", transition="rise", domain="bool")
         @_safe(False)
         def lifted(target: Any, dz: Any = LIFT_M) -> bool:
             """Object held by the gripper with its lowest point >= *dz* (at least
@@ -252,16 +252,18 @@ def build_namespace(
             name = obj(target)
             return welded(name) and gt.clearance(name) >= max(LIFT_M, float(dz))
 
-        @oracle(scope="robot", channel="gripper", transition="rise")
+        @oracle(scope="robot", channel="gripper", transition="rise", domain="bool", window="turn")
         @_safe(False)
         def kept_holding(target: Any) -> bool:
-            """Held now AND its weld never dropped since the turn started."""
+            """Held now AND its weld never dropped since the turn started. Caused only
+            by a grasp in THIS turn (window="turn"): an object already held when the
+            turn began never proves a fetch."""
             name = obj(target)
             t0, _wall = turn_start()
             dropped = any(n == name and not on for _t, n, on in gt.weld_events(since=t0))
             return held(name) and not dropped
 
-        @oracle(scope="robot", channel="gripper", transition="fall")
+        @oracle(scope="robot", channel="gripper", transition="fall", domain="bool")
         @_safe(False)
         def released(target: Any = None) -> bool:
             """No longer held: the object's weld is off and no robot body touches it.
@@ -271,7 +273,7 @@ def build_namespace(
             name = obj(target)
             return not welded(name) and not (gt.contacts(name) & gt.robot_bodies)
 
-        @oracle(scope="robot", channel="gripper", transition="fall", max_tol=_MAX_OBJECT_AT_M)
+        @oracle(scope="robot", channel="gripper", transition="fall", max_tol=_MAX_OBJECT_AT_M, domain="bool")
         @_safe(False)
         def object_at(target: Any, x: Any, y: Any, r: Any = _OBJECT_AT_M) -> bool:
             """Object resting within *r* m (xy) of (x, y)."""
@@ -279,7 +281,7 @@ def build_namespace(
             ox, oy = gt.object_positions()[name][:2]
             return resting(name) and math.dist((ox, oy), (float(x), float(y))) <= _clamp(r, _MAX_OBJECT_AT_M)
 
-        @oracle(scope="robot", channel="gripper", transition="fall")
+        @oracle(scope="robot", channel="gripper", transition="fall", domain="bool")
         @_safe(False)
         def object_on(target: Any, surface: Any) -> bool:
             """Object resting ON the named support surface: in contact with its body,

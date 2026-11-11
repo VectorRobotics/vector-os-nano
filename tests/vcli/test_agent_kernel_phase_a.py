@@ -269,7 +269,8 @@ class TestRobotRegression:
         assert names.isdisjoint(memory), sorted(names & memory)
         assert classify_verify_expr("nearest_room() == 'kitchen'", names) == "RAN"
         assert classify_verify_expr("'mug' in objects_in_room('kitchen')", names) == "RAN"
-        assert classify_verify_expr("get_position()[0] < 5.0", names) == "GROUNDED"
+        # I4 G3: a bare state read names no goal: never evidence (the GT reader is live)
+        assert classify_verify_expr("get_position()[0] < 5.0", names) == "RAN"
 
     def test_robot_world_uses_decomposer_defaults(self) -> None:
         assert RobotWorld().decompose_vocab() is None

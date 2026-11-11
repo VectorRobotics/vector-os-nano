@@ -8,8 +8,8 @@ assert the SHAPE of what the planner is taught and that a correctly-bound plan
 PASSES the decompose validator — never model behaviour:
 
   1. ``Skill.to_schemas()`` surfaces each arm skill's declared ``verify_hint``
-     (pick -> holding_object(), home -> arm_at_home(), detect ->
-     len(detect_objects()) > 0, place -> not holding_object()).
+     (pick -> holding_object({object_label}), home -> arm_at_home(), detect ->
+     len(detect_objects()) > 0, place -> released()).
   2. ``build_decompose_vocab`` derives, world-agnostically:
        - per-strategy ``suggested verify:`` lines in strategy_params_help,
        - a few-shot example whose verify expression IS a skill's verify_hint,
@@ -68,7 +68,7 @@ def _arm_schemas() -> list[dict[str, Any]]:
 
 def test_to_schemas_includes_verify_hint_per_skill() -> None:
     by_name = {s["name"]: s for s in _arm_schemas()}
-    assert by_name["pick"]["verify_hint"] == "holding_object()"
+    assert by_name["pick"]["verify_hint"] == "holding_object({object_label})"
     assert by_name["home"]["verify_hint"] == "arm_at_home()"
     assert by_name["detect"]["verify_hint"] == "in_view('<query>')"
     assert by_name["place"]["verify_hint"] == "released()"
@@ -98,7 +98,7 @@ def test_params_help_carries_suggested_verify_per_skill() -> None:
     vocab = build_decompose_vocab(_arm_schemas(), _ARM_VERIFY_SIGS, has_base=False)
     help_text = vocab.strategy_params_help
     # Each skill's declared predicate is surfaced as a 'suggested verify' line.
-    assert "suggested verify: holding_object()" in help_text
+    assert "suggested verify: holding_object({object_label})" in help_text
     assert "suggested verify: arm_at_home()" in help_text
     assert "suggested verify: in_view('<query>')" in help_text
     assert "suggested verify: released()" in help_text

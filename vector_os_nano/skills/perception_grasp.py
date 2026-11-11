@@ -520,7 +520,9 @@ class PerceptionGraspSkill:
         "single 'bbox') and this skill CONSUMES them — back-projecting the box to "
         "a 3D grasp point — instead of re-perceiving (true producer->consumer)."
     )
-    verify_hint: str = "holding_object('<object>')"
+    # Auto-verified after the grasp, bound from the call's query (an object the world
+    # manifest cannot resolve binds no auto-verify; the model's own verify names it).
+    verify_hint: str = "holding_object({query})"
     parameters: dict = {
         "query": {
             "type": "string",

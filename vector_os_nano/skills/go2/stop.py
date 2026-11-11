@@ -30,6 +30,10 @@ class StopSkill:
     postconditions: list[str] = ["is_stopped"]
     effects: dict = {"is_moving": False}
     failure_modes: list[str] = ["no_base"]
+    # Housekeeping: halting changes no task state, so an unproven stop row does not
+    # fail a turn another row proved — unless it re-verifies (supersedes) an actuating
+    # attempt, which it must then prove (trace_store.turn_reject_reason).
+    housekeeping: bool = True
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Halt all movement.

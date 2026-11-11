@@ -117,6 +117,7 @@ class MobilePickSkill:
     """
 
     name: str = "mobile_pick"
+    verify_hint: str = "holding_object({object_label})"
     description: str = (
         "Walk the dog to a reachable pose near a known object and pick it "
         "up with a top-down grasp. Object must be registered in the world "

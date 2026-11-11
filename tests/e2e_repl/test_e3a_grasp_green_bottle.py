@@ -26,3 +26,5 @@ def test_e3a_grasp_green_bottle_grounded() -> None:
     assert not r.timed_out, text[-3000:]
     assert f"verify holding_object('{_TARGET}') ✓ (actor=CAUSED)" in text, text[-3000:]
     assert "verdict GROUNDED verified=True" in text, text[-3000:]
+    # charter 3.5: a closed grasp form, so the user's end state itself is proven
+    assert "goal=proven" in text and f"goal proven: holding_object('{_TARGET}')" in text, text[-3000:]

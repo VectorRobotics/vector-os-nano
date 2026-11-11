@@ -43,6 +43,7 @@ class Surface:
     body: str
     box: tuple[float, float, float, float]
     height: float
+    aliases: tuple[str, ...] = ()  # what NL calls it ("餐桌", "dining table")
 
 
 def _has(text: str, word: str) -> bool:
@@ -99,6 +100,17 @@ class WorldManifest:
         ]
         return cands[0] if len(cands) == 1 else None
 
+    def resolve_surface(self, text: Any) -> str | None:
+        """The support surface *text* names (its name, or the longest alias inside the
+        text), or None (none named, or two: "the table" in a house of tables)."""
+        q = str(text or "").strip().lower()
+        hits = [(w.lower(), n) for n, s in self.surfaces.items()
+                for w in (n, n.replace("_", " "), *s.aliases) if q and _has(q, w)]
+        if not hits:
+            return None
+        best_word, best = max(hits, key=lambda h: len(h[0]))
+        return best if all(n == best or w in best_word for w, n in hits) else None
+
     def vocabulary(self) -> list[str]:
         """One canonical English name per pickable (its first ASCII alias), for detectors."""
         out = []
@@ -132,7 +144,7 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
         try:
             surfaces[str(name)] = Surface(
                 str(name), str(s["body"]), _box(s["box"], f"{ctx}: surfaces.{name}.box"),
-                float(s["height"]),
+                float(s["height"]), tuple(str(a) for a in s.get("aliases") or ()),
             )
         except (KeyError, TypeError) as exc:
             raise WorldManifestError(f"{ctx}: surfaces.{name} needs body, box, height ({exc})") from exc

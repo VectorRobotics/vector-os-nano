@@ -40,9 +40,7 @@ GROUNDED = [
     "facing(-1.57)",
     "in_room('kitchen')",
     "path_contains('note.txt', 'note')",  # goal-conditioned bool — bare call OK
-    "'table' in describe_scene()",
-    "placed_count() == 2",
-    "len(detect_objects()) > 0",
+    "placed_count((0.0, 0.0, 0.5, 0.5)) >= 1",  # a state read naming its goal region
 ]
 
 # WP02 stricter-only: `not <rise-predicate>` is RAN. A release re-homes to a
@@ -62,6 +60,11 @@ RAN = [
     "get_position() == get_position()",  # oracle vs itself
     "abs(get_position()[0] - get_position()[0]) < 1.0",  # self-cancelling tautology
     "this is not valid python (",  # syntax error -> RAN
+    # I4 G3: a compare on a bare state read names no goal; a disjunction hedges
+    "'table' in describe_scene()",
+    "placed_count() == 2",
+    "len(detect_objects()) > 0",
+    "in_room('kitchen') or in_room('study')",
 ]
 
 
@@ -80,12 +83,7 @@ def test_empty_oracle_names_fails_closed() -> None:
     assert classify_verify_expr("at_position(2.0, 0.0)", frozenset()) == "RAN"
 
 
-@pytest.mark.xfail(
-    reason="R1 known gap: a shape-trivial state-vs-constant compare reads an oracle "
-    "but proves nothing about the goal; STRUCTURALLY indistinguishable from the honest "
-    "len(detect_objects())>0, so not closeable by the truth-bearing check; authenticity "
-    "is deferred to R2's independent observer.",
-    strict=True,
-)
 def test_r1_gap_shape_trivial_state_compare() -> None:
+    # Closed in I4 (G3): a compare on a bare state read (no argument names a goal) is
+    # never evidence, so the shape-trivial compare is RAN like its vacuous siblings.
     assert classify_verify_expr("len(get_position()) == 3", ORACLES) == "RAN"

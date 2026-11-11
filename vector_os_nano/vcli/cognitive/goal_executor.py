@@ -821,13 +821,16 @@ class GoalExecutor:
                 is_robot_predicate,
             )
 
-            oracle_names = self._verify_oracle_names()
-            # Only GRADE a step whose verify names a graded robot predicate that is
-            # live in the oracle set; anything else stays NOT_GRADED (legacy).
-            if not is_robot_predicate(verify, oracle_names):
+            from vector_os_nano.vcli.cognitive.oracle_registry import oracle_tags
+
+            ns = getattr(self._verifier, "_namespace", None)
+            tags = oracle_tags(ns) if isinstance(ns, dict) else {}
+            # Only GRADE a step whose verify calls a live robot-channel oracle;
+            # anything else stays NOT_GRADED (legacy).
+            if not is_robot_predicate(verify, tags):
                 return ActorCaused.NOT_GRADED
             post = capture(self._agent)
-            return grade(baseline, post, verify, oracle_names)
+            return grade(baseline, post, verify, tags)
         except Exception as exc:  # noqa: BLE001
             logger.debug("GoalExecutor: actor-causation grade raised: %s", exc)
             return ActorCaused.NOT_GRADED
@@ -913,6 +916,13 @@ class GoalExecutor:
         return ""
 
     def _execute_strategy(self, result: Any) -> tuple[bool, str, dict]:
+        """Run the strategy as the actor: its commanded motion counts (ACTOR_EPOCH)."""
+        from vector_os_nano.sim.runtime import ACTOR_EPOCH
+
+        with ACTOR_EPOCH.tool():
+            return self._dispatch_strategy(result)
+
+    def _dispatch_strategy(self, result: Any) -> tuple[bool, str, dict]:
         """Dispatch to skill or primitive execution.
 
         Returns:

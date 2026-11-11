@@ -138,11 +138,14 @@ def bind_fake_sim(agent: Any, embodiment: str = "so101", **gt_kwargs: Any) -> Si
 
     ``unbind_fake_sim(session)`` (or the session's ``close()``) removes it.
     """
+    from vector_os_nano.embodiments import registry
     from vector_os_nano.sim import session as sim_session
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     gt = FakeGT(agent, **gt_kwargs)
     turn = [(-math.inf, -math.inf)]
-    s = SimpleNamespace(agent=agent, gt=gt)
+    world_id = registry.load(embodiment).world
+    s = SimpleNamespace(agent=agent, gt=gt, world=load_world(world_id) if world_id else None)
     s.oracles = lambda: fake_namespace(agent, embodiment, gt=gt, turn_start=lambda: turn[0],
                                        belief=lambda: getattr(agent, "_spatial_memory", None))
     s.mark_turn = lambda phase, goal="": turn.__setitem__(0, (gt.sim_time, time.time())) if phase == "start" else None

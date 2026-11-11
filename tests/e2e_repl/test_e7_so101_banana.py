@@ -32,3 +32,4 @@ def test_e7_nl_launch_arm_then_grasp_banana_grounded() -> None:
     assert re.search(r"Started so101 simulation, ready in", text), f"NL launch did not start the arm sim:\n{text[-3000:]}"
     assert "pick → verify holding_object('banana') ✓ (actor=CAUSED)" in text, text[-3000:]
     assert "verdict GROUNDED verified=True (1/1 grounded)" in text, text[-3000:]
+    assert "goal proven: holding_object('banana')" in text, text[-3000:]   # 抓起香蕉: a closed grasp form
