@@ -6,8 +6,6 @@
 2 a simulator is imported only by its backend | hardware/sim/mujoco_g1.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/mujoco_go2.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/mujoco_gripper.py | mujoco
-2 a simulator is imported only by its backend | hardware/sim/mujoco_piper.py | mujoco
-2 a simulator is imported only by its backend | hardware/sim/mujoco_piper_gripper.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/scene_builder.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/viewer_mode.py | mujoco
 2 a simulator is imported only by its backend | vcli/cli.py | mujoco
