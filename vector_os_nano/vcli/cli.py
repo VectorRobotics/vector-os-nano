@@ -492,6 +492,17 @@ def _repl_native_enabled() -> bool:
     )
 
 
+def _goal_line(report: Any, why: str) -> str:
+    """The verdict block's goal check in words (charter 3.5): the end state proven, why
+    it is not met, or that the sentence was not machine-checked and what was proven."""
+    if report.goal_check == "proven":
+        return f"goal proven: {' and '.join(report.contract)}"
+    if report.goal_check == "failed":
+        return f"goal not met: {why}"
+    proven = [s.verify for s in report.per_step if s.evidence == "GROUNDED" and not s.superseded]
+    return f"goal not machine-checked (no task contract for this sentence); proven: {'; '.join(proven) or 'nothing'}"
+
+
 def _lifecycle_lines(entries: list[dict[str, Any]]) -> list[str]:
     """The first line of every start/stop_simulation result among *entries* (in order)."""
     ids = {b.get("id") for e in entries if e.get("type") == "assistant"
@@ -522,7 +533,7 @@ def _repl_attempt_native(
     the turn rebinds ``engine._vgg_agent``, so the verdict is graded on the body the
     turn ended on.
     """
-    from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
+    from vector_os_nano.vcli.cognitive.trace_store import goal_check, verify_oracle_names
     from vector_os_nano.vcli.verdict import VerdictReport
 
     n0 = len(session._entries)
@@ -617,10 +628,11 @@ def _repl_attempt_native(
             console.print(
                 f"  [{TEAL}]verdict[/] {report.evidence} "
                 f"[{color}]verified={report.verified}[/] "
-                f"[dim]({report.n_grounded}/{report.n_steps} grounded){gait}[/]"
+                f"[dim]({report.n_grounded}/{report.n_steps} grounded){gait} goal={report.goal_check}[/]"
             )
             if report.reject_reason and not report.llm_unavailable:
                 console.print(f"  [dim]not verified: {escape(report.reject_reason)}[/]")
+            console.print(f"  [dim]{escape(_goal_line(report, goal_check(trace, oracle_names)[1]))}[/]")
             if report.llm_unavailable:
                 console.print(f"  [yellow]{escape(report.error)}[/] [dim](infrastructure, not an agent failure)[/]")
         except Exception as exc:  # noqa: BLE001 — fail closed (display only)
@@ -1880,7 +1892,8 @@ def run_one_turn(args: Any) -> int:
         else:
             console.print(
                 f"[{TEAL}]verdict[/] {report.evidence} "
-                f"verified={report.verified} ({report.n_grounded}/{report.n_steps} grounded)"
+                f"verified={report.verified} ({report.n_grounded}/{report.n_steps} grounded) "
+                f"goal={report.goal_check}"
             )
         return report.exit_code()
 

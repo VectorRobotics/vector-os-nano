@@ -32,6 +32,7 @@ from typing import Any
 
 from vector_os_nano.vcli.cognitive.trace_store import (
     classify_step_evidence,
+    goal_check,
     graded_indices,
     step_reject_reason,
     turn_reject_reason,
@@ -107,6 +108,10 @@ class VerdictReport:
     acted: bool = False
     scene: str = ""
     contract: tuple[str, ...] = ()
+    # Charter 3.5 (additive): whether the user's end state was machine-checked --
+    # "proven" | "failed" | "unchecked" (trace_store.goal_check), never merged into
+    # ``verified``. A consumer that needs "the task is done" reads goal_check == "proven".
+    goal_check: str = "unchecked"
 
     # ------------------------------------------------------------------
     # Construction — the ONLY supported way to build a verdict from a run.
@@ -189,6 +194,7 @@ class VerdictReport:
             acted=bool(getattr(trace, "actions_dispatched", 0)),
             scene=str(getattr(trace, "scene", "") or ""),
             contract=tuple(getattr(trace, "contract", ()) or ()),
+            goal_check=goal_check(trace, oracle_names)[0],
         )
 
     @classmethod

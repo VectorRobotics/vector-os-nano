@@ -48,15 +48,7 @@ _SURFACES = "coffee_table, console_table, dining_table, pick_table"
     ("把红色罐子放到桌子上", f"object_on('{RED}', None)"),
     ("place the red can on the table", f"object_on('{RED}', None)"),
     ("put the red can on the shelf", f"object_on('{RED}', None)"),
-    ("把红色罐子放到厨房", f"object_on('{RED}', None)"),
-    ("drop the red can in the kitchen", f"object_on('{RED}', None)"),
-    ("put the red can down beside the sofa", f"object_on('{RED}', None)"),   # no listed preposition
-    ("put the red can down please", f"object_on('{RED}', None)"),          # unlisted: fails closed
-    ("set the red can down next to the fridge", f"object_on('{RED}', None)"),
-    ("把红色罐子放在冰箱旁边", f"object_on('{RED}', None)"),
-    ("放下红色罐子在桌子上", f"object_on('{RED}', None)"),
-    ("把红色罐子搁在门口然后放下", f"object_on('{RED}', None)"),
-    ("put the red can on the coffee table or the dining table", f"object_on('{RED}', None)"),  # two fit
+    ("put the red can down please", f"released('{RED}')"),   # I4d: politeness is stripped
     # a uniquely named surface
     ("put the red can onto the dining table", f"object_on('{RED}', 'dining_table')"),
     ("把红色罐子放在茶几上", f"object_on('{RED}', 'coffee_table')"),
@@ -65,6 +57,18 @@ _SURFACES = "coffee_table, console_table, dining_table, pick_table"
 ])
 def test_only_a_pure_release_compiles_released(goal, contract) -> None:
     assert task_contract(goal, APT, "apartment") == (contract,)
+
+
+@pytest.mark.parametrize("goal", [
+    # I4d: these compiled object_on(red, None) on I4c (any place verb with any leftover
+    # fails closed); a destination that is no ON-a-surface slot is now no closed form:
+    # unchecked, never told to the model, and the place gate still needs a release
+    "把红色罐子放到厨房", "drop the red can in the kitchen", "put the red can down beside the sofa",
+    "set the red can down next to the fridge", "把红色罐子放在冰箱旁边", "放下红色罐子在桌子上",
+    "把红色罐子搁在门口然后放下", "put the red can on the coffee table or the dining table",
+])
+def test_a_place_outside_the_closed_forms_is_unchecked(goal) -> None:
+    assert task_contract(goal, APT, "apartment") == ()
 
 
 def test_a_world_without_a_manifest_keeps_no_place_contract() -> None:
@@ -87,17 +91,23 @@ def test_the_unbound_reason_names_the_slot_quotes_the_goal_and_lists_the_world()
     "把红色罐子放到桌子上",
     "place the red can on the table",
     "put the red can on the shelf",
-    "把红色罐子放到厨房",
 ])
 def test_a_drop_anywhere_never_places_on_a_named_destination(goal) -> None:
     """The last verifier's P1 through the runner: the can is only opened out of the
     hand; released('red can') is CAUSED, but the goal names a destination."""
     trace, rep = _two(goal, [("open_can", {}), _v("released('red can')")], held=(RED,))
     assert trace.contract == (f"object_on('{RED}', None)",)
-    assert rep.verified is False
+    assert rep.verified is False and rep.goal_check == "failed"
     assert rep.reject_reason == (
         f"task contract object_on('{RED}', None): the goal {goal!r} names no destination "
         f"the world resolves; surfaces: {_SURFACES}")
+
+
+def test_a_drop_for_an_unchecked_place_never_proves_the_goal() -> None:
+    """I4d: '放到厨房' names no surface slot, so no contract: the release grounds the step
+    and the place gate, but the goal is reported unchecked, never proven."""
+    trace, rep = _two("把红色罐子放到厨房", [("open_can", {}), _v("released('red can')")], held=(RED,))
+    assert trace.contract == () and rep.goal_check == "unchecked"
 
 
 @pytest.mark.parametrize("goal", ["put the red can down", "把红色罐子放下"])

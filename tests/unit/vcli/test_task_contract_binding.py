@@ -50,16 +50,20 @@ GREEN = "pickable_bottle_green"
     # unresolvable object: None binds, the item is no evidence (fails closed)
     ("把那个罐子拿过来", ("kept_holding(None)", "near_object('user')")),
     ("把瓶子放到餐桌上", ("object_on(None, 'dining_table')",)),
-    # I4-V2: a grasp binds like a fetch: two bottles, or an object the world lacks, bind None
+    # I4-V2: a grasp binds like a fetch: two bottles bind None
     ("拿起瓶子", ("holding_object(None)",)),
-    ("pick up the apple", ("holding_object(None)",)),
+    # I4d: a word the world has no object for fills no object slot: no closed form, so
+    # unchecked (the manipulation gate still rejects it: test_a_grasp_of_an_unresolvable_...)
+    ("pick up the apple", ()),
 ])
 def test_the_contract_binds_through_the_world_manifest(goal, contract) -> None:
     assert task_contract(goal, APT, "apartment") == contract
 
 
-def test_without_a_world_the_object_never_binds() -> None:
-    assert task_contract("把绿色瓶子拿过来", APT) == ("kept_holding(None)", "near_object('user')")
+def test_without_a_world_no_manipulation_contract_compiles() -> None:
+    """I4d (charter 3.5): the slots bind only through a manifest, so without one a
+    manipulation goal is unchecked (the fetch was kept_holding(None): never met)."""
+    assert task_contract("把绿色瓶子拿过来", APT) == ()
     assert task_contract("把绿色瓶子放到餐桌上", APT) == ()
 
 

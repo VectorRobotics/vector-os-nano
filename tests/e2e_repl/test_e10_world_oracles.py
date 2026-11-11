@@ -82,10 +82,15 @@ def test_e10_find_localizes_and_a_preplaced_object_never_grounds_a_place() -> No
     find = find[: find.find(_PLACE)] if _PLACE in find else find
     assert "look → verify localized('green bottle') ✓" in find, find[-3000:]
     assert "verdict GROUNDED verified=True" in find, find[-3000:]
+    # a look is no closed form: the step is proven, the goal is not machine-checked
+    assert "goal=unchecked" in find, find[-3000:]
+    assert "goal not machine-checked (no task contract for this sentence); proven: localized('green bottle')" in find
     place = _turn(text, _PLACE)
     assert "verify object_on('green bottle', 'pick_table') ✓ (actor=UNCAUSED)" in place, place[-3000:]
     assert "walk → verify object_on('green bottle', 'pick_table') ✓ (actor=UNCAUSED)" in place, place[-3000:]
     assert "verdict RAN verified=False" in place, place[-3000:]
+    # "桌子" fits none of the apartment's four surfaces: the goal check fails on that slot
+    assert "goal=failed" in place and "goal not met: task contract object_on('pickable_bottle_green', None)" in place
 
 
 @pytest.mark.sim
@@ -101,6 +106,7 @@ def test_e10_carry_grounds_and_a_drop_during_carry_is_never_green() -> None:
     assert "verify holding_object('green bottle') ✓ (actor=CAUSED)" in fetch, fetch[-3000:]
     assert f"navigate → verify {_CARRY_VERIFY} ✓ (actor=CAUSED)" in fetch, fetch[-3000:]
     assert "verdict GROUNDED verified=True" in fetch, fetch[-3000:]
+    assert f"goal proven: {_CONTRACT.removeprefix('Task contract: ')}" in fetch, fetch[-3000:]
     again = _turn(text, _AGAIN)
     again = again[: again.find(_DROP)] if _DROP in again else again
     assert _CONTRACT in again, again[-3000:]

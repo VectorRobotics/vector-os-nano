@@ -19,10 +19,7 @@ from __future__ import annotations
 import pytest
 
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
-from vector_os_nano.vcli.cognitive.object_goal import (
-    goal_has_object_intent,
-    has_necessary_manip_oracle,
-)
+from vector_os_nano.vcli.cognitive.object_goal import goal_intents, has_necessary_manip_oracle
 from vector_os_nano.vcli.cognitive.trace_store import evidence_passed
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
@@ -72,7 +69,7 @@ _DEV_ORACLES = frozenset({"file_exists", "path_contains"})
     ],
 )
 def test_goal_has_object_intent(goal, expected) -> None:
-    assert goal_has_object_intent(goal) is expected
+    assert bool(goal_intents(goal)) is expected
 
 
 @pytest.mark.parametrize(

@@ -14,8 +14,9 @@ marker predicate — the fakeable-grasp false-green (D17) — nor by a detect.
   carry/take/get/deliver/place/put ...); test_object_goal pins that every alias of a
   gripper skill is covered, so a new alias cannot fail the gate open.
 - ``has_necessary_manip_oracle`` checks that a GT manipulation oracle GATES a verify.
-- ``task_contract`` compiles the goal into the GT predicates that must be False at
-  turn start and True at turn end (trace_store checks them).
+- ``task_contract`` compiles a goal made only of closed sentence forms into the GT
+  predicates that must be False at turn start and True at turn end (trace_store's
+  goal check); any other goal compiles none and is reported unchecked (charter 3.5).
 
 Stricter-only (rule 5): the gates built on these only REJECT a turn that already
 classified; intent comes from the user's words (and the skills the producer
@@ -66,11 +67,6 @@ def goal_intents(goal_text: str | None) -> frozenset[str]:
     if not goal_text:
         return frozenset()
     return frozenset(i for i, rx in _INTENT_RES.items() if rx.search(goal_text))
-
-
-def goal_has_object_intent(goal_text: str | None) -> bool:
-    """True iff the NL goal names any manipulation (grasp / fetch / place)."""
-    return bool(goal_intents(goal_text))
 
 
 def proof_oracles(goal: frozenset[str] | set[str], dispatched: frozenset[str] | set[str] = frozenset()
@@ -174,48 +170,76 @@ def backs_contract(item: str, verify: str | None, world_id: str = "") -> bool:
     )
 
 
-# A place goal is a PURE release only when the whole goal is one of these closed forms
-# (optionally after a grasp clause): nothing left over that could name a destination.
-# Every other place goal names one (I4c), so an unlisted phrasing fails closed.
-_RELEASE_FORMS = tuple(re.compile(p) for p in (
-    r"put (?P<o>.+?) down", r"put down (?P<o>.+)", r"set (?P<o>.+?) down", r"set down (?P<o>.+)",
-    r"drop (?P<o>.+)", r"release (?P<o>.+)", r"let go(?: of (?P<o>.+))?",
-    r"(?:(?:拿起|抓起|捡起|拿住|抓住)(?P<g>.+?))?(?:把(?P<o>.+?))?(?:放下|放开|松开|松手|放手|丢下|扔下)来?",
-    r"(?:放下|放开|松开|丢下|扔下)(?P<o>.+)",
-))
-_GRASP_FORMS = tuple(re.compile(p) for p in (
-    r"pick up (?P<o>.+)", r"pick (?P<o>.+?) up", r"grab (?P<o>.+)", r"grasp (?P<o>.+)",
-    r"(?:拿起|抓起|捡起|拿住|抓住)(?P<o>.+)",
-))
-_THEN = re.compile(r"\s*(?:,?\s*and then\s|,?\s*and\s|,?\s*then\s|[,，、;；]|然后|再)\s*")
-_PRONOUNS = frozenset({"it", "that", "this", "them", "它", "这个", "那个"})
+# The closed whole-sentence forms a task contract compiles from (charter 3.5), by the
+# end state each names. ``{o}`` is an object slot (an object name or a pronoun), ``{s}``
+# a destination slot (a surface name). A goal is lead grasp clauses, then one clause of
+# any kind; a phrasing nobody listed compiles nothing (unchecked), never a guess.
+_FORMS: dict[str, tuple[str, ...]] = {
+    "grasp": (r"pick up {o}", r"pick {o} up", r"(?:grab|grasp|take|hold|take hold of|get hold of) {o}",
+              r"(?:拿起|抓起|捡起|拿住|抓住|抓取|夹起|夹住|握住|拿|抓|捡)(?:一下)?{o}",
+              r"把{o}(?:拿|抓|捡|夹)(?:起来|起|住)"),
+    "release": (r"(?:put|set) {o} down", r"(?:put|set) down {o}", r"(?:drop|release|let go of) {o}", r"let go",
+                r"把{o}(?:放下|放开|松开|丢下|扔下)来?", r"(?:放下|放开|松开|丢下|扔下){o}", r"放下|放开|松开|松手|放手"),
+    "place": (r"(?:put|place|set) {o} (?:down )?(?:on top of|onto|on) {s}",
+              r"(?:把{o})?(?:放到|放在|搁到|搁在|摆到|摆在){s}(?:上面|上)"),
+    "fetch": (r"(?:bring|get|give|hand|fetch) me {o}", r"(?:give|hand) {o} to me",
+              r"(?:bring|fetch) {o}(?: to me| to the user| over here| here| over)?", r"把{o}(?:拿|递|带|送)(?:过来给我|来给我|过来|来|给我)", r"拿{o}(?:过来|给我)",
+              r"(?:拿|递|带)给我{o}", r"给我拿(?:来|过来)?{o}"),
+}
+_CLAUSES = [(kind, re.compile(f.format(o="(?P<o>.+?)", s="(?P<s>.+)"))) for kind, fs in _FORMS.items() for f in fs]
+_THEN = re.compile(r"\s*(?:,?\s*\band then\b|,?\s*\band\b|,?\s*\bthen\b|[,，、;；]|然后|再)\s*")
+# Politeness and filler stripped at either end (a closed list, like the forms).
+_LEAD = re.compile(r"^(?:(?:please|kindly|just|can you|could you|would you|will you)\b|请|麻烦你|麻烦|帮我|你)\s*")
+_TAIL = re.compile(r"[\s,，]*(?:\b(?:please|thanks|thank you|for me|now)|吧|一下|一点|谢谢|好吗)$|[\s.!?。！？~～]+$")
+_PRONOUNS = frozenset({"it", "that", "this", "them", "that one", "this one", "它", "它们", "这个", "那个"})
 
 
-def _names_only_an_object(world: Any, phrase: str | None) -> bool:
-    """*phrase* is a pronoun or exactly an object name of *world* (a body name, an
-    alias, or colour / category words), with nothing else in it."""
-    x = re.sub(r"^(?:(?:the|a|an|this|that|my)\s+|这个|那个|这|那)", "", (phrase or "").strip())
-    if x in _PRONOUNS or x in {n.lower() for n in world.pickables} | {
-            a.lower() for p in world.pickables.values() for a in p.aliases}:
+def _names(world: Any, phrase: str, slot: str) -> bool:
+    """*phrase* fills *slot* and nothing else: an object slot ``o`` a pronoun or an
+    object name of *world* (a body name, an alias, colour and category words), a
+    destination slot ``s`` a surface name or a word for furniture (its scenery)."""
+    if slot == "o" and phrase in _PRONOUNS:
+        return True
+    x = re.sub(r"^(?:(?:the|a|an|this|that|my)\s+|这个|那个|这|那)", "", phrase)
+    if slot == "s":
+        names = {w.lower() for n, s in world.surfaces.items() for w in (n, n.replace("_", " "), *s.aliases)}
+        return x in names or re.fullmatch(rf"(?:{_alt(world.scenery)})(?:子|s)?", x) is not None
+    if x in {n.lower() for n in world.pickables} | {a.lower() for p in world.pickables.values() for a in p.aliases}:
         return True
     words = [*(w for ws in world.colours.values() for w in ws), *(p.colour for p in world.pickables.values())]
     cats = [*(w for ws in world.categories.values() for w in ws), *(p.category for p in world.pickables.values())]
-    alt = lambda ws: "|".join(sorted({re.escape(w.lower()) for w in ws}, key=len, reverse=True)) or "(?!)"  # noqa: E731
-    return bool(x) and re.fullmatch(rf"(?:(?:{alt(words)})\s?色?的?)?\s?(?:(?:{alt(cats)})子?)?", x) is not None
+    return bool(x) and re.fullmatch(rf"(?:(?:{_alt(words)})\s?色?的?)?\s?(?:(?:{_alt(cats)})(?:子|e?s)?)?", x) is not None
 
 
-def _pure_release(world: Any, goal_text: str) -> bool:
-    """The goal is only a release (put it down / 放下 / 把 X 放下 ...), optionally after a
-    grasp of the same object: a closed list, so a phrasing nobody listed is NOT one."""
-    text = unicodedata.normalize("NFKC", goal_text).lower().strip()
-    text = re.sub(r"[\s.!?。！？~～]+$", "", re.sub(r"^(?:please\s+|请|帮我)", "", text))
-    *grasps, last = _THEN.split(text)
+def _alt(words: Any) -> str:
+    return "|".join(sorted({re.escape(w.lower()) for w in words}, key=len, reverse=True)) or "(?!)"
 
-    def fits(forms: tuple[re.Pattern[str], ...], clause: str) -> bool:
-        m = next((m for rx in forms if (m := rx.fullmatch(clause))), None)
-        return m is not None and all(_names_only_an_object(world, v) for v in m.groupdict().values() if v)
 
-    return fits(_RELEASE_FORMS, last) and all(fits(_GRASP_FORMS, g) for g in grasps)
+def _sentence(world: Any, goal_text: str) -> tuple[str, str | None, str | None] | None:
+    """The whole goal as closed forms (grasp clauses, then any one clause; a grasp may be
+    glued to it: 拿起X放到Y上), or None: ``(the last clause's kind, the object, the
+    destination)``, each bound through *world* (None: unknown, ambiguous, a pronoun)."""
+    def one(t: str) -> tuple[str, dict[str, str]] | None:
+        for kind, rx in _CLAUSES:
+            m = rx.fullmatch(t.strip())
+            slots = {k: v.strip() for k, v in (m.groupdict() if m else {}).items() if v}
+            if m and all(_names(world, v, k) for k, v in slots.items()):
+                return kind, slots
+        return None
+
+    text, prev = unicodedata.normalize("NFKC", goal_text).lower().strip(), None
+    while text != prev:
+        prev, text = text, _TAIL.sub("", _LEAD.sub("", text)).strip()
+    clauses: list[tuple[str, dict[str, str]]] = []
+    for c in filter(None, _THEN.split(text)):
+        glued = next(([h, t] for i in range(1, len(c)) if (h := one(c[:i])) and h[0] == "grasp"
+                      and (t := one(c[i:]))), None)
+        clauses += [whole] if (whole := one(c)) else glued or [("", {})]
+    if not clauses or any(kind != "grasp" for kind, _ in clauses[:-1]) or not clauses[-1][0]:
+        return None
+    named = {world.resolve(v) for _, slots in clauses if (v := slots.get("o")) and v not in _PRONOUNS}
+    dest = clauses[-1][1].get("s")
+    return clauses[-1][0], named.pop() if len(named) == 1 else None, dest and world.resolve_surface(dest)
 
 
 def unbound_reason(item: str, goal_text: str | None, world_id: str = "") -> str:
@@ -237,54 +261,25 @@ def unbound_reason(item: str, goal_text: str | None, world_id: str = "") -> str:
 
 
 def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id: str = "") -> tuple[str, ...]:
-    """Compile the NL goal into its END-STATE ground-truth predicates (WP07, I4).
-
-    The object and surface are bound through the world manifest *world_id* (the
-    object the goal names, ``WorldManifest.resolve``; the surface,
-    ``resolve_surface``), never from ground truth:
-
-    - place -> ``object_on(obj, surface)``, the surface the manifest resolves from the
-      goal, or None (unknown to the world, or several fit: "the table" in a house of
-      tables) -- fails closed, never decays to a release (I4c). Only a PURE release
-      (``_pure_release``: put it down / 放下 / 把 X 放下 ..., optionally after a grasp)
-      -> ``released(obj)``: out of the hand at turn end (I4F1-D3). A pick-and-place
-      starts released, so trace_store exempts it from False-at-start only after a
-      grounded grasp of the same object; a world without a manifest compiles none;
-    - fetch (拿过来 / bring ...) -> ``kept_holding(obj)`` and ``near_object('user')``:
-      delivered = held, never dropped this turn, at the user. kept_holding is caused
-      only by a grasp in this turn (its ``window="turn"`` tag), and each item must be
-      False at turn start: an object already held, or dropped during the carry, never
-      grounds a fetch;
-    - grasp (拿起 / pick up ...) -> ``holding_object(obj)`` (``holding_object()``, any
-      object, only in a world without a manifest);
-    - a pure coordinate goal -> ``at_position(x, y)``. With a manipulation intent the
-      coordinate is a waypoint, not an end state; the coordinate gate checks it.
-
-    An object the manifest cannot resolve ("bring it to me", two bottles, an apple the
-    world lacks) binds
-    ``None``: that item is no ground-truth evidence, so the turn fails closed. Scoped
-    to the world's oracles (rule 3): a world without ``holding_object`` /
-    ``at_position`` gets no manipulation / coordinate contract (dev). A manipulation
-    goal never falls back to its coordinate: no contract, so every graded step must
-    ground.
-    """
-    intents = goal_intents(goal_text)
-    if intents:
-        if "holding_object" not in oracle_names:
-            return ()
-        world = _manifest(world_id)
-        obj = world.resolve(goal_text) if world is not None else None
-        if "place" in intents:
-            if world is None:
-                return ()
-            if _pure_release(world, goal_text or ""):
-                return (f"released({obj!r})",)
-            return (f"object_on({obj!r}, {world.resolve_surface(goal_text)!r})",)
-        if "fetch" in intents:
-            return (f"kept_holding({obj!r})", "near_object('user')")
-        # a manifest binds the object or None (fails closed: "the apple", two bottles)
-        return (f"holding_object({obj!r})" if world is not None else "holding_object()",)
+    """The goal's END-STATE ground-truth predicates (charter 3.5), ONLY when the WHOLE
+    goal is closed forms (``_FORMS``) whose slots bind through the world manifest
+    *world_id*; anything else compiles () -- unchecked, never guessed. grasp ->
+    ``holding_object(obj)``; release -> ``released(obj)`` (a pick-and-place starts released:
+    trace_store exempts it only after a grounded grasp of obj); place on a surface ->
+    ``object_on(obj, surface)``; fetch to the user -> ``kept_holding(obj)`` (held, never
+    dropped this turn) and ``near_object('user')``; a pure coordinate goal ->
+    ``at_position(x, y)``. A slot bound to None (unknown, ambiguous, a pronoun) fails
+    the goal check (``unbound_reason``). Scoped to the world's oracles (rule 3): no
+    manipulation contract without ``holding_object`` and a manifest, no coordinate one
+    without ``at_position`` or beside a manipulation intent (a waypoint)."""
+    world = _manifest(world_id) if "holding_object" in oracle_names else None
+    form = _sentence(world, goal_text or "") if world is not None else None
+    if form is not None:
+        kind, obj, surface = form
+        return {"grasp": (f"holding_object({obj!r})",), "release": (f"released({obj!r})",),
+                "place": (f"object_on({obj!r}, {surface!r})",),
+                "fetch": (f"kept_holding({obj!r})", "near_object('user')")}[kind]
     xy = parse_goal_coord(goal_text)
-    if xy is not None and "at_position" in oracle_names:
+    if xy is not None and "at_position" in oracle_names and not goal_intents(goal_text):
         return (f"at_position({xy[0]}, {xy[1]})",)
     return ()

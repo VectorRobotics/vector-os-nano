@@ -402,7 +402,7 @@ def graded_indices(trace: ExecutionTrace) -> list[int]:
 
 def _contract_reason(
     trace: ExecutionTrace, graded: list[StepRecord], sg_by_name: dict[str, SubGoal],
-    ev: dict[int, StepEvidence], oracle_names: frozenset[str],
+    ev: dict[int, tuple[StepEvidence, str]], oracle_names: frozenset[str],
 ) -> str:
     """Why the turn's task contract is not met ("" when it is): every predicate must
     be GT-provable here, False at turn start, True at turn end, and asserted by a
@@ -413,7 +413,7 @@ def _contract_reason(
 
     def proven_at(item: str) -> list[int]:  # graded positions of the GROUNDED steps asserting item
         return [i for i, s in enumerate(graded)
-                if ev[id(s)] == "GROUNDED" and backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)]
+                if ev[id(s)][0] == "GROUNDED" and backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)]
 
     # The spine recompiles the contract: a producer can never swap in a weaker one.
     if contract != task_contract(trace.goal_tree.goal, oracle_names, world):
@@ -440,7 +440,7 @@ def _contract_reason(
 
 
 def _coordinate_reason(
-    graded: list[StepRecord], sg_by_name: dict[str, SubGoal], ev: dict[int, StepEvidence],
+    graded: list[StepRecord], sg_by_name: dict[str, SubGoal], ev: dict[int, tuple[StepEvidence, str]],
     oracle_names: frozenset[str], goal_text: str,
 ) -> str:
     """STEP-15 coordinate gate: a goal naming a coordinate needs a GROUNDED graded step
@@ -457,11 +457,11 @@ def _coordinate_reason(
         return ""
     goal_xy = parse_goal_coord(goal_text)
     if goal_xy is not None:
-        ok = any(ev[id(s)] == "GROUNDED" and at_position_const_matches(sg_by_name[s.sub_goal_name].verify, goal_xy)
+        ok = any(ev[id(s)][0] == "GROUNDED" and at_position_const_matches(sg_by_name[s.sub_goal_name].verify, goal_xy)
                  for s in graded)
         return "" if ok else f"no actor-caused step verifies at_position{goal_xy}"
     if goal_has_coordinate_intent(goal_text):
-        ok = any(ev[id(s)] == "GROUNDED" and has_necessary_at_position(sg_by_name[s.sub_goal_name].verify)
+        ok = any(ev[id(s)][0] == "GROUNDED" and has_necessary_at_position(sg_by_name[s.sub_goal_name].verify)
                  for s in graded)
         return "" if ok else "no actor-caused step verifies the commanded coordinate"
     return ""
@@ -469,7 +469,7 @@ def _coordinate_reason(
 
 def _manipulation_reason(
     trace: ExecutionTrace, graded: list[StepRecord], sg_by_name: dict[str, SubGoal],
-    ev: dict[int, StepEvidence], oracle_names: frozenset[str],
+    ev: dict[int, tuple[StepEvidence, str]], oracle_names: frozenset[str],
 ) -> str:
     """D17/D69 manipulation gate, independent of the coordinate gate: a goal (or a
     dispatched gripper skill) with a manipulation intent needs a GROUNDED graded step
@@ -502,10 +502,59 @@ def _manipulation_reason(
     for names in proof_oracles(goal, dispatched):
         if world is not None and want is None:
             return "a manipulation goal that names no object the world resolves is unprovable"
-        if not any(ev[id(s)] == "GROUNDED" and proves(sg_by_name[s.sub_goal_name].verify, names)
+        if not any(ev[id(s)][0] == "GROUNDED" and proves(sg_by_name[s.sub_goal_name].verify, names)
                    for s in graded):
             return f"a {'/'.join(sorted(goal | dispatched))} goal needs an actor-caused {'/'.join(sorted(names))} step"
     return ""
+
+
+def _graded(trace: ExecutionTrace, oracle_names: frozenset[str]) -> Any:
+    """``(attempt groups, graded steps, sub-goal by name, {id(step): (evidence, why)})``
+    for the latest attempt of every group, or why the trace cannot be graded step by step."""
+    sg_by_name = {sg.name: sg for sg in trace.goal_tree.sub_goals}
+    if any(getattr(sg, "foreach", None) is not None for sg in trace.goal_tree.sub_goals):
+        return "a foreach plan cannot be graded step by step"
+    if any(s.sub_goal_name not in sg_by_name for s in trace.steps):
+        return "a step has no sub-goal to grade it against"
+    groups = attempt_groups(trace)
+    graded = [trace.steps[g[-1]] for g in groups]
+    if not graded:
+        return "no checked step"
+    ev = {id(s): _classify(s, sg_by_name[s.sub_goal_name], oracle_names, trace.goal_tree.goal) for s in graded}
+    return groups, graded, sg_by_name, ev
+
+
+def _checks_contract(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool:
+    """Whether the turn has a task contract: one the trace carries, or the one its goal
+    compiles to when the producer grades attempts (``attempt_of``: the native runner), so
+    dropping it (or compiling it against another body's oracles) never skips the check.
+    The legacy executor (no attempt_of, deleted in R1) predates contracts."""
+    from vector_os_nano.vcli.cognitive.object_goal import task_contract
+
+    if trace.contract:
+        return True
+    expected = task_contract(trace.goal_tree.goal, oracle_names, str(getattr(trace, "world", "") or ""))
+    return bool(expected) and any(getattr(s, "attempt_of", "") for s in trace.steps)
+
+
+GoalCheck = Literal["proven", "failed", "unchecked"]
+
+
+def goal_check(trace: ExecutionTrace, oracle_names: frozenset[str]) -> tuple[GoalCheck, str]:
+    """The turn's goal check (charter 3.5) and why it is not proven -- the ONE source
+    the verdict and the REPL read. ``proven``: the task contract was compiled and holds
+    (every item False at turn start, True at turn end, backed by a GROUNDED actor-caused
+    step); ``failed``: it was compiled and does not hold, or a slot is unbound;
+    ``unchecked``: the goal compiles no contract (no closed sentence form). Never a
+    gate: it only says whether the user's end state was machine-checked."""
+    if not _checks_contract(trace, oracle_names):
+        return "unchecked", ""
+    graded = _graded(trace, oracle_names)
+    if isinstance(graded, str):
+        return "failed", graded
+    _groups, steps, sg_by_name, ev = graded
+    why = _contract_reason(trace, steps, sg_by_name, ev, oracle_names)
+    return ("failed", why) if why else ("proven", "")
 
 
 def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> str:
@@ -524,30 +573,21 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
       sub-goal the contract does not cover ("... then turn left") needs its own
       GROUNDED step. At least one graded row must be GROUNDED: a turn that only
       read or halted has no checked step.
-    - With a contract, each predicate must also be False at turn start, True at turn
-      end, and asserted by a GROUNDED graded step.
+    - With a contract (``goal_check``), the goal must be proven.
 
     Then the coordinate and the manipulation gates run INDEPENDENTLY (both apply
     when both intents are present). Every rule only rejects (rule 5).
     """
     if not trace.success:
         return "the turn did not succeed"
-    sg_by_name = {sg.name: sg for sg in trace.goal_tree.sub_goals}
-    if any(getattr(sg, "foreach", None) is not None for sg in trace.goal_tree.sub_goals):
-        return "a foreach plan cannot be graded step by step"
-    if any(s.sub_goal_name not in sg_by_name for s in trace.steps):
-        return "a step has no sub-goal to grade it against"
-    groups = attempt_groups(trace)
-    graded = [trace.steps[g[-1]] for g in groups]
-    if not graded:
-        return "no checked step"
-    goal_text = trace.goal_tree.goal
-    ev: dict[int, StepEvidence] = {}
+    graded = _graded(trace, oracle_names)
+    if isinstance(graded, str):
+        return graded
+    groups, steps, sg_by_name, ev = graded
     proven = False
-    for s, group in zip(graded, groups):
+    for s, group in zip(steps, groups):
         sg = sg_by_name[s.sub_goal_name]
-        evidence, why = _classify(s, sg, oracle_names, goal_text)
-        ev[id(s)] = evidence
+        evidence, why = ev[id(s)]
         if evidence == "FAILED":
             return f"{s.sub_goal_name}: {why}"
         # A housekeeping row never stands in for an attempt it superseded: exempt
@@ -564,20 +604,12 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
         proven = proven or evidence == "GROUNDED"
     if not proven:
         return "no checked step"  # every graded row only read / halted: nothing proven
-    # A producer that grades attempts (``attempt_of``: the native runner) must carry
-    # the contract the goal compiles to: dropping it (or compiling it against another
-    # body's oracles) can never skip the check. The legacy executor (no attempt_of,
-    # deleted in R1) predates contracts and keeps the coordinate / manipulation gates.
-    from vector_os_nano.vcli.cognitive.object_goal import task_contract
-
-    expected = task_contract(goal_text, oracle_names, str(getattr(trace, "world", "") or ""))
-    if trace.contract or (expected and any(getattr(s, "attempt_of", "") for s in trace.steps)):
-        why = _contract_reason(trace, graded, sg_by_name, ev, oracle_names)
-        if why:
-            return why
+    state, why = goal_check(trace, oracle_names)
+    if state == "failed":
+        return why
     return (
-        _coordinate_reason(graded, sg_by_name, ev, oracle_names, goal_text)
-        or _manipulation_reason(trace, graded, sg_by_name, ev, oracle_names)
+        _coordinate_reason(steps, sg_by_name, ev, oracle_names, trace.goal_tree.goal)
+        or _manipulation_reason(trace, steps, sg_by_name, ev, oracle_names)
     )
 
 

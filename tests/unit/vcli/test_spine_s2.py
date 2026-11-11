@@ -47,7 +47,11 @@ def _row(verify: str, *, ok: bool = True, vr: bool = True, caused=C, attempt: st
                               channels=channels, housekeeping=housekeeping)
 
 
-def _trace(goal: str, *rows, contract=(), start=(), end=(), intents=(), success=True) -> ExecutionTrace:
+# I4d: a grasp contract binds through a world manifest (no manifest compiles none).
+GRAB, HOLD = "拿起绿色的瓶子", "holding_object('pickable_bottle_green')"
+
+
+def _trace(goal: str, *rows, contract=(), start=(), end=(), intents=(), success=True, world="") -> ExecutionTrace:
     sub_goals, steps = [], []
     for i, (verify, rec) in enumerate(rows):
         name = f"native_step_{i}"
@@ -57,7 +61,7 @@ def _trace(goal: str, *rows, contract=(), start=(), end=(), intents=(), success=
                                 channels=rec.channels, housekeeping=rec.housekeeping))
     return ExecutionTrace(GoalTree(goal, tuple(sub_goals)), tuple(steps), success, 0.0,
                           contract=tuple(contract), contract_start=tuple(start),
-                          contract_end=tuple(end), intents=tuple(intents))
+                          contract_end=tuple(end), intents=tuple(intents), world=world)
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +137,12 @@ def test_attempts_round_trip_through_save_and_load(tmp_path) -> None:
 def test_go_to_and_grab_with_a_vacuous_grasp_verify_is_not_verified() -> None:
     """spine:object-gate-skipped (FG-5): the coordinate branch no longer returns
     before the manipulation gate."""
+    # I4d: a seek clause is no closed form, so this goal has no contract; the gates judge it
     t = _trace("go to (2,3) and grab the can",
-               _row("at_position(2, 3)"), _row("in_view('can')", caused=ActorCaused.NOT_GRADED),
-               contract=("holding_object()",), start=(False,), end=(True,))
+               _row("at_position(2, 3)"), _row("in_view('can')", caused=ActorCaused.NOT_GRADED))
     assert not evidence_passed(t, MANIP)
     assert "holding_object" in turn_reject_reason(t, MANIP)
-    honest = _trace("go to (2,3) and grab the can", _row("at_position(2, 3)"), _row("holding_object('can')"),
-                    contract=("holding_object()",), start=(False,), end=(True,))
+    honest = _trace("go to (2,3) and grab the can", _row("at_position(2, 3)"), _row("holding_object('can')"))
     assert evidence_passed(honest, MANIP)
 
 
@@ -278,11 +281,12 @@ def test_facing_already_met_at_the_baseline_is_uncaused() -> None:
 
 @pytest.mark.parametrize("goal, names, contract", [
     ("走到坐标 (9.0,3.0)", GO2, ("at_position(9.0, 3.0)",)),
-    ("拿起绿色的瓶子", MANIP, ("holding_object()",)),
-    # no world manifest here: the fetch object cannot bind (test_task_contract_binding)
-    ("把绿色瓶子拿过来", MANIP, ("kept_holding(None)", "near_object('user')")),
-    ("bring me the red can", MANIP, ("kept_holding(None)", "near_object('user')")),
-    ("go to (2,3) and grab the can", MANIP, ("holding_object()",)),  # the coord is a waypoint
+    # I4d: no world manifest here, so no manipulation contract (test_task_contract_binding
+    # has the bound ones); the coordinate of a manipulation goal is a waypoint
+    ("拿起绿色的瓶子", MANIP, ()),
+    ("把绿色瓶子拿过来", MANIP, ()),
+    ("bring me the red can", MANIP, ()),
+    ("go to (2,3) and grab the can", MANIP, ()),
     ("go to (3,0) and grab the red can", GO2, ()),   # no grasp proof here: never a nav contract
     ("走到 (3,0) 把罐子拿过来", GO2, ()),
     ("把香蕉放到盒子里", MANIP, ()),                       # place: no manifest surface named
@@ -294,30 +298,34 @@ def test_task_contract_compiles_from_the_goal(goal, names, contract) -> None:
 
 
 def test_already_satisfied_at_turn_start_is_never_grounded() -> None:
-    t = _trace("拿起瓶子", _row("holding_object('b')"),
-               contract=("holding_object()",), start=(True,), end=(True,))
-    assert turn_reject_reason(t, MANIP) == "already satisfied at turn start: holding_object()"
+    t = _trace(GRAB, _row("holding_object('green bottle')"),
+               contract=(HOLD,), start=(True,), end=(True,), world="apartment")
+    assert turn_reject_reason(t, MANIP) == f"already satisfied at turn start: {HOLD}"
+    assert ts.goal_check(t, MANIP) == ("failed", f"already satisfied at turn start: {HOLD}")
 
 
 def test_contract_not_met_at_turn_end_is_not_verified() -> None:
-    t = _trace("拿起瓶子", _row("holding_object('b')"),
-               contract=("holding_object()",), start=(False,), end=(False,))
+    t = _trace(GRAB, _row("holding_object('green bottle')"),
+               contract=(HOLD,), start=(False,), end=(False,), world="apartment")
     assert "not met at turn end" in turn_reject_reason(t, MANIP)
 
 
-def test_a_fetch_is_unprovable_until_the_world_binds_delivery() -> None:
-    """'grasp-only verifies 拿过来' is closed structurally: with no world manifest the
-    fetch object cannot bind, so the contract is no evidence."""
-    t = _trace("把绿色瓶子拿过来", _row("holding_object('b')"),
-               contract=("kept_holding(None)", "near_object('user')"), start=(False, False), end=(False, False))
-    assert "names no object" in turn_reject_reason(t, MANIP)
+def test_without_a_manifest_a_fetch_is_unchecked_and_the_gates_judge_it() -> None:
+    """I4d: with no world manifest a fetch compiles no contract (it was kept_holding(None),
+    which no turn could ever meet): the goal is unchecked, never proven, and the fetch
+    gate still needs an actor-caused hold."""
+    t = _trace("把绿色瓶子拿过来", _row("holding_object('b')"))
+    assert task_contract(t.goal_tree.goal, MANIP) == ()
+    assert ts.goal_check(t, MANIP) == ("unchecked", "")
+    assert "holding_object" in turn_reject_reason(_trace("把绿色瓶子拿过来", _row("arm_at_home()")), MANIP)
 
 
 def test_a_met_contract_needs_a_caused_step_that_asserts_it() -> None:
-    t = _trace("拿起瓶子", _row("at_position(1.0, 1.0)"),
-               _row("holding_object('b')", caused=U, housekeeping=True),
-               contract=("holding_object()",), start=(False,), end=(True,))
-    assert turn_reject_reason(t, MANIP) == "no actor-caused step proves holding_object()"
+    t = _trace(GRAB, _row("at_position(1.0, 1.0)"),
+               _row("holding_object('green bottle')", caused=U, housekeeping=True),
+               contract=(HOLD,), start=(False,), end=(True,), world="apartment")
+    assert turn_reject_reason(t, MANIP) == f"no actor-caused step proves {HOLD}"
+    assert ts.goal_check(t, MANIP)[0] == "failed"
 
 
 def test_the_wp03_explore_grasp_stop_trace_verifies_under_its_contract() -> None:
@@ -333,26 +341,27 @@ def test_the_wp03_explore_grasp_stop_trace_verifies_under_its_contract() -> None
     assert evidence_passed(old, MANIP), turn_reject_reason(old, MANIP)
     only = _trace("拿起绿色的瓶子", rows[1])
     assert turn_reject_reason(only, MANIP) == "no checked step"
-    t = _trace("拿起绿色的瓶子", *rows, contract=("holding_object()",), start=(False,), end=(True,))
+    t = _trace(GRAB, *rows, contract=(HOLD,), start=(False,), end=(True,), world="apartment")
     assert evidence_passed(t, MANIP), turn_reject_reason(t, MANIP)
+    assert ts.goal_check(t, MANIP) == ("proven", "")
 
 
 @pytest.mark.parametrize("goal, contract, last", [
     # an unproven actuating step the contract does not cover ("... then turn left")
     ("走到坐标 (3,0) 然后左转90度", ("at_position(3.0, 0.0)",), _row("")),
     ("go to (2,3)", ("at_position(2.0, 3.0)",), _row("", ok=True, vr=False)),
-    ("拿起瓶子", ("holding_object()",), _row("facing(0.5, 0.5)", caused=U)),
+    (GRAB, (HOLD,), _row("facing(0.5, 0.5)", caused=U)),
 ])
 def test_an_unproven_actuating_step_fails_a_met_contract(goal, contract, last) -> None:
     """Only a housekeeping row (read-only chain, or a declared stop) is exempt under a
     met contract; an actuating row that did not GROUND still rejects the turn."""
-    first = _row(contract[0] if contract[0] != "holding_object()" else "holding_object('b')")
-    t = _trace(goal, first, last, contract=contract, start=(False,), end=(True,))
+    first = _row(contract[0])
+    t = _trace(goal, first, last, contract=contract, start=(False,), end=(True,), world="apartment")
     assert turn_reject_reason(t, GO2 | MANIP) == "native_step_1: " + ts.step_reject_reason(
         t.steps[1], t.goal_tree.sub_goals[1], GO2 | MANIP, goal)
     verify, rec = last
     exempt = _trace(goal, first, (verify, replace(rec, housekeeping=True)),
-                    contract=contract, start=(False,), end=(True,))
+                    contract=contract, start=(False,), end=(True,), world="apartment")
     assert evidence_passed(exempt, GO2 | MANIP), turn_reject_reason(exempt, GO2 | MANIP)
 
 
@@ -405,8 +414,8 @@ def test_a_housekeeping_row_is_exempt_only_under_a_contract() -> None:
 
 
 def test_a_failing_non_contract_step_still_fails_the_turn() -> None:
-    t = _trace("拿起瓶子", _row("holding_object('b')"), _row("arm_at_home()", vr=False),
-               contract=("holding_object()",), start=(False,), end=(True,))
+    t = _trace(GRAB, _row(HOLD), _row("arm_at_home()", vr=False),
+               contract=(HOLD,), start=(False,), end=(True,), world="apartment")
     assert "verify FAIL" in turn_reject_reason(t, MANIP)
 
 
@@ -449,8 +458,7 @@ def test_commanded_motion_counts_only_inside_a_dispatched_tool() -> None:
 
 
 def test_mutation_contract_guard(monkeypatch) -> None:
-    t = _trace("拿起瓶子", _row("holding_object('b')"),
-               contract=("holding_object()",), start=(True,), end=(True,))
+    t = _trace(GRAB, _row(HOLD), contract=(HOLD,), start=(True,), end=(True,), world="apartment")
     assert not evidence_passed(t, MANIP)
     monkeypatch.setattr(ts, "_contract_reason", lambda *a: "")
     assert evidence_passed(t, MANIP)
