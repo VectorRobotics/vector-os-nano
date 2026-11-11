@@ -293,6 +293,36 @@ def test_contact_threshold_is_the_contract_s_not_the_engine_s(backend, load, con
     assert w.contacts(slab) == (frozenset({0}) if touching else frozenset()), f"{gap * 1000:.1f} mm"
 
 
+def test_own_shapes_static_pairs_and_non_colliding_geoms_are_no_contact(backend, load, contract_scene):
+    """The wall's two boxes touch each other and the floor (static: never collides); the
+    die set inside the ghost (contype 0) touches nothing."""
+    sc = contract_scene
+    die, ghost = sc.body("die"), sc.body("ghost")
+    w = load(backend, sc)
+    q = sc.model.qpos0.copy()
+    q[sc.free_q(die)] = [1.5, -0.3, 0.3, 1, 0, 0, 0]
+    w.reset(q)
+    assert w.contacts(sc.body("wall")) == frozenset()
+    assert w.contacts(die) == frozenset()
+    assert w.contacts(ghost) == frozenset()
+
+
+def test_mujoco_override_flag_still_reads_the_threshold(load, tmp_path):
+    """Under <flag override="enable"/> every contact uses opt.o_margin (0 here)."""
+    from vector_os_nano.sim.scene import compiled_scene
+
+    xml = tmp_path / "override.xml"
+    xml.write_text("""<mujoco><option o_margin="0"><flag override="enable"/></option><worldbody>
+      <geom type="plane" size="1 1 0.1"/><body name="die"><freejoint/><geom type="box" size=".03 .03 .03"/></body>
+    </worldbody></mujoco>""")
+    sc = compiled_scene(xml)
+    w = load("mujoco", sc)
+    q = sc.model.qpos0.copy()
+    q[sc.free_q(sc.body("die"))] = [0.0, 0.0, 0.03 + 0.5e-3, 1, 0, 0, 0]
+    w.reset(q)
+    assert w.contacts(sc.body("die")) == frozenset({0})
+
+
 @pytest.mark.parametrize("gap, touching", [(0.5e-3, True), (1.5e-3, False)])
 def test_mujoco_explicit_pair_reaches_the_threshold_and_steps_unchanged(load, tmp_path, gap, touching):
     """A ``<pair>`` contact (margin 0) reads the charter's threshold too, and widening

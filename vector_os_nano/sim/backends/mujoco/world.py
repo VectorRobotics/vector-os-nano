@@ -46,6 +46,7 @@ class MuJoCoWorld:
         self._probe = p = copy.deepcopy(m)
         p.geom_margin += CONTACT_DISTANCE_M
         p.pair_margin += CONTACT_DISTANCE_M
+        p.opt.o_margin += CONTACT_DISTANCE_M  # what every contact uses under <flag override="enable"/>
         self._probe_data = mj.MjData(p)
         self._lock = threading.Lock()
         acts = reader.actuators(m)
