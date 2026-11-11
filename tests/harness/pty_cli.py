@@ -124,7 +124,6 @@ def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
     # Model weights are a read-only shared cache, not run state: keep finding them
     # (perception loads its pinned weights from the HF cache).
     env.setdefault("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
-    env.setdefault("VECTOR_MODEL_DIR", str(Path.home() / ".cache" / "vector_os" / "models"))
     home = tempfile.mkdtemp(prefix=home_prefix)
     env["HOME"] = home
     # So are the robot assets scripts/fetch_assets.py provisioned (linked, never written).

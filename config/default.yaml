@@ -44,7 +44,6 @@ perception:
   vlm_provider: "moondream"
   vlm_model: "vikhyatk/moondream2"
   tracker: "edgetam"
-  tracker_model: "yonigozlan/EdgeTAM-hf"
 
 calibration:
   file: "config/workspace_calibration.yaml"  # YAML from vector_ws calibration wizard

@@ -121,7 +121,7 @@ def load_config(
             "arm": {"type": "so101", "port": "/dev/ttyACM0", "baudrate": 1000000},
             "camera": {"type": "realsense", "serial": "", "resolution": [640, 480], "fps": 30},
             "perception": {"vlm_provider": "moondream", "vlm_model": "vikhyatk/moondream2",
-                           "tracker": "edgetam", "tracker_model": "yonigozlan/EdgeTAM-hf"},
+                           "tracker": "edgetam"},
             "calibration": {"file": "", "method": "affine", "num_points": 25},
             "skills": {"pick": {"z_offset": 0.12, "pre_grasp_height": 0.06, "max_retries": 2},
                        "place": {"default_height": 0.05},

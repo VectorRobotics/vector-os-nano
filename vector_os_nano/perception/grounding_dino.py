@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""GroundingDinoDetector — open-vocabulary 2D detector (grounding-dino-tiny), OFFLINE.
+"""GroundingDinoDetector — open-vocabulary 2D detector (grounding-dino-tiny).
 
 The first *learned* perception model the runtime routes to as a second model
 family (alongside the chat LLM): a zero-shot open-vocabulary detector that
@@ -10,8 +10,9 @@ ONLY (rgb, query) — never a ground-truth pose — so the grasp it feeds stays
 honestly perception-driven and the verify spine stays the sole grader.
 
 Backend: ``IDEA-Research/grounding-dino-tiny`` via transformers'
-``AutoModelForZeroShotObjectDetection`` + ``AutoProcessor``, loaded with
-``local_files_only=True`` (the HF cache only), so it never reaches the network. torch/transformers are imported LAZILY on first ``detect`` — importing
+``AutoModelForZeroShotObjectDetection`` + ``AutoProcessor``, loaded from the pinned
+snapshot in the Hugging Face cache (perception/weights.py: fetched on first use with
+one notice unless HF_HUB_OFFLINE=1). torch/transformers are imported LAZILY on first ``detect`` — importing
 this module must never pull GPU libs (keeps dev / go2-only worlds and fast unit
 runs torch-free). CUDA is used when present, else CPU (the tiny model is fine on CPU).
 
@@ -29,10 +30,10 @@ from typing import Any
 import numpy as np
 
 from vector_os_nano.core.types import Detection
+from vector_os_nano.perception.weights import Weights, local_dir
 
 logger = logging.getLogger(__name__)
 
-_MODEL_ID = "IDEA-Research/grounding-dino-tiny"
 # Box-score floor: the probe localized the three cylinders cleanly at ~0.2-0.25.
 _BOX_THRESHOLD = 0.25
 # Text-token score floor handed to the post-processor (looser than the box floor;
@@ -73,16 +74,16 @@ def query_to_prompt(query: str | None) -> str:
 
 
 class GroundingDinoDetector:
-    """Zero-shot open-vocabulary detector over grounding-dino-tiny (offline, lazy)."""
+    """Zero-shot open-vocabulary detector over grounding-dino-tiny (lazy)."""
+
+    WEIGHTS = Weights("IDEA-Research/grounding-dino-tiny", "a2bb814dd30d776dcf7e30523b00659f4f141c71")
 
     def __init__(
         self,
         *,
-        model_id: str = _MODEL_ID,
         box_threshold: float = _BOX_THRESHOLD,
         text_threshold: float = _TEXT_THRESHOLD,
     ) -> None:
-        self._model_id = model_id
         self._box_threshold = float(box_threshold)
         self._text_threshold = float(text_threshold)
         self._processor: Any = None
@@ -110,21 +111,12 @@ class GroundingDinoDetector:
                 "Install with: pip install torch transformers"
             ) from exc
 
+        path = local_dir(self.WEIGHTS)  # raises WeightsUnavailable with the pre-fetch command
         self._torch = torch
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(
-            "[GDINO] loading %s on %s (offline)", self._model_id, self._device
-        )
-        self._processor = AutoProcessor.from_pretrained(
-            self._model_id, local_files_only=True
-        )
-        self._model = (
-            AutoModelForZeroShotObjectDetection.from_pretrained(
-                self._model_id, local_files_only=True
-            )
-            .to(self._device)
-            .eval()
-        )
+        logger.info("[GDINO] loading %s on %s", self.WEIGHTS, self._device)
+        self._processor = AutoProcessor.from_pretrained(path)
+        self._model = AutoModelForZeroShotObjectDetection.from_pretrained(path).to(self._device).eval()
         logger.info("[GDINO] loaded on %s", self._device)
 
     # --- detection -----------------------------------------------------------

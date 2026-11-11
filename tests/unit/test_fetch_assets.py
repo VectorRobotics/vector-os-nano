@@ -111,6 +111,19 @@ def test_a_changed_local_file_is_named_and_never_deleted(fake, capsys) -> None:
     assert not (dest / "model.xml").exists()  # and nothing else was written either
 
 
+def test_weights_prefetch_reads_the_package_table(monkeypatch, capsys) -> None:
+    from vector_os_nano.perception import weights
+
+    got = []
+    monkeypatch.setattr(weights, "local_dir", lambda w: got.append(w) or f"/cache/{w.repo_id}")
+    assert _load_script().main(["--weights"]) == 0
+    assert tuple(got) == weights.default_stack()
+    monkeypatch.setattr(weights, "local_dir", lambda w: (_ for _ in ()).throw(
+        weights.WeightsUnavailable(f"{w} missing")))
+    assert _load_script().main(["--weights"]) == 1
+    assert "missing" in capsys.readouterr().err
+
+
 def test_a_robot_that_ships_its_files_has_nothing_to_fetch(capsys) -> None:
     assert _load_script().main(["go2"]) == 0
     assert "nothing to fetch" in capsys.readouterr().out

@@ -76,7 +76,6 @@ if [ -z "${GATE_HOME_SET:-}" ]; then
   # only: the real HF cache, offline. So do the robot assets scripts/fetch_assets.py
   # provisioned (~/.vector/assets, linked; no test writes it).
   export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface} HF_HUB_OFFLINE=1 GATE_HOME_SET=1
-  export VECTOR_MODEL_DIR=${VECTOR_MODEL_DIR:-$HOME/.cache/vector_os/models}
   GATE_HOME=$(mktemp -d -t vos_gate_home_XXXX) || exit 2
   trap 'rm -rf "$GATE_HOME"' EXIT
   if [ -d "$HOME/.vector/assets" ]; then

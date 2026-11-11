@@ -367,27 +367,32 @@ def _build_go2_perception(base: Any, *, width: int, height: int) -> Any:
     return Go2GraspPerception(base, width=width, height=height)
 
 
-def _perception_note(agent: Any) -> str:
-    """The startup capability line: which models perception will actually use."""
+def _perception_note(agent: Any, vlm_why: str = "", *, segmenter: bool = True) -> str:
+    """The startup capability line: which models perception will use, or why not."""
     from vector_os_nano.perception.rynnbrain import RynnBrainDetector
-    from vector_os_nano.perception.tracker import EdgeTAMTracker
 
     import importlib.util
 
-    # ponytail: the device the detector WILL use, without importing torch at sim start
-    # (that inits CUDA and spawns ldconfig); the load logs the real one ("[GDINO] loaded on").
-    visible = os.environ.get("CUDA_VISIBLE_DEVICES") not in ("", "-1")
-    if importlib.util.find_spec("torch") is None:
-        device = "unavailable (no torch)"
+    if importlib.util.find_spec("torch") is None or importlib.util.find_spec("transformers") is None:
+        detector = seg = "unavailable (torch/transformers not installed: uv pip install -e '.[all]')"
     else:
+        from vector_os_nano.perception.grounding_dino import GroundingDinoDetector
+        from vector_os_nano.perception.tracker import EdgeTAMTracker
+        from vector_os_nano.perception.weights import status
+
+        # ponytail: the device the detector WILL use, without importing torch at sim start
+        # (that inits CUDA and spawns ldconfig); the load logs the real one ("[GDINO] loading").
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES") not in ("", "-1")
         device = "cuda" if visible and Path("/proc/driver/nvidia/version").exists() else "cpu"
+        detector = f"grounding-dino@{device} ({status(GroundingDinoDetector.WEIGHTS)})"
+        seg = f"edgetam ({status(EdgeTAMTracker.WEIGHTS)})"
     perception, vlm = getattr(agent, "_perception", None), getattr(agent, "_vlm", None)
-    vlm_s = "none" if vlm is None else f"{'local' if vlm._local else 'openrouter'}:{vlm._model}"
+    vlm_s = f"none ({vlm_why})" if vlm is None else f"{'local' if vlm._local else 'openrouter'}:{vlm._model}"
     return (
-        f"perception: detector=grounding-dino@{device}, "
-        f"segmenter={'edgetam' if EdgeTAMTracker.weights_available() else 'box_rect'}, "
-        f"self_mask={'yes' if getattr(perception, 'has_self_mask', False) else 'no'}, "
-        f"vlm={vlm_s}, rynnbrain={'up' if RynnBrainDetector().available() else 'down'}"
+        f"perception: detector={detector}, "
+        + (f"segmenter={seg}, self_mask={'yes' if getattr(perception, 'has_self_mask', False) else 'no'}, "
+           if segmenter else "")
+        + f"vlm={vlm_s}, rynnbrain={'up' if RynnBrainDetector().available() else 'down'}"
     )
 
 
@@ -437,6 +442,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
 
     # The scene VLM is optional naming sugar: an OpenRouter key OR a local server
     # (VECTOR_VLM_URL, e.g. Ollama). Discovery never needs it.
+    vlm_why = "no OPENROUTER_API_KEY or VECTOR_VLM_URL"
     if api_key or os.environ.get("VECTOR_VLM_URL"):
         try:
             from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
@@ -445,8 +451,8 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
                 "api_key": api_key, "rooms": sorted(world.rooms) if world else [],
                 **(user_cfg.get("vlm") or {}),
             })
-        except Exception as exc:  # noqa: BLE001 — VLM is optional
-            logger.info("[sim] Go2VLMPerception unavailable: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — VLM is optional; the capability line says why
+            vlm_why = f"failed: {type(exc).__name__}: {exc}"
             agent._vlm = None
 
     # Spatial memory is keyed by WORLD (shared by every body that stands in it,
@@ -468,7 +474,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
-    session.notes.append(_perception_note(agent))  # last: the explore note stays up front
+    session.notes.append(_perception_note(agent, vlm_why))  # last: the explore note stays up front
     return agent
 
 
@@ -502,6 +508,7 @@ def _build_mujoco_g1(session: SimSession, vlm_api_key: str | None) -> Any:
     agent = Agent(base=g1)
     # Read-only head-camera perception for the detector capability (no arm).
     agent._perception = G1HeadPerception(g1, width=width, height=height)
+    session.notes.append(_perception_note(agent, "g1 has no scene VLM", segmenter=False))
     return agent
 
 

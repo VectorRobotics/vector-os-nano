@@ -328,13 +328,13 @@ def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_p
         "import json, os, pathlib, pytest\n\n"
         + ("@pytest.mark.sim\n" if tier == "sim" else "")
         + "def test_env():\n"
-        "    keys = ('HOME', 'HF_HOME', 'VECTOR_MODEL_DIR', 'HF_HUB_OFFLINE')\n"
+        "    keys = ('HOME', 'HF_HOME', 'HF_HUB_OFFLINE')\n"
         "    seen = {k: os.environ.get(k) for k in keys}\n"
         "    pt = pathlib.Path.home() / '.vector' / 'assets' / 'g1_gait' / 'motion.pt'\n"
         "    seen['assets'] = pt.read_text() if pt.is_file() else None\n"
         "    pathlib.Path(os.environ['PROBE_OUT']).write_text(json.dumps(seen))\n"
     )
-    env = {k: v for k, v in os.environ.items() if k not in ("GATE_HOME_SET", "HF_HOME", "VECTOR_MODEL_DIR")}
+    env = {k: v for k, v in os.environ.items() if k not in ("GATE_HOME_SET", "HF_HOME")}
     r = subprocess.run(
         ["bash", str(_REPO / "scripts" / "gate.sh"), tier],
         env={**env, "HOME": str(real), "GATE_PER_FILE": "0", "GATE_PATHS": str(probe),
@@ -345,7 +345,6 @@ def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_p
     seen = json.loads(out.read_text())
     assert seen["HOME"] != str(real) and not Path(seen["HOME"]).exists()  # throwaway, removed after
     assert seen["HF_HOME"] == str(real / ".cache" / "huggingface") and seen["HF_HUB_OFFLINE"] == "1"
-    assert seen["VECTOR_MODEL_DIR"] == str(real / ".cache" / "vector_os" / "models")
     assert seen["assets"] == "provisioned"  # fetched robot assets are found, like the caches
     # the gate wrote nothing into the real home
     assert sorted(str(p.relative_to(real)) for p in real.rglob("*")) == [

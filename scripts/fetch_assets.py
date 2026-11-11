@@ -10,6 +10,11 @@
       the upstream licence is written beside them. Verified files are left alone;
       --check only verifies (exit 1 with the command to run). A checksum mismatch
       names the file and deletes nothing.
+
+  python scripts/fetch_assets.py --weights
+      Every perception model the default stack names (perception/weights.py), at
+      its pinned revision, into the Hugging Face cache (HF_HOME); cached ones are
+      left alone, and HF_HUB_OFFLINE=1 makes it fail with what is missing.
 """
 from __future__ import annotations
 
@@ -96,12 +101,30 @@ def _install(src: Path, dst: Path) -> None:
     os.replace(tmp, dst)
 
 
+def fetch_weights() -> int:
+    """The default perception stack's pinned weights, into the Hugging Face cache."""
+    from vector_os_nano.perception import weights
+
+    for w in weights.default_stack():
+        try:
+            print(f"{w}: {weights.local_dir(w)}")
+        except weights.WeightsUnavailable as exc:
+            print(exc, file=sys.stderr)
+            return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("robot", help="embodiment id whose manifest has an assets: block")
+    ap.add_argument("robot", nargs="?", help="embodiment id whose manifest has an assets: block")
     ap.add_argument("--dest", type=Path, help="asset folder (default: ~/.vector/assets/<name>)")
     ap.add_argument("--check", action="store_true", help="only verify; exit 1 if not provisioned")
+    ap.add_argument("--weights", action="store_true", help="pre-fetch the perception weights")
     args = ap.parse_args(argv)
+    if bool(args.robot) == args.weights:
+        ap.error("give a robot id, or --weights")
+    if args.weights:
+        return fetch_weights()
     return fetch_robot(args.robot, args.dest, args.check)
 
 
