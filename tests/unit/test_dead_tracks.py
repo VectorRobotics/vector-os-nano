@@ -77,9 +77,26 @@ _DEAD_MODULES = {
 }
 
 
+def _is_back(p: Path) -> bool:
+    """A deleted path is back as a file, or as a directory holding anything but stale
+    bytecode (git leaves the ignored __pycache__ of a deleted package in a checkout)."""
+    if p.is_dir():
+        return any(f.is_file() and "__pycache__" not in f.parts for f in p.rglob("*"))
+    return p.exists()
+
+
 @pytest.mark.parametrize("path", sorted(_DEAD))
 def test_dead_track_is_deleted(path: str) -> None:
-    assert not (_REPO / path).exists(), f"{path} is back; it held: {_DEAD[path]}"
+    assert not _is_back(_REPO / path), f"{path} is back; it held: {_DEAD[path]}"
+
+
+def test_stale_bytecode_is_not_a_dead_track_come_back(tmp_path: Path) -> None:
+    (tmp_path / "pkg" / "__pycache__").mkdir(parents=True)
+    (tmp_path / "pkg" / "__pycache__" / "old.cpython-312.pyc").write_bytes(b"")
+    assert not _is_back(tmp_path / "pkg")
+    (tmp_path / "pkg" / "new.py").write_text("")
+    assert _is_back(tmp_path / "pkg")
+    assert _is_back(tmp_path / "pkg" / "new.py") and not _is_back(tmp_path / "gone")
 
 
 def _dead(name: str) -> bool:
