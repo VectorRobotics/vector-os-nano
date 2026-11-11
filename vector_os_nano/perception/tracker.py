@@ -8,7 +8,7 @@ Ported from:
 
 Key changes from vector_ws:
   - Removed ROS2 subscribers/publishers — pure function calls
-  - Default model repo from edge_tam.py: "yonigozlan/EdgeTAM-hf"
+  - Model repo from edge_tam.py: "yonigozlan/EdgeTAM-hf", pinned (WEIGHTS)
   - GPU memory management: torch.cuda.empty_cache() every 10 frames
   - torch/transformers imported lazily at __init__ time
 
@@ -23,38 +23,40 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from vector_os_nano.perception.weights import Weights, loading
 
-DEFAULT_EDGETAM_REPO = "yonigozlan/EdgeTAM-hf"
+logger = logging.getLogger(__name__)
 
 
 class EdgeTAMTracker:
     """EdgeTAM video segmentation tracker.
 
-    Loads OFFLINE (``local_files_only=True``, never the network) — mirrors
-    ``GroundingDinoDetector``: a local model dir, else ``$VECTOR_MODEL_DIR/<name>``
-    (default ``~/.cache/vector_os/models``), else the repo id from the Hugging Face
-    cache. Absent weights fail loud.
+    Loads :attr:`WEIGHTS` from the Hugging Face cache (perception/weights.py:
+    fetched on first use with one notice unless HF_HUB_OFFLINE=1). Absent weights
+    fail loud.
 
     Args:
-        model_name: HuggingFace repo ID or local path to model directory.
         device: "cuda", "cpu", or None (auto-detect).
         buffer_size: Max vision feature cache size (sliding window).
     """
 
+    WEIGHTS = (
+        Weights("yonigozlan/EdgeTAM-hf", "c266ce53b3fc00f0f495b583f6a116c4e57f53bb"),
+        # transformers builds a default EdgeTAM config while loading, which reads the
+        # timm backbone's config.json by "main" (measured: transformers 5.18).
+        Weights("timm/repvit_m1.dist_in1k", "55e64695f26bb1711730f916e557b464fb46478d",
+                files=("config.json",), ref="main"),
+    )
+
     def __init__(
         self,
-        model_name: str = DEFAULT_EDGETAM_REPO,
         device: Optional[str] = None,
         buffer_size: int = 5,
     ) -> None:
-        self._model_name = model_name
         self._device_str = device
         self._buffer_size = max(1, int(buffer_size))
 
@@ -75,11 +77,7 @@ class EdgeTAMTracker:
     # ------------------------------------------------------------------
 
     def _load_model(self) -> None:
-        """Load EdgeTAM model and processor (lazy — imports torch/transformers).
-
-        Both ``from_pretrained`` calls pass ``local_files_only=True``: the load never
-        reaches the network (identical posture to ``GroundingDinoDetector``).
-        """
+        """Load EdgeTAM model and processor (lazy — imports torch/transformers)."""
         if self._loaded:
             return
 
@@ -99,43 +97,14 @@ class EdgeTAMTracker:
 
         self._dtype = self._select_dtype(self._device, torch)
 
-        model_source = self._resolve_model_source(self._model_name)
-        logger.info("Loading EdgeTAM from %s on %s (offline)", model_source, self._device)
-
-        self._processor = Sam2VideoProcessor.from_pretrained(
-            model_source, local_files_only=True
-        )
-        self._model = EdgeTamVideoModel.from_pretrained(
-            model_source, local_files_only=True
-        )
-        self._model = self._model.to(self._device, dtype=self._dtype)
+        # raises WeightsUnavailable with the pre-fetch command
+        with loading(self.WEIGHTS) as (path, _backbone):
+            logger.info("Loading EdgeTAM %s on %s", self.WEIGHTS[0], self._device)
+            self._processor = Sam2VideoProcessor.from_pretrained(path)
+            self._model = EdgeTamVideoModel.from_pretrained(path).to(self._device, dtype=self._dtype)
         self._model.eval()
         self._loaded = True
         logger.info("EdgeTAM loaded")
-
-    @staticmethod
-    def _resolve_model_source(model_name: str) -> str:
-        """A local model dir (*model_name* itself or ``$VECTOR_MODEL_DIR/<name>``),
-        else *model_name* as a repo id for the Hugging Face cache."""
-        models = Path(os.environ.get("VECTOR_MODEL_DIR") or Path.home() / ".cache" / "vector_os" / "models")
-        for d in (Path(model_name), models / Path(model_name).name):
-            if (d / "config.json").exists():
-                return str(d)
-        return model_name
-
-    @classmethod
-    def weights_available(cls, model_name: str = DEFAULT_EDGETAM_REPO) -> bool:
-        """True when the weights load offline (a local dir, or a complete HF cache)."""
-        src = cls._resolve_model_source(model_name)
-        if Path(src).is_dir():
-            return True
-        try:
-            from huggingface_hub import try_to_load_from_cache
-
-            return all(isinstance(try_to_load_from_cache(src, f), str)
-                       for f in ("config.json", "model.safetensors"))
-        except Exception:  # noqa: BLE001 — no hub client: only a local dir counts
-            return False
 
     @staticmethod
     def _select_dtype(device, torch) -> object:

@@ -11,8 +11,9 @@ what a real robot has, and only through ONE camera instant:
     frame's ACTUAL shape, and the exact camera->world pose, all of one sim time;
   - :meth:`detect_in` runs grounding-dino-tiny (the shared singleton) on a GIVEN
     frame, so a box always belongs to the pose it is projected with;
-  - :meth:`segment` masks a box with EdgeTAM, or the box rectangle when EdgeTAM is
-    unavailable; ``last_segmenter`` says which ("edgetam"/"box_rect"/"hsv").
+  - :meth:`segment` masks a box with EdgeTAM (a segmenter that cannot load or run
+    raises), or the box rectangle when EdgeTAM finds nothing in the box;
+    ``last_segmenter`` says which ("edgetam"/"box_rect"/"hsv").
 
 It exposes NO ground-truth pose — the 3D point comes from depth + mask downstream
 (grasp_point.py). Detector + EdgeTAM load LAZILY, so importing needs no torch.
@@ -111,28 +112,27 @@ class Go2GraspPerception:
     def segment(self, image: np.ndarray, bbox: Any) -> np.ndarray | None:
         """Binary mask for a single bbox on *image*, or None.
 
-        EdgeTAM for a tight mask; if EdgeTAM is unavailable or yields nothing, the
-        box-interior rectangle (grasp_point's nearest-depth-cluster gate then trims
-        the background it covers, D18). ``last_segmenter`` records which one made
-        the mask, and the first box-rect fallback of the process is a WARNING:
+        EdgeTAM for a tight mask. A segmenter that cannot load or run is an error
+        the caller sees (e.g. ``WeightsUnavailable`` naming the pre-fetch command),
+        never a silent substitute. When EdgeTAM runs but finds nothing in the box,
+        the box-interior rectangle (grasp_point's nearest-depth-cluster gate then
+        trims the background it covers, D18); ``last_segmenter`` records which one
+        made the mask, and the first box-rect mask of the process is a WARNING:
         a coarse mask drags the point toward the support (tricky-bugs Case 6).
         """
         global _warned_box_rect
         x1, y1, x2, y2 = (int(round(float(v))) for v in bbox)
-        try:
-            with self._lock:
-                self._ensure_tracker()
-                results = self._tracker.init_track(image, bboxes=[(x1, y1, x2, y2)])
-            mask = results[0].get("mask") if results else None
-            if mask is not None and int(np.count_nonzero(mask)) > 0:
-                self.last_segmenter = "edgetam"
-                return mask
-            why = "EdgeTAM returned an empty mask"
-        except Exception as exc:  # noqa: BLE001 — segmenter optional; box-rect fallback
-            why = f"EdgeTAM unavailable ({exc})"
+        self.last_segmenter = None
+        with self._lock:
+            self._ensure_tracker()
+            results = self._tracker.init_track(image, bboxes=[(x1, y1, x2, y2)])
+        mask = results[0].get("mask") if results else None
+        if mask is not None and int(np.count_nonzero(mask)) > 0:
+            self.last_segmenter = "edgetam"
+            return mask
         if not _warned_box_rect:
             _warned_box_rect = True
-            logger.warning("[GO2-PERCEPT] %s — box-rect fallback (a coarse mask)", why)
+            logger.warning("[GO2-PERCEPT] EdgeTAM returned an empty mask — box-rect mask (coarse)")
         self.last_segmenter = "box_rect"
         return self._box_rect_mask(image, (x1, y1, x2, y2))
 

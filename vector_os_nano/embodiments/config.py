@@ -138,6 +138,32 @@ class CapabilityProfile:
 
 
 @dataclass(frozen=True)
+class AssetsSpec:
+    """Fetch recipe for files that are not shipped (charter section 5).
+
+    ``files``: asset-folder path -> path in the upstream repository (a file or a
+    folder). ``sha256``: every file the robot loads, by asset-folder path; exactly
+    these are copied. ``license``: ``{spdx, file}`` of the upstream repository.
+    """
+
+    name: str
+    git: str
+    rev: str
+    files: dict[str, str]
+    sha256: dict[str, str]
+    license: dict[str, str]
+
+    def upstream(self, rel: str) -> str:
+        """The upstream path of asset file *rel* (through its longest ``files`` entry)."""
+        key = max((k for k in self.files if _under(rel, k)), key=len)
+        return self.files[key] + rel[len(key):]
+
+
+def _under(rel: str, key: str) -> bool:
+    return rel == key or rel.startswith(key + "/")
+
+
+@dataclass(frozen=True)
 class EmbodimentConfig:
     """Full, immutable description of one robot morphology.
 
@@ -164,6 +190,9 @@ class EmbodimentConfig:
     nav: dict[str, Any] = field(default_factory=dict)
     # The world it stands in: config/worlds/<world>.yaml (rooms, surfaces, pickables).
     world: str = ""
+    # Files not shipped in the package; model.path and policy.ref are then
+    # relative to the asset folder (embodiments/assets.py resolves it).
+    assets: AssetsSpec | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +345,35 @@ def _optional_mapping(raw: dict[str, Any], key: str, ctx: str) -> dict[str, Any]
     return dict(value)
 
 
+def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
+    a = _optional_mapping(raw, "assets", ctx)
+    if a is None:
+        return None
+    actx = f"{ctx}.assets"
+    blocks = {k: _optional_mapping(a, k, actx) for k in ("files", "sha256", "license")}
+    for key, val in blocks.items():
+        if not val:
+            raise EmbodimentConfigError(f"{actx}.{key}: required, a non-empty mapping")
+    lic = blocks["license"]
+    spec = AssetsSpec(
+        name=str(_require(a, "name", actx)),
+        git=str(_require(a, "git", actx)),
+        rev=str(_require(a, "rev", actx)),
+        files={str(k): str(v) for k, v in blocks["files"].items()},
+        sha256={str(k): str(v) for k, v in blocks["sha256"].items()},
+        license={k: str(_require(lic, k, f"{actx}.license")) for k in ("spdx", "file")},
+    )
+    if len(spec.rev) != 40:
+        raise EmbodimentConfigError(f"{actx}.rev must be a full 40-hex commit, got {spec.rev!r}")
+    for rel in spec.sha256:
+        if not any(_under(rel, k) for k in spec.files):
+            raise EmbodimentConfigError(f"{actx}.sha256: {rel!r} lies under no files entry {sorted(spec.files)}")
+    for key in spec.files:
+        if not any(_under(rel, key) for rel in spec.sha256):
+            raise EmbodimentConfigError(f"{actx}.files: {key!r} covers no file listed in sha256")
+    return spec
+
+
 def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> EmbodimentConfig:
     """Parse an already-loaded dict into an EmbodimentConfig (fail-loud)."""
     if not isinstance(raw, dict):
@@ -337,6 +395,7 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> Emb
         arm=_parse_arm(raw, ctx),
         nav=_optional_mapping(raw, "nav", ctx) or {},
         world=str(raw.get("world", "") or ""),
+        assets=_parse_assets(raw, ctx),
     )
 
 
