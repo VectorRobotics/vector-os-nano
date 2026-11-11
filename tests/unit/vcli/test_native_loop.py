@@ -826,7 +826,9 @@ def _grasp(arm):
 
 
 def _stop(arm):
-    return _Skill("stop", lambda: None)
+    stop = _Skill("stop", lambda: None)
+    stop.housekeeping = True  # as the real StopSkill declares (skills/go2/stop.py)
+    return stop
 
 
 def _verdict(agent, eng, trace):

@@ -35,7 +35,8 @@ transition the call's polarity asks for (0->1 for ``holding_object``, 1->0 under
 Commanded motion is the ACTOR's only while a producer-dispatched tool runs
 (``sim.runtime.ACTOR_EPOCH``): the in-process ``navigate`` follower counts, while a
 TARE/bridge follower or a background explore driving the base between tools never
-does. The producer grades a re-verify against the baseline of its attempt group.
+does. The producer grades a re-verify that retried (or only re-checked) its attempt
+group's latest attempt against that attempt's baseline, any other on its own step.
 
 Single-sourced into ``classify_step_evidence`` (trace_store) so the actor-causation
 verdict flows to BOTH gates and the VECTOR_VERDICT report — no split-brain.

@@ -34,8 +34,9 @@ and the model's expr as the SubGoal.verify.
 Capture/grade timing (review fix 3), mirroring ``GoalExecutor._execute_sub_goal``:
 the actor-causation baseline is captured immediately BEFORE the first skill call
 of a step; the grade reads a FRESH post-capture immediately AFTER evaluating that
-step's verify expr. A re-verify of the same predicate (an attempt group, WP07) is
-graded against the baseline of the group's first action; only the actor's own
+step's verify expr. A re-verify of the same predicate (an attempt group, WP07) that
+retried or only re-checked the latest attempt is graded against that attempt's
+baseline; after any other action it is graded on its own step. Only the actor's own
 tools count as commanded motion (``ACTOR_EPOCH``).
 
 Turn contract (WP07): the goal compiles to GT predicates (``task_contract``),
@@ -463,9 +464,12 @@ class NativeStepRunner:
 
     WP07 bookkeeping (no planning):
     - attempt groups: a verify is keyed by its normalized AST (+ an optional model
-      ``goal_id``); a re-verify of the same predicate is graded against the baseline
-      captured before the FIRST action of the group, and supersedes the earlier row
-      (the spine grades the latest only — ``trace_store.graded_indices``);
+      ``goal_id``); a re-verify of the same predicate supersedes the earlier row (the
+      spine grades the latest only — ``trace_store.graded_indices``) and is graded
+      against the group's baseline only when it retried or re-checked the latest
+      attempt (``_group_baseline``), else on its own step;
+    - a step FAILED when any side-effecting tool of its chain reported an error, not
+      only its last tool;
     - auto post-verify: an actuating tool whose ``verify_hint`` binds from its call
       params is checked right after it runs; that check closes the step unless the
       model verifies first (then the model's predicate is the step's — but a FAILED
@@ -507,13 +511,16 @@ class NativeStepRunner:
         # action (stop): the row may stay un-GROUNDED under a met task contract.
         self._housekeeping: bool = True
         self._last_ok: bool = True      # the chain's last tool did not report an error
+        self._acting: set[str] = set()  # the step's side-effecting tools
+        self._acting_failed: bool = False  # one of them reported an error
         self._last_result: ToolResult | None = None
         # The auto post-verify of the last actuating tool, until the step closes.
         self._pending: dict[str, Any] | None = None
         # Probe refusal: a model verify needs a side-effecting action since the last.
         self._acted_since_verify: bool = True
-        # attempt group -> the baseline captured before its FIRST action.
-        self._group_baselines: dict[tuple[str, str], Any] = {}
+        # attempt group -> (the baseline its LATEST attempt was graded against, that
+        # attempt's side-effecting tools). See ``_group_baseline``.
+        self._group_baselines: dict[tuple[str, str], tuple[Any, frozenset[str]]] = {}
         # Manipulation intents of the dispatched skills ("grasp" / "place").
         self.intents: set[str] = set()
 
@@ -595,6 +602,7 @@ class NativeStepRunner:
             self.actions_dispatched += 1
             self._step_acted = True
             self._acted_since_verify = True
+            self._acting.add(name)
             hint = self._bound_hint(tool, params)
             self._note_intents(tool)
         before = self._check(hint) if hint else None  # F->T: the hint at the baseline
@@ -604,13 +612,14 @@ class NativeStepRunner:
                 on_error=lambda _n, exc: logger.debug("native_loop: skill %r raised: %s", name, exc),
             )
         self._last_ok = not result.is_error
+        self._acting_failed |= result.is_error and not read_only
         self._last_result = result
         if hint and self._last_ok:
             ok = self._check(hint)
             caused, channels = self._grade(hint)
             # F->T for THIS action — unless it re-attempts a group whose earlier attempt
             # made it true: then the group baseline (in _grade) is the judge.
-            if before and ("native", attempt_key(hint)) not in self._group_baselines:
+            if before and self._group_baseline(("native", attempt_key(hint))) is None:
                 caused, channels = actor_causation.ActorCaused.UNCAUSED, ("already true before the action",)
             # The auto check belongs to THIS tool: keep its own result for the record
             # (a later read in the same step must not stand in for it).
@@ -719,15 +728,17 @@ class NativeStepRunner:
             verify=expr,
             strategy=strategy,
         ))
-        # The step "ran" (success) iff its producing action — the LAST tool of the
-        # chain — did not report an error; a pure check (no tool) records
-        # success=True so the gate keys on GROUNDED/RAN. A failed skill followed by a
-        # true verify is FAILED, never GROUNDED: the skill's own failure is kept,
-        # with its message, in error / result_data (rule 4).
+        # The step "ran" (success) iff no side-effecting tool of its chain and not its
+        # LAST tool reported an error; a pure check (no tool) records success=True so
+        # the gate keys on GROUNDED/RAN. A failed skill followed by a read and a true
+        # verify is FAILED, never GROUNDED: the skill's own failure is kept, with its
+        # message, in error / result_data (rule 4).
         if failed is None:
-            failed = bool(self._chain) and not self._last_ok
-        if self._baseline is not None:  # the group's baseline: its FIRST recorded action
-            self._group_baselines.setdefault((goal_id or "native", attempt_key(expr)), self._baseline)
+            failed = self._acting_failed or (bool(self._chain) and not self._last_ok)
+        key = (goal_id or "native", attempt_key(expr))
+        if self._baseline is not None and not self._rechecks(key):  # a new attempt of the group
+            self._group_baselines[key] = (self._group_baseline(key) or self._baseline,
+                                          frozenset(self._acting))
         self._steps.append(StepRecord(
             sub_goal_name=step_name,
             strategy=strategy,
@@ -760,8 +771,10 @@ class NativeStepRunner:
         auto, self._pending = self._pending, None
         if auto is not None:
             del self._chain[auto["chain"]:]  # reads after the action are not its producer
+            # The hinted tool succeeded (else no auto-verify), but an earlier actuating
+            # tool of the same step may not have: the row is FAILED then.
             self._record(auto["expr"], auto["ok"], auto["caused"], ("auto-verify", *auto["channels"]),
-                         "", auto["data"], note="auto-verify", failed=False)
+                         "", auto["data"], note="auto-verify", failed=self._acting_failed)
 
     def _close_step(self) -> None:
         # Reset the action chain + baseline for the next pair. NEVER carry a baseline
@@ -772,7 +785,30 @@ class NativeStepRunner:
         self._step_acted = False
         self._housekeeping = True
         self._last_ok = True
+        self._acting = set()
+        self._acting_failed = False
         self._last_result = None
+
+    def _rechecks(self, key: tuple[str, str]) -> bool:
+        """This step only re-checks the group's latest attempt: its chain is all
+        read-only or declared housekeeping (a stop), which changes no task state."""
+        return key in self._group_baselines and self._housekeeping and bool(self._chain)
+
+    def _group_baseline(self, key: tuple[str, str]) -> Any:
+        """The baseline a re-verify of the attempt group *key* is graded against, or
+        None (graded on its own step).
+
+        A RETRY (this step re-ran one of the latest attempt's side-effecting tools) or
+        a RE-CHECK (``_rechecks``) is graded against the baseline the latest attempt
+        was, so a FAIL -> navigate -> PASS recovery counts the whole motion. After any
+        other action — a different one, a no-op — the re-verify is graded on its own
+        step and never inherits an earlier attempt's motion; that attempt then becomes
+        the group's latest, so a later stop cannot launder it either.
+        """
+        entry = self._group_baselines.get(key)
+        if entry is None:
+            return None
+        return entry[0] if entry[1] & self._acting or self._rechecks(key) else None
 
     def record_abort(self, reason: str) -> None:
         """Close the turn with ONE failed step: it was stopped (or its LLM died).
@@ -791,7 +827,7 @@ class NativeStepRunner:
         unproven step (grades RAN at best)."""
         self._flush_pending()
         if self._step_open:
-            self._record_open("not verified", success=self._last_ok)
+            self._record_open("not verified", success=self._last_ok and not self._acting_failed)
 
     def _record_open(self, reason: str, *, success: bool) -> None:
         step_name = f"native_step_{self._step_idx}"
@@ -813,9 +849,10 @@ class NativeStepRunner:
     def _grade(self, expr: str, goal_id: str = "") -> tuple[Any, tuple[str, ...]]:
         """Grade actor-causation for the just-verified step.
 
-        ROBOT predicate (a call to a base / arm / gripper oracle): a fresh post-capture
-        vs the baseline of the step's ATTEMPT GROUP (captured before the group's first
-        action) -> CAUSED / UNCAUSED, per channel. No baseline (no skill ran) grades
+        ROBOT predicate (a call to a base / arm / gripper / perception oracle): a fresh
+        post-capture vs the step's baseline -> CAUSED / UNCAUSED, per channel. A retry
+        or a re-check of the attempt group's latest attempt is graded against that
+        attempt's baseline instead (``_group_baseline``). No baseline (no skill ran) grades
         UNCAUSED (grade fail-closes).
 
         NON-ROBOT predicate (a dev / state oracle): no displacement to attribute, so
@@ -831,7 +868,7 @@ class NativeStepRunner:
                     return actor_causation.ActorCaused.UNCAUSED, ("no action this step",)
                 return actor_causation.ActorCaused.NOT_GRADED, ()
             post = actor_causation.capture(self._agent)
-            baseline = self._group_baselines.get(key, self._baseline)
+            baseline = self._group_baseline(key) or self._baseline
             return actor_causation.grade_channels(baseline, post, expr, self._oracles)
         except Exception as exc:  # noqa: BLE001
             logger.debug("native_loop: grade(%r) raised: %s", expr, exc)
