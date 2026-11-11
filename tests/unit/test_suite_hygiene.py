@@ -7,6 +7,7 @@ Each rule names the ledger key it pins. A guard failure lists every offending li
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -290,6 +291,35 @@ def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
     )
     assert r.returncode != 0, r.stdout[-2000:] + r.stderr[-2000:]
     assert "RED rc=2 collection" in r.stdout, r.stdout[-2000:]
+
+
+@pytest.mark.parametrize("tier", ["hermetic", "sim", "e2e"])
+def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_path, tier) -> None:
+    """tests-gate-e2e:sim-tier-uses-real-home — only the hermetic tier swapped HOME, so
+    the sim and e2e tiers wrote the owner's ~/.vector (strategy stats, traces, sessions)."""
+    real, out = tmp_path / "real_home", tmp_path / "env.json"
+    real.mkdir()
+    probe = tmp_path / "test_probe_env.py"
+    probe.write_text(
+        "import json, os, pathlib, pytest\n\n"
+        + ("@pytest.mark.sim\n" if tier == "sim" else "")
+        + "def test_env():\n"
+        "    keys = ('HOME', 'HF_HOME', 'VECTOR_MODEL_DIR', 'HF_HUB_OFFLINE')\n"
+        "    pathlib.Path(os.environ['PROBE_OUT']).write_text(json.dumps({k: os.environ.get(k) for k in keys}))\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k not in ("GATE_HOME_SET", "HF_HOME", "VECTOR_MODEL_DIR")}
+    r = subprocess.run(
+        ["bash", str(_REPO / "scripts" / "gate.sh"), tier],
+        env={**env, "HOME": str(real), "GATE_PER_FILE": "0", "GATE_PATHS": str(probe),
+             "GATE_OUT": str(tmp_path / "out"), "PROBE_OUT": str(out)},
+        cwd=_REPO, capture_output=True, text=True, timeout=300,
+    )
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    seen = json.loads(out.read_text())
+    assert seen["HOME"] != str(real) and not Path(seen["HOME"]).exists()  # throwaway, removed after
+    assert seen["HF_HOME"] == str(real / ".cache" / "huggingface") and seen["HF_HUB_OFFLINE"] == "1"
+    assert seen["VECTOR_MODEL_DIR"] == str(real / ".cache" / "vector_os" / "models")
+    assert list(real.iterdir()) == []  # the gate wrote nothing into the real home
 
 
 def test_every_known_red_row_names_an_existing_test_file() -> None:
