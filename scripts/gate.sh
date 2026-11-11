@@ -106,6 +106,13 @@ if [ "${GATE_PER_FILE-1}" = 1 ]; then
     echo "$crc (collection) $OUT/collect.log" >> "$OUT/rc.txt"
     echo "[gate] RED rc=$crc collection ($OUT/collect.log)"
   fi
+  if [ ! -s "$OUT/files.txt" ]; then
+    # Nothing to run is never green. A path outside the repo yields no file lines
+    # (run those with GATE_PER_FILE=0); a path whose every test is deselected by the
+    # tier marker proves nothing either.
+    echo "1 (no test files collected) $OUT/collect.log" >> "$OUT/rc.txt"
+    echo "[gate] RED: no test files collected for ${PATHS[*]} in tier $TIER (outside the repo? use GATE_PER_FILE=0) ($OUT/collect.log)"
+  fi
   JOBS=${GATE_JOBS:-2}; [ "$TIER" = hermetic ] || JOBS=1
   echo "[gate] $TIER per-file: $(wc -l < "$OUT/files.txt") files, $JOBS at a time -> $OUT"
   export TIER OUT MEMMAX=${FILE_MEMMAX:-6G} TMO=${TMO:-1500}
