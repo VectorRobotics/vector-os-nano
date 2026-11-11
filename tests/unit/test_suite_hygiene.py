@@ -357,6 +357,17 @@ def test_every_known_red_row_names_an_existing_test_file() -> None:
     assert not [r for r in rows if not (_REPO / r.split("::", 1)[0]).is_file()]
 
 
+def test_notice_cites_existing_files_and_every_bundled_license() -> None:
+    """docs-packaging:notice-incorrect-incomplete — NOTICE cited a deleted bridge
+    directory and said licences sat beside assets that had none."""
+    text = (_REPO / "NOTICE").read_text(encoding="utf-8")
+    cited = re.findall(r"vector_os_nano/[\w/.*-]+\w", text)
+    assert cited and not [c for c in cited if not list(_REPO.glob(c))]
+    licenses = subprocess.run(["git", "ls-files", "*/LICENSE"], cwd=_REPO, capture_output=True,
+                              text=True, check=True).stdout.split()
+    assert licenses and not [p for p in licenses if p.startswith("vector_os_nano/") and p.rsplit("/", 1)[0] not in text]
+
+
 def test_the_dev_extra_declares_the_gates_pytest_plugin() -> None:
     """tests-inventory:dev-extra-missing-pytest-timeout — gate.sh passes --timeout, so
     on a fresh `pip install -e .[dev]` without pytest-timeout every file ran rc=4."""

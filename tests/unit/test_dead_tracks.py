@@ -59,6 +59,8 @@ _DEAD: dict[str, str] = {
         "tools-worlds:ros2-tools-jazzy-broken (hz never returned, echo used a flag Jazzy lacks, "
         "the log tool read files nobody writes)",
     "tests/harness/test_path_follower.py": "tests-inventory:path-follower-tautology (tested a copy of the logic)",
+    "vector_os_nano/hardware/sim/objects": "unreferenced byte-identical copies of hardware/urdf/meshes/*.stl",
+    "vector_os_nano/hardware/urdf/so101_sim.urdf": "the PyBullet arm's URDF, unreferenced since WP04 deleted that arm",
     "foxglove/launch_foxglove.sh": "periphery:foxglove-check-before-source (open_foxglove launches the bridge itself)",
 }
 
