@@ -216,6 +216,32 @@ def test_servo_force_is_limited_by_the_model(backend, load, contract_scene):
     assert q[sc.joint_q(weak)] == pytest.approx(math.acos(1.5 / (G * 0.3)), abs=2e-3)
 
 
+def test_frictionloss_is_a_deadband_then_coulomb_drag(backend, load, contract_scene):
+    """The drag hinge (vertical axis, frictionloss 0.3 N m, nothing else): a torque below
+    the loss holds it, one above it accelerates at (tau - loss) / I, and a spinning joint
+    decelerates at loss / I. MuJoCo's frictionloss is a soft constraint: it creeps a few mrad."""
+    sc = contract_scene
+    drag = sc.joint("drag")
+    a, v = sc.joint_q(drag), sc.joint_qd(drag)
+    loss, inertia, T = 0.3, _mass_matrix_diag(sc, drag), 0.5
+    n = int(T / sc.timestep)
+    w = load(backend, sc)
+    w.set_torque([drag], [0.2])
+    w.step(n)
+    q, qd = w.state()
+    assert abs(q[a]) < 0.02 and abs(qd[v]) < 0.05, f"below the loss it moved {q[a]:.3f} rad"
+    w.reset(sc.model.qpos0)
+    w.set_torque([drag], [0.5])
+    w.step(n)
+    assert w.state()[1][v] == pytest.approx((0.5 - loss) / inertia * T, rel=1e-3)
+    w.set_torque([drag], [0.0])
+    qd0 = np.zeros(sc.model.nv)
+    qd0[v] = 5.0
+    w.reset(sc.model.qpos0, qd0)
+    w.step(50)
+    assert w.state()[1][v] == pytest.approx(5.0 - loss / inertia * 50 * sc.timestep, rel=1e-3)
+
+
 # -- contacts -------------------------------------------------------------------
 
 
@@ -238,6 +264,20 @@ def test_contacts_threshold_and_freshness_after_reset(backend, load, contract_sc
     w.step(200)                           # it rests: still in contact
     assert 0 in w.contacts(die)
     assert put(0.03 + 2 * CONTACT_DISTANCE_M) == frozenset()
+
+
+@pytest.mark.parametrize("gap, touching", [
+    (0.9 * CONTACT_DISTANCE_M, True), (1.5 * CONTACT_DISTANCE_M, False), (0.005, False)])
+def test_contact_threshold_is_the_contract_s_not_the_engine_s(backend, load, contract_scene, gap, touching):
+    """The 1 m slab: both engines report separated points out to ~1 cm here (MuJoCo: its
+    margin; Bullet: its breaking threshold), so only the <= CONTACT_DISTANCE_M filter decides."""
+    sc = contract_scene
+    slab = sc.body("slab")
+    w = load(backend, sc)
+    q = sc.model.qpos0.copy()
+    q[sc.free_q(slab)] = [-3.0, 0.0, 0.1 + gap, 1, 0, 0, 0]
+    w.reset(q)
+    assert w.contacts(slab) == (frozenset({0}) if touching else frozenset()), f"{gap * 1000:.1f} mm"
 
 
 # -- attach ------------------------------------------------------------------------
@@ -352,7 +392,8 @@ def test_render_shape_intrinsics_depth_and_segmentation(backend, load, contract_
     assert f.depth[r, c] == pytest.approx(1.95, abs=2e-3)
     assert f.seg[r, c] == sc.body("wall")
     assert f.seg[0, 0] == -1 and f.depth[0, 0] == 0.0  # sky: no body, invalid depth
-    # canonical body ids: a visible non-colliding marker where K and cam_mat put it
+    # canonical BODY ids (the wall has two geoms, so later geom ids are not body ids)
+    assert sc.model.body_geomadr[sc.body("marker")] != sc.body("marker")
     for name, p in (("marker", [1.5, 0.3, 0.7]), ("ghost", [1.5, -0.3, 0.3])):
         r, c = _project(f, np.array(p))
         assert f.seg[r, c] == sc.body(name), name

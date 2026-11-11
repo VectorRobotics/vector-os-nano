@@ -64,7 +64,8 @@ def test_go2_pd_stance_height_agrees(both, load, robot_scene):
 
 @pytest.mark.parametrize("pose", [[0.0, 1.57, -1.3485, 0.0, 0.0, 0.0], [0.5, 1.57, -1.3485, 0.0, 0.6, 0.0]])
 def test_piper_holds_a_commanded_pose(backend, load, robot_scene, pose):
-    """Gravity compensation, armature and the frictionloss deadband are the model's."""
+    """Gravity compensation and armature are the model's (frictionloss has its own rig:
+    test_contract's drag hinge)."""
     scene = robot_scene("piper")
     w = load(backend, scene)
     arm = [scene.joint(f"joint{i}") for i in range(1, 7)]

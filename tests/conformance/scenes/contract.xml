@@ -14,7 +14,10 @@
 
     <!-- render: a camera at (0, 0, 0.5) looking along +x; right = -y, up = +z -->
     <camera name="cam" pos="0 0 0.5" xyaxes="0 -1 0 0 0 1" fovy="60"/>
-    <body name="wall" pos="2 0 0.5"><geom type="box" size="0.05 0.6 0.5" rgba="0.2 0.4 0.8 1"/></body>
+    <body name="wall" pos="2 0 0.5">  <!-- two geoms: every later geom id differs from its body id -->
+      <geom type="box" pos="0 0 -0.35" size="0.05 0.6 0.15" rgba="0.2 0.4 0.8 1"/>
+      <geom type="box" pos="0 0 0.15" size="0.05 0.6 0.35" rgba="0.2 0.4 0.8 1"/>
+    </body>
     <body name="marker" pos="1.5 0.3 0.7">
       <geom type="sphere" size="0.03" rgba="1 1 0 1" contype="0" conaffinity="0"/>
     </body>
@@ -35,6 +38,14 @@
       <geom type="box" size="0.03 0.03 0.03" mass="0.2" rgba="0.9 0.5 0.1 1"/>
     </body>
 
+    <!-- the contact threshold: a 1 m slab behind the camera, where both engines report
+         separated points (MuJoCo: margin 1 cm, gap 1 cm so the margin adds no force;
+         Bullet: its breaking threshold scales with the shape, ~1.4 cm here) -->
+    <body name="slab" pos="-3 0 0.1">
+      <freejoint name="slab"/>
+      <geom type="box" size="0.5 0.5 0.1" mass="10" margin="0.01" gap="0.01" rgba="0.6 0.6 0.6 1"/>
+    </body>
+
     <!-- the free-body velocity layout with the COM 5 cm off the frame origin -->
     <body name="wand" pos="-0.5 -1 1.5">
       <freejoint name="wand"/>
@@ -51,6 +62,10 @@
       <body name="arm" pos="0.5 0 0">          <!-- horizontal axis: gravity torque m g l -->
         <joint name="servo" type="hinge" axis="0 1 0"/>
         <geom type="sphere" pos="0.3 0 0" size="0.02" mass="1" contype="0" conaffinity="0"/>
+      </body>
+      <body name="dragger" pos="0 0.5 0.2">     <!-- vertical axis: frictionloss is the only drag -->
+        <joint name="drag" type="hinge" axis="0 0 1" frictionloss="0.3"/>
+        <geom type="box" size="0.2 0.02 0.02" mass="1" contype="0" conaffinity="0"/>
       </body>
       <body name="weak_arm" pos="-0.5 0 0">
         <joint name="weak" type="hinge" axis="0 1 0" damping="1"/>  <!-- saturated: the servo cannot damp it -->
@@ -83,5 +98,6 @@
     <position name="servo" joint="servo" kp="500" kv="20" ctrlrange="-0.3 0.3" forcerange="-10 10"/>
     <position name="weak" joint="weak" kp="500" kv="20" forcerange="-1.5 1.5"/>
     <motor name="push" joint="rail" ctrlrange="-100 100"/>
+    <motor name="drag" joint="drag" ctrlrange="-1 1"/>
   </actuator>
 </mujoco>
