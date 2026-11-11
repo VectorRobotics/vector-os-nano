@@ -16,7 +16,11 @@ from a state on the compiled model (``sim/scene/canonical.py``); a backend
 integrates dynamics and contact and renders its own sensors, nothing else.
 
 Every sentence in the method docstrings below is binding and has a test in
-``tests/conformance`` that runs on every backend.
+``tests/conformance`` that runs on every backend. A backend also provides two
+conformance seams the suite reads (never a runtime caller): ``_link_frames()``
+-> the engine's own body-frame poses ``(pos (nbody, 3), quat (nbody, 4))``, NaN
+for a body it does not move, and ``_inertials()`` -> its own ``(mass (nbody,),
+com (nbody, 3), inertia (nbody, 3, 3))`` in the body frame, NaN likewise.
 """
 from __future__ import annotations
 
@@ -172,7 +176,7 @@ class PhysicsWorld(Protocol):
         """Release the engine and any viewer. Idempotent."""
 
     def time(self) -> float:
-        """Sim seconds since load."""
+        """Sim seconds since load (``reset`` does not change it)."""
 
     def step(self, n: int = 1) -> None:
         """Advance *n* physics steps of ``scene.timestep``. Commands are held for all
@@ -184,28 +188,35 @@ class PhysicsWorld(Protocol):
 
     def reset(self, q: np.ndarray, qd: np.ndarray | None = None) -> None:
         """Write the whole state (``qd`` zero when omitted). Clears every torque, keeps
-        the position targets, refreshes kinematics and collision detection."""
+        the position targets and the attachments, refreshes kinematics and collision
+        detection."""
 
     def set_targets(self, joints: Sequence[int], q: Sequence[float]) -> None:
-        """Set-points of the model's OWN position actuators for *joints*. Gains,
-        control range and force limit are the model's and are evaluated at every
-        physics step. A joint without a position actuator is a ``KeyError``."""
+        """Set-points, in joint coordinates, of the model's OWN position actuators for
+        *joints*. Gains, control range and force limit are the model's and are
+        evaluated at every physics step. A joint without a position actuator is a
+        ``KeyError`` naming the joints that have one."""
 
     def targets(self, joints: Sequence[int]) -> np.ndarray:
-        """The current position set-points of *joints*."""
+        """The position set-points of *joints* as written (the control range clips
+        what the servo tracks, not what is read back)."""
 
     def set_torque(self, joints: Sequence[int], tau: Sequence[float]) -> None:
-        """Torques for joints driven by motor actuators, clipped to the actuator
-        range and held until replaced. A joint without a motor actuator is a ``KeyError``."""
+        """Joint torques through the joints' motor actuators (``ctrl = tau / (gear *
+        gain)``), clipped to the actuator's control range (then its force range) and
+        held until replaced. A joint without a motor actuator is a ``KeyError``."""
 
     def contacts(self, body: int) -> frozenset[int]:
-        """Bodies with at least one contact point with *body* at signed distance
-        <= :data:`CONTACT_DISTANCE_M`, as of the last :meth:`step` or :meth:`reset`."""
+        """Bodies with at least one ENGINE contact point with *body* at signed distance
+        <= :data:`CONTACT_DISTANCE_M`, as of the last :meth:`step` or :meth:`reset`.
+        A penetration is always a contact, a gap up to the threshold is one, and a gap
+        over it never is, whatever the geoms' own margins."""
 
     def attach(self, parent: int, child: int) -> None:
         """Hold *child* rigidly at its CURRENT pose relative to *parent*. Only pairs in
-        ``scene.grasp_pairs``; any other pair is a ``KeyError`` listing them. World
-        side only (``sim/grasp.py``): no driver, skill or perception module calls it."""
+        ``scene.grasp_pairs``; any other pair is a ``KeyError`` listing them; a child
+        attached to another parent is a ``ValueError``. World side only
+        (``sim/grasp.py``): no driver, skill or perception module calls it."""
 
     def detach(self, child: int) -> None:
         """Release *child*; a no-op when it is not attached."""
@@ -219,16 +230,21 @@ class PhysicsWorld(Protocol):
         """Cast N rays (origins (N, 3), unit directions (N, 3)). Returns the distance
         to the first hit (-1 = miss) and the canonical id of the hit body (-1 = miss);
         *exclude_body*'s own geometry is transparent. The geometry tested is the
-        engine's own (MuJoCo: visible geoms; PyBullet: collision shapes), so a lidar
+        engine's own (MuJoCo: every geom with alpha > 0, any group, as ``mj_ray``;
+        PyBullet: collision shapes, and a hit beyond 100 m is a miss), so a lidar
         built on this is backend-specific and is never evidence."""
 
     def render(
         self, camera: str, width: int, height: int, kinds: tuple[str, ...] = ("rgb", "depth"),
     ) -> RGBDFrame:
         """Render ``scene.cameras[camera]`` at exactly (*width*, *height*); *kinds* is a
-        subset of ``rgb``, ``depth``, ``seg`` (the others are None). Observes one
-        sim instant and may be called from any thread: a backend that cannot render
-        while stepping serializes the two itself."""
+        subset of ``rgb``, ``depth``, ``seg`` (the others are None; anything else is a
+        ``ValueError``, an unknown camera a ``KeyError``). Visible geoms are the ones a
+        default MuJoCo render draws (group 0-2, alpha > 0); a pixel with nothing behind
+        it has depth 0 and seg -1; pixel (row, col) samples its centre, so a point
+        projects through ``K`` to (col + 0.5, row + 0.5). Observes one sim instant and
+        may be called from any thread: a backend that cannot render while stepping
+        serializes the two itself."""
 
 
 @runtime_checkable
