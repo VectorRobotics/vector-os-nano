@@ -66,7 +66,10 @@ def test_absent_assets_fail_with_one_sentence_naming_the_fetch_command(state_dir
         assets.asset_dir(load_embodiment_config("g1"))
     msg = str(exc.value)
     assert msg.endswith(f"fetch them with: {FETCH}") and msg.count(". ") == 0
-    assert str(state_dir / "assets" / "g1_gait") in msg and "motion.pt missing" in msg
+    assert "motion.pt missing" in msg
+    # the sentence reaches the LLM provider: it names no machine path
+    assert str(state_dir) not in msg and str(Path.home()) not in msg
+    assert not [w for w in msg.split() if w.lstrip("(").startswith("/")], msg
 
 
 def test_provisioned_assets_resolve_and_a_tampered_file_is_refused(state_dir) -> None:

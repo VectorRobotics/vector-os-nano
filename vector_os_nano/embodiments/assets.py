@@ -61,8 +61,9 @@ def asset_dir(cfg: EmbodimentConfig) -> Path:
     if bad:
         rel, why = next(iter(bad.items()))
         more = f" and {len(bad) - 1} more" if len(bad) > 1 else ""
+        # no machine path: this sentence reaches the LLM provider as a tool result
         raise AssetsMissing(
-            f"{cfg.id} cannot start: its model and policy are not shipped and {folder} "
-            f"does not hold them ({rel} {why}{more}); fetch them with: {fetch_command(cfg.id)}"
+            f"{cfg.id} cannot start: its model and policy are neither shipped nor fetched "
+            f"({rel} {why}{more}); fetch them with: {fetch_command(cfg.id)}"
         )
     return folder
