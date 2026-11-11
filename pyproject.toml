@@ -54,6 +54,7 @@ dependencies = [
 # Simulation: MuJoCo (the primary, cross-platform sim backend)
 sim = [
     "mujoco>=3.3",  # MjSpec.attach (scene_builder.build_room_scene); absent in 3.2.7
+    "opencv-python>=4.8",  # perception/front_object: the sim go2 grasp's salient-blob resolver
 ]
 
 # Perception: VLM detection + EdgeTAM tracker + pointcloud (no robot/USB deps).
@@ -93,6 +94,7 @@ ros2 = [
 
 mcp = [
     "mcp>=1.0",
+    "pillow>=10",  # mcp/resources encodes camera frames as PNG
 ]
 
 # Go2 quadruped locomotion: Pinocchio kinematics + CasADi for MPC

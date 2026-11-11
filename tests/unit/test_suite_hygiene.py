@@ -377,3 +377,18 @@ def test_the_dev_extra_declares_the_gates_pytest_plugin() -> None:
     names = {re.split(r"[<>=!~\[ ]", d, maxsplit=1)[0].lower() for d in dev}
     assert "--timeout=" in (_REPO / "scripts" / "gate.sh").read_text()
     assert "pytest-timeout" in names, dev
+
+
+def test_the_ci_install_declares_what_the_hermetic_tier_imports() -> None:
+    """R8a-V2: CI installs .[sim,go2,ik,mcp,dev]; front_object (the sim go2 grasp
+    perception) needs cv2 and the MCP image resources need PIL, so a fresh CI venv
+    without them ran 2 of 226 files red. The extras the workflow names must carry both."""
+    import tomllib
+
+    extras = tomllib.loads((_REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+    ci = (_REPO / ".github" / "workflows" / "ci.yml").read_text()
+    named = re.search(r'-e "\.\[([^\]]+)\]"', ci).group(1).split(",")
+    names = {re.split(r"[<>=!~\[ ]", d, maxsplit=1)[0].lower() for x in named for d in extras[x]}
+    assert {"opencv-python", "pillow"} <= names, (named, sorted(names))
+    assert "opencv-python" in {d.split(">")[0] for d in extras["sim"]}   # front_object is a sim path
+    assert "pillow" in {d.split(">")[0] for d in extras["mcp"]}          # mcp/resources encodes PNG

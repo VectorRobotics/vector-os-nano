@@ -24,6 +24,21 @@ def _put_blob(rgb, cx, cy, color, r=5):
             rgb[v, u] = color
 
 
+def test_without_cv2_the_resolver_fails_loud_not_on_a_degenerate_fallback(monkeypatch):
+    """R8a-V2: the numpy fallback merged every blob into one component, so without cv2
+    the resolver silently picked the wrong object. cv2 is declared by [sim]; its
+    absence must be an ImportError, never a wrong mask."""
+    import importlib
+    import sys
+
+    import pytest
+
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    monkeypatch.delitem(sys.modules, "vector_os_nano.perception.front_object")
+    with pytest.raises(ImportError):
+        importlib.import_module("vector_os_nano.perception.front_object")
+
+
 def test_central_salient_object_found():
     rgb = _muted_bg()
     _put_blob(rgb, _W // 2, _H // 2, (220, 30, 30))  # vivid red, centre
