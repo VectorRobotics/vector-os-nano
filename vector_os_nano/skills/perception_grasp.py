@@ -37,7 +37,6 @@ from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.perception.grasp_point import grasp_point_from_rgbd
 from vector_os_nano.skills.utils.approach_pose import compute_approach_pose
-from vector_os_nano.skills.utils.terminal_dock import dock_converged, terminal_dock
 
 logger = logging.getLogger(__name__)
 
@@ -317,16 +316,6 @@ _REPOSE_TURN_MAX_S = 4.0        # cap a single turn command's duration
 _REPOSE_MOVE_DEADBAND = 0.12    # m
 _REPOSE_MOVE_VX = 0.4           # m/s
 _REPOSE_MOVE_MAX_S = 3.0        # cap a single move command's duration
-# TERMINAL DOCK (R39). After FAR's coarse arrival the dog stands ~0.8 m from the
-# goal at an arbitrary, oblique heading (probe: ~169 deg off) and the d435 frames
-# the floor/wall, so perception mislocalizes the can (R38/D52). The PROVEN colour
-# grasp (D47) GROUNDS when the dog starts HEAD-ON from the room centerline facing
-# the table (the scripted-from-spawn pose). So BEFORE perceiving, dead-reckon to a
-# FIXED proven table-approach pose — NOT can-relative (no chicken-and-egg) — then
-# run the proven colour grasp UNCHANGED. The pose is passed via the ``dock_pose``
-# param (world-agnostic); when absent the dock is a no-op (the scripted-from-spawn
-# path passes nothing, so D34-D51 is preserved byte-for-byte).
-_GRASP_DEFAULT_DOCK_POSE: tuple[float, float, float] | None = None
 # Pre-perceive orientation scan (R38). After a FAR navigate the dog can arrive
 # facing AWAY from the table; a single frame then localizes a far wall, not the
 # can. A PLAUSIBLE grasp target is a near-table object: its planar distance from
@@ -361,7 +350,7 @@ def _grasp_ready_repose(
     Idempotent / benign when the dog is ALREADY head-on (yaw error below the
     deadband, already at the standoff): it issues no large turn and no move, so the
     scripted-from-spawn grasp (D34-D51) is preserved. Reuses the proven
-    ``compute_approach_pose`` (mobile_pick). World-agnostic — uses only the base's
+    ``compute_approach_pose``. World-agnostic — uses only the base's
     ``walk`` / ``get_position`` / ``get_heading`` duck-typed surface.
 
     Returns True if the re-pose ran (or was a benign no-op); False if the base
@@ -545,18 +534,6 @@ class PerceptionGraspSkill:
                 "consumed in place of re-perceiving (back-projected to 3D)."
             ),
         },
-        "dock_pose": {
-            "type": "array",
-            "required": False,
-            "description": (
-                "Optional [x, y, heading] FIXED proven table-approach pose (world "
-                "frame, heading radians). When present, the dog dead-reckons to it "
-                "BEFORE perceiving (the R39 terminal dock) so the camera frames the "
-                "object from the proven head-on pose. NOT can-relative — bridges a "
-                "coarse FAR arrival to the perceivable, reachable pose. Absent on "
-                "the scripted-from-spawn path (no-op, no regression)."
-            ),
-        },
     }
     preconditions: list[str] = ["gripper_empty"]
     postconditions: list[str] = []
@@ -596,49 +573,6 @@ class PerceptionGraspSkill:
                 "no_camera",
                 f"Perception backend {type(perception).__name__} lacks RGB-D grasp surface: {missing}",
             )
-
-        # --- R39 TERMINAL DOCK (before perceiving) ---------------------------
-        # If a FIXED proven table-approach pose is supplied (dock_pose=[x, y, hd]),
-        # dead-reckon the dog to it FIRST — so the d435 frames the object from the
-        # proven head-on pose, not from FAR's oblique coarse arrival. The dock target
-        # is FIXED (NOT can-relative): the dog does not need to perceive the can to
-        # dock, breaking the R38 chicken-and-egg (R38 perceived from the bad pose,
-        # THEN re-posed can-relative off a mislocalized point). Benign no-op on the
-        # scripted-from-spawn path (no dock_pose passed → D34-D51 preserved). Uses
-        # only the base's walk/get_position/get_heading surface (world-agnostic).
-        # R40 POSE-VERIFICATION GATE (D54): the dock is now a CLOSED-LOOP controller
-        # that returns a DockResult. We perceive/grasp ONLY when the dock CONVERGED to
-        # the proven head-on pose (heading within ±12° of +X, |y - centerline| < 8 cm,
-        # x in the perceive band). If it RAN but did NOT converge, ABORT the grasp
-        # cleanly ("dock_not_converged") — NEVER perceive from a bad pose. This converts
-        # the R39 t3 bad-dock (heading 86°, x back from the table) into an HONEST RAN
-        # instead of a spurious/garbage grasp. A dock that did not run (no base surface)
-        # is the scripted-from-spawn path and proceeds unchanged (no regression).
-        dock_pose = self._resolve_dock_pose(params)
-        if dock_pose is not None and context.base is not None:
-            logger.info("[PGRASP] terminal dock to FIXED proven pose %s before perceive",
-                        dock_pose)
-            dock = terminal_dock(
-                context.base, (dock_pose[0], dock_pose[1]), dock_pose[2],
-                on_progress=lambda m: logger.info("[PGRASP] %s", m),
-            )
-            if dock.ran and not dock_converged(dock):
-                logger.warning(
-                    "[PGRASP] dock did NOT converge (hd_err=%.0f° y_err=%.3fm x_err=%.3fm "
-                    "after %d iters) — ABORT grasp (dock_not_converged), do NOT perceive "
-                    "from a bad pose",
-                    math.degrees(dock.heading_err), dock.lateral_err,
-                    dock.x_err, dock.iterations)
-                return _fail(
-                    "dock_not_converged",
-                    "Terminal dock did not converge to the proven head-on grasp pose "
-                    f"(heading_err={dock.heading_err:.3f}rad, lateral_err={dock.lateral_err:.3f}m, "
-                    f"x_err={dock.x_err:.3f}m after {dock.iterations} iterations). "
-                    "Aborting the grasp rather than perceiving/grasping from a bad pose — "
-                    "the camera would not frame the object. Honest RAN, not a false grasp.",
-                    dock_pose=list(dock_pose),
-                    dock_final_pose=list(dock.final_pose) if dock.final_pose else None,
-                )
 
         # --- stow the arm OUT of the camera FOV before perceiving (the arm at rest
         # occludes the forward head camera and corrupts the front-object mask) -----
@@ -768,7 +702,7 @@ class PerceptionGraspSkill:
         # The Piper's forward-reach envelope at full extension is a THIN z-band: at
         # the far standoff the object sits at (it reaches ~0.49 m forward only when
         # reaching to z~0.32, and cannot also hover 5 cm HIGHER there — measured
-        # /tmp/param_probe.py: pre-grasp at obj_z+0.05 IK-fails while the grasp at
+        # by a probe: pre-grasp at obj_z+0.05 IK-fails while the grasp at
         # obj_z IK-succeeds). So we tell PickTopDownSkill to use a SHALLOW pre-grasp
         # hover (obj_z + _GO2_PRE_GRASP_H) that stays inside that band — the EE
         # extends straight to the object's reachable height and the jaws close from
@@ -828,28 +762,6 @@ class PerceptionGraspSkill:
             error_message=res.error_message,
             result_data=rd,
         )
-
-    @staticmethod
-    def _resolve_dock_pose(params: dict) -> tuple[float, float, float] | None:
-        """Extract a FIXED dock pose [x, y, heading] from params, or the default.
-
-        Accepts ``dock_pose=[x, y, heading]`` (heading radians) or
-        ``dock_pose=[x, y]`` (heading defaults to 0.0 = facing +X). Returns
-        ``_GRASP_DEFAULT_DOCK_POSE`` when no dock_pose param is present (None by
-        default → the dock is a no-op, preserving the scripted-from-spawn path).
-        Malformed input → the default (never crashes the grasp).
-        """
-        dp = params.get("dock_pose")
-        if dp is None:
-            return _GRASP_DEFAULT_DOCK_POSE
-        if isinstance(dp, (list, tuple)) and len(dp) >= 2:
-            try:
-                x, y = float(dp[0]), float(dp[1])
-                hd = float(dp[2]) if len(dp) >= 3 else 0.0
-                return (x, y, hd)
-            except (TypeError, ValueError):
-                return _GRASP_DEFAULT_DOCK_POSE
-        return _GRASP_DEFAULT_DOCK_POSE
 
     @staticmethod
     def _resolve_passed_box(params: dict, color: str | None):
@@ -1192,29 +1104,12 @@ class PerceptionGraspSkill:
         detection_found = False
         if use_front_resolver:
             try:
-                # Save frames for diagnosis
-                try:
-                    import cv2 as _cv2
-                    _cv2.imwrite("/tmp/pgrasp_rgb.png", rgb[:, :, ::-1] if rgb is not None else np.zeros((240,320,3),np.uint8))
-                    if depth is not None:
-                        _dvis = np.clip(depth / 3.0 * 255, 0, 255).astype(np.uint8)
-                        _cv2.imwrite("/tmp/pgrasp_depth.png", _dvis)
-                except Exception:
-                    pass
                 mask = perception.front_object_mask(rgb, depth, color=color)
                 _mask_px = int(np.count_nonzero(mask)) if mask is not None else 0
                 _d_valid = int((depth > 0).sum()) if depth is not None else -1
                 _d_near = int(((depth > 0) & (depth <= 2.0)).sum()) if depth is not None else -1
                 _d_min = float(depth[depth > 0].min()) if depth is not None and (depth > 0).any() else -1
                 _d_med = float(np.median(depth[depth > 0])) if depth is not None and (depth > 0).any() else -1
-                # Save mask overlay
-                try:
-                    if mask is not None and rgb is not None:
-                        _overlay = rgb.copy()
-                        _overlay[mask > 0] = [255, 0, 0]  # red highlight
-                        _cv2.imwrite("/tmp/pgrasp_mask.png", _overlay[:, :, ::-1])
-                except Exception:
-                    pass
                 logger.info(
                     "[PGRASP] front_object_mask: mask_px=%d valid_depth=%d "
                     "near_depth(<=2m)=%d d_min=%.3f d_med=%.3f",

@@ -34,11 +34,8 @@ def test_registers_perception_grasp_and_manip_skills() -> None:
     ok = register_manipulation_skills(agent)
     assert ok is True
     names = set(agent._skill_registry.list_skills())
-    for expected in (
-        "perception_grasp", "pick_top_down", "place_top_down",
-        "mobile_pick", "mobile_place",
-    ):
-        assert expected in names, f"{expected} not registered: {names}"
+    assert {"perception_grasp", "pick_top_down", "place_top_down"} <= names, names
+    assert not names & {"mobile_pick", "mobile_place"}, names
 
 
 def test_reuses_the_launcher_perception() -> None:

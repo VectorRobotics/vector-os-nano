@@ -18,8 +18,9 @@ Note on hardware_offsets:
 """
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+from vector_os_nano.perception.calibration import Calibration
 
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.types import SkillResult
@@ -104,7 +105,7 @@ def _make_context(
         gripper=gripper,
         perception=perception,
         world_model=world,
-        calibration=np.eye(4),
+        calibration=Calibration(),
         config=default_config,
     )
 
@@ -271,7 +272,7 @@ class TestPickTargetResolution:
             gripper=None,
             perception=None,
             world_model=world,
-            calibration=np.eye(4),
+            calibration=Calibration(),
             config={},
         )
         result = skill.execute({"object_label": "test"}, ctx)
@@ -308,7 +309,7 @@ class TestPickWorkspaceWithHardwareOffsets:
             arm=arm, gripper=gripper,
             perception=None,
             world_model=world,
-            calibration=np.eye(4),
+            calibration=Calibration(),
             config={
                 "skills": {
                     "pick": {

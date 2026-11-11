@@ -390,13 +390,10 @@ def create_sim_stack(headless: bool = True) -> Agent:
 
     calibration = Calibration()  # identity — sim positions are world-frame
 
-    api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY")
-
     agent = Agent(
         arm=arm,
         gripper=gripper,
         perception=perception,
-        llm_api_key=api_key,
         config=cfg,
     )
     agent._calibration = calibration
@@ -415,7 +412,6 @@ def create_hardware_stack() -> Agent:
         A fully connected Agent ready for VectorEngine use.
     """
     cfg = _load_config_with_fallback()
-    api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY")
 
     # --- Arm ---
     arm = None
@@ -498,7 +494,6 @@ def create_hardware_stack() -> Agent:
         arm=arm,
         gripper=gripper,
         perception=perception,
-        llm_api_key=api_key,
         config=cfg,
     )
     if calibration is not None:

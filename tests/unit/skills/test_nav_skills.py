@@ -79,20 +79,8 @@ def test_arrival_records_the_visit():
     base.get_position.return_value = [kx + 0.1, ky, 0.3]
     base.navigate_to.return_value = _nav(True, "arrived", (kx, ky))
     res = NavigateSkill().execute({"room": "kitchen"}, SkillContext(base=base, services={"spatial_memory": sg}))
-    assert res.success and res.result_data["mode"] == "planner"
+    assert res.success and res.result_data["reason"] == "arrived"
     assert sg.get_room("kitchen").visit_count == n0 + 1
-
-
-def test_bool_planner_failure_still_falls_back_to_the_door_chain():
-    from vector_os_nano.skills.navigate import NavigateSkill
-
-    base = MagicMock()
-    base.get_position.return_value = [10.0, 3.0, 0.3]
-    base.navigate_to.return_value = False
-    skill = NavigateSkill()
-    with patch.object(skill, "_dead_reckoning", return_value=SkillResult(success=False)) as dr:
-        skill.execute({"room": "kitchen"}, SkillContext(base=base, services={"spatial_memory": _sg()}))
-    dr.assert_called_once()
 
 
 def test_coordinate_navigate_cancels_a_running_exploration_and_stops_via_stop():

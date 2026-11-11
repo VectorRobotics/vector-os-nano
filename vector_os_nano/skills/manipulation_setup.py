@@ -44,13 +44,9 @@ def register_manipulation_skills(agent: Any, *, enable_env: bool = True) -> bool
 
     from vector_os_nano.skills.pick_top_down import PickTopDownSkill
     from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
-    from vector_os_nano.skills.mobile_pick import MobilePickSkill
-    from vector_os_nano.skills.mobile_place import MobilePlaceSkill
 
     agent._skill_registry.register(PickTopDownSkill())
     agent._skill_registry.register(PlaceTopDownSkill())
-    agent._skill_registry.register(MobilePickSkill())
-    agent._skill_registry.register(MobilePlaceSkill())
 
     # Perception-driven grasp (the honest North-Star path): real RGB-D from the
     # go2 head camera -> VLM/colour resolve -> EdgeTAM mask -> rendered-depth

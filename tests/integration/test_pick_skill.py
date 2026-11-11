@@ -15,8 +15,9 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
+
+from vector_os_nano.perception.calibration import Calibration
 
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.types import Detection, SkillResult
@@ -116,7 +117,7 @@ def make_context(
         gripper=gripper or MockGripper(),
         perception=perception,
         world_model=world_model or WorldModel(),
-        calibration=calibration if calibration is not None else np.eye(4),
+        calibration=calibration if calibration is not None else Calibration(),
         config=config or {},
     )
 
@@ -401,8 +402,28 @@ class TestPickNoGripper:
             gripper=None,   # no gripper
             perception=None,
             world_model=self.wm,
-            calibration=np.eye(4),
+            calibration=Calibration(),
         )
         result = self.skill.execute({"object_id": "cup_0"}, ctx)
         # Should not crash — succeeds without gripper operations
         assert result.success, result.error_message
+
+
+def test_a_missing_calibration_fails_loud_instead_of_using_camera_coordinates():
+    """perception:calibration-missing-silent-camera-frame: with no camera->arm
+    calibration, pick used an identity transform and drove to camera-frame x/y/z."""
+    from vector_os_nano.core.types import Pose3D, TrackedObject
+
+    class _Tracking(MockPerception):  # a camera-frame pose inside the arm's reach
+        def track(self, detections):
+            return [TrackedObject(track_id=1, label="cup", bbox_2d=(0, 0, 9, 9),
+                                  pose=Pose3D(x=0.2, y=0.0, z=0.02))]
+
+    arm = MockArm()
+    ctx = make_context(arm=arm, perception=_Tracking([Detection("cup", (0, 0, 9, 9), 0.9)]),
+                       config={"skills": {"pick": {"sample_count": 1}}})
+    ctx.calibration = None
+    result = PickSkill().execute({"object_label": "cup"}, ctx)
+    assert not result.success and result.result_data["diagnosis"] == "calibration_error"
+    assert result.result_data["attempts"] == 1  # no retry: it cannot help
+    assert len(arm.moves) == 1  # the scan pose only, never a grasp motion

@@ -34,7 +34,6 @@ import numpy as np
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.calibration import camera_to_base, load_calibration
 from vector_os_nano.skills.scan import scan_first
 
 logger = logging.getLogger(__name__)
@@ -56,7 +55,7 @@ _DEFAULT_MAX_RETRIES: int = 2
 # detectable, so re-homing + re-detecting just repeats the same miss. Fail fast
 # (clearer + faster) instead of exhausting retries on an absent object. Transient
 # failures (ik_unreachable, move_failed, track_failed) still retry.
-_NO_RETRY_DIAGNOSES: frozenset[str] = frozenset({"object_not_found", "no_detections"})
+_NO_RETRY_DIAGNOSES: frozenset[str] = frozenset({"object_not_found", "no_detections", "calibration_error"})
 
 # Position sampling for density-cluster estimation (from _get_target_camera_pos)
 _DEFAULT_SAMPLE_COUNT: int = 20
@@ -239,6 +238,18 @@ class PickSkill:
         home_joints: list[float] = (
             context.config.get("skills", {}).get("home", {}).get("joint_values", _DEFAULT_HOME_JOINTS)
         )
+
+        # A camera position is meaningless to the arm without the camera->base
+        # transform: never treat camera-frame coordinates as arm-base ones.
+        if context.perception is not None and context.calibration is None:
+            return SkillResult(
+                success=False,
+                error_message=(
+                    "No camera->arm calibration is loaded (config calibration.file is "
+                    "missing or unreadable): run the hand-eye calibration first."
+                ),
+                result_data={"diagnosis": "calibration_error"},
+            )
 
         # Step 1: Get target in base frame
         base_pos_result = self._get_target_base_pos(params, context)
@@ -608,7 +619,7 @@ class PickSkill:
         Step 2: Collect _DEFAULT_SAMPLE_COUNT 3D position readings by calling
                 update() repeatedly at _DEFAULT_SAMPLE_INTERVAL intervals.
         Step 3: Density cluster (1.5cm threshold) to find modal position.
-        Step 4: camera_to_base() using calibration transform.
+        Step 4: context.calibration.camera_to_base() to the arm base frame.
         """
         # Resolve query label from whatever reasonable param name the planner
         # bound the target to (language-neutral — no keyword matching here, just
@@ -708,8 +719,7 @@ class PickSkill:
         )
 
         # Transform camera→base using calibration
-        T = _get_calibration_matrix(context)
-        return camera_to_base(cam_pos, T)
+        return np.asarray(context.calibration.camera_to_base(cam_pos), dtype=float)
 
     @staticmethod
     def _density_cluster_mean(
@@ -745,41 +755,3 @@ class PickSkill:
             len(cluster), len(arr), threshold * 100,
         )
         return np.mean(cluster, axis=0)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _get_calibration_matrix(context: SkillContext) -> np.ndarray:
-    """Extract calibration matrix from context, loading from file if needed.
-
-    context.calibration can be:
-    - a (4,4) numpy ndarray directly
-    - a dict with key "transform_matrix"
-    - a string path to workspace_calibration.yaml
-    - None → load from default path
-
-    Returns:
-        (4, 4) numpy float64 homogeneous transform.
-    """
-    cal = context.calibration
-    if cal is None:
-        return load_calibration()
-    if isinstance(cal, np.ndarray) and cal.shape == (4, 4):
-        return cal
-    if isinstance(cal, dict) and "transform_matrix" in cal:
-        return np.array(cal["transform_matrix"], dtype=np.float64)
-    if isinstance(cal, str):
-        return load_calibration(cal)
-    # Handle Calibration object (from vector_os_nano.perception.calibration)
-    if hasattr(cal, '_matrix') and cal._matrix is not None:
-        return np.array(cal._matrix, dtype=np.float64)
-    if hasattr(cal, 'camera_to_base'):
-        # Calibration class — extract matrix or use it directly
-        # Store the Calibration object reference for _camera_to_base to use
-        logger.info("[PICK] Using Calibration object directly")
-        return getattr(cal, '_matrix', np.eye(4))
-    # Unknown type — use identity with a warning
-    logger.warning("[PICK] Unknown calibration type %s — using identity", type(cal))
-    return np.eye(4)

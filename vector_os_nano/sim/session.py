@@ -424,7 +424,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     api_key = vlm_api_key or user_cfg.get("llm", {}).get("api_key") or os.environ.get(
         "OPENROUTER_API_KEY", ""
     )
-    agent = Agent(base=base, arm=arm, gripper=gripper, llm_api_key=api_key, config=user_cfg)
+    agent = Agent(base=base, arm=arm, gripper=gripper, config=user_cfg)
     for skill in get_go2_skills():
         agent._skill_registry.register(skill)
     agent._perception = _build_go2_perception(base, width=width, height=height)

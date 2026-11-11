@@ -293,14 +293,14 @@ class TestPickPerceptionSampling:
         arm.move_joints.return_value = True
         gripper = MagicMock()
         wm = world_model or WorldModel()
-        # identity calibration so camera=base
-        cal_matrix = np.eye(4)
+        from vector_os_nano.perception.calibration import Calibration
+
         return SkillContext(
             arm=arm,
             gripper=gripper,
             perception=perception,
             world_model=wm,
-            calibration={"transform_matrix": cal_matrix.tolist()},
+            calibration=Calibration(),  # identity: camera = base
             config={},
         )
 

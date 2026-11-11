@@ -466,7 +466,7 @@ class TestWaveSkillDiagnosticsSuccess:
 # PickSkill diagnostics
 # ---------------------------------------------------------------------------
 
-import numpy as np
+from vector_os_nano.perception.calibration import Calibration
 from vector_os_nano.skills.pick import PickSkill
 from vector_os_nano.core.world_model import WorldModel, ObjectState
 
@@ -489,7 +489,7 @@ def _make_pick_context(
         gripper=gripper,
         perception=perception,
         world_model=world,
-        calibration=np.eye(4),
+        calibration=Calibration(),
         config={
             "skills": {
                 "pick": {

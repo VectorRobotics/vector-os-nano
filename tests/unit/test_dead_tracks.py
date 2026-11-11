@@ -99,6 +99,21 @@ _DEAD: dict[str, str] = {
     "vector_os_nano/core/executor.py":
         "core:auto-home-eats-tool-payload, core:diagnosis-code-lost-in-executor, core:executor-no-cancel, "
         "core:executor-uncaught-errors, skills-manip:home-after-detect-drops-held-object",
+    # R2: dead skills and the dead code only they used.
+    "vector_os_nano/skills/mobile_pick.py": "skills-manip:mobile-pick-place-nonfunctional",
+    "vector_os_nano/skills/mobile_place.py": "skills-manip:mobile-pick-place-nonfunctional",
+    "vector_os_nano/skills/utils/place_region.py": "unreachable (no caller)",
+    "vector_os_nano/skills/utils/terminal_dock.py":
+        "skills-nav:terminal-dock-dead-track, skills-manip:dock-pose-param-exposed",
+    "vector_os_nano/skills/calibration.py":
+        "a second camera->base loader beside perception.calibration (silent identity: "
+        "perception:calibration-missing-silent-camera-frame)",
+    "vector_os_nano/core/spatial_memory.py": "core:dead-scene-graph-and-worldmodel-api",
+    "vector_os_nano/vcli/backends/text_llm_adapter.py":
+        "core:dead-scene-graph-and-worldmodel-api (rank_rooms_for_goal's adapter, never constructed)",
+    "tests/harness/test_level52_doorchain_navstack.py": "skills-nav:dead-doorchain-proxy-branch",
+    "tests/harness/test_level4_patrol.py": "always skipped: it needed the deleted ROS2 proxy",
+    "tests/unit/test_calibration_transform.py": "always skipped: no calibration file ships",
 }
 
 # dotted modules nothing may import (or import_module) any more
@@ -120,7 +135,11 @@ _DEAD_MODULES = {
 } | {
     "vector_os_nano.vcli." + m
     for m in ("intent_router", "primitives", "eval_runner", "hooks", "turn_status", "dynamic_prompt")
-} | {"vector_os_nano.playground", "vector_os_nano.core.executor"}
+} | {"vector_os_nano.playground", "vector_os_nano.core.executor", "vector_os_nano.core.spatial_memory",
+     "vector_os_nano.vcli.backends.text_llm_adapter", "vector_os_nano.skills.calibration"} | {
+    "vector_os_nano.skills." + m for m in ("mobile_pick", "mobile_place", "utils.place_region",
+                                           "utils.terminal_dock")
+}
 
 # R1: names of the deleted producer that nothing may define again (one producer).
 _DEAD_ENGINE_API = (
@@ -142,6 +161,34 @@ def test_one_producer() -> None:
     assert not back, f"VectorEngine has a second producer again: {back}"
     # core:alias-prefix-misroute: no keyword matcher routes user text to a skill.
     assert not hasattr(SkillRegistry, "match")
+
+
+def test_the_dead_core_api_stays_deleted() -> None:
+    """R2, core:dead-scene-graph-and-worldmodel-api and the mini-planner's leftovers."""
+    import inspect
+
+    from vector_os_nano.core import agent, config, scene_graph, types, world_model
+    from vector_os_nano.skills import navigate, perception_grasp
+
+    dead = {
+        scene_graph.SceneGraph: ("get_location", "get_all_locations", "remember_location",
+                                 "get_unvisited_rooms", "rank_rooms_for_goal"),
+        world_model.WorldModel: ("check_predicate", "apply_skill_effects", "get_spatial_relations",
+                                 "save", "load", "decay_confidence"),
+        agent.Agent: ("stop", "home", "register_skill"),
+        navigate.NavigateSkill: ("_dead_reckoning", "_navigate_with_proxy"),
+        perception_grasp.PerceptionGraspSkill: ("_resolve_dock_pose",),
+    }
+    back = [f"{c.__name__}.{n}" for c, names in dead.items() for n in names if hasattr(c, n)]
+    back += [f"{m.__name__}.{n}" for m, names in (
+        (config, ("validate_config", "get_section")),
+        (types, ("ActionRecord", "GoalResult", "TaskPlan", "TaskStep", "StepTrace", "ExecutionResult")),
+        (scene_graph, ("TextLLM",)),
+    ) for n in names if hasattr(m, n)]
+    params = inspect.signature(agent.Agent).parameters
+    back += [f"Agent({k}=)" for k in ("llm", "llm_api_key") if k in params]
+    back += ["perception_grasp dock_pose"] * ("dock_pose" in perception_grasp.PerceptionGraspSkill.parameters)
+    assert not back, back
 
 
 def test_dead_switches_are_gone() -> None:

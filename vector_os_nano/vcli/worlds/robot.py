@@ -88,7 +88,7 @@ def task_policy(agent: Any) -> str:
                 f"- 拿过来 / bring / fetch = grasp it, then carry it to the user: navigate({ux}, {uy}), "
                 "then verify near_object('user') and kept_holding('<object>')."
             )
-        place = next((s for s in ("mobile_place", "place_top_down") if s in skills), "")
+        place = "place_top_down" if "place_top_down" in skills else ""
         if place and world is not None and world.surfaces:
             tops = "; ".join(
                 f"{n} centre ({(s.box[0] + s.box[2]) / 2:.2f}, {(s.box[1] + s.box[3]) / 2:.2f}) top {s.height:.2f} m"

@@ -5,8 +5,6 @@
 
 Public API:
     load_config(user_config=None) -> dict
-    validate_config(cfg: dict) -> None
-    get_section(cfg: dict, section: str, *, default=_MISSING) -> dict
 
 ConfigError is raised on invalid configuration.
 
@@ -30,18 +28,6 @@ import yaml
 
 class ConfigError(Exception):
     """Raised when configuration is invalid or required fields are missing."""
-
-
-# ---------------------------------------------------------------------------
-# Internal sentinel for missing default
-# ---------------------------------------------------------------------------
-
-
-class _Missing:
-    pass
-
-
-_MISSING = _Missing()
 
 
 # ---------------------------------------------------------------------------
@@ -142,64 +128,3 @@ def load_config(
         )
 
     return _deep_merge(cfg, override)
-
-
-def validate_config(cfg: dict[str, Any]) -> None:
-    """Validate that the config dict has required fields and correct types.
-
-    Args:
-        cfg: Configuration dict (as returned by load_config).
-
-    Raises:
-        ConfigError: On any validation failure.
-    """
-    if not isinstance(cfg, dict):
-        raise ConfigError(f"Config must be a dict, got {type(cfg).__name__}")
-
-    # ---- agent section ----
-    if "agent" not in cfg:
-        raise ConfigError("Config is missing required section: 'agent'")
-
-    agent = cfg["agent"]
-    retries = agent.get("max_planning_retries", 0)
-    if not isinstance(retries, int) or retries < 1:
-        raise ConfigError(
-            f"agent.max_planning_retries must be an integer >= 1, got {retries!r}"
-        )
-
-    # ---- llm section ----
-    if "llm" in cfg:
-        llm = cfg["llm"]
-        provider = llm.get("provider", "claude")
-        _VALID_PROVIDERS = {"claude", "openai", "local"}
-        if provider not in _VALID_PROVIDERS:
-            raise ConfigError(
-                f"llm.provider must be one of {sorted(_VALID_PROVIDERS)}, got {provider!r}"
-            )
-
-
-def get_section(
-    cfg: dict[str, Any],
-    section: str,
-    *,
-    default: Any = _MISSING,
-) -> dict[str, Any]:
-    """Get a top-level section from the config dict.
-
-    Args:
-        cfg: Configuration dict.
-        section: Section name (e.g., "agent", "llm").
-        default: Value to return if section is missing. If not provided,
-                 raises KeyError when the section is absent.
-
-    Returns:
-        The section dict.
-
-    Raises:
-        KeyError: If section is missing and no default was provided.
-    """
-    if section in cfg:
-        return cfg[section]
-    if isinstance(default, _Missing):
-        raise KeyError(f"Config section not found: {section!r}")
-    return default

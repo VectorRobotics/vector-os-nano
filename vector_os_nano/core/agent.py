@@ -62,9 +62,6 @@ class Agent:
         config: dict | str | None = None,
         auto_perception: bool = False,
         base: Any = None,
-        # Deprecated LLM kwargs — accepted but ignored for backward compat
-        llm: Any = None,
-        llm_api_key: str | None = None,
     ) -> None:
         # ---- Configuration --------------------------------------------------
         if isinstance(config, dict):
@@ -174,19 +171,6 @@ class Agent:
     # Convenience methods
     # -------------------------------------------------------------------------
 
-    def home(self) -> bool:
-        """Move arm to home position.
-
-        Returns:
-            True when the home skill succeeds, False otherwise.
-        """
-        return self.execute_skill("home").success
-
-    def stop(self) -> None:
-        """Emergency stop — halts arm motion immediately."""
-        if self._arm is not None:
-            self._arm.stop()
-
     def connect(self) -> None:
         """Connect to all hardware peripherals."""
         if self._arm is not None:
@@ -217,16 +201,6 @@ class Agent:
         result = skill_obj.execute(dict(params or {}), self._build_context())
         self._sync_robot_state()
         return result
-
-    def register_skill(self, skill: Skill) -> None:
-        """Register a custom skill, immediately available to the planner.
-
-        Overwrites any existing skill with the same name.
-
-        Args:
-            skill: Object satisfying the Skill protocol.
-        """
-        self._skill_registry.register(skill)
 
     # -------------------------------------------------------------------------
     # Properties

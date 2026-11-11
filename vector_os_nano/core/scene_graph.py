@@ -39,36 +39,11 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import Any
 
 import yaml
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# TextLLM Protocol — narrow injectable adapter for text-only LLM calls.
-# core/ depends ONLY on this Protocol; no vcli import needed.
-# ---------------------------------------------------------------------------
-
-
-class TextLLM(Protocol):
-    """Minimal protocol for a text-generation adapter.
-
-    Implementations live outside core/ (e.g. vcli/backends/text_llm_adapter.py)
-    so that core/ never imports vcli.  Stubs can be used in tests.
-    """
-
-    def complete_text(self, prompt: str) -> str:
-        """Send *prompt* to the language model and return the text response.
-
-        Args:
-            prompt: The full user-side prompt string.
-
-        Returns:
-            The model's text response as a string.
-        """
-        ...
 
 
 # ---------------------------------------------------------------------------
@@ -591,75 +566,6 @@ class SceneGraph:
         return min(1.0, total_coverage / room_area)
 
     # ------------------------------------------------------------------
-    # VLM-guided room selection
-    # ------------------------------------------------------------------
-
-    def rank_rooms_for_goal(
-        self, goal: str, text_llm: TextLLM,
-    ) -> list[tuple[str, str]]:
-        """Ask a TextLLM which room most likely contains the goal target.
-
-        Args:
-            goal: Natural language goal (e.g. "find the red chair").
-            text_llm: A TextLLM adapter whose complete_text() will be called
-                with a text-only prompt.  No provider, key, or model is
-                hardcoded here — those details belong in the adapter.
-
-        Returns:
-            List of (room_id, reasoning) sorted by relevance.
-        """
-        rooms_info = []
-        with self._lock:
-            for rid, room in self._rooms.items():
-                objs = [
-                    o.category for o in self._objects.values()
-                    if o.room_id == rid
-                ]
-                desc = room.representative_description or "not yet explored"
-                rooms_info.append(
-                    f"- {rid}: {desc}. Objects: {', '.join(objs) if objs else 'none seen'}"
-                )
-
-        if not rooms_info:
-            return []
-
-        prompt = (
-            f"Goal: {goal}\n\n"
-            f"Known rooms and their contents:\n"
-            + "\n".join(rooms_info) + "\n\n"
-            "Which room most likely contains what the goal describes? "
-            "Rank rooms from most to least likely. "
-            'Respond in JSON: [{"room": "...", "reasoning": "..."}]'
-        )
-
-        try:
-            import json
-            import re
-
-            text = text_llm.complete_text(prompt)
-
-            # Parse JSON — try direct parse first, then regex fallback
-            clean = text.strip()
-            data = None
-            try:
-                data = json.loads(clean)
-            except json.JSONDecodeError:
-                match = re.search(r"\[.*\]", clean, re.DOTALL)
-                if match:
-                    data = json.loads(match.group(0))
-
-            if isinstance(data, list):
-                return [
-                    (item.get("room", ""), item.get("reasoning", ""))
-                    for item in data
-                    if isinstance(item, dict)
-                ]
-        except Exception as exc:
-            logger.warning("[SceneGraph] rank_rooms_for_goal failed: %s", exc)
-
-        return []
-
-    # ------------------------------------------------------------------
     # Backward-compatible SpatialMemory API
     # ------------------------------------------------------------------
 
@@ -765,32 +671,6 @@ class SceneGraph:
                     self.merge_object(category=obj_name, room_id=room, viewpoint_id=vp_id)
         return vp
 
-    def get_location(self, name: str) -> Any:
-        """Backward compat: return a LocationRecord-like object."""
-        room = self.get_room(name)
-        if room is None:
-            return None
-        # Return a duck-typed object with .name, .x, .y
-        from vector_os_nano.core.spatial_memory import LocationRecord
-        objs = self.find_objects_in_room(name)
-        return LocationRecord(
-            name=room.room_id,
-            x=room.center_x,
-            y=room.center_y,
-            visit_count=room.visit_count,
-            last_visited=room.last_visited,
-            objects_seen=tuple(o.category for o in objs),
-            description=room.representative_description,
-        )
-
-    def get_all_locations(self) -> list:
-        """Backward compat: return all rooms as LocationRecord-like objects."""
-        return [self.get_location(r.room_id) for r in self.get_all_rooms()]
-
-    def remember_location(self, name: str, x: float, y: float) -> None:
-        """Save a custom named location."""
-        self.visit(name, x, y)
-
     def get_visited_rooms(self) -> list[str]:
         with self._lock:
             return [
@@ -829,10 +709,6 @@ class SceneGraph:
                     best_dist = dist
                     best_id = room.room_id
             return best_id
-
-    def get_unvisited_rooms(self, all_rooms: list[str]) -> list[str]:
-        visited = set(self.get_visited_rooms())
-        return [r for r in all_rooms if r not in visited]
 
     def get_room_summary(self) -> str:
         """Human-readable summary for LLM system prompt.

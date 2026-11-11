@@ -3,20 +3,18 @@
 
 """Integration tests for vector_os_nano.core.agent.Agent.
 
-Tests cover all public Agent methods with mock hardware/LLM objects.
+Tests cover the public Agent methods with mock hardware.
 No real hardware or network calls are made.
 """
 from __future__ import annotations
 
-import pytest
-
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.core.skill import Skill, SkillContext, SkillRegistry
+from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.world_model import WorldModel
 
 
 # ---------------------------------------------------------------------------
-# Mock hardware / LLM helpers
+# Mock hardware helpers
 # ---------------------------------------------------------------------------
 
 
@@ -73,86 +71,6 @@ class MockGripper:
         return None
 
 
-class MockLLM:
-    """Mock LLM that returns a single-step 'home' plan."""
-
-    def plan(
-        self,
-        goal: str,
-        world_state: dict,
-        skill_schemas: list,
-        history=None,
-        model_override: str | None = None,
-    ) -> TaskPlan:
-        return TaskPlan(
-            goal=goal,
-            steps=[TaskStep(step_id="s1", skill_name="home", parameters={})],
-        )
-
-    def query(self, prompt: str, image=None, model_override: str | None = None) -> str:
-        return "I see a robot arm."
-
-    def classify(self, user_message: str, model_override: str | None = None) -> str:
-        return "task"
-
-    def chat(
-        self,
-        user_message: str,
-        system_prompt: str,
-        history=None,
-        model_override: str | None = None,
-    ) -> str:
-        return "Done."
-
-    def summarize(
-        self,
-        original_request: str,
-        execution_trace: str,
-        model_override: str | None = None,
-    ) -> str:
-        return "Task complete."
-
-
-class MockLLMFail:
-    """Mock LLM that always returns a plan that will fail (unknown skill)."""
-
-    def plan(
-        self,
-        goal: str,
-        world_state: dict,
-        skill_schemas: list,
-        history=None,
-        model_override: str | None = None,
-    ) -> TaskPlan:
-        return TaskPlan(
-            goal=goal,
-            steps=[TaskStep(step_id="s1", skill_name="nonexistent_skill", parameters={})],
-        )
-
-    def query(self, prompt: str, image=None, model_override: str | None = None) -> str:
-        return ""
-
-    def classify(self, user_message: str, model_override: str | None = None) -> str:
-        return "task"
-
-    def chat(
-        self,
-        user_message: str,
-        system_prompt: str,
-        history=None,
-        model_override: str | None = None,
-    ) -> str:
-        return ""
-
-    def summarize(
-        self,
-        original_request: str,
-        execution_trace: str,
-        model_override: str | None = None,
-    ) -> str:
-        return ""
-
-
 class AlwaysSucceedSkill:
     """Custom skill that always succeeds, for testing registration."""
 
@@ -190,13 +108,6 @@ class TestAgentCreation:
         agent = Agent()
         assert agent is not None
 
-    def test_agent_creation_with_llm(self):
-        """Agent(arm=MockArm(), llm=MockLLM()) should succeed."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm(), llm=MockLLM())
-        assert agent is not None
-
     def test_agent_creation_with_gripper(self):
         """Explicit gripper should be stored on the agent."""
         from vector_os_nano.core.agent import Agent
@@ -223,20 +134,20 @@ class TestAgentCreation:
 
 
 # ---------------------------------------------------------------------------
-# Test: register_skill()
+# Test: the skills an Agent is built with
 # ---------------------------------------------------------------------------
 
 
-class TestAgentRegisterSkill:
-    """Tests for register_skill() and skills property."""
+class TestAgentSkills:
+    """The skills= argument and the skills property."""
 
-    def test_agent_register_custom_skill(self):
-        """Registered custom skill should appear in agent.skills."""
+    def test_agent_custom_skill(self):
+        """A skill passed to the constructor appears in agent.skills and runs."""
         from vector_os_nano.core.agent import Agent
 
-        agent = Agent(arm=MockArm())
-        agent.register_skill(AlwaysSucceedSkill())
+        agent = Agent(arm=MockArm(), skills=[AlwaysSucceedSkill()])
         assert "always_succeed" in agent.skills
+        assert agent.execute_skill("always_succeed").success
 
     def test_agent_skills_property_includes_defaults(self):
         """agent.skills should include all default built-in skills."""
@@ -250,13 +161,11 @@ class TestAgentRegisterSkill:
         assert "place" in skill_names
         assert "detect" in skill_names
 
-    def test_agent_register_overrides_existing(self):
-        """Re-registering a skill with the same name should replace it."""
+    def test_agent_same_name_registered_once(self):
+        """Two skills with one name: the later one wins, listed once."""
         from vector_os_nano.core.agent import Agent
 
-        agent = Agent(arm=MockArm())
-        agent.register_skill(AlwaysSucceedSkill())
-        agent.register_skill(AlwaysSucceedSkill())  # second register
+        agent = Agent(arm=MockArm(), skills=[AlwaysSucceedSkill(), AlwaysSucceedSkill()])
         assert agent.skills.count("always_succeed") == 1
 
 # ---------------------------------------------------------------------------
@@ -307,64 +216,6 @@ class TestAgentSkillsProperty:
 
         agent = Agent(arm=MockArm())
         assert len(agent.skills) > 0
-
-
-# ---------------------------------------------------------------------------
-# Test: home() convenience
-# ---------------------------------------------------------------------------
-
-
-class TestAgentHomeConvenience:
-    """Tests for agent.home() shorthand."""
-
-    def test_agent_home_convenience_returns_bool(self):
-        """agent.home() should return True on success."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm(), gripper=MockGripper())
-        result = agent.home()
-        assert isinstance(result, bool)
-        assert result is True
-
-    def test_agent_home_convenience_returns_false_on_failure(self):
-        """agent.home() should return False when no arm connected."""
-        from vector_os_nano.core.agent import Agent
-
-        # No arm → home skill fails with "No arm connected"
-        agent = Agent(llm=MockLLMFail())
-        result = agent.home()
-        assert isinstance(result, bool)
-        assert result is False
-
-
-# ---------------------------------------------------------------------------
-# Test: stop()
-# ---------------------------------------------------------------------------
-
-
-class TestAgentStop:
-    """Tests for agent.stop()."""
-
-    def test_agent_stop_calls_arm_stop(self):
-        """agent.stop() should call arm.stop()."""
-        from vector_os_nano.core.agent import Agent
-
-        calls = []
-
-        class TrackingArm(MockArm):
-            def stop(self):
-                calls.append("stop")
-
-        agent = Agent(arm=TrackingArm())
-        agent.stop()
-        assert calls == ["stop"]
-
-    def test_agent_stop_no_arm(self):
-        """agent.stop() should not crash when arm is None."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent()
-        agent.stop()  # Should not raise
 
 
 # ---------------------------------------------------------------------------
