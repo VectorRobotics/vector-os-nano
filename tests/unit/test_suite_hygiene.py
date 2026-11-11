@@ -302,3 +302,14 @@ def test_every_known_red_row_names_an_existing_test_file() -> None:
         if line.strip() and not line.lstrip().startswith("#")
     ]
     assert not [r for r in rows if not (_REPO / r.split("::", 1)[0]).is_file()]
+
+
+def test_the_dev_extra_declares_the_gates_pytest_plugin() -> None:
+    """tests-inventory:dev-extra-missing-pytest-timeout — gate.sh passes --timeout, so
+    on a fresh `pip install -e .[dev]` without pytest-timeout every file ran rc=4."""
+    import tomllib
+
+    dev = tomllib.loads((_REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"]["dev"]
+    names = {re.split(r"[<>=!~\[ ]", d, maxsplit=1)[0].lower() for d in dev}
+    assert "--timeout=" in (_REPO / "scripts" / "gate.sh").read_text()
+    assert "pytest-timeout" in names, dev

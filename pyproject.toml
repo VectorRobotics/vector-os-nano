@@ -53,7 +53,7 @@ dependencies = [
 
 # Simulation: MuJoCo (the primary, cross-platform sim backend)
 sim = [
-    "mujoco>=3.0",
+    "mujoco>=3.3",  # MjSpec.attach (scene_builder.build_room_scene); absent in 3.2.7
 ]
 
 # Perception: VLM detection + EdgeTAM tracker + pointcloud (no robot/USB deps).
@@ -110,7 +110,7 @@ all = [
 dev = [
     "pytest>=7.0",
     "pytest-cov",
-    "lark",
+    "pytest-timeout",  # scripts/gate.sh passes --timeout; tests use @pytest.mark.timeout
 ]
 
 [project.scripts]
