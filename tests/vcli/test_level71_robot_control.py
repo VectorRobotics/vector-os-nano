@@ -20,7 +20,6 @@ Pure-logic tests run with zero robot deps; sim tests skip if mujoco is absent.
 """
 from __future__ import annotations
 
-import argparse
 import threading
 from pathlib import Path
 
@@ -107,13 +106,11 @@ def arm():
 
 def test_sim_agent_has_gripper_and_perception():
     pytest.importorskip("mujoco")
-    from vector_os_nano.vcli import cli
+    from vector_os_nano.vcli import runtime
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 
-    # cli._init_agent reads `headless` (not `gui`): without it a viewer opens.
-    ns = argparse.Namespace(sim=True, sim_go2=False, headless=True, api_key=None)
-    session = cli._init_agent(ns)  # --sim -> the so101 SimSession
+    session = runtime.start_sim("so101", gui=False)  # what --sim starts
     try:
         agent = session.agent
         assert getattr(agent._arm, "_viewer", None) is None

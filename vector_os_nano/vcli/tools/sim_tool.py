@@ -101,7 +101,8 @@ class SimStartTool:
     }
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        from vector_os_nano.sim.session import SimSession, SimSpec, SimStartError, rebind_world
+        from vector_os_nano.sim.session import SimSession, SimSpec, SimStartError
+        from vector_os_nano.vcli.runtime import bind_body
 
         app = context.app_state
         if app is None:
@@ -131,7 +132,7 @@ class SimStartTool:
         prefix = ""
         if current is not None:
             prefix = f"Stopped {current.spec.embodiment} ({current.stop()}). "
-            rebind_world(app, None)
+            bind_body(app, None)
         try:
             session = SimSession.start(spec)
         except SimStartError as exc:
@@ -140,7 +141,7 @@ class SimStartTool:
                 is_error=True,
             )
         try:
-            rebind_world(app, session)
+            bind_body(app, session)
         except Exception as exc:  # noqa: BLE001 — a body the engine cannot bind must not run
             session.stop()
             return ToolResult(
@@ -221,7 +222,7 @@ class SimStopTool:
     }
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        from vector_os_nano.sim.session import rebind_world
+        from vector_os_nano.vcli.runtime import bind_body
 
         app = context.app_state
         if app is None:
@@ -230,7 +231,7 @@ class SimStopTool:
         if session is None:
             return ToolResult(content="No simulation is running.")
         summary = session.stop()
-        rebind_world(app, None)
+        bind_body(app, None)
         return ToolResult(content=f"Simulation stopped: {summary}.")
 
     def check_permissions(

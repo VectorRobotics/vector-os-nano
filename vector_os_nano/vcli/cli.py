@@ -19,12 +19,11 @@ import select
 import threading
 import logging
 import os
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, Callable
 
 from rich.console import Console
@@ -42,17 +41,10 @@ from prompt_toolkit.styles import Style as PTStyle
 
 from vector_os_nano.vcli.backends import create_backend
 from vector_os_nano.vcli.cognitive import abort as _abort
-from vector_os_nano.vcli.engine import VectorEngine
 from vector_os_nano.vcli.native_loop import LIFECYCLE_TOOLS
-from vector_os_nano.vcli.session import (
-    Session,
-    create_session,
-    get_latest_session,
-    list_sessions,
-    load_session,
-)
-from vector_os_nano.vcli.permissions import PermissionContext
-from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_categorized_tools
+from vector_os_nano.vcli.session import Session, list_sessions
+from vector_os_nano.vcli.runtime import build_runtime, flush, run_turn
+from vector_os_nano.vcli.tools import ToolRegistry
 from vector_os_nano.core.run_dir import run_path
 
 logger = logging.getLogger(__name__)
@@ -247,22 +239,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _flush_turn_state(session: Any, app_state: dict[str, Any]) -> None:
-    """Persist the transcript and the scene graph NOW (called between REPL turns).
-
-    A MuJoCo segfault kills the process without the exit-time saves, so this
-    bounds the loss to the turn that crashed; ``vector-cli --resume`` restores
-    the transcript and the next sim start reloads the scene graph.
-    """
-    try:
-        session.save()
-        sm = getattr(app_state.get("agent"), "_spatial_memory", None)
-        if sm is not None and hasattr(sm, "save"):
-            sm.save()
-    except Exception as exc:  # noqa: BLE001 — persistence is best-effort, never a crash
-        logger.debug("per-turn flush failed: %s", exc)
-
-
 def _enable_crash_log(session: Any) -> Any:
     """faulthandler -> ``<session>.crash.log`` next to the transcript (C-level crash traces)."""
     import faulthandler
@@ -321,14 +297,8 @@ def _lifecycle_lines(entries: list[dict[str, Any]]) -> list[str]:
             if r.get("tool_use_id") in ids and r.get("content")]
 
 
-def _repl_turn(
-    engine: Any,
-    user_input: str,
-    session: Any,
-    app_state: dict[str, Any],
-    console: Any,
-) -> None:
-    """Run ONE REPL turn through the native producer and render it.
+def _repl_turn(rt: Any, user_input: str, console: Any) -> None:
+    """Run ONE REPL turn through ``run_turn`` and render it.
 
     The model's own last words are shown; then, for a turn that claimed something
     (acted, verified, was refused, stopped or lost its LLM), its steps and the honest
@@ -345,8 +315,7 @@ def _repl_turn(
     from vector_os_nano.vcli.cognitive.trace_store import goal_check, verify_oracle_names
     from vector_os_nano.vcli.verdict import VerdictReport
 
-    n0 = len(session._entries)
-
+    engine = rt.engine
     # Suppress ROS2/subprocess stderr noise during the turn; restore unconditionally.
     _saved_stderr = sys.stderr
     trace: Any = None
@@ -374,10 +343,7 @@ def _repl_turn(
                     return ask_permission(name, params)
                 finally:
                     _status.start()
-            trace = engine.run_turn_native(
-                user_input, agent=getattr(engine, "_agent", None), session=session,
-                app_state=app_state, on_progress=_on_progress, ask_permission=_ask,
-            )
+            trace, answer, turn = run_turn(rt, user_input, on_progress=_on_progress, ask_permission=_ask)
     finally:
         if sys.stderr is not _saved_stderr:
             try:
@@ -386,12 +352,8 @@ def _repl_turn(
                 pass
         sys.stderr = _saved_stderr
 
-    turn = session._entries[n0:]
     # The model's own last words (the README summary, the test run's outcome): shown,
     # then the steps and the verdict, which are the evidence.
-    answer = session.last_assistant_text(n0)
-    if len(session._entries) > 50:
-        session.compact(keep_recent=12)
     agent = getattr(engine, "_agent", None)  # the body the turn ended on
     sub_goals = list(getattr(trace.goal_tree, "sub_goals", ()) or ())
     steps = list(getattr(trace, "steps", ()) or ())
@@ -710,31 +672,6 @@ def _requested_embodiment(args: argparse.Namespace) -> str | None:
         or ("go2" if getattr(args, "sim_go2", False) else None)
         or ("so101" if getattr(args, "sim", False) else None)
     )
-
-
-def _init_agent(args: argparse.Namespace) -> Any:
-    """Start the requested SimSession (the one NL start_simulation uses), or None.
-
-    Fails loud: a requested sim that does not come up exits 2 instead of
-    silently degrading to the dev world.
-    """
-    embodiment = _requested_embodiment(args)
-    if embodiment is None:
-        return None
-    from vector_os_nano.sim.session import SimSession, SimSpec, SimStartError
-
-    console.print(f"[dim]  Starting {embodiment} simulation...[/dim]")
-    try:
-        # No vlm_api_key: --api-key is the chat LLM's credential (Anthropic /
-        # DeepSeek) and must never be sent to the OpenRouter VLM.
-        session = SimSession.start(
-            SimSpec(embodiment=embodiment, gui=not getattr(args, "headless", False)),
-        )
-    except SimStartError as exc:
-        console.print(f"[red]Simulation failed to start:[/] {exc}")
-        sys.exit(2)
-    console.print(f"[dim]  {embodiment} {session.summary()}[/dim]")
-    return session
 
 
 # ---------------------------------------------------------------------------
@@ -1292,139 +1229,24 @@ def _ensure_sigint_under_mjpython() -> None:
         pass  # not the main thread / no SIGINT on this platform — leave as-is
 
 
-def create_backend_with_fake_seam(
-    *, provider: str, api_key: str, model: str, base_url: str | None
-) -> Any:
-    """Create the LLM backend, with a TEST-ONLY deterministic injection seam.
-
-    Production is ``create_backend``. The ONLY override is gated on the env var
-    ``VECTOR_FAKE_LLM_TOOLS=<json-path>``: a ``FakeToolScriptBackend``
-    (``tests/harness/fake_backend.py``) replays a script of native tool_use turns in
-    place of the network model. Every tool, verify, permission and verdict is still
-    the product's own.
-    """
-    tools_path = os.environ.get("VECTOR_FAKE_LLM_TOOLS")
-    if tools_path:
-        # TEST-ONLY import (lazy, gated on the env var): production never reaches it.
-        from tests.harness.fake_backend import FakeToolScriptBackend
-
-        return FakeToolScriptBackend.from_json_file(tools_path)
-    return create_backend(provider=provider, api_key=api_key, model=model, base_url=base_url)
-
-
-@dataclass
-class TurnContext:
-    """Everything the REPL (and a non-interactive ``-p`` turn) needs to run."""
-
-    args: Any
-    api_key: str
-    provider: str
-    model: str
-    base_url: str | None
-    agent: Any
-    registry: Any
-    session: Any
-    engine: "VectorEngine | None"
-    app_state: dict[str, Any]
-
-
-def _build_turn_context(args: Any) -> TurnContext:
-    """Shared setup for BOTH the REPL and a non-interactive ``-p`` turn.
-
-    Credentials -> agent (a sim when one was requested) -> tool registry -> session
-    -> engine, bound to the agent and its world. The LLM backend is built through
-    ``create_backend_with_fake_seam`` so a scripted test run drives the REAL
-    cli.main. A bind failure raises; the caller reports it.
-    """
-    from vector_os_nano.vcli.config import resolve_credentials
-    from vector_os_nano.vcli.worlds import resolve_world
-
-    api_key, provider, model, base_url = resolve_credentials(
-        cli_api_key=args.api_key,
-        cli_base_url=args.base_url,
-        cli_model=args.model,
+def _build(args: Any, face: str) -> Any:
+    """The face's runtime (``build_runtime``) from the parsed flags; notices on the console."""
+    rt = build_runtime(
+        model=args.model, base_url=args.base_url, api_key=args.api_key,
+        embodiment=_requested_embodiment(args), gui=not args.headless,
+        no_permission=args.no_permission, resume=args.resume, face=face,
+        notice=lambda msg: console.print(f"[dim]{escape(msg)}[/dim]"),
     )
-    if not api_key:
-        # Each console.print is parsed independently — markup tags must balance
-        # within a single call (rich does not span tags across print calls).
-        console.print("[yellow]No API key configured.[/]")
-        console.print("[dim]  /login claude     auto-detect Claude Code subscription[/dim]")
-        console.print("[dim]  /login anthropic  enter Anthropic API key[/dim]")
-        console.print("[dim]  /login openrouter enter OpenRouter key[/dim]\n")
-
-    sim_session = _init_agent(args)
-    agent = sim_session.agent if sim_session is not None else None
-
-    # Tools (categorized registry for scalable tool management)
-    registry: CategorizedToolRegistry = CategorizedToolRegistry()
-    tools_list, cat_map = discover_categorized_tools()
-    for t in tools_list:
-        cat = "default"
-        for c, names in cat_map.items():
-            if t.name in names:
-                cat = c
-                break
-        registry.register(t, category=cat)
-    if agent is not None:
-        from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
-        for skill_tool in wrap_skills(agent):
-            registry.register(skill_tool, category="robot")
-
-    session: Session
-    if args.resume is not None:
-        if args.resume == "latest":
-            loaded = get_latest_session()
-            if loaded is None:
-                console.print("[dim]No previous session, starting new.[/dim]")
-                session = create_session(metadata={"model": model})
-            else:
-                session = loaded
-                console.print(f"[dim]Resumed: {session.session_id}[/dim]")
-        else:
-            session = load_session(args.resume)
-            console.print(f"[dim]Resumed: {session.session_id}[/dim]")
-    else:
-        session = create_session(metadata={"model": model})
-
     # Explore event streaming (the go2 explore skill's background progress lines).
     _setup_explore_events(console)
-
-    # Backend + engine (deferred if no API key — /login can set it up).
-    engine: VectorEngine | None = None
-    if api_key:
-        backend = create_backend_with_fake_seam(
-            provider=provider, api_key=api_key, model=model, base_url=base_url
-        )
-        engine = VectorEngine(
-            backend=backend, registry=registry,
-            permissions=PermissionContext(no_permission=args.no_permission),
-        )
-        engine.bind(agent, resolve_world(agent))
-
-    app_state: dict[str, Any] = {
-        "agent": agent,
-        "registry": registry,
-        "engine": engine,
-        "model": model,
-        "provider": provider,
-        "api_key": api_key,
-        "base_url": base_url,
-        "scene_graph": getattr(agent, "_spatial_memory", None),
-        "skill_registry": getattr(agent, "_skill_registry", None),
-        "sim_session": sim_session,
-    }
-    return TurnContext(
-        args=args, api_key=api_key, provider=provider, model=model, base_url=base_url,
-        agent=agent, registry=registry, session=session, engine=engine, app_state=app_state,
-    )
+    return rt
 
 
 def run_one_turn(args: Any) -> int:
     """Run ONE turn for ``args.print_prompt`` non-interactively and return an exit code.
 
-    The machine-checkable acceptance entrypoint. It reuses the REPL's setup
-    (``_build_turn_context``), runs the turn SYNCHRONOUSLY through the native
-    producer, prints the model's own words, then builds a frozen ``VerdictReport``
+    The machine-checkable acceptance entrypoint. It builds the same runtime as the
+    REPL (``build_runtime``), runs the turn SYNCHRONOUSLY through ``run_turn``, prints the model's own words, then builds a frozen ``VerdictReport``
     from the EXISTING gate (never a second opinion). Under ``--json`` it emits
     exactly one stdout line ``VECTOR_VERDICT {<json>}`` (all Rich output is already
     routed to stderr by ``main``): the report, whose ``acted`` says whether a
@@ -1452,31 +1274,26 @@ def run_one_turn(args: Any) -> int:
         return EXIT_VERIFIED if chat else report.exit_code()
 
     try:
-        ctx = _build_turn_context(args)
+        rt = _build(args, face="print")
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Setup error:[/] {exc}")
         return _emit(VerdictReport.no_trace(goal=prompt, error=str(exc)))
 
-    engine = ctx.engine
+    engine = rt.engine
     if engine is None:
         console.print("[yellow]No API key. Use /login to authenticate first.[/]")
         return _emit(VerdictReport.no_trace(goal=prompt, error="no engine (no API key)"))
 
     # P0 stop: the registered stop skill's words, no LLM call.
     if engine.is_stop(prompt):
-        _p0_stop(engine, prompt, ctx.app_state, ctx.session)
+        _p0_stop(engine, prompt, rt.app_state, rt.session)
         return _emit(VerdictReport.no_trace(goal=prompt, error="stopped (P0, no LLM call)"))
 
-    n0 = len(ctx.session._entries)
     # ask_permission=None: headless denies every 'ask' (--no-permission allows).
     try:
-        trace = engine.run_turn_native(
-            prompt, agent=getattr(engine, "_agent", None), session=ctx.session,
-            app_state=ctx.app_state,
-        )
+        trace, answer, _ = run_turn(rt, prompt)
     except Exception as exc:  # noqa: BLE001
         return _emit(VerdictReport.no_trace(goal=prompt, error=f"native turn failed: {exc}"))
-    answer = ctx.session.last_assistant_text(n0)
     if answer:
         console.print(escape(answer))
     if _chat_turn(trace):
@@ -1547,13 +1364,14 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(_code)
 
     try:
-        ctx = _build_turn_context(args)
-    except Exception as exc:  # noqa: BLE001 — a body the engine cannot bind: fail loud
+        rt = _build(args, face="repl")
+    except Exception as exc:  # noqa: BLE001 — a sim that did not start, a body the engine cannot bind
         console.print(f"[red]Setup error:[/] {exc}")
         sys.exit(2)
-    engine, session, registry, app_state = ctx.engine, ctx.session, ctx.registry, ctx.app_state
+    engine, session, registry, app_state = rt.engine, rt.session, rt.registry, rt.app_state
 
-    print_banner(ctx.model, _provider_display(ctx.api_key, ctx.provider, ctx.base_url), ctx.agent)
+    print_banner(app_state["model"], _provider_display(app_state["api_key"], app_state["provider"],
+                                                       app_state["base_url"]), rt.agent)
     console.print(f"[dim]Session: {session.session_id}[/dim]\n")
 
     # REPL setup
@@ -1592,7 +1410,7 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         while True:
-            _flush_turn_state(session, app_state)  # a segfault loses at most one turn
+            flush(rt)  # a segfault loses at most one turn
             # ---- Read input ----
             try:
                 if pending_input:
@@ -1656,7 +1474,7 @@ def main(argv: list[str] | None = None) -> None:
             if engine.is_stop(user_input):
                 turn = lambda: _p0_stop(engine, user_input, app_state, session)  # noqa: E731
             else:
-                turn = lambda: _repl_turn(engine, user_input, session, app_state, console)  # noqa: E731
+                turn = lambda: _repl_turn(rt, user_input, console)  # noqa: E731
             typed_next = _run_turn_busy(engine, turn, app_state)
             if typed_next:
                 pending_input.append(typed_next)

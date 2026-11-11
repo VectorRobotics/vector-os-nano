@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from vector_os_nano.vcli.cli import _flush_turn_state
+from vector_os_nano.vcli.runtime import Runtime, flush
 from vector_os_nano.vcli.session import create_session, load_session
 
 _REPO = Path(__file__).resolve().parents[3]
@@ -23,10 +23,10 @@ def test_flush_saves_transcript_and_scene_graph(tmp_path) -> None:
     session.append_user("走到坐标 (9.0,3.0)")
     saved = []
     agent = SimpleNamespace(_spatial_memory=SimpleNamespace(save=lambda: saved.append(1)))
-    _flush_turn_state(session, {"agent": agent})
+    flush(Runtime(engine=None, session=session, app_state={"agent": agent}))
     assert load_session(session.session_id, directory=tmp_path).to_messages()[0]["content"]
     assert saved == [1]
-    _flush_turn_state(session, {})  # no sim: transcript only, never raises
+    flush(Runtime(engine=None, session=session, app_state={}))  # no sim: transcript only, never raises
 
 
 def test_segfault_trace_lands_next_to_the_transcript(tmp_path) -> None:

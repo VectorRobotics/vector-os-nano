@@ -425,13 +425,15 @@ def _p_turn(monkeypatch, capsys, trace: Any, answer: str = "") -> tuple[int, dic
         kw["session"].append_assistant(answer)
         return trace
 
+    from vector_os_nano.vcli.runtime import Runtime
+
     engine = SimpleNamespace(_agent=None, is_stop=lambda t: False, run_turn_native=run_turn_native)
-    monkeypatch.setattr(cli, "_build_turn_context",
-                        lambda args: SimpleNamespace(engine=engine, session=_session(), app_state={}))
+    monkeypatch.setattr(cli, "_build",
+                        lambda args, face: Runtime(engine=engine, session=_session(), app_state={}))
     monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
     code = cli.run_one_turn(SimpleNamespace(print_prompt="walk 1 m", json=True))
     line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("VECTOR_VERDICT "))
-    assert "ask_permission" not in seen  # cli-entry:missed3: -p never prompts on stdin
+    assert seen["ask_permission"] is None  # cli-entry:missed3: -p never prompts on stdin
     return code, json.loads(line.split(" ", 1)[1])
 
 
@@ -487,13 +489,23 @@ def test_repl_turn_renders_the_verdict_of_an_unverified_acted_turn(owned) -> Non
 
     from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
 
-    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0,
+    from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
+    from vector_os_nano.vcli.cognitive.types import StepRecord, SubGoal
+    from vector_os_nano.vcli.runtime import Runtime
+
+    # R1V-4: the acted case carries a real step (walk, then a FAILED verify).
+    sub = SubGoal(name="native_step_0", description="d", verify="at_position(9.0, 9.0)", strategy="walk")
+    step = StepRecord("native_step_0", "walk", True, False, 0.0, actor_caused=ActorCaused.CAUSED)
+    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=(sub,) if owned == "acted" else ()),
+                           (step,) if owned == "acted" else (), False, 0.0,
                            actions_dispatched=int(owned == "acted"), cancelled=owned == "cancelled")
     engine = SimpleNamespace(_agent=None, run_turn_native=lambda *a, **k: acted)
     out = io.StringIO()
-    cli._repl_turn(engine, "walk", _session(), {}, cli.Console(file=out, width=200))
-    if owned == "cancelled":
-        assert "verified=False" in out.getvalue()
+    cli._repl_turn(Runtime(engine=engine, session=_session(), app_state={}), "walk",
+                   cli.Console(file=out, width=200))
+    assert "verified=False" in out.getvalue(), out.getvalue()
+    if owned == "acted":
+        assert "walk → verify at_position(9.0, 9.0)" in out.getvalue()
 
 
 @pytest.mark.parametrize("tool", ["file_read", "bash"])
@@ -512,9 +524,11 @@ def test_a_dev_turn_native_owns_shows_the_models_answer(tmp_path, monkeypatch, t
     backend = _script(tool_turn(call), tool_turn(text="README 说这是一个 agent runtime。", end=True))
     eng = _dev_engine(backend, FileReadTool(), bash_tool.BashTool(),
                       permissions=PermissionContext(no_permission=True))
-    monkeypatch.setattr(cli, "create_session", lambda **k: _session())
+    from vector_os_nano.vcli.runtime import Runtime
+
     out = io.StringIO()
-    cli._repl_turn(eng, "总结一下 README.md 的内容", _session(), {}, cli.Console(file=out, width=200))
+    cli._repl_turn(Runtime(engine=eng, session=_session(), app_state={}), "总结一下 README.md 的内容",
+                   cli.Console(file=out, width=200))
     assert "README 说这是一个 agent runtime。" in out.getvalue(), out.getvalue()
     if tool == "file_read":
         assert backend._cursor == 2  # the read, the answer: no 'verify' nudges
@@ -852,7 +866,8 @@ def test_the_chat_llm_key_is_never_handed_to_the_vlm(monkeypatch) -> None:
     monkeypatch.setattr(sim_session.SimSession, "start", staticmethod(fake_start))
     monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
     # Spelled so tests/conftest.py's sim-tier source regex keeps this file hermetic.
-    args = SimpleNamespace(api_key="sk-ant-secret", headless=True, embodiment="go2")
-    start = cli._init_agent
-    start(args)
+    from vector_os_nano.vcli import runtime
+
+    start = runtime.start_sim
+    start("go2", gui=False, notice=lambda msg: None)
     assert seen.get("vlm_api_key") in (None, "")

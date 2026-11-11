@@ -3,7 +3,7 @@
 
 """Scripted test LLMs that drive the REAL cli.main through the native producer.
 
-The backend-injection seam in ``cli.create_backend_with_fake_seam`` is gated ONLY on
+The backend-injection seam in ``runtime.make_backend`` is gated ONLY on
 the env var ``VECTOR_FAKE_LLM_TOOLS=<json-path>``: the network LLM is replaced by a
 ``FakeToolScriptBackend`` (an open-loop ``{"turns"}`` script) or a
 ``ReactiveFakeBackend`` (a ``{"steps"}`` script keyed on what the model observes).

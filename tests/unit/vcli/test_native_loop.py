@@ -645,7 +645,7 @@ class _FakeStartSim:
         from vector_os_nano.vcli.worlds.robot import RobotWorld
 
         agent, _ = _make_agent(0.0, 0.0)
-        context.app_state["agent"] = agent  # what rebind_world does
+        context.app_state["agent"] = agent  # what bind_body does
         self._engine[0].bind(agent, RobotWorld())
         return ToolResult(content="Started go2 simulation, ready in 1.0s")
 

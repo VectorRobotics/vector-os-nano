@@ -15,8 +15,8 @@ grasp number came from it), chosen by the embodiment manifest
 * ``stop`` is idempotent: it disconnects the devices (renderers close with the
   base), kills only the process groups this session spawned and unregisters its
   atexit hook.
-* :func:`rebind_world` is the ONE path that points the REPL at a session (or at
-  no session): the engine binding (agent + world) and the skill tools.
+* ``vcli.runtime.bind_body`` is the ONE path that points the REPL at a session (or
+  at no session): the engine binding (agent + world) and the skill tools.
 """
 from __future__ import annotations
 
@@ -622,36 +622,3 @@ def _launch_ros2_stack(go2: Any, *, gui: bool) -> Callable[[], None]:
         spin_t.join(timeout=2.0)
 
     return _cleanup
-
-
-# ---------------------------------------------------------------------------
-# The ONE world-rebind path
-# ---------------------------------------------------------------------------
-
-
-def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
-    """Point the REPL at *session* (or at none): the engine binding, then the skill tools.
-
-    Used by start/stop_simulation (the CLI startup builds the same state). The engine
-    is bound first: a bind failure raises before anything else changed.
-    """
-    from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
-    from vector_os_nano.vcli.worlds import resolve_world
-
-    agent = session.agent if session is not None else None
-    engine = app_state.get("engine")
-    if engine is not None:
-        engine.bind(agent, resolve_world(agent))
-    sg = getattr(agent, "_spatial_memory", None)
-    skill_registry = getattr(agent, "_skill_registry", None)
-    app_state.update(sim_session=session, agent=agent, scene_graph=sg,
-                     skill_registry=skill_registry)
-
-    registry = app_state.get("registry")
-    if registry is not None:
-        for name in list(registry.list_tools()):
-            if getattr(registry.get(name), "_is_skill_wrapper", False):
-                registry.unregister(name)
-        if agent is not None:
-            for t in wrap_skills(agent):
-                registry.register(t, category="robot")

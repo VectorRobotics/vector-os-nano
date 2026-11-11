@@ -15,7 +15,7 @@ was this test hand-building the rig instead of using the product launcher):
 Only the network LLM is replaced (``VECTOR_FAKE_LLM_TOOLS`` replays the model's tool
 calls); the REPL is driven by the shared tests/harness/pty_cli.run_repl_session.
 Everything else is the product: SimSession (MuJoCoGo2 + MuJoCoPiper +
-MuJoCoPiperGripper), rebind_world, the native producer, perception_grasp (colour
+MuJoCoPiperGripper), bind_body, the native producer, perception_grasp (colour
 resolve -> rendered depth -> IK -> weld, never ground truth) and the untouched
 verify spine.
 

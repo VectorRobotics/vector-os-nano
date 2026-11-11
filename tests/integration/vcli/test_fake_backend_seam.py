@@ -3,7 +3,7 @@
 
 """The VECTOR_FAKE_LLM_TOOLS backend-injection seam (deterministic test LLM).
 
-The seam at the SINGLE create_backend site (``cli.create_backend_with_fake_seam``)
+The seam at the SINGLE backend site (``runtime.make_backend``)
 is gated ONLY on the env var ``VECTOR_FAKE_LLM_TOOLS=<json-path>``. These tests pin:
 
 (1) ABSENT env -> the real ``create_backend`` is called unchanged; the deleted
@@ -35,11 +35,11 @@ def test_absent_env_uses_real_create_backend(
     if legacy_env:  # the deleted decompose-plan seam must not route anything any more
         (tmp_path / "plan.json").write_text('{"goal": "g", "sub_goals": []}')
         monkeypatch.setenv("VECTOR_FAKE_LLM", str(tmp_path / "plan.json"))
-    from vector_os_nano.vcli import cli
+    from vector_os_nano.vcli import backends, runtime
 
     sentinel = object()
-    with patch.object(cli, "create_backend", return_value=sentinel) as real:
-        out = cli.create_backend_with_fake_seam(
+    with patch.object(backends, "create_backend", return_value=sentinel) as real:
+        out = runtime.make_backend(
             provider="anthropic", api_key="k", model="m", base_url=None
         )
     real.assert_called_once_with(provider="anthropic", api_key="k", model="m", base_url=None)
@@ -51,10 +51,10 @@ def test_present_env_uses_the_tool_script_backend(tmp_path: Path, monkeypatch: p
     script_file = tmp_path / "script.json"
     script_file.write_text(json.dumps({"turns": [{"tool_calls": [{"name": "finish", "input": {}}]}]}))
     monkeypatch.setenv("VECTOR_FAKE_LLM_TOOLS", str(script_file))
-    from vector_os_nano.vcli import cli
+    from vector_os_nano.vcli import backends, runtime
 
-    with patch.object(cli, "create_backend") as real:
-        backend = cli.create_backend_with_fake_seam(
+    with patch.object(backends, "create_backend") as real:
+        backend = runtime.make_backend(
             provider="anthropic", api_key="k", model="m", base_url=None
         )
     real.assert_not_called()
@@ -71,16 +71,12 @@ def test_scripted_true_verify_classifies_ran_not_grounded(tmp_path: Path, monkey
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
     from vector_os_nano.vcli.engine import VectorEngine
     from vector_os_nano.vcli.permissions import PermissionContext
-    from vector_os_nano.vcli.tools import discover_categorized_tools
-    from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
+    from vector_os_nano.vcli.runtime import build_registry
     from vector_os_nano.vcli.verdict import VerdictReport
     from vector_os_nano.vcli.worlds import DevWorld
 
     monkeypatch.chdir(tmp_path)
-    registry = CategorizedToolRegistry()
-    tools, cats = discover_categorized_tools()
-    for t in tools:
-        registry.register(t, category=next((c for c, n in cats.items() if t.name in n), "default"))
+    registry = build_registry()
     backend = FakeToolScriptBackend.from_tool_script([
         tool_turn(("file_write", {"file_path": "x.txt", "content": "y"})),
         tool_turn(("verify", {"expr": "True"})),  # a tautology, no oracle

@@ -130,10 +130,10 @@ def test_the_repl_fails_loud_when_the_bind_fails(monkeypatch) -> None:
 
     from vector_os_nano.vcli import cli
 
-    def boom(args: Any) -> Any:
+    def boom(args: Any, face: str) -> Any:
         raise TypeError("cannot bind <world>: it lacks ['persona_blocks']")
 
-    monkeypatch.setattr(cli, "_build_turn_context", boom)
+    monkeypatch.setattr(cli, "_build", boom)
     monkeypatch.setattr(cli, "_maybe_reexec_under_mjpython", lambda args: None)
     monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
     with pytest.raises(SystemExit) as exc:
