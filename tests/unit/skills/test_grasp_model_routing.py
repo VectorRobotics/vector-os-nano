@@ -245,3 +245,61 @@ def test_select_detection_falls_back_when_colour_absent_from_labels():
         Detection(label="can", bbox=(40.0, 10.0, 50.0, 20.0), confidence=0.80),
     ]
     assert PerceptionGraspSkill._select_detection(boxes, "red").label == "can"
+
+
+# --- a named grasp fails loud, never a substitute target (R2) ----------------
+
+
+class _BrokenDetector(RoutingPerception):
+    def detect(self, query):
+        self.calls.append(f"detect:{query}")
+        raise RuntimeError("grounding-dino weights missing")
+
+
+def test_a_detector_error_fails_loud_never_the_front_blob():
+    """perception:named-grasp-falls-back-to-front-blob: the detector raised and the
+    skill grasped the front-most vivid blob, labelled as the query."""
+    perc = _BrokenDetector()
+    res = PerceptionGraspSkill().execute({"query": "罐子"}, _ctx(perc))
+    assert not res.success and res.result_data["diagnosis"] == "perception_failed"
+    assert "weights missing" in res.result_data["cause"]
+    assert not any(c.startswith("front") for c in perc.calls), perc.calls
+
+
+def test_an_empty_detector_answer_fails_loud_never_the_front_blob():
+    """skills-manip:silent-target-substitution: 'VLM empty -> front-object fallback'."""
+    perc = RoutingPerception(detections=[])
+    res = PerceptionGraspSkill().execute({"query": "罐子"}, _ctx(perc))
+    assert not res.success and res.result_data["diagnosis"] == "no_detections"
+    assert not any(c.startswith("front") for c in perc.calls), perc.calls
+
+
+@pytest.mark.parametrize("query, diagnosis", [
+    ("白色的瓶子", "unsupported_colour"),       # a bottle of ANY colour was grasped
+    ("grab the black can", "unsupported_colour"),
+    ("抓那个苹果", "unknown_object"),           # the front-most blob was grasped
+])
+def test_a_target_it_cannot_read_is_refused_before_any_motion(query, diagnosis):
+    perc = RoutingPerception()
+    res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
+    assert not res.success and res.result_data["diagnosis"] == diagnosis
+    assert perc.calls == []  # nothing perceived, nothing grasped
+
+
+def test_a_producer_box_must_be_plausible_on_the_current_frame():
+    """skills-manip:stale-passed-box: a passed box was segmented on the current frame
+    with no plausibility gate. A 1-px-wide sliver is no object; a real box passes."""
+    sliver = PerceptionGraspSkill().execute({"query": "罐子", "bbox": [32, 0, 33, 47]}, _ctx(RoutingPerception()))
+    assert not sliver.success and sliver.result_data["diagnosis"] == "implausible_box"
+    ok = PerceptionGraspSkill().execute({"query": "罐子", "bbox": [29, 21, 35, 27]}, _ctx(RoutingPerception()))
+    assert ok.success and ok.result_data["consumed_bbox"] is True
+
+
+def test_a_stale_box_whose_redetect_fails_reports_the_detector_failure():
+    """C0F2V-4:stale-box-folds-detector-error: the cause was folded into 'stale_box'."""
+    frame = {"size": [320, 240], "cam_pos": [0, 0, 0], "cam_mat": np.eye(3).ravel().tolist()}
+    res = PerceptionGraspSkill().execute(
+        {"query": "罐子", "detections": [{"label": "can", "bbox": [29, 21, 35, 27], "frame": frame}]},
+        _ctx(_BrokenDetector()))
+    assert not res.success and res.result_data["diagnosis"] == "perception_failed"
+    assert "weights missing" in res.result_data["cause"]

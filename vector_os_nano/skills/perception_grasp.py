@@ -82,6 +82,37 @@ def _names_object(query: str) -> bool:
 
 
 
+# Colour words the colour resolver has no hue band for (the world vocabulary only
+# holds the ones it can see): a query naming one is refused, never grasped as "any".
+_UNSEEN_COLOURS = ("white", "black", "grey", "gray", "pink", "brown", "silver", "gold",
+                   "白色", "黑色", "灰色", "粉色", "棕色", "银色", "金色")
+
+
+def _unsupported_target(query: str) -> SkillResult | None:
+    """Why the grasp cannot honestly resolve *query*, or None.
+
+    A colour it cannot see, or words the world vocabulary cannot read (untranslatable
+    CJK that is neither a known object nor deictic), are refused before any motion:
+    the robot never substitutes the front-most blob or a same-noun object of another
+    colour for what was named.
+    """
+    from vector_os_nano.perception.vocab import _has, vocab
+
+    q = (query or "").lower()
+    unseen = next((c for c in _UNSEEN_COLOURS if _has(q, c)), None)
+    if unseen is not None:
+        return _fail("unsupported_colour",
+                     f"{query!r} names the colour {unseen!r}, which this robot cannot tell apart; "
+                     "name the object without it, or by a colour it sees "
+                     "(red, orange, yellow, green, blue, purple).", query=query)
+    if not _is_deictic(query) and vocab().english(query) is None:
+        nouns = sorted({c for _, c in vocab().nouns})
+        return _fail("unknown_object",
+                     f"{query!r} names no object the world vocabulary knows; name one of {nouns} "
+                     "(or say 'the thing in front').", query=query, known_objects=nouns)
+    return None
+
+
 def _scene_name(context: SkillContext, query: str) -> str | None:
     """The world-manifest pickable *query* names ("绿色的瓶子" -> pickable_bottle_green),
     or None. Only the verify LABEL comes from it; the grasp POINT is always perceived."""
@@ -574,6 +605,10 @@ class PerceptionGraspSkill:
                 f"Perception backend {type(perception).__name__} lacks RGB-D grasp surface: {missing}",
             )
 
+        unsupported = _unsupported_target(query)
+        if unsupported is not None:
+            return unsupported
+
         # --- stow the arm OUT of the camera FOV before perceiving (the arm at rest
         # occludes the forward head camera and corrupts the front-object mask) -----
         if hasattr(arm, "move_joints"):
@@ -608,6 +643,7 @@ class PerceptionGraspSkill:
             )
             gp, resolved, fail = self._grasp_point_from_passed_box(
                 perception, query, passed_box, color=color, scene=scene, box_frame=box_frame,
+                base=context.base, confidence=self._passed_box_confidence(params, color),
             )
         else:
             # --- perceive the target's 3D grasp point (real depth + mask, never GT).
@@ -809,6 +845,18 @@ class PerceptionGraspSkill:
         return None
 
     @staticmethod
+    def _passed_box_confidence(params: dict, color: str | None) -> float:
+        """The producer's score for the passed box (1.0 for a bare box: nothing to gate)."""
+        dets = params.get("detections")
+        if params.get("bbox") is None and isinstance(dets, list) and dets:
+            det = PerceptionGraspSkill._select_detection_dict(dets, color)
+            try:
+                return float(det.get("confidence", 1.0))
+            except (TypeError, ValueError, AttributeError):
+                return 0.0
+        return 1.0
+
+    @staticmethod
     def _passed_box_frame(params: dict) -> dict | None:
         """The ``frame`` provenance (size, camera pose) a producer's detect output carries."""
         dets = params.get("detections")
@@ -861,7 +909,8 @@ class PerceptionGraspSkill:
 
     def _grasp_point_from_passed_box(
         self, perception: Any, query: str, box: tuple, *, color: str | None = None,
-        scene: str | None = None, box_frame: dict | None = None,
+        scene: str | None = None, box_frame: dict | None = None, base: Any = None,
+        confidence: float = 1.0,
     ):
         """Back-project a PRODUCER-passed pixel box to a WORLD grasp point.
 
@@ -869,7 +918,9 @@ class PerceptionGraspSkill:
         fresh perceive. We acquire ONLY the RGB-D frame + geometry (no detect /
         front_object call), segment the passed box (same EdgeTAM->box-rect path the
         self-detect route uses), then run the IDENTICAL grasp_point_from_rgbd math.
-        FAIL LOUD if the box yields no depth points — never a GT substitute.
+        FAIL LOUD if the box yields no depth points — never a GT substitute. The box
+        must also be a plausible object on THIS frame (the localizer's gates: size,
+        range, height, standing out, colour) within reach of the base; else refused.
 
         Returns ``(gp | None, resolved_label, fail_result | None)``.
         """
@@ -894,7 +945,11 @@ class PerceptionGraspSkill:
                 from vector_os_nano.perception.object_localizer import detect_on
                 dets = detect_on(perception, rgb, query)
             except Exception as exc:  # noqa: BLE001
-                dets, stale = [], f"{stale}; re-detect raised {exc}"
+                return None, resolved, _fail(
+                    "perception_failed", f"The producer box for {resolved!r} is stale ({stale}) and "
+                    f"the detector failed re-detecting it: {exc}",
+                    detection_label=resolved, query=query, consumed_bbox=True, cause=str(exc),
+                )
             if not dets:
                 return None, resolved, _fail(
                     "stale_box", f"The producer box for {resolved!r} is stale ({stale}) and "
@@ -918,7 +973,30 @@ class PerceptionGraspSkill:
                 detection_label=resolved, query=query, consumed_bbox=True,
             )
 
-        gp = grasp_point_from_rgbd(depth, rgb, mask, intrinsics, cam_xpos, cam_xmat)
+        from types import SimpleNamespace
+
+        from vector_os_nano.perception.grasp_point import grasp_point_from_points, object_points
+        from vector_os_nano.perception.object_localizer import implausible
+        from vector_os_nano.perception.vocab import vocab
+
+        pts = object_points(depth, rgb, mask, intrinsics, cam_xpos, cam_xmat)
+        gp = None if pts is None else grasp_point_from_points(*pts, cam_xpos, cam_xmat)
+        why = None if pts is None else implausible(
+            SimpleNamespace(bbox=box, confidence=confidence), mask, *pts, depth, rgb,
+            noun=vocab().noun(query), colour=color,
+        )
+        if why is None and gp is not None and base is not None:
+            pos = base.get_position()
+            far = math.hypot(gp.x - pos[0], gp.y - pos[1])
+            if far > _SCAN_MAX_LOCAL_M:
+                why = f"{far:.1f} m from the robot (beyond {_SCAN_MAX_LOCAL_M} m)"
+        if why is not None:
+            return None, resolved, _fail(
+                "implausible_box",
+                f"The producer box {box} is not a plausible {resolved!r} on the current frame: "
+                f"{why}. Look again rather than grasp it.",
+                detection_label=resolved, query=query, consumed_bbox=True, why=why,
+            )
         if gp is None:
             return None, resolved, _fail(
                 "no_depth_points",
@@ -1116,14 +1194,18 @@ class PerceptionGraspSkill:
                     _mask_px, _d_valid, _d_near, _d_min, _d_med,
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[PGRASP] front_object_mask raised: %s", exc)
+                return None, resolved, _fail(
+                    "perception_failed", f"The front-object resolver failed: {exc}",
+                    query=query, cause=str(exc))
         else:
             try:
                 from vector_os_nano.perception.object_localizer import detect_on
                 detections = detect_on(perception, rgb, query)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[PGRASP] detect raised: %s", exc)
-                detections = []
+                return None, resolved, _fail(
+                    "perception_failed",
+                    f"The object detector failed on {query!r}: {exc}. Nothing was grasped "
+                    "(never a substitute target).", query=query, cause=str(exc))
             if detections:
                 detection_found = True
                 # PERCEPTUAL colour selection (D48 caveat 1): grounding-dino is
@@ -1144,10 +1226,6 @@ class PerceptionGraspSkill:
                     mask = perception.segment(rgb, det.bbox)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("[PGRASP] segment raised: %s", exc)
-            elif have_front:
-                logger.info("[PGRASP] VLM empty for %r -> front-object fallback", query)
-                mask = perception.front_object_mask(rgb, depth)
-                resolved = query or "front object"
 
         if mask is None or int(np.count_nonzero(mask)) == 0:
             if detection_found:
