@@ -29,7 +29,6 @@ from typing import Any
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
 from vector_os_nano.vcli.cognitive.trace_store import (
     classify_step_evidence,
-    step_evidence_ok,
     verify_oracle_names,
 )
 from vector_os_nano.vcli.cognitive.types import StepRecord, SubGoal
@@ -143,7 +142,6 @@ def test_arm_off_home_step_is_not_grounded() -> None:
     )
     sg = _sub_goal("arm_at_home()")
     assert classify_step_evidence(step, sg, ROBOT_ORACLES) != "GROUNDED"
-    assert step_evidence_ok(step, sg, ROBOT_ORACLES) is False
     # And via the structural classifier directly: arm_at_home() over the oracle set
     # IS a GROUNDED-shaped predicate (a bare predicate-oracle call), so the ONLY
     # thing keeping this step out of GROUNDED is the honest verify_result=False.
@@ -163,7 +161,6 @@ def test_absent_oracle_collapses_to_ran() -> None:
     sg = _sub_goal("arm_at_home()")
     assert classify_verify_expr("arm_at_home()", oracles_without_arm) == "RAN"
     assert classify_step_evidence(step, sg, oracles_without_arm) == "RAN"
-    assert step_evidence_ok(step, sg, oracles_without_arm) is False
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +215,6 @@ def test_robot_base_step_reaches_grounded() -> None:
     )
     assert classify_verify_expr("at_position(2.0, 0.0)", ROBOT_ORACLES) == "GROUNDED"
     assert classify_step_evidence(step, sg, ROBOT_ORACLES) == "GROUNDED"
-    assert step_evidence_ok(step, sg, ROBOT_ORACLES) is True
 
 
 def test_robot_base_at_position_predicate_is_grounded_against_live_oracle() -> None:

@@ -120,14 +120,6 @@ def test_a_failed_action_superseded_by_a_successful_retry_verifies() -> None:
     assert evidence_passed(t, GO2)
 
 
-def test_attempts_round_trip_through_save_and_load(tmp_path) -> None:
-    t = _trace("走到坐标 (9.0,3.0)", _row("at_position(9.0, 3.0)", vr=False),
-               _row("at_position(9.0, 3.0)", channels=("base:at_position:CAUSED",)),
-               contract=("at_position(9.0, 3.0)",), start=(False,), end=(True,))
-    back = ts.load_trace(ts.save_trace(t, tmp_path / "t.json"))
-    assert back.steps[1].channels == ("base:at_position:CAUSED",) and back.contract == t.contract
-    assert evidence_passed(back, GO2) is evidence_passed(t, GO2) is True
-
 
 # ---------------------------------------------------------------------------
 # Independent coordinate + manipulation gates, the vocabulary, D69

@@ -22,7 +22,6 @@ import pytest
 from vector_os_nano.vcli.cognitive.actor_causation import (
     ActorCaused,
     capture,
-    from_name,
     grade,
     is_robot_predicate,
 )
@@ -225,7 +224,7 @@ def test_holding_no_transition_is_uncaused() -> None:
 
 
 # ---------------------------------------------------------------------------
-# misc — predicate detection + enum (de)serialization round-trip
+# misc — predicate detection
 # ---------------------------------------------------------------------------
 
 
@@ -237,58 +236,6 @@ def test_is_robot_predicate_detection() -> None:
     # A robot predicate ABSENT from the live oracle set is not graded.
     assert is_robot_predicate("at_position(1, 2)", frozenset()) is False
 
-
-def test_from_name_roundtrip_and_legacy() -> None:
-    for c in ActorCaused:
-        assert from_name(c.value) is c
-        assert from_name(c) is c
-    # Unknown / missing (legacy trace) -> NOT_GRADED.
-    assert from_name(None) is ActorCaused.NOT_GRADED
-    assert from_name("garbage") is ActorCaused.NOT_GRADED
-
-
-# ---------------------------------------------------------------------------
-# trace_store serialization round-trips the actor_caused enum (v4 schema)
-# ---------------------------------------------------------------------------
-
-
-def test_trace_serialization_roundtrips_actor_caused(tmp_path) -> None:
-    from vector_os_nano.vcli.cognitive.trace_store import load_trace, save_trace
-    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
-
-    sg = SubGoal(name="walk", description="d", verify="at_position(11.0, 3.0)", strategy="walk_forward")
-    step = StepRecord(
-        sub_goal_name="walk", strategy="walk_forward", success=True,
-        verify_result=True, duration_sec=0.1, actor_caused=ActorCaused.UNCAUSED,
-    )
-    trace = ExecutionTrace(
-        goal_tree=GoalTree(goal="g", sub_goals=(sg,)), steps=(step,),
-        success=True, total_duration_sec=0.1,
-    )
-    path = save_trace(trace, tmp_path / "t.json")
-    reloaded = load_trace(path)
-    assert reloaded.steps[0].actor_caused is ActorCaused.UNCAUSED
-
-
-def test_legacy_trace_without_field_loads_as_not_graded(tmp_path) -> None:
-    # An older on-disk trace (no actor_caused key) must load NOT_GRADED -> legacy.
-    import json
-
-    from vector_os_nano.vcli.cognitive.trace_store import load_trace
-
-    payload = {
-        "schema_version": 3,
-        "goal_tree": {"goal": "g", "sub_goals": [
-            {"name": "walk", "description": "d", "verify": "at_position(11.0, 3.0)",
-             "strategy": "walk_forward"}]},
-        "steps": [{"sub_goal_name": "walk", "strategy": "walk_forward",
-                   "success": True, "verify_result": True, "duration_sec": 0.1}],
-        "success": True, "total_duration_sec": 0.1,
-    }
-    p = tmp_path / "legacy.json"
-    p.write_text(json.dumps(payload))
-    reloaded = load_trace(p)
-    assert reloaded.steps[0].actor_caused is ActorCaused.NOT_GRADED
 
 
 # ---------------------------------------------------------------------------

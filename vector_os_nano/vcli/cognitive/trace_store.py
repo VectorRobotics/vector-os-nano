@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""trace_store — persist and reload VGG execution traces, and grade their evidence.
+"""trace_store — grade the evidence of a native turn's execution trace.
 
-- ``save_trace`` / ``load_trace`` round-trip a trace to JSON under
-  ``~/.vector/traces/`` (frozen dataclasses -> dicts and back; tuples survive).
 - ``evidence_passed`` gates a "verified done" in EVERY world (dev and robot
   alike — the old ``if is_robot: return True`` bypass is gone): a step backs the
   outcome with evidence only when its verify actually consumes a world oracle
@@ -19,18 +17,14 @@
 from __future__ import annotations
 
 import ast
-import json
 import logging
-import uuid
-from pathlib import Path
 from typing import Any, Literal
 
-from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused, from_name
+from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
 from vector_os_nano.vcli.cognitive.oracle_registry import OracleTag, oracle_tags
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
-    GoalTree,
     StepRecord,
     SubGoal,
 )
@@ -38,14 +32,6 @@ from vector_os_nano.vcli.cognitive.types import (
 logger = logging.getLogger(__name__)
 
 StepEvidence = Literal["GROUNDED", "RAN", "FAILED"]
-
-_DEFAULT_TRACES_DIR = Path.home() / ".vector" / "traces"
-
-# Bump when the on-disk shape changes; load_trace tolerates older/unknown keys.
-# v2 adds StepRecord.visual_override; v3 adds SubGoal.answer_only (S5.2);
-# v4 adds StepRecord.actor_caused (R2b actor-causation grade); v5 adds the WP07
-# attempt fields (attempt_of / superseded / channels) and the trace's task contract.
-_SCHEMA_VERSION = 5
 
 # The ONLY side-effect-free dispatch route (``GoalExecutor._execute_answer`` does
 # no I/O and no model call). The evidence-gate exemption for a no-robot-evidence
@@ -134,9 +120,8 @@ def classify_step_evidence(
 ) -> StepEvidence:
     """Classify a single executed step's evidence: GROUNDED / RAN / FAILED.
 
-    The ONE source of truth for both the done-gate (``evidence_passed``) and the
-    per-step reward gate (``step_evidence_ok``) — rule 3 (no split-brain). It
-    replaces the old ``if is_robot: return True`` short-circuit with the honest
+    The ONE source of truth for the done-gate (``evidence_passed``) and the
+    verdict's per-step rows — rule 3 (no split-brain). It replaces the old ``if is_robot: return True`` short-circuit with the honest
     classifier: a robot step that merely RAN (``verify="True"``) is no longer
     auto-passed; only a step whose verify actually consumes a world oracle in a
     non-tautological way reaches GROUNDED.
@@ -169,7 +154,7 @@ def classify_step_evidence(
     whose constant differs from the goal by more than the oracle tolerance, the
     otherwise-GROUNDED step DOWNGRADES to RAN — the model verified its OWN landing, not
     the commanded target. Non-coordinate goals/verifies fail OPEN (unchanged);
-    ``goal_text=None`` (the per-step reward gate) is a no-op. Stricter-only (rule 5).
+    ``goal_text=None`` skips this check. Stricter-only (rule 5).
     """
     return _classify(step, sub_goal, oracle_names, goal_text)[0]
 
@@ -213,146 +198,6 @@ def step_reject_reason(
     """Why *step* is not GROUNDED ("" when it is) — the same rules as
     ``classify_step_evidence``, for the verdict's audit row."""
     return _classify(step, sub_goal, oracle_names, goal_text)[1]
-
-
-# ---------------------------------------------------------------------------
-# (De)serialization
-# ---------------------------------------------------------------------------
-
-
-def _trace_to_dict(trace: ExecutionTrace) -> dict[str, Any]:
-    return {
-        "schema_version": _SCHEMA_VERSION,
-        "goal_tree": {
-            "goal": trace.goal_tree.goal,
-            "sub_goals": [
-                {
-                    "name": sg.name,
-                    "description": sg.description,
-                    "verify": sg.verify,
-                    "timeout_sec": sg.timeout_sec,
-                    "depends_on": list(sg.depends_on),
-                    "strategy": sg.strategy,
-                    "strategy_params": sg.strategy_params,
-                    "fail_action": sg.fail_action,
-                    "answer_only": getattr(sg, "answer_only", False),
-                }
-                for sg in trace.goal_tree.sub_goals
-            ],
-            "context_snapshot": trace.goal_tree.context_snapshot,
-        },
-        "steps": [
-            {
-                "sub_goal_name": s.sub_goal_name,
-                "strategy": s.strategy,
-                "success": s.success,
-                "verify_result": s.verify_result,
-                "duration_sec": s.duration_sec,
-                "error": s.error,
-                "fallback_used": s.fallback_used,
-                "visual_override": getattr(s, "visual_override", False),
-                # R2b: serialize the actor-causation grade as its enum ``.value``.
-                "actor_caused": getattr(
-                    s, "actor_caused", ActorCaused.NOT_GRADED
-                ).value,
-                "attempt_of": getattr(s, "attempt_of", ""),
-                "superseded": getattr(s, "superseded", False),
-                "channels": list(getattr(s, "channels", ()) or ()),
-                "housekeeping": getattr(s, "housekeeping", False),
-            }
-            for s in trace.steps
-        ],
-        "success": trace.success,
-        "total_duration_sec": trace.total_duration_sec,
-        "contract": list(getattr(trace, "contract", ()) or ()),
-        "contract_start": list(getattr(trace, "contract_start", ()) or ()),
-        "contract_end": list(getattr(trace, "contract_end", ()) or ()),
-        "intents": list(getattr(trace, "intents", ()) or ()),
-        "world": str(getattr(trace, "world", "") or ""),
-    }
-
-
-def _dict_to_trace(data: dict[str, Any]) -> ExecutionTrace:
-    gt = data.get("goal_tree", {}) or {}
-    sub_goals = tuple(
-        SubGoal(
-            name=str(sg.get("name", "")),
-            description=str(sg.get("description", "")),
-            verify=str(sg.get("verify", "")),
-            timeout_sec=float(sg.get("timeout_sec", 30.0)),
-            depends_on=tuple(sg.get("depends_on", []) or ()),
-            strategy=str(sg.get("strategy", "")),
-            strategy_params=dict(sg.get("strategy_params", {}) or {}),
-            fail_action=str(sg.get("fail_action", "")),
-            answer_only=bool(sg.get("answer_only", False)),
-        )
-        for sg in gt.get("sub_goals", []) or []
-    )
-    goal_tree = GoalTree(
-        goal=str(gt.get("goal", "")),
-        sub_goals=sub_goals,
-        context_snapshot=str(gt.get("context_snapshot", "")),
-    )
-    steps = tuple(
-        StepRecord(
-            sub_goal_name=str(s.get("sub_goal_name", "")),
-            strategy=str(s.get("strategy", "")),
-            success=bool(s.get("success", False)),
-            verify_result=bool(s.get("verify_result", False)),
-            duration_sec=float(s.get("duration_sec", 0.0)),
-            error=str(s.get("error", "")),
-            fallback_used=bool(s.get("fallback_used", False)),
-            visual_override=bool(s.get("visual_override", False)),
-            # R2b: deserialize the actor-causation grade; absent/unknown (older
-            # traces) maps to NOT_GRADED -> legacy-equivalent (no downgrade).
-            actor_caused=from_name(s.get("actor_caused")),
-            attempt_of=str(s.get("attempt_of", "") or ""),
-            superseded=bool(s.get("superseded", False)),
-            channels=tuple(str(c) for c in s.get("channels", []) or ()),
-            housekeeping=bool(s.get("housekeeping", False)),
-        )
-        for s in data.get("steps", []) or []
-    )
-    return ExecutionTrace(
-        goal_tree=goal_tree,
-        steps=steps,
-        success=bool(data.get("success", False)),
-        total_duration_sec=float(data.get("total_duration_sec", 0.0)),
-        contract=tuple(str(c) for c in data.get("contract", []) or ()),
-        contract_start=tuple(bool(v) for v in data.get("contract_start", []) or ()),
-        contract_end=tuple(bool(v) for v in data.get("contract_end", []) or ()),
-        intents=tuple(str(c) for c in data.get("intents", []) or ()),
-        world=str(data.get("world", "") or ""),
-    )
-
-
-def save_trace(trace: ExecutionTrace, path: str | Path | None = None) -> Path:
-    """Serialise *trace* to JSON; return the written path.
-
-    With no *path*, writes a uuid-named file under ``~/.vector/traces/``.
-    Written atomically (temp file + ``os.replace``) so a concurrent reader never
-    sees a half-written file.
-    """
-    import os
-
-    if path is None:
-        _DEFAULT_TRACES_DIR.mkdir(parents=True, exist_ok=True)
-        path = _DEFAULT_TRACES_DIR / f"trace-{uuid.uuid4().hex}.json"
-    else:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-    payload = json.dumps(_trace_to_dict(trace), ensure_ascii=False, indent=2)
-    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(payload)
-    os.replace(tmp, path)
-    return path
-
-
-def load_trace(path: str | Path) -> ExecutionTrace:
-    """Reconstruct an ExecutionTrace from a JSON file written by ``save_trace``."""
-    data = json.loads(Path(path).read_text())
-    return _dict_to_trace(data)
 
 
 # ---------------------------------------------------------------------------
@@ -619,20 +464,3 @@ def evidence_passed(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool
     ``verify_oracle_names``; an empty set fails closed (everything RAN)."""
     return not turn_reject_reason(trace, oracle_names)
 
-
-def step_evidence_ok(
-    step: StepRecord, sub_goal: SubGoal, oracle_names: frozenset[str]
-) -> bool:
-    """True when a SINGLE step's pass is backed by deterministic evidence.
-
-    The per-step analogue of ``evidence_passed``, single-sourced through the SAME
-    ``classify_step_evidence`` (rule 3): True iff this step classifies GROUNDED.
-    The robot bypass is GONE — a robot motor step with ``verify="True"`` now
-    classifies RAN, not GROUNDED, so it no longer trains the bandit on unverified
-    "success". Reward parity with the done-gate is intentional (W1.1 → R1):
-    learning is rewarded only for steps that actually proved their post-condition.
-
-    *oracle_names* MUST come from ``verify_oracle_names(agent, engine)`` (live
-    namespace, single source). An empty set fails closed (classifies RAN).
-    """
-    return classify_step_evidence(step, sub_goal, oracle_names) == "GROUNDED"

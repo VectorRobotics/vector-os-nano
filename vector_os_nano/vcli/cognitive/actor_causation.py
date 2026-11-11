@@ -96,20 +96,6 @@ class ActorCaused(enum.Enum):
     NOT_GRADED = "NOT_GRADED"
 
 
-def from_name(name: Any) -> "ActorCaused":
-    """Deserialize an ``ActorCaused`` from its ``.value`` string, fail-safe.
-
-    An unknown / missing value (older on-disk traces predating R2b) maps to
-    ``NOT_GRADED`` — i.e. legacy-equivalent classification, never a spurious
-    downgrade. Never raises into the (de)serializer.
-    """
-    if isinstance(name, ActorCaused):
-        return name
-    try:
-        return ActorCaused(str(name))
-    except (ValueError, TypeError):
-        return ActorCaused.NOT_GRADED
-
 
 # ---------------------------------------------------------------------------
 # Baseline snapshot — a FROZEN actor-state capture taken BEFORE a step runs

@@ -292,9 +292,6 @@ def test_scope_filter_keeps_dev_predicates_out_of_robot_evidence() -> None:
     robot = evidence_names(ns, "robot")
     assert robot == {"at_position"}
     assert evidence_names(ns, "dev") == {"file_exists"}
-    # No scope (the reward gate) on a namespace mixing scopes fails closed.
-    assert evidence_names(ns) == frozenset()
-    assert evidence_names({k: ns[k] for k in ("at_position", "nearest_room")}) == {"at_position"}
     assert classify_verify_expr("file_exists('.')", robot) == "RAN"
     assert classify_verify_expr("file_exists('.')", robot | {"file_exists"}) == "GROUNDED"
 
