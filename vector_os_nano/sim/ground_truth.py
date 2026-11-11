@@ -208,11 +208,7 @@ class GroundTruth:
     # -- camera ------------------------------------------------------------
 
     def visible_pixels(self, name: str, camera: str, width: int, height: int) -> int:
-        """Pixels of free body *name* in a segmentation render of *camera* (occlusion-exact)."""
-        m = self._rt.world.model
-        geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] == self.bid[name]]
-        # ponytail: RGBDFrame.seg keeps the object id only (not its type), so a
-        # rendered site whose id equals one of these geom ids would count too; the
-        # scenes' few sites sit at ids far below the pickables' geoms.
-        seg = self._rt.render(camera, width, height, ("seg",)).seg
-        return int(np.isin(seg, geoms).sum()) if seg is not None else 0
+        """Pixels of free body *name* in a segmentation render of *camera* (occlusion-exact;
+        ``seg`` holds canonical body ids)."""
+        seg = self._rt.world.render(camera, width, height, ("seg",)).seg
+        return int((seg == self.bid[name]).sum())

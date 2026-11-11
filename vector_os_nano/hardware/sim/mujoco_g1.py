@@ -19,8 +19,8 @@ Architecture:
 Policy control loop (50 Hz, caller-stepped):
   - _step_batch() advances 10 physics steps (0.002 s each = 0.02 s) through the
     SimRuntime on the caller's thread (no stepper thread), then runs one policy
-    inference at that step boundary. Renders go through the runtime's ONE render
-    thread from a step-boundary copy.
+    inference at that step boundary. Renders go through the world's ONE render
+    thread from a copy of one instant.
   - Obs layout (47): [3 ang_vel, 3 gravity, 3 cmd, 12 q, 12 dq, 12 prev_act, 2 gait_phase].
     Exact match to spike_12dof_walk.py (proven correct).
 
@@ -680,12 +680,12 @@ class MuJoCoG1:
         )
 
         result = g1_lidar_scan(
-            m,
-            d,
+            self.runtime.world.raycast,
             pelvis_bid=off.pelvis_bid,
-            robot_geom_ids=off.robot_geom_ids,
+            robot_bodies=frozenset(int(m.geom_bodyid[g]) for g in off.robot_geom_ids),
             pos_lidar=pos_lidar,
             heading=heading,
+            timestamp=float(d.time),
         )
         self._last_scan = result
         self._last_pointcloud = result.points_3d
@@ -708,12 +708,12 @@ class MuJoCoG1:
         raise RuntimeError(f"Camera '{_SCENE_CAM_NAME}' not found. Available: {names}")
 
     def get_camera_frame(self, width: int = 640, height: int = 480) -> "np.ndarray":
-        """Render RGB from the g1_head_rgb camera (runtime render thread, any caller).
+        """Render RGB from the g1_head_rgb camera (the world's render thread, any caller).
 
         Returns (H, W, 3) uint8 numpy array in RGB order, at the requested size.
         """
         self._require_connection()
-        return self.runtime.render(self._cam_name, width, height, ("rgb",)).rgb
+        return self.runtime.world.render(self._cam_name, width, height, ("rgb",)).rgb
 
     def get_camera_pose(self) -> tuple[np.ndarray, np.ndarray]:
         """Return (cam_xpos, cam_xmat) for the g1_head_rgb camera.

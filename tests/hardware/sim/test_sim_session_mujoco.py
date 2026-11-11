@@ -88,7 +88,7 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
             p = agent._perception
             f = p.capture()
             assert f.rgb.shape == (240, 320, 3) and f.depth.shape == (240, 320)
-            assert (f.K.width, f.K.height) == (320, 240)
+            assert (f.K[0, 2], f.K[1, 2]) == (160, 120)
         if eid == "go2":
             assert agent._arm is None and agent._base._mj.model.nu == 12  # env ignored
             assert "explore: coverage (VECTOR_NAV_STACK unset)" in res.content

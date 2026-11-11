@@ -225,3 +225,22 @@ def test_gripper_is_holding_empty(sim):
 
 def test_gripper_get_force_returns_none(sim):
     assert sim["gripper"].get_force() is None
+
+
+# ---------------------------------------------------------------------------
+# Head camera: segmentation is canonical body ids; the self-mask is the arm's bodies
+# ---------------------------------------------------------------------------
+
+
+def test_self_mask_is_the_arm_subtree_by_body_id(sim):
+    go2 = sim["go2"]
+    scene = go2.runtime.world.scene
+    arm = scene.subtree(scene.body("piper_base_link"))
+    seg = go2.get_rgbd_frame(320, 240, ("seg",)).seg
+    assert seg.dtype == np.int32 and seg.min() >= -1 and seg.max() < scene.model.nbody  # body ids
+    assert np.array_equal(go2.self_mask(seg), np.isin(seg, sorted(arm)))
+    # the gripper's fingers are arm bodies, whatever their names; the trunk and a
+    # pickable are not (a geom-id mask would hit or miss them by numbering accident)
+    ids = [scene.body("piper_base_link"), scene.body("piper_link7"), scene.body("base_link"),
+           scene.body("pickable_bottle_green"), -1]
+    assert go2.self_mask(np.array([ids], np.int32)).tolist() == [[True, True, False, False, False]]

@@ -107,7 +107,7 @@ def test_rgbd_frames_honour_each_size_with_matching_intrinsics(flat_go2) -> None
     for w, h in ((320, 240), (640, 480)):
         f = flat_go2.get_rgbd_frame(w, h)
         assert f.rgb.shape == (h, w, 3) and f.depth.shape == (h, w)
-        assert (f.K.width, f.K.height, f.K.cx, f.K.cy) == (w, h, w / 2, h / 2)
+        assert (f.K[0, 2], f.K[1, 2]) == (w / 2, h / 2) and f.seg is None
         assert flat_go2.get_camera_frame(w, h).shape == (h, w, 3)
 
 

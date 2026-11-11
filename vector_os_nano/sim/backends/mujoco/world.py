@@ -6,7 +6,9 @@
 The world owns a private copy of the compiled ``MjModel`` (attach writes the weld
 anchor into ``eq_data``) and one ``MjData``. Commands live in ``data.ctrl``, so
 ``mj_step`` holds them across steps by construction. Renders run on one worker
-thread (a GL context is bound to its thread) from a copy taken under the lock.
+thread (a GL context is bound to its thread) and rays on a scratch copy, each from a
+state copied under the lock, so neither holds up the stepper. ``model`` / ``data`` are
+for MuJoCo-internal code only (the drivers under hardware/sim, on the runtime's thread).
 """
 from __future__ import annotations
 
@@ -61,6 +63,8 @@ class MuJoCoWorld:
         self._pool: ThreadPoolExecutor | None = ThreadPoolExecutor(1, thread_name_prefix="mujoco_render")
         self._renderers: dict[tuple[str, int, int], Any] = {}
         self._render_data: Any = None
+        self._ray_lock = threading.Lock()
+        self._ray_data = mj.MjData(m)
         self._viewer: Any = None
         self._synced = 0.0
         self.caller_thread_only = False
@@ -195,11 +199,16 @@ class MuJoCoWorld:
         dist = np.full(len(o), -1.0)
         geom = np.full(len(o), -1, dtype=np.int32)
         uniq, inv = np.unique(o, axis=0, return_inverse=True)
-        with self._lock:
+        with self._ray_lock:
+            d = self._ray_data
+            with self._lock:
+                d.qpos[:] = self.data.qpos
+                d.mocap_pos[:], d.mocap_quat[:] = self.data.mocap_pos, self.data.mocap_quat
+            mj.mj_kinematics(self.model, d)  # geom poses of exactly this q
             for k, origin in enumerate(uniq):  # one multi-ray per origin (a lidar has one)
                 idx = np.flatnonzero(inv.ravel() == k)
                 g, dd = np.empty(len(idx), dtype=np.int32), np.empty(len(idx))
-                mj.mj_multiRay(self.model, self.data, origin, v[idx].ravel(), None, 1, int(exclude_body),
+                mj.mj_multiRay(self.model, d, origin, v[idx].ravel(), None, 1, int(exclude_body),
                                g, dd, None, len(idx), mj.mjMAXVAL)
                 dist[idx], geom[idx] = dd, g
         hit = (dist >= 0) & (geom >= 0)
@@ -249,12 +258,37 @@ class MuJoCoWorld:
             sim_time=float(d.time), camera=camera,
         )
 
+    def warm_renderers(self, kinds: Sequence[str], sizes: Sequence[tuple[int, int]]) -> None:
+        """Create the renderers for every (kind, (width, height)) now, on the render thread.
+
+        Needed before a passive viewer opens under MUJOCO_GL=egl: an EGL context created
+        AFTER the viewer's GLFW/GLX init can never be made current (probed on an NVIDIA
+        box; contexts created before it keep working).
+        """
+        def job() -> None:
+            for w, h in sizes:
+                for kind in kinds:
+                    self._renderer(kind, int(w), int(h))
+
+        self._pool.submit(job).result()
+
     def _renderer(self, kind: str, w: int, h: int) -> Any:
+        """The cached offscreen renderer for (kind, w, h); render thread only."""
         r = self._renderers.get((kind, w, h))
         if r is None:
-            r = mj.Renderer(self.model, h, w)
+            try:
+                r = mj.Renderer(self.model, h, w)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"cannot create a {w}x{h} {kind} renderer ({exc}); with a viewer window open "
+                    f"under MUJOCO_GL=egl only the renderers created before it work: {sorted(self._renderers)}"
+                ) from exc
             if kind == "seg":
                 r.enable_segmentation_rendering()
+            else:
+                r.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
+            if kind == "rgb":
+                r.scene.flags[mj.mjtRndFlag.mjRND_REFLECTION] = True
             elif kind == "depth":
                 r.enable_depth_rendering()
             self._renderers[(kind, w, h)] = r

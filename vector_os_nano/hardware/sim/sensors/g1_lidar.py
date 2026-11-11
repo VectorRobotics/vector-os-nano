@@ -5,50 +5,44 @@
 
 Public surface:
 
-* :func:`g1_lidar_scan` — cast lidar rays from a given world position in a
-  MuJoCo model+data pair and return a :class:`~vector_os_nano.core.types.LaserScan`
-  with attached 3-D point-cloud diagnostics.  Behaviour is byte-for-byte identical
-  to the inline code that previously lived inside ``MuJoCoG1.get_lidar_scan``.
+* :func:`g1_lidar_scan` — cast lidar rays from a given world position through the
+  world's ``raycast`` and return a :class:`~vector_os_nano.core.types.LaserScan`
+  with attached 3-D point-cloud diagnostics.
 """
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
+from typing import Any, Callable
 
 import numpy as np
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = ["g1_lidar_scan"]
 
 
 def g1_lidar_scan(
-    model: Any,
-    data: Any,
+    raycast: Callable[..., tuple[np.ndarray, np.ndarray]],
     *,
     pelvis_bid: int,
-    robot_geom_ids: set[int],
+    robot_bodies: frozenset[int],
     pos_lidar: np.ndarray,
     heading: float,
+    timestamp: float,
 ) -> Any:
-    """Cast multi-elevation lidar rays from *pos_lidar* in a MuJoCo scene.
+    """Cast multi-elevation lidar rays from *pos_lidar* through the world's *raycast*.
 
-    Mirrors the ray-casting body of ``MuJoCoG1.get_lidar_scan`` exactly —
-    all numeric constants, the tilt, elevation rings, azimuth resolution,
-    ``mj_ray`` ``bodyexclude`` and self-filter logic are preserved unchanged.
+    All numeric constants, the tilt, elevation rings, azimuth resolution,
+    ``bodyexclude`` and self-filter logic are those of the original inline loop.
 
     Args:
-        model: ``mujoco.MjModel`` for the compiled scene.
-        data: ``mujoco.MjData`` for the current sim state.
-        pelvis_bid: Body id passed to ``mj_ray`` as *bodyexclude* (avoids
-            spurious self-hits through the pelvis capsule).
-        robot_geom_ids: Set of geom ids belonging to g1_* bodies; hits against
-            these are treated as self-hits and filtered from the 3-D point cloud
-            and the mid-ring range list.
+        raycast: ``PhysicsWorld.raycast`` of the running world.
+        pelvis_bid: Body the rays pass through (avoids spurious self-hits through
+            the pelvis capsule).
+        robot_bodies: The g1_* bodies; hits against these are treated as
+            self-hits and filtered from the 3-D point cloud and the mid-ring list.
         pos_lidar: ``(3,)`` float64 world position of the virtual lidar origin.
         heading: Robot yaw (radians), used to orient the azimuth sweep so that
             index 0 is behind the robot (``heading - 180 deg``).
+        timestamp: Sim time of the scan.
 
     Returns:
         A :class:`~vector_os_nano.core.types.LaserScan`-like object with all
@@ -73,12 +67,11 @@ def g1_lidar_scan(
     # see sensors/lidar_raycast.py). g1: tilt -10, max_range 15, mid-ring bound.
     # ------------------------------------------------------------------
     raw = raycast_lidar(
-        model,
-        data,
+        raycast,
         pos_lidar=pos_lidar,
         heading=heading,
         exclude_bid=pelvis_bid,
-        robot_geom_ids=robot_geom_ids,
+        robot_bodies=robot_bodies,
         tilt_deg=-10.0,
         elevations=elevations,
         n_azimuth=n_azimuth,
@@ -94,7 +87,7 @@ def g1_lidar_scan(
     # ------------------------------------------------------------------
     valid_ranges = [r for r in mid_ring_ranges if r < 15.0]
     scan = LaserScan(
-        timestamp=float(data.time),
+        timestamp=float(timestamp),
         angle_min=-math.pi,
         angle_max=math.pi,
         angle_increment=math.radians(360.0 / n_azimuth),

@@ -3,12 +3,12 @@
 
 """Equivalence tests for the shared lidar ray loop (STAGE 3a de-triplication).
 
-These pin that the extracted :func:`raycast_lidar` is BYTE-IDENTICAL to the two
-original inline loops it replaces.  Each test embeds a verbatim copy of the
-relevant original loop body (the g1 copy from ``g1_lidar.py`` and the go2 copy
-from ``mujoco_go2._update_lidar``) as a golden reference, runs it on the tiny
-inline MJCF at a fixed pose, and asserts the shared loop produces identical
-output.  No Go2 / g1 model is imported (sensor unit tests stay light per
+These pin that the extracted :func:`raycast_lidar` (one ``world.raycast`` call) is
+BYTE-IDENTICAL to the two original inline ``mj_ray`` loops it replaces.  Each test
+embeds a verbatim copy of the relevant original loop body (the g1 copy from
+``g1_lidar.py`` and the go2 copy from ``mujoco_go2._update_lidar``) as a golden
+reference, runs it on the tiny inline MJCF at a fixed pose, and asserts the shared
+loop produces identical output.  No Go2 / g1 model is imported (sensor unit tests stay light per
 ``feedback_no_parallel_agents``).
 """
 from __future__ import annotations
@@ -136,9 +136,9 @@ def _golden_go2(model, data, *, pos_lidar, heading, robot_body_id, robot_geom_id
 _G1_ELEVATIONS = sorted(set([0] + list(range(-8, 30, 3))))
 
 
-def test_raycast_lidar_matches_g1_golden(tiny_model_data):
+def test_raycast_lidar_matches_g1_golden(tiny_world):
     """Shared loop with g1 params == verbatim original g1 loop, byte-identical."""
-    model, data = tiny_model_data
+    model, data = tiny_world.model, tiny_world.data
     pos_lidar = np.array([0.0, 0.0, 1.5], dtype=np.float64)
     heading = 0.3  # arbitrary non-zero yaw to exercise the rotation math
 
@@ -147,9 +147,9 @@ def test_raycast_lidar_matches_g1_golden(tiny_model_data):
         pelvis_bid=-1, robot_geom_ids=set(),
     )
     result = raycast_lidar(
-        model, data,
+        tiny_world.raycast,
         pos_lidar=pos_lidar, heading=heading,
-        exclude_bid=-1, robot_geom_ids=set(),
+        exclude_bid=-1, robot_bodies=frozenset(),
         tilt_deg=-10.0, elevations=_G1_ELEVATIONS,
         n_azimuth=360, max_range=15.0,
         mid_ring_apply_max_range=True,
@@ -166,9 +166,9 @@ def test_raycast_lidar_matches_g1_golden(tiny_model_data):
 # ----------------------------------------------------------------------------
 # go2 params (tilt -20, elevations range(-8,53,2), max_range 12, NO mid bound)
 # ----------------------------------------------------------------------------
-def test_raycast_lidar_matches_go2_golden(tiny_model_data):
+def test_raycast_lidar_matches_go2_golden(tiny_world):
     """Shared loop with go2 params == verbatim original go2 loop, byte-identical."""
-    model, data = tiny_model_data
+    model, data = tiny_world.model, tiny_world.data
     pos_lidar = np.array([0.0, 0.0, 0.7], dtype=np.float64)
     heading = -0.7
 
@@ -177,9 +177,9 @@ def test_raycast_lidar_matches_go2_golden(tiny_model_data):
         robot_body_id=-1, robot_geom_ids=set(),
     )
     result = raycast_lidar(
-        model, data,
+        tiny_world.raycast,
         pos_lidar=pos_lidar, heading=heading,
-        exclude_bid=-1, robot_geom_ids=set(),
+        exclude_bid=-1, robot_bodies=frozenset(),
         tilt_deg=-20.0, elevations=list(range(-8, 53, 2)),
         n_azimuth=360, max_range=12.0,
         mid_ring_apply_max_range=False,
@@ -191,27 +191,26 @@ def test_raycast_lidar_matches_go2_golden(tiny_model_data):
     assert len(result.points_3d) > 0
 
 
-def test_go2_mid_ring_has_no_max_range_bound(tiny_model_data):
+def test_go2_mid_ring_has_no_max_range_bound(tiny_world):
     """Pin the subtle divergence: go2 mid-ring records ranges beyond max_range.
 
     With ``mid_ring_apply_max_range=False`` a hit farther than ``max_range``
     still produces a finite mid-ring entry (it is only excluded from the points
     cloud).  This is the exact go2 behaviour and MUST be preserved.
     """
-    model, data = tiny_model_data
     pos_lidar = np.array([0.0, 0.0, 0.7], dtype=np.float64)
     heading = 0.0
 
     # max_range deliberately tiny so the x=3 wall (~3 m ahead) is "beyond range".
     res_bounded = raycast_lidar(
-        model, data, pos_lidar=pos_lidar, heading=heading,
-        exclude_bid=-1, robot_geom_ids=set(),
+        tiny_world.raycast, pos_lidar=pos_lidar, heading=heading,
+        exclude_bid=-1, robot_bodies=frozenset(),
         tilt_deg=0.0, elevations=[0], n_azimuth=360, max_range=1.0,
         mid_ring_apply_max_range=True,
     )
     res_unbounded = raycast_lidar(
-        model, data, pos_lidar=pos_lidar, heading=heading,
-        exclude_bid=-1, robot_geom_ids=set(),
+        tiny_world.raycast, pos_lidar=pos_lidar, heading=heading,
+        exclude_bid=-1, robot_bodies=frozenset(),
         tilt_deg=0.0, elevations=[0], n_azimuth=360, max_range=1.0,
         mid_ring_apply_max_range=False,
     )
@@ -221,3 +220,20 @@ def test_go2_mid_ring_has_no_max_range_bound(tiny_model_data):
     # Walls are ~3 m away; bounded (1 m) sees none, unbounded sees them.
     assert finite_bounded == 0
     assert finite_unbounded > 0
+
+
+def test_self_hits_are_filtered_by_body_like_the_old_geom_set(tiny_world):
+    """The self-filter is by BODY now (world.raycast returns the hit body): the robot's
+    bodies filter exactly what the old geom-id set of those bodies filtered."""
+    model, data = tiny_world.model, tiny_world.data
+    pos_lidar = np.array([0.0, 0.0, 1.5], dtype=np.float64)
+    world_geoms = {g for g in range(model.ngeom) if model.geom_bodyid[g] == 0}
+    g_mid, g_pts, g_nz = _golden_g1(model, data, pos_lidar=pos_lidar, heading=0.3,
+                                    pelvis_bid=-1, robot_geom_ids=world_geoms)
+    result = raycast_lidar(
+        tiny_world.raycast, pos_lidar=pos_lidar, heading=0.3, exclude_bid=-1,
+        robot_bodies=frozenset({0}), tilt_deg=-10.0, elevations=_G1_ELEVATIONS,
+        n_azimuth=360, max_range=15.0, mid_ring_apply_max_range=True,
+    )
+    assert (result.mid_ring_ranges, result.points_3d, result.near_zero_self_hits) == (g_mid, g_pts, g_nz)
+    assert result.points_3d == [] and not any(math.isfinite(r) for r in result.mid_ring_ranges)

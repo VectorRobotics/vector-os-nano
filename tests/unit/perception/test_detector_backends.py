@@ -10,7 +10,7 @@ import pytest
 from vector_os_nano.core.types import Detection
 from vector_os_nano.perception.detector_capability import DetectorCapability
 from vector_os_nano.perception.rynnbrain import RynnBrainDetector, parse_reply
-from vector_os_nano.sim.runtime import RGBDFrame
+from vector_os_nano.interfaces.physics import RGBDFrame
 
 
 class _Det:

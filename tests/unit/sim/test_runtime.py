@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""SimRuntime: one PhysicsWorld owner, step-boundary mutations, atomic snapshots/renders."""
+"""SimRuntime: one PhysicsWorld owner, step-boundary mutations, atomic snapshots; renders
+of the world it steps observe one instant."""
 from __future__ import annotations
 
 import threading
@@ -17,9 +18,10 @@ from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: E402
 from vector_os_nano.sim.runtime import SimRuntime  # noqa: E402
 from vector_os_nano.sim.scene import compiled_scene  # noqa: E402
 
-# A camera on a mocap body that the controller drives to x = 2 * t (10 mm per 5 ms
-# tick), looking down +x at a wall whose near face is at x = 10. A frame whose
-# depth and pose came from different instants is off by >= one tick (10 mm).
+# A camera on a body that slides along x at a constant 2 m/s (the controller holds the
+# velocity), so x = 2 * t (10 mm per 5 ms tick), looking down +x at a wall whose near
+# face is at x = 10. A frame whose depth and pose came from different instants is off
+# by >= one tick (10 mm).
 _XML = """
 <mujoco>
   <option timestep="0.001"/>
@@ -27,17 +29,20 @@ _XML = """
     <light pos="0 0 5" dir="0 0 -1"/>
     <geom name="floor" type="plane" size="20 20 0.1"/>
     <geom name="wall" type="box" pos="10.05 0 1" size="0.05 5 5" rgba="1 0 0 1"/>
-    <body name="rig" mocap="true" pos="0 0 1">
-      <camera name="cam" xyaxes="0 -1 0 0 0 1" fovy="45"/>
-    </body>
     <body name="ball" pos="0 2 1">
       <freejoint/>
       <geom type="sphere" size="0.1"/>
+    </body>
+    <body name="rig" pos="0 0 1">
+      <joint name="rail" type="slide" axis="1 0 0"/>
+      <inertial pos="0 0 0" mass="1" diaginertia="0.01 0.01 0.01"/>
+      <camera name="cam" xyaxes="0 -1 0 0 0 1" fovy="45"/>
     </body>
   </worldbody>
 </mujoco>
 """
 _SPEED = 2.0
+_RAIL_QD = 6  # after the ball's 6 velocity slots
 
 
 @pytest.fixture(scope="module")
@@ -49,7 +54,7 @@ def scene(tmp_path_factory: pytest.TempPathFactory):
 
 def _runtime(scene, **kw) -> SimRuntime:
     def ctrl(w):  # the camera rig position is a pure function of sim time
-        w.data.mocap_pos[0, 0] = _SPEED * w.data.time
+        w.data.qvel[_RAIL_QD] = _SPEED
 
     kw.setdefault("substeps", 5)
     return SimRuntime(MuJoCoWorld(scene), controller=ctrl, name="test_rt", **kw)
@@ -68,27 +73,28 @@ def rt(scene):
 
 
 def test_four_threads_x1000_calls_while_stepping(rt) -> None:
-    """snapshot/render/submit hammering from 4 threads: no error, one stepper, monotonic time."""
+    """snapshot/render/submit hammering from 4 threads: no error, one stepper, monotonic
+    time (per source: a render observes the world, up to one tick ahead of the snapshot)."""
     errors: list[BaseException] = []
 
     def worker(k: int) -> None:
-        last = -1.0
+        last = {"snap": -1.0, "render": -1.0}
         try:
             for i in range(1000):
                 op = (i + k) % 3
                 if op == 0:
                     t = rt.snapshot().sim_time
-                    assert t >= last, (t, last)
-                    last = t
+                    assert t >= last["snap"], (t, last)
+                    last["snap"] = t
                 elif op == 1:
                     q = rt.call(lambda w: w.state()[0])
-                    assert q.shape == (7,)
+                    assert q.shape == (8,)
                     rt.submit(lambda w: w.data.qvel.__setitem__(slice(0, 3), 0.0))
                 else:
-                    f = rt.render("cam", 16, 12, ("rgb", "depth"))
+                    f = rt.world.render("cam", 16, 12, ("rgb", "depth"))
                     assert f.rgb.shape == (12, 16, 3) and f.depth.shape == (12, 16)
-                    assert f.sim_time >= last
-                    last = f.sim_time
+                    assert f.sim_time >= last["render"]
+                    last["render"] = f.sim_time
         except BaseException as exc:  # noqa: BLE001 — surfaced below
             errors.append(exc)
 
@@ -108,19 +114,10 @@ def test_rgbd_frame_fields_share_one_sim_time(rt) -> None:
     """Pose, depth and the frame stamp are of ONE instant, while the camera moves."""
     assert rt.wait_sim(0.05)
     for _ in range(20):
-        f = rt.render("cam", 64, 48, ("rgb", "depth"))
-        # the controller set x = 2 t at the start of the tick that ended at sim_time
-        assert f.cam_pos[0] == pytest.approx(_SPEED * (f.sim_time - rt.tick_dt), abs=1e-9)
+        f = rt.world.render("cam", 64, 48, ("rgb", "depth"))
+        assert f.cam_pos[0] == pytest.approx(_SPEED * f.sim_time, abs=1e-9)
         centre = float(f.depth[24, 32])
         assert centre == pytest.approx(10.0 - f.cam_pos[0], abs=5e-3)
-
-
-def test_render_honours_each_size_with_matching_intrinsics(rt) -> None:
-    for w, h in ((320, 240), (640, 480), (320, 240)):
-        f = rt.render("cam", w, h, ("rgb",))
-        assert f.rgb.shape == (h, w, 3)
-        assert (f.K.width, f.K.height) == (w, h)
-        assert f.K.fy == pytest.approx((h / 2) / np.tan(np.radians(45) / 2))
 
 
 def test_submit_is_applied_and_published_before_its_result(rt) -> None:
@@ -163,7 +160,7 @@ def test_pause_is_reference_counted_and_never_starts_a_second_stepper(rt) -> Non
 def test_close_fails_pending_work_and_stops_the_stepper(scene) -> None:
     r = _runtime(scene)
     r.start()
-    r.render("cam", 16, 12, ("rgb",))
+    r.world.render("cam", 16, 12, ("rgb",))
     with r.paused():
         pass
     r.close()
@@ -171,7 +168,7 @@ def test_close_fails_pending_work_and_stops_the_stepper(scene) -> None:
     with pytest.raises(RuntimeError):
         r.submit(lambda w: None).result(timeout=1)
     with pytest.raises(RuntimeError):
-        r.render("cam", 16, 12)
+        r.world.render("cam", 16, 12)  # the runtime closed its world
     r.close()  # idempotent
 
 
@@ -185,7 +182,7 @@ def _scripted_run(scene) -> np.ndarray:
         assert r.sim_time == t, "lockstep physics moved without being stepped"
         r.call(lambda w: w.data.qvel.__setitem__(slice(0, 3), [0.3, -0.2, 2.0]))
         assert r.wait_sim(0.4)
-        r.render("cam", 32, 24, ("rgb",))  # a render must not perturb the run
+        r.world.render("cam", 32, 24, ("rgb",))  # a render must not perturb the run
         r.step(17)
         return r.snapshot().q.copy()
     finally:

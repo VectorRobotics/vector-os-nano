@@ -20,15 +20,10 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
 * **Reads.** :meth:`snapshot` is the latest :class:`SimSnapshot` (``world.state()``
   and sim time of one instant), republished after every tick and every mutation;
   lock-free readers slice ``q`` / ``qd`` by the scene's canonical addresses.
-  :meth:`render` renders from a private ``mj_copyData`` copy taken at a step
-  boundary, so RGB, depth, segmentation and camera pose share one ``sim_time``.
+  Renders and rays go to the world itself (``world.render`` / ``world.raycast``,
+  callable from any thread: the backend copies the state it observes).
 * **Attachments.** Every change of ``world.attached()`` is logged with its sim
   time (:attr:`attach_log`), diffed at every publish.
-* **One render owner.** Every offscreen renderer is created, used and closed on
-  one worker thread: a GL (EGL/GLX) context stays bound to the live thread that
-  last used it, and any other thread then fails with EGL_BAD_ACCESS. Renderers
-  are cached per (kind, width, height), so a frame always has the size it was
-  asked for and its intrinsics are derived from that shape.
 * **Sim time.** :meth:`wait_sim` waits for SIM seconds, so a timed motion means
   the same thing at any real-time ratio.
 * **Actor epoch.** :data:`ACTOR_EPOCH` marks when commanded motion belongs to a
@@ -42,9 +37,9 @@ import logging
 import os
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -82,24 +77,6 @@ class SimSnapshot:
     step: int
     q: np.ndarray
     qd: np.ndarray
-
-
-@dataclass(frozen=True)
-class RGBDFrame:
-    """One camera frame; every field comes from the same ``sim_time``.
-
-    ``K`` is derived from the camera's ``fovy`` and the ACTUAL image shape.
-    ``depth`` is metres (float32), ``seg`` the per-pixel geom id (-1 = none).
-    """
-
-    rgb: np.ndarray | None
-    depth: np.ndarray | None
-    seg: np.ndarray | None
-    K: Any
-    cam_pos: np.ndarray
-    cam_mat: np.ndarray
-    sim_time: float
-    camera: str
 
 
 class ActorEpoch:
@@ -176,11 +153,6 @@ class SimRuntime:
         self.attach_log: collections.deque[tuple[float, int, int | None]] = collections.deque(maxlen=4096)
         self._attached = world.attached()
         self._snap = self._take_snapshot()
-        self._render_pool: ThreadPoolExecutor | None = ThreadPoolExecutor(
-            1, thread_name_prefix=f"{name}_render"
-        )
-        self._renderers: dict[tuple[str, int, int], Any] = {}
-        self._render_data: Any = None  # render-thread-owned scratch MjData
         self._rt_mark = (time.monotonic(), world.time())
         self._rt_ratio = 0.0
         self._pace_t = 0.0
@@ -204,8 +176,7 @@ class SimRuntime:
         self._thread.start()
 
     def close(self) -> None:
-        """Stop physics, fail pending mutations, close every renderer on its thread, then
-        the world. Idempotent."""
+        """Stop physics, fail pending mutations, then close the world. Idempotent."""
         self._stop.set()
         self._wake.set()
         t = self._thread
@@ -216,13 +187,6 @@ class SimRuntime:
                 return
             self._thread = None
         self._fail_pending()
-        pool, self._render_pool = self._render_pool, None
-        if pool is not None:
-            try:  # queued behind any in-flight render; closes each context on its thread
-                pool.submit(self._close_renderers).result()
-            except RuntimeError:  # atexit: interpreter shutdown already retired that thread
-                self._close_renderers()
-            pool.shutdown(wait=True)
         self.world.close()
         with self._published:
             self._published.notify_all()
@@ -364,106 +328,6 @@ class SimRuntime:
                     return False
                 self._published.wait(timeout=0.05)
         return True
-
-    # ------------------------------------------------------------------
-    # rendering
-    # ------------------------------------------------------------------
-
-    def render(
-        self,
-        camera: str,
-        width: int,
-        height: int,
-        kinds: Iterable[str] = ("rgb", "depth"),
-    ) -> RGBDFrame:
-        """Render *kinds* (rgb / depth / seg) of *camera* from ONE step-boundary copy."""
-        from vector_os_nano.perception.depth_projection import mujoco_intrinsics
-
-        kinds = tuple(kinds)
-        w, h = int(width), int(height)
-
-        model = self.world.model
-
-        def job() -> RGBDFrame:
-            import mujoco as mj
-
-            d = self._render_data
-            if d is None:
-                d = self._render_data = mj.MjData(model)
-            self.call(lambda w: mj.mj_copyData(d, w.model, w.data))
-            # Recompute every derived quantity from the copied state, so pose and
-            # pixels are of exactly d.time (live xpos lags qpos by one mj_step).
-            mj.mj_forward(model, d)
-            cam = model.cam(camera).id
-            out: dict[str, np.ndarray] = {}
-            for kind in kinds:
-                r = self._renderer(kind, w, h)
-                r.update_scene(d, camera=cam)
-                out[kind] = r.render().copy()
-            seg = out.get("seg")
-            return RGBDFrame(
-                rgb=out.get("rgb"),
-                depth=out["depth"].astype(np.float32) if "depth" in out else None,
-                seg=seg[:, :, 0] if seg is not None and seg.ndim == 3 else seg,
-                K=mujoco_intrinsics(w, h, vfov_deg=float(model.cam_fovy[cam])),
-                cam_pos=d.cam_xpos[cam].copy(),
-                cam_mat=d.cam_xmat[cam].copy(),
-                sim_time=float(d.time),
-                camera=camera,
-            )
-
-        pool = self._render_pool
-        if pool is None:
-            raise RuntimeError(f"{self.name}: runtime closed")
-        return pool.submit(job).result()
-
-    def warm_renderers(self, kinds: Iterable[str], sizes: Iterable[tuple[int, int]]) -> None:
-        """Create the renderers for every (kind, size) now, on the render thread.
-
-        Needed before a passive viewer opens under MUJOCO_GL=egl: an EGL context
-        created AFTER the viewer's GLFW/GLX init can never be made current (probed
-        on this NVIDIA box; contexts created before it keep working).
-        """
-        def job() -> None:
-            for w, h in sizes:
-                for kind in kinds:
-                    self._renderer(kind, int(w), int(h))
-
-        self._render_pool.submit(job).result()
-
-    def _renderer(self, kind: str, width: int, height: int) -> Any:
-        """The cached offscreen renderer for (kind, width, height); render thread only."""
-        key = (kind, width, height)
-        r = self._renderers.get(key)
-        if r is None:
-            import mujoco as mj
-
-            try:
-                r = mj.Renderer(self.world.model, height, width)
-            except RuntimeError as exc:
-                raise RuntimeError(
-                    f"{self.name}: cannot create a {width}x{height} {kind} renderer ({exc}); "
-                    f"with a viewer window open under MUJOCO_GL=egl only the renderers "
-                    f"created before it work: {sorted(self._renderers)}"
-                ) from exc
-            if kind == "seg":
-                r.enable_segmentation_rendering()
-            else:
-                r.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
-            if kind == "rgb":
-                r.scene.flags[mj.mjtRndFlag.mjRND_REFLECTION] = True
-            elif kind == "depth":
-                r.enable_depth_rendering()
-            self._renderers[key] = r
-        return r
-
-    def _close_renderers(self) -> None:
-        for r in self._renderers.values():
-            try:
-                r.close()
-            except Exception:  # noqa: BLE001
-                pass
-        self._renderers.clear()
 
     # ------------------------------------------------------------------
     # internals (callers hold self.lock)
