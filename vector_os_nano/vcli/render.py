@@ -73,12 +73,12 @@ def _lifecycle_lines(entries: list[dict[str, Any]]) -> list[str]:
             if r.get("tool_use_id") in ids and r.get("content")]
 
 
-def print_banner(model: str, provider: str, agent: Any = None) -> None:
+def print_banner(creds: Any, agent: Any = None) -> None:
     """Print the startup banner: name, version, model, provider and the body."""
     console.print()
     console.print(f"[bold {TEAL}]Vector OS Nano[/] [dim]v{VERSION}[/]")
 
-    info_parts = [f"Model: {model}", f"Provider: {provider}"]
+    info_parts = [f"Model: {creds.model}", f"Provider: {creds.provider}"]
     if agent is not None:
         arm = getattr(agent, "_arm", None)
         base = getattr(agent, "_base", None)
@@ -149,24 +149,6 @@ def _setup_explore_events(console: Any) -> None:
                 _out(f"  >> Exploration {reason} — {len(rooms)} rooms.")
 
     set_event_callback(_on_explore_event)
-
-
-def _provider_display(api_key: str, provider: str, base_url: str | None) -> str:
-    """The banner's provider label (the auth source for a Claude subscription)."""
-    from vector_os_nano.vcli.config import load_claude_oauth
-
-    oauth = load_claude_oauth()
-    if oauth and api_key == oauth.get("accessToken"):
-        return f"Claude {oauth.get('subscriptionType', 'auth')}"
-    if provider == "openrouter":
-        return "OpenRouter"
-    if base_url and "deepseek" in base_url:
-        return "DeepSeek"
-    if provider == "openai_compat":
-        return "OpenAI-compatible"
-    if base_url and "localhost" in base_url:
-        return f"Local ({base_url})"
-    return "Anthropic"
 
 
 def render_turn(console: Any, engine: Any, trace: Any, answer: str, entries: list[dict[str, Any]]) -> None:

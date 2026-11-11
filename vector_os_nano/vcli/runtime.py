@@ -34,11 +34,12 @@ class Runtime:
     """What a face holds: the engine, the session and the shared app state.
 
     ``app_state`` is the mutable binding the tools see (``agent``, ``registry``,
-    ``engine``, ``sim_session``, ``scene_graph``, ``skill_registry``, ``model``,
-    ``provider``, ``api_key``, ``base_url``); ``bind_body`` keeps it current.
+    ``engine``, ``sim_session``, ``scene_graph``, ``skill_registry``,
+    ``credentials``); ``bind_body`` and ``switch_llm`` keep it current. The engine
+    has no backend while the provider's key is missing.
     """
 
-    engine: VectorEngine | None
+    engine: VectorEngine
     session: Session
     app_state: dict[str, Any]
 
@@ -55,8 +56,9 @@ def _stderr(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def make_backend(*, provider: str, api_key: str, model: str, base_url: str | None) -> Any:
-    """The LLM backend, with the deterministic test seam.
+def make_backend(creds: Any) -> Any:
+    """The LLM backend for *creds* (None while its key is missing), with the
+    deterministic test seam.
 
     ``VECTOR_FAKE_LLM_TOOLS=<json-path>`` replaces the network model with a script
     replay (``tests/harness/fake_backend.py``); every tool, verify, permission and
@@ -70,7 +72,26 @@ def make_backend(*, provider: str, api_key: str, model: str, base_url: str | Non
         from tests.harness.fake_backend import FakeToolScriptBackend
 
         return FakeToolScriptBackend.from_json_file(tools_path)
-    return create_backend(provider=provider, api_key=api_key, model=model, base_url=base_url)
+    if not creds.api_key:
+        return None
+    return create_backend(provider=creds.provider, api_key=creds.api_key, model=creds.model,
+                          base_url=creds.base_url)
+
+
+def switch_llm(app_state: dict[str, Any], creds: Any) -> bool:
+    """Point the runtime at *creds*' model: the backend, then everything that holds it
+    (the engine is re-bound, so the world's capabilities get the new backend too).
+
+    False, and nothing changed, when *creds* has no key.
+    """
+    backend = make_backend(creds)
+    if backend is None:
+        return False
+    engine = app_state["engine"]
+    engine._backend = backend
+    engine.bind(engine._agent, engine._world)
+    app_state["credentials"] = creds
+    return True
 
 
 def build_registry() -> Any:
@@ -142,9 +163,9 @@ def _open_session(resume: str | None, metadata: dict[str, Any], notice: Callable
 
 def build_runtime(
     *,
+    provider: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
-    api_key: str | None = None,
     embodiment: str | None = None,
     gui: bool = True,
     agent: Any = None,
@@ -157,33 +178,25 @@ def build_runtime(
 
     Credentials -> the body (``embodiment`` starts a sim; ``agent`` is a body the
     caller already built) -> the tool registry -> the session -> the engine, bound
-    to the body and its world. With no key there is no engine (a face says so). A
-    sim start or bind failure raises; the caller reports it.
+    to the body and its world. With no key the engine has no backend and ONE
+    instruction names the variable to set. A sim start or bind failure raises; the
+    caller reports it.
     """
     from vector_os_nano.vcli.config import resolve_credentials
 
-    api_key, provider, model, base_url = resolve_credentials(
-        cli_api_key=api_key, cli_base_url=base_url, cli_model=model,
-    )
-    if not api_key:
-        notice("No API key configured.")
-        notice("  /login claude     auto-detect Claude Code subscription")
-        notice("  /login anthropic  enter Anthropic API key")
-        notice("  /login openrouter enter OpenRouter key\n")
+    creds = resolve_credentials(provider, model, base_url)
+    if creds.notice:
+        notice(creds.notice)
+    backend = make_backend(creds)
+    if backend is None:
+        notice(creds.instruction())
 
     sim_session = start_sim(embodiment, gui=gui, notice=notice) if embodiment else None
     registry = build_registry()
-    session = _open_session(resume, {"model": model, "face": face}, notice)
-    engine = None
-    if api_key:
-        engine = VectorEngine(
-            backend=make_backend(provider=provider, api_key=api_key, model=model, base_url=base_url),
-            registry=registry, permissions=PermissionContext(no_permission=no_permission),
-        )
-    app_state: dict[str, Any] = {
-        "registry": registry, "engine": engine, "model": model, "provider": provider,
-        "api_key": api_key, "base_url": base_url,
-    }
+    session = _open_session(resume, {"model": creds.model, "face": face}, notice)
+    engine = VectorEngine(backend=backend, registry=registry,
+                          permissions=PermissionContext(no_permission=no_permission))
+    app_state: dict[str, Any] = {"registry": registry, "engine": engine, "credentials": creds}
     try:
         bind_body(app_state, sim_session, agent)
     except BaseException:

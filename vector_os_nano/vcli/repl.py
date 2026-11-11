@@ -30,7 +30,7 @@ from rich.markup import escape
 from rich.prompt import Prompt
 
 from vector_os_nano.vcli.cognitive import abort as _abort
-from vector_os_nano.vcli.render import TEAL, _provider_display, console, print_banner, render_turn
+from vector_os_nano.vcli.render import TEAL, console, print_banner, render_turn
 from vector_os_nano.vcli.runtime import flush, run_turn
 from vector_os_nano.vcli.slash import EXIT_COMMANDS, VectorCompleter, _handle_slash_command
 
@@ -319,8 +319,7 @@ def run_repl(rt: Any) -> None:
     """The bare ``vector-cli`` REPL over *rt*: read a line, run it, render it; until quit."""
     engine, session, registry, app_state = rt.engine, rt.session, rt.registry, rt.app_state
 
-    print_banner(app_state["model"], _provider_display(app_state["api_key"], app_state["provider"],
-                                                       app_state["base_url"]), rt.agent)
+    print_banner(app_state["credentials"], rt.agent)
     console.print(f"[dim]Session: {session.session_id}[/dim]\n")
 
     # REPL setup
@@ -329,7 +328,7 @@ def run_repl(rt: Any) -> None:
 
     def _get_toolbar() -> HTML:
         agent_now = app_state.get("agent")
-        current_model = app_state.get("model", "?")
+        current_model = app_state["credentials"].model
         parts: list[str] = [f"<b>V</b>"]
         arm_now = getattr(agent_now, "_arm", None) if agent_now else None
         base_now = getattr(agent_now, "_base", None) if agent_now else None
@@ -411,8 +410,8 @@ def run_repl(rt: Any) -> None:
                 continue
 
             # ---- Engine turn ----
-            if engine is None:
-                console.print(f"[yellow]No API key. Use /login to authenticate first.[/]")
+            if engine._backend is None:
+                console.print(f"[yellow]{escape(app_state['credentials'].instruction())}[/]")
                 continue
 
             # P0 stop: the REGISTERED stop skill's own words, before the producer —

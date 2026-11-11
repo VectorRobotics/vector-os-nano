@@ -42,9 +42,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Suppress the MuJoCo viewer window (default: window opens when --sim is active)",
     )
-    parser.add_argument("--model", default=None, help="Model to use (overrides config; default reads ~/.vector/config.yaml)")
+    from vector_os_nano.vcli.config import PROVIDERS
+    parser.add_argument(
+        "--provider", default=None, choices=sorted(PROVIDERS),
+        help="LLM provider (overrides llm.provider in ~/.vector/config.yaml; default deepseek). "
+        "Its key is read from the environment or .env, never from a flag",
+    )
+    parser.add_argument("--model", default=None, help="Model to use (overrides llm.model in ~/.vector/config.yaml)")
     parser.add_argument("--resume", nargs="?", const="latest", default=None, help="Resume session")
-    parser.add_argument("--api-key", default=None, help="API key (or set ANTHROPIC_API_KEY / OPENROUTER_API_KEY)")
     parser.add_argument("--base-url", default=None, help="API base URL")
     parser.add_argument("--no-permission", action="store_true", help="Allow all tools without prompts")
     parser.add_argument("--verbose", action="store_true", help="Debug logging")
@@ -201,7 +206,7 @@ def _ensure_sigint_under_mjpython() -> None:
 def _build(args: Any, face: str) -> Any:
     """The face's runtime (``build_runtime``) from the parsed flags; notices on the console."""
     rt = build_runtime(
-        model=args.model, base_url=args.base_url, api_key=args.api_key,
+        provider=args.provider, model=args.model, base_url=args.base_url,
         embodiment=_requested_embodiment(args), gui=not args.headless,
         no_permission=args.no_permission, resume=args.resume, face=face,
         notice=lambda msg: console.print(f"[dim]{escape(msg)}[/dim]"),
@@ -249,9 +254,9 @@ def run_one_turn(args: Any) -> int:
         return _emit(VerdictReport.no_trace(goal=prompt, error=str(exc)))
 
     engine = rt.engine
-    if engine is None:
-        console.print("[yellow]No API key. Use /login to authenticate first.[/]")
-        return _emit(VerdictReport.no_trace(goal=prompt, error="no engine (no API key)"))
+    if engine._backend is None:
+        key_env = rt.app_state["credentials"].key_env
+        return _emit(VerdictReport.no_trace(goal=prompt, error=f"no LLM: {key_env} is not set"))
 
     # P0 stop: the registered stop skill's words, no LLM call.
     if engine.is_stop(prompt):

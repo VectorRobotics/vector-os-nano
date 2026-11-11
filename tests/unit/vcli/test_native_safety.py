@@ -429,7 +429,8 @@ def _p_turn(monkeypatch, capsys, trace: Any, answer: str = "") -> tuple[int, dic
 
     from vector_os_nano.vcli.runtime import Runtime
 
-    engine = SimpleNamespace(_agent=None, is_stop=lambda t: False, run_turn_native=run_turn_native)
+    engine = SimpleNamespace(_agent=None, _backend=object(), is_stop=lambda t: False,
+                             run_turn_native=run_turn_native)
     monkeypatch.setattr(cli, "_build",
                         lambda args, face: Runtime(engine=engine, session=_session(), app_state={}))
     monkeypatch.setattr(render.console, "file", open(os.devnull, "w"))

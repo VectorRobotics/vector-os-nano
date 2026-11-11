@@ -11,12 +11,12 @@ from typing import Any
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.markup import escape
 from rich.table import Table
 
 from vector_os_nano.core.run_dir import run_path
-from vector_os_nano.vcli.backends import create_backend
 from vector_os_nano.vcli.render import TEAL, V_LABEL, console
+from vector_os_nano.vcli.runtime import switch_llm
 from vector_os_nano.vcli.session import Session, list_sessions
 from vector_os_nano.vcli.tools import ToolRegistry
 
@@ -41,7 +41,7 @@ KNOWN_MODELS: list[str] = [
 # Slash command definitions: (name, description, has_args)
 SLASH_COMMANDS: list[tuple[str, str, bool]] = [
     ("help", "Show all commands and shortcuts", False),
-    ("login", "Set up API key (Anthropic or OpenRouter)", True),
+    ("login", "Re-read the API key from the environment / .env", False),
     ("model", "Show or switch model  (/model <name>)", True),
     ("config", "Show saved configuration", False),
     ("tools", "List all registered tools", False),
@@ -143,85 +143,28 @@ def _handle_slash_command(
         return False
 
     elif cmd == "login":
-        from vector_os_nano.vcli.config import load_config, save_config
-        provider_choice = args_rest[0] if args_rest else None
-        if provider_choice not in ("claude", "anthropic", "openrouter", None):
-            console.print(f"[yellow]  Usage: /login claude | /login anthropic | /login openrouter[/]")
-            return True
-
-        if provider_choice is None:
-            console.print(f"\n[bold {TEAL}]Authentication:[/]")
-            console.print()
-            console.print(f"  [{TEAL}]/login claude[/]      Log in with Claude subscription (opens browser)")
-            console.print(f"  [{TEAL}]/login anthropic[/]   Enter Anthropic API key manually")
-            console.print(f"  [{TEAL}]/login openrouter[/]  Enter OpenRouter key (multi-model)")
-            console.print()
-            console.print("[dim]  /login claude gives V its own rate limit pool, independent of Claude Code.[/dim]\n")
-            return True
-
-        config = load_config()
-
-        if provider_choice == "claude":
-            from vector_os_nano.vcli.oauth import login_oauth
-            console.print(f"\n[bold {TEAL}]Claude subscription login[/]")
-            console.print("[dim]  Opening browser for authentication...[/dim]\n")
-            creds = login_oauth()
-            if creds:
-                console.print(f"[green]  Authenticated.[/] Token saved to ~/.vector/oauth_credentials.json")
-                console.print(f"[dim]  Restart vector-cli to use your subscription.[/dim]\n")
-            else:
-                console.print("[red]  Authentication failed or timed out.[/]")
-                console.print("[dim]  Make sure you have an active Claude subscription.[/dim]\n")
-
-        elif provider_choice == "anthropic":
-            console.print(f"\n[bold {TEAL}]Anthropic API key[/]")
-            console.print("[dim]  Get your key at: https://console.anthropic.com/settings/keys[/dim]\n")
-            key = Prompt.ask("  API key (sk-ant-...)")
-            if key.strip():
-                config["anthropic_api_key"] = key.strip()
-                config["provider"] = "anthropic"
-                save_config(config)
-                console.print(f"[green]  Saved.[/] Restart vector-cli to apply.")
-            else:
-                console.print("[dim]  Cancelled.[/dim]")
-
-        elif provider_choice == "openrouter":
-            console.print(f"\n[bold {TEAL}]OpenRouter API key[/]")
-            console.print("[dim]  Get your key at: https://openrouter.ai/keys[/dim]\n")
-            key = Prompt.ask("  API key (sk-or-...)")
-            if key.strip():
-                config["openrouter_api_key"] = key.strip()
-                config["provider"] = "openrouter"
-                config["base_url"] = "https://openrouter.ai/api/v1"
-                save_config(config)
-                console.print(f"[green]  Saved.[/] Restart vector-cli to apply.")
-            else:
-                console.print("[dim]  Cancelled.[/dim]")
+        # Keys live only in the environment: re-read .env and the environment for the
+        # current provider's variable; nothing is typed here.
+        from vector_os_nano.vcli.config import resolve_credentials
+        cur = app_state["credentials"]
+        creds = resolve_credentials(cur.provider, cur.model, cur.base_url)
+        if switch_llm(app_state, creds):
+            console.print(f"  [green]{creds.key_env} found.[/] Using [{TEAL}]{creds.provider} / {creds.model}[/]")
+        else:
+            console.print(f"[yellow]  {escape(creds.instruction())}[/]")
 
     elif cmd == "config":
-        from vector_os_nano.vcli.config import load_config, load_claude_oauth, _CONFIG_PATH
-        config = load_config()
-        oauth = load_claude_oauth()
+        from vector_os_nano.vcli.config import _CONFIG_PATH
+        creds = app_state["credentials"]
         console.print()
         tbl = Table(show_header=False, box=None, padding=(0, 2))
         tbl.add_column(style="dim", no_wrap=True)
         tbl.add_column()
         tbl.add_row("Config", f"[dim]{_CONFIG_PATH}[/dim]")
-        # Claude Code OAuth
-        if oauth:
-            sub = oauth.get("subscriptionType", "?")
-            tbl.add_row("Claude auth", f"[green]{sub} (auto-detected from Claude Code)[/]")
-        else:
-            tbl.add_row("Claude auth", "[dim]not found[/]")
-        # API keys
-        ak = config.get("anthropic_api_key", "")
-        ok = config.get("openrouter_api_key", "")
-        tbl.add_row("Anthropic key", f"[green]{ak[:8]}...{ak[-4:]}[/]" if len(ak) > 12 else "[dim]not set[/]")
-        tbl.add_row("OpenRouter key", f"[green]{ok[:8]}...{ok[-4:]}[/]" if len(ok) > 12 else "[dim]not set[/]")
-        # Active
-        active_provider = (app_state or {}).get("provider", config.get("provider", "?"))
-        active_model = (app_state or {}).get("model", config.get("model", "?"))
-        tbl.add_row("Active", f"[{TEAL}]{active_provider} / {active_model}[/]")
+        tbl.add_row("Provider", f"[{TEAL}]{creds.provider}[/]")
+        tbl.add_row("Model", f"[{TEAL}]{creds.model}[/]")
+        tbl.add_row("Base URL", str(creds.base_url or "(provider default)"))
+        tbl.add_row("Key", f"{creds.key_env} " + ("[green]set[/]" if creds.api_key else "[yellow]not set[/]"))
         console.print(tbl)
         console.print()
 
@@ -380,72 +323,27 @@ def _handle_slash_command(
             console.print(f"[yellow]  Failed to send reset: {_exc}[/]")
 
     elif cmd == "model":
+        from vector_os_nano.vcli.config import PROVIDERS, resolve_credentials
+        cur = app_state["credentials"]
         if not args_rest:
-            current = app_state.get("model", "unknown") if app_state else "unknown"
-            console.print(f"  [{TEAL}]{current}[/]")
-            console.print(f"[dim]  /model <name> to switch. Tab for suggestions.[/dim]")
+            console.print(f"  [{TEAL}]{cur.provider} / {cur.model}[/]")
+            console.print("[dim]  /model <model>  or  /model <provider> [<model>]. Tab for suggestions.[/dim]")
         else:
-            new_model = args_rest[0]
-            if app_state is None:
-                console.print("[yellow]No app state.[/]")
+            if args_rest[0] in PROVIDERS:  # a provider switch: its key variable, its defaults
+                creds = resolve_credentials(args_rest[0], args_rest[1] if len(args_rest) > 1 else None)
             else:
-                prov = app_state["provider"]
-                api_key = app_state["api_key"]
-
-                # Auto-detect provider from model name
-                # "openai/gpt-4o", "google/gemini-*", "meta-llama/*" → openrouter
-                # "claude-*" without prefix → anthropic (if current provider)
-                if "/" in new_model and prov == "anthropic":
-                    # Model has provider prefix → switch to OpenRouter
-                    prov = "openrouter"
-                    # Use OpenRouter API key (from config or env)
-                    import os
-                    or_key = os.environ.get("OPENROUTER_API_KEY", "")
-                    if not or_key:
-                        try:
-                            from vector_os_nano.vcli.config import load_config as _lc
-                            or_key = _lc().get("openrouter_api_key", "")
-                        except Exception:
-                            pass
-                    if not or_key:
-                        # Try user.yaml
-                        try:
-                            import yaml
-                            cfg_path = os.path.join(os.path.dirname(os.path.dirname(
-                                os.path.dirname(os.path.abspath(__file__))
-                            )), "config", "user.yaml")
-                            with open(cfg_path) as f:
-                                cfg = yaml.safe_load(f)
-                            or_key = cfg.get("llm", {}).get("api_key", "")
-                        except Exception:
-                            pass
-                    if or_key:
-                        api_key = or_key
-                    else:
-                        console.print("[yellow]  No OpenRouter API key found (set OPENROUTER_API_KEY)[/]")
-                        return True
-                elif prov == "anthropic" and "/" in new_model:
-                    new_model = new_model.split("/", 1)[1]
-                elif prov == "openrouter" and "/" not in new_model:
-                    new_model = f"anthropic/{new_model}"
-
-                new_backend = create_backend(
-                    provider=prov,
-                    api_key=api_key,
-                    model=new_model,
-                    base_url=app_state.get("base_url"),
-                )
-                app_state["engine"]._backend = new_backend
-                app_state["model"] = new_model
-                app_state["provider"] = prov
-                console.print(f"  Switched to [{TEAL}]{new_model}[/] ({prov})")
+                creds = resolve_credentials(cur.provider, args_rest[0], cur.base_url)
+            if switch_llm(app_state, creds):
+                console.print(f"  Switched to [{TEAL}]{creds.model}[/] ({creds.provider})")
+            else:
+                console.print(f"[yellow]  {escape(creds.instruction())}[/]")
 
     elif cmd == "status":
         agent = (app_state or {}).get("agent")
         arm = getattr(agent, "_arm", None) if agent else None
         base = getattr(agent, "_base", None) if agent else None
         perc = getattr(agent, "_perception", None) if agent else None
-        current_model = (app_state or {}).get("model", "unknown")
+        current_model = app_state["credentials"].model
         tool_count = len(registry.list_tools())
         msg_count = len(session._entries) if session else 0
 

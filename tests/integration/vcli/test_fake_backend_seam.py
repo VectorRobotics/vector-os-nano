@@ -24,6 +24,9 @@ from unittest.mock import patch
 import pytest
 
 from vector_os_nano.vcli.backends import LLMBackend
+from vector_os_nano.vcli.config import Credentials
+
+_CREDS = Credentials(provider="anthropic", model="m", base_url=None, key_env="ANTHROPIC_API_KEY", api_key="k")
 
 
 @pytest.mark.cli_main
@@ -39,9 +42,7 @@ def test_absent_env_uses_real_create_backend(
 
     sentinel = object()
     with patch.object(backends, "create_backend", return_value=sentinel) as real:
-        out = runtime.make_backend(
-            provider="anthropic", api_key="k", model="m", base_url=None
-        )
+        out = runtime.make_backend(_CREDS)
     real.assert_called_once_with(provider="anthropic", api_key="k", model="m", base_url=None)
     assert out is sentinel
 
@@ -54,9 +55,7 @@ def test_present_env_uses_the_tool_script_backend(tmp_path: Path, monkeypatch: p
     from vector_os_nano.vcli import backends, runtime
 
     with patch.object(backends, "create_backend") as real:
-        backend = runtime.make_backend(
-            provider="anthropic", api_key="k", model="m", base_url=None
-        )
+        backend = runtime.make_backend(_CREDS)
     real.assert_not_called()
     from tests.harness.fake_backend import FakeToolScriptBackend
 
