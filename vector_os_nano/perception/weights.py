@@ -15,7 +15,9 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
+from unittest import mock
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,22 @@ def resolve(ws: tuple[Weights, ...]) -> list[str]:
     if missing:
         _fetch(missing)
     return [cached_dir(w) or _moved(w) for w in ws]
+
+
+@contextmanager
+def loading(ws: tuple[Weights, ...]):
+    """:func:`resolve` *ws*, then hold the hub offline while the library loads them.
+
+    Everything the load reads is then cached, yet transformers still asks the hub on
+    its own (EdgeTAM builds a default config, which looks up the timm backbone by
+    "main", whenever a config is printed or diffed): offline, it reads the cache.
+    """
+    from huggingface_hub import constants
+
+    paths = resolve(ws)
+    # ponytail: process-wide for the load's duration; a hub call on another thread meanwhile reads the cache only.
+    with mock.patch.object(constants, "HF_HUB_OFFLINE", True):
+        yield paths
 
 
 def local_dir(w: Weights) -> str:

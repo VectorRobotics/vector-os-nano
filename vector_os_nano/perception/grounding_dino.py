@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 
 from vector_os_nano.core.types import Detection
-from vector_os_nano.perception.weights import Weights, resolve
+from vector_os_nano.perception.weights import Weights, loading
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +111,13 @@ class GroundingDinoDetector:
                 "Install with: pip install torch transformers"
             ) from exc
 
-        path, = resolve(self.WEIGHTS)  # raises WeightsUnavailable with the pre-fetch command
         self._torch = torch
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info("[GDINO] loading %s on %s", self.WEIGHTS[0], self._device)
-        self._processor = AutoProcessor.from_pretrained(path)
-        self._model = AutoModelForZeroShotObjectDetection.from_pretrained(path).to(self._device).eval()
+        # raises WeightsUnavailable with the pre-fetch command
+        with loading(self.WEIGHTS) as (path,):
+            logger.info("[GDINO] loading %s on %s", self.WEIGHTS[0], self._device)
+            self._processor = AutoProcessor.from_pretrained(path)
+            self._model = AutoModelForZeroShotObjectDetection.from_pretrained(path).to(self._device).eval()
         logger.info("[GDINO] loaded on %s", self._device)
 
     # --- detection -----------------------------------------------------------

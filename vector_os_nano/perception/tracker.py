@@ -27,7 +27,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from vector_os_nano.perception.weights import Weights, resolve
+from vector_os_nano.perception.weights import Weights, loading
 
 logger = logging.getLogger(__name__)
 
@@ -97,10 +97,11 @@ class EdgeTAMTracker:
 
         self._dtype = self._select_dtype(self._device, torch)
 
-        path, _backbone = resolve(self.WEIGHTS)  # raises WeightsUnavailable with the pre-fetch command
-        logger.info("Loading EdgeTAM %s on %s", self.WEIGHTS[0], self._device)
-        self._processor = Sam2VideoProcessor.from_pretrained(path)
-        self._model = EdgeTamVideoModel.from_pretrained(path).to(self._device, dtype=self._dtype)
+        # raises WeightsUnavailable with the pre-fetch command
+        with loading(self.WEIGHTS) as (path, _backbone):
+            logger.info("Loading EdgeTAM %s on %s", self.WEIGHTS[0], self._device)
+            self._processor = Sam2VideoProcessor.from_pretrained(path)
+            self._model = EdgeTamVideoModel.from_pretrained(path).to(self._device, dtype=self._dtype)
         self._model.eval()
         self._loaded = True
         logger.info("EdgeTAM loaded")

@@ -148,14 +148,12 @@ def test_a_failed_fetch_is_one_honest_error(hub, monkeypatch) -> None:
 
 def test_the_models_load_from_the_resolved_snapshot_or_raise(monkeypatch) -> None:
     pytest.importorskip("transformers")
-    from vector_os_nano.perception import grounding_dino, tracker
-
     def unavailable(ws):
         raise weights.WeightsUnavailable(f"{ws[0]} unavailable")
 
-    for mod, load in ((grounding_dino, lambda: GroundingDinoDetector()._ensure_loaded()),
-                      (tracker, lambda: EdgeTAMTracker()._load_model())):
-        monkeypatch.setattr(mod, "resolve", unavailable)
+    monkeypatch.setattr(weights, "resolve", unavailable)
+    for load in (lambda: GroundingDinoDetector()._ensure_loaded(),
+                 lambda: EdgeTAMTracker()._load_model()):
         with pytest.raises(weights.WeightsUnavailable):
             load()
 
@@ -184,3 +182,31 @@ def test_nothing_in_the_package_writes_the_offline_flags() -> None:
     assert hits == []
     for legacy in ("VECTOR_MODEL_DIR", "vector_os/models", '"vector_os" / "models"'):
         assert not [p for p in pkg.rglob("*.py") if legacy in p.read_text(encoding="utf-8")], legacy
+
+
+def test_a_real_cached_load_opens_no_socket_with_the_offline_flag_unset(monkeypatch) -> None:
+    """Cached means no network, also inside transformers (EdgeTAM's default vision config
+    asks the hub for the timm backbone by "main" every time a config is printed or diffed)."""
+    pytest.importorskip("transformers")
+    import socket
+
+    import torch
+
+    if weights.status(weights.default_stack()) != "cached":
+        pytest.skip("the default perception weights are not in the Hugging Face cache")
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", False)  # as an unset env reads
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)  # cpu: leave the GPU alone
+    attempts = []
+
+    def blocked(*args, **_kw):
+        attempts.append(args[:1])
+        raise OSError("network blocked by the test")
+
+    monkeypatch.setattr(socket, "getaddrinfo", blocked)
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    GroundingDinoDetector()._ensure_loaded()
+    EdgeTAMTracker(device="cpu")._load_model()
+    assert attempts == []
+    assert huggingface_hub.constants.HF_HUB_OFFLINE is False  # the scope ended with the load
