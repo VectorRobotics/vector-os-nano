@@ -48,7 +48,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-url", default=None, help="API base URL")
     parser.add_argument("--no-permission", action="store_true", help="Allow all tools without prompts")
     parser.add_argument("--verbose", action="store_true", help="Debug logging")
-    parser.add_argument("--system-prompt", default=None, help="Path to custom system prompt file")
     parser.add_argument(
         "-p", "--print",
         dest="print_prompt",
@@ -152,9 +151,6 @@ _QUIET_LOGGERS: tuple[str, ...] = (
     "vector_os_nano.hardware",         # [SIM DETECT] INFO/WARNING lines
 )
 
-
-# Back-compat alias used by the existing tests.
-_COGNITIVE_LOGGER = _QUIET_LOGGERS[0]
 
 
 def _setup_logging(verbose: bool) -> None:

@@ -8,8 +8,6 @@ the verdict line).
 """
 from __future__ import annotations
 
-import time
-from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -24,9 +22,6 @@ console = Console()
 
 
 TEAL = "#00b4b4"
-
-
-_LOGO_PATH = Path(__file__).resolve().parent.parent / "cli" / "logo_braille.txt"
 
 
 # Braille dot-art V — embedded in panel titles
@@ -78,58 +73,10 @@ def _lifecycle_lines(entries: list[dict[str, Any]]) -> list[str]:
             if r.get("tool_use_id") in ids and r.get("content")]
 
 
-_COMPACT_LOGO = f"""\
-[bold {TEAL}]╲  ╱[/] [bold]ECTOR[/]
-[bold {TEAL}] ╲╱[/]  [dim]OS Nano[/dim]"""
-
-
-def _load_logo_lines() -> list[str]:
-    """Load braille logo lines, or empty list if file missing."""
-    try:
-        return _LOGO_PATH.read_text(encoding="utf-8").rstrip().splitlines()
-    except (FileNotFoundError, OSError):
-        return []
-
-
-def format_banner(model: str, agent: Any = None) -> str:
-    """Return banner info text (testable, no side effects)."""
-    lines = [
-        f"Vector CLI v{VERSION}",
-        f"Model: {model}",
-    ]
-    if agent is not None:
-        arm = getattr(agent, "_arm", None)
-        base = getattr(agent, "_base", None)
-        if arm is not None:
-            lines.append(f"Arm: {getattr(arm, 'name', type(arm).__name__)}")
-        if base is not None:
-            lines.append(f"Base: {getattr(base, 'name', type(base).__name__)}")
-    lines.append("/help for commands, quit to exit")
-    return "\n".join(lines)
-
-
 def print_banner(model: str, provider: str, agent: Any = None) -> None:
-    """Print startup banner with braille logo (auto-scales to terminal width)."""
-    import shutil
-    term_w = shutil.get_terminal_size().columns
-    logo_lines = _load_logo_lines()
-    max_logo_w = max((len(l) for l in logo_lines), default=0) if logo_lines else 0
-
+    """Print the startup banner: name, version, model, provider and the body."""
     console.print()
-    if logo_lines and term_w >= max_logo_w:
-        for line in logo_lines:
-            console.print(f"[bold {TEAL}]{line}[/]")
-            time.sleep(0.08)
-    elif logo_lines:
-        # Truncate each line to fit terminal
-        for line in logo_lines:
-            console.print(f"[bold {TEAL}]{line[:term_w - 1]}[/]")
-            time.sleep(0.08)
-    else:
-        console.print(f"[bold {TEAL}]Vector OS Nano[/]")
-
-    console.print(f"[dim]{'':>{min(40, term_w - 10)}}v{VERSION}[/]")
-    time.sleep(0.15)
+    console.print(f"[bold {TEAL}]Vector OS Nano[/] [dim]v{VERSION}[/]")
 
     info_parts = [f"Model: {model}", f"Provider: {provider}"]
     if agent is not None:
@@ -142,14 +89,6 @@ def print_banner(model: str, provider: str, agent: Any = None) -> None:
     console.print(f"[dim]  {' | '.join(info_parts)}[/]")
     console.print(f"[dim]  Type / for commands, quit to exit[/]")
     console.print()
-
-
-_ROOM_LABELS: dict[str, str] = {
-    "living_room": "Living Room", "dining_room": "Dining Room",
-    "kitchen": "Kitchen", "study": "Study",
-    "master_bedroom": "Master Bedroom", "guest_bedroom": "Guest Bedroom",
-    "bathroom": "Bathroom", "hallway": "Hallway",
-}
 
 
 def _setup_explore_events(console: Any) -> None:
@@ -178,7 +117,7 @@ def _setup_explore_events(console: Any) -> None:
             visited = data.get("visited", 0)
             total = data.get("total", 8)
             elapsed = data.get("elapsed_sec", 0)
-            label = _ROOM_LABELS.get(room, room)
+            label = room.replace("_", " ")  # the world manifest's room id
             bar = f"[{'#' * visited}{'.' * (total - visited)}]"
             _out(f"  >> {label} {bar} {visited}/{total} ({elapsed}s)")
 

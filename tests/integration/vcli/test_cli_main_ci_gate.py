@@ -75,7 +75,7 @@ def test_repl_runs_one_turn_then_exits(tmp_path, monkeypatch: pytest.MonkeyPatch
     """
     import threading
 
-    from vector_os_nano.vcli import cli, render, repl
+    from vector_os_nano.vcli import cli, repl
     from vector_os_nano.vcli.engine import VectorEngine
 
     # Run the REPL IN a work dir so the dev-world file oracle (cwd-scoped) reads the
@@ -111,8 +111,6 @@ def test_repl_runs_one_turn_then_exits(tmp_path, monkeypatch: pytest.MonkeyPatch
                 raise EOFError  # clean REPL exit
 
     monkeypatch.setattr(repl, "PromptSession", _FakePromptSession)
-    # Silence the startup banner sleeps (print_banner uses time.sleep).
-    monkeypatch.setattr(render.time, "sleep", lambda *_a, **_k: None)
 
     # The REPL runs the turn on its worker thread (repl._run_turn_busy); capture the
     # trace by spying on the producer.
