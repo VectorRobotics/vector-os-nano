@@ -490,14 +490,15 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
     node, and at least one graded step. Graded = the latest attempt of each attempt
     group (``graded_indices``); every graded action succeeded.
 
-    - Every graded step must classify GROUNDED, with ONE exception: under a task
-      contract (the producer compiled one from the goal), a row the producer marked
-      ``housekeeping`` (its whole chain read-only or a declared housekeeping action:
-      a trailing stop, where_am_i) may stay RAN unless its verify FAILED — and only
-      when EVERY row of its attempt group is housekeeping and succeeded. An
-      actuating row is never exempt, and a housekeeping row that superseded one
-      (stop -> the same re-verify) must GROUND on its own, so a sub-goal the
-      contract does not cover ("... then turn left") needs its own GROUNDED step.
+    - Every graded step must classify GROUNDED, with ONE exception: a row the
+      producer marked ``housekeeping`` (its whole chain read-only or a declared
+      housekeeping action: a trailing stop, where_am_i) may stay RAN unless its
+      verify FAILED — and only when EVERY row of its attempt group is housekeeping
+      and succeeded. An actuating row is never exempt, and a housekeeping row that
+      superseded one (stop -> the same re-verify) must GROUND on its own, so a
+      sub-goal the contract does not cover ("... then turn left") needs its own
+      GROUNDED step. At least one graded row must be GROUNDED: a turn that only
+      read or halted has no checked step.
     - With a contract, each predicate must also be False at turn start, True at turn
       end, and asserted by a GROUNDED graded step.
 
@@ -517,6 +518,7 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
         return "no checked step"
     goal_text = trace.goal_tree.goal
     ev: dict[int, StepEvidence] = {}
+    proven = False
     for s, group in zip(graded, groups):
         sg = sg_by_name[s.sub_goal_name]
         evidence, why = _classify(s, sg, oracle_names, goal_text)
@@ -525,7 +527,7 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
             return f"{s.sub_goal_name}: {why}"
         # A housekeeping row never stands in for an attempt it superseded: exempt
         # only when EVERY row of its group is housekeeping and succeeded.
-        exempt = bool(trace.contract) and all(
+        exempt = all(
             getattr(trace.steps[j], "housekeeping", False) is True and trace.steps[j].success
             for j in group
         )
@@ -534,6 +536,9 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
                 return f"{s.sub_goal_name}: {why}"
         elif evidence != "GROUNDED":
             return f"{s.sub_goal_name}: {why}"
+        proven = proven or evidence == "GROUNDED"
+    if not proven:
+        return "no checked step"  # every graded row only read / halted: nothing proven
     # A producer that grades attempts (``attempt_of``: the native runner) must carry
     # the contract the goal compiles to: dropping it (or compiling it against another
     # body's oracles) can never skip the check. The legacy executor (no attempt_of,

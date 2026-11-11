@@ -328,7 +328,11 @@ def test_the_wp03_explore_grasp_stop_trace_verifies_under_its_contract() -> None
     rows = (_row("holding_object('pickable_bottle_green')", attempt=""),
             _row("holding_object('pickable_bottle_green')", caused=U, attempt="", housekeeping=True))
     old = _trace("拿起绿色的瓶子", *rows)
-    assert not evidence_passed(old, MANIP)  # without a contract: every step must ground
+    # I4 G4: a housekeeping row never downgrades a turn another row proved, contract or
+    # not (a legacy trace carries none); it alone never proves one (below).
+    assert evidence_passed(old, MANIP), turn_reject_reason(old, MANIP)
+    only = _trace("拿起绿色的瓶子", rows[1])
+    assert turn_reject_reason(only, MANIP) == "no checked step"
     t = _trace("拿起绿色的瓶子", *rows, contract=("holding_object()",), start=(False,), end=(True,))
     assert evidence_passed(t, MANIP), turn_reject_reason(t, MANIP)
 
