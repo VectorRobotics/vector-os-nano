@@ -156,6 +156,12 @@ class SimSession:
                 "bad embodiment manifest",
                 f"{cfg.id}/robot.yaml.driver={cfg.driver!r}; valid: {sorted(_BUILDERS)}",
             )
+        from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
+
+        try:
+            asset_dir(cfg)
+        except AssetsMissing as exc:
+            raise SimStartError("assets not provisioned", str(exc)) from exc
         return cfg, builder
 
     @classmethod

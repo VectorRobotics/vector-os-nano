@@ -10,7 +10,7 @@
 # ---- Re-verified 2026-11-11 (R8a, release-1.0 base 2eeb6c6): every xfail row below still fails
 # (hermetic 234/234 files green with them strict; the sim rows in the sim tier). Rows are xfail, never
 # deselected; each names its ledger key and the 2026-10 owner WP, whose release-1.0 owner is:
-# WP15 legacy producer -> R1, WP15 MCP -> R6, WP09 / WP12 skills -> R2, WP17 G1 assets -> C1 / S4.
+# WP15 legacy producer -> R1, WP15 MCP -> R6, WP09 / WP12 skills -> R2.
 
 # legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
 tests/harness/test_level50_phase2_integration.py::TestGoalExecutorStatsRecording::test_executor_records_success_true | xfail | legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
@@ -47,11 +47,3 @@ tests/unit/test_skill_diagnostics.py::TestHomeSkillDiagnosticsSuccess::test_home
 # stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
 tests/unit/test_skill_schemas.py::TestGetDefaultSkills::test_returns_all_skills | xfail | stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
 tests/unit/test_skill_schemas.py::TestGetDefaultSkills::test_all_skill_names_present | xfail | stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
-
-# sim tier, rest of the per-file run (2026-10-04)
-tests/unit/embodiments/test_dof_layout.py::test_g1_layout_matches_g1offsets | xfail | sim-locomotion:g1-assets-unshipped (assets/g1_gait/g1_12dof.xml absent, its setup script missing; WP17)
-tests/unit/embodiments/test_dof_layout.py::test_g1_stance_vector_equals_default_angles | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/hardware/sim/test_g1_room.py::test_scene_compiles_with_pick_table_and_g1_pelvis | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/hardware/sim/test_g1_room.py::test_g1_head_camera_in_compiled_model | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/hardware/sim/test_g1_room.py::test_g1_self_geom_set_nonempty | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/hardware/sim/test_g1_room.py::test_walk_forward_displacement | xfail | sim-locomotion:g1-assets-unshipped (WP17)

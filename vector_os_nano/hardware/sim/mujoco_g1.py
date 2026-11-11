@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from vector_os_nano.embodiments.assets import asset_dir
 from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.embodiments.dof_layout import DofLayout
 from vector_os_nano.hardware.sim.sensors.g1_lidar import g1_lidar_scan
@@ -60,14 +61,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _HERE = Path(__file__).resolve().parent
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 _ROOM_XML = _HERE / "go2_room.xml"
 _GO2_ASSETS_DIR = _HERE / "mjcf" / "go2" / "assets"
-
-# 12-DOF model + policy from assets/g1_gait/
-_ASSET_DIR = _REPO_ROOT / "assets" / "g1_gait"
-_G1_12DOF_XML = _ASSET_DIR / "g1_12dof.xml"
-_G1_MESHES_DIR = _ASSET_DIR / "meshes"
 
 # G1 spawn position in the room
 _G1_SPAWN_X: float = 10.0
@@ -164,24 +159,21 @@ def _build_g1_room_scene_xml() -> Path:
 
     if not _ROOM_XML.exists():
         raise FileNotFoundError(f"go2_room.xml not found at {_ROOM_XML}")
-    if not _G1_12DOF_XML.exists():
-        raise FileNotFoundError(
-            f"g1_12dof.xml not found at {_G1_12DOF_XML}; "
-            "run scripts/setup_g1_gait.sh first."
-        )
+    cfg = load_embodiment_config("g1")
+    assets = asset_dir(cfg)  # raises AssetsMissing naming the fetch command
 
     # ONE scene-build path (Rule 11), shared with go2: MjSpec.attach + compile().
     # g1 carries prefix "g1_" (keeps the room's pickable_* unprefixed), a head
     # camera on pelvis, and no grasp welds. connect() then sets standing z=0.793.
     _model, scene_path = build_room_scene(
-        robot_model_path=_G1_12DOF_XML,
+        robot_model_path=assets / cfg.model.path,
         room_template_path=_ROOM_XML,
         room_assets_dir=_GO2_ASSETS_DIR,
         attach_prefix="g1_",
         spawn_xy=(_G1_SPAWN_X, _G1_SPAWN_Y),
         welds=(),
         cache_stem="scene_g1_12dof_room",
-        robot_meshes_dir=_G1_MESHES_DIR,
+        robot_meshes_dir=assets / cfg.model.meshes_dir,
         camera={
             "mount_body": "pelvis",
             "name": "head_rgb",
@@ -338,13 +330,7 @@ class MuJoCoG1:
         )
 
         # Load policy
-        policy_path = _ASSET_DIR / "motion.pt"
-        if not policy_path.exists():
-            raise FileNotFoundError(
-                f"motion.pt not found at {policy_path}; "
-                "run scripts/setup_g1_gait.sh first."
-            )
-        self._policy = torch.jit.load(str(policy_path))
+        self._policy = torch.jit.load(str(asset_dir(self._config) / self._config.policy.ref))
 
         # Reset control state
         self._action = np.zeros(_NUM_ACTIONS, dtype=np.float32)
