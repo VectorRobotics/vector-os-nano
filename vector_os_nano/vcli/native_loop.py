@@ -147,16 +147,14 @@ class _NativeBaseNavigateTool:
     ``navigate`` step's ``at_position`` verify grades CAUSED when the base really moved
     there (closes D14's "nav RAN-only"); an external TARE/FAR follower driving the base
     between tools is never counted. ``verify_hint`` auto-verifies the target after it
-    returns. Duck-typed like a ``Tool`` so ``dispatch_skill`` runs it uniformly.
+    returns; it and the sentence about it are read off the world's arrival oracle
+    (``ARRIVAL_ORACLE``): its own parameters bind the call's ``x`` / ``y``, its own
+    signature and docstring are what the model reads. A world without that oracle gets
+    no hint. Duck-typed like a ``Tool`` so ``dispatch_skill`` runs it uniformly.
     """
 
     name = "navigate"
-    verify_hint = "at_position({x}, {y})"
-    description = (
-        "Go to a world coordinate (x, y) using the navigation PLANNER, which AVOIDS "
-        "obstacles (lidar + local planner). Use this to REACH a place/coordinate. After "
-        "it returns, call verify(at_position(x, y))."
-    )
+    ARRIVAL_ORACLE = "at_position"
     input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -165,6 +163,21 @@ class _NativeBaseNavigateTool:
         },
         "required": ["x", "y"],
     }
+
+    def __init__(self, arrived: Any = None) -> None:
+        self.description = (
+            "Go to a world coordinate (x, y) using the navigation PLANNER, which AVOIDS "
+            "obstacles (lidar + local planner). Use this to REACH a place/coordinate."
+        )
+        self.verify_hint = ""
+        try:
+            params = list(inspect.signature(arrived).parameters) if callable(arrived) else []
+        except (TypeError, ValueError):
+            params = []
+        bound = [p for p in params if p in self.input_schema["required"]]
+        if bound:
+            self.verify_hint = f"{self.ARRIVAL_ORACLE}({', '.join('{%s}' % p for p in bound)})"
+            self.description += (f" It is then verified with {_oracle_line(self.ARRIVAL_ORACLE, arrived)}")
 
     def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
         # It drives the base: confirm unless the body is a live in-process sim.
@@ -224,8 +237,7 @@ class _NativeBaseNavigateTool:
         else:
             status = "did NOT confirm arrival (FAR graph unavailable or timeout)"
         return ToolResult(
-            content=f"navigate: {status}; now at {where} (target ({x}, {y})). "
-            "Call verify(at_position) to confirm."
+            content=f"navigate: {status}; now at {where} (target ({x}, {y}))."
         )
 
 
@@ -708,6 +720,9 @@ class NativeStepRunner:
             auto = None
         self._pending = None  # the model's own predicate is this step's verify
         verify_result = self._check(expr)
+        # Why the predicate could not be evaluated (its exception's type and message,
+        # or the sandbox's refusal), so the model can correct it. Never a value it read.
+        why = "" if verify_result else str(getattr(self._verifier, "last_error", "") or "")
         actor_caused, channels = self._grade(expr, goal_id)
         data = self._result_data()
         if auto is not None:
@@ -717,6 +732,7 @@ class NativeStepRunner:
             content=(
                 f"verify({expr}) -> {verify_word(verify_result)} "
                 f"(result={verify_result}, actor={actor_caused.value})"
+                + (f"; it could not be evaluated: {why}" if why else "")
             )
         )
 
@@ -1360,7 +1376,8 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
     from vector_os_nano.embodiments.capability_profile import resolve_capability_profile
 
     if resolve_capability_profile(agent).has_base:
-        tools["navigate"] = _NativeBaseNavigateTool()
+        namespace = getattr(engine, "_build_verifier_namespace", lambda a: {})(agent)
+        tools["navigate"] = _NativeBaseNavigateTool(namespace.get(_NativeBaseNavigateTool.ARRIVAL_ORACLE))
     # Source 4 (S6): EVERY capability the world registered into the engine's
     # CapabilityRegistry, as a tool the model routes to by name — the SAME instances
     # the world bound (agent-bound for live perception), never a second model load.

@@ -54,8 +54,9 @@ def _read_file(path: str) -> str:
 
 @oracle(scope="dev", domain="bool")
 def file_exists(path: str) -> bool:
-    """True if *path* (relative to cwd, inside the project) exists; state absence
-    as not file_exists(path).
+    """True if the file *path* (relative to cwd, inside the project) exists; state
+    absence as not file_exists(path). A directory (the project root '.' included)
+    verifies False either way: name a file.
 
     Existence is not content, so a protected path inside the project may be asked
     about; anything read_permission would not auto-allow for its location ($HOME,
@@ -63,14 +64,19 @@ def file_exists(path: str) -> bool:
     p = real_path(path)
     if not in_project(p, project_root(None)):
         raise PermissionError(f"verify may not look outside the project: {path}")
+    if p.is_dir():  # vacuous: '.' (the project root) always exists
+        raise IsADirectoryError(f"file_exists names a file; {path} is a directory")
     return p.exists()
 
 
 @oracle(scope="dev", domain="bool")
 def path_contains(path: str, substr: str) -> bool:
-    """True if the ONE regular file at *path* contains *substr*; a directory, a
-    missing, secret or non-regular path verifies False. One file per call: to state
-    something about several files, 'and' the calls together."""
+    """True if the ONE regular file at *path* contains the non-empty *substr*; a
+    directory, a missing, secret or non-regular path, or an empty substr verifies
+    False. One file per call: to state something about several files, 'and' the
+    calls together."""
+    if not substr:  # vacuous: every file contains ''
+        raise ValueError("path_contains needs a non-empty substring")
     return substr in _read_file(path)
 
 
@@ -78,8 +84,10 @@ def path_contains(path: str, substr: str) -> bool:
 def grep_count(pattern: str, path: str) -> int:
     """Number of regex *pattern* matches in the ONE regular file at *path* (path has
     no default); a directory, a missing, secret or non-regular path, a file over
-    1 MB or an invalid regex verifies False. One file per call: to state something
-    about several files, 'and' the calls together."""
+    1 MB, an empty or an invalid regex verifies False. One file per call: to state
+    something about several files, 'and' the calls together."""
+    if not pattern:  # vacuous: '' matches at every position
+        raise ValueError("grep_count needs a non-empty pattern")
     return len(re.compile(pattern).findall(_read_file(path)))
 
 

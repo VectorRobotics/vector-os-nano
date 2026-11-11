@@ -127,3 +127,41 @@ def test_a_bash_child_dies_with_its_caller() -> None:
     while _alive(marker) and time.monotonic() < deadline:
         time.sleep(0.1)
     assert _alive(marker) == []
+
+
+def test_a_raising_verify_tells_the_model_why(tmp_path, monkeypatch) -> None:
+    """R1:verify-error-text-lost: a predicate that raised verified FAIL with no reason;
+    the tool result now carries the exception's type and message (never a value)."""
+    monkeypatch.chdir(tmp_path)
+    session = _session()
+    eng = _dev_engine(_script(tool_turn(("deploy", {})),
+                              tool_turn(("verify", {"expr": "path_contains('a.py', '')"})),
+                              tool_turn(("deploy", {})),
+                              tool_turn(("verify", {"expr": "file_exists('a.py') + "})),
+                              tool_turn(end=True)), _SpyTool("deploy", "allow"))
+    eng.run_turn_native("deploy", session=session)
+    results = [r["content"] for e in session._entries if e["type"] == "tool_result" for r in e["results"]
+               if r["content"].startswith("verify(")]
+    assert "FAIL" in results[0] and \
+        "could not be evaluated: ValueError: path_contains needs a non-empty substring" in results[0]
+    assert "could not be evaluated: SyntaxError" in results[1]
+
+
+def test_navigates_hint_comes_from_the_arrival_oracle() -> None:
+    """MR1V:kernel-at-position-text: the hint binds the oracle's own parameters and the
+    description quotes the oracle's own signature and docstring; no oracle, no hint."""
+    from vector_os_nano.vcli.native_loop import _NativeBaseNavigateTool
+
+    def at_position(x: float, y: float, tol: float = 0.3) -> bool:
+        """True when the base is within tol metres of (x, y)."""
+        return True
+
+    tool = _NativeBaseNavigateTool(at_position)
+    assert tool.verify_hint == "at_position({x}, {y})"
+    assert "at_position(x, y, tol=0.3): True when the base is within tol metres" in tool.description
+
+    def renamed(px: float, py: float) -> bool:
+        return True
+
+    assert _NativeBaseNavigateTool(renamed).verify_hint == ""  # nothing binds: no guess
+    assert _NativeBaseNavigateTool().verify_hint == "" and "verified" not in _NativeBaseNavigateTool().description

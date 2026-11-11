@@ -493,7 +493,7 @@ def test_dev_verify_tool_reads_the_oracles_own_docstrings() -> None:
     eng = VectorEngine(backend=None)
     eng.bind(None, DevWorld())
     desc = _verify_description(eng, None)
-    assert "\n- file_exists(path): True if *path* (relative to cwd, inside the project) exists" in desc
+    assert "\n- file_exists(path): True if the file *path* (relative to cwd, inside the project) exists" in desc
     assert "\n- grep_count(pattern, path): Number of regex *pattern* matches in the ONE regular file" in desc
     assert "(path has no default)" in desc
     assert desc.count("'and' the calls together") == 2  # grep_count and path_contains

@@ -112,6 +112,9 @@ class GoalVerifier:
         self._namespace: dict[str, Any] = dict(primitives_namespace)
         # A thread-path evaluation that outlived its timeout (it cannot be killed).
         self._runaway: threading.Thread | None = None
+        # Why the last evaluation failed ('' if it ran): the exception's type and
+        # message, or the sandbox's refusal — never a value the predicate read.
+        self.last_error = ""
 
     # ------------------------------------------------------------------
     # Public API
@@ -137,18 +140,19 @@ class GoalVerifier:
         path uses the IDENTICAL sandbox, AST checks, safe builtins, and timeout as
         the boolean path — nothing is loosened.
         """
+        self.last_error = ""
         if not expression or not expression.strip():
             _LOG.warning("GoalVerifier: empty expression")
-            return False, None
+            return self._fail("empty expression")
 
         if self._runaway is not None and self._runaway.is_alive():
             _LOG.warning("GoalVerifier: a timed-out evaluation is still running; refusing %r", expression)
-            return False, None
+            return self._fail("a timed-out evaluation is still running")
 
         # Dunder check on raw source text
         if "__" in expression:
             _LOG.warning("GoalVerifier: dunder name rejected in expression: %r", expression)
-            return False, None
+            return self._fail("a dunder name is not allowed")
 
         # LLM-authored expressions can carry sloppy escape sequences (e.g. '\.');
         # they parse fine (the escape becomes a literal) but ast.parse would emit a
@@ -158,20 +162,20 @@ class GoalVerifier:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 tree = ast.parse(expression, mode="eval")
-        except SyntaxError:
+        except SyntaxError as exc:
             _LOG.warning("GoalVerifier: SyntaxError in expression: %r", expression)
-            return False, None
+            return self._fail(f"SyntaxError: {exc.msg}")
 
         bad = _grammar_violation(tree)
         if bad is not None:
             _LOG.warning("GoalVerifier: %s is outside the verify grammar: %r", bad, expression)
-            return False, None
+            return self._fail(f"{bad} is outside the verify grammar")
 
         try:
             code = compile(tree, "<verify>", "eval")
         except Exception as exc:  # noqa: BLE001
             _LOG.warning("GoalVerifier: compile error for %r: %s", expression, exc)
-            return False, None
+            return self._fail(f"{type(exc).__name__}: {exc}")
 
         exec_globals: dict[str, Any] = {"__builtins__": _SAFE_BUILTINS}
         exec_globals.update(self._namespace)
@@ -184,7 +188,11 @@ class GoalVerifier:
             return bool(raw), raw
         except Exception as exc:  # noqa: BLE001 — e.g. an ambiguous numpy truth value
             _LOG.warning("GoalVerifier: result of %r has no truth value: %s", expression, exc)
-            return False, None
+            return self._fail(f"the result has no truth value ({type(exc).__name__})")
+
+    def _fail(self, why: str) -> tuple[bool, Any]:
+        self.last_error = why[:300]
+        return False, None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -220,9 +228,11 @@ class GoalVerifier:
                 signal.alarm(0)  # disarm before anything else can be interrupted
         except _TimeoutError:
             _LOG.warning("GoalVerifier: expression timed out")
+            self._fail(f"timed out after {_TIMEOUT_SECONDS} s")
             return _EVAL_FAILED
         except Exception as exc:  # noqa: BLE001
             _LOG.warning("GoalVerifier: runtime error: %s", exc)
+            self._fail(f"{type(exc).__name__}: {exc}")
             return _EVAL_FAILED
         finally:
             signal.signal(signal.SIGALRM, old_handler)
@@ -256,10 +266,12 @@ class GoalVerifier:
         if thread.is_alive():
             self._runaway = thread
             _LOG.warning("GoalVerifier: expression timed out (thread fallback)")
+            self._fail(f"timed out after {_TIMEOUT_SECONDS} s")
             return _EVAL_FAILED
 
         if error_box[0] is not None:
             _LOG.warning("GoalVerifier: runtime error: %s", error_box[0])
+            self._fail(f"{type(error_box[0]).__name__}: {error_box[0]}")
             return _EVAL_FAILED
 
         return result_box[0]
