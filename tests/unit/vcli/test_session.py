@@ -61,11 +61,28 @@ def test_create_session_generates_uuid(tmp_path: Path) -> None:
     assert str(parsed) == session.session_id
 
 
-def test_create_session_creates_file(tmp_path: Path) -> None:
-    """create_session() immediately creates the JSONL file on disk."""
+def test_a_session_is_written_on_its_first_entry(tmp_path: Path) -> None:
+    """cli-entry:session-litter-and-resume: an empty session leaves no file (it never
+    litters /sessions or --resume latest); the first entry writes it."""
     session = create_session(directory=tmp_path)
     expected_path = tmp_path / f"{session.session_id}.jsonl"
+    session.save()
+    assert not expected_path.exists()
+    session.append_user("hi")
+    session.save()
     assert expected_path.exists()
+
+
+def test_latest_is_never_an_empty_or_a_print_session(tmp_path: Path) -> None:
+    """--resume latest resumes the newest conversation, never a one-shot -p turn."""
+    repl = create_session(metadata={"face": "repl"}, directory=tmp_path)
+    repl.append_user("a conversation")
+    repl.save()
+    once = create_session(metadata={"face": "print"}, directory=tmp_path)
+    once.append_user("a -p turn")
+    once.save()
+    create_session(directory=tmp_path).save()  # empty: no file at all
+    assert get_latest_session(directory=tmp_path).session_id == repl.session_id
 
 
 def test_session_default_directory_follows_home_at_call_time(
@@ -78,6 +95,8 @@ def test_session_default_directory_follows_home_at_call_time(
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     session = create_session()
+    session.append_user("hi")
+    session.save()
     assert (tmp_path / ".vector" / "sessions" / f"{session.session_id}.jsonl").exists()
     assert get_latest_session().session_id == session.session_id
 
@@ -86,6 +105,7 @@ def test_session_metadata(tmp_path: Path) -> None:
     """Metadata dict provided at creation is preserved across save/load."""
     meta = {"robot": "go2", "user": "yusen"}
     session = create_session(metadata=meta, directory=tmp_path)
+    session.append_user("x")  # a session is written on its first entry
     session.save()
 
     loaded = load_session(session.session_id, directory=tmp_path)
@@ -339,6 +359,7 @@ def test_read_files_not_persisted_on_save_and_load(tmp_path: Path) -> None:
     """read_files is runtime-only — it is NOT written to or loaded from disk."""
     session = create_session(directory=tmp_path)
     session.read_files.add("/tmp/important.txt")
+    session.append_user("x")  # a session is written on its first entry
     session.save()
 
     loaded = load_session(session.session_id, directory=tmp_path)

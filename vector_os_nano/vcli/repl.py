@@ -32,7 +32,7 @@ from rich.prompt import Prompt
 from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.render import TEAL, console, print_banner, render_turn
 from vector_os_nano.vcli.runtime import flush, run_turn
-from vector_os_nano.vcli.slash import EXIT_COMMANDS, VectorCompleter, _handle_slash_command
+from vector_os_nano.vcli.slash import EXIT_COMMANDS, VectorCompleter, dispatch
 
 logger = logging.getLogger(__name__)
 
@@ -388,8 +388,7 @@ def run_repl(rt: Any) -> None:
 
             # ---- Slash commands ----
             if is_slash_command(user_input):
-                parts = user_input.split()
-                if not _handle_slash_command(parts[0][1:], parts[1:], registry, session, app_state):
+                if not dispatch(rt, user_input):
                     break
                 continue
 

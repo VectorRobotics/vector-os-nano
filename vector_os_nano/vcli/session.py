@@ -311,7 +311,12 @@ class Session:
     # ------------------------------------------------------------------
 
     def save(self) -> None:
-        """Write all entries + meta to the JSONL file (atomic fsync)."""
+        """Write all entries + meta to the JSONL file (atomic fsync).
+
+        A session is written on its first entry: an empty one leaves no file.
+        """
+        if not self._entries and not self._path.exists():
+            return
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
         # Build the full set of lines: all content entries + a trailing meta
@@ -353,7 +358,7 @@ def create_session(
     metadata: dict[str, Any] | None = None,
     directory: Path | None = None,
 ) -> Session:
-    """Create a new session, write initial file to disk, and return it."""
+    """Create a new session (its file is written on its first entry) and return it."""
     session_dir = _resolve_dir(directory)
     session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -368,7 +373,6 @@ def create_session(
         path=path,
         metadata=dict(metadata) if metadata else {},
     )
-    session.save()
     return session
 
 
@@ -408,37 +412,44 @@ def load_session(session_id: str, directory: Path | None = None) -> Session:
     )
 
 
-def list_sessions(directory: Path | None = None) -> list[SessionSummary]:
-    """Return SessionSummary list for all sessions, newest-modified first."""
-    session_dir = _resolve_dir(directory)
-    if not session_dir.exists():
-        return []
+def _newest_first(session_dir: Path) -> list[Path]:
+    paths = []
+    for p in session_dir.glob("*.jsonl") if session_dir.exists() else ():
+        try:
+            paths.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    return [p for _, p in sorted(paths, reverse=True)]
 
+
+def list_sessions(directory: Path | None = None) -> list[SessionSummary]:
+    """A SessionSummary of every session that holds a message, newest-modified first."""
+    session_dir = _resolve_dir(directory)
     summaries: list[SessionSummary] = []
-    for p in session_dir.glob("*.jsonl"):
+    for p in _newest_first(session_dir):
         try:
             session = load_session(p.stem, directory=session_dir)
-        except Exception:
+        except Exception:  # noqa: BLE001 — an unreadable file is not a session
             continue
-        non_meta = session._non_meta_entries()
-        summaries.append(
-            SessionSummary(
-                session_id=session.session_id,
-                created_at=session.created_at,
-                updated_at=session.updated_at,
-                message_count=len(non_meta),
-                path=p,
-            )
-        )
-
-    summaries.sort(key=lambda s: s.path.stat().st_mtime, reverse=True)
+        if session._entries:
+            summaries.append(SessionSummary(
+                session_id=session.session_id, created_at=session.created_at,
+                updated_at=session.updated_at, message_count=len(session._non_meta_entries()), path=p,
+            ))
     return summaries
 
 
 def get_latest_session(directory: Path | None = None) -> Session | None:
-    """Return the most recently modified session, or None if none exist."""
-    summaries = list_sessions(directory=directory)
-    if not summaries:
-        return None
-    latest = summaries[0]
-    return load_session(latest.session_id, directory=_resolve_dir(directory))
+    """The most recently modified conversation to resume: never an empty session and
+    never a one-shot ``-p`` turn (``metadata['face'] == 'print'``). None if there is none.
+
+    Files are read newest first and only until one qualifies."""
+    session_dir = _resolve_dir(directory)
+    for p in _newest_first(session_dir):
+        try:
+            session = load_session(p.stem, directory=session_dir)
+        except Exception:  # noqa: BLE001
+            continue
+        if session._entries and session.metadata.get("face") != "print":
+            return session
+    return None

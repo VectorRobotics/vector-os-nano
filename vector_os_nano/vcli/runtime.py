@@ -156,7 +156,12 @@ def _open_session(resume: str | None, metadata: dict[str, Any], notice: Callable
             return create_session(metadata=metadata)
         notice(f"Resumed: {loaded.session_id}")
         return loaded
-    session = load_session(resume)
+    try:
+        if os.path.basename(resume) != resume or resume in (".", ".."):
+            raise ValueError(resume)  # an id, never a path
+        session = load_session(resume)
+    except (FileNotFoundError, ValueError) as exc:
+        raise ValueError(f"no saved session {resume!r} (/sessions lists them)") from exc
     notice(f"Resumed: {session.session_id}")
     return session
 

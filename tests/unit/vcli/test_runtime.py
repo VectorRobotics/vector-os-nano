@@ -22,6 +22,9 @@ PKG = Path(vector_os_nano.__file__).resolve().parent
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    import dotenv
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)  # no real .env on the way
     monkeypatch.setenv("HOME", str(tmp_path))
     script = tmp_path / "script.json"
     script.write_text('{"turns": []}')
