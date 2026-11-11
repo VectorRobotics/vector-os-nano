@@ -138,9 +138,9 @@ ray-based clearance would have graded a resting object as lifted (so the AABB ru
 | WP | wave | scope | status |
 |---|---|---|---|
 | I1 | 1 | fast-forward `wave4j-int2` (3 gate reds) | merged f3f1276, verified (sim 10/10, E5 + E10 green) |
-| I23 | 1 | merge `wave3-wp11` (perception + memory) and `wave3-wp14` (native persona / context / lifecycle) | running |
-| I4 | 1 | land `wave2-wp07` (spine S2) + bind the task contract to the manifest + close the probe hole + vacuous-compare corpus | queued behind I23 |
-| R3 | 1 | tool security: `rg` argv, resolved-path guard + credential deny-list, `web_fetch` asks + redirect checks | running |
+| I23 | 1 | merge `wave3-wp11` (perception + memory) and `wave3-wp14` (native persona / context / lifecycle) | merged f07070a; verified round 2 (hermetic 231/231, sim 51/51, e2e 11/11); 52 ledger rows closed |
+| I4 | 1 | land `wave2-wp07` (spine S2) + bind the task contract to the manifest + close the probe hole + vacuous-compare corpus | running |
+| R3 | 1 | tool security: `rg` argv, resolved-path guard + credential deny-list, `web_fetch` asks + redirect checks | 3 verification rounds failed (each found new bypasses); fix round 3 running |
 | S2 | 1b | the contract, standalone, on both engines (new files only): `interfaces/`, `sim/scene/{reader, canonical}`, `sim/backends/{mujoco, pybullet}/world.py`, `tests/conformance/` (kinematic + inertial parity, every binding sentence, oracle-parity battery, go2 walking on PyBullet) | running |
 | R1 | 2 | ONE producer: delete the legacy producer + IntentRouter + primitives + playground + `vector-eval` + their tests | open |
 | S1 | 2 | MuJoCo runs on the contract: golden traces first; `SimRuntime` over `PhysicsWorld`; `fn(model, data)` → `fn(world)`; `sim/grasp.py`; the one `GroundTruth` | open |
