@@ -91,7 +91,7 @@ _MAX_NATIVE_TURNS = 24
 _MAX_VERIFY_NUDGES = 2
 
 # The registry category whose tools are the kernel's domain-general ACTION surface
-# (file_read/file_write/file_edit/bash/glob/grep — see tools.__init__._TOOL_CATEGORIES).
+# (file_read/file_write/file_edit/bash/glob/grep — each tool declares its category).
 # The native loop offers
 # these as motor tools alongside the world's skills, so the dev world (no robot agent,
 # hence no wrapped skills) can still ACT — and the robot world gains the same code

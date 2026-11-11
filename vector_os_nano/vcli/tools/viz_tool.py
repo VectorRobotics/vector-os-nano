@@ -37,6 +37,7 @@ def _is_bridge_running() -> bool:
 
 @tool(
     name="open_foxglove",
+    category="system",
     description=(
         "打开/关闭可视化 (Open/close visualization). "
         "Start or stop Foxglove Bridge for real-time 3D visualization (可视化/foxglove/viz). "

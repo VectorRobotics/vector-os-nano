@@ -41,7 +41,7 @@ def _readable(path: str | Path, root: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@tool(name="glob", description="Find files matching a glob pattern", read_only=True, permission="allow")
+@tool(name="glob", description="Find files matching a glob pattern", read_only=True, permission="allow", category="code")
 class GlobTool:
     """Find files using pathlib.Path.glob, sorted by mtime (newest first)."""
 
@@ -96,7 +96,7 @@ class GlobTool:
 # ---------------------------------------------------------------------------
 
 
-@tool(name="grep", description="Search file contents using regex", read_only=True, permission="allow")
+@tool(name="grep", description="Search file contents using regex", read_only=True, permission="allow", category="code")
 class GrepTool:
     """Search file contents.
 

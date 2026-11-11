@@ -65,6 +65,7 @@ def _embodiment_menu() -> str:
 
 @tool(
     name="start_simulation",
+    category="sim",
     description=(
         "Start, or switch to, an in-process robot simulation. The tool returns only "
         "once the sim is ready (physics stepping, camera live). A running sim of a "
@@ -205,6 +206,7 @@ class SimStartTool:
 
 @tool(
     name="stop_simulation",
+    category="sim",
     description=(
         "Stop the running robot simulation: disconnects the sim, stops anything it "
         "spawned, and removes its skill tools. Call this when the user says "

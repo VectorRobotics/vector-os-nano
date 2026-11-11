@@ -57,6 +57,7 @@ DENY_PATTERNS: list[str] = [
 
 @tool(
     name="bash",
+    category="code",
     description="Execute a shell command and return captured stdout/stderr",
     read_only=False,
     permission="ask",

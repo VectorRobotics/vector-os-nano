@@ -184,6 +184,7 @@ def _record_read(context: ToolContext, path: Path) -> None:
 
 @tool(
     name="file_read",
+    category="code",
     description="Read a file from disk with optional offset/limit",
     read_only=True,
     permission="allow",
@@ -270,6 +271,7 @@ class FileReadTool:
 
 @tool(
     name="file_write",
+    category="code",
     description="Write content to a file (create or overwrite)",
     read_only=False,
     permission="ask",
@@ -405,6 +407,7 @@ def _format_edit_diff(before: str, after: str, file_path_str: str) -> str:
 
 @tool(
     name="file_edit",
+    category="code",
     description="Search and replace text in a file (old_string must match exactly once)",
     read_only=False,
     permission="ask",

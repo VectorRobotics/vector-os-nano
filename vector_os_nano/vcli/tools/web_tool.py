@@ -213,6 +213,7 @@ def _html_to_text(html: str) -> str:
 
 @tool(
     name="web_fetch",
+    category="general",
     description="Fetch a URL and return its text content",
     read_only=True,
     permission="ask",

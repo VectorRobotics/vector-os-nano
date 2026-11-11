@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
           "LIMITATION: Do not reload modules with background threads (explore.py) "
           "or modules that hold persistent state."
       ),
-      read_only=False, permission="ask")
+      read_only=False, permission="ask", category="system")
 class SkillReloadTool:
     input_schema: dict[str, Any] = {
         "type": "object",

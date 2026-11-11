@@ -43,30 +43,14 @@ class TestDiscoverAllTools:
         assert isinstance(result, list)
 
 
-class TestDiscoverCategorizedTools:
-    """Tests for the new discover_categorized_tools() function."""
-
-    def test_discover_categorized_tools_signature(self) -> None:
-        """discover_categorized_tools() must return a 2-tuple."""
-        from vector_os_nano.vcli.tools import discover_categorized_tools
-
-        result = discover_categorized_tools()
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-
-    def test_discover_categorized_tools_structure(self) -> None:
-        """First element is list of tools, second is dict of categories."""
-        from vector_os_nano.vcli.tools import discover_categorized_tools
-
-        tools_list, categories_dict = discover_categorized_tools()
-        assert isinstance(tools_list, list)
-        assert isinstance(categories_dict, dict)
+class TestToolCategories:
+    """Each tool declares its own category; the registry files it there (no hand map)."""
 
     def test_categories_code(self) -> None:
         """'code' category contains file_read, file_write, file_edit, bash, glob, grep."""
-        from vector_os_nano.vcli.tools import discover_categorized_tools
+        from vector_os_nano.vcli.runtime import build_registry
 
-        _, categories = discover_categorized_tools()
+        categories = build_registry().list_categories()
         assert "code" in categories
         code_tools = set(categories["code"])
         expected = {"file_read", "file_write", "file_edit", "bash", "glob", "grep"}
@@ -75,18 +59,18 @@ class TestDiscoverCategorizedTools:
 
     def test_categories_diag(self) -> None:
         """'diag' is exactly nav_state and terrain_status (the ROS diagnostic tools are deleted)."""
-        from vector_os_nano.vcli.tools import discover_categorized_tools
+        from vector_os_nano.vcli.runtime import build_registry
 
-        _, categories = discover_categorized_tools()
+        categories = build_registry().list_categories()
         assert "diag" in categories
         diag_tools = set(categories["diag"])
         assert diag_tools == {"nav_state", "terrain_status"}
 
     def test_categories_system(self) -> None:
         """'system' holds robot infra; sim lifecycle lives in its own 'sim' category."""
-        from vector_os_nano.vcli.tools import discover_categorized_tools
+        from vector_os_nano.vcli.runtime import build_registry
 
-        _, categories = discover_categorized_tools()
+        categories = build_registry().list_categories()
         assert "system" in categories
         system_tools = set(categories["system"])
         expected = {"robot_status", "skill_reload", "open_foxglove"}
@@ -99,9 +83,9 @@ class TestDiscoverCategorizedTools:
 
     def test_categories_general(self) -> None:
         """'general' is the domain-general bucket and holds web_fetch (moved out of 'system')."""
-        from vector_os_nano.vcli.tools import discover_categorized_tools
+        from vector_os_nano.vcli.runtime import build_registry
 
-        _, categories = discover_categorized_tools()
+        categories = build_registry().list_categories()
         assert "general" in categories
         assert "web_fetch" in set(categories["general"])
         # web_fetch must no longer be advertised as a robot/system tool
@@ -109,11 +93,18 @@ class TestDiscoverCategorizedTools:
 
     def test_categories_robot(self) -> None:
         """'robot' category contains scene_graph_query (world_query may also be here)."""
-        from vector_os_nano.vcli.tools import discover_categorized_tools
+        from vector_os_nano.vcli.runtime import build_registry
 
-        _, categories = discover_categorized_tools()
+        categories = build_registry().list_categories()
         assert "robot" in categories
         robot_tools = set(categories["robot"])
         assert "scene_graph_query" in robot_tools, (
             f"'robot' category missing 'scene_graph_query'; has: {robot_tools}"
         )
+
+    def test_every_built_in_tool_declares_a_category(self) -> None:
+        """producers:tool-category-map-handauthored: a new tool cannot land in
+        'default' silently; its decorator names its category."""
+        from vector_os_nano.vcli.tools import discover_all_tools
+
+        assert [t.name for t in discover_all_tools() if t.category == "default"] == []

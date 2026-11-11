@@ -63,6 +63,7 @@ def _is_process_running(name: str) -> bool:
 
 @tool(
     name="nav_state",
+    category="diag",
     description=(
         "Get current navigation and exploration state: exploring, nav stack running, "
         "explored rooms, TARE/FAR process status."
@@ -99,6 +100,7 @@ _TERRAIN_PATH: str = os.path.expanduser("~/.vector_os_nano/terrain_map.npz")
 
 @tool(
     name="terrain_status",
+    category="diag",
     description=(
         "Check terrain map persistence: file exists, size, voxel count, replay state."
     ),
@@ -141,6 +143,7 @@ class TerrainStatusTool:
 
 @tool(
     name="go_to_room",
+    category="robot",
     description=(
         "Walk the robot to a ROOM by name, in any language (e.g. 'kitchen', '厨房', "
         "'dining room'): a free floor point inside it from the house map, reached "

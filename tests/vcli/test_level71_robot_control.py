@@ -57,9 +57,9 @@ def test_robot_context_no_hardware_still_disconnected():
 
 
 def test_start_simulation_in_sim_category():
-    from vector_os_nano.vcli.tools import discover_categorized_tools
+    from vector_os_nano.vcli.runtime import build_registry
 
-    _, cat_map = discover_categorized_tools()
+    cat_map = build_registry().list_categories()
     assert "start_simulation" in cat_map.get("sim", [])
     assert "stop_simulation" in cat_map.get("sim", [])
     assert "start_simulation" not in cat_map.get("system", [])
@@ -174,8 +174,8 @@ def test_skill_wrapper_pick_honors_auto_steps(arm, monkeypatch):
 
 def test_sim_tool_lifecycle_dev_to_arm_to_dev():
     pytest.importorskip("mujoco")
-    from vector_os_nano.vcli.tools.base import CategorizedToolRegistry, ToolContext
-    from vector_os_nano.vcli.tools import discover_categorized_tools
+    from vector_os_nano.vcli.runtime import build_registry
+    from vector_os_nano.vcli.tools.base import ToolContext
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
 
     class _FakeEngine:
@@ -185,10 +185,7 @@ def test_sim_tool_lifecycle_dev_to_arm_to_dev():
         def bind(self, agent, world):
             self.bound.append((agent, world.name))
 
-    reg = CategorizedToolRegistry()
-    tools, cat_map = discover_categorized_tools()
-    for t in tools:
-        reg.register(t, category=next((c for c, n in cat_map.items() if t.name in n), "default"))
+    reg = build_registry()
     eng = _FakeEngine()
     app = {"agent": None, "registry": reg, "engine": eng}
     ctx = ToolContext(agent=None, cwd=Path.cwd(), session=None, permissions=None,

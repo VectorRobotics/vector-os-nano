@@ -102,8 +102,13 @@ def tool(
     input_schema: dict[str, Any] | None = None,
     permission: str = "allow",
     read_only: bool = False,
+    category: str = "default",
 ):
     """Class decorator that stamps tool metadata and injects default helpers.
+
+    ``category`` files the tool in the registry ("code" and "general" work with no
+    robot; "robot", "diag" and "system" are robot-world tools; "sim" is the
+    simulation lifecycle, offered everywhere).
 
     Usage (explicit args)::
 
@@ -154,6 +159,7 @@ def tool(
         cls.__tool_input_schema__ = resolved_schema
         cls.__tool_permission__ = permission
         cls.__tool_read_only__ = read_only
+        cls.category = category
 
         # Inject name / description / input_schema as class attributes when absent
         if not hasattr(cls, "name") or not isinstance(cls.__dict__.get("name"), str):

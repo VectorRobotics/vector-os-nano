@@ -844,14 +844,9 @@ def test_the_dev_world_can_launch_a_sim() -> None:
     dev world's native toolset holds the sim lifecycle, so '启动 go2 仿真' is the
     model's to route, like a dev write."""
     from vector_os_nano.vcli.native_loop import _build_motor_tools
-    from vector_os_nano.vcli.tools import discover_categorized_tools
-    from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
+    from vector_os_nano.vcli.runtime import build_registry
 
-    registry = CategorizedToolRegistry()
-    tools, cats = discover_categorized_tools()
-    for t in tools:
-        registry.register(t, category=next((c for c, ns in cats.items() if t.name in ns), "default"))
-    dev = SimpleNamespace(_registry=registry)
+    dev = SimpleNamespace(_registry=build_registry())
     assert {"start_simulation", "stop_simulation"} <= set(_build_motor_tools(None, dev))
 
 

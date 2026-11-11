@@ -29,6 +29,7 @@ from vector_os_nano.vcli.tools.base import (
 
 @tool(
     name="scene_graph_query",
+    category="robot",
     description=(
         "Query the robot's spatial memory (SceneGraph). "
         "Use to look up rooms, doors, objects, coverage, or navigation waypoints."

@@ -23,15 +23,14 @@ __all__ = [
     "ToolResult",
     "tool",
     "discover_all_tools",
-    "discover_categorized_tools",
 ]
 
 
 def discover_all_tools() -> list:
-    """Instantiate and return all built-in tool objects (flat list, backward compat).
+    """Instantiate and return all built-in tool objects.
 
-    Each tool class is imported here to avoid circular imports at module level.
-    The caller registers the returned instances into a ToolRegistry.
+    Each tool class is imported here to avoid circular imports at module level. Each
+    tool declares its own registry category (``@tool(category=...)``).
     """
     from vector_os_nano.vcli.tools.bash_tool import BashTool
     from vector_os_nano.vcli.tools.file_tools import FileEditTool, FileReadTool, FileWriteTool
@@ -65,28 +64,3 @@ def discover_all_tools() -> list:
         SkillReloadTool(),
         FoxgloveTool(),
     ]
-
-
-# Category assignments for CategorizedToolRegistry.
-# "code" + "general" are the domain-general kernel toolset (work with no robot).
-# "robot" / "diag" / "system" are robot-world tools (disabled when no robot agent).
-_TOOL_CATEGORIES: dict[str, list[str]] = {
-    "code": ["file_read", "file_write", "file_edit", "bash", "glob", "grep"],
-    "general": ["web_fetch"],
-    "robot": ["world_query", "scene_graph_query", "go_to_room"],
-    "diag": ["nav_state", "terrain_status"],
-    # Sim lifecycle: kept enabled even in the dev (no-robot) world so the user can
-    # spin up a sim conversationally ("start the arm sim").
-    "sim": ["start_simulation", "stop_simulation"],
-    "system": ["robot_status", "skill_reload", "open_foxglove"],
-}
-
-
-def discover_categorized_tools() -> tuple[list, dict[str, list[str]]]:
-    """Return (tools_list, categories_dict) for CategorizedToolRegistry.
-
-    Returns:
-        Tuple of (list of tool instances, dict mapping category name to tool names).
-    """
-    tools = discover_all_tools()
-    return tools, dict(_TOOL_CATEGORIES)

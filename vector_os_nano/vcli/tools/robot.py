@@ -22,6 +22,7 @@ from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, live_agent, 
 
 @tool(
     name="world_query",
+    category="robot",
     description="Query the robot's world model for detected objects and robot pose",
     read_only=True,
     permission="allow",
@@ -108,6 +109,7 @@ class WorldQueryTool:
 
 @tool(
     name="robot_status",
+    category="system",
     description=(
         "Get current hardware status: arm, gripper, base, and perception pipeline"
     ),

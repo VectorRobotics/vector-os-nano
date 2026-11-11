@@ -75,12 +75,11 @@ def make_backend(*, provider: str, api_key: str, model: str, base_url: str | Non
 
 def build_registry() -> Any:
     """The built-in tools, each under its category (the skill tools come with a body)."""
-    from vector_os_nano.vcli.tools import CategorizedToolRegistry, discover_categorized_tools
+    from vector_os_nano.vcli.tools import CategorizedToolRegistry, discover_all_tools
 
     registry = CategorizedToolRegistry()
-    tools, categories = discover_categorized_tools()
-    for t in tools:
-        registry.register(t, category=next((c for c, names in categories.items() if t.name in names), "default"))
+    for t in discover_all_tools():
+        registry.register(t, category=t.category)
     return registry
 
 
