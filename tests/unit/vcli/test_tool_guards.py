@@ -50,6 +50,10 @@ def box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     # case-insensitive filesystem (macOS, Windows).
     for name in (".ENV", "server.PEM", "api.Key", "ID_RSA", ".Env.local"):
         (project / name).write_text(SECRET)
+    for rel in (".AWS/credentials", ".SSH/config", ".Vector/config.yaml",
+                ".Config/gh/hosts.yml", ".NETRC", ".Git-Credentials"):
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).write_text(SECRET)
     (project / ".GIT").mkdir()
     (project / ".GIT" / "config").write_text(SECRET)
     (project / ".ENV.Example").write_text("ANTHROPIC_API_KEY=\n")
@@ -91,6 +95,9 @@ def _credential_paths(box: dict[str, Path]) -> list[str]:
         str(p / ".git" / "config"),
         "/etc/shadow",
         ".ENV", "server.PEM", "api.Key", "ID_RSA", ".Env.local", ".GIT/config",
+        str(h / ".AWS" / "credentials"), str(h / ".SSH" / "config"),
+        str(h / ".Vector" / "config.yaml"), str(h / ".Config" / "gh" / "hosts.yml"),
+        str(h / ".NETRC"), str(h / ".Git-Credentials"),
     ]
 
 

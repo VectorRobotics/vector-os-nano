@@ -22,7 +22,7 @@ from typing import Any
 
 from vector_os_nano.vcli.cognitive.oracle_registry import oracle
 from vector_os_nano.vcli.prompt import DEV_ROLE_PROMPT, DEV_TOOL_INSTRUCTIONS
-from vector_os_nano.vcli.tools.file_tools import is_protected
+from vector_os_nano.vcli.tools.file_tools import in_project, project_root, read_permission, real_path
 from vector_os_nano.vcli.worlds.base import DecomposeVocab
 
 # Bounds for read-only predicates (keep evaluation cheap + safe within the
@@ -30,7 +30,6 @@ from vector_os_nano.vcli.worlds.base import DecomposeVocab
 _MAX_FILES = 2000
 _MAX_BYTES_PER_FILE = 1_000_000
 _SKIP_DIRS = {
-    ".git",
     ".venv",
     ".venv-nano",
     "venv",
@@ -44,46 +43,40 @@ _SKIP_DIRS = {
 }
 
 
-def _safe_path(path: str) -> Path | None:
-    """Resolve *path* under the current working directory.
-
-    Returns the resolved Path if it stays within cwd, else None (reject
-    traversal / absolute escapes). Predicates are observational and must not
-    read outside the project tree.
-    """
-    try:
-        root = Path.cwd().resolve()
-        target = (root / path).resolve()
-        if target == root or root in target.parents:
-            return target
-        return None
-    except OSError:
-        return None
-
-
 def _readable_path(path: str) -> Path:
-    """_safe_path, minus secret files: a model-authored predicate runs with no
-    prompt, so it must not become a content oracle on .env or .git/config.
+    """The real path of *path*, if the ONE read rule (file_tools.read_permission)
+    auto-allows it: inside the project root, not protected, and the root is
+    neither $HOME nor /. A model-authored predicate runs with no prompt, so it
+    must never become a content oracle on what file_read would ask or refuse.
 
     A refused path RAISES (GoalVerifier turns that into False): returning
     False/0 would make ``not path_contains('.env', ...)`` verify True whatever
     the file holds. Fail closed in both polarities."""
-    p = _safe_path(path)
-    if p is None or is_protected(p):
-        raise PermissionError(f"verify may not read {path} (outside the project or a protected file)")
-    return p
+    perm = read_permission(path, None)
+    if perm.behavior != "allow":
+        raise PermissionError(f"verify may not read {path}: {perm.reason}")
+    return real_path(path)
 
 
 @oracle(scope="dev")
 def file_exists(path: str) -> bool:
-    """True if *path* (relative to cwd) exists."""
-    p = _safe_path(path)
-    return bool(p is not None and p.exists())
+    """True if *path* (relative to cwd) exists. Existence is not content, so a
+    protected path inside the project may be asked about; anything read_permission
+    would not auto-allow for its location ($HOME or / as cwd, outside cwd) raises."""
+    p = real_path(path)
+    if not in_project(p, project_root(None)):
+        raise PermissionError(f"verify may not look outside the project: {path}")
+    return p.exists()
 
 
 def _read_bounded(p: Path) -> str:
-    """The text of *p*. A file over the size cap RAISES, like an unreadable one: a
-    truncated read would make 'not path_contains(...)' verify True on a match past it."""
+    """The text of *p*. A missing path, a non-regular file (directory, FIFO) or one
+    over the size cap RAISES, like an unreadable one: answering False/0 would make
+    'not path_contains(...)' verify True on a file that was never examined."""
+    if not p.is_file():
+        if not p.exists():
+            raise FileNotFoundError(f"verify found no file {p.name}: state absence with not file_exists(...)")
+        raise OSError(f"verify will not read {p.name}: not a regular file")
     if p.stat().st_size > _MAX_BYTES_PER_FILE:
         raise OSError(f"verify will not read {p.name}: larger than {_MAX_BYTES_PER_FILE} bytes")
     return p.read_text(encoding="utf-8", errors="ignore")
@@ -92,18 +85,28 @@ def _read_bounded(p: Path) -> str:
 @oracle(scope="dev")
 def path_contains(path: str, substr: str) -> bool:
     """True if the text file at *path* contains *substr* (bounded read)."""
-    p = _readable_path(path)
-    return p.is_file() and substr in _read_bounded(p)
+    return substr in _read_bounded(_readable_path(path))
+
+
+def _raise(err: OSError) -> None:
+    raise err
 
 
 def _walk(root: Path) -> list[Path]:
     """Every file under *root*, minus _SKIP_DIRS judged RELATIVE to root (a project
-    that itself lives under build/ is still walked). Over _MAX_FILES it raises: a
-    partial count would let a negated count verify True."""
+    that itself lives under build/ is still walked) and .git pointer files (a
+    worktree's or submodule's 'gitdir: ...'). Anything that would leave the walk
+    partial RAISES (a partial count would let a negated count verify True): more
+    than _MAX_FILES files, an unlistable directory, a symlinked directory."""
     files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_raise):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and d.lower() != ".git"]
+        for d in dirnames:
+            if os.path.islink(os.path.join(dirpath, d)):
+                raise OSError(f"verify will not walk the symlinked directory {d}: name its real path")
         for name in filenames:
+            if name.lower() == ".git":
+                continue
             p = _readable_path(os.path.join(dirpath, name))  # a refused file fails the count
             if not p.is_file():  # dangling link, FIFO, socket: no text to count
                 continue
@@ -116,12 +119,11 @@ def _walk(root: Path) -> list[Path]:
 @oracle(scope="dev")
 def grep_count(pattern: str, path: str = ".") -> int:
     """Count regex *pattern* matches in text files under *path* (bounded). An invalid
-    regex, an unreadable or oversized file, or a refused path raises."""
+    regex, a missing path, an unreadable or oversized file, a symlinked directory
+    or a refused path raises."""
     rx = re.compile(pattern)
     root = _readable_path(path)
-    if not root.exists():
-        return 0
-    files = [root] if root.is_file() else _walk(root)
+    files = _walk(root) if root.is_dir() else [root]
     return sum(len(rx.findall(_read_bounded(fp))) for fp in files)
 
 
@@ -137,14 +139,21 @@ def dev_verify_namespace() -> dict[str, Any]:
 # --- Decompose vocabulary --------------------------------------------------
 
 _DEV_VERIFY_SIGNATURES: dict[str, str] = {
-    "file_exists": "file_exists(path: str) -> bool  # path (relative to cwd) exists",
+    "file_exists": (
+        "file_exists(path: str) -> bool  # path (relative to cwd) exists; "
+        "state absence as not file_exists(path)"
+    ),
     "grep_count": (
         "grep_count(pattern: str, path: str = '.') -> int  # regex match count under path; "
-        "path '.' walks the whole tree and is refused (verifies False) when the tree holds "
-        f"a secret file such as .env, a file over {_MAX_BYTES_PER_FILE} bytes or more than "
-        f"{_MAX_FILES} files: name a file or a subdirectory"
+        "a missing path verifies False; path '.' walks the whole tree and is refused "
+        "(verifies False) when the tree holds a secret file such as .env, a symlinked "
+        f"directory, a file over {_MAX_BYTES_PER_FILE} bytes or more than {_MAX_FILES} "
+        "files: name a file or a subdirectory by its real path"
     ),
-    "path_contains": "path_contains(path: str, substr: str) -> bool  # file at path contains substr",
+    "path_contains": (
+        "path_contains(path: str, substr: str) -> bool  # regular file at path contains "
+        "substr; a missing path or a directory verifies False"
+    ),
 }
 
 _DEV_EXAMPLE = """\

@@ -37,10 +37,8 @@ _SYSTEM_SECRETS: tuple[str, ...] = (
     "/etc/ssh", "/etc/ssl/private",
 )
 # Secret-looking file names anywhere (.env, private keys); templates stay readable.
-# Names match case-insensitively: on a case-insensitive filesystem (macOS, Windows)
-# .ENV and .GIT/config ARE the real secrets.
 _SECRET_NAME_RE: re.Pattern[str] = re.compile(
-    r"^(\.env(\..+)?|id_(rsa|dsa|ecdsa|ed25519)(_sk)?|.+\.(pem|key|p12|pfx))$", re.IGNORECASE
+    r"^(\.env(\..+)?|id_(rsa|dsa|ecdsa|ed25519)(_sk)?|.+\.(pem|key|p12|pfx))$"
 )
 _ENV_TEMPLATE_SUFFIXES: tuple[str, ...] = (".example", ".sample", ".template")
 
@@ -60,16 +58,18 @@ def _within(path: Path, root: Path) -> bool:
 
 
 def is_protected(path: Path) -> bool:
-    """True when the REAL *path* is a credential store, a secret file or inside .git."""
-    if any(part.lower() == ".git" for part in path.parts):
+    """True when the REAL *path* is a credential store, a secret file or inside .git.
+    Compared case-insensitively (a harmless false positive on Linux): on macOS or
+    Windows .AWS/credentials and .GIT/config ARE the real secrets."""
+    low = Path(str(path).lower())
+    if ".git" in low.parts:
         return True
-    name = path.name
-    if _SECRET_NAME_RE.match(name) and not name.lower().endswith(_ENV_TEMPLATE_SUFFIXES):
+    if _SECRET_NAME_RE.match(low.name) and not low.name.endswith(_ENV_TEMPLATE_SUFFIXES):
         return True
-    home = Path(os.path.realpath(Path.home()))
-    roots = [Path(os.path.realpath(p)) for p in _SYSTEM_SECRETS]
-    roots += [home / p for p in _HOME_SECRET_DIRS + _HOME_SECRET_FILES]
-    return any(_within(path, r) for r in roots)
+    home = os.path.realpath(Path.home())
+    roots = [os.path.realpath(p) for p in _SYSTEM_SECRETS]
+    roots += [os.path.join(home, p) for p in _HOME_SECRET_DIRS + _HOME_SECRET_FILES]
+    return any(_within(low, Path(r.lower())) for r in roots)
 
 
 def project_root(context: Any) -> Path:
@@ -77,19 +77,23 @@ def project_root(context: Any) -> Path:
     return Path(os.path.realpath(getattr(context, "cwd", None) or os.getcwd()))
 
 
+def in_project(path: Path, root: Path) -> bool:
+    """The REAL *path* lies inside *root*, and root is neither $HOME nor /."""
+    return root not in (Path("/"), Path(os.path.realpath(Path.home()))) and _within(path, root)
+
+
 def read_permission(path_str: str, context: Any) -> PermissionResult:
     """The ONE permission rule for every auto-allowed read tool.
 
     deny  — the real path is protected (credential deny-list, .git);
-    allow — the real path lies inside the project root;
+    allow — the real path lies inside the project root (in_project);
     ask   — anything else (a home dir or / as the root never auto-allows).
     """
     root = project_root(context)
     path = real_path(path_str, root)
     if is_protected(path):
         return PermissionResult("deny", f"{path_str} is a protected path")
-    home = Path(os.path.realpath(Path.home()))
-    if root not in (Path("/"), home) and _within(path, root):
+    if in_project(path, root):
         return PermissionResult("allow")
     return PermissionResult("ask", f"Read {path} (outside the project {root})?")
 
