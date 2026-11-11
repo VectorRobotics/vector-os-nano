@@ -788,8 +788,8 @@ class GoalExecutor:
         if self._agent is None:
             return None
         try:
-            from vector_os_nano.vcli.cognitive.actor_causation import capture
-            return capture(self._agent)
+            from vector_os_nano.vcli.native_loop import actor_state
+            return actor_state(self._agent)
         except Exception as exc:  # noqa: BLE001
             logger.debug("GoalExecutor: actor-causation capture raised: %s", exc)
             return None
@@ -815,11 +815,8 @@ class GoalExecutor:
         if self._agent is None or baseline is None:
             return ActorCaused.NOT_GRADED
         try:
-            from vector_os_nano.vcli.cognitive.actor_causation import (
-                capture,
-                grade,
-                is_robot_predicate,
-            )
+            from vector_os_nano.vcli.cognitive.actor_causation import grade, is_robot_predicate
+            from vector_os_nano.vcli.native_loop import actor_state
 
             from vector_os_nano.vcli.cognitive.oracle_registry import oracle_tags
 
@@ -829,7 +826,7 @@ class GoalExecutor:
             # anything else stays NOT_GRADED (legacy).
             if not is_robot_predicate(verify, tags):
                 return ActorCaused.NOT_GRADED
-            post = capture(self._agent)
+            post = actor_state(self._agent)
             return grade(baseline, post, verify, tags)
         except Exception as exc:  # noqa: BLE001
             logger.debug("GoalExecutor: actor-causation grade raised: %s", exc)

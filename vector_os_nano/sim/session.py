@@ -21,6 +21,7 @@ grasp number came from it), chosen by the embodiment manifest
 from __future__ import annotations
 
 import atexit
+import itertools
 import logging
 import math
 import os
@@ -63,6 +64,7 @@ class SimStartError(RuntimeError):
 
 
 _LIVE: list["SimSession"] = []
+_UIDS = itertools.count(1)
 
 
 def session_for(agent: Any) -> "SimSession | None":
@@ -128,6 +130,7 @@ class SimSession:
     def __init__(self, spec: SimSpec, config: Any) -> None:
         self.spec = spec
         self.config = config
+        self.uid = next(_UIDS)  # stamps every causation baseline taken in this session
         self.agent: Any = None
         self.notes: list[str] = []
         self.ready: dict[str, Any] = {}
