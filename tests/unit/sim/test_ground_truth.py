@@ -99,6 +99,48 @@ def test_a_job_cannot_set_attributes_on_the_world_it_is_handed(rt) -> None:
         rt.call(lambda w: setattr(w, "attach", None))
 
 
+def test_a_job_cannot_reach_the_unlogged_world_through_its_view(rt) -> None:
+    """S1F1V-1: no attribute of the view holds the runtime or the bare world, so a job
+    cannot attach / detach around the call-time log; private names are refused."""
+    sc = rt.world.scene
+    for name in ("_rt", "_world", "_note_attachments", "_welds"):
+        with pytest.raises(AttributeError):
+            rt.call(lambda w, n=name: getattr(w, n))
+    view = rt.call(lambda w: w)
+    assert all(getattr(view, n, None) is not rt for n in dir(view))
+    assert all(getattr(view, n, None) is not rt.world for n in dir(view))
+    rt.call(lambda w: w.attach(sc.body("hand"), sc.body("box")))  # the public path still logs
+    assert [p for _t, _c, p in rt.attach_log] == [sc.body("hand")]
+
+
+def test_clearance_support_is_a_shape_top_at_most_1cm_above_the_bottom(tmp_path) -> None:
+    """S1F1V-2: a support top 8 mm ABOVE the object's lowest point (the object resting
+    sunk into it) is still its support, a shape top 28 mm above it never is: the 1 cm
+    support epsilon is pinned to [8 mm, 28 mm) (the resting scenarios only sink ~0.1 mm)."""
+    xml = """
+<mujoco>
+  <worldbody>
+    <geom name="floor" type="plane" size="5 5 0.1"/>
+    <geom name="table" type="box" pos="0 0 0.2" size="0.3 0.3 0.2"/>
+    <geom name="pillar" type="box" pos="0.2 0 0.21" size="0.02 0.02 0.21"/>
+    <body name="low" pos="-0.1 0 0.437"><freejoint/><geom type="box" size="0.05 0.05 0.045"/></body>
+    <body name="sunk" pos="0.2 0 0.427"><freejoint/><geom type="box" size="0.01 0.01 0.035"/></body>
+  </worldbody>
+</mujoco>
+"""
+    path = tmp_path / "eps.xml"
+    path.write_text(xml)
+    rt = SimRuntime(MuJoCoWorld(compiled_scene(path)), threaded=False, paced=False, name="eps")
+    try:
+        gt = GroundTruth(rt)
+        # bottoms at 0.392, the table top at 0.40: both rest 8 mm deep in the table
+        assert gt.clearance("low") == pytest.approx(-0.008, abs=1e-9)
+        # the pillar top (0.42) is 28 mm above the sunk box's bottom: not its support
+        assert gt.clearance("sunk") == pytest.approx(-0.008, abs=1e-9)
+    finally:
+        rt.close()
+
+
 def _stub_gt(parent: str) -> SimpleNamespace:
     """A GroundTruth that says the green bottle is gripped by both Piper fingers, 10 cm
     up, attached to *parent*."""

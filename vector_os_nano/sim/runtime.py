@@ -49,7 +49,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from vector_os_nano.interfaces.physics import GraspSpec, PhysicsWorld
+from vector_os_nano.interfaces.physics import GraspSpec, PhysicsWorld, RGBDFrame
 from vector_os_nano.sim import grasp as _grasp
 
 logger = logging.getLogger(__name__)
@@ -122,28 +122,33 @@ class ActorEpoch:
 ACTOR_EPOCH = ActorEpoch()
 
 
-class _LoggingWorld:
+def _logging_view(rt: SimRuntime) -> Any:
     """The world as jobs and controllers see it: ``attach`` / ``detach`` log at call
-    time; everything else is the world's own. Setting an attribute fails loud."""
+    time; every other public name is the world's own. The runtime and the bare world
+    are closed over, never attributes, and private names are refused, so a job cannot
+    attach around the log. Setting an attribute fails loud."""
+    world = rt.world
 
-    __slots__ = ("_rt",)
+    class _LoggingWorld:
+        __slots__ = ()
 
-    def __init__(self, rt: SimRuntime) -> None:
-        object.__setattr__(self, "_rt", rt)
+        def __getattr__(self, name: str) -> Any:
+            if name.startswith("_"):
+                raise AttributeError(f"a job cannot reach {name!r} through the world it is handed")
+            return getattr(world, name)
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._rt.world, name)
+        def __setattr__(self, name: str, value: Any) -> None:
+            raise AttributeError(f"a job cannot set {name!r} on the world it is handed")
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError(f"a job cannot set {name!r} on the world it is handed")
+        def attach(self, parent: int, child: int) -> None:
+            world.attach(parent, child)
+            rt._note_attachments()
 
-    def attach(self, parent: int, child: int) -> None:
-        self._rt.world.attach(parent, child)
-        self._rt._note_attachments()
+        def detach(self, child: int) -> None:
+            world.detach(child)
+            rt._note_attachments()
 
-    def detach(self, child: int) -> None:
-        self._rt.world.detach(child)
-        self._rt._note_attachments()
+    return _LoggingWorld()
 
 
 class SimRuntime:
@@ -186,7 +191,7 @@ class SimRuntime:
         # tick made around them (GroundTruth.attach_events reads it).
         self.attach_log: collections.deque[tuple[float, int, int | None]] = collections.deque(maxlen=4096)
         self._attached = world.attached()
-        self._view = _LoggingWorld(self)
+        self._view = _logging_view(self)
         self._snap = self._take_snapshot()
         self._rt_mark = (time.monotonic(), world.time())
         self._rt_ratio = 0.0
@@ -248,8 +253,16 @@ class SimRuntime:
         return self._snap.sim_time
 
     def snapshot(self) -> SimSnapshot:
-        """The latest published state (republished every tick and every mutation)."""
+        """The latest published state (republished every tick and every mutation).
+        Raises once the stepper has died: its last state is not now."""
+        self._alive()
         return self._snap
+
+    def render(self, camera: str, width: int, height: int,
+               kinds: tuple[str, ...] = ("rgb", "depth")) -> RGBDFrame:
+        """``world.render`` (any thread, one instant); raises once the stepper has died."""
+        self._alive()
+        return self.world.render(camera, width, height, kinds)
 
     def rt_ratio(self) -> float:
         """Measured sim-seconds per wall-second over the last measurement window."""

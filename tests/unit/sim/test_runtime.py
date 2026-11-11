@@ -15,6 +15,7 @@ pytest.importorskip("mujoco")
 pytestmark = pytest.mark.sim  # renders through EGL
 
 from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: E402
+from vector_os_nano.sim.ground_truth import GroundTruth  # noqa: E402
 from vector_os_nano.sim.runtime import SimRuntime  # noqa: E402
 from vector_os_nano.sim.scene import compiled_scene  # noqa: E402
 
@@ -227,8 +228,13 @@ def test_a_dead_stepper_fails_every_later_call_loudly(scene) -> None:
         while r.daemon_alive and time.monotonic() < deadline:
             time.sleep(0.01)
         assert not r.daemon_alive and "solver exploded" in r.dead_reason
+        gt = GroundTruth(r)
+        # S1V-3: snapshot readers (ground truth among them) fail closed, never serve the
+        # last state the dead stepper published as if it were now.
         for poke in (lambda: r.call(lambda w: None), lambda: r.wait_sim(0.01), lambda: r.step(1),
-                     lambda: r.sim_time):
+                     lambda: r.sim_time, r.snapshot, gt.object_positions,
+                     lambda: gt.clearance("ball"), lambda: gt.joint_positions(("rail",)),
+                     lambda: gt.visible_pixels("ball", "cam", 32, 24)):
             with pytest.raises(RuntimeError, match="solver exploded"):
                 poke()
     finally:
