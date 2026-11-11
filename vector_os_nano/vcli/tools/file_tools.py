@@ -29,20 +29,22 @@ from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolRe
 # Credential stores are matched by PATH COMPONENT anywhere, case-insensitively, not
 # under one $HOME: a cwd that holds several users' homes is covered without knowing
 # who the users are. Refused outright, whatever the permission mode.
-# Whole components: everything under them is secret.
-_SECRET_DIRS: frozenset[str] = frozenset({".ssh", ".aws", ".gnupg", ".git"})
-# Consecutive components (directory, name glob): only the credential inside a
-# directory whose name alone says nothing (an in-project .docker/Dockerfile is code).
-_SECRET_DIR_PAIRS: tuple[tuple[str, str], ...] = (
+# Store component -> the file-name globs that stay readable anywhere under it. The
+# store dir itself and every other file under it are refused: .kube and .azure hold
+# no project code; a project's .docker holds Dockerfile-style files beside docker's
+# own keys (config.json, contexts/, machine/); $VECTOR_HOME holds two user-authored
+# files beside keys, transcripts (sessions, exports, history) and traces.
+_SECRET_STORES: dict[str, tuple[str, ...]] = {
+    ".ssh": (), ".aws": (), ".gnupg": (), ".git": (), ".kube": (), ".azure": (),
+    ".vector": ("vector.md", "personality.md"),
+    ".docker": ("dockerfile", "dockerfile.*", "*.dockerfile", "*compose*.yml", "*compose*.yaml", ".dockerignore"),
+}
+# Consecutive components: the credential inside a directory whose name says nothing.
+_SECRET_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset({
     (".config", "gh"), (".config", "gcloud"),
     (".claude", ".credentials.json"),                                   # Claude credentials
     ("huggingface", "token"), ("huggingface", "stored_tokens"), (".huggingface", "token"),
-    (".docker", "config.json"), (".kube", "config"),
-    (".azure", "accesstokens.json"), (".azure", "msal_token_cache.*"),
-    (".azure", "service_principal_entries.json"),
-    (".vector", "config.yaml"), (".vector", "oauth_credentials.json"),
-    (".vector", "sessions"), (".vector", "traces"),
-)
+})
 _SECRET_FILES: frozenset[str] = frozenset({
     ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials", ".claude.json",
     ".bash_history", ".zsh_history", ".python_history",
@@ -79,10 +81,12 @@ def is_protected(path: Path) -> bool:
     Windows .AWS/credentials and .GIT/config ARE the real secrets."""
     low = _fold(path)
     parts = low.parts
-    if _SECRET_DIRS.intersection(parts) or low.name in _SECRET_FILES:
+    if low.name in _SECRET_FILES or _SECRET_DIR_PAIRS.intersection(zip(parts, parts[1:])):
         return True
-    if any(a == d and fnmatch.fnmatchcase(b, n) for a, b in zip(parts, parts[1:]) for d, n in _SECRET_DIR_PAIRS):
-        return True
+    for i, part in enumerate(parts):
+        keep = _SECRET_STORES.get(part)
+        if keep is not None and not (i < len(parts) - 1 and any(fnmatch.fnmatchcase(low.name, g) for g in keep)):
+            return True
     if _SECRET_NAME_RE.match(low.name) and not low.name.endswith(_ENV_TEMPLATE_SUFFIXES):
         return True
     # All of this user's ~/.claude (session transcripts, not only credentials), and /etc secrets.

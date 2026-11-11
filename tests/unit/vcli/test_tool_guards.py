@@ -391,11 +391,20 @@ _BOB = {".aws/credentials": "aws_secret_access_key", ".vector/config.yaml": "ant
         ".claude/.credentials.json": "token", ".cache/huggingface/token": "hf_"}
 
 
+_STORES = (".aws", ".ssh", ".gnupg", ".kube", ".azure", ".vector", ".docker")
+# Files in those stores that no exact-name rule lists (R8a-V1): the store refuses
+# everything but its named project files, so each one is refused all the same.
+_UNLISTED = {".kube/config-prod": "token", ".kube/configs/staging.yaml": "token",
+             ".vector/exports/s1.md": "**You:**", ".vector/history": "+key",
+             ".azure/service_principal_entries.bin": "secret", ".docker/daemon-auth.json": "auth",
+             ".docker/contexts/meta/m.json": "host", ".docker/machine/certs/ca.pem": "CERT"}
+
+
 @pytest.fixture()
 def homes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """cwd holds several users' homes (e.g. root started in /home), $HOME lies elsewhere."""
     root = tmp_path / "home"
-    for rel, word in _BOB.items():
+    for rel, word in {**_BOB, **_UNLISTED}.items():
         (root / "bob" / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / "bob" / rel).write_text(f"{word}={SECRET}\n")
     (root / "bob" / "docs").mkdir()
@@ -422,10 +431,30 @@ def test_another_users_credentials_are_refused_with_home_elsewhere(homes: Path, 
         assert gv.verify(expr) is False, expr
     for tool in (GrepTool(), GlobTool()):
         assert _decide(tool, {"pattern": "*", "path": path}, homes) == "deny"
-    if rel.split("/")[0] in (".aws", ".ssh", ".gnupg"):   # a whole-component credential dir
+    if rel.split("/")[0] in _STORES:   # a credential store dir: searching it is refused too
         store = path.rsplit("/", 1)[0]
         for tool in (GrepTool(), GlobTool()):
             assert _decide(tool, {"pattern": "*", "path": store}, homes) == "deny", store
+
+
+@pytest.mark.parametrize("rel", list(_UNLISTED))
+def test_an_unlisted_file_in_a_credential_store_is_refused(homes: Path, rel: str) -> None:
+    """R8a-V1: bob's home is not a passwd home, so in_project auto-allows anything
+    is_protected lets through; a kubeconfig variant or a .vector transcript must not."""
+    from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
+    from vector_os_nano.vcli.worlds.dev import dev_verify_namespace
+
+    path = f"bob/{rel}"
+    assert _decide(FileReadTool(), {"file_path": path}, homes) == "deny"
+    assert FileReadTool().execute({"file_path": path}, _ctx(homes)).is_error
+    gv = GoalVerifier(dev_verify_namespace())
+    for expr in (f"path_contains({path!r}, {SECRET!r})", f"grep_count({SECRET!r}, {path!r}) == 1"):
+        assert gv.verify(expr) is False, expr
+    store = "bob/" + rel.split("/")[0]
+    for tool in (GrepTool(), GlobTool()):
+        assert _decide(tool, {"pattern": "*", "path": store}, homes) == "deny", store
+    hits = GrepTool().execute({"pattern": SECRET, "path": "bob"}, _ctx(homes)).content
+    assert SECRET not in hits, hits
 
 
 def test_a_search_over_several_homes_never_returns_credentials(homes: Path) -> None:
@@ -517,14 +546,18 @@ def test_a_root_holding_any_accounts_home_never_auto_allows(tmp_path: Path, monk
 
 
 def test_content_free_dir_names_refuse_only_their_credentials(box: dict[str, Path]) -> None:
-    """R3CV-2: an in-project .docker/Dockerfile is code (readable); the credential file
-    inside .docker / .kube / .azure / .vector is refused by consecutive components."""
+    """R3CV-2 / R8a-V1: .kube and .azure are refused whole; .docker and .vector refuse
+    everything but their named project files (Dockerfile-style, VECTOR.md, personality.md)."""
     project = box["project"]
-    readable = (".docker/Dockerfile", ".kube/README.md", ".azure/pipelines.yml", ".vector/VECTOR.md")
-    refused = (".docker/config.json", ".kube/config", ".azure/accessTokens.json",
+    readable = (".docker/Dockerfile", ".docker/php/Dockerfile.dev", ".docker/web.dockerfile",
+                ".docker/docker-compose.yml", ".docker/.dockerignore",
+                ".vector/VECTOR.md", ".vector/personality.md")
+    refused = (".docker/config.json", ".docker/entrypoint.sh", ".docker/contexts/meta/m.json",
+               ".kube/config", ".kube/README.md", ".azure/accessTokens.json", ".azure/pipelines.yml",
                ".azure/msal_token_cache.json", ".azure/service_principal_entries.json",
-               ".vector/config.yaml", ".vector/oauth_credentials.json",
-               ".vector/sessions/s1.json", ".vector/traces/t1.jsonl")
+               ".vector/config.yaml", ".vector/oauth_credentials.json", ".vector/history",
+               ".vector/exports/s1.md", ".vector/sessions/s1.json", ".vector/traces/t1.jsonl",
+               ".vector/sessions/VECTOR.md.jsonl")
     for rel in readable + refused:
         (project / rel).parent.mkdir(parents=True, exist_ok=True)
         (project / rel).write_text(f"x {SECRET}\n")
