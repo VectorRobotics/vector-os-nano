@@ -75,6 +75,12 @@ _COMPILED = {
     "hand me the green bottle": _FETCH, "fetch the green bottle": _FETCH,
     "pick up the red can and bring me the green bottle": ("kept_holding(None)", "near_object('user')"),
     "grab the red can then bring me the green bottle": ("kept_holding(None)", "near_object('user')"),
+    # I4D-V1: 一点 / 一下 stay fillers after a fetch to the user ("bring it a bit closer")
+    "把绿瓶子拿过来一下": _FETCH, "把绿瓶子递过来一点吧": _FETCH, "拿绿瓶子过来一点": _FETCH,
+    # I4D-V2: a colour alone names an object only as a reference (the red one, 红色的, 红的, 红色那个)
+    "pick up the red one": (f"holding_object('{RED}')",), "拿起红色那个": (f"holding_object('{RED}')",),
+    "拿起红的": (f"holding_object('{RED}')",), "拿起那个红色的": (f"holding_object('{RED}')",),
+    "bring me the green one": _FETCH, "把绿色的放到餐桌上": _on("dining_table"),
 }
 
 _UNCHECKED = [
@@ -124,6 +130,13 @@ _UNCHECKED = [
     "bring me the dining table", "give me the green bottle, the dining table",
     # an object the world has no word for
     "pick up the apple",
+    # I4D-V1: 一点 / 一下 after a release, a place or a grasp change the end state
+    # (lower it a bit, let go for a moment): never stripped there
+    "把绿瓶子放下一点", "放下绿瓶子一点", "把绿瓶子放到餐桌上一点", "把绿瓶子放下一下", "松开绿瓶子一下",
+    "拿起绿瓶子一点", "把绿瓶子放下一点吧",
+    # I4D-V2: a bare colour word is a noun (the orange is a fruit), never an object reference
+    "pick up the orange", "pick up the green", "bring me the orange", "拿起橙色", "拿起绿",
+    "put the orange on the dining table", "把橙色放到餐桌上",
 ]
 
 
