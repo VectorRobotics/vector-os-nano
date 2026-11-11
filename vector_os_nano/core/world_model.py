@@ -105,11 +105,15 @@ class WorldModel:
         Matching rules (in priority order):
         1. Exact normalised match (e.g. "protein bar" == "Protein Bar")
         2. Query is a substring of the stored label or vice versa
+
+        An empty label names nothing and matches nothing.
         """
         def _norm(s: str) -> str:
             return s.lower().strip().replace("_", " ")
 
-        query = _norm(label)
+        query = _norm(label or "")
+        if not query:
+            return []
         results: list[ObjectState] = []
         for o in self._objects.values():
             obj_label = _norm(o.label)

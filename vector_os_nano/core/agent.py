@@ -255,8 +255,8 @@ class Agent:
                     self._calibration = Calibration.load(cal_file)  # relative to cwd
                 else:
                     self._calibration = Calibration()
-            except Exception as exc:
-                logger.debug("Calibration not available: %s", exc)
+            except Exception as exc:  # noqa: BLE001 — the arm skills refuse without one
+                logger.warning("No camera->arm calibration (%s): pick/detect will refuse", exc)
 
         # Build services dict for skills that need injected dependencies
         services: dict = {}

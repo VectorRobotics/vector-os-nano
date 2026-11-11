@@ -104,7 +104,10 @@ class PickSkill:
     """
 
     name: str = "pick"
-    description: str = "Pick up an object. Use mode='hold' to keep it, mode='drop' to discard it to the side."
+    description: str = (
+        "Pick up an object and hold it (the default). mode='drop' discards it to the side "
+        "instead; the holding_object verify then fails by design."
+    )
     # Typical REAL-TIME (viewer-synced) duration in seconds, with margin for up to 2
     # retries (each attempt: pregrasp 3s + descent 1s + gripper seq + lift 1s + home 3s
     # = ~8–10s; 2 retries + home-between + perception sampling → ~40s real-time).
@@ -135,14 +138,14 @@ class PickSkill:
         "mode": {
             "type": "string",
             "required": False,
-            "default": "drop",
+            "default": "hold",
             "enum": ["drop", "hold"],
             "description": "'hold' = grasp and hold at home (for subsequent place), 'drop' = grasp and discard to side",
         },
     }
     preconditions: list[str] = ["gripper_empty"]
-    postconditions: list[str] = []  # pick ends with gripper open (object dropped)
-    effects: dict = {"gripper_state": "open"}  # pick ends with drop
+    postconditions: list[str] = []
+    effects: dict = {"gripper_state": "holding"}  # the default mode holds what it picked
     failure_modes: list[str] = [
         "no_arm", "object_not_found", "no_detections", "no_3d_samples",
         "out_of_workspace", "ik_unreachable", "move_failed", "track_failed",
@@ -179,6 +182,13 @@ class PickSkill:
                     "missing or unreadable): run the hand-eye calibration first."
                 ),
                 result_data={"diagnosis": "calibration_error"},
+            )
+
+        if not _target_of(params):
+            return SkillResult(
+                success=False,
+                error_message="pick needs a target: name the object (object_label).",
+                result_data={"diagnosis": "no_target"},
             )
 
         max_retries = max(1, int(
@@ -253,7 +263,7 @@ class PickSkill:
         # Step 1: Get target in base frame
         base_pos_result = self._get_target_base_pos(params, context)
         if base_pos_result is None:
-            label = params.get("object_label") or params.get("object_id") or ""
+            label = _target_of(params)
             return SkillResult(
                 success=False,
                 error_message="Cannot locate target object",
@@ -427,7 +437,7 @@ class PickSkill:
             )
 
         # Step 14: Mode-dependent behavior
-        pick_mode = params.get("mode", cfg.get("default_mode", "drop"))
+        pick_mode = params.get("mode", "hold")
 
         if pick_mode == "hold":
             # Hold mode: keep object in gripper, ready for place command
@@ -470,14 +480,7 @@ class PickSkill:
         # the bound label, or the nearest-object name when unbound). Lets a later
         # verify close the loop against what was grabbed (R2-7) and surfaces it
         # in the observation trace. Language-neutral: a structural label/id.
-        resolved_target = (
-            params.get("object_label")
-            or params.get("object")
-            or params.get("query")
-            or params.get("target")
-            or params.get("object_id")
-            or ""
-        )
+        resolved_target = _target_of(params)
         return SkillResult(
             success=True,
             result_data={
@@ -494,34 +497,6 @@ class PickSkill:
     # Target position resolution
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _nearest_object_name(context: SkillContext) -> Optional[str]:
-        """Return the name of the nearest free-body object in the sim scene.
-
-        Used ONLY when NO target is bound (object_label/object/query/target/
-        object_id are all absent/empty).  Keyed on EMPTY binding — zero language
-        matching — so it is safe for any language or caller.
-
-        Requires context.arm to expose get_object_positions() (sim oracle only;
-        real hardware won't have it — caller guards with hasattr in the caller).
-
-        Returns the object name closest to the base origin by sqrt(x²+y²), or
-        None when no free objects are present.
-        """
-        arm = context.arm  # property: returns first arm or legacy field
-        if arm is None:
-            return None
-        try:
-            positions: dict = arm.get_object_positions()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("[PICK] _nearest_object_name: get_object_positions failed: %s", exc)
-            return None
-        if not positions:
-            return None
-        # Pick nearest by XY distance from base origin (language-neutral: structure only).
-        nearest = min(positions.items(), key=lambda kv: kv[1][0] ** 2 + kv[1][1] ** 2)
-        return nearest[0]
-
     def _get_target_base_pos(
         self,
         params: dict,
@@ -530,7 +505,6 @@ class PickSkill:
         """Resolve target object position in base frame.
 
         Resolution order (matches the code below):
-        0. No target bound + sim oracle available → nearest object (R2-3).
         1. context.perception → live re-detect + density cluster (preferred when
            a perception backend is present; the object may have moved).
         2. world_model by object_id → get_object().
@@ -542,38 +516,11 @@ class PickSkill:
         Returns:
             (3,) numpy array in base frame metres, or None if unresolvable.
         """
-        # R2-3: no target bound → resolve to nearest scene object via sim oracle.
-        # "No target bound" means all standard target params are absent/empty —
-        # keyed entirely on EMPTY binding, zero language matching.
-        _no_target = not any([
-            params.get("object_label"),
-            params.get("object"),
-            params.get("query"),
-            params.get("target"),
-            params.get("object_id"),
-        ])
-        if _no_target and hasattr(context.arm, "get_object_positions"):
-            nearest = self._nearest_object_name(context)
-            if nearest is not None:
-                logger.info("[PICK] no target bound -> nearest object %r", nearest)
-                # Inject the resolved name so the normal perception/world-model
-                # path runs unchanged — behaviour when a target IS bound is untouched.
-                params = dict(params)  # shallow copy; never mutate the caller's dict
-                params["object_label"] = nearest
-
         # ALWAYS re-detect with perception if available (object may have moved).
         # Honour whatever reasonable param name the planner bound the target to
         # (language-neutral param-name fallbacks — no keyword matching).
         if context.perception is not None:
-            label = (
-                params.get("object_label")
-                or params.get("object")
-                or params.get("query")
-                or params.get("target")
-                or params.get("object_id")
-                or "object"
-            )
-            logger.info("[PICK] Live perception for %r (always re-detect)", label)
+            logger.info("[PICK] Live perception for %r (always re-detect)", _target_of(params))
             result = self._sample_from_perception(params, context)
             if result is not None:
                 return result
@@ -583,7 +530,7 @@ class PickSkill:
         obj_id = params.get("object_id")
         if obj_id:
             obj = context.world_model.get_object(obj_id)
-            if obj is not None and (abs(obj.x) > 0.01 or abs(obj.y) > 0.01):
+            if obj is not None:
                 logger.info("[PICK] Fallback: world_model object_id=%s", obj_id)
                 return np.array([obj.x, obj.y, obj.z], dtype=float)
 
@@ -595,9 +542,8 @@ class PickSkill:
         )
         if label:
             objects = context.world_model.get_objects_by_label(label)
-            valid = [o for o in objects if abs(o.x) > 0.01 or abs(o.y) > 0.01]
-            if valid:
-                closest = min(valid, key=lambda o: o.x ** 2 + o.y ** 2)
+            if objects:
+                closest = min(objects, key=lambda o: o.x ** 2 + o.y ** 2)
                 logger.info("[PICK] Fallback: world_model label=%r", label)
                 return np.array([closest.x, closest.y, closest.z], dtype=float)
 
@@ -754,3 +700,9 @@ class PickSkill:
             len(cluster), len(arr), threshold * 100,
         )
         return np.mean(cluster, axis=0)
+
+
+def _target_of(params: dict) -> str:
+    """The object the call names, whichever parameter the model bound it to."""
+    return str(next((params[k] for k in ("object_label", "object", "query", "target", "object_id")
+                     if params.get(k)), ""))

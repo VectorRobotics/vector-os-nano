@@ -409,6 +409,28 @@ class TestPickNoGripper:
         assert result.success, result.error_message
 
 
+def test_the_default_pick_holds_what_its_verify_hint_says():
+    """skills-manip:pick-verify-hint-contradicts-drop-default: the hint said
+    holding_object() while the default mode dropped the object."""
+    wm = WorldModel()
+    wm.add_object(ObjectState(object_id="cup_0", label="cup", x=0.25, y=0.0, z=0.005))
+    gripper = MockGripper()
+    result = PickSkill().execute({"object_label": "cup"}, make_context(gripper=gripper, world_model=wm))
+    assert result.success and gripper.actions[-1] == "close"  # never re-opened: held
+    assert PickSkill.verify_hint == "holding_object({object_label})"
+    assert PickSkill.parameters["mode"]["default"] == "hold"
+
+
+def test_pick_with_no_target_never_chooses_one():
+    """skills-manip:pick-sim-oracle-nearest-object: no target read the nearest object
+    from the simulator's oracle. Now it asks for a target, before any motion."""
+    arm = MockArm()
+    arm.get_object_positions = lambda: {"banana": (0.12, 0.12, 0.0)}
+    result = PickSkill().execute({"mode": "hold"}, make_context(arm=arm))
+    assert not result.success and result.result_data["diagnosis"] == "no_target"
+    assert arm.moves == []
+
+
 def test_a_missing_calibration_fails_loud_instead_of_using_camera_coordinates():
     """perception:calibration-missing-silent-camera-frame: with no camera->arm
     calibration, pick used an identity transform and drove to camera-frame x/y/z."""

@@ -132,6 +132,17 @@ def test_detect_while_holding_never_opens_the_gripper() -> None:
     assert r.success and g.opened == 0 and g.holding
 
 
+def test_home_never_opens_a_holding_gripper() -> None:
+    """skills-manip:home-opens-gripper-drops-object: home opened the gripper always."""
+    g = MockGripper(holding=True)
+    r = _agent(g).execute_skill("home")
+    assert r.success and r.result_data["kept_holding"] is True
+    assert g.opened == 0 and g.holding
+    empty = MockGripper()
+    assert _agent(empty).execute_skill("home").result_data["kept_holding"] is False
+    assert empty.opened == 1  # an empty gripper is still opened at home
+
+
 def test_pick_runs_its_scan_prerequisite_itself_and_returns_its_own_failure() -> None:
     a = _agent(perception=_Perception())
     r = a.execute_skill("pick", {"object_label": "banana", "mode": "hold"})

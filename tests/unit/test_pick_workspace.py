@@ -217,30 +217,18 @@ class TestPickTargetResolution:
             f"World model fallback should resolve to 25cm: {result.error_message!r}"
         )
 
-    def test_world_model_zero_coords_filtered_out(self) -> None:
-        """Objects at exact (0, 0, z) are filtered by the abs(x)>0.01 or abs(y)>0.01 guard.
-
-        The pick skill ignores objects where both |x| <= 0.01 and |y| <= 0.01 because
-        they're likely stale/zeroed placeholders, not real detections.
-        """
+    def test_an_object_at_the_origin_is_a_position_not_a_sentinel(self) -> None:
+        """perception:zero-sentinel-downstream: (0, 0) was treated as 'unknown'. The
+        world model only holds localized objects, so (0, 0) is a real place: the arm's
+        own base, outside its workspace."""
         skill = PickSkill()
         ctx = _make_context(base_pos=[0.0, 0.0, 0.0], perception=None)
         result = skill.execute({"object_label": "test"}, ctx)
         assert not result.success
-        assert "Cannot locate" in (result.error_message or ""), (
-            f"Zero-coord object should be filtered, got: {result.error_message!r}"
-        )
-
-    def test_world_model_small_x_zero_y_filtered(self) -> None:
-        """Object at (0.005, 0.0, 0.0) — |x|=0.005 ≤ 0.01 and |y|=0 ≤ 0.01 → filtered."""
-        skill = PickSkill()
-        ctx = _make_context(base_pos=[0.005, 0.0, 0.0], perception=None)
-        result = skill.execute({"object_label": "test"}, ctx)
-        assert not result.success
-        assert "Cannot locate" in (result.error_message or "")
+        assert result.result_data["diagnosis"] == "out_of_workspace"
 
     def test_world_model_valid_y_not_filtered(self) -> None:
-        """Object at (0.005, 0.20, 0.0): |y|=0.20 > 0.01 → NOT filtered by zero guard."""
+        """Object at (0.005, 0.20, 0.0): dist ≈ 20 cm, in the workspace."""
         skill = PickSkill()
         ctx = _make_context(base_pos=[0.005, 0.20, 0.0], perception=None)
         result = skill.execute({"object_label": "test"}, ctx)

@@ -70,6 +70,15 @@ class DetectSkill:
                 error_message="No perception backend available",
                 result_data={"diagnosis": "no_perception"},
             )
+        if context.calibration is None:
+            return SkillResult(
+                success=False,
+                error_message=(
+                    "No camera->arm calibration is loaded (config calibration.file is "
+                    "missing or unreadable): run the hand-eye calibration first."
+                ),
+                result_data={"diagnosis": "calibration_error"},
+            )
         scan_failed = scan_first(context, "detect")
         if scan_failed is not None:
             return scan_failed
@@ -164,29 +173,21 @@ class DetectSkill:
                 pose = tracked_objects[idx].pose
                 cam_pos = [pose.x, pose.y, pose.z]
 
-                # Apply calibration if available
-                if context.calibration is not None:
-                    try:
-                        import numpy as np
-                        base_pos = context.calibration.camera_to_base(
-                            np.array(cam_pos, dtype=float)
-                        )
-                        x, y, z = float(base_pos[0]), float(base_pos[1]), float(base_pos[2])
-                        has_3d = True
-                        logger.info(
-                            "[DETECT] %s: camera(%.3f,%.3f,%.3f) -> base(%.1f,%.1f,%.1f)cm",
-                            det.label, cam_pos[0], cam_pos[1], cam_pos[2],
-                            x * 100, y * 100, z * 100,
-                        )
-                    except Exception as exc:
-                        logger.warning("[DETECT] Calibration failed for %s: %s", det.label, exc)
-                        x, y, z = cam_pos[0], cam_pos[1], cam_pos[2]
-                        has_3d = True
-                else:
-                    # No calibration — store camera frame coords
-                    x, y, z = cam_pos[0], cam_pos[1], cam_pos[2]
+                # Camera -> arm base; a camera-frame point is never stored as a base one.
+                try:
+                    import numpy as np
+                    base_pos = context.calibration.camera_to_base(
+                        np.array(cam_pos, dtype=float)
+                    )
+                    x, y, z = float(base_pos[0]), float(base_pos[1]), float(base_pos[2])
                     has_3d = True
-                    logger.info("[DETECT] %s: camera(%.3f,%.3f,%.3f) (no calibration)", det.label, x, y, z)
+                    logger.info(
+                        "[DETECT] %s: camera(%.3f,%.3f,%.3f) -> base(%.1f,%.1f,%.1f)cm",
+                        det.label, cam_pos[0], cam_pos[1], cam_pos[2],
+                        x * 100, y * 100, z * 100,
+                    )
+                except Exception as exc:  # noqa: BLE001 — that object stays 2D-only
+                    logger.warning("[DETECT] Calibration failed for %s: %s", det.label, exc)
 
             # Only a real 3D pose enters the world model: a 2D-only box stored at
             # (0, 0, 0) was later picked "there" (skills-manip:detect-zero-sentinel-pollution).

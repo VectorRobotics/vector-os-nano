@@ -30,12 +30,6 @@ tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_no
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_overhead | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_unknown_uri | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 
-# stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
-tests/unit/test_skill_diagnostics.py::TestScanSkillDiagnosticsMoveFailed::test_scan_move_failed_returns_diagnosis | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
-tests/unit/test_skill_diagnostics.py::TestScanSkillDiagnosticsSuccess::test_scan_success_returns_diagnosis_ok | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
-tests/unit/test_skill_diagnostics.py::TestHomeSkillDiagnosticsMoveFailed::test_home_move_failed_returns_diagnosis | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
-tests/unit/test_skill_diagnostics.py::TestHomeSkillDiagnosticsSuccess::test_home_success_returns_diagnosis_ok | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
-
 # sim tier, rest of the per-file run (2026-10-04)
 tests/unit/embodiments/test_dof_layout.py::test_g1_layout_matches_g1offsets | xfail | sim-locomotion:g1-assets-unshipped (assets/g1_gait/g1_12dof.xml absent, its setup script missing; WP17)
 tests/unit/embodiments/test_dof_layout.py::test_g1_stance_vector_equals_default_angles | xfail | sim-locomotion:g1-assets-unshipped (WP17)

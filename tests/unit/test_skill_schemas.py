@@ -47,14 +47,11 @@ class TestHomeSkillSchema:
         """HomeSkill is always executable — no preconditions."""
         assert self.skill.preconditions == []
 
-    def test_postconditions(self):
-        assert "gripper_empty" in self.skill.postconditions
-
-    def test_effects_gripper_open(self):
-        assert self.skill.effects.get("gripper_state") == "open"
-
-    def test_effects_held_object_none(self):
-        assert self.skill.effects.get("held_object") is None
+    def test_home_declares_no_release(self):
+        """Home keeps a held object, so it is never read as a place (native loop)."""
+        assert "held_object" not in self.skill.effects
+        assert "gripper_state" not in self.skill.effects
+        assert self.skill.postconditions == []
 
     def test_effects_is_moving_false(self):
         assert self.skill.effects.get("is_moving") is False
@@ -162,12 +159,11 @@ class TestPickSkillSchema:
         assert "gripper_empty" in self.skill.preconditions
 
     def test_postconditions_empty(self):
-        # Pick ends with drop — no postconditions
         assert self.skill.postconditions == []
 
-    def test_effects_gripper_state_open(self):
-        # Pick ends with drop
-        assert self.skill.effects.get("gripper_state") == "open"
+    def test_effects_gripper_state_holding(self):
+        # The default pick holds what it picked (its verify_hint is holding_object)
+        assert self.skill.effects.get("gripper_state") == "holding"
 
     def test_satisfies_skill_protocol(self):
         assert isinstance(self.skill, Skill)

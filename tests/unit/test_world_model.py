@@ -125,6 +125,14 @@ class TestGetObjects:
         assert len(cups) == 3
 
 
+def test_an_empty_label_matches_nothing(wm, cup_obj, bottle_obj):
+    """core:worldmodel-empty-label-removes-arbitrary: '' was a substring of every
+    label, so a pick with no label removed an arbitrary object."""
+    wm.add_object(cup_obj)
+    wm.add_object(bottle_obj)
+    assert wm.get_objects_by_label("") == [] and wm.get_objects_by_label("  ") == []
+
+
 class TestRobotState:
     def test_default_robot_state(self, wm):
         robot = wm.get_robot()

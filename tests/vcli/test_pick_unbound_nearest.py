@@ -1,22 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""R2-3 regression — singular grab picks the NEAREST object when no target is bound.
+"""Pick binds its target from the call, never from the simulator's oracle.
 
 Two scenarios:
-  (a) execute_skill("pick", {}) — no object_label → the skill resolves the
-      nearest scene object (banana, at XY≈0.170m) via get_object_positions and
-      successfully grasps + lifts it.
+  (a) execute_skill("pick", {}) — no object_label → the skill refuses (no_target)
+      and nothing moves; it used to grasp the nearest scene object (banana) read
+      from get_object_positions.
   (b) execute_skill("pick", {"object_label": "mug"}) — bound target → the mug
-      is gripped (NOT the nearest banana), confirming bound-target behaviour is
-      unchanged.
+      is gripped (NOT the nearest banana).
 
 The test is headless (gui=False) and deterministic — no LLM, no network.
 Requires mujoco; entire module is skipped when mujoco is absent.
 """
 from __future__ import annotations
 
-import math
 
 import pytest
 
@@ -97,55 +95,19 @@ def sim_agent_bound():
 
 
 @pytest.mark.integration
-class TestPickUnboundNearest:
-    """R2-3: pick with no target resolves to the nearest scene object."""
+class TestPickUnboundRefused:
+    """R2: pick with no target asks for one; it never reads the nearest object from
+    the simulator's oracle (skills-manip:pick-sim-oracle-nearest-object)."""
 
-    def test_gripper_empty_before_pick(self, sim_agent_unbound: Agent) -> None:
-        """Pre-condition: gripper is empty before the unbound pick."""
-        holding = rig_namespace(sim_agent_unbound._arm.runtime, "so101")["holding_object"]
-        assert holding() is False, "Expected empty gripper before pick"
-
-    def test_nearest_object_is_banana(self, sim_agent_unbound: Agent) -> None:
-        """Sanity: get_object_positions confirms banana is closest to origin."""
-        arm = sim_agent_unbound._arm
-        positions = arm.get_object_positions()
-        assert _NEAREST_OBJECT in positions, f"{_NEAREST_OBJECT!r} not in scene"
-        # Verify banana is geometrically nearest by XY distance from origin.
-        nearest = min(
-            positions.items(),
-            key=lambda kv: kv[1][0] ** 2 + kv[1][1] ** 2,
-        )
-        assert nearest[0] == _NEAREST_OBJECT, (
-            f"Expected {_NEAREST_OBJECT!r} to be nearest, got {nearest[0]!r}"
-        )
-
-    def test_unbound_pick_succeeds(self, sim_agent_unbound: Agent) -> None:
-        """execute_skill('pick', {no object_label, mode=hold}) must succeed.
-
-        mode='hold' prevents the post-pick home step from opening the gripper
-        (same contract as the existing test_sim_grasp_e2e.py).  The binding
-        under test is NO object_label — target is resolved by the skill, not
-        the planner.
-        """
+    def test_unbound_pick_fails_and_names_why(self, sim_agent_unbound: Agent) -> None:
         result = sim_agent_unbound.execute_skill("pick", {"mode": "hold"})
-        assert result.success, (
-            f"Unbound pick failed: {getattr(result, 'failure_reason', result)}"
-        )
+        assert not result.success and result.result_data["diagnosis"] == "no_target"
 
-    def test_holding_after_unbound_pick(self, sim_agent_unbound: Agent) -> None:
-        """After unbound pick, holding_object() must be True."""
+    def test_nothing_is_held_or_lifted(self, sim_agent_unbound: Agent) -> None:
         holding = rig_namespace(sim_agent_unbound._arm.runtime, "so101")["holding_object"]
-        assert holding() is True, "holding_object() must be True after unbound pick"
-
-    def test_nearest_object_is_lifted(self, sim_agent_unbound: Agent) -> None:
-        """The nearest object (banana) must be physically lifted > 5 cm."""
-        arm = sim_agent_unbound._arm
-        positions = arm.get_object_positions()
-        assert _NEAREST_OBJECT in positions, f"{_NEAREST_OBJECT!r} not in scene after pick"
-        z = positions[_NEAREST_OBJECT][2]
-        assert z > 0.05, (
-            f"{_NEAREST_OBJECT!r} should be lifted > 5cm, got z={z:.3f}m"
-        )
+        assert holding() is False
+        z = sim_agent_unbound._arm.get_object_positions()[_NEAREST_OBJECT][2]
+        assert z < 0.15, f"{_NEAREST_OBJECT!r} must stay on the table, got z={z:.3f}m"
 
 
 # ---------------------------------------------------------------------------

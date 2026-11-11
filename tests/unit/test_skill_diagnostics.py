@@ -247,7 +247,7 @@ class TestScanSkillDiagnosticsNoArm:
 class TestScanSkillDiagnosticsMoveFailed:
     def test_scan_move_failed_returns_diagnosis(self):
         """arm.move_joints returns False -> diagnosis == 'move_failed'."""
-        arm = Mock()
+        arm = Mock(dof=5)  # the SO-101's 5 DoF (a bare Mock dof is no int)
         arm.move_joints = Mock(return_value=False)
         skill = ScanSkill()
         context = _make_context(arm=arm)
@@ -260,7 +260,7 @@ class TestScanSkillDiagnosticsMoveFailed:
 class TestScanSkillDiagnosticsSuccess:
     def test_scan_success_returns_diagnosis_ok(self):
         """Full success path -> diagnosis == 'ok' and joint_values present."""
-        arm = Mock()
+        arm = Mock(dof=5)
         arm.move_joints = Mock(return_value=True)
         skill = ScanSkill()
         context = _make_context(arm=arm)
@@ -303,7 +303,7 @@ class TestHomeSkillDiagnosticsNoArm:
 class TestHomeSkillDiagnosticsMoveFailed:
     def test_home_move_failed_returns_diagnosis(self):
         """arm.move_joints returns False -> diagnosis == 'move_failed'."""
-        arm = Mock()
+        arm = Mock(dof=5)
         arm.move_joints = Mock(return_value=False)
         skill = HomeSkill()
         context = _make_context(arm=arm)
@@ -316,7 +316,7 @@ class TestHomeSkillDiagnosticsMoveFailed:
 class TestHomeSkillDiagnosticsSuccess:
     def test_home_success_returns_diagnosis_ok(self):
         """Full success path -> diagnosis == 'ok' and joint_values present."""
-        arm = Mock()
+        arm = Mock(dof=5)
         arm.move_joints = Mock(return_value=True)
         skill = HomeSkill()
         context = _make_context(arm=arm)
@@ -684,7 +684,7 @@ def _make_detect_ctx(perception=None, world=None) -> SkillContext:
         gripper=None,
         perception=perception,
         world_model=world if world is not None else WorldModel(),
-        calibration=None,
+        calibration=Calibration(),
         config={},
     )
 
