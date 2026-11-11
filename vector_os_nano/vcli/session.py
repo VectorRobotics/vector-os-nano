@@ -225,8 +225,11 @@ class Session:
 
         *tool_names* (the caller's tool list): a tool_use naming a tool outside it
         (another producer's, e.g. native's verify/finish) is sent as TEXT with its
-        result instead (a tool_use for an absent tool 400s), so the turn's memory
-        survives; its tool_result is then an orphan and dropped.
+        result instead (so the model never sees a call to a tool it was not given;
+        whether a provider would reject one is unverified), so the turn's memory
+        survives; its tool_result is then an
+        orphan and dropped, and an assistant entry that follows merges into that
+        text-only assistant message, so roles still alternate.
         """
         messages: list[dict[str, Any]] = []
         open_tool_use_ids: list[str] = []
@@ -265,7 +268,11 @@ class Session:
                 )
                 tool_use = [b for b in tool_use if not _foreign(b)]
                 content.extend(tool_use)
-                if content:
+                if content and messages and messages[-1]["role"] == "assistant":
+                    # The previous assistant went text-only (its foreign tool_use became
+                    # text, its result dropped): merge, so roles still alternate.
+                    messages[-1]["content"].extend(content)
+                elif content:
                     messages.append({"role": "assistant", "content": content})
                 open_tool_use_ids.extend(
                     b["id"] for b in tool_use if isinstance(b, dict) and "id" in b

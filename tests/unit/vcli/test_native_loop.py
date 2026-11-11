@@ -635,7 +635,7 @@ def test_turns_share_the_real_session() -> None:
 
 def test_native_never_sends_a_legacy_tool_use_absent_from_its_tools() -> None:
     """I23: native and legacy share the real session; a legacy turn's bash tool_use is
-    not a native tool, so native sends it as text (an API 400 otherwise)."""
+    not a native tool, so native sends it as text."""
     seen: list[tuple[list, set]] = []
 
     class _Recorder:
@@ -655,3 +655,63 @@ def test_native_never_sends_a_legacy_tool_use_absent_from_its_tools() -> None:
     assert "bash" not in names
     assert not [b for b in blocks if b.get("type") in ("tool_use", "tool_result")]
     assert any("README.md" in b.get("text", "") for b in blocks)
+
+
+class _Scripted:
+    """Backend that replays scripted responses and records every call's messages."""
+
+    def __init__(self, turns):
+        self.turns, self.seen = list(turns), []
+
+    def call(self, messages, tools, **_kw):
+        from vector_os_nano.vcli.backends.types import LLMResponse
+        self.seen.append(list(messages))
+        return self.turns.pop(0) if self.turns else LLMResponse(text="", stop_reason="end_turn")
+
+
+def _alternates(messages) -> list[str]:
+    from vector_os_nano.vcli.backends.openai_compat import convert_messages
+    roles = [m["role"] for m in convert_messages(messages, "")]
+    assert all(a != b or a == "tool" for a, b in zip(roles, roles[1:])), roles
+    return roles
+
+
+def test_legacy_turn_after_a_real_native_turn_keeps_role_alternation() -> None:
+    """I23-D1: native issues one tool per round-trip (walk, verify, finish); a later
+    legacy turn sees verify/finish as foreign text and must not emit consecutive
+    assistant messages (DeepSeek via openai_compat does not merge them)."""
+    from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
+
+    def _tool(i, name, inp):
+        return LLMResponse(text="", tool_calls=[LLMToolCall(id=i, name=name, input=inp)],
+                           stop_reason="tool_use")
+    rec = _Scripted([
+        _tool("a", "walk", {"distance": 1.0}),
+        _tool("b", "verify", {"expr": "at_position(1.0, 0.0, 1.0)"}),
+        _tool("c", "finish", {}),
+        LLMResponse(text="到了", stop_reason="end_turn"),
+        LLMResponse(text="你好呀", stop_reason="end_turn"),
+    ])
+    agent, _ = _make_agent(0.0, 0.0)
+    engine, session = _make_engine(agent, rec), _session()
+    engine.run_turn_native("往前走一米", session=session)
+    engine.run_turn("你好", session)
+    sent = rec.seen[-1]
+    text = " ".join(b.get("text", "") for m in sent if isinstance(m["content"], list)
+                    for b in m["content"])
+    assert "verify(" in text and "finish(" in text  # the native turn's memory survives
+    _alternates(sent)
+
+
+def test_native_turn_after_a_legacy_tool_then_text_turn_keeps_role_alternation() -> None:
+    """I23-D1 mirror: a legacy turn (bash tool_use, its result, then final text) seen by
+    native is bash-as-text followed by the final text: one assistant message, not two."""
+    rec = _Scripted([])
+    session = _session()
+    session.append_user("ls")
+    session.append_assistant("", [{"type": "tool_use", "id": "x1", "name": "bash", "input": {"command": "ls"}}])
+    session.append_tool_results([{"tool_use_id": "x1", "content": "README.md"}])
+    session.append_assistant("there is a README", [])
+    agent, _ = _make_agent(0.0, 0.0)
+    _make_engine(agent, rec).run_turn_native("往前走一米", session=session)
+    assert _alternates(rec.seen[0]) == ["user", "assistant", "user"]

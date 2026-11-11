@@ -609,8 +609,8 @@ class TestSessionIntegration:
 
 def test_legacy_turn_never_sends_a_tool_use_absent_from_its_tool_list() -> None:
     """I23: the native turn (with its synthetic verify/finish tool_use) lives in the
-    real session; a later legacy turn must not send those blocks (the API 400s on a
-    tool_use naming a tool absent from ``tools``). The exchange survives as text."""
+    real session; a later legacy turn must not send those blocks (a tool_use naming
+    a tool absent from ``tools``). The exchange survives as text."""
     from vector_os_nano.vcli.backends.openai_compat import convert_messages
 
     registry = ToolRegistry()
