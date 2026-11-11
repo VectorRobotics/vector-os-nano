@@ -125,7 +125,6 @@ class ViewpointNode:
     timestamp: float = field(default_factory=time.time)
     scene_summary: str = ""             # VLM scene description
     object_ids: tuple[str, ...] = ()    # objects visible from here
-    frame_b64: str = ""                 # optional cached frame (base64 jpeg)
 
     @property
     def coverage_area(self) -> float:
