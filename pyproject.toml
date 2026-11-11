@@ -140,4 +140,5 @@ markers = [
     "capability: a claimed product capability; MUST also carry @pytest.mark.cli_main so it is verified through the real product, never a bypass script",
     "sim: builds a MuJoCo sim (auto-added per file by tests/conftest.py); gated by the session sim_preflight",
     "slow: long-running test (minutes); deselect with -m 'not slow'",
+    "own_process: signals its own process; tests/conftest.py runs it in a child pytest",
 ]

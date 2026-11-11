@@ -58,6 +58,7 @@ _DEAD: dict[str, str] = {
     "vector_os_nano/vcli/tools/ros2_tools.py": "tools-worlds:ros2-tools-broken-and-dead-logs, "
         "tools-worlds:ros2-tools-jazzy-broken (hz never returned, echo used a flag Jazzy lacks, "
         "the log tool read files nobody writes)",
+    "tests/harness/test_path_follower.py": "tests-inventory:path-follower-tautology (tested a copy of the logic)",
     "foxglove/launch_foxglove.sh": "periphery:foxglove-check-before-source (open_foxglove launches the bridge itself)",
 }
 

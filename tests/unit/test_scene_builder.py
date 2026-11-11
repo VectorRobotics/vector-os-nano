@@ -193,7 +193,7 @@ def test_build_room_scene_go2_arm_byte_identical():
         attach_prefix="",
         spawn_xy=[10.0, 3.0],
         welds=_WELDS,
-        robot_meshes_dir=_GO2_ASSETS,
+        robot_meshes_dir=None,  # go2_piper.xml's ../go2/assets paths resolve from its own dir, as in production
     )
     assert path is None
     _assert_byte_identical(legacy, model)

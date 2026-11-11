@@ -59,37 +59,6 @@ def test_velocity_tracking_forward(go2_standing):
 
 
 @pytest.mark.level3
-@pytest.mark.skip(reason="Hip abduction alone insufficient for lateral locomotion — needs body-frame velocity decomposition")
-def test_velocity_tracking_lateral(go2_standing):
-    """set_velocity(0, 0.2, 0) → robot moves in Y direction after 5 s."""
-    start_pos = go2_standing.get_position()
-    deadline = time.monotonic() + _TIMEOUT_S
-
-    go2_standing.set_velocity(0.0, 0.2, 0.0)
-    time.sleep(_SETTLE_TIME_S)
-
-    assert time.monotonic() < deadline, "test_velocity_tracking_lateral exceeded timeout"
-
-    end_pos = go2_standing.get_position()
-    go2_standing.set_velocity(0.0, 0.0, 0.0)
-
-    # Lateral displacement: robot should have moved in Y (or any XY direction since
-    # heading may not be aligned with world axes — measure XY displacement)
-    dx = end_pos[0] - start_pos[0]
-    dy = end_pos[1] - start_pos[1]
-    xy_displacement = math.sqrt(dx * dx + dy * dy)
-
-    # Accept any XY movement > 0.1 m (lateral gait may not be perfectly side-pure)
-    min_displacement = 0.1
-    assert xy_displacement > min_displacement, (
-        f"Lateral velocity tracking: XY displacement {xy_displacement:.3f} m "
-        f"< minimum {min_displacement} m. start={start_pos[:2]}, end={end_pos[:2]}"
-    )
-
-    assert end_pos[2] > _MIN_Z, f"Robot fell during lateral walk: z={end_pos[2]:.3f} m"
-
-
-@pytest.mark.level3
 def test_velocity_tracking_yaw(go2_standing):
     """set_velocity(0, 0, 0.5) → heading changes > 0.5 rad over 3 s."""
     start_heading = go2_standing.get_heading()

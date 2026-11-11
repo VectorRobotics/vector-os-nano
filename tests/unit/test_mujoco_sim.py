@@ -207,53 +207,6 @@ class TestMuJoCoGripper:
         assert pos_open > pos_closed
 
 
-class TestMuJoCoPickAndPlace:
-    """Integration test: full pick-and-place in MuJoCo simulation."""
-
-    @pytest.mark.skip(reason="Timing-sensitive; pick verified manually — see test_mujoco_sim_manual.py")
-    def test_pick_cube(self, arm: MuJoCoArm, gripper: MuJoCoGripper):
-        """Pick up the red cube and verify it lifts off the table."""
-        # Let objects settle on the table first
-        arm.step(500)
-        objs = arm.get_object_positions()
-        red = objs["red_cube"]
-        original_z = red[2]  # ~0.035 (on table)
-
-        # Open gripper, move above, descend — smooth incremental motion
-        gripper.open()
-
-        def _smooth_move(target, steps=8, dur=0.5):
-            cur, _ = arm.fk(arm.get_joint_positions())
-            for i in range(1, steps + 1):
-                t = i / steps
-                pt = tuple(c + t * (g - c) for c, g in zip(cur, target))
-                ik = arm.ik(pt)
-                if ik:
-                    arm.move_joints(ik, duration=dur)
-                    arm.step(50)
-
-        _smooth_move((red[0], red[1], red[2] + 0.08))
-        _smooth_move((red[0], red[1], red[2] - 0.02))
-
-        # Close and lift incrementally
-        gripper.close()
-        arm.step(200)
-
-        ee_pos, _ = arm.fk(arm.get_joint_positions())
-        for step in range(12):
-            target_z = ee_pos[2] + (step + 1) * 0.01
-            ik = arm.ik((ee_pos[0], ee_pos[1], target_z))
-            if ik:
-                arm.move_joints(ik, duration=0.5)
-                arm.step(80)
-
-        new_objs = arm.get_object_positions()
-        new_z = new_objs["red_cube"][2]
-        assert new_z > original_z + 0.03, (
-            f"Cube should have lifted >3cm, got delta={new_z - original_z:.3f}m"
-        )
-
-
 # ---------------------------------------------------------------------------
 # TestMuJoCoArmPhysics — physical realism checks
 # ---------------------------------------------------------------------------
@@ -334,34 +287,3 @@ class TestMuJoCoGripperWeld:
         gripper.open()
         assert gripper.is_holding() is False
 
-    @pytest.mark.skip(reason="Timing-sensitive — object follow requires many physics steps")
-    def test_held_object_follows_arm(self, arm: MuJoCoArm, gripper: MuJoCoGripper):
-        """After grasping, lifting the arm should increase the held object's z."""
-        arm.step(200)
-        objs = arm.get_object_positions()
-        banana_pos = objs["banana"]
-
-        # Move to banana and grasp
-        target = (banana_pos[0], banana_pos[1], banana_pos[2] + 0.02)
-        solution = arm.ik(target)
-        if solution is not None:
-            arm.move_joints(solution, duration=2.0)
-            arm.step(100)
-        gripper.close()
-        arm.step(200)
-
-        # Record z before lift
-        pre_lift_z = arm.get_object_positions()["banana"][2]
-
-        # Lift EE by 0.08 m
-        cur_pos, _ = arm.fk(arm.get_joint_positions())
-        lift_target = (cur_pos[0], cur_pos[1], cur_pos[2] + 0.08)
-        lift_solution = arm.ik(lift_target)
-        if lift_solution is not None:
-            arm.move_joints(lift_solution, duration=2.0)
-            arm.step(200)
-
-        post_lift_z = arm.get_object_positions()["banana"][2]
-        assert post_lift_z > pre_lift_z + 0.03, (
-            f"Object z did not increase after lift: pre={pre_lift_z:.4f}, post={post_lift_z:.4f}"
-        )

@@ -293,6 +293,29 @@ def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
     assert "RED rc=2 collection" in r.stdout, r.stdout[-2000:]
 
 
+def test_own_process_tests_run_in_a_child_a_self_signal_ends_only_it(tmp_path) -> None:
+    """tests-inventory:signal-own-pid — native_safety SIGINTed the pytest process from a
+    timer; one firing late would abort the whole file. @own_process runs it in a child."""
+    probe = tmp_path / "test_probe_own_process.py"
+    probe.write_text(
+        "import os, signal, pytest\n\n"
+        "@pytest.mark.own_process\ndef test_in_child():\n"
+        "    assert os.environ.get('VECTOR_TEST_OWN_PROCESS_CHILD') == '1'\n\n"
+        "@pytest.mark.own_process\ndef test_child_fails():\n    assert False, 'red in the child'\n\n"
+        "@pytest.mark.own_process\ndef test_kills_itself():\n    os.kill(os.getpid(), signal.SIGTERM)\n\n"
+        "@pytest.mark.own_process\ndef test_child_skips():\n    pytest.skip('no weights here')\n\n"
+        "def test_parent_still_runs():\n    assert 'VECTOR_TEST_OWN_PROCESS_CHILD' not in os.environ\n"
+    )
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
+         "-c", str(_REPO / "pyproject.toml"), "-q", "--rootdir", str(tmp_path), str(probe)],
+        cwd=_REPO, capture_output=True, text=True, timeout=300,
+    )
+    out = r.stdout + r.stderr
+    assert "2 failed, 2 passed, 1 skipped" in r.stdout, out[-3000:]
+    assert "red in the child" in r.stdout and "rc=-15" in r.stdout, out[-3000:]
+
+
 @pytest.mark.parametrize("tier", ["hermetic", "sim", "e2e"])
 def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_path, tier) -> None:
     """tests-gate-e2e:sim-tier-uses-real-home — only the hermetic tier swapped HOME, so

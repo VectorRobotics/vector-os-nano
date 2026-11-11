@@ -9,14 +9,6 @@ import pytest
 pytest.importorskip("mujoco", reason="mujoco not installed")
 
 
-def _has_convex_mpc() -> bool:
-    try:
-        import vector_os_nano.third_party.convex_mpc  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 class TestMuJoCoGo2Lifecycle:
     def test_connect_disconnect(self):
         from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
@@ -47,8 +39,8 @@ class TestMuJoCoGo2Lifecycle:
 
 
 class TestMuJoCoGo2ConvexMPC:
-    @pytest.mark.skipif(not _has_convex_mpc(), reason="convex_mpc not installed")
     def test_imports(self):
+        pytest.importorskip("pinocchio", reason="pin ([go2] extra) not installed")
         from vector_os_nano.third_party.convex_mpc.go2_robot_data import PinGo2Model
         go2 = PinGo2Model()
         assert go2.model.nq == 19
