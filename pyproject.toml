@@ -96,7 +96,7 @@ mcp = [
 ]
 
 # Go2 quadruped locomotion: Pinocchio kinematics + CasADi for MPC
-go2 = ["casadi>=3.6", "pin>=3.0"]
+go2 = ["casadi>=3.6", "pin>=3.0", "scipy>=1.11"]  # scipy: the vendored convex_mpc imports it
 
 # Mac-installable union (excludes [real] hardware-only native deps)
 # NOTE: go2 MUST be here — it carries casadi (the convex-MPC QP solver). Omitting
