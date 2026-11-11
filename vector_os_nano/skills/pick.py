@@ -108,15 +108,8 @@ class PickSkill:
         "Pick up an object and hold it (the default). mode='drop' discards it to the side "
         "instead; the holding_object verify then fails by design."
     )
-    # Typical REAL-TIME (viewer-synced) duration in seconds, with margin for up to 2
-    # retries (each attempt: pregrasp 3s + descent 1s + gripper seq + lift 1s + home 3s
-    # = ~8–10s; 2 retries + home-between + perception sampling → ~40s real-time).
-    # GoalExecutor floors the step's effective timeout at this value so a completed pick
-    # is never falsely marked timeout under a live MuJoCo viewer (R2-2).
-    typical_duration_sec: float = 45.0
-    # Success predicate this skill is verified against (single-source for the
-    # planner; kernel rules 3 + 5), bound from the call's object_label by the native
-    # runner. References the arm verify namespace.
+    # Success predicate this skill is verified against, bound from the call's
+    # object_label by the native runner. References the arm verify namespace.
     verify_hint: str = "holding_object({object_label})"
     parameters: dict = {
         "object_id": {

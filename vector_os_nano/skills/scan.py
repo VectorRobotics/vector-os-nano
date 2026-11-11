@@ -37,11 +37,6 @@ class ScanSkill:
 
     name: str = "scan"
     description: str = "Move arm to scan position for workspace observation"
-    # Typical REAL-TIME (viewer-synced) duration: 3s arm move + perception sampling
-    # overhead ≈ 10–12s real-time; 15s gives margin.  GoalExecutor floors the step
-    # timeout at this value (R2-2) so a tight LLM-emitted timeout_sec is not a
-    # false failure under a live viewer.
-    typical_duration_sec: float = 15.0
     # No meaningful state predicate — the always-safe truthy literal.
     verify_hint: str = "True"
     parameters: dict = {}

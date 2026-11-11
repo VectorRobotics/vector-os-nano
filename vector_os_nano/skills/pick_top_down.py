@@ -371,9 +371,8 @@ class PickTopDownSkill:
                             return (obj.object_id, _xyz_of(obj))
 
         # No match. Caller sees object_not_found with the known-objects list;
-        # the decomposer is expected to retry with a detect/look step to
-        # populate the world model via perception (SO-101 pattern), not to
-        # silently substitute a nearby pickable.
+        # the model is expected to look again, never to silently substitute a
+        # nearby pickable.
         return None
 
 

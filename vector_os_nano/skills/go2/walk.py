@@ -65,10 +65,6 @@ class WalkSkill:
     description: str = (
         "Walk the quadruped forward, backward, left, or right by a given distance."
     )
-    # Typical REAL-TIME duration for a default 1m walk at 0.3 m/s: ~3s command +
-    # ROS2/network overhead + stabilisation ≈ 10–15s; 30s gives headroom for longer
-    # distances. GoalExecutor floors the step timeout at this value (R2-2).
-    typical_duration_sec: float = 30.0
     parameters: dict = {
         "direction": {
             "type": "string",

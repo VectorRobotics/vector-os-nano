@@ -400,9 +400,6 @@ class ExploreSkill:
         "until done; stop() cancels it). With the TARE stack it runs in the "
         "background until stop()."
     )
-    # A full 8-room coverage tour is ~6-7 sim-minutes on the go2 gait. GoalExecutor
-    # floors the step timeout at this value (R2-2).
-    typical_duration_sec: float = 600.0
     parameters: dict = {
         "backend": {
             "type": "string",

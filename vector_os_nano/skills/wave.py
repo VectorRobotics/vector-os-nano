@@ -37,10 +37,6 @@ class WaveSkill:
 
     name: str = "wave"
     description: str = "Wave the arm to greet the user"
-    # Typical REAL-TIME (viewer-synced) duration: raise 2s + 3 wave cycles (0.8s each,
-    # ×2 directions) + home 2s + pauses ≈ 12–13s; 15s gives margin.  GoalExecutor
-    # floors the step timeout at this value (R2-2).
-    typical_duration_sec: float = 15.0
     # No meaningful state predicate — the always-safe truthy literal.
     verify_hint: str = "True"
     parameters: dict = {}

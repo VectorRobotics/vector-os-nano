@@ -68,13 +68,8 @@ class PlaceSkill:
 
     name: str = "place"
     description: str = "Place held object at a location: front, left, right, center, back, front_left, front_right, back_left, back_right"
-    # Typical REAL-TIME (viewer-synced) duration in seconds: approach 3s + descent 2s +
-    # open gripper + lift 2s + home 3s + perception overhead ≈ 15–20s; 45s gives margin
-    # for a retry or a slow IK solve. GoalExecutor floors the step timeout at this value
-    # (R2-2) so a completed place is never falsely marked timeout under a live viewer.
-    typical_duration_sec: float = 45.0
-    # Success predicate this skill is verified against (single-source for the planner,
-    # auto-verified by the native runner). A place RELEASES the held object, so the
+    # Success predicate this skill is verified against (auto-verified by the native
+    # runner). A place RELEASES the held object, so the
     # gripper ends empty: released() is GT
     # (no weld active) and grades CAUSED only by a release this step.
     verify_hint: str = "released()"

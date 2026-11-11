@@ -188,6 +188,12 @@ def test_the_dead_core_api_stays_deleted() -> None:
     params = inspect.signature(agent.Agent).parameters
     back += [f"Agent({k}=)" for k in ("llm", "llm_api_key") if k in params]
     back += ["perception_grasp dock_pose"] * ("dock_pose" in perception_grasp.PerceptionGraspSkill.parameters)
+    # the deleted producer's skill metadata (no reader since R1)
+    from vector_os_nano.skills import get_piper_skills, get_so101_skills
+    from vector_os_nano.skills.go2 import get_go2_skills
+
+    back += [f"{type(s).__name__}.{a}" for s in (*get_so101_skills(), *get_go2_skills(), *get_piper_skills())
+             for a in ("typical_duration_sec", "__skill_direct__", "__skill_auto_steps__") if hasattr(s, a)]
     assert not back, back
 
 

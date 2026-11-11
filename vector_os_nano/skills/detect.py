@@ -46,7 +46,7 @@ class DetectSkill:
 
     name: str = "detect"
     description: str = "Detect objects in the workspace using VLM. The query is a natural-language noun/phrase in ANY language (e.g. 'banana' / '香蕉' / 'red cup' / '红色杯子'), or 'all objects' to detect everything."
-    # Success predicate this skill is verified against (single-source for the planner).
+    # Success predicate this skill is verified against (the native runner binds it).
     # GT: the object is in the robot's camera view (segmentation), never a count of
     # the detector's own boxes.
     verify_hint: str = "in_view('<query>')"
@@ -102,8 +102,7 @@ class DetectSkill:
         if not detections:
             # Decide success based on query intent (R2-7 honest-success fix):
             # - Generic "all objects" / "everything" queries: an empty scene is a
-            #   valid answer — the robot looked and found nothing; success=True so a
-            #   downstream foreach can no-op cleanly over the empty list.
+            #   valid answer — the robot looked and found nothing; success=True.
             # - Specific target queries (e.g. "apple", "苹果"): no detections means
             #   the target is absent; the step genuinely failed — success=False so
             #   the verify moat catches the miss instead of false-passing.
@@ -205,11 +204,7 @@ class DetectSkill:
 
             summary = {
                 "object_id": obj_id,
-                # Expose BOTH "name" and "label" (same value): a downstream foreach
-                # binds a per-item field (e.g. "${item.name}") into a skill param, and
-                # the decompose example / the playground detect producer use "name"
-                # while this skill historically used "label". Carrying both keeps the
-                # producer->foreach->skill contract robust to whichever the planner emits.
+                # BOTH "name" and "label" (same value): the model may bind either.
                 "name": det.label,
                 "label": det.label,
                 "confidence": round(det.confidence, 4),

@@ -37,7 +37,7 @@ class DescribeSkill:
 
     name: str = "describe"
     description: str = "Describe what the camera sees using VLM scene understanding"
-    # Success predicate this skill is verified against (single-source for the planner).
+    # Success predicate this skill is verified against (the native runner binds it).
     # A description is not a checkable world state: the step grades RAN.
     verify_hint: str = "True"
     parameters: dict = {

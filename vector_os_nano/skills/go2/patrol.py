@@ -156,10 +156,6 @@ class PatrolSkill:
             "description": "Total patrol timeout in seconds (default 300)",
         },
     }
-    # Typical REAL-TIME duration for visiting ~4 rooms: navigate (~20s each) + look
-    # per room (~10s) × 4 ≈ 120s; 90s is the floor for even a 2-room patrol.
-    # GoalExecutor floors the step timeout at this value (R2-2).
-    typical_duration_sec: float = 90.0
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"patrolled": True}
