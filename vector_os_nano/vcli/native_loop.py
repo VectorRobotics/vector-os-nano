@@ -57,6 +57,7 @@ from vector_os_nano.vcli.cognitive.types import (
     SubGoal,
 )
 from vector_os_nano.vcli.permissions import PermissionContext
+from vector_os_nano.vcli.prompt import user_prompt_files
 from vector_os_nano.vcli.tool_execution import execute_resolved_tool, resolve_permission
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
 from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
@@ -1227,7 +1228,7 @@ def _native_system_prompt(engine: Any, oracle_names: frozenset[str], agent: Any 
 
     The verify vocab is the SAME live oracle set ``verify_oracle_names`` reads; each
     predicate's signature and meaning is in the verify tool's description. The world persona (``engine._world.persona_blocks(agent)``) carries the
-    body's task policy; the ``[Robot State]`` block is the actor's belief right now
+    body's task policy; the user's own prompt files follow it (``user_prompt_files``); the ``[Robot State]`` block is the actor's belief right now
     (pose, room, gripper, localized objects, nav/explore backend), rebuilt for every
     round-trip. Nothing here names a ground-truth object.
     """
@@ -1240,6 +1241,7 @@ def _native_system_prompt(engine: Any, oracle_names: frozenset[str], agent: Any 
             blocks += [{"type": "text", "text": t.strip()} for t in world.persona_blocks(agent) if t]
         except Exception as exc:  # noqa: BLE001 — the kernel rules still stand
             logger.warning("native_loop: world persona unavailable: %s", exc)
+    blocks += [{"type": "text", "text": t} for t in user_prompt_files()]
     if agent is not None:
         from vector_os_nano.vcli.robot_context import RobotContextProvider
 

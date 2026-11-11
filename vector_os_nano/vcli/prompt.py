@@ -1,12 +1,37 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""The persona text of the two kernel worlds (one role + tool-instruction pair each).
+"""The persona text of the two kernel worlds (one role + tool-instruction pair each),
+and the user-authored prompt files.
 
 ``DevWorld.persona_blocks`` and ``RobotWorld.persona_blocks`` return these; the
-native loop puts them after its kernel rules in the system prompt.
+native loop puts them after its kernel rules in the system prompt, then
+``user_prompt_files``.
 """
 from __future__ import annotations
+
+from pathlib import Path
+
+
+def user_prompt_files() -> list[str]:
+    """The user-authored prompt text, one entry per non-empty file, in this order:
+    ``~/.vector/personality.md``, the project's ``VECTOR.md`` in cwd, ``~/.vector/VECTOR.md``.
+
+    Another agent's files (AGENTS.md, CLAUDE.md) are never read: a repo's developer
+    constitution is not the robot's system prompt.
+    """
+    home = Path.home() / ".vector"
+    out = []
+    for label, path in (("Personality", home / "personality.md"),
+                        ("Project Context (VECTOR.md)", Path.cwd() / "VECTOR.md"),
+                        ("User Context (~/.vector/VECTOR.md)", home / "VECTOR.md")):
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except OSError:  # absent, a directory, unreadable: nothing to add
+            continue
+        if text:
+            out.append(f"{label}:\n{text}")
+    return out
 
 # ---------------------------------------------------------------------------
 # Static prompt text — these are cacheable. One persona pair per world.

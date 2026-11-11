@@ -723,3 +723,37 @@ def test_native_turn_after_a_foreign_tool_then_text_turn_keeps_role_alternation(
     agent, _ = _make_agent(0.0, 0.0)
     _make_engine(agent, rec).run_turn_native("往前走一米", session=session)
     assert _alternates(rec.seen[0]) == ["user", "assistant", "user"]
+
+
+def test_user_authored_prompt_files_reach_the_native_turn(tmp_path, monkeypatch) -> None:
+    """R1V-3: $VECTOR_HOME personality.md and VECTOR.md (and the project's own VECTOR.md
+    in cwd) are user-authored file interfaces (charter §5); every native turn sees them."""
+    home, project = tmp_path / "home", tmp_path / "project"
+    (home / ".vector").mkdir(parents=True)
+    project.mkdir()
+    (home / ".vector" / "personality.md").write_text("speak like a pirate\n")
+    (home / ".vector" / "VECTOR.md").write_text("user notes: metric units\n")
+    (project / "VECTOR.md").write_text("project notes: the arm is left-handed\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(project)
+    text = _prompt_text(None, None)
+    for wanted in ("speak like a pirate", "user notes: metric units", "project notes: the arm is left-handed"):
+        assert wanted in text, wanted
+    assert text.index("Never finish while") < text.index("speak like a pirate")  # below the kernel rules
+
+
+def test_absent_empty_or_foreign_prompt_files_add_nothing(tmp_path, monkeypatch) -> None:
+    """No file, an empty file, a directory named VECTOR.md, or another agent's file
+    (AGENTS.md / CLAUDE.md: a repo's developer constitution) adds no block and never raises."""
+    home, project = tmp_path / "home", tmp_path / "project"
+    (home / ".vector").mkdir(parents=True)
+    (project / "VECTOR.md").mkdir(parents=True)
+    (home / ".vector" / "personality.md").write_text("  \n")
+    (project / "AGENTS.md").write_text("agents constitution\n")
+    (project / "CLAUDE.md").write_text("claude constitution\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(project)
+    assert "constitution" not in _prompt_text(None, None)
+    from vector_os_nano.vcli.native_loop import _native_system_prompt
+
+    assert len(_native_system_prompt(SimpleNamespace(_world=None), frozenset({"holding_object"}), None)) == 1
