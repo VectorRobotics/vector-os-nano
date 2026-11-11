@@ -64,7 +64,7 @@ class RobotContextProvider:
         now = time.time()
         objs = []
         for o in self._sg.find_objects_by_category(""):
-            if (o.x, o.y) == (0.0, 0.0):  # never localized
+            if o.x is None or o.y is None:  # never localized
                 continue
             seen = float(getattr(o, "last_seen", None) or getattr(o, "first_seen", 0.0))
             objs.append((seen, o))
@@ -73,7 +73,8 @@ class RobotContextProvider:
         for seen, o in objs[:_MAX_KNOWN_OBJECTS]:
             colour = (getattr(o, "attributes", None) or {}).get("color", "")
             label = f"{colour} {o.category}".strip()
-            out.append(f"  {label} at ({o.x:.2f}, {o.y:.2f}, {o.z:.2f}), seen {_age(now - seen)} ago")
+            z = "?" if o.z is None else f"{o.z:.2f}"
+            out.append(f"  {label} at ({o.x:.2f}, {o.y:.2f}, {z}), seen {_age(now - seen)} ago")
         return out
 
     def get_context_block(self) -> dict[str, str]:

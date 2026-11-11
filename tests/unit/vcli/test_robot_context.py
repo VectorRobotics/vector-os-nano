@@ -148,3 +148,19 @@ class TestBaseAndSceneGraph:
         provider = _make_provider(base=MockBase())
         block = provider.get_context_block()
         assert block["text"].startswith("[Robot State]")
+
+
+def test_known_objects_block_skips_unlocalized_and_survives_none_z() -> None:
+    """I23: after WP11 an unlocalized instance has x/y None and a localized one may
+    have z None; the (0,0)-sentinel reader raised TypeError on both and the try/except
+    silently dropped the whole Known-objects block from the prompt."""
+    from vector_os_nano.core.scene_graph import SceneGraph
+    from vector_os_nano.vcli.robot_context import RobotContextProvider
+
+    sg = SceneGraph()
+    sg.merge_object("green bottle", "hallway", "vp", x=10.86, y=2.8)  # z unknown
+    sg.merge_object("sofa", "hallway", "vp")  # a name with no position
+    text = RobotContextProvider(base=MockBase(), scene_graph=sg).get_context_block()["text"]
+    assert "Known objects (from your perception):" in text
+    assert "green bottle at (10.86, 2.80, ?)" in text
+    assert "sofa" not in text
