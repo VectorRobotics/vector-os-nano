@@ -181,8 +181,10 @@ def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id:
     ``resolve_surface``), never from ground truth:
 
     - place naming a surface (放到餐桌上 / put it on the dining table) ->
-      ``object_on(obj, surface)``; a place naming no surface compiles none (the
-      manipulation gate still needs a release / placement step);
+      ``object_on(obj, surface)``; a place naming none (put it down) ->
+      ``released(obj)``: out of the hand at turn end (I4F1-D3). A pick-and-place
+      starts released, so trace_store exempts it from False-at-start only after a
+      grounded grasp of the same object; a world without a manifest compiles none;
     - fetch (拿过来 / bring ...) -> ``kept_holding(obj)`` and ``near_object('user')``:
       delivered = held, never dropped this turn, at the user. kept_holding is caused
       only by a grasp in this turn (its ``window="turn"`` tag), and each item must be
@@ -208,8 +210,10 @@ def task_contract(goal_text: str | None, oracle_names: frozenset[str], world_id:
         world = _manifest(world_id)
         obj = world.resolve(goal_text) if world is not None else None
         if "place" in intents:
-            surface = world.resolve_surface(goal_text) if world is not None else None
-            return (f"object_on({obj!r}, {surface!r})",) if surface else ()
+            if world is None:
+                return ()
+            surface = world.resolve_surface(goal_text)
+            return (f"object_on({obj!r}, {surface!r})" if surface else f"released({obj!r})",)
         if "fetch" in intents:
             return (f"kept_holding({obj!r})", "near_object('user')")
         # a manifest binds the object or None (fails closed: "the apple", two bottles)

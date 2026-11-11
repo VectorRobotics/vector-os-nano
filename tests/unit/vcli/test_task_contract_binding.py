@@ -41,9 +41,11 @@ GREEN = "pickable_bottle_green"
     ("把绿色瓶子放到餐桌上", (f"object_on('{GREEN}', 'dining_table')",)),
     ("put the yellow cup on the coffee table", ("object_on('pickable_cup_yellow', 'coffee_table')",)),
     ("拿起绿色瓶子放到茶几上", (f"object_on('{GREEN}', 'coffee_table')",)),
-    # a bare "table" names none of the four surfaces: no place contract (the
-    # manipulation gate still needs a release / placement step)
-    ("把绿色瓶子放到桌子上", ()),
+    # a bare "table" names none of the four surfaces: the bottle out of the hand
+    # at turn end (I4F1-D3; before, no contract at all)
+    ("把绿色瓶子放到桌子上", (f"released('{GREEN}')",)),
+    ("put the green bottle down", (f"released('{GREEN}')",)),
+    ("put the can down", ("released(None)",)),
     # unresolvable object: None binds, the item is no evidence (fails closed)
     ("把那个罐子拿过来", ("kept_holding(None)", "near_object('user')")),
     ("把瓶子放到餐桌上", ("object_on(None, 'dining_table')",)),
@@ -99,13 +101,15 @@ _TAGS = {"kept_holding": OracleTag(scope="robot", channel="gripper", transition=
 
 
 def test_kept_holding_is_judged_from_the_turn_start() -> None:
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
     held, empty = ActorBaseline(gripper_welds={GREEN: True}), ActorBaseline(gripper_welds={GREEN: False})
-    expr = "kept_holding('green bottle')"
+    expr, apt = "kept_holding('green bottle')", load_world("apartment")  # the alias resolves via the manifest
     # the carry step's own baseline already holds it; the grasp was earlier this turn
-    assert grade_channels(held, held, expr, _TAGS, turn_baseline=empty)[0] is ActorCaused.CAUSED
+    assert grade_channels(held, held, expr, _TAGS, turn_baseline=empty, world=apt)[0] is ActorCaused.CAUSED
     # held before the turn began: never the actor's fetch
-    assert grade_channels(held, held, expr, _TAGS, turn_baseline=held)[0] is ActorCaused.UNCAUSED
-    assert grade_channels(held, held, expr, _TAGS)[0] is ActorCaused.UNCAUSED  # no turn baseline
+    assert grade_channels(held, held, expr, _TAGS, turn_baseline=held, world=apt)[0] is ActorCaused.UNCAUSED
+    assert grade_channels(held, held, expr, _TAGS, world=apt)[0] is ActorCaused.UNCAUSED  # no turn baseline
 
 
 # ---------------------------------------------------------------------------
@@ -310,10 +314,12 @@ def test_a_goal_never_grounds_on_another_caused_predicate(goal, verify) -> None:
 
 
 def test_a_place_naming_no_surface_still_needs_a_release_or_placement() -> None:
-    t = _one_row("place the can on the table", "at_position(10.9, 3.0)")
-    assert t.contract == ()
-    assert "object_at/object_on/released" in turn_reject_reason(t, APT)
-    assert turn_reject_reason(_one_row("place the can on the table", "released('red can')"), APT) == ""
+    t = _one_row("place the red can on the table", "at_position(10.9, 3.0)")
+    assert t.contract == ("released('pickable_can_red')",)
+    assert "released" in turn_reject_reason(t, APT)
+    assert turn_reject_reason(_one_row("place the red can on the table", "released('red can')"), APT) == ""
+    # "the can" names no one object: the release contract binds None and fails closed
+    assert "names no object" in turn_reject_reason(_one_row("place the can on the table", "released('red can')"), APT)
 
 
 def test_the_right_object_on_the_right_surface_grounds() -> None:
@@ -345,17 +351,17 @@ def _rows(goal, verifies, *, intents=()):
 ])
 def test_pick_and_place_is_not_proven_by_a_hold(goal) -> None:
     t = _rows(goal, [f"holding_object('{GREEN}')"])
-    assert "object_at/object_on/released" in turn_reject_reason(t, APT), t.contract
+    assert "released" in turn_reject_reason(t, APT), t.contract
     both = _rows(goal, [f"holding_object('{GREEN}')", "released('green bottle')"])
     assert turn_reject_reason(both, APT) == ""
 
 
 def test_a_pure_place_with_a_dispatched_grasp_needs_both_proofs() -> None:
-    hold = _rows("place the can on the table", ["holding_object('red can')"], intents=("grasp",))
-    assert "object_at/object_on/released" in turn_reject_reason(hold, APT)
-    place = _rows("place the can on the table", ["released('red can')"], intents=("grasp",))
+    hold = _rows("place the red can on the table", ["holding_object('red can')"], intents=("grasp",))
+    assert "released" in turn_reject_reason(hold, APT)
+    place = _rows("place the red can on the table", ["released('red can')"], intents=("grasp",))
     assert "holding_object/kept_holding/lifted" in turn_reject_reason(place, APT)
-    both = _rows("place the can on the table", ["holding_object('red can')", "released('red can')"],
+    both = _rows("place the red can on the table", ["holding_object('red can')", "released('red can')"],
                  intents=("grasp",))
     assert turn_reject_reason(both, APT) == ""
 
@@ -377,8 +383,8 @@ def test_a_place_goal_that_only_grasped_is_rejected_through_the_runner(goal) -> 
     eng = _make_engine(agent, backend)
     trace = eng.run_turn_native(goal, session=_session())
     rep = _verdict(agent, eng, trace)
-    assert trace.contract == () and "grasp" in trace.intents, (trace.contract, trace.intents)
-    assert rep.verified is False and "object_at/object_on/released" in rep.reject_reason, rep.reject_reason
+    assert trace.contract == (f"released('{GREEN}')",) and "grasp" in trace.intents, (trace.contract, trace.intents)
+    assert rep.verified is False and "released" in rep.reject_reason, rep.reject_reason
 
 
 @pytest.mark.parametrize("goal, verify", [
@@ -388,3 +394,128 @@ def test_a_place_goal_that_only_grasped_is_rejected_through_the_runner(goal) -> 
 ])
 def test_a_grasp_of_an_unresolvable_object_fails_closed(goal, verify) -> None:
     assert "names no object" in turn_reject_reason(_one_row(goal, verify), APT)
+
+
+# ---------------------------------------------------------------------------
+# I4F1-D2: every manipulation proof names the goal's object (the wrong object never
+# grounds, through an alias either). I4F1-D3: a place ends with the object out of the
+# hand (released(obj) at turn end), so proofs out of order never verify.
+# ---------------------------------------------------------------------------
+
+RED = "pickable_can_red"
+
+
+class _TwoArm:
+    """The red can and the green bottle; each rises to the EE while held."""
+
+    _connected = True
+
+    def __init__(self) -> None:
+        self.held = {RED: False, GREEN: False}
+
+    def get_object_positions(self):
+        rest = {RED: [10.6, 3.0, 0.02], GREEN: [10.9, 3.0, 0.02]}
+        return {n: [0.0, 0.0, 0.3] if self.held[n] else rest[n] for n in rest}
+
+    def get_joint_positions(self):
+        return [0.0] * 6
+
+
+class _TwoGripper:
+    def __init__(self, arm: _TwoArm) -> None:
+        self._arm = arm
+
+    def is_holding(self) -> bool:
+        return any(self._arm.held.values())
+
+    def weld_is_active(self) -> dict:
+        return dict(self._arm.held)
+
+
+def _two(goal, script, *, held=()):
+    from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
+    from vector_os_nano.sim.session import session_for
+
+    agent, _ = _make_agent(10.0, 3.0)
+    agent._base = _NavBase(10.0, 3.0)
+    arm = _TwoArm()
+    agent._arm, agent._gripper = arm, _TwoGripper(arm)
+    unbind_fake_sim(session_for(agent))
+    bind_fake_sim(agent, "go2_piper")
+    arm.held.update({n: True for n in held})
+    for tag, name in (("can", RED), ("green", GREEN)):
+        agent._skill_registry.register(_Skill(f"grasp_{tag}", lambda n=name: arm.held.__setitem__(n, True)))
+        agent._skill_registry.register(_Skill(f"open_{tag}", lambda n=name: arm.held.__setitem__(n, False)))
+    backend = FakeToolScriptBackend.from_tool_script(
+        [*(tool_turn(c) for c in script), tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native(goal, session=_session())
+    return trace, _verdict(agent, eng, trace)
+
+
+def _v(expr):
+    return ("verify", {"expr": expr})
+
+
+_HOLD_GREEN, _REL_GREEN = _v("holding_object('green bottle')"), _v("released('green bottle')")
+
+
+def test_releasing_another_object_never_places_the_named_one() -> None:
+    """Probe 1: the red can is released, the green bottle never touched."""
+    trace, rep = _two("put the green bottle down", [("open_can", {}), _REL_GREEN], held=(RED,))
+    assert trace.steps[0].actor_caused is ActorCaused.UNCAUSED, trace.steps[0].channels
+    assert rep.verified is False
+
+
+def test_a_pick_and_place_of_another_object_never_grounds() -> None:
+    """Probe 2: the hold proof names the red can; the release alias is not caused by it."""
+    trace, rep = _two("pick up the green bottle and put it down",
+                      [("grasp_can", {}), _v("holding_object('red can')"), ("open_can", {}), _REL_GREEN])
+    assert trace.contract == (f"released('{GREEN}')",)
+    assert rep.verified is False
+
+
+@pytest.mark.parametrize("goal", ["put the green bottle down", "pick up the green bottle and put it down"])
+def test_a_place_that_ends_with_the_object_in_hand_never_grounds(goal) -> None:
+    """D3: released, then grasped again: both proofs CAUSED, but the bottle ends held."""
+    trace, rep = _two(goal, [("open_green", {}), _REL_GREEN, ("grasp_green", {}), _HOLD_GREEN], held=(GREEN,))
+    assert [s.actor_caused for s in trace.steps] == [ActorCaused.CAUSED, ActorCaused.CAUSED]
+    assert rep.verified is False and "not met at turn end" in rep.reject_reason, rep.reject_reason
+
+
+def test_a_place_and_a_pick_and_place_of_the_named_object_ground() -> None:
+    trace, rep = _two("put the green bottle down", [("open_green", {}), _REL_GREEN], held=(GREEN,))
+    assert rep.verified is True, rep.reject_reason
+    trace, rep = _two("pick up the green bottle and put it down",
+                      [("grasp_green", {}), _HOLD_GREEN, ("open_green", {}), _REL_GREEN])
+    assert trace.contract_start == (True,)  # resting at start: exempt only after the grasp
+    assert rep.verified is True, rep.reject_reason
+
+
+def test_a_resting_object_released_before_any_grasp_is_already_satisfied() -> None:
+    """The pick-and-place exemption needs the grasp proof FIRST."""
+    t = _rows("pick up the green bottle and put it down", ["released('green bottle')", f"holding_object('{GREEN}')"])
+    t = ExecutionTrace(t.goal_tree, t.steps, True, 0.0, contract=t.contract, contract_start=(True,),
+                       contract_end=(True,), world="apartment")
+    assert turn_reject_reason(t, APT).startswith("already satisfied at turn start")
+
+
+def test_an_alias_target_is_caused_only_by_its_own_weld() -> None:
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+    tags = {"released": OracleTag(scope="robot", channel="gripper", transition="fall")}
+    before = ActorBaseline(gripper_welds={RED: True, GREEN: False})
+    after = ActorBaseline(gripper_welds={RED: False, GREEN: False})
+    expr = "released('green bottle')"
+    assert grade_channels(before, after, expr, tags, world=load_world("apartment"))[0] is ActorCaused.UNCAUSED
+    assert grade_channels(before, after, expr, tags)[0] is ActorCaused.UNCAUSED  # no manifest: not a weld key
+    assert grade_channels(before, after, "released('red can')", tags,
+                          world=load_world("apartment"))[0] is ActorCaused.CAUSED
+
+
+@pytest.mark.parametrize("goal, verifies", [
+    ("pick up the green bottle and put it down", ["holding_object('red can')", "released('green bottle')"]),
+    ("put the green bottle down", ["released('red can')"]),
+])
+def test_every_manipulation_proof_names_the_goal_object(goal, verifies) -> None:
+    assert turn_reject_reason(_rows(goal, verifies), APT) != ""

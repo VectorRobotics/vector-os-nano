@@ -346,25 +346,29 @@ def _commanded(before: float | None, after: float | None) -> bool:
     return before is not None and after is not None and after - before >= MOTION_EPS
 
 
-def _gripper_caused(want: str, call: ast.Call, b: ActorBaseline, p: ActorBaseline) -> bool:
+def _gripper_caused(want: str, call: ast.Call, b: ActorBaseline, p: ActorBaseline, world: Any = None) -> bool:
     """A weld transition of the wanted polarity: 0->1 for ``rise`` (a grasp), 1->0 for
-    ``fall`` (a release), either for ``level``. Target-aware when the call names a
-    welded body (``holding_object('mug')`` is not caused by a fresh banana weld)."""
+    ``fall`` (a release), either for ``level``. Target-aware when the call names an
+    object: the name resolves through the world manifest *world* (an alias, "green
+    bottle") or is a weld key itself, and only that body's weld counts
+    (``holding_object('mug')`` is not caused by a fresh banana weld); a name that
+    matches no welded body is never caused (I4F1-D2: an alias was caused by ANY weld)."""
     if b.gripper_welds is None or p.gripper_welds is None:
         return False
     target = call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) else None
     keys = set(b.gripper_welds) | set(p.gripper_welds)
-    if isinstance(target, str) and target.strip().lower() in {k.lower() for k in keys}:
-        keys = {k for k in keys if k.lower() == target.strip().lower()}
+    if isinstance(target, str):
+        name = ((world.resolve(target) if world is not None else None) or target).strip().lower()
+        keys = {k for k in keys if k.lower() == name}
     rose = any(p.gripper_welds.get(k) and not b.gripper_welds.get(k) for k in keys)
     fell = any(b.gripper_welds.get(k) and not p.gripper_welds.get(k) for k in keys)
     return {"rise": rose, "fall": fell}.get(want, rose or fell)
 
 
 def _call_caused(name: str, call: ast.Call, channel: str, want: str,
-                 b: ActorBaseline, p: ActorBaseline) -> bool:
+                 b: ActorBaseline, p: ActorBaseline, world: Any = None) -> bool:
     if channel == "gripper":
-        return _gripper_caused(want, call, b, p)
+        return _gripper_caused(want, call, b, p, world)
     if channel == "perception":
         # The belief gained a localized observation this step (WP11 observation_count);
         # memory from before the step, or a step that localized nothing, is UNCAUSED.
@@ -385,7 +389,7 @@ def _call_caused(name: str, call: ast.Call, channel: str, want: str,
 
 def grade_channels(
     baseline: ActorBaseline | None, post: ActorBaseline, verify: str, oracles: Any,
-    turn_baseline: ActorBaseline | None = None,
+    turn_baseline: ActorBaseline | None = None, world: Any = None,
 ) -> tuple[ActorCaused, tuple[str, ...]]:
     """Grade EVERY robot-channel oracle call in *verify* (no first match).
 
@@ -408,7 +412,7 @@ def grade_channels(
 
     def caused(name: str, call: ast.Call, channel: str, want: str) -> bool:
         b = turn_baseline if getattr(_tag(oracles, name), "window", "step") == "turn" else baseline
-        return b is not None and _call_caused(name, call, channel, want, b, post)
+        return b is not None and _call_caused(name, call, channel, want, b, post, world)
 
     detail = tuple(
         f"{channel}:{name}:{'CAUSED' if caused(name, call, channel, want) else 'UNCAUSED'}"
@@ -420,10 +424,10 @@ def grade_channels(
 
 def grade(
     baseline: ActorBaseline | None, post: ActorBaseline, verify: str, oracles: Any,
-    turn_baseline: ActorBaseline | None = None,
+    turn_baseline: ActorBaseline | None = None, world: Any = None,
 ) -> ActorCaused:
     """``grade_channels`` without the per-call detail."""
-    return grade_channels(baseline, post, verify, oracles, turn_baseline)[0]
+    return grade_channels(baseline, post, verify, oracles, turn_baseline, world)[0]
 
 
 def is_robot_predicate(verify: str, oracles: Any) -> bool:

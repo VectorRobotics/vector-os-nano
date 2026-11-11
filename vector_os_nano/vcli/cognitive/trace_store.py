@@ -407,9 +407,14 @@ def _contract_reason(
     """Why the turn's task contract is not met ("" when it is): every predicate must
     be GT-provable here, False at turn start, True at turn end, and asserted by a
     GROUNDED (actor-caused) graded step."""
-    from vector_os_nano.vcli.cognitive.object_goal import backs_contract, task_contract
+    from vector_os_nano.vcli.cognitive.object_goal import _HOLD, backs_contract, task_contract
 
     contract, world = tuple(trace.contract), str(getattr(trace, "world", "") or "")
+
+    def proven_at(item: str) -> list[int]:  # graded positions of the GROUNDED steps asserting item
+        return [i for i, s in enumerate(graded)
+                if ev[id(s)] == "GROUNDED" and backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)]
+
     # The spine recompiles the contract: a producer can never swap in a weaker one.
     if contract != task_contract(trace.goal_tree.goal, oracle_names, world):
         return "the task contract does not match the goal"
@@ -419,12 +424,17 @@ def _contract_reason(
         if classify_verify_expr(item, oracle_names) != "GROUNDED":
             return (f"task contract {item}: the goal names no object the world resolves"
                     if "None" in item else f"task contract {item} is not provable in this world")
-        if was:
+        proofs = proven_at(item)
+        # A pick-and-place starts released: that is no evidence unless a grounded grasp
+        # of the same object precedes the release proof (I4F1-D3).
+        obj = item[len("released("):-1] if item.startswith("released(") else None
+        picked = obj is not None and proofs and any(
+            i < proofs[-1] for n in _HOLD for i in proven_at(f"{n}({obj})"))
+        if was and not picked:
             return f"already satisfied at turn start: {item}"
         if not now:
             return f"task contract not met at turn end: {item}"
-        if not any(ev[id(s)] == "GROUNDED" and backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)
-                   for s in graded):
+        if not proofs:
             return f"no actor-caused step proves {item}"
     return ""
 
@@ -468,6 +478,8 @@ def _manipulation_reason(
     release for a place, both for a pick-and-place. Scoped to a world with
     ``holding_object``."""
     from vector_os_nano.vcli.cognitive.object_goal import (
+        _manifest,
+        backs_contract,
         goal_intents,
         has_necessary_manip_oracle,
         proof_oracles,
@@ -477,8 +489,20 @@ def _manipulation_reason(
         return ""
     goal = goal_intents(trace.goal_tree.goal)
     dispatched = set(getattr(trace, "intents", ()) or ())
+    # With a world manifest every proof must name the goal's object (I4F1-D2: a hold of
+    # the red can never proves "pick up the green bottle"); an unresolvable one fails closed.
+    world_id = str(getattr(trace, "world", "") or "")
+    world = _manifest(world_id)
+    want = world.resolve(trace.goal_tree.goal) if world is not None else None
+
+    def proves(verify: str | None, names: frozenset[str]) -> bool:
+        return has_necessary_manip_oracle(verify, names) and (
+            world is None or any(backs_contract(f"{n}({want!r})", verify, world_id) for n in names))
+
     for names in proof_oracles(goal, dispatched):
-        if not any(ev[id(s)] == "GROUNDED" and has_necessary_manip_oracle(sg_by_name[s.sub_goal_name].verify, names)
+        if world is not None and want is None:
+            return "a manipulation goal that names no object the world resolves is unprovable"
+        if not any(ev[id(s)] == "GROUNDED" and proves(sg_by_name[s.sub_goal_name].verify, names)
                    for s in graded):
             return f"a {'/'.join(sorted(goal | dispatched))} goal needs an actor-caused {'/'.join(sorted(names))} step"
     return ""

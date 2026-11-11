@@ -874,7 +874,10 @@ class NativeStepRunner:
                 return actor_causation.ActorCaused.NOT_GRADED, ()
             post = actor_causation.capture(self._agent)
             baseline = self._group_baseline(key) or self._baseline
-            return actor_causation.grade_channels(baseline, post, expr, self._oracles, self._turn_baseline)
+            from vector_os_nano.sim.session import session_for
+
+            world = getattr(session_for(self._agent), "world", None)  # a gripper target resolves through it
+            return actor_causation.grade_channels(baseline, post, expr, self._oracles, self._turn_baseline, world)
         except Exception as exc:  # noqa: BLE001
             logger.debug("native_loop: grade(%r) raised: %s", expr, exc)
             return actor_causation.ActorCaused.NOT_GRADED, ()
