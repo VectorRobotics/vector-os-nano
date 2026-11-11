@@ -172,6 +172,29 @@ Braking and the stance hand-over at zero command are the policy's job. Postures 
 are PD holds owned by `LeggedBase` and persist until a non-zero velocity command. Built-ins:
 `convex_mpc` (quadruped), `torchscript` (file + observation spec; G1), `sinusoidal`.
 
+### 3.5 What a verdict claims
+
+A verdict states three separate facts and never merges them:
+
+- **Step evidence** — a graded (action → verify) step is GROUNDED only when its predicate is ground
+  truth at that instant and the actor caused it. This is the moat; it has no vocabulary.
+- **Goal check** — `goal_check`: `proven` | `failed` | `unchecked`. The spine compiles a task
+  contract from the user's sentence ONLY when the WHOLE sentence matches a closed form (grasp,
+  release, place on a named surface, pick-and-place, fetch to the user) and binds its slots through
+  the world manifest. `proven`: every contract item was False at turn start, True at turn end and
+  backed by a GROUNDED step. `failed`: a contract was compiled and is not met, or a slot could not
+  be bound (the reason names the slot, quotes the words and lists the candidates). `unchecked`: no
+  contract — the spine does not read this sentence as an end state, says so, and lists the
+  predicates that were proven instead. There is no fallback from "the sentence mentions an object"
+  to a contract, no list of prepositions and no exemption list: a closed grammar can be sound;
+  what lies outside it is reported, never guessed, and never told to the model as its task.
+- **`verified`** — with a contract: the goal check is `proven` and every graded step is GROUNDED.
+  Without one: every graded step is GROUNDED and no gate rejects. A consumer that needs "the task
+  the user asked for is done" reads `goal_check == "proven"`.
+
+The gates that only reject stay (a manipulation word in the goal needs a manipulation proof that
+names the goal's object; coordinate goals; verify probes): they never make a goal proven.
+
 ## 4. Config-file interfaces (`vector_os_nano/schemas/` — imports stdlib and yaml only)
 
 Every file has a required `schema: 1`; a higher number fails with "upgrade vector_os_nano". Frozen
@@ -250,6 +273,7 @@ every `os.environ` read in the package to be in the catalogue.
   Hugging Face cache only; `HF_HUB_OFFLINE=1` forbids fetching; a first-use fetch prints one notice.
 - **Outputs are interfaces too**, each with a `schema` field: session JSONL, `scene_graph.yaml`, the
   `VECTOR_VERDICT {json}` line (per step: embodiment, backend, session, actor_caused; per report:
+  goal_check, contract,
   world, backend version, perception kind), the `VECTOR_GT_DUMP` JSONL.
 
 ## 6. Modularity (enforced by `tests/unit/test_layering.py`: AST-based, with an allowlist that only shrinks)
