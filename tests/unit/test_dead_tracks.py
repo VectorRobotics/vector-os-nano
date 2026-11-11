@@ -90,4 +90,4 @@ def test_pyproject_drops_the_dead_backend_deps() -> None:
 
     extras = tomllib.loads((_REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"]
     deps = {d.split(">")[0].split("=")[0].split("[")[0].strip().lower() for v in extras.values() for d in v}
-    assert not deps & {"pybullet", "open3d"}
+    assert not deps & {"open3d"}  # pybullet is back as sim/backends/pybullet (owner decision, release 1.0)
