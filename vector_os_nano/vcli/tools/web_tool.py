@@ -54,12 +54,13 @@ class _Refused(Exception):
 
 
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_V4_COMPATIBLE = ipaddress.ip_network("::/96")  # deprecated ::a.b.c.d; never routable
 
 
 def _is_public(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """True only for a globally routable unicast address. An IPv6 address that
     embeds an IPv4 one (v4-mapped, 6to4, NAT64) must be public on both readings."""
-    if not addr.is_global or addr.is_multicast:
+    if not addr.is_global or addr.is_multicast or addr in _V4_COMPATIBLE:
         return False
     if isinstance(addr, ipaddress.IPv6Address):
         inner = addr.ipv4_mapped or addr.sixtofour or (
@@ -88,9 +89,10 @@ def _public_address(host: str, port: int) -> str:
 
 def _expose(conn: Any, sock: socket.socket) -> socket.socket:
     """Hand *sock* to the deadline timer (raw_sock); if the deadline already passed
-    while there was nothing to shut down (inside connect), stop here."""
+    while there was nothing to shut down (inside connect), close it and stop here."""
     conn.raw_sock = sock
     if conn.expired.is_set():
+        sock.close()
         raise TimeoutError
     return sock
 

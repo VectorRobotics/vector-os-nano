@@ -142,6 +142,7 @@ def test_web_fetch_never_joins_a_parallel_batch() -> None:
     "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "0.0.0.0",
     "100.64.0.1", "224.0.0.1", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1",
     "::ffff:10.0.0.1", "64:ff9b::7f00:1", "2002:7f00:1::1", "::",
+    "::127.0.0.1", "::10.0.0.1", "::8.8.8.8",   # IPv4-compatible (::/96, deprecated)
 ])
 def test_non_public_addresses_are_refused(addr: str) -> None:
     assert web_tool._is_public(ipaddress.ip_address(addr)) is False
@@ -230,22 +231,35 @@ def test_total_time_is_capped_for_dripped_headers_and_chunk_lines(
     assert time.monotonic() - t0 < 3.0
 
 
+@pytest.mark.parametrize("scheme", ["http", "https"])
 def test_total_time_is_capped_when_it_expires_during_connect(
-    server: str, server_is_public: None, monkeypatch: pytest.MonkeyPatch
+    scheme: str, server_is_public: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The deadline fires while the TCP connect is still running (a delayed SYN-ACK),
-    before there is a socket to shut down; the header drip after it must not run on."""
+    before there is a socket to shut down. The fetch must stop at once (no request
+    sent, no TLS handshake begun, either of which a silent peer would hold for
+    another full socket timeout) and close the socket connect() returned.
+
+    The peer is a bare listening socket: the kernel completes the TCP handshake,
+    nothing ever answers, so no certificate is needed for https."""
     import time
 
+    lsock = socket.create_server(("127.0.0.1", 0))
     real_connect = socket.create_connection
+    opened: list[socket.socket] = []
 
     def slow_connect(*a: Any, **kw: Any) -> socket.socket:
         time.sleep(1.2)  # past the 1.0 s cap
-        return real_connect(*a, **kw)
+        opened.append(real_connect(*a, **kw))
+        return opened[-1]
 
     monkeypatch.setattr(web_tool, "_TOTAL_TIMEOUT_S", 1.0)
     monkeypatch.setattr(web_tool.socket, "create_connection", slow_connect)
     t0 = time.monotonic()
-    res = _fetch(server + "/drip-hdr")
+    try:
+        res = _fetch(f"{scheme}://127.0.0.1:{lsock.getsockname()[1]}/")
+    finally:
+        lsock.close()
     assert res.is_error and "timed out" in res.content, res.content
-    assert time.monotonic() - t0 < 3.0
+    assert time.monotonic() - t0 < 2.0
+    assert len(opened) == 1 and opened[0].fileno() == -1   # closed, not leaked
