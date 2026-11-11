@@ -27,6 +27,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+pytest.importorskip("PIL", reason="pillow ([perception] extra) not installed")
+
 # Import types used in mock return values
 from vector_os_nano.perception.vlm_go2 import (
     DetectedObject,

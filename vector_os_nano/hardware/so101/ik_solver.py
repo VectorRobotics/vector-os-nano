@@ -25,23 +25,8 @@ from vector_os_nano.hardware.so101.joint_config import ARM_JOINT_NAMES
 logger = logging.getLogger(__name__)
 
 
-def _find_urdf() -> Path:
-    """Locate the SO-101 URDF, checking canonical locations."""
-    candidates = [
-        Path(__file__).parent.parent / "urdf" / "so101.urdf",
-        Path.home() / "Desktop" / "vector_ws" / "src" / "so101_description"
-        / "urdf" / "so101_new_calib.urdf",
-        Path.home() / "Desktop" / "vector_ws" / "install" / "so101_description"
-        / "share" / "so101_description" / "urdf" / "so101_new_calib.urdf",
-    ]
-    for p in candidates:
-        if p.exists():
-            logger.debug("Found URDF at %s", p)
-            return p
-    raise FileNotFoundError(
-        "SO-101 URDF not found. Checked:\n"
-        + "\n".join(f"  {p}" for p in candidates)
-    )
+# The bundled SO-101 URDF (onshape-to-robot export, the calibrated so101_new_calib).
+_URDF = Path(__file__).parent.parent / "urdf" / "so101.urdf"
 
 
 class IKSolver:
@@ -62,8 +47,7 @@ class IKSolver:
         """Load URDF and initialise Pinocchio model.
 
         Args:
-            urdf_path: explicit path to the SO-101 URDF. When None, the
-                solver searches canonical locations automatically.
+            urdf_path: explicit path to the SO-101 URDF; None loads the bundled one.
 
         Raises:
             ImportError: if pinocchio is not installed.
@@ -79,11 +63,9 @@ class IKSolver:
 
         self._pin = pin
 
-        if urdf_path is None:
-            urdf_path = str(_find_urdf())
-
-        mesh_dir = str(Path(urdf_path).parent)
-        self.model, _, _ = pin.buildModelsFromUrdf(urdf_path, mesh_dir)
+        urdf_path = str(urdf_path or _URDF)
+        # Kinematics only: the URDF's package:// meshes are not needed for FK/IK.
+        self.model = pin.buildModelFromUrdf(urdf_path)
         self.data = self.model.createData()
 
         # Ordered list of joint names as Pinocchio sees them (skips universe)

@@ -243,35 +243,11 @@ def _bgr_to_rgb(bgr_array: Any) -> Any:
 
 
 def _numpy_to_png(rgb_array: Any) -> bytes:
-    """Convert a numpy RGB array (H, W, 3) uint8 to PNG bytes.
+    """Convert a numpy RGB array (H, W, 3) uint8 to PNG bytes (PIL; [mcp] declares it)."""
+    import io  # noqa: PLC0415
 
-    Tries PIL first; falls back to OpenCV if PIL is not available.
+    from PIL import Image  # noqa: PLC0415
 
-    Raises:
-        RuntimeError: If neither PIL nor cv2 can encode the image.
-    """
-    try:
-        import io  # noqa: PLC0415
-
-        from PIL import Image  # noqa: PLC0415
-
-        img = Image.fromarray(rgb_array)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-    except ImportError:
-        pass
-
-    try:
-        import cv2  # noqa: PLC0415
-        import numpy as np  # noqa: PLC0415
-
-        # cv2 expects BGR — our input is already RGB, so re-convert
-        bgr = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
-        success, buf = cv2.imencode(".png", bgr)
-        if success:
-            return buf.tobytes()
-    except ImportError:
-        pass
-
-    raise RuntimeError("Failed to encode PNG: neither PIL nor cv2 is available")
+    buf = io.BytesIO()
+    Image.fromarray(rgb_array).save(buf, format="PNG")
+    return buf.getvalue()

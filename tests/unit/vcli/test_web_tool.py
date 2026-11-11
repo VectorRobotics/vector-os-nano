@@ -148,6 +148,7 @@ def test_web_fetch_never_joins_a_parallel_batch() -> None:
     "64:ff9b::a9fe:a9fe",                       # NAT64 of 169.254.169.254
     "192.88.99.1",                              # 6to4 relay anycast
     "fec0::1",                                  # deprecated site-local fec0::/10
+    "::1:0:0:1", "1::1", "ff::8.8.8.8",         # IETF-reserved ::/8 outside ::/96 (R3CV-4)
 ])
 def test_non_public_addresses_are_refused(addr: str) -> None:
     assert web_tool._is_public(ipaddress.ip_address(addr)) is False

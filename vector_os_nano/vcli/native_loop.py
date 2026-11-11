@@ -838,7 +838,7 @@ def run_turn_native(
 
     The sim session (if any) is told where the turn starts and ends: its GT oracles
     scope ``kept_holding`` / ``localized`` to the turn, and ``VECTOR_GT_DUMP`` gets a
-    ground-truth line at both ends for the independent grader (tools/gt_grade.py).
+    ground-truth line at both ends for the independent grader (scripts/gt_grade.py).
     """
     from vector_os_nano.sim.session import mark_turn
 

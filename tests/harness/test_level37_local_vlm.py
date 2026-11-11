@@ -25,6 +25,8 @@ import httpx
 import numpy as np
 import pytest
 
+pytest.importorskip("PIL", reason="pillow ([perception] extra) not installed")
+
 
 def _ollama_available() -> bool:
     """Check if Ollama is running and has gemma4:e4b."""

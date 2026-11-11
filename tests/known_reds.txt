@@ -7,8 +7,10 @@
 # xfail is strict: once its cause is fixed the test XPASSes, which is red until the
 # row is deleted. Use flaky only for a test that really alternates.
 
-# ---- hermetic-tier baseline (scripts/gate.sh hermetic, 2026-10-04): every red on base c188658 that
-# is NOT a WP01 bug. Rows below are xfail (never deselected); each names its ledger key or owner WP.
+# ---- Re-verified 2026-11-11 (R8a, release-1.0 base 2eeb6c6): every xfail row below still fails
+# (hermetic 234/234 files green with them strict; the sim rows in the sim tier). Rows are xfail, never
+# deselected; each names its ledger key and the 2026-10 owner WP, whose release-1.0 owner is:
+# WP15 legacy producer -> R1, WP15 MCP -> R6, WP09 / WP12 skills -> R2, WP17 G1 assets -> C1 / S4.
 
 # legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
 tests/harness/test_level50_phase2_integration.py::TestGoalExecutorStatsRecording::test_executor_records_success_true | xfail | legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
@@ -36,8 +38,6 @@ tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_no
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_overhead | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_unknown_uri | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 
-# stale: PerceptionProtocol grew members the hand-written mock lacks (runtime_checkable isinstance; WP11)
-
 # stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
 tests/unit/test_skill_diagnostics.py::TestScanSkillDiagnosticsMoveFailed::test_scan_move_failed_returns_diagnosis | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
 tests/unit/test_skill_diagnostics.py::TestScanSkillDiagnosticsSuccess::test_scan_success_returns_diagnosis_ok | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
@@ -55,5 +55,3 @@ tests/unit/hardware/sim/test_g1_room.py::test_scene_compiles_with_pick_table_and
 tests/unit/hardware/sim/test_g1_room.py::test_g1_head_camera_in_compiled_model | xfail | sim-locomotion:g1-assets-unshipped (WP17)
 tests/unit/hardware/sim/test_g1_room.py::test_g1_self_geom_set_nonempty | xfail | sim-locomotion:g1-assets-unshipped (WP17)
 tests/unit/hardware/sim/test_g1_room.py::test_walk_forward_displacement | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/test_scene_builder.py::test_build_room_scene_go2_arm_byte_identical | xfail | relative mesh resolution reads mjcf/go2/go2/assets (doubled dir); red on base c188658 too (docs-vs-code:go2piper-abs-mesh-paths family; WP03)
-tests/e2e/test_explore_navigate_e2e.py::TestNavigate::test_walk_toward_kitchen | flaky | the pick table (near edge x=10.80) stops this eastward walk from the (10,3) spawn at dx~0.47-0.5 m; the test needs > 0.5 m (walk timing is sim-time since WP06; route around the table in WP08)

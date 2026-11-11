@@ -7,6 +7,7 @@ Each rule names the ledger key it pins. A guard failure lists every offending li
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -72,13 +73,52 @@ def test_sleep_guard_catches_every_patch_form(line: str) -> None:
     assert re.search(_SLEEP_PATCH, line)
 
 
+def _tracked_text() -> list[tuple[str, list[str]]]:
+    """Every tracked text file, except the docs (docs/, README.md, CLAUDE.md): those
+    are excluded only until the release's final docs pass rewrites them."""
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=_REPO, capture_output=True, check=False).stdout
+    files = []
+    for rel in out.decode().split("\0"):
+        p = _REPO / rel
+        if not rel or rel.startswith("docs/") or rel in ("README.md", "CLAUDE.md") or p == _SELF or not p.is_file():
+            continue
+        data = p.read_bytes()
+        if b"\0" not in data:
+            files.append((rel, data.decode("utf-8", "replace").splitlines()))
+    assert files, "not a git checkout: the tree-wide guards have nothing to scan"
+    return files
+
+
+def _tracked_offenders(pattern: str, skip: tuple[str, ...] = ()) -> list[str]:
+    rx = re.compile(pattern)
+    return [f"{rel}:{i}: {line.strip()[:120]}" for rel, lines in _tracked_text() if rel not in skip
+            for i, line in enumerate(lines, 1) if rx.search(line)]
+
+
+# A kill by name or a machine-wide teardown, as a Python argv / string or a shell command.
+_KILL = r"""\[\s*["'](rosm|pkill|killall|fuser)["']|(^|[;&|"'])\s*(sudo\s+)?(pkill|killall|rosm\s+nuke|fuser\s+-k)\b"""
+
+
 def test_no_machine_wide_kill_commands() -> None:
-    """tests:pty-harness-timeouts-and-kill — `rosm nuke` / pkill took down other
-    projects' stacks. Kill only your own process group (tests/harness/sim_cleanup.py)."""
-    assert not _offenders(
-        r"""\[\s*["'](rosm|pkill|killall)["']|["'](pkill|killall) -|["']rosm nuke""",
-        skip=("tests/conftest.py",),  # the shims that fail those calls
-    )
+    """tests:pty-harness-timeouts-and-kill, periphery:tools-kill-by-name-and-rosm —
+    `rosm nuke` / pkill took down other projects' stacks. Kill only your own process
+    group (tests/harness/sim_cleanup.py). Every tracked file, not only tests."""
+    assert not _tracked_offenders(_KILL, skip=("tests/conftest.py",))  # the shims that fail those calls
+
+
+@pytest.mark.parametrize("line, hit", [
+    ('subprocess.run(["pkill", "-9", "-f", "verify_fetch_flow"])', True),
+    ("subprocess.run(\"pkill -9 -f '[m]ujoco' 2>/dev/null || true\", shell=True)", True),
+    ('subprocess.run(["rosm", "nuke", "--yes"])', True),
+    ("  killall -9 ros2", True),
+    ("trap 'fuser -k 8765/tcp' EXIT", True),
+    ("ok || pkill -f tare", True),
+    ("# own group under `set -m`). Never pkill by name or wipe /dev/shm", False),
+    ("Replaces the old ``rosm nuke --yes`` / ``pkill -f`` teardowns", False),
+    ('"tools": "periphery:tools-kill-by-name-and-rosm (pkill -9 -f mujoco, rosm nuke)"', False),
+])
+def test_kill_guard_catches_invocations_not_prose(line: str, hit: bool) -> None:
+    assert bool(re.search(_KILL, line)) is hit
 
 
 def test_no_import_time_env_writes() -> None:
@@ -88,21 +128,54 @@ def test_no_import_time_env_writes() -> None:
                           skip=("tests/conftest.py",))
 
 
-_MACHINE_PATH = r"/home/yusen/|~/Desktop/vector_(navigation_stack|os_nano)\b"
+_MACHINE_PATH = r"""/(home|Users)/[A-Za-z0-9_][\w.-]*/|~/Desktop\b|["']Desktop["']"""
 
 
-def test_no_hardcoded_machine_paths() -> None:
-    """tests:hardcoded-machine-paths — harness tests read ~/Desktop/vector_navigation_stack
-    and ~/Desktop/vector_os_nano (another machine's clone) and failed instead of skipping;
-    scripts hardcoded /home/yusen. An external checkout comes from its env var
-    (VECTOR_NAV_STACK via scripts/nav_env.sh), never a path baked into the source."""
-    scripts = [
-        f"{p.relative_to(_REPO)}:{i}: {line.strip()}"
-        for p in sorted((_REPO / "scripts").iterdir()) if p.is_file()
-        for i, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
-        if re.search(_MACHINE_PATH, line)
-    ]
-    assert not _offenders(_MACHINE_PATH) + scripts
+def test_no_machine_paths_in_tracked_files() -> None:
+    """tests:hardcoded-machine-paths, docs-vs-code:go2piper-abs-mesh-paths,
+    tests-gate-e2e:hygiene-guard-blind-to-this-machine-and-dotfiles — harness tests read
+    ~/Desktop/vector_navigation_stack, 98 /home/yusen mesh paths broke the go2+Piper
+    scene, a tracked .mcp.json named another user's checkout. No tracked file (code,
+    scripts, configs, MJCF, tests, dotfiles) names any account's home: an external
+    checkout comes from its env var (VECTOR_NAV_STACK via scripts/nav_env.sh)."""
+    assert not _tracked_offenders(_MACHINE_PATH)
+
+
+@pytest.mark.parametrize("line, hit", [
+    ('"command": "/home/yusen/Desktop/vector_os_nano/.venv/bin/python"', True),
+    ('<mesh file="/home/alice/robots/go2/base_0.obj"/>', True),
+    ("ROOT=/Users/bob/src/nav", True),
+    ('Path.home() / "Desktop" / "vector_ws"', True),
+    ("cd ~/Desktop/vector_navigation_stack", True),
+    ('GlobTool().execute({"pattern": "../home/.ssh/*"})', False),
+    ("os.path.expanduser('~/.vector/config.yaml')", False),
+])
+def test_machine_path_guard_matches_any_account(line: str, hit: bool) -> None:
+    assert bool(re.search(_MACHINE_PATH, line)) is hit
+
+
+def _tracked_but_ignored(repo: Path) -> list[str]:
+    return subprocess.run(["git", "ls-files", "-i", "-c", "--exclude-standard"], cwd=repo,
+                          capture_output=True, text=True, check=True).stdout.split()
+
+
+def test_no_tracked_file_is_ignored() -> None:
+    """docs-packaging:gitignore-assets-hides-meshes — an unanchored `assets/` matched
+    the 232 tracked package meshes; hatchling honours .gitignore, so the wheel shipped
+    none of them and a new mesh was silently left untracked."""
+    assert not _tracked_but_ignored(_REPO)
+
+
+def test_tracked_but_ignored_detects_a_swallowed_mesh(tmp_path) -> None:
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(git + ["init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "pkg" / "assets").mkdir(parents=True)
+    (tmp_path / "pkg" / "assets" / "base.obj").write_text("v 0 0 0\n")
+    (tmp_path / ".gitignore").write_text("assets/\n")
+    subprocess.run(git + ["add", "-f", "pkg/assets/base.obj", ".gitignore"], cwd=tmp_path, check=True)
+    assert _tracked_but_ignored(tmp_path) == ["pkg/assets/base.obj"]
+    (tmp_path / ".gitignore").write_text("/assets/\n")
+    assert _tracked_but_ignored(tmp_path) == []
 
 
 def test_no_vacuous_tests() -> None:
@@ -124,25 +197,6 @@ def test_no_vacuous_tests() -> None:
                     and any(isinstance(v, ast.Constant) and v.value is True for v in node.test.values)):
                 bad.append(f"{p.relative_to(_REPO)}:{node.lineno}: assert ... or True")
     assert not bad, bad
-
-
-def _tracked_assets() -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files", "*.xml", "*.yaml", "*.yml", "*.urdf"],
-        cwd=_REPO, capture_output=True, text=True, check=False,
-    ).stdout.split()
-    return out or ["<no git checkout>"]
-
-
-@pytest.mark.parametrize("asset", _tracked_assets())
-def test_no_absolute_home_paths_in_committed_assets(asset: str) -> None:
-    """docs-vs-code:go2piper-abs-mesh-paths — 98 /home/yusen mesh paths made the
-    go2+Piper scene uncompilable on any other machine."""
-    if asset.startswith("<"):
-        pytest.skip("not a git checkout")
-    text = (_REPO / asset).read_text(encoding="utf-8", errors="replace")
-    hits = [ln.strip()[:120] for ln in text.splitlines() if "/home/" in ln]
-    assert not hits, f"{asset}: {len(hits)} absolute /home/ path(s), e.g. {hits[0]}"
 
 
 def test_ros_python_ahead_of_the_venv_is_detected() -> None:
@@ -239,6 +293,58 @@ def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
     assert "RED rc=2 collection" in r.stdout, r.stdout[-2000:]
 
 
+def test_own_process_tests_run_in_a_child_a_self_signal_ends_only_it(tmp_path) -> None:
+    """tests-inventory:signal-own-pid — native_safety SIGINTed the pytest process from a
+    timer; one firing late would abort the whole file. @own_process runs it in a child."""
+    probe = tmp_path / "test_probe_own_process.py"
+    probe.write_text(
+        "import os, signal, pytest\n\n"
+        "@pytest.mark.own_process\ndef test_in_child():\n"
+        "    assert os.environ.get('VECTOR_TEST_OWN_PROCESS_CHILD') == '1'\n\n"
+        "@pytest.mark.own_process\ndef test_child_fails():\n    assert False, 'red in the child'\n\n"
+        "@pytest.mark.own_process\ndef test_kills_itself():\n    os.kill(os.getpid(), signal.SIGTERM)\n\n"
+        "@pytest.mark.own_process\ndef test_child_skips():\n    pytest.skip('no weights here')\n\n"
+        "def test_parent_still_runs():\n    assert 'VECTOR_TEST_OWN_PROCESS_CHILD' not in os.environ\n"
+    )
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
+         "-c", str(_REPO / "pyproject.toml"), "-q", "--rootdir", str(tmp_path), str(probe)],
+        cwd=_REPO, capture_output=True, text=True, timeout=300,
+    )
+    out = r.stdout + r.stderr
+    assert "2 failed, 2 passed, 1 skipped" in r.stdout, out[-3000:]
+    assert "red in the child" in r.stdout and "rc=-15" in r.stdout, out[-3000:]
+
+
+@pytest.mark.parametrize("tier", ["hermetic", "sim", "e2e"])
+def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_path, tier) -> None:
+    """tests-gate-e2e:sim-tier-uses-real-home — only the hermetic tier swapped HOME, so
+    the sim and e2e tiers wrote the owner's ~/.vector (strategy stats, traces, sessions)."""
+    real, out = tmp_path / "real_home", tmp_path / "env.json"
+    real.mkdir()
+    probe = tmp_path / "test_probe_env.py"
+    probe.write_text(
+        "import json, os, pathlib, pytest\n\n"
+        + ("@pytest.mark.sim\n" if tier == "sim" else "")
+        + "def test_env():\n"
+        "    keys = ('HOME', 'HF_HOME', 'VECTOR_MODEL_DIR', 'HF_HUB_OFFLINE')\n"
+        "    pathlib.Path(os.environ['PROBE_OUT']).write_text(json.dumps({k: os.environ.get(k) for k in keys}))\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k not in ("GATE_HOME_SET", "HF_HOME", "VECTOR_MODEL_DIR")}
+    r = subprocess.run(
+        ["bash", str(_REPO / "scripts" / "gate.sh"), tier],
+        env={**env, "HOME": str(real), "GATE_PER_FILE": "0", "GATE_PATHS": str(probe),
+             "GATE_OUT": str(tmp_path / "out"), "PROBE_OUT": str(out)},
+        cwd=_REPO, capture_output=True, text=True, timeout=300,
+    )
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    seen = json.loads(out.read_text())
+    assert seen["HOME"] != str(real) and not Path(seen["HOME"]).exists()  # throwaway, removed after
+    assert seen["HF_HOME"] == str(real / ".cache" / "huggingface") and seen["HF_HUB_OFFLINE"] == "1"
+    assert seen["VECTOR_MODEL_DIR"] == str(real / ".cache" / "vector_os" / "models")
+    assert list(real.iterdir()) == []  # the gate wrote nothing into the real home
+
+
 def test_every_known_red_row_names_an_existing_test_file() -> None:
     """A merge resurrected 88 known_reds rows WP04 had deleted (with the files they
     pinned), and with them a strict xfail whose test WP04 had fixed. A row for a file
@@ -249,3 +355,40 @@ def test_every_known_red_row_names_an_existing_test_file() -> None:
         if line.strip() and not line.lstrip().startswith("#")
     ]
     assert not [r for r in rows if not (_REPO / r.split("::", 1)[0]).is_file()]
+
+
+def test_notice_cites_existing_files_and_every_bundled_license() -> None:
+    """docs-packaging:notice-incorrect-incomplete — NOTICE cited a deleted bridge
+    directory and said licences sat beside assets that had none."""
+    text = (_REPO / "NOTICE").read_text(encoding="utf-8")
+    cited = re.findall(r"vector_os_nano/[\w/.*-]+\w", text)
+    assert cited and not [c for c in cited if not list(_REPO.glob(c))]
+    licenses = subprocess.run(["git", "ls-files", "*/LICENSE"], cwd=_REPO, capture_output=True,
+                              text=True, check=True).stdout.split()
+    assert licenses and not [p for p in licenses if p.startswith("vector_os_nano/") and p.rsplit("/", 1)[0] not in text]
+
+
+def test_the_dev_extra_declares_the_gates_pytest_plugin() -> None:
+    """tests-inventory:dev-extra-missing-pytest-timeout — gate.sh passes --timeout, so
+    on a fresh `pip install -e .[dev]` without pytest-timeout every file ran rc=4."""
+    import tomllib
+
+    dev = tomllib.loads((_REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"]["dev"]
+    names = {re.split(r"[<>=!~\[ ]", d, maxsplit=1)[0].lower() for d in dev}
+    assert "--timeout=" in (_REPO / "scripts" / "gate.sh").read_text()
+    assert "pytest-timeout" in names, dev
+
+
+def test_the_ci_install_declares_what_the_hermetic_tier_imports() -> None:
+    """R8a-V2: CI installs .[sim,go2,ik,mcp,dev]; front_object (the sim go2 grasp
+    perception) needs cv2 and the MCP image resources need PIL, so a fresh CI venv
+    without them ran 2 of 226 files red. The extras the workflow names must carry both."""
+    import tomllib
+
+    extras = tomllib.loads((_REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+    ci = (_REPO / ".github" / "workflows" / "ci.yml").read_text()
+    named = re.search(r'-e "\.\[([^\]]+)\]"', ci).group(1).split(",")
+    names = {re.split(r"[<>=!~\[ ]", d, maxsplit=1)[0].lower() for x in named for d in extras[x]}
+    assert {"opencv-python", "pillow"} <= names, (named, sorted(names))
+    assert "opencv-python" in {d.split(">")[0] for d in extras["sim"]}   # front_object is a sim path
+    assert "pillow" in {d.split(">")[0] for d in extras["mcp"]}          # mcp/resources encodes PNG

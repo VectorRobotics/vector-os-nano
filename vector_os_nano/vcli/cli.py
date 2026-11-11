@@ -2397,12 +2397,6 @@ def main(argv: list[str] | None = None) -> None:
                         qt = p.get("query_type", "?")
                         room = p.get("room", "")
                         return f"[dim]scene_graph[/] {qt}" + (f" ({room})" if room else "")
-                    if name in ("ros2_topics", "ros2_nodes"):
-                        action = p.get("action", "?")
-                        topic = p.get("topic", p.get("node", ""))
-                        return f"[dim]{name}[/] {action}" + (f" {topic}" if topic else "")
-                    if name == "ros2_log":
-                        return f"[dim]log[/] {p.get('log_name', '?')}"
                     if name in ("glob", "grep"):
                         pattern = p.get("pattern", "")[:40]
                         return f"[dim]{name}[/] {pattern}"

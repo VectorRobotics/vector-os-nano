@@ -360,21 +360,11 @@ class Agent:
         # base never gets an identity one: its perception carries the camera pose.
         if self._calibration is None and self._base is None:
             try:
-                from pathlib import Path
-
                 from vector_os_nano.perception.calibration import Calibration  # lazy
 
                 cal_file: str = self._config.get("calibration", {}).get("file", "")
                 if cal_file:
-                    # Resolve relative paths: try ~/Desktop/vector_os/<cal_file> then cwd
-                    cal_path = Path(cal_file)
-                    if not cal_path.is_absolute():
-                        candidate = Path.home() / "Desktop" / "vector_os_nano" / cal_path
-                        if not candidate.exists():
-                            candidate = Path.cwd() / cal_path
-                        if candidate.exists():
-                            cal_path = candidate
-                    self._calibration = Calibration.load(str(cal_path))
+                    self._calibration = Calibration.load(cal_file)  # relative to cwd
                 else:
                     self._calibration = Calibration()
             except Exception as exc:

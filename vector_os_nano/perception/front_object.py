@@ -12,11 +12,12 @@ grasp_point.py derives the 3D grasp point from REAL depth — honest perception,
 never a ground-truth pose lookup.
 
 Pluggable: a VLM (named objects) or EdgeTAM (precise instance masks) can replace
-this resolver when available; the 3D-point math downstream is identical. Pure
-except for an optional cv2 fast path (graceful numpy fallback).
+this resolver when available; the 3D-point math downstream is identical. Needs
+cv2 ([sim] declares it): without it the import fails loud.
 """
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 _SAT_MIN = 140      # HSV saturation: vivid objects (cylinders sat~164-194) vs the
@@ -82,30 +83,8 @@ def colour_matches(rgb: np.ndarray, mask: np.ndarray, color: str, *, min_px: int
 
 
 def _hue(rgb: np.ndarray) -> np.ndarray:
-    """Return the HSV hue channel (0..180) for *rgb*, cv2 if present else numpy.
-
-    The numpy fallback replicates OpenCV's 0..180 hue convention so the
-    `_COLOR_HUE` bands apply identically on both paths.
-    """
-    try:
-        import cv2
-        return cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)[:, :, 0]
-    except Exception:  # noqa: BLE001 — numpy HSV hue fallback (OpenCV 0..180 scale)
-        a = rgb.astype(np.float32)
-        r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
-        mx = a.max(axis=2)
-        mn = a.min(axis=2)
-        diff = mx - mn
-        hue = np.zeros_like(mx)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            mask = diff > 0
-            rm = (mx == r) & mask
-            gm = (mx == g) & mask & ~rm
-            bm = (mx == b) & mask & ~rm & ~gm
-            hue[rm] = (60.0 * (g[rm] - b[rm]) / diff[rm]) % 360.0
-            hue[gm] = 60.0 * (b[gm] - r[gm]) / diff[gm] + 120.0
-            hue[bm] = 60.0 * (r[bm] - g[bm]) / diff[bm] + 240.0
-        return (hue / 2.0).astype(np.uint8)  # 0..360 -> OpenCV 0..180
+    """The HSV hue channel (OpenCV's 0..180 scale) of *rgb*."""
+    return cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)[:, :, 0]
 
 
 def _hue_in_color(hue_val: float, color: str) -> bool:
@@ -117,18 +96,9 @@ def _hue_in_color(hue_val: float, color: str) -> bool:
 
 
 def _saturation(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Return (saturation, value) in 0..255, cv2 if present else numpy."""
-    try:
-        import cv2
-        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-        return hsv[:, :, 1], hsv[:, :, 2]
-    except Exception:  # noqa: BLE001 — numpy HSV S=(max-min)/max, V=max
-        a = rgb.astype(np.float32)
-        mx = a.max(axis=2)
-        mn = a.min(axis=2)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            sat = np.where(mx > 0, (mx - mn) / mx, 0.0) * 255.0
-        return sat.astype(np.uint8), mx.astype(np.uint8)
+    """(saturation, value) of *rgb*, both 0..255."""
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    return hsv[:, :, 1], hsv[:, :, 2]
 
 
 def _open(binary: np.ndarray, ksize: int = _OPEN_KSIZE) -> np.ndarray:
@@ -138,49 +108,17 @@ def _open(binary: np.ndarray, ksize: int = _OPEN_KSIZE) -> np.ndarray:
     wherever a 1-3px chain of borderline-saturation pixels connects them; after
     8-connectivity that makes one giant blob and the central object stops being a
     selectable component. Opening removes structures thinner than the kernel
-    (the bridges) while preserving the solid object bodies. cv2 fast path, numpy
-    fallback (separable erode-then-dilate via a sliding min/max).
+    (the bridges) while preserving the solid object bodies.
     """
     if ksize < 2:
         return binary
-    try:
-        import cv2
-        k = np.ones((ksize, ksize), np.uint8)
-        return cv2.morphologyEx(binary.astype(np.uint8), cv2.MORPH_OPEN, k)
-    except Exception:  # noqa: BLE001 — numpy separable opening fallback
-        b = binary.astype(bool)
-        r = ksize // 2
-
-        def _slide(mask: np.ndarray, op) -> np.ndarray:
-            out = mask.copy()
-            for ax in (0, 1):
-                acc = mask
-                for s in range(1, r + 1):
-                    acc = op(acc, np.roll(mask, s, axis=ax))
-                    acc = op(acc, np.roll(mask, -s, axis=ax))
-                mask = acc
-            return mask
-
-        eroded = _slide(b, np.logical_and)
-        dilated = _slide(eroded, np.logical_or)
-        return dilated.astype(np.uint8)
+    return cv2.morphologyEx(binary.astype(np.uint8), cv2.MORPH_OPEN, np.ones((ksize, ksize), np.uint8))
 
 
 def _components(binary: np.ndarray):
-    """Connected components -> (n, labels, centroids, areas). cv2 or numpy BFS-free fallback."""
-    try:
-        import cv2
-        n, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
-        areas = stats[:, cv2.CC_STAT_AREA]
-        return n, labels, centroids, areas
-    except Exception:  # noqa: BLE001 — degenerate single-component fallback
-        labels = binary.astype(np.int32)
-        ys, xs = np.where(binary > 0)
-        if len(xs) == 0:
-            return 1, labels, np.array([[0.0, 0.0]]), np.array([0])
-        centroids = np.array([[0.0, 0.0], [xs.mean(), ys.mean()]])
-        areas = np.array([0, len(xs)])
-        return 2, labels, centroids, areas
+    """8-connected components -> (n, labels, centroids, areas)."""
+    n, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    return n, labels, centroids, stats[:, cv2.CC_STAT_AREA]
 
 
 def front_object_mask(
