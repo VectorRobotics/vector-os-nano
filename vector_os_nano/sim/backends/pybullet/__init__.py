@@ -14,6 +14,8 @@ from typing import Any
 from vector_os_nano.interfaces.physics import CompiledScene, PhysicsWorld
 
 INSTALL_HINT = "pybullet is not installed: uv pip install -e '.[pybullet]' (builds from source; needs g++ and python3-dev)"
+# the policies measured on PyBullet (charter section 7); anything else is a no, with the reason
+CERTIFIED = ("position_actuators", "sinusoidal")
 
 
 class PyBulletBackend:
@@ -27,6 +29,10 @@ class PyBulletBackend:
         ref = str(getattr(getattr(robot, "policy", None), "ref", "") or "")
         if ref == "torchscript" or ref.endswith(".pt"):
             return "a TorchScript (RL) policy is not run on PyBullet in 1.0: it was trained for MuJoCo"
+        if ref == "convex_mpc":
+            return "convex_mpc falls on PyBullet (measured: within 2 s); use the sinusoidal gait there"
+        if ref not in CERTIFIED:
+            return f"policy {ref!r} is not certified on PyBullet in 1.0; certified: {list(CERTIFIED)}"
         return None
 
     def load(self, scene: CompiledScene, *, gui: bool = False) -> PhysicsWorld:

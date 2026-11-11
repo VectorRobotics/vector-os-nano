@@ -38,13 +38,17 @@ def _robot(ref: str) -> SimpleNamespace:
 def test_supports_gives_a_reason_or_none(monkeypatch):
     assert backends.get("mujoco").supports(_robot("assets/g1_gait/motion.pt"), None) is None
     pb = backends.get("pybullet")
-    if importlib.util.find_spec("pybullet") is not None:
-        assert pb.supports(_robot("convex_mpc"), None) is None
+    real = importlib.util.find_spec
+    # the policy verdicts, as on a machine with the extra (whether or not this one has it)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda n, *a: object() if n == "pybullet" else real(n, *a))
+    for ref in ("sinusoidal", "position_actuators"):  # certified on PyBullet (charter section 7)
+        assert pb.supports(_robot(ref), None) is None, ref
+    assert "falls" in pb.supports(_robot("convex_mpc"), None)  # measured: falls within 2 s
+    assert "not certified" in pb.supports(_robot("my_new_mpc"), None)  # an unknown policy is a no
     assert "TorchScript" in pb.supports(_robot("assets/g1_gait/motion.pt"), None)
     assert "TorchScript" in pb.supports(_robot("torchscript"), None)
-    real = importlib.util.find_spec
     monkeypatch.setattr(importlib.util, "find_spec", lambda n, *a: None if n == "pybullet" else real(n, *a))
-    assert "pip install" in pb.supports(_robot("convex_mpc"), None)
+    assert "pip install" in pb.supports(_robot("sinusoidal"), None)
     with pytest.raises(ImportError, match="pip install"):
         pb.load(None, gui=False)
 
