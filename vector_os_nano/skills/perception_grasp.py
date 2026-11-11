@@ -41,7 +41,7 @@ from vector_os_nano.skills.utils.terminal_dock import dock_converged, terminal_d
 
 logger = logging.getLogger(__name__)
 
-# Perception-backend surface this skill consumes (a Go2GraspPerception or any
+# Perception-backend surface this skill consumes (a CameraPerception or any
 # adapter giving ONE RGB-D snapshot, detection on a given frame, and a segmenter).
 _REQUIRED_PERCEPTION = ("capture", "detect_in", "segment")
 # A producer-passed box is stale once the camera moved this far since its frame.
@@ -581,7 +581,7 @@ class PerceptionGraspSkill:
             return _fail(
                 "arm_unsupported",
                 f"Arm {getattr(arm, 'name', type(arm).__name__)!r} lacks ik_top_down; "
-                "PerceptionGraspSkill needs a 6-DoF arm with top-down IK (e.g. MuJoCoPiper).",
+                "PerceptionGraspSkill needs a 6-DoF arm with top-down IK (e.g. the Piper).",
             )
 
         perception = context.perception

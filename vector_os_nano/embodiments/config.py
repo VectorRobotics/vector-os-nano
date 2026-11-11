@@ -5,16 +5,14 @@
 
 A robot morphology is data, not code (project CLAUDE.md Rule 11). This module
 parses ``vector_os_nano/embodiments/<id>/robot.yaml`` into immutable dataclasses
-so the generic embodiment driver (Stage 2) can READ every morphology-specific
-parameter — spawn pose, nominal stance (by joint name), sensor mounts, root body,
-gait/policy reference, capability profile — instead of hardcoding it.
+so the generic drivers READ every morphology-specific parameter — spawn pose,
+nominal stance (by joint name), cameras and sensor mounts, root body, the arm and
+its gripper, gait/policy reference, capability profile — instead of hardcoding it.
 
-Design notes:
-  * All dataclasses are ``frozen=True`` (Rule 6 — additive change only: new field
-    last, with a default).
-  * The loader is FAIL-LOUD: a missing file or a missing required key raises a
-    clear error naming the embodiment + the offending key, never a silent default.
-  * No MuJoCo / ROS2 imports — pure data, importable + testable offline.
+The loader is FAIL-LOUD: a missing file, a missing required key, or an unknown key
+(top level, ``arm``, ``arm.gripper``, ``arm.ee``, a camera entry) raises a clear
+error naming the file, the key and the valid set, never a silent default. No MuJoCo /
+ROS2 imports: pure data, importable and testable offline.
 """
 from __future__ import annotations
 
@@ -33,13 +31,13 @@ class EmbodimentConfigError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# Schema — frozen dataclasses (Rule 6: additive only — new field LAST + default)
+# Schema — frozen dataclasses
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """Where the body's MuJoCo model + meshes live, and its root (free) body."""
+    """Where the body's MuJoCo model + meshes live, and its root body."""
 
     path: str
     root_body: str
@@ -48,7 +46,7 @@ class ModelSpec:
 
 @dataclass(frozen=True)
 class SpawnSpec:
-    """Where the body is placed in the scene on connect()."""
+    """Where a body with a base is placed in the scene on connect()."""
 
     xy: tuple[float, float]
     base_height: float
@@ -57,14 +55,7 @@ class SpawnSpec:
 
 @dataclass(frozen=True)
 class SensorSpec:
-    """One sensor mounted on the body (camera, depth, lidar, …).
-
-    role: logical role ('camera', 'depth', 'lidar', …) — what the runtime routes to.
-    mount_body: the body the sensor is rigidly attached to.
-    name: the named MuJoCo element (camera name), if any.
-    pos / euler: mount offset (metres / radians) from ``mount_body``, if any.
-    params: sensor-specific tuning (tilt, fov, update interval, …).
-    """
+    """A non-camera sensor (lidar) mounted on the body: role, mount body, offset, params."""
 
     role: str
     mount_body: str
@@ -72,6 +63,27 @@ class SensorSpec:
     pos: tuple[float, ...] | None = None
     euler: tuple[float, ...] | None = None
     params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CameraSpec:
+    """A camera (``sensors: [{role: camera, ...}]``) and the size it renders at.
+
+    ``depth``: the (near, far) range in metres it reports depth over (outside it 0,
+    invalid); None for a colour-only camera. With ``pos`` the scene compiler adds the
+    camera to ``body`` (the world when None) at ``pos`` / ``quat`` (w x y z) with
+    ``fovy`` (degrees); without it the camera must already be in the robot's model.
+    """
+
+    name: str
+    width: int
+    height: int
+    depth: tuple[float, float] | None = None
+    body: str | None = None
+    pos: tuple[float, float, float] | None = None
+    quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
+    fovy: float = 45.0
+    role: str = "camera"
 
 
 @dataclass(frozen=True)
@@ -83,47 +95,40 @@ class PolicySpec:
 
 
 @dataclass(frozen=True)
-class GraspSpec:
-    """Manipulation surface (only for bodies with a gripper)."""
-
-    gripper_body: str
-    graspable: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
 class GripperSpec:
-    """A position-controlled jaw: its actuator/joint, range, and the bodies that touch.
+    """A position-controlled jaw, by its joint (the driver commands the joint's own
+    position actuator).
 
-    ``finger_bodies``: the bodies whose collision geoms must ALL touch an object
-    before a grasp counts (the contact gate). ``weld_body``: the body a grasped
-    object is welded to. ``min_opening``: the jaws must be held at least this
-    far open by the object (fully closed jaws grip nothing).
+    ``finger_bodies``: every one must touch an object before a grasp counts (the
+    contact gate; each needs a colliding geom). ``weld_body``: the body a grasped
+    object is attached to. ``min_opening``: the jaws must be held at least this far
+    open (joint units past ``closed``) by the object.
     """
 
-    actuator: str
     joint: str
     open: float
-    closed: float = 0.0
-    finger_bodies: tuple[str, ...] = ()
-    weld_body: str = ""
-    # A grasp needs the jaws held at least this far open (m) by the object.
-    min_opening: float = 0.005
+    closed: float
+    finger_bodies: tuple[str, ...]
+    weld_body: str
+    min_opening: float
 
 
 @dataclass(frozen=True)
 class ArmSpec:
-    """An arm mounted on the body: names in the compiled model, home, IK seeds."""
+    """An arm: its joints in order, the end-effector site, home, IK seeds, the move
+    tolerance and its gripper. Every name is the compiled scene's."""
 
-    name: str
-    dof: int
-    ee_site: str
     joints: tuple[str, ...]
-    actuators: tuple[str, ...]
+    ee_site: str
     home: tuple[float, ...]
     ik_seeds: tuple[tuple[float, ...], ...] = ()
     # move_joints succeeds when every joint settles within this (rad) of its target.
     track_tol: float = 0.05
     gripper: GripperSpec | None = None
+
+    @property
+    def dof(self) -> int:
+        return len(self.joints)
 
 
 @dataclass(frozen=True)
@@ -139,24 +144,19 @@ class CapabilityProfile:
 
 @dataclass(frozen=True)
 class EmbodimentConfig:
-    """Full, immutable description of one robot morphology.
-
-    Faithfully captures what a per-robot driver currently hardcodes, so the
-    generic driver (Stage 2) can stand the body up from data alone.
-    """
+    """Full, immutable description of one robot morphology. ``spawn``, ``stance`` and
+    ``policy`` belong to a body with a base; a fixed arm stands at its world's spawn."""
 
     id: str
     display_name: str
     model: ModelSpec
-    spawn: SpawnSpec
-    stance: dict[str, float]
-    sensors: tuple[SensorSpec, ...]
-    policy: PolicySpec
+    sensors: tuple[SensorSpec | CameraSpec, ...]
     capabilities: CapabilityProfile
-    grasp: GraspSpec | None = None
-    # Which in-process driver stands the body up (mujoco_go2 | mujoco_g1 |
-    # mujoco_arm). Transitional: removed once one generic driver reads the
-    # manifest (WP17).
+    spawn: SpawnSpec | None = None
+    stance: dict[str, float] = field(default_factory=dict)
+    policy: PolicySpec | None = None
+    # Which in-process builder stands the body up (mujoco_go2 | mujoco_g1 | mujoco_arm |
+    # generic). Transitional: one generic builder for every body (S4 / S5).
     driver: str = ""
     # Arm mounted on the body (e.g. the Piper on go2_piper), or None.
     arm: ArmSpec | None = None
@@ -164,6 +164,11 @@ class EmbodimentConfig:
     nav: dict[str, Any] = field(default_factory=dict)
     # The world it stands in: config/worlds/<world>.yaml (rooms, surfaces, pickables).
     world: str = ""
+
+    @property
+    def camera(self) -> CameraSpec | None:
+        """The body's first camera, or None."""
+        return next((s for s in self.sensors if isinstance(s, CameraSpec)), None)
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +185,38 @@ def _require(raw: dict[str, Any], key: str, ctx: str) -> Any:
     return raw[key]
 
 
+def _keys(raw: Any, ctx: str, valid: set[str]) -> dict[str, Any]:
+    """*raw* when it is a mapping of keys in *valid*; else fail naming the key and the set."""
+    if not isinstance(raw, dict):
+        raise EmbodimentConfigError(f"{ctx} must be a mapping, got {type(raw).__name__}")
+    for key in raw:
+        if key not in valid:
+            raise EmbodimentConfigError(f"{ctx}: unknown key {key!r}; valid: {sorted(valid)}")
+    return raw
+
+
 def _as_tuple(value: Any) -> tuple[Any, ...]:
     if value is None:
         return ()
     if isinstance(value, (list, tuple)):
         return tuple(value)
     raise EmbodimentConfigError(f"expected a list, got {type(value).__name__}: {value!r}")
+
+
+def _floats(value: Any, n: int, ctx: str) -> tuple[float, ...]:
+    out = tuple(float(v) for v in _as_tuple(value))
+    if len(out) != n:
+        raise EmbodimentConfigError(f"{ctx} must have {n} values, got {len(out)}: {value!r}")
+    return out
+
+
+def _optional_mapping(raw: dict[str, Any], key: str, ctx: str) -> dict[str, Any] | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise EmbodimentConfigError(f"{ctx}.{key} must be a mapping, got {type(value).__name__}")
+    return dict(value)
 
 
 def _parse_model(raw: dict[str, Any], ctx: str) -> ModelSpec:
@@ -198,45 +229,57 @@ def _parse_model(raw: dict[str, Any], ctx: str) -> ModelSpec:
     )
 
 
-def _parse_spawn(raw: dict[str, Any], ctx: str) -> SpawnSpec:
-    s = _require(raw, "spawn", ctx)
-    sctx = f"{ctx}.spawn"
-    xy = _as_tuple(_require(s, "xy", sctx))
+def _parse_spawn(s: dict[str, Any], ctx: str) -> SpawnSpec:
+    xy = _as_tuple(_require(s, "xy", ctx))
     if len(xy) != 2:
-        raise EmbodimentConfigError(f"{sctx}.xy must have exactly 2 values, got {xy!r}")
+        raise EmbodimentConfigError(f"{ctx}.xy must have exactly 2 values, got {xy!r}")
     return SpawnSpec(
         xy=(float(xy[0]), float(xy[1])),
-        base_height=float(_require(s, "base_height", sctx)),
+        base_height=float(_require(s, "base_height", ctx)),
         heading=float(s.get("heading", 0.0)),
     )
 
 
-def _parse_sensors(raw: dict[str, Any], ctx: str) -> tuple[SensorSpec, ...]:
-    out: list[SensorSpec] = []
+_CAMERA_KEYS = {"role", "name", "width", "height", "depth", "body", "pos", "quat", "fovy"}
+
+
+def _parse_camera(c: dict[str, Any], ctx: str) -> CameraSpec:
+    _keys(c, ctx, _CAMERA_KEYS)
+    placed = c.get("pos") is not None
+    for key in ("body", "quat", "fovy"):
+        if c.get(key) is not None and not placed:
+            raise EmbodimentConfigError(f"{ctx}.{key} places a camera in the scene: it needs pos too")
+    depth = c.get("depth")
+    return CameraSpec(
+        name=str(_require(c, "name", ctx)),
+        width=int(_require(c, "width", ctx)),
+        height=int(_require(c, "height", ctx)),
+        depth=None if depth is None else _floats(depth, 2, f"{ctx}.depth"),  # type: ignore[arg-type]
+        body=None if c.get("body") is None else str(c["body"]),
+        pos=_floats(c["pos"], 3, f"{ctx}.pos") if placed else None,  # type: ignore[arg-type]
+        quat=_floats(c.get("quat") or (1.0, 0.0, 0.0, 0.0), 4, f"{ctx}.quat"),  # type: ignore[arg-type]
+        fovy=float(c.get("fovy") or 45.0),
+    )
+
+
+def _parse_sensors(raw: dict[str, Any], ctx: str) -> tuple[SensorSpec | CameraSpec, ...]:
+    out: list[SensorSpec | CameraSpec] = []
     for i, sraw in enumerate(raw.get("sensors", []) or []):
         sctx = f"{ctx}.sensors[{i}]"
+        if _require(sraw, "role", sctx) == "camera":
+            out.append(_parse_camera(sraw, sctx))
+            continue
         pos = sraw.get("pos")
         euler = sraw.get("euler")
-        out.append(
-            SensorSpec(
-                role=str(_require(sraw, "role", sctx)),
-                mount_body=str(_require(sraw, "mount_body", sctx)),
-                name=(str(sraw["name"]) if sraw.get("name") is not None else None),
-                pos=(tuple(float(v) for v in _as_tuple(pos)) if pos is not None else None),
-                euler=(tuple(float(v) for v in _as_tuple(euler)) if euler is not None else None),
-                params=dict(sraw.get("params", {}) or {}),
-            )
-        )
+        out.append(SensorSpec(
+            role=str(sraw["role"]),
+            mount_body=str(_require(sraw, "mount_body", sctx)),
+            name=(str(sraw["name"]) if sraw.get("name") is not None else None),
+            pos=(tuple(float(v) for v in _as_tuple(pos)) if pos is not None else None),
+            euler=(tuple(float(v) for v in _as_tuple(euler)) if euler is not None else None),
+            params=dict(sraw.get("params", {}) or {}),
+        ))
     return tuple(out)
-
-
-def _parse_policy(raw: dict[str, Any], ctx: str) -> PolicySpec:
-    p = _require(raw, "policy", ctx)
-    pctx = f"{ctx}.policy"
-    return PolicySpec(
-        ref=str(_require(p, "ref", pctx)),
-        spec=dict(p.get("spec", {}) or {}),
-    )
 
 
 def _parse_capabilities(raw: dict[str, Any], ctx: str) -> CapabilityProfile:
@@ -250,22 +293,23 @@ def _parse_capabilities(raw: dict[str, Any], ctx: str) -> CapabilityProfile:
     )
 
 
-def _parse_grasp(raw: dict[str, Any], ctx: str) -> GraspSpec | None:
-    g = raw.get("grasp")
-    if g is None:
-        return None
-    gctx = f"{ctx}.grasp"
-    return GraspSpec(
-        gripper_body=str(_require(g, "gripper_body", gctx)),
-        graspable=tuple(str(v) for v in _as_tuple(g.get("graspable"))),
+_ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper"}
+_GRIPPER_KEYS = {"joint", "open", "closed", "finger_bodies", "weld_body", "min_opening"}
+
+
+def _parse_gripper(g: dict[str, Any], ctx: str) -> GripperSpec:
+    _keys(g, ctx, _GRIPPER_KEYS)
+    fingers = tuple(str(v) for v in _as_tuple(_require(g, "finger_bodies", ctx)))
+    if not fingers:
+        raise EmbodimentConfigError(f"{ctx}.finger_bodies must name at least one body")
+    return GripperSpec(
+        joint=str(_require(g, "joint", ctx)),
+        open=float(_require(g, "open", ctx)),
+        closed=float(_require(g, "closed", ctx)),
+        finger_bodies=fingers,
+        weld_body=str(_require(g, "weld_body", ctx)),
+        min_opening=float(_require(g, "min_opening", ctx)),
     )
-
-
-def _floats(value: Any, n: int, ctx: str) -> tuple[float, ...]:
-    out = tuple(float(v) for v in _as_tuple(value))
-    if len(out) != n:
-        raise EmbodimentConfigError(f"{ctx} must have {n} values, got {len(out)}: {value!r}")
-    return out
 
 
 def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
@@ -273,66 +317,44 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
     if a is None:
         return None
     actx = f"{ctx}.arm"
-    dof = int(_require(a, "dof", actx))
+    _keys(a, actx, _ARM_KEYS)
     joints = tuple(str(v) for v in _as_tuple(_require(a, "joints", actx)))
-    actuators = tuple(str(v) for v in _as_tuple(a.get("actuators", joints)))
-    for key, names in (("joints", joints), ("actuators", actuators)):
-        if len(names) != dof:
-            raise EmbodimentConfigError(f"{actx}.{key} must name {dof} joints (dof), got {names!r}")
-    g = a.get("gripper")
-    gripper = None
-    if g is not None:
-        gctx = f"{actx}.gripper"
-        gripper = GripperSpec(
-            actuator=str(_require(g, "actuator", gctx)),
-            joint=str(_require(g, "joint", gctx)),
-            open=float(_require(g, "open", gctx)),
-            closed=float(g.get("closed", 0.0)),
-            finger_bodies=tuple(str(v) for v in _as_tuple(g.get("finger_bodies"))),
-            weld_body=str(g.get("weld_body", "") or ""),
-            min_opening=float(g.get("min_opening", 0.005)),
-        )
+    ee = _keys(_require(a, "ee", actx), f"{actx}.ee", {"site"})
+    g = _optional_mapping(a, "gripper", actx)
     return ArmSpec(
-        name=str(_require(a, "name", actx)),
-        dof=dof,
-        ee_site=str(_require(a, "ee_site", actx)),
         joints=joints,
-        actuators=actuators,
-        home=_floats(_require(a, "home", actx), dof, f"{actx}.home"),
+        ee_site=str(_require(ee, "site", f"{actx}.ee")),
+        home=_floats(_require(a, "home", actx), len(joints), f"{actx}.home"),
         ik_seeds=tuple(
-            _floats(s, dof, f"{actx}.ik_seeds[{i}]") for i, s in enumerate(a.get("ik_seeds") or ())
+            _floats(s, len(joints), f"{actx}.ik_seeds[{i}]") for i, s in enumerate(a.get("ik_seeds") or ())
         ),
         track_tol=float(a.get("track_tol", 0.05)),
-        gripper=gripper,
+        gripper=None if g is None else _parse_gripper(g, f"{actx}.gripper"),
     )
 
 
-def _optional_mapping(raw: dict[str, Any], key: str, ctx: str) -> dict[str, Any] | None:
-    value = raw.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise EmbodimentConfigError(f"{ctx}.{key} must be a mapping, got {type(value).__name__}")
-    return dict(value)
+_TOP_KEYS = {"id", "display_name", "driver", "world", "model", "spawn", "stance", "sensors",
+             "policy", "capabilities", "arm", "nav"}
 
 
 def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> EmbodimentConfig:
-    """Parse an already-loaded dict into an EmbodimentConfig (fail-loud)."""
-    if not isinstance(raw, dict):
-        raise EmbodimentConfigError(f"{ctx}: top-level YAML must be a mapping, got {type(raw).__name__}")
-    stance_raw = _require(raw, "stance", ctx)
-    if not isinstance(stance_raw, dict):
+    """Parse an already-loaded dict into an EmbodimentConfig (fail-loud, unknown keys too)."""
+    _keys(raw, ctx, _TOP_KEYS)
+    stance = raw.get("stance") or {}
+    if not isinstance(stance, dict):
         raise EmbodimentConfigError(f"{ctx}.stance must be a mapping of joint_name -> angle")
+    spawn = _optional_mapping(raw, "spawn", ctx)
+    policy = _optional_mapping(raw, "policy", ctx)
     return EmbodimentConfig(
         id=str(_require(raw, "id", ctx)),
         display_name=str(_require(raw, "display_name", ctx)),
         model=_parse_model(raw, ctx),
-        spawn=_parse_spawn(raw, ctx),
-        stance={str(k): float(v) for k, v in stance_raw.items()},
         sensors=_parse_sensors(raw, ctx),
-        policy=_parse_policy(raw, ctx),
         capabilities=_parse_capabilities(raw, ctx),
-        grasp=_parse_grasp(raw, ctx),
+        spawn=None if spawn is None else _parse_spawn(spawn, f"{ctx}.spawn"),
+        stance={str(k): float(v) for k, v in stance.items()},
+        policy=None if policy is None else PolicySpec(
+            ref=str(_require(policy, "ref", f"{ctx}.policy")), spec=dict(policy.get("spec") or {})),
         driver=str(raw.get("driver", "") or ""),
         arm=_parse_arm(raw, ctx),
         nav=_optional_mapping(raw, "nav", ctx) or {},
@@ -345,8 +367,7 @@ def load_embodiment_config(embodiment_id: str) -> EmbodimentConfig:
 
     Raises:
         EmbodimentConfigError: if the file is missing, unreadable, not a mapping,
-            or missing any required field (fail-loud, Rule 8 — clear error, no
-            silent default).
+            missing a required field or carries an unknown key (fail-loud, Rule 8).
     """
     yaml_path = _EMBODIMENTS_DIR / embodiment_id / "robot.yaml"
     if not yaml_path.is_file():

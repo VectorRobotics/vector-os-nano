@@ -104,19 +104,24 @@ def test_unknown_driver_is_error_naming_the_field(tmp_path, monkeypatch) -> None
 
 
 class _Clock:
+    """A threaded runtime's clock: every read is *step* sim seconds later."""
+
+    threaded = True
+
     def __init__(self, step: float) -> None:
         self.t, self.step = 0.0, step
 
-    def get_sim_time(self) -> float:
+    @property
+    def sim_time(self) -> float:
         self.t += self.step
         return self.t
 
 
-def _agent(base: Any = None, arm: Any = None, frame: Any = 1) -> Any:
+def _agent(arm: Any = None, frame: Any = 1) -> Any:
     import numpy as np
 
     perception = SimpleNamespace(get_color_frame=lambda: np.full((24, 32, 3), frame, np.uint8))
-    return SimpleNamespace(_base=base, _arm=arm, _perception=perception)
+    return SimpleNamespace(_base=None, _arm=arm, _perception=perception)
 
 
 def test_ready_probe_fails_fast_when_the_clock_is_dead(monkeypatch) -> None:
@@ -126,7 +131,7 @@ def test_ready_probe_fails_fast_when_the_clock_is_dead(monkeypatch) -> None:
     cfg = registry.load("go2")
     t0 = time.monotonic()
     with pytest.raises(SimStartError, match="physics is not stepping"):
-        sess._probe_ready(_agent(base=_Clock(0.0)), cfg, deadline=time.monotonic() + 60)
+        sess._probe_ready(_agent(), cfg, _Clock(0.0), deadline=time.monotonic() + 60)
     assert time.monotonic() - t0 < 5  # a dead thread is detected, not waited out
 
 
@@ -137,7 +142,7 @@ def test_ready_probe_deadline_holds_for_a_creeping_clock() -> None:
     t0 = time.monotonic()
     with pytest.raises(SimStartError, match="physics is not stepping"):
         # Moves every poll (never "stalled") but would need ~250 s to reach 0.5 s.
-        sess._probe_ready(_agent(base=_Clock(1e-4)), cfg, deadline=time.monotonic() + 1)
+        sess._probe_ready(_agent(), cfg, _Clock(1e-4), deadline=time.monotonic() + 1)
     assert time.monotonic() - t0 < 3
 
 
@@ -154,7 +159,7 @@ def test_ready_probe_never_renders_on_the_calling_thread() -> None:
 
     agent = SimpleNamespace(_base=None, _arm=None,
                             _perception=SimpleNamespace(get_color_frame=frame))
-    assert sess._probe_ready(agent, registry.load("go2"), deadline=1e18)["camera"] == "32x24"
+    assert sess._probe_ready(agent, registry.load("go2"), None, deadline=1e18)["camera"] == "32x24"
     assert seen and seen[0] is not threading.current_thread() and not seen[0].is_alive()
 
 
@@ -164,12 +169,12 @@ def test_ready_probe_rejects_black_frame_and_nan_arm() -> None:
     cfg = registry.load("go2_piper")
     dl = time.monotonic() + 30
     with pytest.raises(SimStartError, match="black"):
-        sess._probe_ready(_agent(base=_Clock(0.1), frame=0), cfg, deadline=dl)
+        sess._probe_ready(_agent(frame=0), cfg, _Clock(0.1), deadline=dl)
     nan_arm = SimpleNamespace(get_joint_positions=lambda: [0.0, float("nan")])
     with pytest.raises(SimStartError, match="not finite"):
-        sess._probe_ready(_agent(base=_Clock(0.1), arm=nan_arm), cfg, deadline=dl)
-    ok = sess._probe_ready(_agent(base=_Clock(0.1), arm=SimpleNamespace(
-        get_joint_positions=lambda: [0.0] * 6)), cfg, deadline=dl)
+        sess._probe_ready(_agent(arm=nan_arm), cfg, _Clock(0.1), deadline=dl)
+    ok = sess._probe_ready(_agent(arm=SimpleNamespace(
+        get_joint_positions=lambda: [0.0] * 6)), cfg, _Clock(0.1), deadline=dl)
     assert ok["camera"] == "32x24" and ok["arm"] == "6-DoF"
 
 
@@ -178,7 +183,8 @@ def _fake_builder(cleanups: list[str], *, fail: bool = False):
         session.own("device closed", lambda: cleanups.append("closed"))
         if fail:
             raise RuntimeError("boom")
-        return _agent(base=_Clock(0.2), arm=SimpleNamespace(get_joint_positions=lambda: [0.0]))
+        session.runtime = _Clock(0.2)
+        return _agent(arm=SimpleNamespace(get_joint_positions=lambda: [0.0]))
     return build
 
 

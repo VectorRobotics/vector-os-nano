@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+#
+# AgileX Piper 6-DoF arm alone on the workbench pedestal, with a fixed camera across
+# the bench looking back at it. The generic Arm / Gripper / Camera drive it on any
+# backend; sim/scene/compose.py mounts it at the world's spawn. Every name is the
+# exact name in piper.xml (the scene adds no prefix).
+
+id: piper
+display_name: "AgileX Piper (6-DoF arm, tabletop)"
+driver: generic
+world: workbench
+
+model:
+  path: vector_os_nano/hardware/sim/mjcf/piper/piper.xml
+  root_body: base_link
+
+sensors:
+  # Added by the scene compiler to base_link: 85 cm ahead of the arm and 40 cm up,
+  # looking back down at the bench 25 cm ahead of the base (the objects are in front
+  # of the arm, so the arm never hides them).
+  - role: camera
+    name: workspace_cam
+    width: 640
+    height: 480
+    depth: [0.05, 3.0]
+    body: base_link
+    pos: [0.85, 0.0, 0.40]
+    quat: [0.632456, 0.316228, 0.316228, 0.632456]
+    fovy: 55
+
+arm:
+  joints: [joint1, joint2, joint3, joint4, joint5, joint6]
+  ee: {site: ee_site}
+  home: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # URDF zero: upright (joint2/joint3 at a limit)
+  # Top-down IK starts: reaching over the bench 30 cm ahead (the conformance pick's
+  # seed), then the go2_piper ones; the live arm joints are always tried too.
+  ik_seeds:
+    - [0.0, 1.87, -0.98, 0.0, 0.77, 0.0]
+    - [0.0, 1.57, -1.57, 0.0, 1.22, 0.0]
+    - [0.0, 2.48, -1.75, 0.0, 1.00, 3.13]
+    - [0.0, 1.57, -1.57, 0.0, 1.22, 3.14]
+  track_tol: 0.08                       # above the kp=10 wrist servos' frictionloss deadband
+  gripper:
+    joint: joint7                       # joint8 mirrors it (equality in piper.xml)
+    open: 0.035                         # per-finger travel (m): 70 mm jaw opening
+    closed: 0.0
+    finger_bodies: [link7, link8]       # box finger pads (colliding)
+    weld_body: link6
+    min_opening: 0.005                  # jaws held >= 10 mm apart by the object
+
+capabilities:
+  has_base: false
+  has_arm: true
+  has_gripper: true
+  camera: true
+  lidar: false

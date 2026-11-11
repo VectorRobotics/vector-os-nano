@@ -15,9 +15,11 @@ from pathlib import Path
 import pytest
 
 import vector_os_nano
+from vector_os_nano.embodiments import registry
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene import compiled_scene
 from vector_os_nano.sim.scene.compiled import inactive_welds
+from vector_os_nano.sim.scene.compose import compose
 
 SCENES = Path(__file__).parent / "scenes"
 SIM_DIR = Path(vector_os_nano.__file__).parent / "hardware" / "sim"
@@ -80,43 +82,18 @@ def contract_scene():
     return compiled_scene(SCENES / "contract.xml", grasp_pairs=[("carrier", "parcel"), ("arm", "parcel")])
 
 
-def _compose(out: Path, world: str, robot: Path, at: tuple[float, float, float],
-             welds: tuple[tuple[str, str], ...] = ()) -> Path:
-    """A test scene: *robot* attached into scenes/*world* at *at*, plus inactive welds."""
-    import mujoco as mj
-
-    from vector_os_nano.hardware.sim.scene_builder import normalize_attach_defaults
-
-    spec = mj.MjSpec.from_file(str(SCENES / world))
-    model = mj.MjSpec.from_file(str(robot))
-    for mesh in model.meshes:
-        mesh.file = str((robot.parent / model.meshdir / mesh.file).resolve())
-    model.meshdir = ""
-    spec.attach(model, prefix="", frame=spec.worldbody.add_frame(pos=list(at)))
-    for parent, child in welds:
-        eq = spec.add_equality()
-        eq.type, eq.objtype = mj.mjtEq.mjEQ_WELD, mj.mjtObj.mjOBJ_BODY
-        eq.name1, eq.name2, eq.active = parent, child, False
-    spec.compile()
-    path = out / f"{Path(world).stem}_{robot.stem}.xml"
-    path.write_text(normalize_attach_defaults(spec.to_xml()))
-    return path
+@pytest.fixture(scope="session")
+def battery_scene():
+    """battery.xml with the `piper` body (its manifest: camera, gripper) mounted at
+    (0, 0, 0.2) and its two grasp welds, by the product's scene composition."""
+    return compose(SCENES / "battery.xml", registry.load("piper"), spawn=(0.0, 0.0, 0.2, 0.0),
+                   pickables=("box", "cylinder"))
 
 
 @pytest.fixture(scope="session")
-def battery_scene(tmp_path_factory: pytest.TempPathFactory):
-    """battery.xml with the Piper attached at (0, 0, 0.2) and its two grasp welds."""
-    pairs = (("link6", "box"), ("link6", "cylinder"))
-    path = _compose(tmp_path_factory.mktemp("battery"), "battery.xml",
-                    SIM_DIR / "mjcf" / "piper" / "piper.xml", (0.0, 0.0, 0.2), pairs)
-    return compiled_scene(path, robot_root="base_link", grasp_pairs=pairs)
-
-
-@pytest.fixture(scope="session")
-def flat_go2_scene(tmp_path_factory: pytest.TempPathFactory):
-    """go2.xml on flat ground (the locomotion bounds need room to walk)."""
-    path = _compose(tmp_path_factory.mktemp("flat"), "flat.xml", SIM_DIR / "mjcf" / "go2" / "go2.xml", (0.0, 0.0, 0.0))
-    return compiled_scene(path, robot_root="base_link")
+def flat_go2_scene():
+    """go2 on flat ground (the locomotion bounds need room to walk)."""
+    return compose(SCENES / "flat.xml", registry.load("go2"), spawn=(0.0, 0.0, 0.0, 0.0))
 
 
 def _robot_scene(name: str):

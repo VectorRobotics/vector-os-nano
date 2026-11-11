@@ -24,6 +24,7 @@ import sys
 import time
 import types
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -205,9 +206,10 @@ class TerrainAccumulator:
 class Go2VNavBridge(Node):
     """ROS2 node bridging MuJoCoGo2 to Vector Navigation Stack."""
 
-    def __init__(self, go2: MuJoCoGo2, quiet: bool = False) -> None:
+    def __init__(self, go2: MuJoCoGo2, camera: Any, quiet: bool = False) -> None:
         super().__init__("go2_vnav_bridge")
         self._go2 = go2
+        self._camera = camera  # the head camera (sim/drivers/camera.Camera)
         self._last_cmd_time = time.time()
         # Suppress verbose logging when embedded in CLI (floods terminal)
         if quiet or os.environ.get("VECTOR_BRIDGE_QUIET"):
@@ -684,13 +686,13 @@ class Go2VNavBridge(Node):
     def _publish_camera(self) -> None:
         """Publish ONE head-camera instant: RGB, depth and camera pose, one stamp.
 
-        The frame comes from MuJoCoGo2.get_rgbd_frame (rendered by the world from a
-        copy of one instant), so pixels and the published
+        The frame comes from the head Camera (rendered by the world from a copy of
+        one instant), so pixels and the published
         d435 pose belong to the same sim time (D36: grasp_point_from_rgbd
         back-projects with exactly this pose).
         """
         try:
-            frame = self._go2.get_rgbd_frame(320, 240)
+            frame = self._camera.capture(320, 240)
             now = self.get_clock().now().to_msg()
 
             from std_msgs.msg import Float64MultiArray
@@ -1549,7 +1551,11 @@ def main():
 
     print("Starting Vector Nav Bridge...")
     rclpy.init()
-    node = Go2VNavBridge(go2)
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.sim.drivers.camera import Camera
+
+    cfg = registry.load("go2_piper" if os.environ.get("VECTOR_SIM_WITH_ARM") == "1" else "go2")
+    node = Go2VNavBridge(go2, Camera(cfg.camera, go2.runtime))
 
     try:
         rclpy.spin(node)

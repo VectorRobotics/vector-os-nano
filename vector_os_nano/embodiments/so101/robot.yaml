@@ -27,9 +27,10 @@ stance:
   wrist_roll:    0.311
 
 sensors:
-  - role: camera
-    mount_body: world
+  - role: camera                  # in so101_mujoco.xml, fixed to the world
     name: overhead
+    width: 640                    # MuJoCoPerception's render size
+    height: 480
 
 policy:
   ref: position_actuators         # MuJoCo position servos, no gait

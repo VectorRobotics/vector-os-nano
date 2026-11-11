@@ -75,12 +75,12 @@ def _bbox_for_mask() -> tuple[float, float, float, float]:
 
 
 # ---------------------------------------------------------------------------
-# Stub perception (fake Go2GraspPerception)
+# Stub perception (fake CameraPerception)
 # ---------------------------------------------------------------------------
 
 
 class _StubPerception:
-    """Minimal stub that mimics Go2GraspPerception's required API.
+    """Minimal stub that mimics CameraPerception's required API.
 
     Parameters
     ----------

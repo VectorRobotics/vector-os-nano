@@ -3,8 +3,8 @@
 #
 # Unitree Go2 + AgileX Piper 6-DoF arm on its back — embodiment manifest.
 # Same body/stance/gait as go2/robot.yaml; the scene is go2_piper.xml (arm
-# attached) and the arm block below makes the session attach MuJoCoPiper +
-# MuJoCoPiperGripper and the manipulation skills.
+# attached) and the arm block below makes the session attach the generic
+# Arm + Gripper drivers and the manipulation skills.
 
 id: go2_piper
 display_name: "Unitree Go2 + AgileX Piper arm (mobile manipulator)"
@@ -41,17 +41,12 @@ stance:
   RR_calf:  -1.8
 
 sensors:
-  # RealSense D435 RGB — named 'd435_rgb' camera fixed to base_link (MJCF).
+  # The camera is in go2_piper.xml (fixed to base_link); depth over the D435's range.
   - role: camera
-    mount_body: base_link
     name: d435_rgb
-    params:
-      width: 320                  # the measured grasp numbers used 320x240
-      height: 240
-  # RealSense D435 depth — named 'd435_depth' camera, same mounting as RGB.
-  - role: depth
-    mount_body: base_link
-    name: d435_depth
+    width: 320                    # the measured grasp numbers used 320x240
+    height: 240
+    depth: [0.1, 10.0]
   # Livox MID360-like 3D lidar — _update_lidar(): offset 0.3 m forward, 0.2 m up
   # from base; beams tilted -20 deg; ~5 Hz (_LIDAR_UPDATE_INTERVAL=200 steps).
   - role: lidar
@@ -85,11 +80,8 @@ policy:
     holonomic: true               # supports_holonomic -> True (can strafe)
 
 arm:
-  name: piper
-  dof: 6
-  ee_site: piper_ee_site
   joints: [piper_joint1, piper_joint2, piper_joint3, piper_joint4, piper_joint5, piper_joint6]
-  # actuators default to the joint names (one position servo per joint)
+  ee: {site: piper_ee_site}
   home: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # URDF zero = the stow pose MuJoCoGo2 sets
   # Top-down IK starts: shoulder up, elbow back, wrist pitched down (joint5 at its
   # 1.22 limit), with both wrist rolls; the live arm joints are always tried too.
@@ -102,7 +94,6 @@ arm:
   # below an arm blocked by the table.
   track_tol: 0.08
   gripper:
-    actuator: piper_gripper
     joint: piper_joint7             # joint8 mirrors it (equality in the MJCF)
     open: 0.035                     # per-finger travel (m): 70 mm jaw opening
     closed: 0.0

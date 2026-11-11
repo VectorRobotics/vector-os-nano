@@ -33,7 +33,7 @@ def test_skills_perception_and_drivers_never_import_ground_truth() -> None:
     """spine:gt-firewall-import-only — the sim drivers held a GroundTruth and handed it
     to skills through get_object_positions (mujoco_piper / mujoco_piper_gripper)."""
     offenders = []
-    for top in ("skills", "perception", "hardware/sim"):
+    for top in ("skills", "perception", "hardware/sim", "sim/drivers"):
         for path in sorted((_PKG / top).rglob("*.py")):
             bad = [m for m in _imports(path) if m == "GroundTruth" or m.startswith(_FORBIDDEN)]
             if bad:

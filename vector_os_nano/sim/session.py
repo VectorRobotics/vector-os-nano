@@ -5,7 +5,7 @@
 
 ``start_simulation(embodiment=...)`` and the ``--sim`` / ``--sim-go2`` /
 ``--embodiment`` flags all call :meth:`SimSession.start`. The body is the proven
-in-process rig (MuJoCoGo2 + MuJoCoPiper + MuJoCoPiperGripper, every measured
+in-process rig (MuJoCoGo2 + the generic Arm / Gripper / Camera, every measured
 grasp number came from it), chosen by the embodiment manifest
 (``embodiments/<id>/robot.yaml``) — never by an env var.
 
@@ -40,10 +40,8 @@ _REPO = Path(__file__).resolve().parents[2]
 # move at all for _STALL_S of wall time is a dead physics thread.
 _READY_SIM_S = 0.5
 _STALL_S = 3.0
-
-# Frame-source methods a base must expose for Go2GraspPerception to localize.
-# Perception reads ONE atomic RGB-D frame (rgb + depth + seg + pose) from the base.
-_GO2_PERCEPTION_FRAME_METHODS = ("get_rgbd_frame",)
+# One runtime tick (sim s) of a body without a controller of its own (the generic arm).
+_TICK_S = 0.005
 
 
 @dataclass(frozen=True)
@@ -137,6 +135,7 @@ class SimSession:
         self.startup_s: float = 0.0
         self._cleanups: list[tuple[str, Callable[[], Any]]] = []
         self._stopped = False
+        self.runtime: Any = None  # the SimRuntime the builder made (world side only)
         self.gt: Any = None  # GroundTruth of the running sim (oracles + graders only)
         self.world: Any = None  # the WorldManifest the body stands in
         self._turn: tuple[float, float] = (-math.inf, -math.inf)  # (sim, wall) turn start
@@ -175,7 +174,7 @@ class SimSession:
         t0 = time.monotonic()
         try:
             session.agent = builder(session, vlm_api_key)
-            session.ready = _probe_ready(session.agent, cfg, deadline=t0 + deadline_s)
+            session.ready = _probe_ready(session.agent, cfg, session.runtime, deadline=t0 + deadline_s)
             session._bind_ground_truth()
         except BaseException as exc:
             session.stop()
@@ -212,12 +211,10 @@ class SimSession:
         from vector_os_nano.vcli.worlds.world_manifest import load_world
 
         agent = self.agent
-        rt = getattr(getattr(agent, "_base", None), "runtime", None) or getattr(
-            getattr(agent, "_arm", None), "runtime", None)
-        if rt is None:  # no world owner: no oracles, every verify grades RAN
-            self.notes.append("ground truth: unavailable (no SimRuntime on the base or the arm)")
+        if self.runtime is None:  # no world owner: no oracles, every verify grades RAN
+            self.notes.append("ground truth: unavailable (the builder made no SimRuntime)")
             return
-        self.gt = GroundTruth(rt)
+        self.gt = GroundTruth(self.runtime)
         self.world = load_world(self.config.world) if self.config.world else None
         # Skills resolve object names through the world manifest by id (never GT).
         cfg = getattr(agent, "_config", None)
@@ -268,7 +265,7 @@ class SimSession:
 # ---------------------------------------------------------------------------
 
 
-def _probe_ready(agent: Any, cfg: Any, *, deadline: float) -> dict[str, Any]:
+def _probe_ready(agent: Any, cfg: Any, runtime: Any, *, deadline: float) -> dict[str, Any]:
     """Prove the sim is live, or raise SimStartError naming what is not."""
     import numpy as np
 
@@ -276,18 +273,18 @@ def _probe_ready(agent: Any, cfg: Any, *, deadline: float) -> dict[str, Any]:
     arm = getattr(agent, "_arm", None)
     report: dict[str, Any] = {}
 
-    clock = getattr(base, "get_sim_time", None)
-    runtime = getattr(base, "runtime", None)
-    if callable(clock) and runtime is not None and not runtime.threaded:
-        # Caller-stepped (VECTOR_SIM_LOCKSTEP / macOS pump): advance it here.
-        t0 = clock()
-        if not base.wait_sim(_READY_SIM_S) or clock() - t0 < _READY_SIM_S - 1e-6:
+    if runtime is not None and not runtime.threaded:
+        # Caller-stepped (VECTOR_SIM_LOCKSTEP / macOS pump): advance it here, through
+        # the base when it has one (a policy that ticks outside the runtime, G1's).
+        t0 = runtime.sim_time
+        advance = getattr(base, "wait_sim", None) or runtime.wait_sim
+        if not advance(_READY_SIM_S) or runtime.sim_time - t0 < _READY_SIM_S - 1e-6:
             raise SimStartError("not ready", "caller-stepped physics did not advance")
-        report["sim_time"] = f"{clock():.1f}s"
-    elif callable(clock):
-        t0 = last = clock()
+        report["sim_time"] = f"{runtime.sim_time:.1f}s"
+    elif runtime is not None:
+        t0 = last = runtime.sim_time
         moved_at = time.monotonic()
-        while (now := clock()) - t0 < _READY_SIM_S:
+        while (now := runtime.sim_time) - t0 < _READY_SIM_S:
             if now != last:
                 last, moved_at = now, time.monotonic()
             if time.monotonic() - moved_at > _STALL_S or time.monotonic() > deadline:
@@ -296,13 +293,14 @@ def _probe_ready(agent: Any, cfg: Any, *, deadline: float) -> dict[str, Any]:
                     f"sim time advanced {now - t0:.2f}s (< {_READY_SIM_S}s): physics is not stepping",
                 )
             time.sleep(0.05)
-        report["sim_time"] = f"{clock():.1f}s"
+        report["sim_time"] = f"{runtime.sim_time:.1f}s"
     if getattr(base, "gait_backend", ""):
         report["gait"] = base.gait_backend
 
     if cfg.capabilities.camera:
         perception = getattr(agent, "_perception", None)
-        grab = getattr(perception, "get_color_frame", None) or getattr(base, "get_camera_frame", None)
+        capture = getattr(perception, "capture", None)
+        grab = (lambda: capture().rgb) if callable(capture) else getattr(perception, "get_color_frame", None)
         frame = None
         if callable(grab):
             # On a thread that then exits: a GL context stays bound to the live
@@ -327,21 +325,6 @@ def _probe_ready(agent: Any, cfg: Any, *, deadline: float) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _camera_size(cfg: Any) -> tuple[int, int]:
-    """(width, height) of the manifest's camera sensor; fail loud if unset."""
-    from vector_os_nano.embodiments.config import EmbodimentConfigError
-
-    for s in cfg.sensors:
-        if s.role == "camera":
-            try:
-                return int(s.params["width"]), int(s.params["height"])
-            except KeyError as exc:
-                raise EmbodimentConfigError(
-                    f"{cfg.id}/robot.yaml: camera sensor params missing {exc}"
-                ) from exc
-    raise EmbodimentConfigError(f"{cfg.id}/robot.yaml: no sensor with role 'camera'")
-
-
 def _user_config() -> dict[str, Any]:
     from vector_os_nano.core.config import load_config
 
@@ -349,21 +332,32 @@ def _user_config() -> dict[str, Any]:
     return load_config(str(path)) if path.exists() else {}
 
 
-def _build_go2_perception(base: Any, *, width: int, height: int) -> Any:
-    """Go2GraspPerception over *base* at the manifest size, or None without a camera.
+def _devices(cfg: Any, rt: Any, *, wait_mount: Callable[[], Any] | None = None) -> tuple[Any, Any, Any]:
+    """``(arm, gripper, camera)`` of *cfg* on *rt*: the generic drivers, None where
+    the manifest has no such block."""
+    from vector_os_nano.sim.drivers.arm import Arm
+    from vector_os_nano.sim.drivers.camera import Camera
+    from vector_os_nano.sim.drivers.gripper import Gripper
+    from vector_os_nano.vcli.cognitive.abort import is_abort_requested
 
-    Built ONCE per session; ``register_manipulation_skills`` reuses it, so the
-    grasp and look/localize paths can never run at different sizes.
-    """
-    if base is None:
-        return None
-    for meth in _GO2_PERCEPTION_FRAME_METHODS:
-        if not callable(getattr(base, meth, None)):
-            logger.debug("[sim] base lacks %s — perception None", meth)
-            return None
-    from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
+    from vector_os_nano.sim.scene.compose import check_fingers
 
-    return Go2GraspPerception(base, width=width, height=height)
+    camera = Camera(cfg.camera, rt) if cfg.camera is not None else None
+    if cfg.arm is None:
+        return None, None, camera
+    arm = Arm(cfg.arm, rt, abort=is_abort_requested, wait_mount=wait_mount)
+    if cfg.arm.gripper is None:
+        return arm, None, camera
+    check_fingers(rt.world.scene, cfg.arm.gripper.finger_bodies)
+    return arm, Gripper(cfg.arm.gripper, rt), camera
+
+
+def _perception(camera: Any) -> Any:
+    """The ONE perception over the manifest's camera (``register_manipulation_skills``
+    reuses it, so the grasp and look/localize paths always see the same camera size)."""
+    from vector_os_nano.perception.camera_perception import CameraPerception
+
+    return CameraPerception(camera) if camera is not None else None
 
 
 def _perception_note(agent: Any) -> str:
@@ -385,7 +379,7 @@ def _perception_note(agent: Any) -> str:
     return (
         f"perception: detector=grounding-dino@{device}, "
         f"segmenter={'edgetam' if EdgeTAMTracker.weights_available() else 'box_rect'}, "
-        f"self_mask={'yes' if getattr(perception, 'has_self_mask', False) else 'no'}, "
+        f"self_mask={'yes' if callable(getattr(perception, 'capture', None)) else 'no'}, "
         f"vlm={vlm_s}, rynnbrain={'up' if RynnBrainDetector().available() else 'down'}"
     )
 
@@ -399,7 +393,6 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
 
     cfg, spec = session.config, session.spec
     world = load_world(cfg.world) if cfg.world else None
-    width, height = _camera_size(cfg)
     base = MuJoCoGo2(
         gui=spec.gui, room=True, backend=str(cfg.policy.spec.get("backend", "auto")),
         with_arm=cfg.arm is not None,
@@ -407,18 +400,8 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     session.own(f"{base.name} disconnected", base.disconnect)
     base.connect()
     base.stand()
-
-    arm = gripper = None
-    if cfg.arm is not None:
-        from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
-        from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
-
-        arm = MuJoCoPiper(base, cfg.arm)
-        session.own(f"{arm.name} disconnected", arm.disconnect)
-        arm.connect()
-        gripper = MuJoCoPiperGripper(base, cfg.arm.gripper)
-        session.own("gripper disconnected", gripper.disconnect)
-        gripper.connect()
+    session.runtime = base.runtime
+    arm, gripper, camera = _devices(cfg, base.runtime, wait_mount=base.wait_settled)
 
     user_cfg = _user_config()
     api_key = vlm_api_key or user_cfg.get("llm", {}).get("api_key") or os.environ.get(
@@ -427,7 +410,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     agent = Agent(base=base, arm=arm, gripper=gripper, llm_api_key=api_key, config=user_cfg)
     for skill in get_go2_skills():
         agent._skill_registry.register(skill)
-    agent._perception = _build_go2_perception(base, width=width, height=height)
+    agent._perception = _perception(camera)
     agent._calibration = None
     if arm is not None:
         from vector_os_nano.skills.manipulation_setup import register_manipulation_skills
@@ -463,7 +446,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
             session.notes.append("explore: coverage (VECTOR_NAV_STACK unset)")
         else:
             try:
-                session.own("nav stack stopped", _launch_ros2_stack(base, gui=spec.gui))
+                session.own("nav stack stopped", _launch_ros2_stack(base, camera, gui=spec.gui))
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
@@ -481,6 +464,7 @@ def _build_mujoco_arm(session: SimSession, vlm_api_key: str | None) -> Any:
     arm = MuJoCoArm(gui=session.spec.gui)
     session.own(f"{arm.name} disconnected", arm.disconnect)
     arm.connect()
+    session.runtime = arm.runtime
     return Agent(
         arm=arm,
         gripper=MuJoCoGripper(arm),
@@ -494,17 +478,51 @@ def _build_mujoco_g1(session: SimSession, vlm_api_key: str | None) -> Any:
     from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
     from vector_os_nano.perception.g1_head_perception import G1HeadPerception
 
-    width, height = _camera_size(session.config)
+    cam = session.config.camera
     g1 = MuJoCoG1(gui=session.spec.gui, room=True)
     session.own("MuJoCoG1 disconnected", g1.disconnect)
     g1.connect()
+    session.runtime = g1.runtime
     agent = Agent(base=g1)
     # Read-only head-camera perception for the detector capability (no arm).
-    agent._perception = G1HeadPerception(g1, width=width, height=height)
+    agent._perception = G1HeadPerception(g1, width=cam.width, height=cam.height)
+    return agent
+
+
+def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
+    """A body the generic drivers run whole (a fixed arm): its world's scene composed with
+    the manifest (sim/scene/compose.py), loaded on MuJoCo, ONE SimRuntime with no
+    controller (the servos hold the arm)."""
+    from vector_os_nano.core.agent import Agent
+    from vector_os_nano.sim import backends
+    from vector_os_nano.sim.runtime import SimRuntime
+    from vector_os_nano.sim.scene.compose import compose
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+    cfg = session.config
+    world = load_world(cfg.world)
+    if world.scene is None or world.spawn is None:
+        raise SimStartError("bad world manifest", f"{world.path}: a fixed body needs the world's scene and spawn")
+    scene = compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+    sim = backends.get("mujoco").load(scene, gui=session.spec.gui)
+    rt = SimRuntime(sim, substeps=max(1, round(_TICK_S / scene.timestep)), threaded=not sim.caller_thread_only,
+                    name=cfg.id)
+    session.own(f"{cfg.id} runtime closed", rt.close)
+    rt.start()
+    session.runtime = rt
+    arm, gripper, camera = _devices(cfg, rt)
+    agent = Agent(arm=arm, gripper=gripper, config=_user_config())
+    agent._perception = _perception(camera)
+    if arm is not None:
+        from vector_os_nano.skills.manipulation_setup import register_manipulation_skills
+
+        register_manipulation_skills(agent)
+    session.notes.append(_perception_note(agent))
     return agent
 
 
 _BUILDERS: dict[str, Callable[[SimSession, str | None], Any]] = {
+    "generic": _build_generic,
     "mujoco_go2": _build_mujoco_go2,
     "mujoco_arm": _build_mujoco_arm,
     "mujoco_g1": _build_mujoco_g1,
@@ -549,7 +567,7 @@ def _kill_sessions(sids: set[int], grace_s: float = 5.0) -> None:
             time.sleep(0.1)
 
 
-def _launch_ros2_stack(go2: Any, *, gui: bool) -> Callable[[], None]:
+def _launch_ros2_stack(go2: Any, camera: Any, *, gui: bool) -> Callable[[], None]:
     """Start the ROS2 bridge (thread) + nav stack (its own session).
 
     Returns the cleanup the session owns: stops the monitor and kills every
@@ -572,7 +590,7 @@ def _launch_ros2_stack(go2: Any, *, gui: bool) -> Callable[[], None]:
     mod = importlib.util.module_from_spec(spec)
     sys.modules["_vnav_bridge"] = mod
     spec.loader.exec_module(mod)
-    node = mod.Go2VNavBridge(go2)
+    node = mod.Go2VNavBridge(go2, camera)
 
     def _spin() -> None:
         try:

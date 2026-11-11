@@ -137,7 +137,7 @@ def test_navigate_to_arrives_and_avoids_table(go2_sim: MuJoCoGo2) -> None:
 def test_navigate_to_with_piper_attached_does_not_crash(monkeypatch) -> None:
     """REGRESSION (R12): navigate_to must not segfault/hang with the Piper attached.
 
-    The grasp path runs navigate_to with a MuJoCoPiper connected and a tight tol. The
+    The grasp path runs navigate_to with the Piper's Arm built and a tight tol. The
     original navigate_to called mj_forward to snapshot the pose — that WRITES derived
     fields and RACED the 1 kHz gait daemon's mj_step, segfaulting/hanging (the green
     grasp "hang"). The fix reads the pose via the thread-safe accessor and never calls
@@ -145,13 +145,13 @@ def test_navigate_to_with_piper_attached_does_not_crash(monkeypatch) -> None:
     (arm-enabled scene + Piper attached + tight tol) and asserts navigate_to returns
     in bounded wall-time having moved the dog. Self-contained (own arm-enabled sim).
     """
-    from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.sim.drivers.arm import Arm
 
     go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
     try:
         go2.connect()
-        piper = MuJoCoPiper(go2)
-        piper.connect()
+        Arm(registry.load("go2_piper").arm, go2.runtime, wait_mount=go2.wait_settled)
         time.sleep(0.5)
         start = go2.get_position()
         t0 = time.time()
@@ -170,4 +170,4 @@ def test_navigate_to_with_piper_attached_does_not_crash(monkeypatch) -> None:
         # Dog actually advanced toward the goal (didn't no-op).
         assert moved > 0.15, f"dog barely moved ({moved:.2f} m)"
     finally:
-        go2.disconnect()  # the Piper rides on the go2 sim (its disconnect is a flag)
+        go2.disconnect()  # the Piper rides on the go2 sim

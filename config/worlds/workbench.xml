@@ -1,0 +1,40 @@
+<!--
+  The workbench world: a bench, a pedestal at its back edge and two objects on the bench
+  top. Plain MJCF: no robot, no grasp welds (sim/scene/compose.py adds the robot at the
+  spawn in workbench.yaml, its cameras and one inactive weld per gripper x pickable).
+  The pedestal top (z 0.50) is the spawn: a 6-DoF arm mounted there reaches the objects
+  8 cm below its base, inside its top-down wrist range.
+-->
+<mujoco model="workbench">
+  <option timestep="0.002" integrator="implicitfast" cone="elliptic" impratio="10"/>
+  <statistic extent="1" center="0.3 0 0.45"/>
+  <visual>
+    <map znear="0.01" zfar="20"/>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+  </visual>
+
+  <asset>
+    <texture type="2d" name="grid" builtin="checker" rgb1="0.8 0.8 0.8" rgb2="0.65 0.65 0.65"
+             width="300" height="300"/>
+    <material name="grid" texture="grid" texrepeat="6 6" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0.3 0 2.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" type="plane" size="3 3 0.1" material="grid"/>
+    <body name="bench" pos="0.25 0 0.2">
+      <geom type="box" size="0.35 0.4 0.2" rgba="0.55 0.45 0.35 1"/>
+    </body>
+    <body name="pedestal" pos="0 0 0.45">
+      <geom type="cylinder" size="0.05 0.05" rgba="0.3 0.3 0.32 1"/>
+    </body>
+    <body name="red_box" pos="0.30 -0.10 0.42">
+      <freejoint name="red_box"/>
+      <geom type="box" size="0.02 0.02 0.02" mass="0.05" rgba="0.9 0.1 0.1 1"/>
+    </body>
+    <body name="blue_cylinder" pos="0.30 0.10 0.43">
+      <freejoint name="blue_cylinder"/>
+      <geom type="cylinder" size="0.02 0.03" mass="0.05" rgba="0.1 0.2 0.9 1"/>
+    </body>
+  </worldbody>
+</mujoco>

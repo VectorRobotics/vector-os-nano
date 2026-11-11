@@ -56,10 +56,10 @@ def test_go2_stance_matches_stand_joints() -> None:
 def test_go2_sensors() -> None:
     cfg = load_embodiment_config("go2")
     by_role = {s.role: s for s in cfg.sensors}
-    # d435_rgb / d435_depth cameras on base_link.
-    assert by_role["camera"].name == "d435_rgb"
-    assert by_role["camera"].mount_body == "base_link"
-    assert by_role["depth"].name == "d435_depth"
+    # The d435_rgb camera of go2.xml, rendered at 640x480, depth over the D435 range.
+    cam = cfg.camera
+    assert by_role["camera"] is cam and (cam.name, cam.width, cam.height) == ("d435_rgb", 640, 480)
+    assert cam.depth == (0.1, 10.0) and cam.pos is None  # in the model, not placed by the compiler
     # Lidar offset 0.3 m forward, 0.2 m up (_LIDAR_OFFSET_X / _LIDAR_OFFSET_Z).
     lidar = by_role["lidar"]
     assert lidar.pos == (0.3, 0.0, 0.2)
@@ -129,11 +129,10 @@ def test_g1_stance_matches_default_angles() -> None:
 def test_g1_sensors() -> None:
     cfg = load_embodiment_config("g1")
     by_role = {s.role: s for s in cfg.sensors}
-    # Head RGB camera 'g1_head_rgb' on g1_pelvis, pos (0.04, 0, 0.42).
-    cam = by_role["camera"]
-    assert cam.name == "g1_head_rgb"
-    assert cam.mount_body == "g1_pelvis"
-    assert cam.pos == (0.04, 0.0, 0.42)
+    # Head RGB camera 'g1_head_rgb' (mujoco_g1's scene build places it), colour only.
+    cam = cfg.camera
+    assert by_role["camera"] is cam and (cam.name, cam.width, cam.height) == ("g1_head_rgb", 640, 480)
+    assert cam.depth is None
     # Lidar offset _LIDAR_OFFSET_X=0.0, _LIDAR_OFFSET_Z=0.72.
     assert by_role["lidar"].pos == (0.0, 0.0, 0.72)
 
@@ -169,19 +168,45 @@ def test_missing_embodiment_raises_clear_error() -> None:
 
 
 def test_missing_required_field_raises_clear_error() -> None:
-    # A manifest missing 'spawn' must fail loud, naming the field.
-    raw = {
-        "id": "broken",
-        "display_name": "Broken",
-        "model": {"path": "x.xml", "root_body": "base"},
-        # no 'spawn'
-        "stance": {"j": 0.0},
-        "policy": {"ref": "p"},
-        "capabilities": {},
-    }
+    # A manifest missing 'model' must fail loud, naming the field.
+    raw = {"id": "broken", "display_name": "Broken", "capabilities": {}}
     with pytest.raises(EmbodimentConfigError) as exc:
         parse_embodiment_config(raw, ctx="broken/robot.yaml")
-    assert "spawn" in str(exc.value)
+    assert "model" in str(exc.value) and "broken/robot.yaml" in str(exc.value)
+
+
+def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
+    """A body without a base stands at its world's spawn: those blocks are a base's."""
+    cfg = load_embodiment_config("piper")
+    assert cfg.spawn is None and cfg.stance == {} and cfg.policy is None
+    assert cfg.arm.dof == 6 and cfg.camera.pos is not None
+
+
+@pytest.mark.parametrize("where, raw", [
+    ("broken/robot.yaml", {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
+                           "capabilities": {}, "grasp": {}}),
+    ("broken/robot.yaml.arm", {"arm": {"joints": ["j"], "ee": {"site": "s"}, "home": [0.0], "dof": 1}}),
+    ("broken/robot.yaml.arm.ee", {"arm": {"joints": ["j"], "ee": {"site": "s", "body": "b"}, "home": [0.0]}}),
+    ("broken/robot.yaml.arm.gripper", {"arm": {"joints": ["j"], "ee": {"site": "s"}, "home": [0.0], "gripper": {
+        "joint": "g", "open": 1.0, "closed": 0.0, "finger_bodies": ["f"], "weld_body": "w",
+        "min_opening": 0.0, "actuator": "g"}}}),
+    ("broken/robot.yaml.sensors[0]", {"sensors": [{"role": "camera", "name": "c", "width": 2, "height": 2,
+                                                   "params": {}}]}),
+])
+def test_an_unknown_key_fails_naming_the_file_the_key_and_the_valid_set(where: str, raw: dict) -> None:
+    """Strict manifests: a misspelt or retired key is an error, never silently ignored."""
+    full = {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"}, "capabilities": {}, **raw}
+    with pytest.raises(EmbodimentConfigError) as exc:
+        parse_embodiment_config(full, ctx="broken/robot.yaml")
+    msg = str(exc.value)
+    assert msg.startswith(where + ": unknown key") and "valid: [" in msg, msg
+
+
+def test_a_camera_placed_without_a_position_fails_loud() -> None:
+    raw = {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"}, "capabilities": {},
+           "sensors": [{"role": "camera", "name": "c", "width": 2, "height": 2, "body": "b"}]}
+    with pytest.raises(EmbodimentConfigError, match=r"sensors\[0\]\.body places a camera"):
+        parse_embodiment_config(raw, ctx="a/robot.yaml")
 
 
 def test_both_embodiments_distinct() -> None:
@@ -202,28 +227,29 @@ def test_both_embodiments_distinct() -> None:
 def _with_arm(arm: dict) -> dict:
     return {
         "id": "a", "display_name": "A", "model": {"path": "x.xml", "root_body": "b"},
-        "spawn": {"xy": [0, 0], "base_height": 0.1}, "stance": {"j": 0.0},
-        "policy": {"ref": "p"}, "capabilities": {}, "arm": arm,
+        "capabilities": {}, "arm": arm,
     }
 
 
 def test_go2_piper_arm_block_is_typed() -> None:
     arm = load_embodiment_config("go2_piper").arm
     assert arm.dof == 6 and arm.joints == tuple(f"piper_joint{i}" for i in range(1, 7))
-    assert arm.actuators == arm.joints and arm.home == (0.0,) * 6
+    assert arm.home == (0.0,) * 6 and arm.track_tol == 0.08
     assert arm.ee_site == "piper_ee_site" and len(arm.ik_seeds) == 3
     g = arm.gripper
-    assert (g.actuator, g.joint, g.open, g.closed) == ("piper_gripper", "piper_joint7", 0.035, 0.0)
+    assert (g.joint, g.open, g.closed, g.min_opening) == ("piper_joint7", 0.035, 0.0, 0.005)
     assert g.finger_bodies == ("piper_link7", "piper_link8") and g.weld_body == "piper_link6"
 
 
 @pytest.mark.parametrize("bad, field", [
-    ({"joints": ["j1"]}, "joints"),
+    ({"joints": ["j1"]}, "home"),
     ({"home": [0.0]}, "home"),
     ({"ik_seeds": [[0.0, 0.0, 0.0]]}, "ik_seeds[0]"),
+    ({"gripper": {"joint": "g", "open": 1.0, "closed": 0.0, "finger_bodies": [], "weld_body": "w",
+                  "min_opening": 0.0}}, "gripper.finger_bodies"),
 ])
 def test_arm_block_dof_mismatch_fails_loud(bad: dict, field: str) -> None:
-    arm = {"name": "x", "dof": 2, "ee_site": "s", "joints": ["j1", "j2"], "home": [0.0, 0.0], **bad}
+    arm = {"ee": {"site": "s"}, "joints": ["j1", "j2"], "home": [0.0, 0.0], **bad}
     with pytest.raises(EmbodimentConfigError) as exc:
         parse_embodiment_config(_with_arm(arm), ctx="a/robot.yaml")
     assert f"arm.{field}" in str(exc.value)

@@ -16,16 +16,16 @@ from vector_os_nano.skills.manipulation_setup import register_manipulation_skill
 
 
 class _StubBase:
-    """A no-op base — Go2GraspPerception only stores it (construction is lazy)."""
+    """A no-op base."""
 
 
 def _agent() -> Agent:
     # arm/gripper truthy stubs so the helper treats the arm as present; the
     # launcher has already built the ONE perception.
-    from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
+    from vector_os_nano.perception.camera_perception import CameraPerception
 
     agent = Agent(base=_StubBase(), arm=object(), gripper=object(), config={})
-    agent._perception = Go2GraspPerception(agent._base, width=320, height=240)
+    agent._perception = CameraPerception(camera=None)  # only stored (lazy)
     return agent
 
 
@@ -45,9 +45,9 @@ def test_reuses_the_launcher_perception() -> None:
     """launcher-perception-drift: the helper used to REPLACE the perception with a
     hardcoded 320x240 one, so two launchers ended at different sizes."""
     agent = _agent()
-    from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
+    from vector_os_nano.perception.camera_perception import CameraPerception
 
-    agent._perception = mine = Go2GraspPerception(agent._base, width=640, height=480)
+    agent._perception = mine = CameraPerception(camera=None)
     register_manipulation_skills(agent)
     assert agent._perception is mine
 

@@ -20,8 +20,9 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
 * **Reads.** :meth:`snapshot` is the latest :class:`SimSnapshot` (``world.state()``
   and sim time of one instant), republished after every tick and every mutation;
   lock-free readers slice ``q`` / ``qd`` by the scene's canonical addresses.
-  Renders and rays go to the world itself (``world.render`` / ``world.raycast``,
-  callable from any thread: the backend copies the state it observes).
+  Renders and rays go to the world itself (:meth:`render` / ``world.raycast``,
+  callable from any thread: the backend copies the state it observes);
+  :meth:`capture` is the actor's camera path (its segmentation never leaves here).
 * **Attachments.** :meth:`grasp` / :meth:`release` run the world-side grasp
   decision (``sim/grasp.py``) at a step boundary. Jobs and controllers get the
   world through :class:`_LoggingWorld`, so every ``attach`` / ``detach`` is logged
@@ -49,6 +50,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from vector_os_nano.interfaces.devices import CameraFrame
 from vector_os_nano.interfaces.physics import GraspSpec, PhysicsWorld, RGBDFrame
 from vector_os_nano.sim import grasp as _grasp
 
@@ -186,6 +188,8 @@ class SimRuntime:
         self.dead_reason: str | None = None  # why the stepper thread died (None: it did not)
         self._stepper: int | None = None  # ident of the thread stepping right now
         self._steps = 0
+        sc = world.scene  # the robot's own bodies: what a camera's self mask covers
+        self._robot = np.array(sorted(sc.subtree(sc.robot_root)) if sc.robot_root >= 0 else [], dtype=np.int64)
         # Attachment transition log: (sim_time, child body, parent body or None for a
         # detach) per attach / detach call, and per change of world.attached() a job or
         # tick made around them (GroundTruth.attach_events reads it).
@@ -263,6 +267,13 @@ class SimRuntime:
         """``world.render`` (any thread, one instant); raises once the stepper has died."""
         self._alive()
         return self.world.render(camera, width, height, kinds)
+
+    def capture(self, camera: str, width: int, height: int, *, depth: bool = True) -> CameraFrame:
+        """The actor's camera path: one instant of RGB (and depth) with the robot's own
+        pixels as a mask, computed here from the segmentation, which stays here."""
+        f = self.render(camera, width, height, ("rgb", "depth", "seg") if depth else ("rgb", "seg"))
+        return CameraFrame(rgb=f.rgb, depth=f.depth, self_mask=np.isin(f.seg, self._robot), K=f.K,
+                           cam_pos=f.cam_pos, cam_mat=f.cam_mat, sim_time=f.sim_time, camera=f.camera)
 
     def rt_ratio(self) -> float:
         """Measured sim-seconds per wall-second over the last measurement window."""

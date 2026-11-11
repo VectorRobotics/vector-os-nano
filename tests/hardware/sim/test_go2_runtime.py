@@ -43,11 +43,19 @@ def flat_go2():
     go2.disconnect()
 
 
+def _camera(go2: MuJoCoGo2):
+    """The go2 head camera (the manifest's), on the dog's runtime."""
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.sim.drivers.camera import Camera
+
+    return Camera(registry.load("go2").camera, go2.runtime)
+
+
 def _hammer(go2: MuJoCoGo2, stop: threading.Event, errors: list) -> None:
     while not stop.is_set():
         try:
             go2.get_odometry()
-            go2.get_rgbd_frame(64, 48)
+            _camera(go2).capture(64, 48)
             go2.get_lidar_scan()
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
@@ -103,12 +111,11 @@ def test_walk_counts_sim_seconds_at_half_real_time() -> None:
     assert abs(half - full) <= 0.15 * full, (full, half)
 
 
-def test_rgbd_frames_honour_each_size_with_matching_intrinsics(flat_go2) -> None:
+def test_camera_frames_honour_each_size_with_matching_intrinsics(flat_go2) -> None:
     for w, h in ((320, 240), (640, 480)):
-        f = flat_go2.get_rgbd_frame(w, h)
-        assert f.rgb.shape == (h, w, 3) and f.depth.shape == (h, w)
-        assert (f.K[0, 2], f.K[1, 2]) == (w / 2, h / 2) and f.seg is None
-        assert flat_go2.get_camera_frame(w, h).shape == (h, w, 3)
+        f = _camera(flat_go2).capture(w, h)
+        assert f.rgb.shape == (h, w, 3) and f.depth.shape == (h, w) and f.self_mask.shape == (h, w)
+        assert (f.K[0, 2], f.K[1, 2]) == (w / 2, h / 2) and not hasattr(f, "seg")
 
 
 def test_mpc_plan_is_dropped_when_idle_and_failures_fall_back_loudly(monkeypatch, caplog) -> None:

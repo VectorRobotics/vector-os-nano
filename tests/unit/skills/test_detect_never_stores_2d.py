@@ -39,7 +39,7 @@ def test_a_mobile_base_gets_no_identity_calibration() -> None:
 
 
 class _Snapshot:
-    """Go2GraspPerception's surface after WP11: capture/detect_in/segment, no detect(query)."""
+    """CameraPerception's surface after WP11: capture/detect_in/segment, no detect(query)."""
 
     def __init__(self) -> None:
         self.seen = []

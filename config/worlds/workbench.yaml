@@ -1,0 +1,28 @@
+# World manifest — the workbench: a fixed arm on a pedestal at the back edge of a bench,
+# a red box and a blue cylinder on the bench top. Loaded by
+# vector_os_nano/vcli/worlds/world_manifest.py for robot.yaml `world: workbench`.
+#
+# scene: the robot-free MJCF beside this file; spawn: where a body without a base is
+# mounted (x, y, z, heading): the pedestal top.
+
+scene: workbench.xml
+spawn: {xy: [0.0, 0.0], z: 0.50, heading: 0.0}
+
+rooms: {}
+boxes: {}
+doors: {}
+
+surfaces:
+  bench: {body: bench, box: [-0.10, -0.40, 0.60, 0.40], height: 0.40, aliases: [bench, workbench, 桌子, 工作台]}
+
+pickables:
+  red_box:       {category: box,      colour: red,  surface: bench, aliases: [red box, 红盒子, 红色的盒子, 红方块]}
+  blue_cylinder: {category: cylinder, colour: blue, surface: bench, aliases: [blue cylinder, 蓝圆柱, 蓝色的圆柱]}
+
+vocab:
+  colours:
+    red:  [red, 红]
+    blue: [blue, 蓝]
+  categories:
+    box:      [box, 盒子, 方块]
+    cylinder: [cylinder, 圆柱]

@@ -10,8 +10,10 @@ grasp for a phantom dog at spawn). The "live" state is a q vector the test write
 """
 from __future__ import annotations
 
+import json
 import math
 import threading
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -144,39 +146,25 @@ def test_fk_waits_for_the_kinematics_lock(rig) -> None:
 
 
 # -- today's numbers: the kinematics replace MuJoCoPiper's bit for bit ---------------
+# golden/piper_kinematics.json holds MuJoCoPiper's ik_top_down / ik / fk on these 16
+# cases, recorded from that driver on release/1.0 just before S3a deleted it (the live
+# comparison passed on 84fcde0). JSON floats round-trip exactly.
 
 _BASES = [(10.0, 3.0, 0.0), (10.46, 3.0, 0.0), (12.8, 4.0, math.pi / 2), (9.5, 2.0, -2.5)]
 _TARGETS = [(0.45, 0.0, 0.30), (0.40, 0.08, 0.22), (0.38, -0.05, 0.34), (2.0, 0.0, 0.3)]
 _ARM = [0.1, 0.9, -0.8, 0.05, 0.3, -0.2]
 
 
-def _cases():
-    for x, y, yaw in _BASES:
-        c, s = math.cos(yaw), math.sin(yaw)
-        for f, left, z in _TARGETS:
-            yield (x, y, yaw), (x + c * f - s * left, y + s * f + c * left, z)
-
-
 def test_the_kinematics_keep_the_old_driver_numbers(rig) -> None:
-    from types import SimpleNamespace
-
-    from vector_os_nano.embodiments.dof_layout import DofLayout
-    from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
-
-    q_live = rig.scene.model.qpos0.copy()
-    go2 = SimpleNamespace(
-        _connected=True, _scene_xml_path=str(rig.scene.xml_path), wait_settled=lambda: True,
-        _mj=SimpleNamespace(model=rig.scene.model, layout=DofLayout(rig.scene.model, "base_link", 12)),
-        runtime=SimpleNamespace(snapshot=lambda: SimpleNamespace(q=q_live.copy())),
-    )
-    old = MuJoCoPiper(go2, rig.spec)
-    old.connect()
-    solved = 0
-    for base, target in _cases():
-        q_live[:] = rig.place(*base, arm=_ARM)
-        new_td = rig.kin.ik_top_down(q_live, target, rig.seeds())
-        assert old.ik_top_down(target) == new_td, (base, target)
-        assert old.ik(target) == rig.kin.ik(q_live, target, rig.kin.arm_q(q_live)), (base, target)
-        assert old.fk(_ARM) == rig.kin.fk(q_live, _ARM)
-        solved += new_td is not None
-    assert solved >= 8  # the comparison covers solutions, not only misses
+    golden = json.loads((Path(__file__).with_name("golden") / "piper_kinematics.json").read_text())
+    cases = [((x, y, yaw), (x + math.cos(yaw) * f - math.sin(yaw) * left,
+                            y + math.sin(yaw) * f + math.cos(yaw) * left, z))
+             for x, y, yaw in _BASES for f, left, z in _TARGETS]
+    assert len(golden) == len(cases) == 16
+    for (base, target), old in zip(cases, golden):
+        q = rig.place(*base, arm=_ARM).copy()
+        assert rig.kin.ik_top_down(q, target, rig.seeds()) == old["td"], (base, target)
+        assert rig.kin.ik(q, target, rig.kin.arm_q(q)) == old["ik"], (base, target)
+        pos, rot = rig.kin.fk(q, _ARM)
+        assert [pos, rot] == old["fk"], (base, target)
+    assert sum(o["td"] is not None for o in golden) == 12  # solutions, not only misses

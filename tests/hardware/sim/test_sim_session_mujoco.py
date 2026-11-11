@@ -59,7 +59,7 @@ def _start(app: dict[str, Any], eid: str) -> Any:
 
 def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> None:
     from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-    from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
+    from vector_os_nano.sim.drivers.arm import Arm
 
     monkeypatch.delenv("VECTOR_NAV_STACK", raising=False)
     monkeypatch.setenv("VECTOR_SIM_WITH_ARM", "1")  # must NOT pick the arm any more
@@ -80,11 +80,11 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
         agent = app["sim_session"].agent
         if eid == "go2_piper":
             # In-process rig, never the ROS2 proxies / launch_explore.sh subprocess.
-            assert type(agent._base) is MuJoCoGo2 and type(agent._arm) is MuJoCoPiper
+            assert type(agent._base) is MuJoCoGo2 and type(agent._arm) is Arm
             assert agent._base._mj.model.nu == 19
             # One perception at the manifest size; a 640x480 render of the same
             # camera by another caller (look) must not change what it gets.
-            agent._base.get_camera_frame()
+            agent._perception._camera.capture(640, 480)
             p = agent._perception
             f = p.capture()
             assert f.rgb.shape == (240, 320, 3) and f.depth.shape == (240, 320)
@@ -113,12 +113,12 @@ def test_frames_render_from_any_thread_after_start(monkeypatch) -> None:
     threads0 = threading.active_count()
     s = SimSession.start(SimSpec("go2_piper", gui=False))
     try:
-        p, base = s.agent._perception, s.agent._base
+        p = s.agent._perception
         assert p.capture().rgb.shape == (240, 320, 3)  # the starting thread
 
         def grab(_: int) -> tuple:
             f = p.capture()
-            return (f.rgb.shape, f.depth.shape, base.get_camera_frame().shape)
+            return (f.rgb.shape, f.depth.shape, p._camera.capture(640, 480).rgb.shape)
 
         want = ((240, 320, 3), (240, 320), (480, 640, 3))
         out: list[tuple] = []
@@ -144,7 +144,7 @@ def test_interpreter_exit_stops_the_session_cleanly() -> None:
         "    r = orig(self); print('STOP:', r, flush=True); return r\n"
         "S.SimSession.stop = stop\n"
         "s = S.SimSession.start(S.SimSpec('go2', gui=False))\n"
-        "s.agent._base.get_camera_frame()\n"
+        "s.agent._perception.capture()\n"
     )
     out = subprocess.run([sys.executable, "-c", code], cwd=_REPO, capture_output=True,
                          text=True, env={**os.environ, "VECTOR_NAV_STACK": ""}, timeout=180)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tests.conformance.test_battery import Arm, _settled
+from tests.conformance.test_drivers import Body
 from vector_os_nano.sim import grasp as g
 from vector_os_nano.sim.runtime import SimRuntime
 
@@ -54,17 +54,15 @@ def test_submit_runs_at_a_step_boundary(backend, load, contract_scene):
 
 
 def test_grasp_and_release_log_at_call_time(backend, load, battery_scene):
-    sc = battery_scene
-    w = _settled(load, backend, sc)
-    arm = Arm(w, sc)
-    _jaw, box = arm.grip()
-    rt = SimRuntime(w, threaded=False, paced=False, name="conf")
+    b = Body(load(backend, battery_scene))
+    rt, box, spec = b.rt, b.around("box"), b.gripper._grasp
     try:
+        b.servo_jaw(0.0)
         t = rt.sim_time
-        assert rt.grasp(arm.spec) == box and rt.attachments() == {box: arm.hand}
-        assert rt.release(arm.hand) == [] and rt.attachments() == {}
-        assert rt.grasp(arm.spec) == box  # re-grasped at the same instant: both changes logged
-        assert list(rt.attach_log) == [(t, box, arm.hand), (t, box, None), (t, box, arm.hand)]
+        assert rt.grasp(spec) == box and rt.attachments() == {box: b.hand}
+        assert rt.release(b.hand) == [] and rt.attachments() == {}
+        assert rt.grasp(spec) == box  # re-grasped at the same instant: both changes logged
+        assert list(rt.attach_log) == [(t, box, b.hand), (t, box, None), (t, box, b.hand)]
     finally:
         rt.close()
 
@@ -73,19 +71,17 @@ def test_every_attach_and_detach_inside_one_job_is_logged(backend, load, battery
     """Adversarial: a detach and a re-attach inside ONE job leave the attachments as they
     were, yet both transitions are logged; so is a release + attach through sim/grasp,
     and a re-attach to the same parent changes nothing and logs nothing."""
-    sc = battery_scene
-    w = _settled(load, backend, sc)
-    arm = Arm(w, sc)
-    _jaw, box = arm.grip()
-    rt = SimRuntime(w, threaded=False, paced=False, name="conf")
+    b = Body(load(backend, battery_scene))
+    rt, box, hand = b.rt, b.around("box"), b.hand
     try:
+        b.servo_jaw(0.0)
         t = rt.sim_time
-        rt.call(lambda w: w.attach(arm.hand, box))
-        rt.call(lambda w: (w.detach(box), w.attach(arm.hand, box)))
-        rt.call(lambda w: (g.release(w, arm.hand), w.attach(arm.hand, box)))
-        rt.call(lambda w: w.attach(arm.hand, box))  # already held by that parent: no event
-        held, free = (t, box, arm.hand), (t, box, None)
+        rt.call(lambda w: w.attach(hand, box))
+        rt.call(lambda w: (w.detach(box), w.attach(hand, box)))
+        rt.call(lambda w: (g.release(w, hand), w.attach(hand, box)))
+        rt.call(lambda w: w.attach(hand, box))  # already held by that parent: no event
+        held, free = (t, box, hand), (t, box, None)
         assert list(rt.attach_log) == [held, free, held, free, held]
-        assert rt.attachments() == {box: arm.hand}
+        assert rt.attachments() == {box: hand}
     finally:
         rt.close()

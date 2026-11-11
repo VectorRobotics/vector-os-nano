@@ -9,7 +9,9 @@ anything, and replayed here bit for bit:
 1. go2: connect, stand, walk(0.4, 0, 0) for 3 sim-s, zero command, wait until the brake
    has settled; (sim_time, q, qd) every 0.1 s.
 2. go2_piper: the scripted pick of the green bottle on the pick table (ik_top_down ->
-   move_joints -> close -> lift); the state at every sampled instant, the weld events,
+   move_joints -> close -> lift; since S3a through the generic sim/drivers Arm and
+   Gripper, which replay MuJoCoPiper's bit for bit); the state at every sampled instant,
+   the weld events,
    the final object pose and the holding_object / lifted verdicts.
 3. Ground truth at about 50 instants of (1) and (2): every GroundTruth value the oracles
    read (base pose, object positions and speeds, contacts, clearance, welds, arm joints,
@@ -163,20 +165,18 @@ def run_go2_piper_pick() -> dict[str, np.ndarray]:
     """Scenario 2 (+ its half of scenario 3)."""
     from vector_os_nano.embodiments import registry
     from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-    from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
-    from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
+    from vector_os_nano.sim.drivers.arm import Arm
+    from vector_os_nano.sim.drivers.gripper import Gripper
     from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     cfg = registry.load("go2_piper")
     go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
-    arm = grip = None
     try:
         go2.connect()
         go2.stand()
-        arm, grip = MuJoCoPiper(go2, cfg.arm), MuJoCoPiperGripper(go2, cfg.arm.gripper)
-        arm.connect()
-        grip.connect()
+        arm = Arm(cfg.arm, go2.runtime, wait_mount=go2.wait_settled)
+        grip = Gripper(cfg.arm.gripper, go2.runtime)
         rq = go2._mj.layout.root_qpos_adr
         go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
         go2.reset_pose()
@@ -213,9 +213,6 @@ def run_go2_piper_pick() -> dict[str, np.ndarray]:
                                     ns["holding_object"]()])
         return out
     finally:
-        for dev in (grip, arm):
-            if dev is not None:
-                dev.disconnect()
         go2.disconnect()
 
 

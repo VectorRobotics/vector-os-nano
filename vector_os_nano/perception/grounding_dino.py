@@ -212,7 +212,7 @@ class GroundingDinoDetector:
 
 # --- shared lazy singleton ----------------------------------------------------
 # ONE detector instance shared by the registered DetectorCapability AND the grasp
-# route's Go2GraspPerception.detect, so the model loads at most once per process.
+# route's CameraPerception.detect, so the model loads at most once per process.
 
 _SHARED: GroundingDinoDetector | None = None
 _SHARED_LOCK = threading.Lock()

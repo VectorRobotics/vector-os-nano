@@ -170,6 +170,7 @@ def bind_real_sim(agent: Any, embodiment: str) -> Any:
 
     s = sim_session.SimSession(sim_session.SimSpec(embodiment, gui=False), registry.load(embodiment))
     s.agent = agent
+    s.runtime = getattr(agent._base, "runtime", None) or getattr(agent._arm, "runtime", None)
     s._bind_ground_truth()
     sim_session._LIVE.append(s)
     return s
