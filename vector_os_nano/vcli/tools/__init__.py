@@ -40,7 +40,6 @@ def discover_all_tools() -> list:
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
     from vector_os_nano.vcli.tools.web_tool import WebFetchTool
     from vector_os_nano.vcli.tools.scene_graph_tool import SceneGraphQueryTool
-    from vector_os_nano.vcli.tools.ros2_tools import Ros2TopicsTool, Ros2NodesTool, Ros2LogTool
     from vector_os_nano.vcli.tools.nav_tools import GoToRoomTool, NavStateTool, TerrainStatusTool
     from vector_os_nano.vcli.tools.reload_tool import SkillReloadTool
     from vector_os_nano.vcli.tools.viz_tool import FoxgloveTool
@@ -61,9 +60,6 @@ def discover_all_tools() -> list:
         # New Wave 1-2 tools
         SceneGraphQueryTool(),
         GoToRoomTool(),
-        Ros2TopicsTool(),
-        Ros2NodesTool(),
-        Ros2LogTool(),
         NavStateTool(),
         TerrainStatusTool(),
         SkillReloadTool(),
@@ -78,7 +74,7 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
     "code": ["file_read", "file_write", "file_edit", "bash", "glob", "grep"],
     "general": ["web_fetch"],
     "robot": ["world_query", "scene_graph_query", "go_to_room"],
-    "diag": ["ros2_topics", "ros2_nodes", "ros2_log", "nav_state", "terrain_status"],
+    "diag": ["nav_state", "terrain_status"],
     # Sim lifecycle: kept enabled even in the dev (no-robot) world so the user can
     # spin up a sim conversationally ("start the arm sim").
     "sim": ["start_simulation", "stop_simulation"],

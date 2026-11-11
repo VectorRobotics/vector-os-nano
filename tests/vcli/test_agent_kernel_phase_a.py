@@ -412,7 +412,7 @@ class TestToolGating:
             reg.disable_category(c)
         names = {s["name"] for s in reg.to_anthropic_schemas()}
         assert "web_fetch" in names
-        assert "ros2_topics" not in names
+        assert "nav_state" not in names
 
     def test_robot_world_keeps_all(self) -> None:
         reg = self._registry()  # nothing disabled (robot world)

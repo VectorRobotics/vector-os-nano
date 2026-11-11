@@ -55,6 +55,9 @@ _DEAD: dict[str, str] = {
     "config/far_go2_indoor.yaml": "periphery:config-dead-planner-yamls (no launcher reads it)",
     "config/local_planner_go2.yaml": "periphery:config-dead-planner-yamls (no launcher reads it)",
     "tests/e2e": "tests-gate-e2e:e2e-dir-stale-direct-api (a hand-built rig, not the bare REPL)",
+    "vector_os_nano/vcli/tools/ros2_tools.py": "tools-worlds:ros2-tools-broken-and-dead-logs, "
+        "tools-worlds:ros2-tools-jazzy-broken (hz never returned, echo used a flag Jazzy lacks, "
+        "the log tool read files nobody writes)",
     "foxglove/launch_foxglove.sh": "periphery:foxglove-check-before-source (open_foxglove launches the bridge itself)",
 }
 
@@ -67,6 +70,7 @@ _DEAD_MODULES = {
 } | {
     "vector_os_nano.integrations", "vector_os_nano.ros2", "vector_os_nano.core.nav_client",
     "vector_os_nano.vcli.tools.sysnav_sim_tool", "vector_os_nano.hardware.ros2.runtime",
+    "vector_os_nano.vcli.tools.ros2_tools",
 }
 
 
