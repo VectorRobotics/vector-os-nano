@@ -122,7 +122,6 @@ dev = [
 [project.scripts]
 vector-os-mcp = "vector_os_nano.mcp.server:main_sync"
 vector-cli = "vector_os_nano.vcli.cli:main"
-vector-eval = "vector_os_nano.vcli.eval_runner:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vector_os_nano"]

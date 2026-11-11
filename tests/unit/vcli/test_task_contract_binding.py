@@ -284,7 +284,7 @@ def test_a_lifecycle_tool_recompiles_the_contract_for_the_new_body() -> None:
     registry.register(_FakeStartSim(ref), category="sim")
     eng = VectorEngine(backend=backend, registry=registry, permissions=PermissionContext(no_permission=True))
     ref.append(eng)
-    eng.init_vgg(agent=None, world=DevWorld())
+    eng.bind(None, DevWorld())
     app_state: dict = {"agent": None}
     events: list[str] = []
     trace = eng.run_turn_native("启动 go2 然后走到坐标 (2.0,0.0)", session=_session(),

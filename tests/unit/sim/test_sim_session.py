@@ -285,12 +285,16 @@ def test_switch_to_a_typo_never_stops_the_running_session(monkeypatch) -> None:
 
 
 class _Engine:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self._vgg_agent = "stale"
+    """Records every bind; ``fail`` makes the next bind raise (engine.bind is atomic)."""
 
-    def init_vgg(self, **kw: Any) -> None:
-        self.calls.append(kw)
+    def __init__(self) -> None:
+        self.bound: list[tuple[Any, str]] = []
+        self.fail: Exception | None = None
+
+    def bind(self, agent: Any, world: Any) -> None:
+        if self.fail is not None:
+            raise self.fail
+        self.bound.append((agent, world.name))
 
 
 def _app(**extra: Any) -> dict[str, Any]:
@@ -300,11 +304,7 @@ def _app(**extra: Any) -> dict[str, Any]:
     tools, cats = discover_categorized_tools()
     for t in tools:
         reg.register(t, category=next((c for c, n in cats.items() if t.name in n), "default"))
-    for c in ("robot", "diag", "system"):
-        reg.disable_category(c)
-    app = {"registry": reg, "engine": _Engine(),
-           "vgg_step_callback": object(), "vgg_step_view_callback": object(),
-           "tool_permission_resolver": object()}
+    app = {"registry": reg, "engine": _Engine()}
     app.update(extra)
     return app
 
@@ -316,37 +316,51 @@ def _robot_session() -> Any:
     return SimpleNamespace(agent=Agent(base=base, config={}), spec=SimSpec("go2"))
 
 
-def test_rebind_world_passes_view_and_permission_and_enables_system() -> None:
+def _skill_tools(reg: Any) -> list[str]:
+    return [n for n in reg.list_tools() if getattr(reg.get(n), "_is_skill_wrapper", False)]
+
+
+def test_rebind_world_binds_the_engine_and_adds_the_skill_tools() -> None:
     app = _app()
     s = _robot_session()
     rebind_world(app, s)
-    reg, eng = app["registry"], app["engine"]
-    assert all(reg.is_category_enabled(c) for c in ("robot", "diag", "system"))
-    (kw,) = eng.calls
-    assert kw["on_vgg_step_view"] is app["vgg_step_view_callback"]
-    assert kw["tool_permission_resolver"] is app["tool_permission_resolver"]
-    assert kw["agent"] is s.agent and app["world"].is_robot()
+    assert app["engine"].bound == [(s.agent, "robot")]
+    assert _skill_tools(app["registry"])
     assert app["agent"] is s.agent and app["sim_session"] is s
 
 
-def test_rebind_world_to_none_clears_agent_tools_and_vgg_agent() -> None:
+def test_rebind_world_to_none_binds_the_dev_world_and_drops_the_skill_tools() -> None:
     app = _app()
     rebind_world(app, _robot_session())
-    assert any(getattr(app["registry"].get(n), "_is_skill_wrapper", False)
-               for n in app["registry"].list_tools())
     rebind_world(app, None)
-    reg, eng = app["registry"], app["engine"]
-    assert not any(getattr(reg.get(n), "_is_skill_wrapper", False) for n in reg.list_tools())
-    assert not any(reg.is_category_enabled(c) for c in ("robot", "diag", "system"))
-    assert eng._vgg_agent is None and eng.calls[-1]["agent"] is None
-    assert not app["world"].is_robot()
+    assert app["engine"].bound[-1] == (None, "dev")
+    assert not _skill_tools(app["registry"])
+    assert app["agent"] is None and app["sim_session"] is None
 
 
-def test_rebind_world_keeps_an_active_scenario_world() -> None:
-    world = SimpleNamespace(is_robot=lambda: False, name="tabletop")
-    app = _app(world=world, scenario="tabletop")
-    rebind_world(app, _robot_session())
-    assert app["world"] is world and app["engine"].calls[-1]["world"] is world
+def test_a_started_body_the_engine_cannot_bind_is_stopped(monkeypatch) -> None:
+    """The start tool never leaves a running sim the REPL is not bound to."""
+    sessions: list[_FakeSession] = []
+
+    def fake_start(spec: SimSpec, **_: Any) -> _FakeSession:
+        sessions.append(_FakeSession(spec))
+        return sessions[-1]
+
+    monkeypatch.setattr(SimSession, "start", staticmethod(fake_start))
+    app = _app()
+    app["engine"].fail = RuntimeError("no ground truth")
+    res = SimStartTool().execute({"embodiment": "go2", "gui": False}, _ctx(app))
+    assert res.is_error and "binding it failed: no ground truth" in res.content
+    assert sessions[0].stopped == 1 and app.get("sim_session") is None
+
+
+def test_a_failed_bind_changes_nothing() -> None:
+    """legacy-cognitive:B19: the engine is bound first; a failure leaves the REPL whole."""
+    app = _app()
+    app["engine"].fail = RuntimeError("cannot bind")
+    with pytest.raises(RuntimeError):
+        rebind_world(app, _robot_session())
+    assert "agent" not in app and not _skill_tools(app["registry"])
 
 
 # ---------------------------------------------------------------------------

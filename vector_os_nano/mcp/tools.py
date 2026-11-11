@@ -95,8 +95,8 @@ def build_diagnostics_tool() -> dict:
 def build_natural_language_tool() -> dict:
     """Build the natural_language meta-tool definition.
 
-    This tool passes free-form text through the full VectorEngine pipeline
-    (run_turn -> LLM tool_use loop -> TurnResult).
+    This tool passes free-form text through the native producer
+    (engine.run_turn_native).
     """
     return {
         "name": "natural_language",
@@ -206,17 +206,10 @@ async def handle_tool_call(
     Routing:
     - "diagnostics"      -> read hardware state from agent directly
     - "debug_perception" -> read perception pipeline from agent directly
-    - "run_goal"         -> engine.vgg_decompose + engine.vgg_execute
-    - "natural_language" -> the unified closed-loop controller -> answer text
-    - direct skill       -> the unified closed-loop controller -> answer text
+    - "run_goal", "natural_language" and a direct skill -> the native producer
+      (``engine.run_turn_native``) -> the model's last words
 
-    Stage 5 (S5.4) cut-over: free-form text now flows through the ONE closed-loop
-    controller (``run_turn_unified``) — every turn is decomposed-or-answered and
-    verified, with the keyword gate demoted to an optimization hint. Set
-    ``VECTOR_LEGACY_TURN=1`` to restore the old open ``run_turn`` ReAct loop for
-    one release as a fallback.
-
-    Note: both controllers are synchronous; wrapped with ``asyncio.to_thread()``.
+    Note: the producer is synchronous; wrapped with ``asyncio.to_thread()``.
 
     Returns a string suitable for MCP TextContent.
     """
@@ -231,7 +224,7 @@ async def handle_tool_call(
 
     if tool_name == "run_goal":
         goal = arguments.get("goal", "")
-        return await asyncio.to_thread(_run_goal_via_vgg, engine, goal)
+        return await asyncio.to_thread(_run_text_turn, engine, session, goal)
 
     if tool_name == "natural_language":
         instruction = arguments.get("instruction", "")
@@ -243,66 +236,10 @@ async def handle_tool_call(
 
 
 def _run_text_turn(engine: Any, session: Any, instruction: str) -> str:
-    """Run one free-form turn through the unified controller; return the answer text.
-
-    Routes through ``run_turn_unified`` (the S5.4 cut-over) so every MCP text turn
-    is a verified closed loop. ``VECTOR_LEGACY_TURN=1`` falls back to the legacy
-    open ``run_turn`` ReAct loop for one release. Both surface ``.text``.
-    """
-    import os
-
-    if os.environ.get("VECTOR_LEGACY_TURN") == "1":
-        return engine.run_turn(instruction, session).text
-    return engine.run_turn_unified(instruction, session).text
-
-
-def _run_goal_via_vgg(engine: Any, goal: str) -> str:
-    """Decompose a goal via VGG and execute it. Returns formatted trace as JSON string."""
-    tree = engine.vgg_decompose(goal)
-    if tree is None:
-        # VGG not available or goal not suitable — fall back to run_turn without session
-        # (MCP goal calls don't have a persistent session to pass here)
-        return f"VGG not available for goal: {goal!r}. Use natural_language tool instead."
-    try:
-        trace = engine.vgg_execute(tree)
-        return _format_vgg_trace(trace)
-    except Exception as exc:
-        return f"VGG execution failed: {exc}"
-
-
-def _format_vgg_trace(trace: Any) -> str:
-    """Format an ExecutionTrace from VGG into a JSON string for MCP consumers."""
-    import json
-
-    if trace is None:
-        return json.dumps({"success": False, "error": "No trace returned"})
-
-    # ExecutionTrace is a dataclass — convert to dict
-    try:
-        if hasattr(trace, "to_dict"):
-            return json.dumps(trace.to_dict(), ensure_ascii=False, indent=2)
-
-        # Fallback: manual serialisation
-        result: dict[str, Any] = {}
-        if hasattr(trace, "success"):
-            result["success"] = trace.success
-        if hasattr(trace, "goal"):
-            result["goal"] = trace.goal
-        if hasattr(trace, "steps"):
-            steps = []
-            for s in trace.steps:
-                step: dict[str, Any] = {}
-                for attr in ("name", "status", "error", "duration_sec", "result"):
-                    val = getattr(s, attr, None)
-                    if val is not None:
-                        step[attr] = val
-                steps.append(step)
-            result["steps"] = steps
-        if hasattr(trace, "error"):
-            result["error"] = trace.error
-        return json.dumps(result, ensure_ascii=False, indent=2)
-    except Exception as exc:
-        return json.dumps({"success": False, "error": f"Trace serialisation failed: {exc}"})
+    """Run one free-form turn through the native producer; return the model's last words."""
+    n0 = len(session._entries)
+    engine.run_turn_native(instruction, session=session)
+    return session.last_assistant_text(n0)
 
 
 def _run_debug_perception(agent: Agent, query: str) -> str:

@@ -3,17 +3,16 @@
 
 """Skill protocol, @skill decorator, registry, and execution context.
 
-The @skill decorator replaces hard-coded routing. Each skill declares:
-- aliases: words/phrases that trigger it (Chinese + English)
-- direct: if True, execute immediately without LLM planning
+Each skill declares (the model routes by the skill's description; nothing matches
+user text against these):
+- aliases: words/phrases for it (Chinese + English); the stop skill's are the P0
+  stop phrases
+- direct: unread (no keyword router remains)
 - auto_steps: default skill chain for common patterns (e.g. scan→detect→pick)
-
-The SkillRegistry matches user input against aliases and routes accordingly.
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from vector_os_nano.core.types import SkillResult
@@ -39,10 +38,9 @@ def skill(
     """Decorator that marks a class as a skill with routing metadata.
 
     Args:
-        aliases: Words/phrases that trigger this skill (multi-language).
-                 Matched against user input for automatic routing.
-        direct: If True, execute immediately without LLM planning.
-                For simple commands like "home", "open", "close".
+        aliases: Words/phrases for this skill (multi-language); the stop skill's
+                 are the P0 stop phrases.
+        direct: Unread since the keyword router was deleted.
         auto_steps: Default skill chain. E.g. ["scan", "detect", "pick"]
                     means this skill auto-expands to that sequence.
         actuates: Whether the skill moves the robot (base, arm, gripper). Fail
@@ -274,87 +272,19 @@ class SkillContext:
 
 
 # ---------------------------------------------------------------------------
-# Match result
-# ---------------------------------------------------------------------------
-
-@dataclass
-class SkillMatch:
-    """Result of matching user input against skill aliases."""
-    skill_name: str
-    direct: bool
-    auto_steps: list[str]
-    extracted_arg: str  # remaining text after alias match (e.g. "杯子" from "抓杯子")
-
-
-# ---------------------------------------------------------------------------
 # SkillRegistry
 # ---------------------------------------------------------------------------
 
 class SkillRegistry:
-    """Manages skills with alias-based routing.
-
-    Replaces all hard-coded command routing with declarative alias matching.
-    """
+    """The skills of one body, by name."""
 
     def __init__(self) -> None:
         self._skills: dict[str, Any] = {}
-        # alias → (skill_name, is_direct, auto_steps)
-        self._alias_map: dict[str, tuple[str, bool, list[str]]] = {}
 
     def register(self, skill_instance: Any) -> None:
-        """Register a skill instance. Reads @skill decorator metadata."""
-        name = skill_instance.name
-        self._skills[name] = skill_instance
-
-        # Read decorator metadata
-        aliases = getattr(skill_instance, '__skill_aliases__', [])
-        direct = getattr(skill_instance, '__skill_direct__', False)
-        auto_steps = getattr(skill_instance, '__skill_auto_steps__', [])
-
-        # Also register the skill name itself as an alias
-        self._alias_map[name.lower()] = (name, direct, auto_steps)
-
-        for alias in aliases:
-            self._alias_map[alias.lower()] = (name, direct, auto_steps)
-
-        logger.debug("Registered skill %r with %d aliases, direct=%s",
-                      name, len(aliases), direct)
-
-    def match(self, user_input: str) -> SkillMatch | None:
-        """Match user input against skill aliases.
-
-        Tries exact match first, then prefix match (longest alias wins).
-        Returns SkillMatch with extracted argument, or None if no match.
-
-        Examples:
-            "home"      → SkillMatch(home, direct=True, arg="")
-            "抓杯子"    → SkillMatch(pick, direct=False, arg="杯子")
-            "close grip" → SkillMatch(gripper_close, direct=True, arg="")
-            "你好"       → None (no match, goes to LLM)
-        """
-        text = user_input.strip().lower()
-
-        # 1. Exact match
-        if text in self._alias_map:
-            name, direct, auto = self._alias_map[text]
-            return SkillMatch(name, direct, auto, "")
-
-        # 2. Longest prefix match (e.g. "抓" matches in "抓杯子")
-        best_match: tuple[str, bool, list[str]] | None = None
-        best_len = 0
-        best_arg = ""
-
-        for alias, (name, direct, auto) in self._alias_map.items():
-            if text.startswith(alias) and len(alias) > best_len:
-                best_match = (name, direct, auto)
-                best_len = len(alias)
-                best_arg = text[len(alias):].strip()
-
-        if best_match is not None and best_len > 0:
-            name, direct, auto = best_match
-            return SkillMatch(name, direct, auto, best_arg)
-
-        return None
+        """Register a skill instance under its name."""
+        self._skills[skill_instance.name] = skill_instance
+        logger.debug("Registered skill %r", skill_instance.name)
 
     def get(self, name: str) -> Any | None:
         """Retrieve a skill by name."""

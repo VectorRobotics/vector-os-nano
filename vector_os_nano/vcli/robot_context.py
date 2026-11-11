@@ -4,8 +4,8 @@
 """Robot state context provider for LLM system prompt.
 
 Collects real-time robot state (position, room, SceneGraph, nav state)
-and formats it as an Anthropic system prompt block. Injected into
-build_system_prompt() on every LLM turn.
+and formats it as an Anthropic system prompt block. The native loop appends it
+to the system prompt on every LLM round-trip.
 """
 from __future__ import annotations
 

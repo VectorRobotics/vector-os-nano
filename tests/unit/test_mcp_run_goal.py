@@ -1,13 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Tests for MCP run_goal tool — build_run_goal_tool, schema, list, handler.
-
-TDD: RED phase — written before implementation.
+"""Tests for MCP run_goal tool — build_run_goal_tool and its listing.
 """
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock
 
 from vector_os_nano.mcp.tools import skills_to_mcp_tools, build_run_goal_tool
@@ -49,9 +46,3 @@ class TestRunGoalMCPTool:
         assert props["max_iterations"]["default"] == 10
         assert props["verify"]["default"] is True
 
-    def test_format_vgg_trace_none(self):
-        from vector_os_nano.mcp.tools import _format_vgg_trace
-
-        result = _format_vgg_trace(None)
-        data = json.loads(result)
-        assert data["success"] is False

@@ -3,11 +3,9 @@
 
 """CapabilityRegistry — per-run registry of routable capabilities.
 
-Worlds populate it via ``World.register_capabilities`` (the dev world registers
-the chat capability; the robot world will register detectors/planners/VLA
-policies in Phase C.3). The StrategySelector reads the registered names to know
-which strategy strings resolve to capability dispatch; the GoalExecutor looks a
-capability up by name at execution time.
+Worlds populate it via ``World.register_capabilities`` (the robot world registers
+its detector); the engine binds it and the native loop offers each capability as
+a tool.
 """
 from __future__ import annotations
 
@@ -15,22 +13,6 @@ import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-
-def validate_input(schema: dict[str, Any], payload: dict[str, Any]) -> str | None:
-    """Light boundary check: every ``schema['required']`` key is present.
-
-    Returns an error message string on failure, or ``None`` when the payload is
-    acceptable. Intentionally minimal in C.1 — capabilities validate their own
-    value shapes inside ``invoke``.
-    """
-    if not isinstance(payload, dict):
-        return "capability input must be a dict"
-    required = schema.get("required", []) if isinstance(schema, dict) else []
-    missing = [k for k in required if k not in payload]
-    if missing:
-        return f"missing required input(s): {', '.join(missing)}"
-    return None
 
 
 class CapabilityRegistry:

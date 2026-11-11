@@ -11,7 +11,7 @@ legacy plan.
 
 - HONEST  [walk -> verify('at_position(x,y)')] -> CAUSED -> GROUNDED -> verified
           True / exit 0. Driven through the REAL ``cli.main -p ... --json
-          --sim-go2 --native-loop`` (the R2a PTY harness) with the native tool-
+          --sim-go2`` (the R2a PTY harness) with the native tool-
           script seam (VECTOR_FAKE_LLM_TOOLS).
 - NO-OP   [verify only, no walk], predicate true at start -> UNCAUSED -> RAN ->
           verified False / exit 2. Same PTY path.
@@ -74,7 +74,7 @@ def test_native_honest_walk_is_caused_and_verified(sim_cleanup) -> None:
         "走到坐标 (9.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_HONEST_SCRIPT,
     )
     assert r.verified is True, f"native honest walk should verify; got {r.verdict}"
@@ -96,7 +96,7 @@ def test_native_noop_is_uncaused_and_not_verified(sim_cleanup) -> None:
         "声称已在 (10.0,3.0)",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_NOOP_SCRIPT,
     )
     assert r.verified is False, f"a native no-op must NOT verify; got {r.verdict}"
@@ -176,10 +176,7 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
             backend=backend, registry=CategorizedToolRegistry(),
             permissions=PermissionContext(no_permission=True),  # a hand-built rig is no SimSession: grant asks
         )
-        eng._world = RobotWorld()
-        eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())
-        eng._vgg_agent = agent
-        eng._backend = backend
+        eng.bind(agent, RobotWorld())
 
         session = Session(
             session_id="native-teleport", created_at="t", updated_at="t",

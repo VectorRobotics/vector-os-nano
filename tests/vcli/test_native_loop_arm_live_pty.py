@@ -9,7 +9,7 @@ the THESIS: that the REAL frontier model, handed the SO-101 arm tool-set + NL,
 drives the manipulation loop ITSELF. This module is that proof — the arm analogue
 of the live walk acceptance (``test_native_loop_live_llm_pty.py``).
 
-It drives the REAL ``cli.main -p "<NL>" --json --sim --native-loop`` PTY with NO
+It drives the REAL ``cli.main -p "<NL>" --json --sim`` PTY with NO
 tool_script — the REAL provider backend resolved from the repo-root ``.env`` (the
 product default) on the REAL SO-101 MuJoCo arm sim. The MODEL must AUTONOMOUSLY
 decompose / route / verify the grasp:
@@ -133,7 +133,7 @@ def test_live_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
         sim=True,
         live=True,
         timeout_sec=_LIVE_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
     )
     # Echo the live verdict (visible under `pytest -s`) so a real run's autonomous
     # routing + grounding is inspectable in the log, not just pass/fail.

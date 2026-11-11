@@ -516,20 +516,3 @@ def test_verdict_reports_actor_caused_and_reasons() -> None:
     assert step["reject_reason"] == "UNCAUSED (base:at_position:UNCAUSED)"
     assert r.reject_reason.endswith("UNCAUSED (base:at_position:UNCAUSED)")
     assert SimpleNamespace(**r.to_dict()).acted is False
-
-
-def test_the_legacy_room_navigate_verify_never_reaches_the_next_room() -> None:
-    """A robot in the master bedroom must not ground 'go to the dining room': every
-    room's arrival disc lies inside that room's floor box."""
-    import ast
-
-    from vector_os_nano.sim.nav.coverage import room_layout
-    from vector_os_nano.vcli.engine import VectorEngine
-
-    layout = room_layout()
-    for room, (x, y) in layout["rooms"].items():
-        verify = VectorEngine._verify_for_skill("navigate", room)
-        cx, cy, tol = (a.value for a in ast.parse(verify, mode="eval").body.args)
-        x0, y0, x1, y1 = layout["boxes"][room]
-        assert (cx, cy) == (x, y) and 0 < tol <= 2.0, verify
-        assert x0 <= x - tol and x + tol <= x1 and y0 <= y - tol and y + tol <= y1, (room, verify)

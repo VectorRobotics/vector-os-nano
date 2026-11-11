@@ -9,8 +9,7 @@ fake agent (a base exposing the actor-causation surface + a registered walk skil
 
 Pinned here (the RED-0 tripwire + the review fixes):
 - (RED-0) the tool-script backend drives run_turn_native to the EXPECTED ordered
-  tool calls (walk -> verify -> finish), and the legacy single-plan FakeBackend
-  constructor is byte-identical (unchanged).
+  tool calls (walk -> verify -> finish).
 - (fix 2 granularity) N bare walks then ONE verify -> exactly ONE StepRecord whose
   strategy is the last walk; intermediate walks are NOT each a checked sub-goal.
 - (fix 3 timing + spine parity) an HONEST walk -> CAUSED -> GROUNDED -> verified;
@@ -27,11 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.harness.fake_backend import (
-    FakeBackend,
-    FakeToolScriptBackend,
-    tool_turn,
-)
+from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
 from vector_os_nano.vcli.cognitive.trace_store import (
     evidence_passed,
@@ -134,7 +129,7 @@ def _make_agent(x: float = 0.0, y: float = 0.0, **gt_kwargs):
 
 
 def _make_engine(agent, backend):
-    """A REAL VectorEngine wired for VGG over the fake agent + a scripted backend."""
+    """A REAL VectorEngine bound to the fake agent + a scripted backend."""
     from vector_os_nano.vcli.engine import VectorEngine
     from vector_os_nano.vcli.permissions import PermissionContext
     from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
@@ -145,10 +140,7 @@ def _make_engine(agent, backend):
         registry=CategorizedToolRegistry(),
         permissions=PermissionContext(no_permission=True),  # harness grants asks (the gate: test_native_safety)
     )
-    eng._world = RobotWorld()
-    eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())
-    eng._vgg_agent = agent
-    eng._backend = backend
+    eng.bind(agent, RobotWorld())
     return eng
 
 
@@ -164,15 +156,6 @@ def _session() -> Session:
 # ---------------------------------------------------------------------------
 # RED-0 — the tool-script backend + run_turn_native ordered drive
 # ---------------------------------------------------------------------------
-
-
-def test_legacy_fake_backend_constructor_unchanged() -> None:
-    """The single-plan FakeBackend constructor is byte-identical (legacy seam)."""
-    fb = FakeBackend({"goal": "g", "sub_goals": []})
-    resp = fb.call(messages=[], tools=[], system=[], max_tokens=10)
-    assert resp.stop_reason == "end_turn"
-    assert resp.tool_calls == []
-    assert "sub_goals" in resp.text
 
 
 def test_tool_script_replays_ordered_turns() -> None:
@@ -494,6 +477,57 @@ def test_robot_world_policy_and_belief_state_reach_the_native_turn() -> None:
     assert "green bottle at (10.86, 2.80, 0.31), seen" in text
 
 
+def _verify_description(engine, agent) -> str:
+    from vector_os_nano.vcli.native_loop import _bind_body
+
+    *_, schemas = _bind_body(engine, agent)
+    return next(s for s in schemas if s["name"] == "verify")["description"]
+
+
+def test_dev_verify_tool_reads_the_oracles_own_docstrings() -> None:
+    """The verify tool's predicates come from ONE source, each oracle's signature and
+    docstring: the dev world's one-file-per-call guidance reaches the model there."""
+    from vector_os_nano.vcli.engine import VectorEngine
+    from vector_os_nano.vcli.worlds.dev import DevWorld
+
+    eng = VectorEngine(backend=None)
+    eng.bind(None, DevWorld())
+    desc = _verify_description(eng, None)
+    assert "\n- file_exists(path): True if *path* (relative to cwd, inside the project) exists" in desc
+    assert "\n- grep_count(pattern, path): Number of regex *pattern* matches in the ONE regular file" in desc
+    assert "(path has no default)" in desc
+    assert desc.count("'and' the calls together") == 2  # grep_count and path_contains
+    assert "\n- path_contains(path, substr): True if the ONE regular file" in desc
+    # Only the first docstring paragraph (the model-facing one), and no robot oracle.
+    assert "pseudo-fs" not in desc and "at_position" not in desc
+
+
+def test_robot_verify_tool_lists_every_oracle_and_nothing_else() -> None:
+    """A robot world: one line per evidence oracle, signature (defaults included) +
+    docstring, and no kernel sentence about any one predicate. An untagged callable
+    in the namespace and a dev predicate in a robot world are never offered."""
+    import re
+
+    from vector_os_nano.vcli.native_loop import _native_system_prompt
+    from vector_os_nano.vcli.worlds.dev import file_exists
+
+    agent, _ = _make_agent(0.0, 0.0)
+    eng = _make_engine(agent, FakeToolScriptBackend.from_tool_script([]))
+    names = verify_oracle_names(agent, eng)
+    desc = _verify_description(eng, agent)
+    assert re.search(r"\n- at_position\(x, y, tol=[0-9.]+\): Base within \*tol\* m \(xy\) of \(x, y\)\.", desc)
+    listed = re.findall(r"\n- (\w+)\(", desc)
+    assert sorted(listed) == sorted(names) and "at_position" in names
+
+    real = eng._build_verifier_namespace
+    eng._build_verifier_namespace = lambda a: {**real(a), "memory_reader": lambda: 1,
+                                               "file_exists": file_exists}
+    desc = _verify_description(eng, agent)
+    assert "memory_reader" not in desc and "file_exists" not in desc
+    prompt = "\n".join(b["text"] for b in _native_system_prompt(eng, frozenset(names), None))
+    assert "tol=" not in prompt and "metres" not in prompt  # no world-specific kernel sentence
+
+
 def test_policy_lines_follow_the_body() -> None:
     """An arm-only body gets no base lines; a base without an arm no grasp lines."""
     from vector_os_nano.vcli.worlds.robot import task_policy
@@ -536,7 +570,7 @@ class _CodeRegistry:
 
 
 def _engine_with_code_tools():
-    return SimpleNamespace(_registry=_CodeRegistry(), _goal_executor=None)
+    return SimpleNamespace(_registry=_CodeRegistry())
 
 
 def test_robot_world_drops_mutating_code_tools() -> None:
@@ -591,7 +625,7 @@ class _FakeStartSim:
 
         agent, _ = _make_agent(0.0, 0.0)
         context.app_state["agent"] = agent  # what rebind_world does
-        self._engine[0].init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())
+        self._engine[0].bind(agent, RobotWorld())
         return ToolResult(content="Started go2 simulation, ready in 1.0s")
 
 
@@ -614,7 +648,7 @@ def test_lifecycle_tool_rebinds_the_turn_to_the_new_body() -> None:
     registry.register(_FakeStartSim(ref), category="sim")
     eng = VectorEngine(backend=backend, registry=registry, permissions=PermissionContext(no_permission=True))
     ref.append(eng)
-    eng.init_vgg(agent=None, world=DevWorld())
+    eng.bind(None, DevWorld())
     app_state: dict = {"agent": None}
     trace = eng.run_turn_native("start go2 and walk 2 m", session=_session(), app_state=app_state)
 
@@ -662,9 +696,9 @@ def test_turns_share_the_real_session() -> None:
     assert session.token_usage.input_tokens == 400 and session.token_usage.output_tokens == 28
 
 
-def test_native_never_sends_a_legacy_tool_use_absent_from_its_tools() -> None:
-    """I23: native and legacy share the real session; a legacy turn's bash tool_use is
-    not a native tool, so native sends it as text."""
+def test_native_never_sends_a_tool_use_absent_from_its_tools() -> None:
+    """I23: an earlier turn's bash tool_use (a dev-world turn, before a sim started) is
+    not a tool of this robot-world turn, so native sends it as text."""
     seen: list[tuple[list, set]] = []
 
     class _Recorder:
@@ -705,36 +739,10 @@ def _alternates(messages) -> list[str]:
     return roles
 
 
-def test_legacy_turn_after_a_real_native_turn_keeps_role_alternation() -> None:
-    """I23-D1: native issues one tool per round-trip (walk, verify, finish); a later
-    legacy turn sees verify/finish as foreign text and must not emit consecutive
-    assistant messages (DeepSeek via openai_compat does not merge them)."""
-    from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
-
-    def _tool(i, name, inp):
-        return LLMResponse(text="", tool_calls=[LLMToolCall(id=i, name=name, input=inp)],
-                           stop_reason="tool_use")
-    rec = _Scripted([
-        _tool("a", "walk", {"distance": 1.0}),
-        _tool("b", "verify", {"expr": "at_position(1.0, 0.0, 1.0)"}),
-        _tool("c", "finish", {}),
-        LLMResponse(text="到了", stop_reason="end_turn"),
-        LLMResponse(text="你好呀", stop_reason="end_turn"),
-    ])
-    agent, _ = _make_agent(0.0, 0.0)
-    engine, session = _make_engine(agent, rec), _session()
-    engine.run_turn_native("往前走一米", session=session)
-    engine.run_turn("你好", session)
-    sent = rec.seen[-1]
-    text = " ".join(b.get("text", "") for m in sent if isinstance(m["content"], list)
-                    for b in m["content"])
-    assert "verify(" in text and "finish(" in text  # the native turn's memory survives
-    _alternates(sent)
-
-
-def test_native_turn_after_a_legacy_tool_then_text_turn_keeps_role_alternation() -> None:
-    """I23-D1 mirror: a legacy turn (bash tool_use, its result, then final text) seen by
-    native is bash-as-text followed by the final text: one assistant message, not two."""
+def test_native_turn_after_a_foreign_tool_then_text_turn_keeps_role_alternation() -> None:
+    """I23-D1: an earlier turn (bash tool_use, its result, then final text) whose tool is
+    not offered now is bash-as-text followed by the final text: one assistant message,
+    not two (DeepSeek via openai_compat does not merge them)."""
     rec = _Scripted([])
     session = _session()
     session.append_user("ls")
@@ -744,6 +752,9 @@ def test_native_turn_after_a_legacy_tool_then_text_turn_keeps_role_alternation()
     agent, _ = _make_agent(0.0, 0.0)
     _make_engine(agent, rec).run_turn_native("往前走一米", session=session)
     assert _alternates(rec.seen[0]) == ["user", "assistant", "user"]
+
+
+# ---------------------------------------------------------------------------
 # WP07 — the runner's attempt groups, auto post-verify, probe refusal, the task
 # contract, failure recording and dispatched-skill intents (fakes, no sim).
 # ---------------------------------------------------------------------------
@@ -1174,3 +1185,37 @@ def test_a_dispatched_release_skill_is_a_place_intent() -> None:
 
 # test_the_contract_start_fails_closed_on_an_unevaluable_predicate moved to
 # test_task_contract_binding.py (I4): its fetch contract now binds the manifest object.
+
+
+def test_user_authored_prompt_files_reach_the_native_turn(tmp_path, monkeypatch) -> None:
+    """R1V-3: $VECTOR_HOME personality.md and VECTOR.md (and the project's own VECTOR.md
+    in cwd) are user-authored file interfaces (charter §5); every native turn sees them."""
+    home, project = tmp_path / "home", tmp_path / "project"
+    (home / ".vector").mkdir(parents=True)
+    project.mkdir()
+    (home / ".vector" / "personality.md").write_text("speak like a pirate\n")
+    (home / ".vector" / "VECTOR.md").write_text("user notes: metric units\n")
+    (project / "VECTOR.md").write_text("project notes: the arm is left-handed\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(project)
+    text = _prompt_text(None, None)
+    for wanted in ("speak like a pirate", "user notes: metric units", "project notes: the arm is left-handed"):
+        assert wanted in text, wanted
+    assert text.index("Never finish while") < text.index("speak like a pirate")  # below the kernel rules
+
+
+def test_absent_empty_or_foreign_prompt_files_add_nothing(tmp_path, monkeypatch) -> None:
+    """No file, an empty file, a directory named VECTOR.md, or another agent's file
+    (AGENTS.md / CLAUDE.md: a repo's developer constitution) adds no block and never raises."""
+    home, project = tmp_path / "home", tmp_path / "project"
+    (home / ".vector").mkdir(parents=True)
+    (project / "VECTOR.md").mkdir(parents=True)
+    (home / ".vector" / "personality.md").write_text("  \n")
+    (project / "AGENTS.md").write_text("agents constitution\n")
+    (project / "CLAUDE.md").write_text("claude constitution\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(project)
+    assert "constitution" not in _prompt_text(None, None)
+    from vector_os_nano.vcli.native_loop import _native_system_prompt
+
+    assert len(_native_system_prompt(SimpleNamespace(_world=None), frozenset({"holding_object"}), None)) == 1

@@ -48,7 +48,7 @@ def test_arm_vacuous_verifies_grade_ran() -> None:
         "回到初始位置",
         sim=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_turns(*[({"name": "home", "input": {}}, e) for e in _VACUOUS]),
     )
     assert r.verified is False and r.exit_code == 2, r.verdict
@@ -67,7 +67,7 @@ def test_arm_honest_grasp_grades_grounded() -> None:
         "把香蕉抓起来拿在手里",
         sim=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
         tool_script=_turns(
             ({"name": "pick", "input": {"object_label": "banana", "mode": "hold"}},
              "holding_object('banana')"),
