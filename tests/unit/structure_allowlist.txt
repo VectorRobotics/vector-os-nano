@@ -23,17 +23,5 @@ unreachable | vector_os_nano/hardware/ros2/__init__.py
 unreachable | vector_os_nano/hardware/ros2/viz.py
 unreachable | vector_os_nano/hardware/sim/mjcf/go2_piper/build_go2_piper.py
 unreachable | vector_os_nano/hardware/sim/sim_clock.py
-unreachable | vector_os_nano/interfaces/__init__.py
-unreachable | vector_os_nano/interfaces/physics.py
-unreachable | vector_os_nano/interfaces/policy.py
-unreachable | vector_os_nano/sim/backends/__init__.py
-unreachable | vector_os_nano/sim/backends/mujoco/__init__.py
-unreachable | vector_os_nano/sim/backends/mujoco/world.py
-unreachable | vector_os_nano/sim/backends/pybullet/__init__.py
-unreachable | vector_os_nano/sim/backends/pybullet/world.py
-unreachable | vector_os_nano/sim/scene/__init__.py
-unreachable | vector_os_nano/sim/scene/canonical.py
-unreachable | vector_os_nano/sim/scene/compiled.py
-unreachable | vector_os_nano/sim/scene/reader.py
 unreachable | vector_os_nano/skills/utils/place_region.py
 unreachable | vector_os_nano/vcli/backends/text_llm_adapter.py
