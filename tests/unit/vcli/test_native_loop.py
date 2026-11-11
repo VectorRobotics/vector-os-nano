@@ -528,6 +528,27 @@ def test_robot_verify_tool_lists_every_oracle_and_nothing_else() -> None:
     assert "tol=" not in prompt and "metres" not in prompt  # no world-specific kernel sentence
 
 
+def test_a_mobile_arms_oracles_reach_the_model_with_signature_and_meaning() -> None:
+    """The verify tool over the spine's GT oracles (a go2+arm body): every oracle is a
+    line with its signature and its own docstring's first paragraph."""
+    import re
+
+    agent, _arm = _make_arm_agent()
+    eng = _make_engine(agent, FakeToolScriptBackend.from_tool_script([]))
+    names = verify_oracle_names(agent, eng)
+    desc = _verify_description(eng, agent)
+    for n in names:
+        assert re.search(rf"\n- {n}\([^\n]*\): \S", desc), n
+    for line in (
+        "- kept_holding(target): Held now AND its weld never dropped since the turn started.",
+        "- near_object(name, r=",
+        "- object_on(target, surface): Object resting ON the named support surface",
+        "- released(target=None): No longer held",
+        "- localized(target, tol=0.15): The actor's SceneGraph has an instance of *target*",
+    ):
+        assert "\n" + line in desc, line
+
+
 def test_policy_lines_follow_the_body() -> None:
     """An arm-only body gets no base lines; a base without an arm no grasp lines."""
     from vector_os_nano.vcli.worlds.robot import task_policy
