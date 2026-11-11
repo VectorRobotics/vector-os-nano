@@ -183,14 +183,17 @@ _FORMS: dict[str, tuple[str, ...]] = {
     "place": (r"(?:put|place|set) {o} (?:down )?(?:on top of|onto|on) {s}",
               r"(?:把{o})?(?:放到|放在|搁到|搁在|摆到|摆在){s}(?:上面|上)"),
     "fetch": (r"(?:bring|get|give|hand|fetch) me {o}", r"(?:give|hand) {o} to me",
-              r"(?:bring|fetch) {o}(?: to me| to the user| over here| here| over)?", r"把{o}(?:拿|递|带|送)(?:过来给我|来给我|过来|来|给我)", r"拿{o}(?:过来|给我)",
+              r"(?:bring|fetch) {o}(?: to me| to the user| over here| here| over)?", r"把{o}(?:拿|递|带|送)(?:过来给我|来给我|过来|来|给我)(?:一下|一点)?",
+              r"拿{o}(?:过来|给我)(?:一下|一点)?",
               r"(?:拿|递|带)给我{o}", r"给我拿(?:来|过来)?{o}"),
 }
 _CLAUSES = [(kind, re.compile(f.format(o="(?P<o>.+?)", s="(?P<s>.+)"))) for kind, fs in _FORMS.items() for f in fs]
 _THEN = re.compile(r"\s*(?:,?\s*\band then\b|,?\s*\band\b|,?\s*\bthen\b|[,，、;；]|然后|再)\s*")
-# Politeness and filler stripped at either end (a closed list, like the forms).
+# Politeness stripped at either end (a closed list, like the forms): only words that
+# cannot change the end state after any form. 一下 / 一点 can (放下一点: lower it a bit;
+# 松开一下: let go for a moment), so they are part of the fetch forms alone (拿过来一点).
 _LEAD = re.compile(r"^(?:(?:please|kindly|just|can you|could you|would you|will you)\b|请|麻烦你|麻烦|帮我|你)\s*")
-_TAIL = re.compile(r"[\s,，]*(?:\b(?:please|thanks|thank you|for me|now)|吧|一下|一点|谢谢|好吗)$|[\s.!?。！？~～]+$")
+_TAIL = re.compile(r"[\s,，]*(?:\b(?:please|thanks|thank you|for me|now)|吧|谢谢|好吗)$|[\s.!?。！？~～]+$")
 _PRONOUNS = frozenset({"it", "that", "this", "them", "that one", "this one", "它", "它们", "这个", "那个"})
 
 
@@ -208,7 +211,11 @@ def _names(world: Any, phrase: str, slot: str) -> bool:
         return True
     words = [*(w for ws in world.colours.values() for w in ws), *(p.colour for p in world.pickables.values())]
     cats = [*(w for ws in world.categories.values() for w in ws), *(p.category for p in world.pickables.values())]
-    return bool(x) and re.fullmatch(rf"(?:(?:{_alt(words)})\s?色?的?)?\s?(?:(?:{_alt(cats)})(?:子|e?s)?)?", x) is not None
+    # a colour with a category word, or a colour marked as a reference (the red one, 红色的,
+    # 红色那个): a bare colour word is a noun ("the orange" is a fruit) and names nothing
+    c = _alt(words)
+    return re.fullmatch(rf"(?:(?:{c})\s?色?的?\s?)?(?:{_alt(cats)})(?:子|e?s)?|(?:{c})(?:\s+one|色?(?:的|那个|这个)+)",
+                        x) is not None
 
 
 def _alt(words: Any) -> str:
