@@ -7,6 +7,10 @@ Implements ArmProtocol -- drop-in replacement for SO101Arm.
 MuJoCo is imported lazily so the module is safe to import on systems
 without mujoco installed (import error deferred until connect()).
 
+Physics ownership: the arm's world is driven by ONE caller-stepped SimRuntime
+(no stepper thread). Every step, every write and every read of live MjData runs
+through it; a motion is runtime ticks with a set-point ramp as the controller.
+
 Usage:
     arm = MuJoCoArm(gui=True)    # with viewer
     arm.connect()
@@ -75,6 +79,23 @@ _IK_DAMPING = 1e-4
 # ---------------------------------------------------------------------------
 
 
+def object_positions(model: Any, data: Any) -> dict[str, list[float]]:
+    """``{free body: its frame position}`` as the live data holds it (a runtime job)."""
+    mj = _get_mujoco()
+    result: dict[str, list[float]] = {}
+    for i in range(model.nbody):
+        body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
+        if body_name is None:
+            continue
+        # Free bodies have a freejoint — check via parent joint type
+        jnt_start = model.body_jntadr[i]
+        if jnt_start < 0:
+            continue
+        if model.jnt_type[jnt_start] == mj.mjtJoint.mjJNT_FREE:
+            result[body_name] = list(data.body(body_name).xpos)
+    return result
+
+
 class MuJoCoArm:
     """SO-101 arm in MuJoCo simulation.
 
@@ -104,6 +125,7 @@ class MuJoCoArm:
 
         # Cached joint / actuator / site IDs (set on connect)
         self._arm_joint_ids: list[int] = []
+        self._arm_qpos_adr: list[int] = []
         self._arm_actuator_ids: list[int] = []
         self._ee_site_id: int = -1
 
@@ -152,11 +174,12 @@ class MuJoCoArm:
         self._ee_site_id = mj.mj_name2id(
             self._model, mj.mjtObj.mjOBJ_SITE, _EE_SITE_NAME
         )
+        self._arm_qpos_adr = [int(self._model.jnt_qposadr[j]) for j in self._arm_joint_ids]
 
         # Initial forward pass
         mj.mj_forward(self._model, self._data)
-        # The world owner the ground-truth oracles read through. Caller-stepped:
-        # this arm steps its own data on the calling thread; no physics daemon.
+        # The ONE owner of the world. Caller-stepped: physics advances only through
+        # this arm's (and its gripper's) runtime.step calls; no physics daemon.
         self.runtime = SimRuntime(world, threaded=False, paced=False, name="so101")
 
         # GUI viewer (passive — does not block)
@@ -221,10 +244,8 @@ class MuJoCoArm:
     def get_joint_positions(self) -> list[float]:
         """Read current joint positions in radians."""
         self._require_connection()
-        return [
-            float(self._data.joint(_ARM_JOINT_NAMES[i]).qpos[0])
-            for i in range(self.dof)
-        ]
+        q = self.runtime.snapshot().q
+        return [float(q[a]) for a in self._arm_qpos_adr]
 
     # ------------------------------------------------------------------
     # Motion commands
@@ -248,43 +269,44 @@ class MuJoCoArm:
                 f"got {len(positions)}"
             )
 
-        mj = _get_mujoco()
+        dt = self._model.opt.timestep
+        steps = max(1, int(duration / dt))
+        ids = list(self._arm_actuator_ids)
+        # Read current actuator targets as start
+        start = self.runtime.call(lambda w: [float(w.data.ctrl[aid]) for aid in ids])
+        tick = [0]
+
+        def ramp(w: Any) -> None:  # linear interpolation of the actuator targets
+            t = (tick[0] + 1) / steps
+            tick[0] += 1
+            for act_id, s, g in zip(ids, start, positions):
+                w.data.ctrl[act_id] = s + t * (g - s)
+
+        self.runtime.step(steps, controller=self._paced(ramp))
+        return True
+
+    def _paced(self, ctrl: Any) -> Any:
+        """*ctrl*, plus with a viewer a sync every 1/60 s of sim time and real-time pacing."""
+        viewer = self._viewer
+        if viewer is None:
+            return ctrl
         import time as _time  # noqa: PLC0415
 
         dt = self._model.opt.timestep
-        steps = max(1, int(duration / dt))
         sync_interval = max(1, int(1.0 / 60.0 / dt))
+        wall_start, tick = _time.monotonic(), [0]
 
-        # Read current actuator targets as start
-        start = [float(self._data.ctrl[aid]) for aid in self._arm_actuator_ids]
+        def paced(w: Any) -> None:
+            ctrl(w)
+            i = tick[0]
+            tick[0] += 1
+            if i % sync_interval == 0:
+                viewer.sync()
+                sleep = i * dt - (_time.monotonic() - wall_start)
+                if sleep > 0:
+                    _time.sleep(sleep)
 
-        if self._viewer is not None:
-            wall_start = _time.monotonic()
-            for i in range(steps):
-                # Linear interpolation of actuator targets
-                t = (i + 1) / steps
-                for j, (act_id, s, g) in enumerate(
-                    zip(self._arm_actuator_ids, start, positions)
-                ):
-                    self._data.ctrl[act_id] = s + t * (g - s)
-
-                mj.mj_step(self._model, self._data)
-
-                if i % sync_interval == 0:
-                    self._viewer.sync()
-                    sim_elapsed = (i + 1) * dt
-                    wall_elapsed = _time.monotonic() - wall_start
-                    sleep = sim_elapsed - wall_elapsed
-                    if sleep > 0:
-                        _time.sleep(sleep)
-        else:
-            for i in range(steps):
-                t = (i + 1) / steps
-                for act_id, s, g in zip(self._arm_actuator_ids, start, positions):
-                    self._data.ctrl[act_id] = s + t * (g - s)
-                mj.mj_step(self._model, self._data)
-
-        return True
+        return paced
 
     def move_cartesian(
         self,
@@ -309,30 +331,29 @@ class MuJoCoArm:
         self._require_connection()
         mj = _get_mujoco()
 
-        # Save full state
-        old_qpos = self._data.qpos.copy()
-        old_qvel = self._data.qvel.copy()
+        def fk(w: Any) -> tuple[list[float], list[list[float]]]:
+            model, data = w.model, w.data
+            # Save full state
+            old_qpos = data.qpos.copy()
+            old_qvel = data.qvel.copy()
 
-        # Set requested joints
-        for i, pos in enumerate(joint_positions):
-            self._data.joint(_ARM_JOINT_NAMES[i]).qpos[0] = pos
+            # Set requested joints
+            for i, pos in enumerate(joint_positions):
+                data.joint(_ARM_JOINT_NAMES[i]).qpos[0] = pos
 
-        mj.mj_forward(self._model, self._data)
+            mj.mj_forward(model, data)
 
-        # Read EE site
-        ee_pos = list(self._data.site_xpos[self._ee_site_id].copy())
-        ee_rot = (
-            self._data.site_xmat[self._ee_site_id]
-            .reshape(3, 3)
-            .tolist()
-        )
+            # Read EE site
+            ee_pos = list(data.site_xpos[self._ee_site_id].copy())
+            ee_rot = data.site_xmat[self._ee_site_id].reshape(3, 3).tolist()
 
-        # Restore
-        self._data.qpos[:] = old_qpos
-        self._data.qvel[:] = old_qvel
-        mj.mj_forward(self._model, self._data)
+            # Restore
+            data.qpos[:] = old_qpos
+            data.qvel[:] = old_qvel
+            mj.mj_forward(model, data)
+            return ee_pos, ee_rot
 
-        return ee_pos, ee_rot
+        return self.runtime.call(fk)
 
     def ik(
         self,
@@ -347,42 +368,47 @@ class MuJoCoArm:
         Returns joint positions if converged within 1 mm, else None.
         """
         self._require_connection()
-        mj = _get_mujoco()
         import numpy as np  # noqa: PLC0415
 
         target = np.array(target_xyz, dtype=np.float64)
-
-        # Save state
-        old_qpos = self._data.qpos.copy()
-        old_qvel = self._data.qvel.copy()
-
         # Seed from current or provided joints
         seed = current_joints if current_joints is not None else self.get_joint_positions()
+        return self.runtime.call(lambda w: self._ik(w.model, w.data, target, seed))
+
+    def _ik(self, model: Any, data: Any, target: Any, seed: list[float]) -> list[float] | None:
+        """The DLS loop on the live data, restored afterwards (a runtime job)."""
+        mj = _get_mujoco()
+        import numpy as np  # noqa: PLC0415
+
+        # Save state
+        old_qpos = data.qpos.copy()
+        old_qvel = data.qvel.copy()
+
         for i, pos in enumerate(seed):
-            self._data.joint(_ARM_JOINT_NAMES[i]).qpos[0] = pos
+            data.joint(_ARM_JOINT_NAMES[i]).qpos[0] = pos
 
         # Map arm joint qpos indices (for indexing into full Jacobian)
         arm_qpos_adrs = [
-            self._model.jnt_qposadr[jid] for jid in self._arm_joint_ids
+            model.jnt_qposadr[jid] for jid in self._arm_joint_ids
         ]
         arm_dof_adrs = [
-            self._model.jnt_dofadr[jid] for jid in self._arm_joint_ids
+            model.jnt_dofadr[jid] for jid in self._arm_joint_ids
         ]
 
         success = False
         for _ in range(_IK_MAX_ITER):
-            mj.mj_forward(self._model, self._data)
+            mj.mj_forward(model, data)
 
             # Current EE position
-            ee_pos = self._data.site_xpos[self._ee_site_id].copy()
+            ee_pos = data.site_xpos[self._ee_site_id].copy()
             err = target - ee_pos
             if np.linalg.norm(err) < _IK_TOL:
                 success = True
                 break
 
             # Compute site Jacobian (3 x nv for position)
-            jacp = np.zeros((3, self._model.nv), dtype=np.float64)
-            mj.mj_jacSite(self._model, self._data, jacp, None, self._ee_site_id)
+            jacp = np.zeros((3, model.nv), dtype=np.float64)
+            mj.mj_jacSite(model, data, jacp, None, self._ee_site_id)
 
             # Extract columns for arm DOFs only
             J = jacp[:, arm_dof_adrs]
@@ -393,25 +419,23 @@ class MuJoCoArm:
 
             # Apply
             for i, adr in enumerate(arm_qpos_adrs):
-                self._data.qpos[adr] += _IK_STEP_SIZE * dq[i]
+                data.qpos[adr] += _IK_STEP_SIZE * dq[i]
                 # Clamp to joint limits
-                lo = self._model.jnt_range[self._arm_joint_ids[i], 0]
-                hi = self._model.jnt_range[self._arm_joint_ids[i], 1]
-                self._data.qpos[adr] = float(
-                    np.clip(self._data.qpos[adr], lo, hi)
-                )
+                lo = model.jnt_range[self._arm_joint_ids[i], 0]
+                hi = model.jnt_range[self._arm_joint_ids[i], 1]
+                data.qpos[adr] = float(np.clip(data.qpos[adr], lo, hi))
 
         if success:
             result = [
-                float(self._data.qpos[adr]) for adr in arm_qpos_adrs
+                float(data.qpos[adr]) for adr in arm_qpos_adrs
             ]
         else:
             result = None
 
         # Restore
-        self._data.qpos[:] = old_qpos
-        self._data.qvel[:] = old_qvel
-        mj.mj_forward(self._model, self._data)
+        data.qpos[:] = old_qpos
+        data.qvel[:] = old_qvel
+        mj.mj_forward(model, data)
 
         return result
 
@@ -452,28 +476,12 @@ class MuJoCoArm:
             Dict mapping body name to [x, y, z] position.
         """
         self._require_connection()
-        mj = _get_mujoco()
-        result: dict[str, list[float]] = {}
-        for i in range(self._model.nbody):
-            body_name = mj.mj_id2name(self._model, mj.mjtObj.mjOBJ_BODY, i)
-            if body_name is None:
-                continue
-            # Free bodies have a freejoint — check via parent joint type
-            jnt_start = self._model.body_jntadr[i]
-            if jnt_start < 0:
-                continue
-            jnt_type = self._model.jnt_type[jnt_start]
-            if jnt_type == mj.mjtJoint.mjJNT_FREE:
-                pos = list(self._data.body(body_name).xpos)
-                result[body_name] = pos
-        return result
+        return self.runtime.call(lambda w: object_positions(w.model, w.data))
 
     def step(self, n: int = 1) -> None:
         """Advance simulation by n timesteps. Syncs viewer if active."""
         self._require_connection()
-        mj = _get_mujoco()
-        for _ in range(n):
-            mj.mj_step(self._model, self._data)
+        self.runtime.step(n)
         if self._viewer is not None:
             self._viewer.sync()
 
@@ -489,14 +497,10 @@ class MuJoCoArm:
             numpy array (H, W, 3) uint8 BGR image, or None on failure.
         """
         self._require_connection()
-        mj = _get_mujoco()
         import numpy as np  # noqa: PLC0415
 
         try:
-            renderer = mj.Renderer(self._model, height=height, width=width)
-            renderer.update_scene(self._data, camera=camera_name)
-            rgb = renderer.render()
-            renderer.close()
+            rgb = self.runtime.world.render(camera_name, width, height, ("rgb",)).rgb
             # MuJoCo returns RGB; convert to BGR for OpenCV compatibility
             bgr = np.ascontiguousarray(rgb[:, :, ::-1])
             return bgr
