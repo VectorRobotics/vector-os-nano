@@ -266,6 +266,19 @@ def test_contacts_threshold_and_freshness_after_reset(backend, load, contract_sc
     assert put(0.03 + 2 * CONTACT_DISTANCE_M) == frozenset()
 
 
+@pytest.mark.parametrize("gap, touching", [(0.2e-3, True), (0.5e-3, True), (0.9e-3, True), (1.5e-3, False)])
+def test_default_margin_gap_within_the_threshold_is_a_contact(backend, load, contract_scene, gap, touching):
+    """The die has the default margin 0, where MuJoCo alone emits no separated point;
+    the charter's <= CONTACT_DISTANCE_M still holds on every backend."""
+    sc = contract_scene
+    die = _id(sc, "die")
+    w = load(backend, sc)
+    q = sc.model.qpos0.copy()
+    q[sc.free_q(die)] = [0.5, -1.0, 0.03 + gap, 1, 0, 0, 0]
+    w.reset(q)
+    assert w.contacts(die) == (frozenset({0}) if touching else frozenset()), f"{gap * 1000:.1f} mm"
+
+
 @pytest.mark.parametrize("gap, touching", [
     (0.9 * CONTACT_DISTANCE_M, True), (1.5 * CONTACT_DISTANCE_M, False), (0.005, False)])
 def test_contact_threshold_is_the_contract_s_not_the_engine_s(backend, load, contract_scene, gap, touching):
@@ -278,6 +291,28 @@ def test_contact_threshold_is_the_contract_s_not_the_engine_s(backend, load, con
     q[sc.free_q(slab)] = [-3.0, 0.0, 0.1 + gap, 1, 0, 0, 0]
     w.reset(q)
     assert w.contacts(slab) == (frozenset({0}) if touching else frozenset()), f"{gap * 1000:.1f} mm"
+
+
+@pytest.mark.parametrize("gap, touching", [(0.5e-3, True), (1.5e-3, False)])
+def test_mujoco_explicit_pair_reaches_the_threshold_and_steps_unchanged(load, tmp_path, gap, touching):
+    """A ``<pair>`` contact (margin 0) reads the charter's threshold too, and widening
+    contact detection leaves the stepped model's margins (its physics) as compiled."""
+    from vector_os_nano.sim.scene import compiled_scene
+
+    xml = tmp_path / "pair.xml"
+    xml.write_text("""<mujoco><worldbody>
+      <geom name="floor" type="plane" size="1 1 0.1"/>
+      <body name="ball"><freejoint/><geom name="ball" type="sphere" size="0.05" contype="0" conaffinity="0"/></body>
+    </worldbody><contact><pair geom1="floor" geom2="ball"/></contact></mujoco>""")
+    sc = compiled_scene(xml)
+    w = load("mujoco", sc)
+    ball = sc.body("ball")
+    q = sc.model.qpos0.copy()
+    q[sc.free_q(ball)] = [0.0, 0.0, 0.05 + gap, 1, 0, 0, 0]
+    w.reset(q)
+    assert w.contacts(ball) == (frozenset({0}) if touching else frozenset())
+    for f in ("geom_margin", "geom_gap", "pair_margin", "pair_gap"):
+        assert np.array_equal(getattr(w.model, f), getattr(sc.model, f)), f
 
 
 # -- attach ------------------------------------------------------------------------

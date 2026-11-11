@@ -209,10 +209,8 @@ class PhysicsWorld(Protocol):
     def contacts(self, body: int) -> frozenset[int]:
         """Bodies with at least one ENGINE contact point with *body* at signed distance
         <= :data:`CONTACT_DISTANCE_M`, as of the last :meth:`step` or :meth:`reset`.
-        A penetration is always a contact and a gap over the threshold never is; an
-        engine reports a separated point only inside its own detection margin
-        (MuJoCo: the geoms' ``margin``; Bullet: its breaking threshold, about 2 % of
-        the shape size), so a gap under 1 mm may read either way."""
+        A penetration is always a contact, a gap up to the threshold is one, and a gap
+        over it never is, whatever the geoms' own margins."""
 
     def attach(self, parent: int, child: int) -> None:
         """Hold *child* rigidly at its CURRENT pose relative to *parent*. Only pairs in

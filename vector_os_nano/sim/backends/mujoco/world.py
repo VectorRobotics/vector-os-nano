@@ -40,6 +40,13 @@ class MuJoCoWorld:
         self.scene = scene
         self.model = m = copy.deepcopy(scene.model)
         self.data = d = mj.MjData(m)
+        # contacts() runs its own collision pass on a copy whose margins reach
+        # CONTACT_DISTANCE_M: at margin 0 MuJoCo emits no separated point, and a margin
+        # on the stepped model makes force (gap does not cancel it), moving rest poses.
+        self._probe = p = copy.deepcopy(m)
+        p.geom_margin += CONTACT_DISTANCE_M
+        p.pair_margin += CONTACT_DISTANCE_M
+        self._probe_data = mj.MjData(p)
         self._lock = threading.Lock()
         acts = reader.actuators(m)
         self._position = {a.joint: a for a in acts if a.kind == "position"}
@@ -131,11 +138,16 @@ class MuJoCoWorld:
     # -- contact and attachment ----------------------------------------------
 
     def contacts(self, body: int) -> frozenset[int]:
-        m, d = self.model, self.data
-        n = int(d.ncon)
-        near = d.contact.dist[:n] <= CONTACT_DISTANCE_M
-        b1 = m.geom_bodyid[d.contact.geom1[:n][near]]
-        b2 = m.geom_bodyid[d.contact.geom2[:n][near]]
+        m, d = self._probe, self._probe_data
+        with self._lock:
+            d.qpos[:] = self.data.qpos
+            d.mocap_pos[:], d.mocap_quat[:] = self.data.mocap_pos, self.data.mocap_quat
+            mj.mj_kinematics(m, d)
+            mj.mj_collision(m, d)
+            n = int(d.ncon)
+            near = d.contact.dist[:n] <= CONTACT_DISTANCE_M
+            b1 = m.geom_bodyid[d.contact.geom1[:n][near]]
+            b2 = m.geom_bodyid[d.contact.geom2[:n][near]]
         return frozenset(int(b) for b in np.concatenate([b2[b1 == body], b1[b2 == body]]))
 
     def attach(self, parent: int, child: int) -> None:

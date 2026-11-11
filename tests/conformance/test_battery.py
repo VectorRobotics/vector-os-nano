@@ -76,6 +76,18 @@ def test_object_held_5mm_above_is_not_in_contact(backend, load, battery_scene):
     assert clearance(sc, w.state()[0], box) == pytest.approx(0.005, abs=5e-4)
 
 
+@pytest.mark.parametrize("lift", [0.3e-3, 0.5e-3])
+def test_object_held_under_1mm_above_is_in_contact(backend, load, battery_scene, lift):
+    """Charter 3.1: a gap <= 1 mm is a contact on every backend (MuJoCo too, at margin 0)."""
+    sc = battery_scene
+    w = _settled(load, backend, sc)
+    box = sc.body("box")
+    q = w.state()[0]
+    q[sc.free_q(box).start + 2] += lift
+    w.reset(q)
+    assert sc.body("table") in w.contacts(box)
+
+
 def test_contact_gated_pick_attach_and_lift(backend, load, battery_scene):
     sc = battery_scene
     w = _settled(load, backend, sc)

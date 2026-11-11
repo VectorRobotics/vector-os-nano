@@ -39,8 +39,9 @@
     </body>
 
     <!-- the contact threshold: a 1 m slab behind the camera, where both engines report
-         separated points (MuJoCo: margin 1 cm, gap 1 cm so the margin adds no force;
-         Bullet: its breaking threshold scales with the shape, ~1.4 cm here) -->
+         separated points (MuJoCo: its own margin 1 cm; MuJoCo 3.14 ignores gap, so the
+         slab makes force out to 1 cm and only reset poses are tested; Bullet: its
+         breaking threshold scales with the shape, ~1.4 cm here) -->
     <body name="slab" pos="-3 0 0.1">
       <freejoint name="slab"/>
       <geom type="box" size="0.5 0.5 0.1" mass="10" margin="0.01" gap="0.01" rgba="0.6 0.6 0.6 1"/>
