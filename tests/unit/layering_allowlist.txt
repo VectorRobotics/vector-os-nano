@@ -27,11 +27,8 @@
 3 actor code imports neither the world side nor the kernel | skills/go2/patrol.py | vcli.cognitive.abort.is_abort_requested
 3 actor code imports neither the world side nor the kernel | skills/go2/stop.py | vcli.cognitive.abort
 3 actor code imports neither the world side nor the kernel | skills/go2/stop.py | vcli.cognitive.abort.request_abort
-3 actor code imports neither the world side nor the kernel | skills/navigate.py | vcli.cognitive.abort
-3 actor code imports neither the world side nor the kernel | skills/navigate.py | vcli.cognitive.abort.is_abort_requested
 3 actor code imports neither the world side nor the kernel | skills/perception_grasp.py | vcli.worlds.world_manifest
 3 actor code imports neither the world side nor the kernel | skills/perception_grasp.py | vcli.worlds.world_manifest.load_world
-3 skills and perception touch no runtime / world / gt | skills/pick.py | get_object_positions
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/actor_causation.py | vcli.worlds.sim_oracles
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/actor_causation.py | vcli.worlds.sim_oracles._FACING_TOL_RAD
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/coord_goal.py | vcli.worlds.sim_oracles
@@ -66,5 +63,3 @@
 5 core imports only interfaces and schemas | core/agent.py | perception.tracker.EdgeTAMTracker
 5 core imports only interfaces and schemas | core/agent.py | perception.vlm
 5 core imports only interfaces and schemas | core/agent.py | perception.vlm.VLMDetector
-5 core imports only interfaces and schemas | core/agent.py | skills
-5 core imports only interfaces and schemas | core/agent.py | skills.get_default_skills
