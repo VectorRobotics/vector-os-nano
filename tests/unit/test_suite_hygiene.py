@@ -250,7 +250,7 @@ def test_billed_vlm_benchmarks_are_live_llm_gated() -> None:
     """tests:missed2 — the harness VLM benchmarks called OpenRouter whenever a key
     was in the env/config; billed calls need the explicit VECTOR_LIVE_LLM=1 opt-in."""
     for f in ("test_level0_vlm_api.py", "test_level1_camera_vlm.py",
-              "test_level4_patrol.py", "test_level5_vlm_accuracy.py"):
+              "test_level5_vlm_accuracy.py"):
         src = (_TESTS / "harness" / f).read_text(encoding="utf-8")
         assert "pytestmark = pytest.mark.live_llm" in src, f
 

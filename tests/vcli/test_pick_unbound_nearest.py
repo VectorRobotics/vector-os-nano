@@ -27,7 +27,7 @@ from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
 from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
 from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 from vector_os_nano.core.agent import Agent
-from vector_os_nano.skills import get_default_skills
+from vector_os_nano.skills import get_so101_skills
 from vector_os_nano.skills.pick import SIM_PICK_CONFIG
 from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
 
@@ -64,7 +64,7 @@ def sim_agent_unbound():
         config={"skills": {"pick": dict(SIM_PICK_CONFIG)}},
     )
     # Re-register skills so the fixture-built agent uses the same set as CLI.
-    reg = get_default_skills()
+    reg = get_so101_skills()
     for s in reg:
         agent._skill_registry.register(s)
     yield agent
@@ -84,7 +84,7 @@ def sim_agent_bound():
         perception=perception,
         config={"skills": {"pick": dict(SIM_PICK_CONFIG)}},
     )
-    reg = get_default_skills()
+    reg = get_so101_skills()
     for s in reg:
         agent._skill_registry.register(s)
     yield agent

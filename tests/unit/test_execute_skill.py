@@ -17,7 +17,7 @@ import pytest
 from vector_os_nano.core.agent import Agent
 from vector_os_nano.core.skill import skill
 from vector_os_nano.core.types import Detection, SkillResult
-from vector_os_nano.skills import get_default_skills
+from vector_os_nano.skills import get_so101_skills
 
 
 class MockArm:
@@ -102,8 +102,9 @@ class _Diagnosing:
 
 
 def _agent(gripper: MockGripper | None = None, **kw) -> Agent:
-    return Agent(arm=MockArm(), gripper=gripper or MockGripper(),
-                 skills=[*get_default_skills(), _Diagnosing()], **kw)
+    # config={}: no calibration file is configured, so the identity one is used
+    return Agent(arm=MockArm(), gripper=gripper or MockGripper(), config={},
+                 skills=[*get_so101_skills(), _Diagnosing()], **kw)
 
 
 def test_unknown_skill_fails_with_a_diagnosis() -> None:
@@ -153,4 +154,4 @@ def test_the_skill_tool_payload_is_the_skills_own() -> None:
 
 @pytest.mark.parametrize("attr", ["__skill_auto_steps__", "__skill_direct__"])
 def test_the_decorator_carries_no_planner_metadata(attr: str) -> None:
-    assert not any(hasattr(type(s), attr) for s in get_default_skills())
+    assert not any(hasattr(type(s), attr) for s in get_so101_skills())

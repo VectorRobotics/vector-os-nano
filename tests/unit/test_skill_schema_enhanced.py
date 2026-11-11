@@ -77,10 +77,10 @@ def test_to_schemas_backward_compat_no_failure_modes():
 
 
 def test_all_default_skills_have_failure_modes():
-    """Every skill from get_default_skills() has failure_modes attribute."""
-    from vector_os_nano.skills import get_default_skills
+    """Every skill from get_so101_skills() has failure_modes attribute."""
+    from vector_os_nano.skills import get_so101_skills
 
-    for skill in get_default_skills():
+    for skill in get_so101_skills():
         assert hasattr(skill, "failure_modes"), f"{skill.name} missing failure_modes"
         assert isinstance(skill.failure_modes, list), (
             f"{skill.name}.failure_modes is not a list"

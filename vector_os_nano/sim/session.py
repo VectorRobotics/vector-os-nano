@@ -352,8 +352,8 @@ def _user_config() -> dict[str, Any]:
 def _build_go2_perception(base: Any, *, width: int, height: int) -> Any:
     """Go2GraspPerception over *base* at the manifest size, or None without a camera.
 
-    Built ONCE per session; ``register_manipulation_skills`` reuses it, so the
-    grasp and look/localize paths can never run at different sizes.
+    Built ONCE per session and shared by the grasp and look/localize skills, so
+    they can never run at different sizes.
     """
     if base is None:
         return None
@@ -390,11 +390,24 @@ def _perception_note(agent: Any) -> str:
     )
 
 
+def _skill_pack(embodiment: str) -> list:
+    """The skills a body is offered: arm skills only on an arm, base skills only on a
+    base (the table S5 replaces with capability binding)."""
+    from vector_os_nano.skills import get_piper_skills, get_so101_skills
+    from vector_os_nano.skills.go2 import get_go2_skills
+
+    return {
+        "so101": get_so101_skills,
+        "go2": get_go2_skills,
+        "go2_piper": lambda: [*get_go2_skills(), *get_piper_skills()],
+        "g1": list,  # its locomotion pack is S4's
+    }[embodiment]()
+
+
 def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.scene_graph import SceneGraph
     from vector_os_nano.hardware.sim.mujoco_go2 import _ROOM_XML, MuJoCoGo2
-    from vector_os_nano.skills.go2 import get_go2_skills
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     cfg, spec = session.config, session.spec
@@ -424,15 +437,9 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     api_key = vlm_api_key or user_cfg.get("llm", {}).get("api_key") or os.environ.get(
         "OPENROUTER_API_KEY", ""
     )
-    agent = Agent(base=base, arm=arm, gripper=gripper, config=user_cfg)
-    for skill in get_go2_skills():
-        agent._skill_registry.register(skill)
+    agent = Agent(base=base, arm=arm, gripper=gripper, config=user_cfg, skills=_skill_pack(cfg.id))
     agent._perception = _build_go2_perception(base, width=width, height=height)
     agent._calibration = None
-    if arm is not None:
-        from vector_os_nano.skills.manipulation_setup import register_manipulation_skills
-
-        register_manipulation_skills(agent)
 
     # The scene VLM is optional naming sugar: an OpenRouter key OR a local server
     # (VECTOR_VLM_URL, e.g. Ollama). Discovery never needs it.
@@ -486,6 +493,7 @@ def _build_mujoco_arm(session: SimSession, vlm_api_key: str | None) -> Any:
         gripper=MuJoCoGripper(arm),
         perception=MuJoCoPerception(arm),
         config={"skills": {"pick": dict(SIM_PICK_CONFIG)}},
+        skills=_skill_pack(session.config.id),
     )
 
 
@@ -498,7 +506,7 @@ def _build_mujoco_g1(session: SimSession, vlm_api_key: str | None) -> Any:
     g1 = MuJoCoG1(gui=session.spec.gui, room=True)
     session.own("MuJoCoG1 disconnected", g1.disconnect)
     g1.connect()
-    agent = Agent(base=g1)
+    agent = Agent(base=g1, skills=_skill_pack(session.config.id))
     # Read-only head-camera perception for the detector capability (no arm).
     agent._perception = G1HeadPerception(g1, width=width, height=height)
     return agent

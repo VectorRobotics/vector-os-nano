@@ -6,7 +6,7 @@
 Tests verify:
 - Each skill has correct name, description, parameters, pre/postconditions, effects
 - All skills satisfy the Skill runtime-checkable Protocol
-- get_default_skills() returns all 5 skills
+- get_so101_skills() returns the SO-101 set
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from vector_os_nano.skills import (
     PickSkill,
     PlaceSkill,
     ScanSkill,
-    get_default_skills,
+    get_so101_skills,
 )
 
 
@@ -220,16 +220,19 @@ class TestPlaceSkillSchema:
 
 
 # ---------------------------------------------------------------------------
-# get_default_skills
+# get_so101_skills
 # ---------------------------------------------------------------------------
 
+_SO101_SET = {"home", "scan", "describe", "detect", "pick", "place", "handover",
+              "gripper_open", "gripper_close", "wave"}
 
-class TestGetDefaultSkills:
+
+class TestGetSo101Skills:
     def setup_method(self):
-        self.skills = get_default_skills()
+        self.skills = get_so101_skills()
 
     def test_returns_all_skills(self):
-        assert len(self.skills) == 9
+        assert len(self.skills) == len(_SO101_SET)
 
     def test_all_satisfy_skill_protocol(self):
         for skill in self.skills:
@@ -239,7 +242,7 @@ class TestGetDefaultSkills:
 
     def test_all_skill_names_present(self):
         names = {s.name for s in self.skills}
-        assert names == {"home", "scan", "describe", "detect", "pick", "place", "gripper_open", "gripper_close", "wave"}
+        assert names == _SO101_SET
 
     def test_all_skills_have_descriptions(self):
         for skill in self.skills:

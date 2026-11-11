@@ -24,6 +24,7 @@ from mcp.server.lowlevel.helper_types import ReadResourceContents
 import mcp.types as types
 
 from vector_os_nano.core.agent import Agent
+from vector_os_nano.skills import get_so101_skills
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +396,7 @@ def create_sim_stack(headless: bool = True) -> Agent:
         gripper=gripper,
         perception=perception,
         config=cfg,
+        skills=get_so101_skills(),
     )
     agent._calibration = calibration
 
@@ -495,6 +497,7 @@ def create_hardware_stack() -> Agent:
         gripper=gripper,
         perception=perception,
         config=cfg,
+        skills=get_so101_skills(),
     )
     if calibration is not None:
         agent._calibration = calibration

@@ -142,9 +142,9 @@ def test_perception_caption_and_describe(arm):
     cap = p.caption()
     assert isinstance(cap, str) and cap
     assert p.visual_query("what is there?") == cap
-    from vector_os_nano.skills import get_default_skills
+    from vector_os_nano.skills import get_so101_skills
 
-    agent = Agent(arm=arm, perception=p, skills=get_default_skills())
+    agent = Agent(arm=arm, perception=p, skills=get_so101_skills())
     assert agent.execute_skill("describe").success
 
 
@@ -152,12 +152,12 @@ def test_skill_wrapper_pick_returns_picks_own_data(arm):
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
     from vector_os_nano.core.agent import Agent
-    from vector_os_nano.skills import get_default_skills
+    from vector_os_nano.skills import get_so101_skills
     from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
     from vector_os_nano.vcli.tools.base import ToolContext
 
     agent = Agent(arm=arm, gripper=MuJoCoGripper(arm), perception=MuJoCoPerception(arm),
-                  skills=get_default_skills(),
+                  skills=get_so101_skills(),
                   config={"skills": {"pick": {"hardware_offsets": False}}})
     pick = agent._skill_registry.get("pick")
     ctx = ToolContext(agent=agent, cwd=Path("."), session=None, permissions=None,

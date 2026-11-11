@@ -425,5 +425,4 @@ def test_a_missing_calibration_fails_loud_instead_of_using_camera_coordinates():
     ctx.calibration = None
     result = PickSkill().execute({"object_label": "cup"}, ctx)
     assert not result.success and result.result_data["diagnosis"] == "calibration_error"
-    assert result.result_data["attempts"] == 1  # no retry: it cannot help
-    assert len(arm.moves) == 1  # the scan pose only, never a grasp motion
+    assert arm.moves == []  # no motion at all, never a grasp at camera coordinates

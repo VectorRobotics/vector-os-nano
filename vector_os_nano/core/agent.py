@@ -28,8 +28,9 @@ class Agent:
     Usage::
 
         from vector_os_nano import Agent, SO101
+        from vector_os_nano.skills import get_so101_skills
         arm = SO101(port="/dev/ttyACM0")
-        agent = Agent(arm=arm)
+        agent = Agent(arm=arm, skills=get_so101_skills())
         agent.execute_skill("pick", {"object_label": "red cup"})
 
     All hardware arguments are optional — Agent degrades gracefully when
@@ -41,8 +42,8 @@ class Agent:
             SO101Arm (has ``_bus``), a SO101Gripper is created automatically.
         perception: Object implementing PerceptionProtocol.  None disables
             vision-based skills.
-        skills: Additional Skill instances to register alongside the built-in
-            defaults.
+        skills: The skills this body is offered. The Agent registers nothing on
+            its own: whoever builds the body chooses its skills.
         config: Configuration override — a dict, a path to a YAML file, or
             None to use the built-in defaults.
         auto_perception: When True and perception=None and config specifies
@@ -115,17 +116,8 @@ class Agent:
 
         # ---- Skill registry -------------------------------------------------
         self._skill_registry = SkillRegistry()
-
-        # Register built-in skills
-        from vector_os_nano.skills import get_default_skills  # lazy-ish (already imported by wave 2)
-
-        for skill in get_default_skills():
+        for skill in skills or []:
             self._skill_registry.register(skill)
-
-        # Register caller-supplied custom skills
-        if skills:
-            for skill in skills:
-                self._skill_registry.register(skill)
 
         # ---- Lazy-init state ------------------------------------------------
         self._ik_solver: Any = None

@@ -12,9 +12,6 @@
 # deselected; each names its ledger key and the 2026-10 owner WP, whose release-1.0 owner is:
 # WP15 legacy producer -> R1, WP15 MCP -> R6, WP09 / WP12 skills -> R2, WP17 G1 assets -> C1 / S4.
 
-# stale skill-count pin (13 go2 skills now); docs-vs-code:tool-menu-noise decides the menu (WP12)
-tests/unit/test_go2_skills.py::TestSkillRegistration::test_get_go2_skills | xfail | stale skill-count pin (13 go2 skills now); docs-vs-code:tool-menu-noise decides the menu (WP12)
-
 # MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_server_creation | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_server_name | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
@@ -38,10 +35,6 @@ tests/unit/test_skill_diagnostics.py::TestScanSkillDiagnosticsMoveFailed::test_s
 tests/unit/test_skill_diagnostics.py::TestScanSkillDiagnosticsSuccess::test_scan_success_returns_diagnosis_ok | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
 tests/unit/test_skill_diagnostics.py::TestHomeSkillDiagnosticsMoveFailed::test_home_move_failed_returns_diagnosis | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
 tests/unit/test_skill_diagnostics.py::TestHomeSkillDiagnosticsSuccess::test_home_success_returns_diagnosis_ok | xfail | stale mocks: the DoF-aware home/scan (D96) calls int() on Mock joint data (skills-manip:arm-at-home-5dof family; WP09)
-
-# stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
-tests/unit/test_skill_schemas.py::TestGetDefaultSkills::test_returns_all_skills | xfail | stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
-tests/unit/test_skill_schemas.py::TestGetDefaultSkills::test_all_skill_names_present | xfail | stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
 
 # sim tier, rest of the per-file run (2026-10-04)
 tests/unit/embodiments/test_dof_layout.py::test_g1_layout_matches_g1offsets | xfail | sim-locomotion:g1-assets-unshipped (assets/g1_gait/g1_12dof.xml absent, its setup script missing; WP17)

@@ -55,7 +55,7 @@ _DEFAULT_MAX_RETRIES: int = 2
 # detectable, so re-homing + re-detecting just repeats the same miss. Fail fast
 # (clearer + faster) instead of exhausting retries on an absent object. Transient
 # failures (ik_unreachable, move_failed, track_failed) still retry.
-_NO_RETRY_DIAGNOSES: frozenset[str] = frozenset({"object_not_found", "no_detections", "calibration_error"})
+_NO_RETRY_DIAGNOSES: frozenset[str] = frozenset({"object_not_found", "no_detections"})
 
 # Position sampling for density-cluster estimation (from _get_target_camera_pos)
 _DEFAULT_SAMPLE_COUNT: int = 20
@@ -169,6 +169,17 @@ class PickSkill:
                 error_message="No arm connected",
                 result_data={"diagnosis": "no_arm"},
             )
+        # A camera position is meaningless to the arm without the camera->base
+        # transform: never treat camera-frame coordinates as arm-base ones.
+        if context.perception is not None and context.calibration is None:
+            return SkillResult(
+                success=False,
+                error_message=(
+                    "No camera->arm calibration is loaded (config calibration.file is "
+                    "missing or unreadable): run the hand-eye calibration first."
+                ),
+                result_data={"diagnosis": "calibration_error"},
+            )
 
         max_retries = max(1, int(
             context.config.get("skills", {}).get("pick", {}).get("max_retries", _DEFAULT_MAX_RETRIES)
@@ -238,18 +249,6 @@ class PickSkill:
         home_joints: list[float] = (
             context.config.get("skills", {}).get("home", {}).get("joint_values", _DEFAULT_HOME_JOINTS)
         )
-
-        # A camera position is meaningless to the arm without the camera->base
-        # transform: never treat camera-frame coordinates as arm-base ones.
-        if context.perception is not None and context.calibration is None:
-            return SkillResult(
-                success=False,
-                error_message=(
-                    "No camera->arm calibration is loaded (config calibration.file is "
-                    "missing or unreadable): run the hand-eye calibration first."
-                ),
-                result_data={"diagnosis": "calibration_error"},
-            )
 
         # Step 1: Get target in base frame
         base_pos_result = self._get_target_base_pos(params, context)

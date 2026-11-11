@@ -166,10 +166,10 @@ class TestSkillSchemaAllOptional:
 class TestSkillsToMcpTools:
     def _make_registry(self) -> "SkillRegistry":
         from vector_os_nano.core.skill import SkillRegistry
-        from vector_os_nano.skills import get_default_skills
+        from vector_os_nano.skills import get_so101_skills
 
         registry = SkillRegistry()
-        for s in get_default_skills():
+        for s in get_so101_skills():
             registry.register(s)
         return registry
 
