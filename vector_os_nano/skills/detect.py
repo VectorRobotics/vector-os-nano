@@ -77,7 +77,9 @@ class DetectSkill:
 
         # Step 1: VLM 2D detection
         try:
-            detections = context.perception.detect(query)
+            from vector_os_nano.perception.base import detect_query
+
+            detections = detect_query(context.perception, query)
         except Exception as exc:
             logger.error("[DETECT] Perception error: %s", exc)
             return SkillResult(
