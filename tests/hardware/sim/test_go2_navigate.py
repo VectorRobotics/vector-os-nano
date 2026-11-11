@@ -68,7 +68,7 @@ def test_obstacles_from_model_importable_for_go2(go2_sim: MuJoCoGo2) -> None:
     # At a step boundary, on the stepper: reading (or mj_forward-ing) the live MjData
     # from this thread raced mj_step and segfaulted about one full sim tier in three.
     polys = go2_sim.runtime.call(
-        lambda m, d: obstacles_from_model(m, d, robot_geom_ids=go2_sim._mj.layout.robot_geom_ids)
+        lambda w: obstacles_from_model(w.model, w.data, robot_geom_ids=go2_sim._mj.layout.robot_geom_ids)
     )
     # The go2 room has furniture, walls, and pick_table — expect multiple polygons
     assert len(polys) > 0, (

@@ -16,7 +16,8 @@ import pytest
 
 import vector_os_nano
 from vector_os_nano.sim import backends
-from vector_os_nano.sim.scene import compiled_scene, reader
+from vector_os_nano.sim.scene import compiled_scene
+from vector_os_nano.sim.scene.compiled import inactive_welds
 
 SCENES = Path(__file__).parent / "scenes"
 SIM_DIR = Path(vector_os_nano.__file__).parent / "hardware" / "sim"
@@ -74,15 +75,6 @@ def load():
         w.close()
 
 
-def _inactive_welds(path: Path) -> list[tuple[str, str]]:
-    scene = compiled_scene(path)
-    m = scene.model
-    return [
-        (scene.body_name(int(m.eq_obj1id[i])), scene.body_name(int(m.eq_obj2id[i])))
-        for i in range(m.neq) if m.eq_type[i] == reader.EQ_WELD and not m.eq_active0[i]
-    ]
-
-
 @pytest.fixture(scope="session")
 def contract_scene():
     return compiled_scene(SCENES / "contract.xml", grasp_pairs=[("carrier", "parcel"), ("arm", "parcel")])
@@ -136,7 +128,7 @@ def _robot_scene(name: str):
         from vector_os_nano.hardware.sim import mujoco_go2
 
         path = mujoco_go2._build_room_scene_xml(with_arm=name == "go2_piper")
-        return compiled_scene(path, robot_root="base_link", grasp_pairs=_inactive_welds(path),
+        return compiled_scene(path, robot_root="base_link", grasp_pairs=inactive_welds(path),
                               timestep=mujoco_go2._SIM_DT)
     if name == "g1":
         if not (G1_DIR / "scene.xml").exists():

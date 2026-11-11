@@ -71,7 +71,7 @@ def _free_pose(go2: Any, body: str) -> np.ndarray:
     """x y z qw qx qy qz of a free body, from the published state."""
     m = go2._mj.model
     a = int(m.jnt_qposadr[m.body(body).jntadr[0]])
-    return go2.runtime.snapshot().qpos[a:a + 7].copy()
+    return go2.runtime.snapshot().q[a:a + 7].copy()
 
 
 def _camera(embodiment: str) -> tuple[str, int, int]:
@@ -94,8 +94,8 @@ class _Recorder:
     def state(self) -> None:
         s = self.go2.runtime.snapshot()
         self.t.append(s.sim_time)
-        self.q.append(s.qpos.copy())
-        self.qd.append(s.qvel.copy())
+        self.q.append(s.q.copy())
+        self.qd.append(s.qd.copy())
 
     def truth(self) -> None:
         self.rows.append(_gt_row(self.gt, self.objects, self.camera, self.arm))
@@ -165,7 +165,7 @@ def run_go2_piper_pick() -> dict[str, np.ndarray]:
         arm.connect()
         grip.connect()
         rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda _m, d: d.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
+        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
         go2.reset_pose()
         assert go2.wait_sim(1.5)
         gt = _ground_truth(go2)

@@ -41,7 +41,7 @@ class GroundTruth:
         import mujoco as mj
 
         self._rt = runtime
-        m = runtime.model
+        m = runtime.world.model
         self.robot_root_bid = int(robot_root_bid)
         self.robot_bodies: frozenset[int] = frozenset(
             b for b in range(m.nbody) if robot_root_bid > 0 and in_subtree(m, b, robot_root_bid)
@@ -63,7 +63,6 @@ class GroundTruth:
                 name = mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, int(m.eq_obj2id[i]))
                 if name:
                     self._welds[name] = i
-        self._weld_body = {i: n for n, i in self._welds.items()}
         root_j = int(m.body_jntadr[robot_root_bid]) if robot_root_bid > 0 else -1
         self._root_qadr = (
             int(m.jnt_qposadr[root_j])
@@ -82,13 +81,13 @@ class GroundTruth:
 
     @property
     def sim_time(self) -> float:
-        return float(self._rt.call(lambda _m, d: float(d.time)))
+        return float(self._rt.call(lambda w: w.time()))
 
     # -- poses -------------------------------------------------------------
 
     def free_body_poses(self) -> dict[str, tuple[list[float], list[float]]]:
         """``{body: ([x, y, z], [qw, qx, qy, qz])}`` for every free body, one instant."""
-        q = self._rt.snapshot().qpos
+        q = self._rt.snapshot().q
         return {n: (q[a:a + 3].tolist(), q[a + 3:a + 7].tolist()) for n, a in self._free.items()}
 
     def free_body_positions(self) -> dict[str, list[float]]:
@@ -98,13 +97,14 @@ class GroundTruth:
         """Like :meth:`free_body_positions`, read from the live data at a step boundary
         (also right for a caller-stepped scene that steps MjData directly)."""
         free = self._free
-        return self._rt.call(lambda _m, d: {n: d.qpos[a:a + 3].tolist() for n, a in free.items()})
+        return self._rt.call(lambda w: {n: w.data.qpos[a:a + 3].tolist() for n, a in free.items()})
 
     def object_speed(self, name: str) -> float:
         """Linear speed (m/s) of free body *name*."""
         j = self.bid[name]
 
-        def read(m: Any, d: Any) -> float:
+        def read(w: Any) -> float:
+            m, d = w.model, w.data
             a = int(m.jnt_dofadr[int(m.body_jntadr[j])])
             return float(np.linalg.norm(d.qvel[a:a + 3]))
 
@@ -115,7 +115,7 @@ class GroundTruth:
         a = self._root_qadr
         if a < 0:
             return None
-        q = self._rt.call(lambda _m, d: d.qpos[a:a + 7].copy())
+        q = self._rt.call(lambda w: w.data.qpos[a:a + 7].copy())
         w, x, y, z = (float(v) for v in q[3:7])
         yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
         return float(q[0]), float(q[1]), float(q[2]), yaw
@@ -124,14 +124,14 @@ class GroundTruth:
         """qpos of the named hinge/slide joints (fails loud on an unknown name)."""
         import mujoco as mj
 
-        m = self._rt.model
+        m = self._rt.world.model
         adr = []
         for name in joints:
             jid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_JOINT, name)
             if jid < 0:
                 raise KeyError(f"joint {name!r} not in the model")
             adr.append(int(m.jnt_qposadr[jid]))
-        return self._rt.call(lambda _m, d: [float(d.qpos[a]) for a in adr])
+        return self._rt.call(lambda w: [float(w.data.qpos[a]) for a in adr])
 
     # -- welds -------------------------------------------------------------
 
@@ -139,20 +139,21 @@ class GroundTruth:
         """``{welded body2 name: active}`` over every weld equality."""
         welds = self._welds
         return self._rt.call(
-            lambda _m, d: {n: bool(int(np.asarray(d.eq_active)[i]) != 0) for n, i in welds.items()}
+            lambda w: {n: bool(int(np.asarray(w.data.eq_active)[i]) != 0) for n, i in welds.items()}
         )
 
     def weld_events(self, since: float = -math.inf) -> list[tuple[float, str, bool]]:
         """``(sim_time, welded body, active)`` weld transitions after *since*, oldest first.
 
-        From the runtime's transition log (every step-boundary publish compares
-        ``eq_active``); a read publishes first, so a write made outside the runtime
-        is logged by the next read at the latest.
+        From the runtime's attachment log (every step-boundary publish compares
+        ``world.attached()``); a read publishes first, so a write made outside the
+        runtime is logged by the next read at the latest.
         """
-        self._rt.call(lambda _m, _d: None)
+        self._rt.call(lambda _w: None)
+        name = {b: n for n, b in self.bid.items()}
         return [
-            (t, self._weld_body[i], on) for t, i, on in list(self._rt.eq_log)
-            if i in self._weld_body and t > since
+            (t, name[c], p is not None) for t, c, p in list(self._rt.attach_log)
+            if c in name and t > since
         ]
 
     # -- contacts / support ------------------------------------------------
@@ -161,7 +162,8 @@ class GroundTruth:
         """Body ids in contact with free body *name* right now."""
         bid = self.bid[name]
 
-        def read(m: Any, d: Any) -> set[int]:
+        def read(w: Any) -> set[int]:
+            m, d = w.model, w.data
             n = int(d.ncon)
             b1 = m.geom_bodyid[np.asarray(d.contact.geom1[:n])]
             b2 = m.geom_bodyid[np.asarray(d.contact.geom2[:n])]
@@ -174,7 +176,7 @@ class GroundTruth:
     def body_id(self, name: str) -> int:
         import mujoco as mj
 
-        return int(mj.mj_name2id(self._rt.model, mj.mjtObj.mjOBJ_BODY, name))
+        return int(mj.mj_name2id(self._rt.world.model, mj.mjtObj.mjOBJ_BODY, name))
 
     def clearance(self, name: str) -> float:
         """Gap (m) between the object's lowest point and the highest colliding,
@@ -184,7 +186,8 @@ class GroundTruth:
         robot = np.array(sorted(self.robot_bodies), dtype=int)
         colliding = self._colliding
 
-        def read(m: Any, d: Any) -> float:
+        def read(w: Any) -> float:
+            m, d = w.model, w.data
             # World AABB of every geom (its local aabb rotated by the geom frame).
             R = d.geom_xmat.reshape(-1, 3, 3)
             c = d.geom_xpos + np.einsum("gij,gj->gi", R, m.geom_aabb[:, :3])
@@ -206,7 +209,7 @@ class GroundTruth:
 
     def visible_pixels(self, name: str, camera: str, width: int, height: int) -> int:
         """Pixels of free body *name* in a segmentation render of *camera* (occlusion-exact)."""
-        m = self._rt.model
+        m = self._rt.world.model
         geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] == self.bid[name]]
         # ponytail: RGBDFrame.seg keeps the object id only (not its type), so a
         # rendered site whose id equals one of these geom ids would count too; the

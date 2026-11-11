@@ -283,7 +283,7 @@ class MuJoCoPiper:
     def get_joint_positions(self) -> list[float]:
         """Read the arm joint positions in radians."""
         self._require_connection()
-        q = self._go2.runtime.snapshot().qpos
+        q = self._go2.runtime.snapshot().q
         return [float(q[adr]) for adr in self._arm_joint_qpos_adr]
 
     def get_object_positions(self) -> dict[str, list[float]]:
@@ -321,16 +321,16 @@ class MuJoCoPiper:
         ids = list(self._arm_actuator_ids)
         stop = self._stop_evt
         stop.clear()
-        start = rt.call(lambda _m, d: [float(d.ctrl[aid]) for aid in ids])
+        start = rt.call(lambda w: [float(w.data.ctrl[aid]) for aid in ids])
         # R2b: the commanded ctrl displacement (sum of |target - start|).
         commanded = sum(abs(g - s) for s, g in zip(start, goal))
         from vector_os_nano.sim.runtime import ACTOR_EPOCH
 
         counted = ACTOR_EPOCH.active
 
-        def _write(_m: Any, d: Any, v: list[float]) -> None:
+        def _write(w: Any, v: list[float]) -> None:
             if not stop.is_set():  # checked at the step boundary: never after stop()'s hold
-                d.ctrl[ids] = v
+                w.data.ctrl[ids] = v
 
         steps = max(1, int(duration * _MOVE_UPDATE_HZ))
         dt = duration / steps
@@ -340,7 +340,7 @@ class MuJoCoPiper:
                 break
             t = i / steps
             targets = [s + t * (g - s) for s, g in zip(start, goal)]
-            rt.submit(lambda m, d, v=targets: _write(m, d, v))
+            rt.submit(lambda w, v=targets: _write(w, v))
             done = t
             rt.wait_sim(dt, cancel=stop)
 
@@ -358,7 +358,7 @@ class MuJoCoPiper:
         tol = float(self._spec.track_tol)
         deadline = rt.sim_time + _SETTLE_S
         while True:
-            q = rt.snapshot().qpos
+            q = rt.snapshot().q
             err = max(abs(float(q[a]) - g) for a, g in zip(self._arm_joint_qpos_adr, goal))
             if err < tol:
                 return True
@@ -398,7 +398,7 @@ class MuJoCoPiper:
         self._require_connection()
         self._stop_evt.set()  # BEFORE the hold, so no queued set-point lands after it
         qadr, ids = list(self._arm_joint_qpos_adr), list(self._arm_actuator_ids)
-        self._go2.runtime.call(lambda _m, d: d.ctrl.__setitem__(ids, d.qpos[qadr]))
+        self._go2.runtime.call(lambda w: w.data.ctrl.__setitem__(ids, w.data.qpos[qadr]))
 
     def home(self, duration: float = 3.0) -> bool:
         """Move to the manifest home pose."""
@@ -492,7 +492,7 @@ class MuJoCoPiper:
         The source is the runtime snapshot — a copy, no physics pause.
         """
         go2 = self._go2
-        live_qpos = go2.runtime.snapshot().qpos
+        live_qpos = go2.runtime.snapshot().q
         lo = go2._mj.layout.root_qpos_adr
         n = 7 + go2._mj.layout.num_actuated  # freejoint(7) + legs
         self._ik_data.qpos[lo:lo + n] = live_qpos[lo:lo + n]

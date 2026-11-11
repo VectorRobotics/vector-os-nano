@@ -146,7 +146,8 @@ class MuJoCoPiperGripper:
         self._require_connection()
         aid, eqs = self._actuator_id, list(self._welds.values())
 
-        def _open(_model: Any, data: Any) -> list[int]:
+        def _open(w: Any) -> list[int]:
+            data = w.data
             data.ctrl[aid] = self._spec.open
             data.eq_active[eqs] = 0
             return [i for i in eqs if int(data.eq_active[i]) != 0]
@@ -172,7 +173,7 @@ class MuJoCoPiperGripper:
         aid = self._actuator_id
         rt = self._go2.runtime
         try:
-            rt.call(lambda _m, d: d.ctrl.__setitem__(aid, self._spec.closed))
+            rt.call(lambda w: w.data.ctrl.__setitem__(aid, self._spec.closed))
             self._wait_jaws_settled()
             held = rt.call(self._weld_if_gripped)
         except Exception as exc:  # noqa: BLE001 — a failed grasp is a no-hold, never a crash
@@ -209,7 +210,7 @@ class MuJoCoPiperGripper:
     def get_position(self) -> float:
         """Normalized jaw position: 0.0 closed, 1.0 fully open."""
         self._require_connection()
-        pos = float(self._go2.runtime.snapshot().qpos[self._joint_qpos_adr])
+        pos = float(self._go2.runtime.snapshot().q[self._joint_qpos_adr])
         return max(0.0, min(1.0, pos / self._spec.open))
 
     def get_force(self) -> float | None:
@@ -223,20 +224,21 @@ class MuJoCoPiperGripper:
     def _wait_jaws_settled(self) -> None:
         rt = self._go2.runtime
         deadline = rt.sim_time + _SETTLE_S
-        last = float(rt.snapshot().qpos[self._joint_qpos_adr])
+        last = float(rt.snapshot().q[self._joint_qpos_adr])
         rt.wait_sim(5 * _SETTLE_POLL_S)  # let the servo start moving
         while rt.sim_time < deadline:
-            now = float(rt.snapshot().qpos[self._joint_qpos_adr])
+            now = float(rt.snapshot().q[self._joint_qpos_adr])
             if abs(now - last) < _SETTLE_EPS:
                 return
             last = now
             if not rt.wait_sim(_SETTLE_POLL_S):
                 return
 
-    def _weld_if_gripped(self, model: Any, data: Any) -> str | None:
+    def _weld_if_gripped(self, w: Any) -> str | None:
         """At a step boundary: weld the object every finger touches while the jaws
         are held open by it (anchor = the live relative pose, so nothing snaps)."""
         mj = _get_mujoco()
+        model, data = w.model, w.data
         opening = float(data.qpos[self._joint_qpos_adr]) - self._spec.closed
         n = int(data.ncon)
         g1 = np.asarray(data.contact.geom1[:n])

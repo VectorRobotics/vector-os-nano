@@ -307,6 +307,6 @@ def rig_namespace(runtime: Any, embodiment_id: str, **kwargs: Any) -> dict[str, 
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     cfg = registry.load(embodiment_id)
-    root = mj.mj_name2id(runtime.model, mj.mjtObj.mjOBJ_BODY, cfg.model.root_body)
+    root = mj.mj_name2id(runtime.world.model, mj.mjtObj.mjOBJ_BODY, cfg.model.root_body)
     gt = GroundTruth(runtime, robot_root_bid=int(root))
     return build_namespace(gt, load_world(cfg.world) if cfg.world else None, cfg, **kwargs)

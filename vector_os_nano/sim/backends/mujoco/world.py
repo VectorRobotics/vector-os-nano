@@ -78,7 +78,10 @@ class MuJoCoWorld:
             viewer.close()
         pool, self._pool = self._pool, None
         if pool is not None:
-            pool.submit(self._close_renderers).result()
+            try:  # queued behind any in-flight render; closes each context on its thread
+                pool.submit(self._close_renderers).result()
+            except RuntimeError:  # atexit: interpreter shutdown already retired that thread
+                self._close_renderers()
             pool.shutdown(wait=True)
 
     def time(self) -> float:

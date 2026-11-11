@@ -40,7 +40,7 @@ def rig():
         arm.connect()
         grip.connect()
         rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda _m, d: d.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
+        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
         go2.reset_pose()
         go2.wait_sim(1.5)
         yield go2, arm, grip
@@ -51,9 +51,11 @@ def rig():
         go2.disconnect()
 
 
-def _restore_objects(_m, d) -> None:
+def _restore_objects(w) -> None:
     """Every pickable back to its compiled rest pose, at rest."""
     import mujoco as mj
+
+    _m, d = w.model, w.data
 
     for j in range(_m.njnt):
         if _m.jnt_type[j] == mj.mjtJoint.mjJNT_FREE and mj.mj_id2name(
@@ -171,9 +173,9 @@ def test_stop_preempts_a_move_within_50_sim_ms(seated) -> None:
     assert out["ok"] is False
     assert out["t"] - t_stop <= 0.05, f"move returned {out['t'] - t_stop:.3f} sim-s after stop()"
     ids = arm._arm_actuator_ids
-    ctrl = rt.call(lambda _m, d: d.ctrl[ids].copy())
+    ctrl = rt.call(lambda w: w.data.ctrl[ids].copy())
     go2.wait_sim(0.3)
-    np.testing.assert_allclose(rt.call(lambda _m, d: d.ctrl[ids].copy()), ctrl)  # nothing written after the hold
+    np.testing.assert_allclose(rt.call(lambda w: w.data.ctrl[ids].copy()), ctrl)  # nothing written after the hold
     assert np.max(np.abs(np.array(arm.get_joint_positions()) - q_stop)) < 0.1
 
 
@@ -207,6 +209,6 @@ def test_ik_right_after_a_walk_solves_for_the_stopped_body(seated) -> None:
         assert math.dist(pos, target) < 0.01, pos
     finally:  # back to the seat for the module's other tests
         rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda _m, d: d.qpos.__setitem__(slice(rq, rq + 7), [*_SEAT, 0.3, 1.0, 0.0, 0.0, 0.0]))
+        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 7), [*_SEAT, 0.3, 1.0, 0.0, 0.0, 0.0]))
         go2.reset_pose()
         go2.wait_sim(1.5)

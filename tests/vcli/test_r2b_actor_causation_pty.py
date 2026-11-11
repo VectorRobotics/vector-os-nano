@@ -171,7 +171,7 @@ def test_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         adr = base._mj.layout.root_qpos_adr
 
         def teleport_primitive(**_):
-            base.runtime.call(lambda _m, d: d.qpos.__setitem__(adr, 9.0))
+            base.runtime.call(lambda w: w.data.qpos.__setitem__(adr, 9.0))
             base.wait_sim(0.15)
             return True
 

@@ -1,26 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""SimRuntime — the ONE owner of a MuJoCo ``MjData``.
+"""SimRuntime — the ONE owner of a :class:`~vector_os_nano.interfaces.physics.PhysicsWorld`.
 
 Every thread that touches the simulation goes through this object, so physics
 stepping, mutations and reads can never race (the R12 / reset_pose segfault
 class: ``mj_forward`` or a qpos write on live data while another thread steps).
 
-* **Stepping.** One control tick = ``controller(model, data)`` then
-  ``mj_step(nstep=substeps)``, always under ``lock``. In the default mode one
+* **Stepping.** One control tick = ``controller(world)`` then
+  ``world.step(substeps)``, always under ``lock``. In the default mode one
   daemon thread runs ticks paced against an ABSOLUTE wall-clock schedule
   (``next += period``; a lag over ``_MAX_LAG_S`` is dropped, so catch-up is
   bounded). ``VECTOR_SIM_LOCKSTEP=1`` (or ``threaded=False``) starts no thread:
   physics advances only through :meth:`step` / :meth:`wait_sim` on the caller's
   thread, so a scripted run is deterministic.
-* **Mutations.** :meth:`submit` runs ``fn(model, data)`` at a step boundary and
+* **Mutations.** :meth:`submit` runs ``fn(world)`` at a step boundary and
   returns a ``Future`` with its result. The stepper drains the queue before each
   tick (and every few ms while paused); with no daemon it runs inline.
-* **Reads.** :meth:`snapshot` is the latest :class:`SimSnapshot` (qpos, qvel and
-  sim time of one instant), republished after every tick and every mutation.
+* **Reads.** :meth:`snapshot` is the latest :class:`SimSnapshot` (``world.state()``
+  and sim time of one instant), republished after every tick and every mutation;
+  lock-free readers slice ``q`` / ``qd`` by the scene's canonical addresses.
   :meth:`render` renders from a private ``mj_copyData`` copy taken at a step
   boundary, so RGB, depth, segmentation and camera pose share one ``sim_time``.
+* **Attachments.** Every change of ``world.attached()`` is logged with its sim
+  time (:attr:`attach_log`), diffed at every publish.
 * **One render owner.** Every offscreen renderer is created, used and closed on
   one worker thread: a GL (EGL/GLX) context stays bound to the live thread that
   last used it, and any other thread then fails with EGL_BAD_ACCESS. Renderers
@@ -45,6 +48,8 @@ from typing import Any, Callable, Iterable
 
 import numpy as np
 
+from vector_os_nano.interfaces.physics import PhysicsWorld
+
 logger = logging.getLogger(__name__)
 
 LOCKSTEP_ENV = "VECTOR_SIM_LOCKSTEP"
@@ -60,7 +65,7 @@ _MIN_REALTIME = 0.05
 _MIN_WALL_CAP_S = 5.0
 _RT_LOG_EVERY_S = 60.0
 
-Controller = Callable[[Any, Any], None]
+Controller = Callable[[PhysicsWorld], None]
 
 
 def lockstep_requested() -> bool:
@@ -70,12 +75,13 @@ def lockstep_requested() -> bool:
 
 @dataclass(frozen=True)
 class SimSnapshot:
-    """State of one instant: ``qpos``/``qvel`` are copies, never live views."""
+    """State of one instant (``world.state()``): ``q`` / ``qd`` are copies in the
+    canonical layout, never live views."""
 
     sim_time: float
-    qpos: np.ndarray
-    qvel: np.ndarray
     step: int
+    q: np.ndarray
+    qd: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -131,12 +137,11 @@ ACTOR_EPOCH = ActorEpoch()
 
 
 class SimRuntime:
-    """Owns ``model``/``data``: one stepper, step-boundary mutations, snapshots."""
+    """Owns one ``world``: one stepper, step-boundary mutations, snapshots."""
 
     def __init__(
         self,
-        model: Any,
-        data: Any,
+        world: PhysicsWorld,
         *,
         controller: Controller | None = None,
         substeps: int = 1,
@@ -146,10 +151,9 @@ class SimRuntime:
     ) -> None:
         if lockstep_requested():
             threaded, paced = False, False
-        self.model = model
-        self.data = data
+        self.world = world
         self.substeps = max(1, int(substeps))
-        self.tick_dt = float(model.opt.timestep) * self.substeps
+        self.tick_dt = float(world.scene.timestep) * self.substeps
         self.threaded = threaded
         self.paced = paced
         self.name = name
@@ -158,7 +162,7 @@ class SimRuntime:
         self.rt_factor = 1.0
         self.lock = threading.RLock()
         self._controller: Controller | None = controller
-        self._queue: collections.deque[tuple[Callable[[Any, Any], Any], Future]] = collections.deque()
+        self._queue: collections.deque[tuple[Callable[[PhysicsWorld], Any], Future]] = collections.deque()
         self._wake = threading.Event()
         self._published = threading.Condition()
         self._pauses = 0
@@ -166,17 +170,18 @@ class SimRuntime:
         self._thread: threading.Thread | None = None
         self._stepper: int | None = None  # ident of the thread stepping right now
         self._steps = 0
-        # Weld/equality transition log: (sim_time, eq index, active) per change,
-        # appended at every publish (GroundTruth.weld_events reads it).
-        self.eq_log: collections.deque[tuple[float, int, bool]] = collections.deque(maxlen=4096)
-        self._eq_prev = np.asarray(data.eq_active).copy()
+        # Attachment transition log: (sim_time, child body, parent body or None for a
+        # detach) per change of world.attached(), appended at every publish
+        # (GroundTruth.weld_events reads it).
+        self.attach_log: collections.deque[tuple[float, int, int | None]] = collections.deque(maxlen=4096)
+        self._attached = world.attached()
         self._snap = self._take_snapshot()
         self._render_pool: ThreadPoolExecutor | None = ThreadPoolExecutor(
             1, thread_name_prefix=f"{name}_render"
         )
         self._renderers: dict[tuple[str, int, int], Any] = {}
         self._render_data: Any = None  # render-thread-owned scratch MjData
-        self._rt_mark = (time.monotonic(), float(data.time))
+        self._rt_mark = (time.monotonic(), world.time())
         self._rt_ratio = 0.0
         self._pace_t = 0.0
 
@@ -185,7 +190,7 @@ class SimRuntime:
     # ------------------------------------------------------------------
 
     def set_controller(self, fn: Controller | None) -> None:
-        """Install the per-tick controller ``fn(model, data)`` (runs before each mj_step)."""
+        """Install the per-tick controller ``fn(world)`` (runs before each world.step)."""
         with self.lock:
             self._controller = fn
 
@@ -199,7 +204,8 @@ class SimRuntime:
         self._thread.start()
 
     def close(self) -> None:
-        """Stop physics, fail pending mutations, close every renderer on its thread. Idempotent."""
+        """Stop physics, fail pending mutations, close every renderer on its thread, then
+        the world. Idempotent."""
         self._stop.set()
         self._wake.set()
         t = self._thread
@@ -217,6 +223,7 @@ class SimRuntime:
             except RuntimeError:  # atexit: interpreter shutdown already retired that thread
                 self._close_renderers()
             pool.shutdown(wait=True)
+        self.world.close()
         with self._published:
             self._published.notify_all()
 
@@ -253,8 +260,8 @@ class SimRuntime:
     # mutations
     # ------------------------------------------------------------------
 
-    def submit(self, fn: Callable[[Any, Any], Any]) -> Future:
-        """Run ``fn(model, data)`` at a step boundary; the Future carries its result.
+    def submit(self, fn: Callable[[PhysicsWorld], Any]) -> Future:
+        """Run ``fn(world)`` at a step boundary; the Future carries its result.
 
         Never wait on the Future while holding :attr:`lock` from another thread.
         """
@@ -281,7 +288,7 @@ class SimRuntime:
             if fut.set_running_or_notify_cancel():
                 fut.set_exception(RuntimeError(f"{self.name}: runtime closed"))
 
-    def call(self, fn: Callable[[Any, Any], Any]) -> Any:
+    def call(self, fn: Callable[[PhysicsWorld], Any]) -> Any:
         """``submit(fn).result()``: a read or mutation at a step boundary."""
         return self.submit(fn).result()
 
@@ -375,17 +382,19 @@ class SimRuntime:
         kinds = tuple(kinds)
         w, h = int(width), int(height)
 
+        model = self.world.model
+
         def job() -> RGBDFrame:
             import mujoco as mj
 
             d = self._render_data
             if d is None:
-                d = self._render_data = mj.MjData(self.model)
-            self.call(lambda m, src: mj.mj_copyData(d, m, src))
+                d = self._render_data = mj.MjData(model)
+            self.call(lambda w: mj.mj_copyData(d, w.model, w.data))
             # Recompute every derived quantity from the copied state, so pose and
             # pixels are of exactly d.time (live xpos lags qpos by one mj_step).
-            mj.mj_forward(self.model, d)
-            cam = self.model.cam(camera).id
+            mj.mj_forward(model, d)
+            cam = model.cam(camera).id
             out: dict[str, np.ndarray] = {}
             for kind in kinds:
                 r = self._renderer(kind, w, h)
@@ -396,7 +405,7 @@ class SimRuntime:
                 rgb=out.get("rgb"),
                 depth=out["depth"].astype(np.float32) if "depth" in out else None,
                 seg=seg[:, :, 0] if seg is not None and seg.ndim == 3 else seg,
-                K=mujoco_intrinsics(w, h, vfov_deg=float(self.model.cam_fovy[cam])),
+                K=mujoco_intrinsics(w, h, vfov_deg=float(model.cam_fovy[cam])),
                 cam_pos=d.cam_xpos[cam].copy(),
                 cam_mat=d.cam_xmat[cam].copy(),
                 sim_time=float(d.time),
@@ -430,7 +439,7 @@ class SimRuntime:
             import mujoco as mj
 
             try:
-                r = mj.Renderer(self.model, height, width)
+                r = mj.Renderer(self.world.model, height, width)
             except RuntimeError as exc:
                 raise RuntimeError(
                     f"{self.name}: cannot create a {width}x{height} {kind} renderer ({exc}); "
@@ -461,27 +470,29 @@ class SimRuntime:
     # ------------------------------------------------------------------
 
     def _take_snapshot(self) -> SimSnapshot:
-        d = self.data
-        return SimSnapshot(float(d.time), d.qpos.copy(), d.qvel.copy(), self._steps)
+        q, qd = self.world.state()
+        return SimSnapshot(self.world.time(), self._steps, q, qd)
 
     def _publish(self) -> None:
         self._snap = self._take_snapshot()
-        eq = np.asarray(self.data.eq_active)
-        if eq.size and not np.array_equal(eq, self._eq_prev):
-            for i in np.flatnonzero(eq != self._eq_prev):
-                self.eq_log.append((self._snap.sim_time, int(i), bool(eq[i])))
-            self._eq_prev = eq.copy()
+        now = self.world.attached()
+        if now != self._attached:
+            t, was = self._snap.sim_time, self._attached
+            for child in sorted(was.keys() | now.keys()):
+                if was.get(child) != now.get(child):
+                    self.attach_log.append((t, child, now.get(child)))
+            self._attached = now
         with self._published:
             self._published.notify_all()
 
-    def _run(self, jobs: list[tuple[Callable[[Any, Any], Any], Future]]) -> None:
+    def _run(self, jobs: list[tuple[Callable[[PhysicsWorld], Any], Future]]) -> None:
         """Apply mutations, publish the new state, THEN resolve their futures."""
         done: list[tuple[Future, bool, Any]] = []
         for fn, fut in jobs:
             if not fut.set_running_or_notify_cancel():
                 continue
             try:
-                done.append((fut, True, fn(self.model, self.data)))
+                done.append((fut, True, fn(self.world)))
             except BaseException as exc:  # noqa: BLE001 — delivered to the submitter
                 done.append((fut, False, exc))
         if done:
@@ -497,13 +508,11 @@ class SimRuntime:
             self._run(jobs)
 
     def _tick(self, controller: Controller | None) -> None:
-        import mujoco as mj
-
         self._drain()
         ctrl = controller or self._controller
         if ctrl is not None:
-            ctrl(self.model, self.data)
-        mj.mj_step(self.model, self.data, nstep=self.substeps)
+            ctrl(self.world)
+        self.world.step(self.substeps)
         self._steps += self.substeps
         self._publish()
 

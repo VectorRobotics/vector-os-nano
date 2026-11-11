@@ -114,7 +114,7 @@ class TestRealArmOracleContract:
         from vector_os_nano.sim.ground_truth import GroundTruth
         from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-        m = real_arm.runtime.model
+        m = real_arm.runtime.world.model
         gt = GroundTruth(real_arm.runtime, mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "base_link"))
         names = set(gt.object_positions())
         # Exactly the scenario's known objects == the tabletop manifest's pickables.

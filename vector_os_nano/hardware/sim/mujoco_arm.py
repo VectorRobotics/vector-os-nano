@@ -130,9 +130,15 @@ class MuJoCoArm:
     def connect(self) -> None:
         """Load MJCF, create MjData, optionally launch viewer."""
         mj = _get_mujoco()
+        from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld
+        from vector_os_nano.sim.runtime import SimRuntime
+        from vector_os_nano.sim.scene import compiled_scene
+        from vector_os_nano.sim.scene.compiled import inactive_welds
 
-        self._model = mj.MjModel.from_xml_path(self._scene_xml)
-        self._data = mj.MjData(self._model)
+        world = MuJoCoWorld(compiled_scene(
+            self._scene_xml, robot_root="base_link", grasp_pairs=inactive_welds(self._scene_xml),
+        ))
+        self._model, self._data = world.model, world.data
 
         # Cache IDs
         self._arm_joint_ids = [
@@ -149,11 +155,9 @@ class MuJoCoArm:
 
         # Initial forward pass
         mj.mj_forward(self._model, self._data)
-        # The MjData owner the ground-truth oracles read through. Caller-stepped:
+        # The world owner the ground-truth oracles read through. Caller-stepped:
         # this arm steps its own data on the calling thread; no physics daemon.
-        from vector_os_nano.sim.runtime import SimRuntime
-
-        self.runtime = SimRuntime(self._model, self._data, threaded=False, paced=False, name="so101")
+        self.runtime = SimRuntime(world, threaded=False, paced=False, name="so101")
 
         # GUI viewer (passive — does not block)
         if self._gui:

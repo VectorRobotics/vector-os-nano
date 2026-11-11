@@ -327,9 +327,11 @@ class MuJoCoG1:
         mj = _get_mujoco()
         torch = _get_torch()
 
-        self._model = mj.MjModel.from_xml_path(str(_build_g1_room_scene_xml()))
-        self._model.opt.timestep = _SIM_DT
-        self._data = mj.MjData(self._model)
+        from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: PLC0415
+        from vector_os_nano.sim.scene import compiled_scene  # noqa: PLC0415
+
+        world = MuJoCoWorld(compiled_scene(_build_g1_room_scene_xml(), robot_root="g1_pelvis", timestep=_SIM_DT))
+        self._model, self._data = world.model, world.data
         self._offsets = _G1Offsets(self._model)
         # Build the nominal-stance qpos vector from the manifest, in the model's
         # leg-qpos order (byte-identical to _DEFAULT_ANGLES — see test_dof_layout).
@@ -356,8 +358,7 @@ class MuJoCoG1:
         self._reset_to_stance()
         self._cam_name = self._resolve_camera()
         self.runtime = SimRuntime(
-            self._model, self._data, controller=self._pd_control, substeps=1,
-            threaded=False, paced=False, name="mujoco_g1",
+            world, controller=self._pd_control, substeps=1, threaded=False, paced=False, name="mujoco_g1",
         )
 
         if self._gui:
@@ -441,8 +442,9 @@ class MuJoCoG1:
     # Policy step (core control loop — single-threaded)
     # ------------------------------------------------------------------
 
-    def _pd_control(self, _model: Any, data: Any) -> None:
+    def _pd_control(self, w: Any) -> None:
         """Runtime controller (every physics step): PD toward the policy target."""
+        data = w.data
         off = self._offsets
         lq, ld = off.leg_qpos_start, off.leg_dof_start
         tau = (self._target - data.qpos[lq : lq + _NUM_ACTIONS]) * _KPS - (
@@ -457,8 +459,9 @@ class MuJoCoG1:
         self.runtime.step(_DECIMATION)
         self.runtime.call(self._policy_tick)
 
-    def _policy_tick(self, _model: Any, d: Any) -> None:
+    def _policy_tick(self, w: Any) -> None:
         """Observation -> policy -> next PD target (at a step boundary); viewer sync."""
+        d = w.data
         torch = _get_torch()
         off = self._offsets
         lq = off.leg_qpos_start
@@ -564,7 +567,7 @@ class MuJoCoG1:
         """
         self._require_connection()
         mj = _get_mujoco()
-        self.runtime.call(mj.mj_forward)
+        self.runtime.call(lambda w: mj.mj_forward(w.model, w.data))
         obstacles = vg.obstacles_from_model(self._model, self._data, self._offsets.robot_geom_ids)
         res = follow(self, (x, y), obstacles, body=self._config.nav, tol=tol, speed=speed,
                      timeout=timeout, cancel=cancel, on_progress=on_progress)
@@ -721,7 +724,7 @@ class MuJoCoG1:
         self._require_connection()
         cam_id = self._model.cam(self._cam_name).id
         return self.runtime.call(
-            lambda _m, d: (d.cam_xpos[cam_id].copy(), d.cam_xmat[cam_id].copy())
+            lambda w: (w.data.cam_xpos[cam_id].copy(), w.data.cam_xmat[cam_id].copy())
         )
 
     # ------------------------------------------------------------------

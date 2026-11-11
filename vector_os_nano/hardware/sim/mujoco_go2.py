@@ -19,9 +19,9 @@ Joint ordering (MuJoCo ctrl and qpos[7:19]):
 Quaternion convention: MuJoCo uses (w, x, y, z) in qpos[3:7].
 
 Physics ownership (vector_os_nano/sim/runtime.py):
-    connect() hands MjModel/MjData to ONE SimRuntime, whose single stepper runs
-    the gait controller (_control) every 5 ms tick (200 Hz control, 1 kHz
-    physics). Every other thread mutates through runtime.submit (applied at a
+    connect() compiles the scene into a MuJoCoWorld and hands it to ONE
+    SimRuntime, whose single stepper runs the gait controller (_control) every
+    5 ms tick (200 Hz control, 1 kHz physics). Every other thread mutates through runtime.submit (applied at a
     step boundary) and reads runtime.snapshot() or a runtime.render() copy.
     set_velocity() writes (vx, vy, vyaw) under _cmd_lock (non-blocking).
     stand/sit/lie_down step a PD ramp on the caller's thread (stepper parked).
@@ -259,6 +259,21 @@ def _build_flat_scene_xml() -> Path:
     return write_scene("scene_flat", xml.replace("MJCF_DIR", str(_MJCF_DIR)))
 
 
+def _grasp_pairs(with_arm: bool) -> tuple[tuple[str, str], ...]:
+    """(parent, child) grasp welds — only with the arm (the no-arm model has no weld
+    body; a weld to a missing body fails to compile). Parent = the manifest gripper's
+    weld_body (the wrist carrying the EE site + fingers), child = EVERY pickable the
+    world manifest lists; created INACTIVE — the grasp decision activates one only
+    when both fingers grip that object (mirrors so101_mujoco.xml)."""
+    if not with_arm:
+        return ()
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+    weld_body = registry.load("go2_piper").arm.gripper.weld_body
+    return tuple((weld_body, p) for p in load_world("apartment").pickables)
+
+
 def _build_room_scene_xml(with_arm: bool = False) -> Path:
     """Build composite room scene using local MJCF files.
 
@@ -284,18 +299,8 @@ def _build_room_scene_xml(with_arm: bool = False) -> Path:
         # go2_piper.xml carries mesh paths relative to its own directory;
         # build_room_scene resolves them (meshes_dir=None = model-file dir).
         robot_meshes_dir = None
-        # Grasp welds (name, body1, body2) — only with the arm (the no-arm model
-        # has no weld body; a weld to a missing body fails to compile). body1 =
-        # the manifest gripper's weld_body (the wrist carrying the EE site +
-        # fingers), body2 = EVERY pickable the world manifest lists; created
-        # INACTIVE — the gripper's close() activates one only when both fingers
-        # grip that object (mirrors so101_mujoco.xml).
-        from vector_os_nano.embodiments import registry
-        from vector_os_nano.vcli.worlds.world_manifest import load_world
-
-        weld_body = registry.load("go2_piper").arm.gripper.weld_body
         welds: tuple[tuple[str, str, str], ...] = tuple(
-            (f"grasp_{p}", weld_body, p) for p in load_world("apartment").pickables
+            (f"grasp_{child}", parent, child) for parent, child in _grasp_pairs(with_arm)
         )
     else:
         go2_xml = _MJCF_DIR / "go2.xml"
@@ -518,10 +523,18 @@ class MuJoCoGo2:
             raise RuntimeError("MuJoCoGo2: already connected (disconnect first)")
         mj = _get_mujoco()
 
+        # The world owns MjModel / MjData; this driver reaches them as world.model /
+        # world.data (MuJoCo-internal code), always on the runtime's thread.
+        from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: PLC0415
+        from vector_os_nano.sim.scene import compiled_scene  # noqa: PLC0415
+
         if self._room:
             scene_path = _build_room_scene_xml(with_arm=self._with_arm)
-            model = mj.MjModel.from_xml_path(str(scene_path))
-            data = mj.MjData(model)
+            world = MuJoCoWorld(compiled_scene(
+                scene_path, robot_root="base_link", grasp_pairs=_grasp_pairs(self._with_arm),
+                timestep=_SIM_DT,
+            ))
+            model, data = world.model, world.data
             self._mj = _Go2Model(model, data)
             # Expose for downstream consumers that need to load an isolated
             # MjModel from the same MJCF (e.g. MuJoCoPiper's IK).
@@ -554,8 +567,8 @@ class MuJoCoGo2:
                 data.ctrl[12:19] = _PIPER_STOW_CTRL
         else:
             scene_path = _build_flat_scene_xml()
-            model = mj.MjModel.from_xml_path(str(scene_path))
-            data = mj.MjData(model)
+            world = MuJoCoWorld(compiled_scene(scene_path, robot_root="base_link", timestep=_SIM_DT))
+            model, data = world.model, world.data
             self._mj = _Go2Model(model, data)
             self._scene_xml_path = str(scene_path)
 
@@ -564,14 +577,8 @@ class MuJoCoGo2:
             if key_id >= 0:
                 mj.mj_resetDataKeyframe(model, data, key_id)
 
-        # Set physics timestep to 1 kHz
-        self._mj.model.opt.timestep = _SIM_DT
-
-        mj.mj_forward(self._mj.model, self._mj.data)
-        self.runtime = SimRuntime(
-            self._mj.model, self._mj.data, controller=self._control,
-            substeps=_CTRL_DECIM, name="mujoco_go2",
-        )
+        mj.mj_forward(model, data)
+        self.runtime = SimRuntime(world, controller=self._control, substeps=_CTRL_DECIM, name="mujoco_go2")
 
         if self._gui:
             if os.environ.get("MUJOCO_GL", "").lower() == "egl":
@@ -780,12 +787,13 @@ class MuJoCoGo2:
         dq_cur = np.asarray(data.qvel[jd : jd + 12], dtype=np.float64)
         return np.clip(_KP * (q_des - q_cur) - _KD * dq_cur, -_TAU_LIMITS, _TAU_LIMITS)
 
-    def _control(self, model: Any, data: Any) -> None:
+    def _control(self, w: Any) -> None:
         """The runtime controller: one 200 Hz tick (runs before 5 physics steps).
 
         Moving: the MPC force plan (or the sinusoidal gait); idle: PD-hold the
         manifest stance. Then the held torque is written and the viewer synced.
         """
+        data = w.data
         with self._cmd_lock:
             vx, vy, vyaw = self._cmd_vel
         t = float(data.time)
@@ -980,7 +988,8 @@ class MuJoCoGo2:
         height = float(self._config.spawn.base_height)
         has_arm = self._mj.model.nu >= 19
 
-        def _reset(model: Any, data: Any) -> None:
+        def _reset(w: Any) -> None:
+            data = w.data
             with self._cmd_lock:
                 self._cmd_vel = (0.0, 0.0, 0.0)
             data.qpos[rq + 2] = height
@@ -996,7 +1005,7 @@ class MuJoCoGo2:
             if has_arm:
                 data.ctrl[12:19] = _PIPER_STOW_CTRL
             self._reset_step_state()
-            mj.mj_forward(model, data)
+            mj.mj_forward(w.model, data)
 
         self.runtime.call(_reset)
 
@@ -1012,7 +1021,7 @@ class MuJoCoGo2:
 
     def _q(self) -> np.ndarray:
         self._require_connection()
-        return self.runtime.snapshot().qpos
+        return self.runtime.snapshot().q
 
     def get_position(self) -> list[float]:
         """Return base position [x, y, z] in world frame."""
@@ -1023,7 +1032,7 @@ class MuJoCoGo2:
         """Return base linear velocity [vx, vy, vz] in world frame."""
         self._require_connection()
         rd = self._mj.layout.root_dof_adr
-        return [float(v) for v in self.runtime.snapshot().qvel[rd : rd + 3]]
+        return [float(v) for v in self.runtime.snapshot().qd[rd : rd + 3]]
 
     def get_heading(self) -> float:
         """Return yaw angle (radians) from base quaternion."""
@@ -1042,7 +1051,7 @@ class MuJoCoGo2:
         """Return all 12 joint velocities (rad/s), ordered FL/FR/RL/RR."""
         self._require_connection()
         jd = self._mj.layout.joint_dof_start
-        return [float(v) for v in self.runtime.snapshot().qvel[jd : jd + 12]]
+        return [float(v) for v in self.runtime.snapshot().qd[jd : jd + 12]]
 
     def get_odometry(self) -> Any:
         """Odometry of one instant (the latest runtime snapshot)."""
@@ -1050,7 +1059,7 @@ class MuJoCoGo2:
 
         self._require_connection()
         s = self.runtime.snapshot()
-        q, v = s.qpos, s.qvel
+        q, v = s.q, s.qd
         rq = self._mj.layout.root_qpos_adr
         rd = self._mj.layout.root_dof_adr
         return Odometry(
@@ -1108,7 +1117,7 @@ class MuJoCoGo2:
         self._require_connection()
         cam_id = self._mj.model.cam("d435_rgb").id
         return self.runtime.call(
-            lambda _m, d: (d.cam_xpos[cam_id].copy(), d.cam_xmat[cam_id].copy())
+            lambda w: (w.data.cam_xpos[cam_id].copy(), w.data.cam_xmat[cam_id].copy())
         )
 
     def self_mask(self, seg: "np.ndarray") -> "np.ndarray":
@@ -1171,7 +1180,7 @@ class MuJoCoGo2:
             d = self._lidar_data
             if d is None:
                 d = self._lidar_data = mj.MjData(model)
-            self.runtime.call(lambda m, src: mj.mj_copyData(d, m, src))
+            self.runtime.call(lambda w: mj.mj_copyData(d, w.model, w.data))
             mj.mj_kinematics(model, d)  # geom poses of the copied qpos
             self._lidar_cache = self._cast_lidar(model, d)
             return self._lidar_cache
@@ -1257,13 +1266,14 @@ class MuJoCoGo2:
         self._was_moving, self._brake_t, self._brake_q = False, None, None  # the posture owns the joints
         rt = self.runtime
         jq = self._mj.layout.joint_qpos_start
-        q_start = np.array(rt.snapshot().qpos[jq : jq + 12], dtype=np.float64)
+        q_start = np.array(rt.snapshot().q[jq : jq + 12], dtype=np.float64)
         q_target = np.asarray(target_joints, dtype=np.float64)
         dt = rt.tick_dt
         n_ramp = max(1, int(duration / dt))
         tick = [0]
 
-        def ramp(_model: Any, data: Any) -> None:
+        def ramp(w: Any) -> None:
+            data = w.data
             k = tick[0]
             tick[0] += 1
             if k < n_ramp:
@@ -1378,9 +1388,9 @@ class MuJoCoGo2:
         robot = layout.robot_geom_ids
         extra_q = layout.joint_qpos_start + layout.num_actuated
 
-        def read(m: Any, d: Any) -> tuple[list, float]:
-            return (vg.obstacles_from_model(m, d, robot),
-                    vg.overhang(m, d, layout.root_bid, extra_q))
+        def read(w: Any) -> tuple[list, float]:
+            return (vg.obstacles_from_model(w.model, w.data, robot),
+                    vg.overhang(w.model, w.data, layout.root_bid, extra_q))
 
         obstacles, reach = self.runtime.call(read)
         nav = self._config.nav

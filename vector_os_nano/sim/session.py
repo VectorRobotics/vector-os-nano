@@ -216,7 +216,7 @@ class SimSession:
         if rt is None:  # no MjData owner: no oracles, every verify grades RAN
             self.notes.append("ground truth: unavailable (no SimRuntime on the base or the arm)")
             return
-        root = mj.mj_name2id(rt.model, mj.mjtObj.mjOBJ_BODY, self.config.model.root_body)
+        root = mj.mj_name2id(rt.world.model, mj.mjtObj.mjOBJ_BODY, self.config.model.root_body)
         self.gt = GroundTruth(rt, robot_root_bid=int(root))
         self.world = load_world(self.config.world) if self.config.world else None
         # Skills resolve object names through the world manifest by id (never GT).
