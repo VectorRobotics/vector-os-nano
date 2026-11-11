@@ -158,6 +158,14 @@ def test_chat_turn_renders_the_models_text_and_no_claim(monkeypatch) -> None:
     assert rt.app_state["last_response"] == "I see no green bottle; explore first."  # for /copy
 
 
+def test_an_empty_reply_is_shown_never_a_blank_turn(monkeypatch) -> None:
+    """producers:empty-llm-reply-silent: a turn with no claim and no words printed nothing."""
+    _stub_oracle(monkeypatch)
+    console = _FakeConsole()
+    repl._repl_turn(_rt(_FakeEngine(_chat_trace("g"), answer="")), "hello", console)
+    assert "empty reply" in console.text and "verdict" not in console.text
+
+
 def test_a_task_sentence_the_model_only_answered_is_a_goal_not_met(monkeypatch) -> None:
     """A sentence that compiled a task contract is a task, never a chat: the model's
     words alone show the verdict with the goal not met (charter 3.5)."""

@@ -20,6 +20,9 @@ from vector_os_nano.version import __version__
 
 console = Console()
 
+# A turn that claimed nothing and said nothing is shown as such, never as a blank.
+NO_REPLY = "(the model returned an empty reply)"
+
 
 TEAL = "#00b4b4"
 
@@ -169,6 +172,8 @@ def render_turn(console: Any, engine: Any, trace: Any, answer: str, entries: lis
     if answer:
         console.print(escape(answer))
     if _chat_turn(trace):
+        if not answer:
+            console.print(f"[yellow]{NO_REPLY}[/]")
         return
     for refusal in getattr(trace, "refused", ()) or ():
         console.print(f"  [{TEAL}]▸[/] [red]refused[/] {escape(refusal)}")

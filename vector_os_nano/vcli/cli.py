@@ -21,7 +21,9 @@ from typing import Any
 
 from rich.markup import escape
 
-from vector_os_nano.vcli.render import TEAL, _chat_turn, _gait_backend, _setup_explore_events, _trace_acted, console
+from vector_os_nano.vcli.render import (
+    NO_REPLY, TEAL, _chat_turn, _gait_backend, _setup_explore_events, _trace_acted, console,
+)
 from vector_os_nano.vcli.repl import _p0_stop, run_repl
 from vector_os_nano.vcli.runtime import build_runtime, run_turn
 
@@ -272,6 +274,8 @@ def run_one_turn(args: Any) -> int:
     if answer:
         console.print(escape(answer))
     if _chat_turn(trace):
+        if not answer:
+            console.print(f"[yellow]{NO_REPLY}[/]")
         return _emit(VerdictReport.no_trace(goal=prompt), chat=True)
 
     # Build the verdict from the EXISTING gate, single-sourced from the SAME
