@@ -134,6 +134,8 @@ def test_referents_tells_an_unbound_reference_from_no_reference(world, text, fit
     # ... while a phrase beside the verbs, particles and places of a sentence still names its object
     ("把桌子上的红色罐子拿给我", {R}), ("帮我拿红罐子吧", {R}), ("去客厅把黄色杯子拿起来", {Y}),
     ("我要绿色的瓶子", {G}), ("拿起我的红罐子", {R}), ("红色的罐子放到餐桌上", {R}), ("拿起红色的红罐子", {R}),
+    ("用 RynnBrain 找一下绿色瓶子", {G}), ("去绿色的瓶子那里", {G}), ("帮我拿一下红色的罐子", {R}),
+    ("拿出红罐子", {R}), ("把红罐子提起来", {R}),
 ])
 def test_mentions_counts_complete_noun_phrases_only(sentence, named) -> None:
     assert load_world("apartment").mentions(sentence) == named
@@ -142,6 +144,8 @@ def test_mentions_counts_complete_noun_phrases_only(sentence, named) -> None:
 @pytest.mark.parametrize("sentence, named", [
     ("粉红色 mugs", set()), ("拿起粉红色的马克杯", set()), ("拿起白色的马克杯", set()), ("拿起香蕉皮", set()),
     ("拿起蓝色的马克杯", set()), ("拿起红色的马克杯", {"mug"}), ("拿起香蕉", {"banana"}), ("red mugs", {"mug"}),
+    # a phrase that fits nothing makes the whole sentence name nothing (not the other object)
+    ("拿起黄色的杯子和香蕉", set()), ("把蓝色的马克杯和香蕉拿过来", set()),
 ])
 def test_mentions_in_the_tabletop(sentence, named) -> None:
     assert load_world("tabletop").mentions(sentence) == named

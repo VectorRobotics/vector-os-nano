@@ -63,8 +63,8 @@ _FILLERS = {
 # other CJK character there makes a longer word of it (粉红 pink, 罐头 canned food, 瓶盖 a
 # cap) or modifies it (深红, 大的), so the sentence names no object of this world.
 _CJK_EDGE = {
-    "before": frozenset("把将拿起抓取握捡拾提递给带找要想请帮我你是在从和与及跟或还个这那只到放看用移搬推举来去了"),
-    "after": frozenset("拿抓取放给递带送来去到上下里内中旁前后左右和与及跟或吧呢啊吗呀了在是也都搬移交"),
+    "before": frozenset("把将拿起抓取握捡拾拎提递给带找见要想请帮我你是在从和与及跟或还个这那只到放看用移搬推举来去了下走出"),
+    "after": frozenset("拿抓取捡拎提举放给递带送扔推来去到上下里内中旁前后左右附那这和与及跟或吧呢啊吗呀了在是也都搬移交"),
     "of": frozenset("上下里内外中边面侧前后左右旁我你他她它"),  # X的 <phrase>: a place or an owner
 }
 
@@ -184,8 +184,9 @@ class WorldManifest:
         body name or an alias, or a colour word attached to a category word or an alias
         ("red can", 红色的罐子, 红色的马克杯). A lone colour, a category alone and a generic
         head are references only as a whole slot (in a sentence "can" is a verb and 的 an
-        attributive). Fails closed like ``referents``: when a phrase is no word of its own
-        in CJK text (``_stands_alone``: 粉红色的罐子, 红色罐头) the sentence names nothing."""
+        attributive). Fails closed like ``referents``: when a phrase fits no object ("green
+        can") or is no word of its own in CJK text (``_stands_alone``: 粉红色的罐子, 红色罐头),
+        the sentence names nothing."""
         q, spans = _norm(sentence), []
         for i in range(len(q)):
             for w, kind, fits in self._lexicon:
@@ -200,7 +201,7 @@ class WorldManifest:
                           if kind2 in ("category", "name") and (e := _match(q, k, w2)) is not None]
         inner = {s for s in spans for t in spans if t[0] <= s[0] and s[1] <= t[1] and t[:2] != s[:2]}
         outer = [s for s in spans if s not in inner]
-        if not all(_stands_alone(q, i, j) for i, j, _ in outer):
+        if not all(fits and _stands_alone(q, i, j) for i, j, fits in outer):
             return frozenset()
         return frozenset().union(*(s[2] for s in outer))
 
