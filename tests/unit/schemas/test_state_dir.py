@@ -23,6 +23,9 @@ from vector_os_nano.schemas import paths
 
 PKG = Path(vector_os_nano.__file__).resolve().parent
 _REPO = PKG.parent
+# Set, but empty: the child's load_dotenv never fills them from a repo-root .env.
+_NO_KEYS = {k: "" for k in ("DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                            "MOONDREAM_API_KEY")}
 
 
 def test_the_layout_is_the_charters_list() -> None:
@@ -143,7 +146,7 @@ def test_a_dev_turn_writes_only_under_vector_home(tmp_path) -> None:
         {"tool_calls": [{"name": "verify", "input": {"expr": "path_contains('m.txt', 'ok')"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]}))
-    env = {k: v for k, v in os.environ.items() if not k.endswith("_API_KEY")}
+    env = {**os.environ, **_NO_KEYS}
     env.update(HOME=str(real), VECTOR_HOME=str(state), PYTHONPATH=str(_REPO), VECTOR_FAKE_LLM_TOOLS=str(script))
     proc = subprocess.run(
         [sys.executable, "-m", "vector_os_nano.vcli.cli", "-p", "write m.txt", "--json", "--no-permission"],
@@ -166,7 +169,7 @@ def test_a_simulator_start_writes_only_under_vector_home(tmp_path) -> None:
     old.write_text("rooms: {}\n")
     script = tmp_path / "script.json"
     script.write_text(json.dumps({"turns": [{"text": "standing by"}]}))
-    env = {k: v for k, v in os.environ.items() if not k.endswith("_API_KEY")}
+    env = {**os.environ, **_NO_KEYS}
     env.update(HOME=str(real), VECTOR_HOME=str(state), PYTHONPATH=str(_REPO), VECTOR_NAV_STACK="",
                VECTOR_FAKE_LLM_TOOLS=str(script))
     proc = subprocess.run(
@@ -174,7 +177,9 @@ def test_a_simulator_start_writes_only_under_vector_home(tmp_path) -> None:
         cwd=tmp_path, env=env, capture_output=True, text=True, timeout=400,
     )
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-3000:]
-    assert "moved the scene memory of apartment from ~/.vector_os_nano/worlds" in proc.stderr, proc.stderr[-3000:]
+    said = " ".join(proc.stderr.split())  # rich wraps the console
+    assert "moved the scene memory of apartment from ~/.vector_os_nano/worlds to $VECTOR_HOME/memory" in said, said
+    assert "vlm=none" in said, said  # no key reached the child
     assert len(list((state / "sessions").glob("*.jsonl"))) == 1
     assert (state / "memory" / "apartment" / "scene_graph.yaml").is_file()
     assert list((state / "cache" / "scenes").glob("*.xml"))
