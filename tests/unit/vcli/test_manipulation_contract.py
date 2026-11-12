@@ -123,6 +123,12 @@ def test_every_checkable_goal_the_gate_offers_can_be_met_in_its_world(world) -> 
     for goal in goals:
         contract = task_contract(goal, APT, world)
         assert contract and all(_can_be_met(i, w) for i in contract), (goal, contract)
+        # REF1d-V-02: a place onto the object's own start surface is already true at turn
+        # start, and the contract needs it false there
+        for i in contract:
+            if i.startswith("object_on("):
+                obj, dest = (a.value for a in ast.parse(i, mode="eval").body.args)
+                assert dest != w.pickables[obj].surface, (goal, i)
     assert any("bring me" in g for g in goals) is (w.user is not None), goals
 
 
@@ -183,7 +189,8 @@ def _close_turn(goal: str, verify: str, *, real: bool):
 
 @pytest.mark.parametrize("real", [False, True])
 @pytest.mark.parametrize("verify", ["holding_object('red can')", f"lifted('{_CAN}')",
-                                    "holding_object('red can') and kept_holding('red can')"])
+                                    "holding_object('red can') and kept_holding('red can')",
+                                    "True == holding_object('red can')"])
 @pytest.mark.parametrize("goal", CLOSE_GOALS)
 def test_a_hold_made_by_a_skill_without_a_gripper_hint_needs_a_contract(goal, verify, real) -> None:
     trace, rep = _close_turn(goal, verify, real=real)
@@ -215,7 +222,10 @@ def test_a_gripper_turn_that_asserts_no_possession_or_placement_stays_as_it_was(
     ("object_on('x', 't')", {"place"}), ("released('x')", {"place"}), ("object_at('x', 1, 2)", {"place"}),
     ("holding_object('x') and object_on('x', 't')", {"grasp", "place"}),
     ("not holding_object('x')", set()), ("holding_object('x') or True", set()),
-    ("holding_object('x') == False", set()), ("near_object('x')", set()), ("holding_object(", set()), ("", set()),
+    ("True == holding_object('x')", {"grasp"}), ("True == object_on('x', 't')", {"place"}),
+    ("True == (holding_object('x') and lifted('x'))", {"grasp"}),
+    ("holding_object('x') == False", set()), ("False == holding_object('x')", set()),
+    ("True != holding_object('x')", set()), ("True == (not holding_object('x'))", set()), ("near_object('x')", set()), ("holding_object(", set()), ("", set()),
 ])
 def test_verify_intents_reads_only_asserted_manipulation_oracles(expr, want) -> None:
     assert verify_intents(expr) == frozenset(want)

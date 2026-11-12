@@ -116,16 +116,16 @@ def has_necessary_manip_oracle(expr: str | None, names: frozenset[str] = _HOLD) 
 
 def _asserted_calls(node: ast.AST) -> list[ast.Call]:
     """Calls whose truth the verify ASSERTS: the call, an ``and`` conjunct, or
-    ``<call> == True`` — never under ``not`` / ``or`` / an ordering."""
+    ``<call> == True`` or ``True == <call>`` (the classifier grades both, REF1d-V-01) —
+    never under ``not`` / ``or`` / an ordering."""
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         return [node]
     if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
         return [c for v in node.values for c in _asserted_calls(v)]
-    if (
-        isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq)
-        and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is True
-    ):
-        return _asserted_calls(node.left)
+    if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+        sides = (node.left, node.comparators[0])
+        return [c for i, s in enumerate(sides) if isinstance(s, ast.Constant) and s.value is True
+                for c in _asserted_calls(sides[1 - i])]
     return []
 
 
@@ -254,12 +254,13 @@ def _sentence(world: Any, goal_text: str) -> tuple[str, str | None, str | None] 
 
 
 def checkable_goals(world: Any, oracle_names: frozenset[str]) -> list[str]:
-    """``_EXAMPLES`` filled with *world*'s first object and surface, each only when this
+    """``_EXAMPLES`` filled with *world*'s first object and first surface other than the one
+    it starts on (a place there holds at turn start: REF1d-V-02), each only when this
     world can prove its contract (REF1c-V-03): every item a ground-truth predicate here
     with every slot bound, and a fetch only where the world has a user to deliver to."""
     pk = next(iter(world.pickables.values()))
     zo = next((a for a in pk.aliases if not a.isascii()), pk.english)
-    s = next(iter(world.surfaces), "").replace("_", " ")
+    s = next((n for n in world.surfaces if n != pk.surface), "").replace("_", " ")
     goals = [e.format(o=pk.english, zo=zo, s=s) for e in _EXAMPLES]
     return [g for g in goals if (c := task_contract(g, oracle_names, world.id)) and all(
         classify_verify_expr(i, oracle_names) == "GROUNDED" and not unbound_reason(i, g, world.id)
