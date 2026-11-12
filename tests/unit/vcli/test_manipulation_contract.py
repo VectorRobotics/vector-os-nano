@@ -102,3 +102,13 @@ def test_every_checkable_goal_the_gate_offers_compiles_a_bound_contract(world) -
     for goal in goals:
         contract = task_contract(goal, APT, world)
         assert contract and not any("None" in item for item in contract), (goal, contract)
+
+
+@pytest.mark.parametrize("goal", ["把绿色的放到餐桌上", "put the green one on the dining table"])
+def test_the_gate_takes_the_object_the_contract_bound(goal) -> None:
+    """I4E-VER-1: a colour reference beside a surface word is proven AND verified (the
+    gate once resolved the whole sentence, which also held the scenery word)."""
+    t = _one_row(goal, "object_on('green bottle', 'dining_table')", "apartment")
+    assert t.contract == ("object_on('pickable_bottle_green', 'dining_table')",)
+    assert turn_reject_reason(t, APT) == ""
+    assert turn_reject_reason(_one_row(goal, "object_on('red can', 'dining_table')", "apartment"), APT) != ""

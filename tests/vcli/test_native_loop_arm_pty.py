@@ -134,7 +134,8 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
             path=_Path("/tmp/native_arm.jsonl"),
         )
         trace = eng.run_turn_native(
-            "把香蕉抓起来拿在手里", session=session
+            # a closed form (REF1c: a manipulation verifies only through a proven contract)
+            "把香蕉抓起来", session=session
         )
 
         # EXACTLY one StepRecord — one (action-chain -> verify) pair.
@@ -165,6 +166,7 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
         report = VerdictReport.from_trace(trace, names)
         assert report.verified is True, f"a grounded grasp must verify; {report.evidence}"
         assert report.evidence == "GROUNDED"
+        assert report.goal_check == "proven", report.reject_reason
         assert report.exit_code() == 0
         unbind_fake_sim(sim)
     finally:
