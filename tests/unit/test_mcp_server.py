@@ -1,517 +1,118 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Tests for MCP server integration.
+"""vector-os-mcp (hermetic): the loopback-only bind, a dev-world stdio smoke, and the
+permission rule (nobody can be asked over MCP: an ``ask`` is refused unless --allow
+names the tool; an intrinsic deny is never lifted).
 
-Tests cover:
-- VectorMCPServer construction with a mock agent
-- Tool listing (skills + natural_language meta-tool)
-- Tool call routing (natural_language and direct skill)
-- Resource listing
-- Resource reading (world state, objects, robot, camera)
-- create_sim_stack() with MuJoCo mocked out
+The server is the real ``python -m vector_os_nano.mcp`` driven by the SDK's client;
+the simulator half of the smoke is tests/e2e_repl/test_e13_mcp_stdio.py.
 """
-
 from __future__ import annotations
 
-import asyncio
-import base64
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+import subprocess
+import sys
 
 import pytest
 
-from vector_os_nano.mcp.server import VectorMCPServer, create_sim_stack
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_mock_agent(skill_names: list[str] | None = None) -> MagicMock:
-    """Build a minimal mock Agent with the attributes VectorMCPServer touches."""
-    skill_names = skill_names or ["pick", "place", "home", "scan", "detect"]
-
-    # Build fake skill schemas
-    schemas = []
-    for name in skill_names:
-        schemas.append(
-            {
-                "name": name,
-                "description": f"Execute the {name} skill",
-                "parameters": {},
-            }
-        )
-
-    registry = MagicMock()
-    registry.to_schemas.return_value = schemas
-    registry.list_skills.return_value = skill_names
-
-    world = MagicMock()
-    world.to_dict.return_value = {
-        "objects": [{"id": "banana", "label": "banana", "x": 0.2, "y": 0.1, "z": 0.05}],
-        "robot": {"joint_positions": [0.0, 0.0, 0.0, 0.0, 0.0], "gripper": "open"},
-    }
-
-    arm = MagicMock()
-    arm.render.return_value = None
-
-    agent = MagicMock()
-    agent._skill_registry = registry
-    agent.world = world
-    agent._arm = arm
-
-    return agent
-
-
-def _make_mock_engine() -> MagicMock:
-    """Build a minimal mock VectorEngine."""
-    engine = MagicMock()
-    # Every MCP text turn goes through the native producer; the reply is the
-    # model's last words on the session.
-    engine.run_turn_native.return_value = MagicMock()
-    return engine
-
-
-def _make_mock_session() -> MagicMock:
-    """Build a minimal mock Session."""
-    session = MagicMock()
-    session._entries = []
-    session.last_assistant_text.return_value = '{"success": true, "status": "completed"}'
-    return session
-
-
-def _make_server(skill_names: list[str] | None = None) -> tuple:
-    """Build (server, agent, engine, session) for testing."""
-    agent = _make_mock_agent(skill_names)
-    engine = _make_mock_engine()
-    session = _make_mock_session()
-    server = VectorMCPServer(agent, engine, session)
-    return server, agent, engine, session
-
-
-# ---------------------------------------------------------------------------
-# TestVectorMCPServer
-# ---------------------------------------------------------------------------
-
-
-class TestVectorMCPServer:
-    """Test MCP server construction and handler registration."""
-
-    def test_server_creation(self) -> None:
-        """Server creates successfully with a mock agent."""
-        server, agent, engine, session = _make_server()
-        assert server._server is not None
-        assert server._agent is agent
-
-    def test_server_name(self) -> None:
-        """Underlying MCP server has the correct name."""
-        server, agent, engine, session = _make_server()
-        assert server._server.name == "vector-os-nano"
-
-    def test_list_tools_includes_natural_language(self) -> None:
-        """list_tools returns the natural_language meta-tool."""
-        server, agent, engine, session = _make_server([])
-
-        # Directly call the registered list_tools handler
-        tool_list = asyncio.run(_invoke_list_tools(server))
-        names = [t.name for t in tool_list]
-        assert "natural_language" in names
-
-    def test_list_tools_includes_skills(self) -> None:
-        """list_tools returns one tool per registered skill."""
-        skills = ["pick", "place", "home"]
-        server, agent, engine, session = _make_server(skills)
-
-        tool_list = asyncio.run(
-            _invoke_list_tools(server)
-        )
-        names = [t.name for t in tool_list]
-        for skill in skills:
-            assert skill in names
-
-    def test_list_tools_count(self) -> None:
-        """Tool count equals skill count + 1 (natural_language)."""
-        skills = ["pick", "place", "home", "scan", "detect"]
-        server, agent, engine, session = _make_server(skills)
-
-        tool_list = asyncio.run(
-            _invoke_list_tools(server)
-        )
-        # skills + natural_language + diagnostics + debug_perception + run_goal
-        assert len(tool_list) == len(skills) + 4
-
-    def test_list_resources_count(self) -> None:
-        """list_resources returns 6 resources (3 world + 3 cameras)."""
-        server, agent, engine, session = _make_server()
-
-        resource_list = asyncio.run(
-            _invoke_list_resources(server)
-        )
-        assert len(resource_list) == 7
-
-    def test_list_resources_uris(self) -> None:
-        """list_resources URIs include world:// and camera:// schemes."""
-        server, agent, engine, session = _make_server()
-
-        resource_list = asyncio.run(
-            _invoke_list_resources(server)
-        )
-        uris = [str(r.uri) for r in resource_list]
-        assert "world://state" in uris
-        assert "world://objects" in uris
-        assert "world://robot" in uris
-        assert "camera://overhead" in uris
-        assert "camera://front" in uris
-        assert "camera://side" in uris
-
-    def test_call_tool_natural_language(self) -> None:
-        """call_tool natural_language routes through the native producer."""
-        server, agent, engine, session = _make_server()
-
-        result = asyncio.run(
-            _invoke_call_tool(server, "natural_language", {"instruction": "pick banana"})
-        )
-        assert len(result) == 1
-        assert result[0].type == "text"
-        engine.run_turn_native.assert_called_once()
-
-    def test_call_tool_direct_skill(self) -> None:
-        """call_tool for a named skill routes through the native producer."""
-        server, agent, engine, session = _make_server(["home"])
-
-        result = asyncio.run(
-            _invoke_call_tool(server, "home", {})
-        )
-        assert len(result) == 1
-        assert result[0].type == "text"
-        engine.run_turn_native.assert_called_once()
-
-    def test_call_tool_with_arguments(self) -> None:
-        """call_tool passes a structured instruction to the native producer."""
-        server, agent, engine, session = _make_server(["pick"])
-
-        asyncio.run(
-            _invoke_call_tool(server, "pick", {"object_label": "mug"})
-        )
-        engine.run_turn_native.assert_called_once()
-        call_args = engine.run_turn_native.call_args[0]
-        assert "pick" in call_args[0]
-        assert "mug" in call_args[0]
-
-    def test_read_resource_world_state(self) -> None:
-        """read_resource world://state returns JSON text."""
-        server, agent, engine, session = _make_server()
-
-        contents = asyncio.run(
-            _invoke_read_resource(server, "world://state")
-        )
-        assert len(contents) == 1
-        assert contents[0].mime_type == "application/json"
-        assert isinstance(contents[0].content, str)
-        assert "objects" in contents[0].content
-
-    def test_read_resource_world_objects(self) -> None:
-        """read_resource world://objects returns JSON list."""
-        import json
-
-        server, agent, engine, session = _make_server()
-
-        contents = asyncio.run(
-            _invoke_read_resource(server, "world://objects")
-        )
-        assert len(contents) == 1
-        data = json.loads(contents[0].content)
-        assert isinstance(data, list)
-
-    def test_read_resource_robot_state(self) -> None:
-        """read_resource world://robot returns JSON dict."""
-        import json
-
-        server, agent, engine, session = _make_server()
-
-        contents = asyncio.run(
-            _invoke_read_resource(server, "world://robot")
-        )
-        assert len(contents) == 1
-        data = json.loads(contents[0].content)
-        assert isinstance(data, dict)
-
-    def test_read_resource_camera_no_arm(self) -> None:
-        """read_resource camera://overhead raises ValueError when arm absent."""
-        server, agent, engine, session = _make_server()
-        agent._arm = None
-
-        with pytest.raises(ValueError, match="Camera render not available"):
-            asyncio.run(
-                _invoke_read_resource(server, "camera://overhead")
-            )
-
-    def test_read_resource_camera_overhead(self) -> None:
-        """read_resource camera://overhead returns base64 PNG bytes."""
-        import numpy as np
-
-        server, agent, engine, session = _make_server()
-        fake_bgr = np.zeros((10, 10, 3), dtype=np.uint8)
-        fake_bgr[:, :, 1] = 255
-        agent._arm.render.return_value = fake_bgr
-
-        contents = asyncio.run(
-            _invoke_read_resource(server, "camera://overhead")
-        )
-        assert len(contents) == 1
-        assert isinstance(contents[0].content, bytes)
-        assert contents[0].mime_type == "image/png"
-
-    def test_read_resource_unknown_uri(self) -> None:
-        """read_resource raises ValueError for unknown URIs."""
-        server, agent, engine, session = _make_server()
-
-        with pytest.raises(ValueError, match="Unknown resource URI"):
-            asyncio.run(
-                _invoke_read_resource(server, "unknown://foo")
-            )
-
-
-# ---------------------------------------------------------------------------
-# TestCreateSimAgent
-# ---------------------------------------------------------------------------
-
-
-class TestCreateSimAgent:
-    """Test simulation agent factory."""
-
-    def test_create_sim_stack_returns_agent(self) -> None:
-        """create_sim_stack() returns an Agent instance."""
-        with _patch_mujoco():
-            agent = create_sim_stack(headless=True)
-        assert isinstance(agent, Agent)
-
-    def test_create_sim_stack_headless(self) -> None:
-        """create_sim_stack(headless=True) creates MuJoCoArm with gui=False."""
-        with _patch_mujoco() as mock_arm_cls:
-            create_sim_stack(headless=True)
-        mock_arm_cls.assert_called_once_with(gui=False)
-
-    def test_create_sim_stack_with_viewer(self) -> None:
-        """create_sim_stack(headless=False) creates MuJoCoArm with gui=True."""
-        with _patch_mujoco() as mock_arm_cls:
-            create_sim_stack(headless=False)
-        mock_arm_cls.assert_called_once_with(gui=True)
-
-    def test_create_sim_stack_connects_arm(self) -> None:
-        """create_sim_stack() calls arm.connect()."""
-        with _patch_mujoco() as mock_arm_cls:
-            create_sim_stack(headless=True)
-        mock_arm_cls.return_value.connect.assert_called_once()
-
-    def test_create_sim_stack_closes_gripper(self) -> None:
-        """create_sim_stack() closes the gripper after creation."""
-        with _patch_mujoco_full() as (mock_arm_cls, mock_gripper_cls, _):
-            create_sim_stack(headless=True)
-        mock_gripper_cls.return_value.close.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Async test helpers (invoke registered handlers directly)
-# ---------------------------------------------------------------------------
-
-
-async def _invoke_list_tools(server: VectorMCPServer) -> list[Any]:
-    """Call the list_tools handler registered on the server."""
-    from mcp import types as mcp_types
-
-    handler = server._server.request_handlers.get(mcp_types.ListToolsRequest)
-    if handler is None:
-        pytest.fail("list_tools handler not registered")
-    req = mcp_types.ListToolsRequest(method="tools/list", params=None)
-    result = await handler(req)
-    return result.root.tools  # type: ignore[attr-defined]
-
-
-async def _invoke_list_resources(server: VectorMCPServer) -> list[Any]:
-    """Call the list_resources handler registered on the server."""
-    from mcp import types as mcp_types
-
-    handler = server._server.request_handlers.get(mcp_types.ListResourcesRequest)
-    if handler is None:
-        pytest.fail("list_resources handler not registered")
-    req = mcp_types.ListResourcesRequest(method="resources/list", params=None)
-    result = await handler(req)
-    return result.root.resources  # type: ignore[attr-defined]
-
-
-async def _invoke_call_tool(
-    server: VectorMCPServer, name: str, arguments: dict
-) -> list[Any]:
-    """Call the call_tool handler registered on the server."""
-    from mcp import types as mcp_types
-
-    handler = server._server.request_handlers.get(mcp_types.CallToolRequest)
-    if handler is None:
-        pytest.fail("call_tool handler not registered")
-    params = mcp_types.CallToolRequestParams(name=name, arguments=arguments)
-    req = mcp_types.CallToolRequest(method="tools/call", params=params)
-    result = await handler(req)
-    return result.root.content  # type: ignore[attr-defined]
-
-
-async def _invoke_read_resource(server: VectorMCPServer, uri: str) -> list[Any]:
-    """Call the read_resource handler and return ReadResourceContents list."""
-    from mcp import types as mcp_types
-    from mcp.server.lowlevel.helper_types import ReadResourceContents
-    from pydantic import AnyUrl
-
-    handler = server._server.request_handlers.get(mcp_types.ReadResourceRequest)
-    if handler is None:
-        pytest.fail("read_resource handler not registered")
-
-    # The handler reads req.params.uri — wrap the string in AnyUrl
-    params = mcp_types.ReadResourceRequestParams(uri=AnyUrl(uri))  # type: ignore[call-arg]
-    req = mcp_types.ReadResourceRequest(method="resources/read", params=params)
-    result = await handler(req)
-    # result.root.contents is a list[TextResourceContents | BlobResourceContents]
-    raw_contents = result.root.contents  # type: ignore[attr-defined]
-
-    # Convert to ReadResourceContents for easy assertions
-    out: list[ReadResourceContents] = []
-    for item in raw_contents:
-        if hasattr(item, "text"):
-            out.append(ReadResourceContents(content=item.text, mime_type=item.mimeType))
-        elif hasattr(item, "blob"):
-            # blob is base64 encoded string in MCP
-            raw_bytes = base64.b64decode(item.blob)
-            out.append(ReadResourceContents(content=raw_bytes, mime_type=item.mimeType))
-    return out
-
-
-# ---------------------------------------------------------------------------
-# MuJoCo mock context managers
-# ---------------------------------------------------------------------------
-
-
-def _patch_mujoco():
-    """Patch MuJoCoArm for create_sim_stack tests.
-
-    Patches the class in its source module (hardware.sim.mujoco_arm) because
-    create_sim_stack() uses a local `from ... import` inside the function body.
-    Returns the mock arm class as the context manager value.
-    """
-    mock_arm = MagicMock()
-    mock_arm.get_joint_positions.return_value = [0.0] * 5
-    mock_arm.get_object_positions.return_value = {}
-    mock_arm._connected = True
-    mock_arm.name = "mujoco_so101"
-
-    mock_gripper = MagicMock()
-    mock_perception = MagicMock()
-
-    mock_arm_cls = MagicMock(return_value=mock_arm)
-    mock_gripper_cls = MagicMock(return_value=mock_gripper)
-    mock_perception_cls = MagicMock(return_value=mock_perception)
-
-    import contextlib
-
-    @contextlib.contextmanager
-    def _ctx():
-        with (
-            patch("vector_os_nano.hardware.sim.mujoco_arm.MuJoCoArm", mock_arm_cls),
-            patch("vector_os_nano.hardware.sim.mujoco_gripper.MuJoCoGripper", mock_gripper_cls),
-            patch("vector_os_nano.hardware.sim.mujoco_perception.MuJoCoPerception", mock_perception_cls),
-            patch("vector_os_nano.mcp.server.MuJoCoArm", mock_arm_cls, create=True),
-            patch("vector_os_nano.mcp.server.MuJoCoGripper", mock_gripper_cls, create=True),
-            patch("vector_os_nano.mcp.server.MuJoCoPerception", mock_perception_cls, create=True),
-        ):
-            yield mock_arm_cls
-
-    return _ctx()
-
-
-def _patch_mujoco_full():
-    """Patch MuJoCoArm, MuJoCoGripper, MuJoCoPerception for fuller tests."""
-    import contextlib
-
-    mock_arm = MagicMock()
-    mock_arm.get_joint_positions.return_value = [0.0] * 5
-    mock_arm.get_object_positions.return_value = {}
-    mock_arm._connected = True
-    mock_arm.name = "mujoco_so101"
-
-    mock_gripper = MagicMock()
-    mock_perception = MagicMock()
-
-    mock_arm_cls = MagicMock(return_value=mock_arm)
-    mock_gripper_cls = MagicMock(return_value=mock_gripper)
-    mock_perception_cls = MagicMock(return_value=mock_perception)
-
-    @contextlib.contextmanager
-    def _ctx():
-        with (
-            patch("vector_os_nano.hardware.sim.mujoco_arm.MuJoCoArm", mock_arm_cls),
-            patch("vector_os_nano.hardware.sim.mujoco_gripper.MuJoCoGripper", mock_gripper_cls),
-            patch("vector_os_nano.hardware.sim.mujoco_perception.MuJoCoPerception", mock_perception_cls),
-            patch("vector_os_nano.mcp.server.MuJoCoArm", mock_arm_cls, create=True),
-            patch("vector_os_nano.mcp.server.MuJoCoGripper", mock_gripper_cls, create=True),
-            patch("vector_os_nano.mcp.server.MuJoCoPerception", mock_perception_cls, create=True),
-        ):
-            yield mock_arm_cls, mock_gripper_cls, mock_perception_cls
-
-    return _ctx()
-
-
-# Import Agent for isinstance check in TestCreateSimAgent
-from vector_os_nano.core.agent import Agent  # noqa: E402
-
-
-# ---------------------------------------------------------------------------
-# create_hardware_stack: calibration comes only from Calibration.load (R2F1V-02)
-# ---------------------------------------------------------------------------
-
-
-def _hardware_agent(tmp_path, monkeypatch, body: str) -> Agent:
-    """create_hardware_stack with fake camera/VLM/tracker and *body* as calibration.file."""
-    import sys
-    import types
-
-    import vector_os_nano.mcp.server as srv
-
-    cal = tmp_path / "workspace_calibration.yaml"
-    cal.write_text(body)
-
-    class _Cam:
-        def __init__(self, **kw):
-            pass
-
-        def connect(self):
-            pass
-
-    fakes = {"realsense": {"RealSenseCamera": _Cam}, "vlm": {"VLMDetector": object},
-             "tracker": {"EdgeTAMTracker": object},
-             "pipeline": {"PerceptionPipeline": lambda **kw: object()}}
-    for mod, attrs in fakes.items():
-        fake = types.ModuleType(mod)
-        fake.__dict__.update(attrs)
-        monkeypatch.setitem(sys.modules, f"vector_os_nano.perception.{mod}", fake)
-    monkeypatch.setattr(srv, "_load_config_with_fallback",
-                        lambda: {"calibration": {"file": str(cal)}, "arm": {"port": "/nonexistent"}})
-    monkeypatch.setattr(srv, "_start_camera_viewer", lambda p: None)
-    return srv.create_hardware_stack()
-
-
-@pytest.mark.parametrize("body", ["foo: 1\n", "transform_matrix: [[1, 0], [0, 1]]\n"])
-def test_hardware_stack_never_gets_an_identity_calibration_from_a_bad_file(tmp_path, monkeypatch, body):
-    """perception:calibration-missing-silent-camera-frame on vector-os-mcp --hardware: a yaml
-    with no 4x4 transform_matrix became an identity Calibration() poked into the Agent."""
-    ctx = _hardware_agent(tmp_path, monkeypatch, body)._build_context()
-    assert ctx.calibration is None
-    assert "unreadable" in ctx.services["calibration_error"]
-
-
-def test_hardware_stack_loads_a_valid_calibration_file(tmp_path, monkeypatch):
-    import numpy as np
-
-    m = [[1, 0, 0, 0.1], [0, 1, 0, 0.2], [0, 0, 1, 0.3], [0, 0, 0, 1]]
-    ctx = _hardware_agent(tmp_path, monkeypatch, f"transform_matrix: {m}\n")._build_context()
-    assert np.allclose(ctx.calibration._matrix, m)
-    assert "calibration_error" not in ctx.services
+from tests.harness.mcp_client import drive_mcp, run
+from vector_os_nano.mcp.server import LOOPBACK, bind_refusal
+
+
+@pytest.mark.parametrize("transport", ["sse", "streamable-http"])
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "", "192.168.1.5", "127.0.0.2",
+                                  "localhost.attacker.example", "127.0.0.1 "])
+def test_a_network_transport_refuses_every_non_loopback_host(transport, host) -> None:
+    why = bind_refusal(transport, host)
+    assert why and repr(host) in why and "authentication" in why
+
+
+@pytest.mark.parametrize("host", LOOPBACK)
+def test_loopback_binds_and_stdio_never_binds(host) -> None:
+    assert bind_refusal("streamable-http", host) == "" and bind_refusal("sse", host) == ""
+    assert bind_refusal("stdio", "0.0.0.0") == ""  # stdio opens no socket
+
+
+def test_the_server_exits_before_building_anything_on_a_public_bind() -> None:
+    r = subprocess.run([sys.executable, "-m", "vector_os_nano.mcp", "--transport", "streamable-http",
+                        "--host", "0.0.0.0"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2, r
+    assert "refusing to listen on '0.0.0.0'" in r.stderr and "authentication" in r.stderr
+    assert "Starting" not in r.stderr and r.stdout == ""
+
+
+def test_stdio_smoke_dev_world(tmp_path) -> None:
+    script = {"steps": [{"when": "你好", "text": "你好！", "tool_calls": [], "stop_reason": "end_turn"}]}
+
+    async def calls(c):
+        tools = {t.name for t in (await c.list_tools()).tools}
+        resources = [str(r.uri) for r in (await c.list_resources()).resources]
+        status = (await c.call_tool("status", {})).structured_content
+        turn = await run(c, "你好")
+        stopped = (await c.call_tool("stop", {})).structured_content["result"]
+        try:
+            await c.read_resource("camera://frame")
+            camera = "read"
+        except Exception as exc:  # noqa: BLE001 — the SDK raises the server's error
+            camera = str(exc)
+        return tools, resources, status, turn, stopped, camera
+
+    tools, resources, status, turn, stopped, camera = drive_mcp(tmp_path, script, calls)
+    assert tools == {"run", "stop", "status"}  # skills are the model's choice inside run
+    assert resources == ["camera://frame"]
+    assert status["body"] == "none (dev world)" and status["world"] == "dev"
+    assert status["turn_running"] is False and status["allowed"] == []
+    assert turn["answer"] == "你好！"
+    v = turn["verdict"]  # a chat turn: the -p VECTOR_VERDICT shape, nothing claimed
+    assert v["evidence"] == "NO_TRACE" and v["verified"] is False and v["goal_check"] == "unchecked"
+    assert v["goal"] == "你好" and v["error"] == "" and turn["refused"] == []
+    assert stopped.startswith("stopped (") and "no LLM call" in stopped
+    assert "no camera" in camera
+
+
+def _write_turn(tmp_path, args: tuple[str, ...]):
+    target = tmp_path / "hello.txt"
+    script = {"steps": [
+        {"when": "hello.txt", "tool_calls": [
+            {"name": "file_write", "input": {"file_path": str(target), "content": "hello\n"}}]},
+        {"when": "Wrote", "tool_calls": [
+            {"name": "verify", "input": {"expr": f"path_contains('{target}', 'hello')"}}]},
+        {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
+        {"when": "Permission denied", "text": "I was not allowed to write it.", "tool_calls": [],
+         "stop_reason": "end_turn"},
+    ]}
+    turn = drive_mcp(tmp_path, script, lambda c: run(c, f"在 {tmp_path} 写一个 hello.txt"),
+                     args=args, cwd=tmp_path)
+    return turn, target
+
+
+@pytest.mark.parametrize("args", [(), ("--allow", "bash,file_edit")], ids=["no-allow", "other-tools"])
+def test_an_ask_is_refused_with_the_reason_unless_allowed_by_name(tmp_path, args) -> None:
+    turn, target = _write_turn(tmp_path, args)
+    assert not target.exists()  # never silently allowed
+    assert any(r.startswith("file_write:") for r in turn["refused"]), turn
+    assert "--allow" in turn["note"]
+    assert turn["verdict"]["verified"] is False
+
+
+def test_the_allow_flag_allows_exactly_the_named_tool(tmp_path) -> None:
+    turn, target = _write_turn(tmp_path, ("--allow", "file_write"))
+    assert target.read_text(encoding="utf-8") == "hello\n"
+    assert turn["refused"] == [] and "note" not in turn
+    v = turn["verdict"]
+    assert v["verified"] is True and v["evidence"] == "GROUNDED", v
+    assert [s["verify"] for s in v["per_step"]] == [f"path_contains('{target}', 'hello')"]
+
+
+def test_allow_never_lifts_an_intrinsic_deny(tmp_path) -> None:
+    keep = tmp_path / "keep" / "keep.txt"
+    keep.parent.mkdir()
+    keep.write_text("keep\n", encoding="utf-8")
+    script = {"steps": [
+        {"when": "清空", "tool_calls": [{"name": "bash", "input": {"command": f"rm -rf {keep.parent}"}}]},
+        {"when": "", "text": "refused", "tool_calls": [], "stop_reason": "end_turn"},
+    ]}
+    turn = drive_mcp(tmp_path, script, lambda c: run(c, f"清空 {keep.parent}"),
+                     args=("--allow", "bash"), cwd=tmp_path)
+    assert keep.read_text(encoding="utf-8") == "keep\n"
+    assert any(r.startswith("bash:") for r in turn["refused"]), turn

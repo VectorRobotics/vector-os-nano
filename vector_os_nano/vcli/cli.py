@@ -16,16 +16,15 @@ import logging
 import os
 import signal
 import sys
-from dataclasses import replace
 from typing import Any
 
 from rich.markup import escape
 
 from vector_os_nano.vcli.render import (
-    NO_REPLY, TEAL, _chat_turn, _gait_backend, _setup_explore_events, _trace_acted, console,
+    NO_REPLY, TEAL, _setup_explore_events, console,
 )
 from vector_os_nano.vcli.repl import _p0_stop, run_repl
-from vector_os_nano.vcli.runtime import build_runtime, run_turn
+from vector_os_nano.vcli.runtime import build_runtime, graded_turn
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     from vector_os_nano.version import __version__
@@ -223,8 +222,9 @@ def run_one_turn(args: Any) -> int:
     """Run ONE turn for ``args.print_prompt`` non-interactively and return an exit code.
 
     The machine-checkable acceptance entrypoint. It builds the same runtime as the
-    REPL (``build_runtime``), runs the turn SYNCHRONOUSLY through ``run_turn``, prints the model's own words, then builds a frozen ``VerdictReport``
-    from the EXISTING gate (never a second opinion). Under ``--json`` it emits
+    REPL (``build_runtime``), runs and grades the turn SYNCHRONOUSLY through
+    ``graded_turn`` (the EXISTING gate, never a second opinion) and prints the
+    model's own words. Under ``--json`` it emits
     exactly one stdout line ``VECTOR_VERDICT {<json>}`` (all Rich output is already
     routed to stderr by ``main``): the report, whose ``acted`` says whether a
     side-effecting tool ran.
@@ -232,7 +232,6 @@ def run_one_turn(args: Any) -> int:
     Exit codes: 0 = verified, or a chat turn (no action, no verify: nothing claimed);
     2 = ran, not verified; 1 = error / no trace.
     """
-    from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
     from vector_os_nano.vcli.verdict import EXIT_VERIFIED, VerdictReport
 
     prompt = args.print_prompt or ""
@@ -257,36 +256,19 @@ def run_one_turn(args: Any) -> int:
         return _emit(VerdictReport.no_trace(goal=prompt, error=str(exc)))
 
     engine = rt.engine
-    if engine._backend is None:
-        key_env = rt.app_state["credentials"].key_env
-        return _emit(VerdictReport.no_trace(goal=prompt, error=f"no LLM: {key_env} is not set"))
-
     # P0 stop: the registered stop skill's words, no LLM call.
     if engine.is_stop(prompt):
         _p0_stop(engine, prompt, rt.app_state, rt.session)
         return _emit(VerdictReport.no_trace(goal=prompt, error="stopped (P0, no LLM call)"))
 
     # ask_permission=None: headless denies every 'ask' (--no-permission allows).
-    try:
-        trace, answer, _ = run_turn(rt, prompt)
-    except Exception as exc:  # noqa: BLE001
-        return _emit(VerdictReport.no_trace(goal=prompt, error=f"native turn failed: {exc}"))
+    answer, report, _ = graded_turn(rt, prompt)
     if answer:
         console.print(escape(answer))
-    if _chat_turn(trace):
+    if report is None:  # a chat turn: nothing claimed
         if not answer:
             console.print(f"[yellow]{NO_REPLY}[/]")
         return _emit(VerdictReport.no_trace(goal=prompt), chat=True)
-
-    # Build the verdict from the EXISTING gate, single-sourced from the SAME
-    # namespace GoalVerifier uses. Fail CLOSED on any error reading the gate.
-    try:
-        agent = getattr(engine, "_agent", None)
-        oracle_names = verify_oracle_names(agent, engine)
-        report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
-    except Exception as exc:  # noqa: BLE001
-        report = replace(VerdictReport.no_trace(goal=prompt, error=f"verdict failed: {exc}"),
-                         acted=_trace_acted(trace))
     return _emit(report)
 
 

@@ -12,21 +12,3 @@
 # deselected; each names its ledger key and the 2026-10 owner WP, whose release-1.0 owner is:
 # WP15 legacy producer -> R1, WP15 MCP -> R6, WP09 / WP12 skills -> R2.
 
-# MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_server_creation | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_server_name | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_list_tools_includes_natural_language | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_list_tools_includes_skills | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_list_tools_count | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_list_resources_count | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_list_resources_uris | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_natural_language | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_direct_skill | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_with_arguments | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_world_state | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_world_objects | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_robot_state | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_no_arm | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_camera_overhead | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_unknown_uri | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-
