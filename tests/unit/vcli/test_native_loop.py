@@ -977,7 +977,10 @@ def test_a_failed_skill_is_recorded_with_its_message() -> None:
         lambda arm: _Skill("grasp_fake", lambda: None, "holding_object()", fail="ik_unreachable"))
     eng = _make_engine(agent, backend)
     trace = eng.run_turn_native("拿起红色的罐子", session=_session())
-    (step,) = trace.steps
+    # Charter 3.5: no arm counter, so no motion evidence: a failed attempt, closed at once
+    # as its own FAILED row; the model's verify after it is a row of its own.
+    step, _after = trace.steps
+    assert step.failed_attempt is True
     assert step.success is False and "ik_unreachable" in step.error
     assert step.result_data["is_error"] is True and "ik_unreachable" in step.result_data["content"]
     assert _verdict(agent, eng, trace).evidence == "FAILED"
@@ -1117,9 +1120,11 @@ def test_a_declared_housekeeping_stop_does_not_fail_a_met_contract() -> None:
 
 @pytest.mark.parametrize("expr", ["True", "len(get_position()) == 3", "facing(0.0)"])
 def test_a_stop_never_launders_a_failed_turn(expr) -> None:
-    """Verifier P8 through the real producer: the turn skill FAILS ('Unknown turn
-    direction'), then stop and the same re-verify. The stop row supersedes the turn
-    row but its group is not all housekeeping, so it must GROUND on its own."""
+    """Verifier P8 through the real producer: the turn skill errs ('Unknown turn
+    direction') before commanding motion, then stop and the same re-verify. Charter 3.5:
+    that turn was REFUSED, not an action: the verify right after it is a probe (refused
+    unevaluated), and the stop's row carries the refusal; nothing was laundered. The
+    failed-after-motion twin still rejects (test_native_failed_attempts)."""
     stop = _Skill("stop", lambda: None)
     stop.housekeeping = True
     agent = _nav_agent(_Skill("turn_fake", lambda: None, fail="Unknown turn direction"), stop)
@@ -1136,9 +1141,10 @@ def test_a_stop_never_launders_a_failed_turn(expr) -> None:
     trace = eng.run_turn_native("走到坐标 (9.0,3.0) 然后左转90度", session=_session())
     assert trace.contract == ("at_position(9.0, 3.0)",)
     assert [(s.strategy, s.success, s.housekeeping, s.superseded) for s in trace.steps] == [
-        ("navigate", True, False, False), ("turn_fake", False, False, True), ("stop", True, True, False)]
+        ("navigate", True, False, False), ("stop", True, True, False)]
     report = _verdict(agent, eng, trace)
-    assert report.verified is False and report.reject_reason.startswith("native_step_2:")
+    assert report.per_step[1].refused == ("turn_fake: Unknown turn direction",)
+    assert report.verified is True and report.goal_check == "proven", report.reject_reason
 
 
 def test_navigating_twice_to_the_same_target_still_verifies() -> None:

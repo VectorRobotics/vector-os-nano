@@ -366,6 +366,35 @@ def goal_check(trace: ExecutionTrace, oracle_names: frozenset[str]) -> tuple[Goa
     return ("failed", why) if why else ("proven", "")
 
 
+def _recovered(trace: ExecutionTrace, oracle_names: frozenset[str]) -> frozenset[int]:
+    """Charter 3.5 (failed attempts and recovery): the trace indices of the failed
+    attempts a proven goal recovered from -- graded rows the producer recorded as failed
+    attempts that failed, after each of which a GROUNDED graded step proved every contract
+    item again. Nothing unless the goal check is proven; a failed attempt after the last
+    proof of an item (a contract that names only part of the sentence: "go to (9,3) then
+    turn left") is not recovered from and rejects as any failed row."""
+    if goal_check(trace, oracle_names)[0] != "proven":
+        return frozenset()
+    from vector_os_nano.vcli.cognitive.object_goal import backs_contract
+
+    groups, steps, sg_by_name, ev = _graded(trace, oracle_names)
+    world = str(getattr(trace, "world", "") or "")
+    rows = list(zip((g[-1] for g in groups), steps))
+    after = min((max((i for i, s in rows if ev[id(s)][0] == "GROUNDED"
+                      and backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)), default=-1)
+                 for item in trace.contract), default=-1)
+    return frozenset(i for i, s in rows if getattr(s, "failed_attempt", False) is True and not s.success and i < after)
+
+
+def turn_succeeded(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool:
+    """The trace's structural success flag: a step was recorded and every graded step
+    (the latest attempt of each group) succeeded, the failed attempts a proven goal
+    recovered from (``_recovered``) aside. The producer sets ``ExecutionTrace.success``
+    from it, so the flag and ``turn_reject_reason`` agree."""
+    recovered = _recovered(trace, oracle_names)
+    return bool(trace.steps) and all(trace.steps[i].success or i in recovered for i in graded_indices(trace))
+
+
 def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> str:
     """Why the turn is NOT verified, or "" when it is — the ONE done-gate.
 
@@ -382,7 +411,9 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
       sub-goal the contract does not cover ("... then turn left") needs its own
       GROUNDED step. At least one graded row must be GROUNDED: a turn that only
       read or halted has no checked step.
-    - With a contract (``goal_check``), the goal must be proven.
+    - With a contract (``goal_check``), the goal must be proven; then a failed attempt
+      the goal was proven again after (``_recovered``, charter 3.5) does not reject the
+      turn. Without one, every graded FAILED row rejects.
 
     Then the coordinate and the manipulation gates run INDEPENDENTLY (both apply
     when both intents are present). Every rule only rejects (rule 5).
@@ -393,10 +424,14 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
     if isinstance(graded, str):
         return graded
     groups, steps, sg_by_name, ev = graded
+    state, goal_why = goal_check(trace, oracle_names)
+    recovered = _recovered(trace, oracle_names)
     proven = False
     for s, group in zip(steps, groups):
         sg = sg_by_name[s.sub_goal_name]
         evidence, why = ev[id(s)]
+        if group[-1] in recovered:
+            continue
         if evidence == "FAILED":
             return f"{s.sub_goal_name}: {why}"
         # A housekeeping row never stands in for an attempt it superseded: exempt
@@ -413,9 +448,8 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
         proven = proven or evidence == "GROUNDED"
     if not proven:
         return "no checked step"  # every graded row only read / halted: nothing proven
-    state, why = goal_check(trace, oracle_names)
     if state == "failed":
-        return why
+        return goal_why
     return (
         _coordinate_reason(steps, sg_by_name, ev, oracle_names, trace.goal_tree.goal)
         or _manipulation_reason(trace, steps, sg_by_name, ev, oracle_names)

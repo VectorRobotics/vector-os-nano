@@ -33,7 +33,7 @@ from typing import Any, Callable
 
 from vector_os_nano.vcli.cognitive import actor_causation
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
-from vector_os_nano.vcli.cognitive.trace_store import attempt_key, graded_indices
+from vector_os_nano.vcli.cognitive.trace_store import attempt_key, graded_indices, turn_succeeded
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     GoalTree,
@@ -83,8 +83,11 @@ class NativeStepRunner:
       spine grades the latest only — ``trace_store.graded_indices``) and is graded
       against the group's baseline only when it retried or re-checked the latest
       attempt (``_group_baseline``), else on its own step;
-    - a step FAILED when any side-effecting tool of its chain reported an error, not
-      only its last tool;
+    - failed attempts and recovery (charter 3.5): a side-effecting tool that reports an
+      error with no commanded motion (``actor_causation.commanded_nothing``) was REFUSED
+      — not an action, kept on its step's row; one that commanded motion is a FAILED
+      ATTEMPT, recorded at once as its own FAILED row, so a later action's row is
+      neither failed nor backed by it;
     - auto post-verify: an actuating tool whose ``verify_hint`` binds from its call
       params is checked right after it runs; that check closes the step unless the
       model verifies first (then the model's predicate is the step's — but a FAILED
@@ -133,7 +136,7 @@ class NativeStepRunner:
         self._housekeeping: bool = True
         self._last_ok: bool = True      # the chain's last tool did not report an error
         self._acting: set[str] = set()  # the step's side-effecting tools
-        self._acting_failed: bool = False  # one of them reported an error
+        self._refused_calls: list[str] = []  # "<tool>: <message>" refused in this step
         self._last_result: ToolResult | None = None
         # The auto post-verify of the last actuating tool, until the step closes.
         self._pending: dict[str, Any] | None = None
@@ -208,33 +211,43 @@ class NativeStepRunner:
             read_only = bool(tool.is_read_only(params))
         except Exception:  # noqa: BLE001 — no/broken declaration: fail closed (it acts)
             read_only = False
-        if not read_only:
-            self._flush_pending()  # an auto-verified step closes before the next action
-        if not self._step_open:
-            # First skill of a fresh step -> capture the causation baseline NOW.
-            self._baseline = actor_state(self._world, self._agent)
-            self._step_open = True
-        self._chain.append(name)
-        hint = None
-        if not read_only and getattr(tool, "housekeeping", False) is not True:
-            self._housekeeping = False
-        if not read_only:
-            self.actions_dispatched += 1
-            self._step_acted = True
-            self._acted_since_verify = True
-            self._acting.add(name)
-            hint = self._bound_hint(tool, params)
-            self._note_intents(tool)
+        if read_only:
+            self._open_step(actor_state(self._world, self._agent))
+            self._chain.append(name)
+            result = self._run(tool, name, params)
+            self._last_ok, self._last_result = not result.is_error, result
+            return result
+        self.actions_dispatched += 1
+        self._note_intents(tool)
+        hint = self._bound_hint(tool, params)
         before = self._check(hint) if hint else None  # F->T: the hint at the baseline
-        with self._world.actor_epoch() if self._world is not None else contextlib.nullcontext():
-            result = execute_resolved_tool(
-                tool, params, self._ctx, error_prefix=f"Skill '{name}' raised",
-                on_error=lambda _n, exc: logger.debug("native_loop: skill %r raised: %s", name, exc),
-            )
-        self._last_ok = not result.is_error
-        self._acting_failed |= result.is_error and not read_only
-        self._last_result = result
-        if hint and self._last_ok:
+        pre = actor_state(self._world, self._agent)
+        result = self._run(tool, name, params)
+        if result.is_error and actor_causation.commanded_nothing(
+                self._agent, pre, actor_state(self._world, self._agent)):
+            # Charter 3.5: REFUSED — an error with no commanded motion is not an action.
+            # The model reads its message; the row of the step it is in records the try.
+            self._open_step(pre)
+            self._refused_calls.append(f"{name}: {str(result.content).strip().splitlines()[0][:200]}"
+                                       if str(result.content).strip() else name)
+            return result
+        self._flush_pending()  # an auto-verified step closes before the next action
+        self._open_step(pre)
+        self._chain.append(name)
+        if getattr(tool, "housekeeping", False) is not True:
+            self._housekeeping = False
+        self._step_acted = self._acted_since_verify = True
+        self._acting.add(name)
+        self._last_ok, self._last_result = not result.is_error, result
+        if result.is_error:
+            # Charter 3.5: a FAILED ATTEMPT (it commanded motion) closes its step at once,
+            # under its bound hint, so it neither fails nor backs a later action's row;
+            # what follows is graded on a fresh baseline, never an earlier attempt's.
+            self._record(hint or "", False, actor_causation.ActorCaused.NOT_GRADED, ("failed attempt",),
+                         "", self._result_data(), note="failed attempt", failed=True)
+            self._group_baselines.clear()
+            return result
+        if hint:
             ok = self._check(hint)
             caused, channels = self._grade(hint)
             # F->T for THIS action — unless it re-attempts a group whose earlier attempt
@@ -250,6 +263,20 @@ class NativeStepRunner:
                 is_error=result.is_error, metadata=result.metadata,
             )
         return result
+
+    def _open_step(self, baseline: Any) -> None:
+        """Open a step if none is: *baseline* (captured before its first tool) is frozen
+        as its causation baseline."""
+        if not self._step_open:
+            self._baseline, self._step_open = baseline, True
+
+    def _run(self, tool: Any, name: str, params: dict[str, Any]) -> ToolResult:
+        """Run *tool* inside the bound world's actor epoch (only its motion is the actor's)."""
+        with self._world.actor_epoch() if self._world is not None else contextlib.nullcontext():
+            return execute_resolved_tool(
+                tool, params, self._ctx, error_prefix=f"Skill '{name}' raised",
+                on_error=lambda _n, exc: logger.debug("native_loop: skill %r raised: %s", name, exc),
+            )
 
     def _bound_hint(self, tool: Any, params: dict[str, Any]) -> str | None:
         """The tool's ``verify_hint`` bound from its call params, if it binds to a GT
@@ -359,13 +386,11 @@ class NativeStepRunner:
             verify=expr,
             strategy=strategy,
         ))
-        # The step "ran" (success) iff no side-effecting tool of its chain and not its
-        # LAST tool reported an error; a pure check (no tool) records success=True so
-        # the gate keys on GROUNDED/RAN. A failed skill followed by a read and a true
-        # verify is FAILED, never GROUNDED: the skill's own failure is kept, with its
-        # message, in error / result_data (rule 4).
+        # The step "ran" (success) iff its LAST tool did not report an error (a failed
+        # side-effecting tool is its own row: dispatch_skill); a pure check (no tool)
+        # records success=True so the gate keys on GROUNDED/RAN.
         if failed is None:
-            failed = self._acting_failed or (bool(self._chain) and not self._last_ok)
+            failed = bool(self._chain) and not self._last_ok
         key = (goal_id or "native", attempt_key(expr))
         if self._baseline is not None and not self._rechecks(key):  # a new attempt of the group
             self._group_baselines[key] = (self._group_baseline(key) or self._baseline,
@@ -377,11 +402,12 @@ class NativeStepRunner:
             verify_result=verify_result,
             duration_sec=0.0,
             error=str(data.get("content", ""))[:300] if failed else "",
-            result_data=data,
+            result_data=self._with_refused(data),
             actor_caused=actor_caused,
             attempt_of=goal_id or "native",
             channels=channels,
             housekeeping=self._housekeeping,
+            failed_attempt=note == "failed attempt",
         ))
         self._close_step()
 
@@ -396,16 +422,20 @@ class NativeStepRunner:
             out["output"] = res.metadata
         return out
 
+    def _with_refused(self, data: dict[str, Any]) -> dict[str, Any]:
+        """*data* plus the calls refused in this step (charter 3.5: tried, not an action)."""
+        return {**data, "refused": list(self._refused_calls)} if self._refused_calls else data
+
     def _flush_pending(self) -> None:
         """Record a pending auto post-verify as its step's verify (the model did not
         verify the action itself)."""
         auto, self._pending = self._pending, None
         if auto is not None:
             del self._chain[auto["chain"]:]  # reads after the action are not its producer
-            # The hinted tool succeeded (else no auto-verify), but an earlier actuating
-            # tool of the same step may not have: the row is FAILED then.
+            # The hinted tool succeeded (else no auto-verify), and a failed one before it
+            # closed its own step: the row ran.
             self._record(auto["expr"], auto["ok"], auto["caused"], ("auto-verify", *auto["channels"]),
-                         "", auto["data"], note="auto-verify", failed=self._acting_failed)
+                         "", auto["data"], note="auto-verify", failed=False)
 
     def _close_step(self) -> None:
         # Reset the action chain + baseline for the next pair. NEVER carry a baseline
@@ -417,7 +447,7 @@ class NativeStepRunner:
         self._housekeeping = True
         self._last_ok = True
         self._acting = set()
-        self._acting_failed = False
+        self._refused_calls = []
         self._last_result = None
 
     def _rechecks(self, key: tuple[str, str]) -> bool:
@@ -458,7 +488,7 @@ class NativeStepRunner:
         unproven step (grades RAN at best)."""
         self._flush_pending()
         if self._step_open:
-            self._record_open("not verified", success=self._last_ok and not self._acting_failed)
+            self._record_open("not verified", success=self._last_ok)
 
     def _record_open(self, reason: str, *, success: bool) -> None:
         step_name = f"native_step_{self._step_idx}"
@@ -472,7 +502,8 @@ class NativeStepRunner:
         ))
         self._steps.append(StepRecord(
             sub_goal_name=step_name, strategy=strategy, success=success,
-            verify_result=False, duration_sec=0.0, error=reason, result_data=self._result_data(),
+            verify_result=False, duration_sec=0.0, error=reason,
+            result_data=self._with_refused(self._result_data()),
             housekeeping=self._housekeeping,
         ))
         self._close_step()
@@ -518,22 +549,21 @@ class NativeStepRunner:
     ) -> ExecutionTrace:
         """Assemble the ExecutionTrace from the recorded (chain -> verify) steps.
 
-        ``success`` is True iff at least one step was recorded AND every GRADED step
-        (the latest attempt of each sub-goal) succeeded — the structural success flag
-        the verdict reads (the moat is GROUNDED/RAN, not this flag). A superseded
-        attempt is marked for the audit row. An empty trace (no verify ever called) is
-        success=False, so the verdict gate fails closed.
+        ``success`` is the spine's structural success flag (``trace_store.turn_succeeded``:
+        a step was recorded and every GRADED step — the latest attempt of each sub-goal —
+        succeeded, a failed attempt on the way to a proven goal aside); the moat is
+        GROUNDED/RAN, not this flag. A superseded attempt is marked for the audit row. An
+        empty trace (no verify ever called) is success=False, so the gate fails closed.
         """
         goal_tree = GoalTree(goal=goal, sub_goals=tuple(self._sub_goals))
         probe = ExecutionTrace(goal_tree=goal_tree, steps=tuple(self._steps), success=False,
                                total_duration_sec=0.0)
         graded = set(graded_indices(probe))
         steps = tuple(s if i in graded else replace(s, superseded=True) for i, s in enumerate(self._steps))
-        success = bool(steps) and all(steps[i].success for i in graded)
-        return ExecutionTrace(
+        trace = ExecutionTrace(
             goal_tree=goal_tree,
             steps=steps,
-            success=success,
+            success=False,
             total_duration_sec=0.0,
             actions_dispatched=self.actions_dispatched,
             llm_error=llm_error,
@@ -547,6 +577,7 @@ class NativeStepRunner:
             scene=scene,
             world=world,
         )
+        return replace(trace, success=turn_succeeded(trace, self._oracle_names))
 
 
 def verify_word(ok: bool) -> str:
