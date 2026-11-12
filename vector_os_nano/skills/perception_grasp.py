@@ -1213,7 +1213,7 @@ class PerceptionGraspSkill:
             except Exception as exc:  # noqa: BLE001 — a missing model is not "found nothing"
                 return None, resolved, _fail(
                     "perception_failed",
-                    f"The object detector failed on {query!r}: {type(exc).__name__}: {exc}. "
+                    f"The detector failed for {query!r}: {type(exc).__name__}: {exc}. "
                     "Nothing was grasped (never a substitute target).", query=query, cause=str(exc))
             if detections:
                 detection_found = True
