@@ -145,10 +145,10 @@ def test_a_miss_after_motion_then_a_retry_verifies_with_two_rows(retry) -> None:
     trace, rep, rows, text = _run(GOAL, [GRASP, (retry, GRASP[1]), VERIFY],
                                   grasp=grasp if retry == "perception_grasp" else grasp[:1], other=grasp[1:])
     assert rep.verified is True and rep.goal_check == "proven", rep.reject_reason
-    assert rows == [("perception_grasp", False, True, False), (retry, True, False, False)], rows
+    assert rows == [("perception_grasp", False, True, True), (retry, True, False, False)], rows
     assert [(s.evidence, s.failed_attempt) for s in rep.per_step] == [("FAILED", True), ("GROUNDED", False)]
     assert rep.per_step[0].reject_reason.startswith("the action failed: ")
-    assert rep.n_steps == 2 and rep.n_grounded == 1 and trace.success is True
+    assert rep.n_steps == 1 and rep.n_grounded == 1 and trace.success is True  # the miss is audit only
     assert "perception_grasp → failed attempt " in text and "verdict GROUNDED verified=True" in text, text
 
 
@@ -168,7 +168,7 @@ def test_a_failed_attempt_then_a_verify_already_true_is_uncaused() -> None:
     """The grasp welded the bottle and then reported an error: a verify after it has no
     step of its own (no baseline) and grades UNCAUSED, never GROUNDED."""
     _trace, rep, rows, _ = _run(GOAL, [GRASP, VERIFY], grasp=(("held", "lift failed"),))
-    assert rows == [("perception_grasp", False, True, False), ("", True, False, False)], rows
+    assert rows == [("perception_grasp", False, True, True), ("", True, False, False)], rows
     assert rep.per_step[1].evidence == "RAN" and rep.per_step[1].reject_reason.startswith("UNCAUSED")
     assert rep.verified is False and rep.goal_check == "failed"
 
@@ -246,7 +246,7 @@ def test_without_motion_evidence_an_error_is_a_failed_attempt(params, verified) 
     (fail closed), so it is its own FAILED row; the contract proven after it excuses it
     only when the call's bound hint backs the contract item (SP1V-01)."""
     trace, rep, rows, _ = _run(GOAL, [("pick_top_down", params), GRASP, VERIFY], arm_counter=False)
-    assert rows[0] == ("pick_top_down", False, True, False), rows
+    assert rows[0] == ("pick_top_down", False, True, verified), rows  # a bound hint: the proof supersedes it
     assert rep.goal_check == "proven" and rep.verified is verified, rep.reject_reason
 
 
@@ -338,18 +338,94 @@ def test_the_gate_excuses_only_a_failed_attempt_a_proven_goal_recovered_from(row
     from vector_os_nano.vcli.cognitive.trace_store import turn_reject_reason, turn_succeeded
 
     t = _trace(GOAL, rows, contract=contract, end=end)
-    t = replace(t, success=turn_succeeded(t, APT))
+    t = replace(t, success=turn_succeeded(t))
     assert (turn_reject_reason(t, APT) == "") is verified, turn_reject_reason(t, APT)
 
 
 def test_the_gate_never_excuses_without_a_contract() -> None:
+    """No contract: a failed attempt that no later row of the same predicate supersedes
+    rejects, whatever proof follows it."""
     from tests.unit.vcli.test_task_contract_binding import APT
     from vector_os_nano.vcli.cognitive.trace_store import turn_reject_reason, turn_succeeded
 
-    t = _trace("move the green bottle", [(HINT, False, True), (HOLD, True, False)], contract=(), end=())
-    assert turn_succeeded(t, APT) is False
+    t = _trace("move the green bottle", [("at_position(1.0, 2.0)", False, True), (HOLD, True, False)],
+               contract=(), end=())
+    assert turn_succeeded(t) is False
     t = replace(t, success=True)  # even a producer that claims success
     assert turn_reject_reason(t, APT).startswith("s0: the action failed")
+
+
+_RED_HOLD = "holding_object('pickable_can_red')"
+
+
+@pytest.mark.parametrize("rows, attempts, verified, superseded", [
+    ([(HINT, False, True), (HOLD, True, False)], ("native", "grasp_green"), True, True),         # another goal_id, alias
+    ([(HOLD, False, True), (HOLD, True, False)], ("native", "grasp_green"), True, True),         # another goal_id
+    ([(HINT, False, True), (HOLD, True, False)], ("native", "native"), True, True),              # alias, same goal_id
+    ([(HINT, False, True), (_RED_HOLD, True, False)], ("native", "g"), False, False),         # another object
+    ([(HINT, False, True), (f"{HOLD} or True", True, False)], ("native", "g"), False, False),  # not necessarily asserted
+    ([(HINT, False, True), (HOLD, True, False)], ("native", ""), False, False),               # later row not opted in
+    ([("", False, True), (HOLD, True, False)], ("native", "g"), False, False),                # failed row with no predicate
+    ([(HOLD, True, False), (HINT, False, True)], ("g", "native"), False, False),              # failed AFTER the proof
+    ([(HINT, False, False), (HOLD, True, False)], ("native", "g"), False, False),             # a FAILED row, not an attempt
+    ([(HINT, False, True), (HOLD, False, False)], ("native", "g"), False, True),            # the retry failed too
+])
+def test_without_a_contract_a_later_attempt_of_the_same_predicate_supersedes_a_failed_one(
+        rows, attempts, verified, superseded) -> None:
+    """SP1F1V-01 (charter 3.5): the failed attempt is superseded by the next opted-in row
+    that necessarily asserts its predicate (an object by any name the world resolves),
+    whatever goal_id each carries; it never supersedes a row before it."""
+    from tests.unit.vcli.test_task_contract_binding import APT
+    from vector_os_nano.vcli.cognitive.trace_store import graded_indices, turn_reject_reason, turn_succeeded
+
+    t = _trace("move the green bottle", rows, contract=(), end=())
+    t = replace(t, steps=tuple(replace(s, attempt_of=a) for s, a in zip(t.steps, attempts)))
+    t = replace(t, success=turn_succeeded(t))
+    assert (turn_reject_reason(t, APT) == "") is verified, turn_reject_reason(t, APT)
+    assert graded_indices(t) == ([1] if superseded else [0, 1]), graded_indices(t)
+
+
+class _FlakyNav(_NavBase):
+    """The first navigate walks part of the way, then the nav stack dies (an error after
+    commanded motion: a failed attempt); the next one arrives."""
+
+    def __init__(self, x: float, y: float) -> None:
+        super().__init__(x, y)
+        self.calls = 0
+
+    def navigate_to(self, x, y, timeout=None):
+        self.calls += 1
+        if self.calls == 1:
+            self.walk(0.5, 0.0, 0.0, 1.0)
+            raise RuntimeError("nav stack died mid-way")
+        return super().navigate_to(x, y)
+
+
+@pytest.mark.parametrize("goal", ["go to the kitchen", "走到坐标 (9.0,3.0)"])
+@pytest.mark.parametrize("gid", ["", "reach_kitchen"])
+def test_a_failed_navigate_then_a_retry_verifies_whatever_the_goal_id(goal, gid) -> None:
+    """SP1F1V-01: the failed attempt is filed under its bound hint; the model's verify of
+    the same coordinate under its own goal_id supersedes it (base behaviour, no contract)."""
+    agent, _ = _make_agent(0.0, 0.0)
+    agent._base = _FlakyNav(0.0, 0.0)
+    nav, at = ("navigate", {"x": 9.0, "y": 3.0}), ("verify", {"expr": "at_position(9.0, 3.0)", "goal_id": gid})
+    backend = FakeToolScriptBackend.from_tool_script([tool_turn(c) for c in (nav, at, nav, at, ("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native(goal, session=_session())
+    rep = _verdict(agent, eng, trace)
+    assert [(s.strategy, s.success, s.failed_attempt, s.superseded) for s in trace.steps] == [
+        ("navigate", False, True, True), ("", True, False, True), ("navigate", True, False, False)]
+    assert rep.verified is True and trace.success is True, rep.reject_reason
+
+
+def test_a_missed_grasp_then_a_retry_verified_by_another_name_verifies_without_a_contract() -> None:
+    """SP1F1V-01 (fuzz seed 11973): the failed grasp's hint names the bottle one way, the
+    model's verify another; the world resolves both to the same object."""
+    grasp = (("rest", "grasp missed"), ("held", ""))
+    trace, rep, rows, _ = _run("move the green bottle", [GRASP, GRASP, VERIFY], grasp=grasp)
+    assert trace.contract == () and rows == [("perception_grasp", False, True, True),
+                                             ("perception_grasp", True, False, False)], rows
+    assert rep.verified is True and rep.goal_check == "unchecked", rep.reject_reason
 
 
 # ---------------------------------------------------------------------------

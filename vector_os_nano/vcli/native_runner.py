@@ -86,8 +86,9 @@ class NativeStepRunner:
     - failed attempts and recovery (charter 3.5): a side-effecting tool that reports an
       error with no commanded motion (``actor_causation.commanded_nothing``) was REFUSED
       — not an action, kept on its step's row; one that commanded motion is a FAILED
-      ATTEMPT, recorded at once as its own FAILED row, so a later action's row is
-      neither failed nor backed by it;
+      ATTEMPT, recorded at once as its own FAILED row under its bound hint, so a later
+      action's row is neither failed nor backed by it, and a later attempt of that
+      predicate supersedes it whatever its ``goal_id`` (``trace_store.attempt_groups``);
     - auto post-verify: an actuating tool whose ``verify_hint`` binds from its call
       params is checked right after it runs; that check closes the step unless the
       model verifies first (then the model's predicate is the step's — but a FAILED
@@ -238,7 +239,7 @@ class NativeStepRunner:
         self._flush_pending()  # an auto-verified step closes before the next action
         if error and self._step_acted:
             # An earlier action of this step succeeded unverified: its own unproven row,
-            # never folded into the failed attempt's (which a proven goal may excuse).
+            # never folded into the failed attempt's (which a later attempt may supersede).
             self._record_open("not verified", success=self._last_ok)
         self._open_step(pre)
         self._chain.append(name)
@@ -559,13 +560,13 @@ class NativeStepRunner:
 
         ``success`` is the spine's structural success flag (``trace_store.turn_succeeded``:
         a step was recorded and every GRADED step — the latest attempt of each sub-goal —
-        succeeded, a failed attempt on the way to a proven goal aside); the moat is
+        succeeded); the moat is
         GROUNDED/RAN, not this flag. A superseded attempt is marked for the audit row. An
         empty trace (no verify ever called) is success=False, so the gate fails closed.
         """
         goal_tree = GoalTree(goal=goal, sub_goals=tuple(self._sub_goals))
         probe = ExecutionTrace(goal_tree=goal_tree, steps=tuple(self._steps), success=False,
-                               total_duration_sec=0.0)
+                               total_duration_sec=0.0, world=world)
         graded = set(graded_indices(probe))
         steps = tuple(s if i in graded else replace(s, superseded=True) for i, s in enumerate(self._steps))
         trace = ExecutionTrace(
@@ -585,7 +586,7 @@ class NativeStepRunner:
             scene=scene,
             world=world,
         )
-        return replace(trace, success=turn_succeeded(trace, self._oracle_names))
+        return replace(trace, success=turn_succeeded(trace))
 
 
 def verify_word(ok: bool) -> str:

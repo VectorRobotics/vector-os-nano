@@ -75,7 +75,8 @@ class StepVerdict:
     reject_reason: str = ""
     superseded: bool = False
     # Charter 3.5 (additive): the row is a failed attempt (evidence FAILED, its own
-    # reject_reason; it rejects the turn only when the goal check is not proven), and
+    # reject_reason; it rejects the turn unless a later attempt of its predicate
+    # superseded it), and
     # the calls refused in its step ("<tool>: <message>": tried, not an action).
     failed_attempt: bool = False
     refused: tuple[str, ...] = ()

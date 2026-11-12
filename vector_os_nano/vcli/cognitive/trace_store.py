@@ -193,15 +193,44 @@ def attempt_groups(trace: ExecutionTrace) -> list[list[int]]:
     the group's verify normalizes the same (``attempt_key``), so a producer can never
     merge two predicates and a PASS of a different, easier predicate never supersedes
     a FAIL. Every other step is its own group.
+
+    Charter 3.5: a group whose latest row is a failed attempt joins the group of the next
+    opted-in row that asserts the same predicate (by any ``attempt_of``, an object by any
+    name the world resolves), so that later attempt supersedes it. A failed attempt only
+    ever is superseded: it never takes the place of a row before it.
     """
+    from vector_os_nano.vcli.cognitive.object_goal import backs_contract
+
     verify_of = {sg.name: sg.verify for sg in trace.goal_tree.sub_goals}
+    verifies = [verify_of.get(s.sub_goal_name, "") for s in trace.steps]
+    world = str(getattr(trace, "world", "") or "")
     groups: dict[tuple[str, ...], list[int]] = {}
     for i, s in enumerate(trace.steps):
-        verify = verify_of.get(s.sub_goal_name, "")
         attempt = getattr(s, "attempt_of", "")
-        key = ("attempt", attempt, attempt_key(verify)) if attempt and verify else ("own", str(i))
+        key = ("attempt", attempt, attempt_key(verifies[i])) if attempt and verifies[i] else ("own", str(i))
         groups.setdefault(key, []).append(i)
-    return sorted(groups.values(), key=lambda g: g[-1])
+
+    def retried_by(i: int) -> int | None:  # the next opted-in row asserting failed row i's predicate
+        s, v = trace.steps[i], verifies[i]
+        if not (getattr(s, "failed_attempt", False) is True and getattr(s, "attempt_of", "") and v):
+            return None
+        return next((j for j in range(i + 1, len(trace.steps))
+                     if getattr(trace.steps[j], "attempt_of", "") and verifies[j]
+                     and (attempt_key(verifies[j]) == attempt_key(v) or backs_contract(v, verifies[j], world))),
+                    None)
+
+    owner: dict[int, list[int]] = {}
+    out: list[list[int]] = []
+    for g in sorted(groups.values(), key=lambda g: g[-1], reverse=True):  # a later group is placed first
+        j = retried_by(g[-1])
+        if j is None:
+            out.append(g)
+        else:
+            owner[j].extend(g)
+            owner[j].sort()
+        for k in g:
+            owner[k] = g if j is None else owner[j]
+    return sorted(out, key=lambda g: g[-1])
 
 
 def graded_indices(trace: ExecutionTrace) -> list[int]:
@@ -366,39 +395,12 @@ def goal_check(trace: ExecutionTrace, oracle_names: frozenset[str]) -> tuple[Goa
     return ("failed", why) if why else ("proven", "")
 
 
-def _recovered(trace: ExecutionTrace, oracle_names: frozenset[str]) -> frozenset[int]:
-    """Charter 3.5 (failed attempts and recovery): the trace indices of the failed
-    attempts a proven goal recovered from -- graded rows the producer recorded as failed
-    attempts OF a contract item (the row's own verify, its bound hint, backs one) that
-    failed, after each of which a GROUNDED graded step proved every contract item again.
-    Nothing unless the goal check is proven. A failed attempt with no hint or a hint the
-    contract does not name (a contract that covers only part of the sentence: "go to
-    (9,3) then turn left"), or one after the last proof of an item, is not recovered
-    from and rejects as any failed row."""
-    if goal_check(trace, oracle_names)[0] != "proven":
-        return frozenset()
-    from vector_os_nano.vcli.cognitive.object_goal import backs_contract
-
-    groups, steps, sg_by_name, ev = _graded(trace, oracle_names)
-    world = str(getattr(trace, "world", "") or "")
-    rows = list(zip((g[-1] for g in groups), steps))
-
-    def backs(s: StepRecord, item: str) -> bool:
-        return backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)
-
-    after = min((max((i for i, s in rows if ev[id(s)][0] == "GROUNDED" and backs(s, item)), default=-1)
-                 for item in trace.contract), default=-1)
-    return frozenset(i for i, s in rows if getattr(s, "failed_attempt", False) is True and not s.success
-                     and i < after and any(backs(s, item) for item in trace.contract))
-
-
-def turn_succeeded(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool:
+def turn_succeeded(trace: ExecutionTrace) -> bool:
     """The trace's structural success flag: a step was recorded and every graded step
-    (the latest attempt of each group) succeeded, the failed attempts a proven goal
-    recovered from (``_recovered``) aside. The producer sets ``ExecutionTrace.success``
+    (the latest attempt of each group: a failed attempt a later attempt of its predicate
+    superseded is not graded) succeeded. The producer sets ``ExecutionTrace.success``
     from it, so the flag and ``turn_reject_reason`` agree."""
-    recovered = _recovered(trace, oracle_names)
-    return bool(trace.steps) and all(trace.steps[i].success or i in recovered for i in graded_indices(trace))
+    return bool(trace.steps) and all(trace.steps[i].success for i in graded_indices(trace))
 
 
 def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> str:
@@ -417,9 +419,9 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
       sub-goal the contract does not cover ("... then turn left") needs its own
       GROUNDED step. At least one graded row must be GROUNDED: a turn that only
       read or halted has no checked step.
-    - With a contract (``goal_check``), the goal must be proven; then a failed attempt
-      the goal was proven again after (``_recovered``, charter 3.5) does not reject the
-      turn. Without one, every graded FAILED row rejects.
+    - With a contract (``goal_check``), the goal must be proven. A failed attempt is
+      graded only while no later attempt of its predicate superseded it
+      (``attempt_groups``, charter 3.5); a graded FAILED row rejects.
 
     Then the coordinate and the manipulation gates run INDEPENDENTLY (both apply
     when both intents are present). Every rule only rejects (rule 5).
@@ -431,13 +433,10 @@ def turn_reject_reason(trace: ExecutionTrace, oracle_names: frozenset[str]) -> s
         return graded
     groups, steps, sg_by_name, ev = graded
     state, goal_why = goal_check(trace, oracle_names)
-    recovered = _recovered(trace, oracle_names)
     proven = False
     for s, group in zip(steps, groups):
         sg = sg_by_name[s.sub_goal_name]
         evidence, why = ev[id(s)]
-        if group[-1] in recovered:
-            continue
         if evidence == "FAILED":
             return f"{s.sub_goal_name}: {why}"
         # A housekeeping row never stands in for an attempt it superseded: exempt
