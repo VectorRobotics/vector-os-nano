@@ -219,6 +219,27 @@ def test_stop_preempts_a_move(body):
     assert np.array_equal(body.rt.call(lambda w: w.targets(joints)), held)  # nothing written after the hold
 
 
+def test_a_move_that_dies_mid_way_still_counts_what_it_commanded(body, monkeypatch):
+    """Charter 3.5: an error with no commanded motion is a REFUSED call. A move that
+    raises after writing set-points did command motion, so the counter must say so
+    (it was only added after the interpolation loop)."""
+    from vector_os_nano.sim.runtime import ACTOR_EPOCH
+
+    real, calls = body.rt.wait_sim, []
+
+    def dying(dt, **kw):
+        calls.append(dt)
+        if len(calls) > 3:
+            raise RuntimeError("the stepper died")
+        return real(dt, **kw)
+
+    monkeypatch.setattr(body.rt, "wait_sim", dying)
+    before = body.arm.ctrl_motion()
+    with ACTOR_EPOCH.tool(), pytest.raises(RuntimeError, match="stepper died"):
+        body.arm.move_joints(body.case.far, 3.0)
+    assert body.arm.ctrl_motion() > before
+
+
 def test_a_capture_is_metric_and_masks_the_arm_and_nothing_else(body):
     sc, cam = body.sc, body.cfg.camera
     f = body.camera.capture()  # caller-stepped: the segmentation below is the same instant

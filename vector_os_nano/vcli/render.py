@@ -182,6 +182,12 @@ def render_turn(console: Any, engine: Any, trace: Any, answer: str, entries: lis
         chain = (getattr(s, "strategy", "") or "").strip() or "(no action)"
         ok = bool(getattr(s, "verify_result", False))
         actor = getattr(getattr(s, "actor_caused", None), "value", "?")
+        for call in (getattr(s, "result_data", None) or {}).get("refused", ()):
+            console.print(f"  [{TEAL}]▸[/] [yellow]refused[/] {escape(call)} [dim](no motion: not an action)[/]")
+        if getattr(s, "failed_attempt", False):
+            why = (str(getattr(s, "error", "")).strip().splitlines() or [""])[0][:200]
+            console.print(f"  [{TEAL}]▸[/] {chain} → [red]failed attempt[/] {escape(why)}")
+            continue
         if not verify_expr and getattr(s, "error", ""):
             console.print(f"  [{TEAL}]▸[/] {chain} → [yellow]{escape(s.error)}[/]")
             continue

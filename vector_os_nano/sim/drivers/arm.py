@@ -102,16 +102,20 @@ class Arm:
         steps = max(1, int(duration * _MOVE_UPDATE_HZ))
         dt = duration / steps
         done = 0.0
-        for i in range(1, steps + 1):
-            if self._preempted():
-                break
-            t = i / steps
-            targets = [s + t * (g - s) for s, g in zip(start, goal)]
-            rt.submit(lambda w, v=targets: _write(w, v))
-            done = t
-            rt.wait_sim(dt, cancel=stop)
-        if counted:  # the actor's command only inside a producer-dispatched tool
-            self._ctrl_motion += commanded * done
+        try:
+            for i in range(1, steps + 1):
+                if self._preempted():
+                    break
+                t = i / steps
+                targets = [s + t * (g - s) for s, g in zip(start, goal)]
+                rt.submit(lambda w, v=targets: _write(w, v))
+                done = t
+                rt.wait_sim(dt, cancel=stop)
+        finally:
+            # also when the loop raises: a call that wrote set-points commanded motion
+            # (the verdict tells a refused call from a failed attempt by this counter)
+            if counted:  # the actor's command only inside a producer-dispatched tool
+                self._ctrl_motion += commanded * done
         if self._preempted():
             logger.info("Arm.move_joints: preempted at %.0f%% of the move", 100 * done)
             return False
