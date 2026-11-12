@@ -6,14 +6,18 @@
 Reads the episode dump a sim session writes when ``VECTOR_GT_DUMP=<file>`` is set
 (one JSON line at every turn start and end: base pose, every object's position and
 weld, the world's surfaces and user location) and re-derives, with its OWN
-thresholds, whether the turn delivered an object to the user and/or left it on a
-surface. It imports nothing from vector_os_nano — no oracle, classifier or manifest
-code — so a bug in the verify spine cannot also hide here (A2: the benchmark audits
-every GROUNDED verdict against this).
+thresholds, whether the turn delivered an object to the user, left it on a surface,
+picked it up (held and lifted), or brought the base into a box or to a point. It
+imports nothing from vector_os_nano — no oracle, classifier or manifest code — so a
+bug in the verify spine cannot also hide here (A2: the benchmark audits every
+GROUNDED verdict against this; A10: the live matrix grades every real-model turn).
 
     python scripts/gt_grade.py --dump run.jsonl --object pickable_bottle_green [--surface dining_table]
+    python scripts/gt_grade.py --dump run.jsonl --box 14 0 20 5 --at 3 2.5
 
-Prints one JSON line per turn: {"turn", "goal", "moved_m", "delivered", "object_on"}.
+Prints one JSON line per turn: {"turn", "goal"} plus, with --object, "moved_m",
+"delivered" and "held_lifted"; with --surface, "object_on"; with --box, "base_in";
+with --at, "base_at".
 """
 from __future__ import annotations
 
@@ -25,6 +29,8 @@ from typing import Any
 
 DELIVER_R = 1.0     # m (xy) from the user location at turn end, and not already there at start
 ON_MAX_ABOVE = 0.15  # m: the object's centre at most this far above the surface top
+LIFT_DZ = 0.03      # m: a picked-up object's centre rose at least this much over the turn
+AT_R = 0.5          # m (xy): the base this close to a point is at it
 
 
 def load(path: str) -> list[dict[str, Any]]:
@@ -59,17 +65,49 @@ def object_on(end: dict[str, Any], obj: str, surface: str) -> bool:
     return x0 <= x <= x1 and y0 <= y <= y1 and s["height"] < z <= s["height"] + ON_MAX_ABOVE
 
 
-def grade(path: str, obj: str, surface: str | None = None) -> list[dict[str, Any]]:
+def held_lifted(start: dict[str, Any], end: dict[str, Any], obj: str) -> bool:
+    """Picked up in this turn: attached at the end and not at the start, and its
+    centre rose by LIFT_DZ (an object attached while still resting is no pick)."""
+    s, e = start["objects"].get(obj), end["objects"].get(obj)
+    return bool(s and e) and e["welded"] and not s["welded"] and e["pos"][2] - s["pos"][2] >= LIFT_DZ
+
+
+def _inside(line: dict[str, Any], box: list[float]) -> bool:
+    b = line.get("base")
+    return b is not None and box[0] <= b[0] <= box[2] and box[1] <= b[1] <= box[3]
+
+
+def base_in(start: dict[str, Any], end: dict[str, Any], box: list[float]) -> bool:
+    """The base entered the xy box [x0, y0, x1, y1] in this turn (outside it at the start)."""
+    return _inside(end, box) and not _inside(start, box)
+
+
+def _near(line: dict[str, Any], xy: list[float]) -> bool:
+    b = line.get("base")
+    return b is not None and _xy_dist(b, xy) <= AT_R
+
+
+def base_at(start: dict[str, Any], end: dict[str, Any], xy: list[float]) -> bool:
+    """The base came within AT_R of (x, y) in this turn (farther at the start)."""
+    return _near(end, xy) and not _near(start, xy)
+
+
+def grade(path: str, obj: str | None = None, surface: str | None = None,
+          box: list[float] | None = None, at: list[float] | None = None) -> list[dict[str, Any]]:
     out = []
     for start, end in turns(load(path)):
-        row = {
-            "turn": end["turn"], "goal": end.get("goal", ""),
-            "moved_m": round(_xy_dist(start["objects"][obj]["pos"], end["objects"][obj]["pos"]), 3)
-            if obj in end["objects"] and obj in start["objects"] else None,
-            "delivered": delivered(start, end, obj),
-        }
-        if surface is not None:
-            row["object_on"] = object_on(end, obj, surface)
+        row: dict[str, Any] = {"turn": end["turn"], "goal": end.get("goal", "")}
+        if obj is not None:
+            row["moved_m"] = (round(_xy_dist(start["objects"][obj]["pos"], end["objects"][obj]["pos"]), 3)
+                              if obj in end["objects"] and obj in start["objects"] else None)
+            row["delivered"] = delivered(start, end, obj)
+            row["held_lifted"] = held_lifted(start, end, obj)
+            if surface is not None:
+                row["object_on"] = object_on(end, obj, surface)
+        if box is not None:
+            row["base_in"] = base_in(start, end, box)
+        if at is not None:
+            row["base_at"] = base_at(start, end, at)
         out.append(row)
     return out
 
@@ -77,10 +115,15 @@ def grade(path: str, obj: str, surface: str | None = None) -> list[dict[str, Any
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dump", required=True, help="the VECTOR_GT_DUMP file")
-    ap.add_argument("--object", required=True, help="scene body name, e.g. pickable_bottle_green")
+    ap.add_argument("--object", help="scene body name, e.g. pickable_bottle_green")
     ap.add_argument("--surface", help="surface name for the object_on check, e.g. dining_table")
+    ap.add_argument("--box", nargs=4, type=float, metavar=("X0", "Y0", "X1", "Y1"),
+                    help="an xy box for the base_in check, e.g. a room's floor")
+    ap.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"), help="a point for the base_at check")
     a = ap.parse_args(argv)
-    for row in grade(a.dump, a.object, a.surface):
+    if a.surface and not a.object:
+        ap.error("--surface needs --object")
+    for row in grade(a.dump, a.object, a.surface, a.box, a.at):
         print(json.dumps(row, ensure_ascii=False))
     return 0
 
