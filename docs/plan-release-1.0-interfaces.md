@@ -210,8 +210,14 @@ A verdict states three separate facts and never merges them:
   predicate supersedes rejects the turn. An action that succeeded and was never verified is
   still an unproven step and still rejects the turn, with or without a contract.
 
-The gates that only reject stay (a manipulation word in the goal needs a manipulation proof that
-names the goal's object; coordinate goals; verify probes): they never make a goal proven.
+The gates that only reject stay (coordinate goals; verify probes): they never make a goal proven.
+
+**Manipulation needs a contract.** In a world with a manifest, a turn that asks for a manipulation
+(a manipulation word in the goal) or performs one (a dispatched grasp, release or placement) is
+verified only through a proven contract. Outside the closed forms the spine has no sound way to
+tell which object the words name (a landmark, a part, an excluded or a negated object all mention
+it), so it does not look for one: the goal is `unchecked`, the turn is not verified, and the
+reason gives the forms that can be checked. The step evidence is reported as always.
 
 ## 4. Config-file interfaces (`vector_os_nano/schemas/` — imports stdlib and yaml only)
 
