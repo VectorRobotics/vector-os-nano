@@ -41,15 +41,6 @@
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/cognitive/trace_store.py | vcli.worlds.registry.resolve_world
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.registry
 4 the kernel imports no concrete world, body, backend or skill pack | vcli/engine.py | vcli.worlds.registry.resolve_world
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | embodiments.capability_profile
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | embodiments.capability_profile.resolve_capability_profile
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.runtime
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.runtime.ACTOR_EPOCH
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.is_sim_agent
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.mark_turn
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.session_for
-4 the kernel imports no concrete world, body, backend or skill pack | vcli/native_loop.py | sim.session.sim_id
 5 core imports only interfaces and schemas | core/agent.py | hardware.so101.gripper
 5 core imports only interfaces and schemas | core/agent.py | hardware.so101.gripper.SO101Gripper
 5 core imports only interfaces and schemas | core/agent.py | hardware.so101.ik_solver
