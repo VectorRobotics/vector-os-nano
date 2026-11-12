@@ -115,10 +115,9 @@ def has_necessary_manip_oracle(expr: str | None, names: frozenset[str] = _HOLD) 
 
 
 def _asserted_calls(node: ast.AST) -> list[ast.Call]:
-    """Calls whose truth the verify ASSERTS, as a contract proof: the call, an ``and``
-    conjunct, or ``<call> == True`` — never ``True == <call>`` (REF1e-V-01: release/1.0's
-    proof spelling; the gate sees that one through named_intents), nor under ``not`` /
-    ``or`` / an ordering."""
+    """Calls whose truth the verify ASSERTS (a contract proof): the call, an ``and``
+    conjunct, or ``<call> == True`` — never ``True == <call>`` (REF1e-V-01), nor under
+    ``not`` / ``or`` / an ordering."""
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         return [node]
     if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
