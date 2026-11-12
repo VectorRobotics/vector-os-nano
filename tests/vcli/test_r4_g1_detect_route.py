@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vector_os_nano.vcli.native_loop import (
+from vector_os_nano.vcli.native_tools import (
     _NativeDetectTool,
     _build_motor_tools,
     _registered_capabilities,

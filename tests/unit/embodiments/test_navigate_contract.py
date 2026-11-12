@@ -46,7 +46,7 @@ def test_go2_and_g1_navigate_to_share_the_polymorphic_contract():
 
 def test_native_navigate_tool_is_embodiment_agnostic():
     """The kernel navigate tool dispatches via duck-typed base.navigate_to — no concrete-class branch."""
-    import vector_os_nano.vcli.native_loop as nl
+    import vector_os_nano.vcli.native_tools as nl
 
     src = inspect.getsource(nl._NativeBaseNavigateTool)
     assert "navigate_to" in src, "the tool must call the base's navigate_to"

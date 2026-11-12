@@ -150,7 +150,7 @@ def test_a_raising_verify_tells_the_model_why(tmp_path, monkeypatch) -> None:
 def test_navigates_hint_comes_from_the_arrival_oracle() -> None:
     """MR1V:kernel-at-position-text: the hint binds the oracle's own parameters and the
     description quotes the oracle's own signature and docstring; no oracle, no hint."""
-    from vector_os_nano.vcli.native_loop import _NativeBaseNavigateTool
+    from vector_os_nano.vcli.native_tools import _NativeBaseNavigateTool
 
     def at_position(x: float, y: float, tol: float = 0.3) -> bool:
         """True when the base is within tol metres of (x, y)."""
@@ -172,7 +172,7 @@ def test_navigate_auto_allows_only_a_live_sim_body_of_its_world() -> None:
     no simulator). Only a body a live session owns, asked of the robot world, is
     auto-allowed; a body with no session, the dev world or no world at all asks."""
     from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
-    from vector_os_nano.vcli.native_loop import _NativeBaseNavigateTool
+    from vector_os_nano.vcli.native_tools import _NativeBaseNavigateTool
     from vector_os_nano.vcli.worlds.dev import DevWorld
     from vector_os_nano.vcli.worlds.robot import RobotWorld
 

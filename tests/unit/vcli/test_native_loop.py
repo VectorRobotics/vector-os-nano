@@ -595,7 +595,7 @@ def _engine_with_code_tools():
 
 
 def test_robot_world_drops_mutating_code_tools() -> None:
-    from vector_os_nano.vcli.native_loop import _build_motor_tools
+    from vector_os_nano.vcli.native_tools import _build_motor_tools
 
     robot_agent = SimpleNamespace(_base=None, _arm=None, _perception=None, _skill_registry=None)
     tools = _build_motor_tools(robot_agent, _engine_with_code_tools())
@@ -610,7 +610,7 @@ def test_robot_world_drops_mutating_code_tools() -> None:
 
 
 def test_dev_world_keeps_full_code_tool_set() -> None:
-    from vector_os_nano.vcli.native_loop import _build_motor_tools
+    from vector_os_nano.vcli.native_tools import _build_motor_tools
 
     tools = _build_motor_tools(None, _engine_with_code_tools())  # dev world: no agent
     for name in ("file_read", "file_write", "file_edit", "bash", "glob", "grep"):
