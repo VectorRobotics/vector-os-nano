@@ -18,7 +18,8 @@ import pytest
 _REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO))
 
-from vector_os_nano.core.scene_graph import RoomNode, SceneGraph
+from vector_os_nano.core.scene_graph import SceneGraph
+from vector_os_nano.core.scene_nodes import RoomNode
 
 
 # ---------------------------------------------------------------------------

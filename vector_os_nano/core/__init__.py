@@ -10,4 +10,6 @@ Contains:
 - world_model.py: the session object store
 - skill.py      : @skill, the Skill protocol, SkillContext, SkillRegistry
 - scene_graph.py: spatial memory (rooms, objects, viewpoints)
+- scene_nodes.py: its node types (RoomNode, ViewpointNode, ObjectNode)
+- scene_store.py: its persistence (save / load / autosave / quarantine)
 """

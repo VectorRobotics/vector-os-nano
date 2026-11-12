@@ -106,7 +106,7 @@ _OBJECT_COLORS: dict[str, tuple[float, float, float]] = {
 }
 _OBJECT_COLOR_DEFAULT = (1.00, 0.55, 0.00)  # orange fallback
 
-# FOV cone parameters — matches scene_graph.py constants
+# FOV cone parameters — matches core/scene_nodes.py constants
 _VIEWPOINT_FOV_DEG: float = 60.0
 _VIEWPOINT_RANGE: float = 3.0
 _TRAJECTORY_MAX_POINTS: int = 200

@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from vector_os_nano.core.scene_graph import ObjectNode, RoomNode, SceneGraph
+from vector_os_nano.core.scene_graph import SceneGraph
+from vector_os_nano.core.scene_nodes import ObjectNode, RoomNode
 from vector_os_nano.vcli.tools.base import ToolContext
 
 

@@ -18,7 +18,8 @@ import pytest
 
 mj = pytest.importorskip("mujoco")
 
-from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph  # noqa: E402
+from vector_os_nano.core.scene_graph import SceneGraph  # noqa: E402
+from vector_os_nano.core.scene_nodes import ObjectNode  # noqa: E402
 from vector_os_nano.embodiments.dof_layout import DofLayout  # noqa: E402
 from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml, _grasp_pairs  # noqa: E402
 from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: E402

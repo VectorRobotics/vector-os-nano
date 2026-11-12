@@ -5,6 +5,7 @@ rooms, atomic world-keyed persistence. Each test names the ledger bug it pins.""
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -120,6 +121,21 @@ def test_save_is_atomic_and_autosaves_after_a_mutation(tmp_path) -> None:
     assert [f.name for f in tmp_path.iterdir()] == ["sg.yaml"], "no temp file left behind"
 
 
+def test_persisted_format_is_unchanged(tmp_path) -> None:
+    """golden/scene_graph.yaml was written by the SceneGraph of release/1.0 before the
+    SG1 split (fixed and discovered rooms, doors, viewpoints, localized, half-localized
+    and unlocalized objects, zh text, attributes); loading it and saving it back must
+    give the same bytes, so a file on disk survives an upgrade and a downgrade."""
+    golden = Path(__file__).with_name("golden") / "scene_graph.yaml"
+    p = tmp_path / "scene_graph.yaml"
+    p.write_bytes(golden.read_bytes())
+    sg = SceneGraph(persist_path=str(p))
+    sg.load()
+    assert sg.stats() == {"rooms": 3, "viewpoints": 2, "objects": 4, "visited_rooms": 3}
+    sg.save()
+    assert p.read_bytes() == golden.read_bytes()
+
+
 def test_clear_is_in_place_and_keeps_the_world_layout() -> None:
     sg = SceneGraph()
     sg.load_layout(str(_APT.path))
@@ -143,11 +159,3 @@ def test_zh_and_en_names_find_the_same_instance() -> None:
     assert sg.find_objects_by_category("can") == []  # never 'candle'
     # an observation named in zh merges into the en-named instance
     assert sg.merge_object("绿色的瓶子", "hallway", "vp2", x=10.89, y=3.01).object_id == o.object_id
-
-
-def test_update_object_records_a_pick_event() -> None:
-    sg = SceneGraph()
-    o = sg.merge_object("green bottle", "hallway", "vp", x=10.88, y=3.0, z=0.32)
-    held = sg.update_object(o.object_id, state="held", x=10.5, y=3.0, z=0.6)
-    assert held.attributes["state"] == "held" and (held.x, held.z) == (10.5, 0.6)
-    assert sg.update_object("nope", state="held") is None

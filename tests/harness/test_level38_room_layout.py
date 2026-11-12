@@ -13,7 +13,8 @@ import textwrap
 
 import pytest
 
-from vector_os_nano.core.scene_graph import SceneGraph, RoomNode
+from vector_os_nano.core.scene_graph import SceneGraph
+from vector_os_nano.core.scene_nodes import RoomNode
 
 
 @pytest.fixture
