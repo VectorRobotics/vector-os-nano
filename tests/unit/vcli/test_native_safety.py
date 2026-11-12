@@ -307,6 +307,7 @@ def test_a_walk_ends_on_a_stop() -> None:
 
     base = LeggedBase.__new__(LeggedBase)
     base._lock, base._owners, base._cmd, base._hold, base._cmd_motion = threading.Lock(), [], (0.0,) * 3, None, 0.0
+    base._stops = 0
     base._spec = SimpleNamespace(limits=(0.8, 0.4, 4.0), fall_z=0.15)
     base._rt = SimpleNamespace(wait_sim=wait_sim, release_clock=lambda: None,
                                snapshot=lambda: SimpleNamespace(q=np.array([0, 0, 0.3, 1.0, 0, 0, 0])))
