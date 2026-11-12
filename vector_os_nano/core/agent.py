@@ -244,19 +244,27 @@ class Agent:
                 self._ik_solver = False
                 logger.debug("IK solver not available: %s", exc)
 
-        # Lazy-init the camera->arm calibration of a fixed (base-less) arm. A mobile
-        # base never gets an identity one: its perception carries the camera pose.
+        # Lazy-init the camera->arm calibration of a fixed (base-less) arm: a perception
+        # that reports arm-base points carries its own (identity) one, any other needs
+        # the config's calibration.file. Without one the arm skills refuse, told why.
+        # A mobile base never gets one: its perception carries the camera pose.
+        calibration_error = ""
         if self._calibration is None and self._base is None:
-            try:
-                from vector_os_nano.perception.calibration import Calibration  # lazy
+            self._calibration = getattr(self._perception, "calibration", None)
+        if self._calibration is None and self._base is None:
+            cal_file: str = self._config.get("calibration", {}).get("file", "")
+            if not cal_file:
+                calibration_error = "the config names no calibration.file"
+            else:
+                try:
+                    from vector_os_nano.perception.calibration import Calibration  # lazy
 
-                cal_file: str = self._config.get("calibration", {}).get("file", "")
-                if cal_file:
                     self._calibration = Calibration.load(cal_file)  # relative to cwd
-                else:
-                    self._calibration = Calibration()
-            except Exception as exc:  # noqa: BLE001 — the arm skills refuse without one
-                logger.warning("No camera->arm calibration (%s): pick/detect will refuse", exc)
+                except Exception as exc:  # noqa: BLE001 — the arm skills refuse without one
+                    calibration_error = f"calibration.file {cal_file} is unreadable: {exc}"
+            if calibration_error:
+                logger.warning("No camera->arm calibration (%s): pick/detect will refuse",
+                               calibration_error)
 
         # Build services dict for skills that need injected dependencies
         services: dict = {}
@@ -266,6 +274,8 @@ class Agent:
             services["spatial_memory"] = self._spatial_memory
         if hasattr(self, "_skill_registry"):
             services["skill_registry"] = self._skill_registry
+        if calibration_error:
+            services["calibration_error"] = calibration_error
 
         return SkillContext(
             arms={"default": self._arm} if self._arm else {},

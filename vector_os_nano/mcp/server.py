@@ -351,7 +351,6 @@ def create_sim_stack(headless: bool = True) -> Agent:
     from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm  # noqa: PLC0415
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper  # noqa: PLC0415
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception  # noqa: PLC0415
-    from vector_os_nano.perception.calibration import Calibration  # noqa: PLC0415
     from vector_os_nano.skills.pick import SIM_PICK_CONFIG  # noqa: PLC0415
 
     _log(f"[MCP] Starting MuJoCo simulation (headless={headless})...")
@@ -389,16 +388,13 @@ def create_sim_stack(headless: bool = True) -> Agent:
     perception = MuJoCoPerception(arm)
     _log("[MCP] Sim perception ready (ground-truth mode).")
 
-    calibration = Calibration()  # identity — sim positions are world-frame
-
     agent = Agent(
         arm=arm,
         gripper=gripper,
-        perception=perception,
+        perception=perception,  # base-frame poses: it carries the identity calibration
         config=cfg,
         skills=get_so101_skills(),
     )
-    agent._calibration = calibration
 
     _log(f"[MCP] Sim stack ready. Skills: {agent.skills}")
     return agent

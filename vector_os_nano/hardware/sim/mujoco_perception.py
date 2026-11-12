@@ -23,6 +23,7 @@ from vector_os_nano.core.types import (
     Pose3D,
     TrackedObject,
 )
+from vector_os_nano.perception.calibration import Calibration
 
 if TYPE_CHECKING:
     from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
@@ -57,6 +58,9 @@ class MuJoCoPerception:
 
     def __init__(self, mujoco_arm: "MuJoCoArm") -> None:
         self._arm = mujoco_arm
+        # Its tracked poses are already in the arm-base frame: the camera->arm
+        # calibration it declares is the identity (the Agent needs no calibration.file).
+        self.calibration = Calibration()
         self._last_detections: list[Detection] = []
         self._last_tracked: list[TrackedObject] = []
 

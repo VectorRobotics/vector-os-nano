@@ -74,8 +74,9 @@ class DetectSkill:
             return SkillResult(
                 success=False,
                 error_message=(
-                    "No camera->arm calibration is loaded (config calibration.file is "
-                    "missing or unreadable): run the hand-eye calibration first."
+                    "No camera->arm calibration is loaded "
+                    f"({context.services.get('calibration_error', 'none was given')}): "
+                    "run the hand-eye calibration first."
                 ),
                 result_data={"diagnosis": "calibration_error"},
             )
