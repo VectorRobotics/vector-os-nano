@@ -16,6 +16,7 @@ permission-gated ``bash`` tool — never a verify predicate.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import Any
 
@@ -117,3 +118,19 @@ class DevWorld:
     def register_capabilities(self, registry: Any, agent: Any, backend: Any) -> None:
         # The model driving the native loop is the dev world's only model.
         return None
+
+    # No body: every fact about one is empty.
+    def session(self, agent: Any) -> Any:
+        return None
+
+    def mark_turn(self, agent: Any, phase: str, goal: str = "") -> None:
+        return None
+
+    def sim_id(self, agent: Any) -> str:
+        return ""
+
+    def has_base(self, agent: Any) -> bool:
+        return False
+
+    def actor_epoch(self) -> Any:
+        return contextlib.nullcontext()

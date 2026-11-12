@@ -165,3 +165,29 @@ def test_navigates_hint_comes_from_the_arrival_oracle() -> None:
 
     assert _NativeBaseNavigateTool(renamed).verify_hint == ""  # nothing binds: no guess
     assert _NativeBaseNavigateTool().verify_hint == "" and "verified" not in _NativeBaseNavigateTool().description
+
+
+def test_navigate_auto_allows_only_a_live_sim_body_of_its_world() -> None:
+    """NL1: the kernel asks the bound world whether the body is a live sim (it imports
+    no simulator). Only a body a live session owns, asked of the robot world, is
+    auto-allowed; a body with no session, the dev world or no world at all asks."""
+    from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
+    from vector_os_nano.vcli.native_loop import _NativeBaseNavigateTool
+    from vector_os_nano.vcli.worlds.dev import DevWorld
+    from vector_os_nano.vcli.worlds.robot import RobotWorld
+
+    body, stray = SimpleNamespace(), SimpleNamespace()
+    sim = bind_fake_sim(body, "go2")
+    try:
+        def asked(world: Any, agent: Any) -> str:
+            return _NativeBaseNavigateTool(None, world).check_permissions({}, SimpleNamespace(agent=agent)).behavior
+
+        assert asked(RobotWorld(), body) == "allow"
+        assert asked(RobotWorld(), stray) == "ask"
+        assert asked(RobotWorld(), None) == "ask"
+        assert asked(DevWorld(), body) == "ask"
+        assert asked(None, body) == "ask"
+    finally:
+        unbind_fake_sim(sim)
+    assert _NativeBaseNavigateTool(None, RobotWorld()).check_permissions(
+        {}, SimpleNamespace(agent=body)).behavior == "ask"  # the session ended

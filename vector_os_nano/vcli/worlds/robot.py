@@ -131,12 +131,35 @@ class RobotWorld:
         nothing, so every verify there grades RAN. This is the engine's whole verify
         namespace: the kernel adds no predicate of its own.
         """
-        from vector_os_nano.sim.session import session_for
-
-        session = session_for(agent)
+        session = self.session(agent)
         if session is None or session.gt is None:
             return {}
         return session.oracles()
+
+    def session(self, agent: Any) -> Any:
+        from vector_os_nano.sim.session import session_for
+
+        return session_for(agent)
+
+    def mark_turn(self, agent: Any, phase: str, goal: str = "") -> None:
+        from vector_os_nano.sim.session import mark_turn
+
+        mark_turn(agent, phase, goal)
+
+    def sim_id(self, agent: Any) -> str:
+        from vector_os_nano.sim.session import sim_id
+
+        return sim_id(agent)
+
+    def has_base(self, agent: Any) -> bool:
+        from vector_os_nano.embodiments.capability_profile import resolve_capability_profile
+
+        return resolve_capability_profile(agent).has_base
+
+    def actor_epoch(self) -> Any:
+        from vector_os_nano.sim.runtime import ACTOR_EPOCH
+
+        return ACTOR_EPOCH.tool()
 
     def register_capabilities(self, registry: Any, agent: Any, backend: Any) -> None:
         # Register the learned open-vocabulary DETECTOR (grounding-dino-tiny) as a

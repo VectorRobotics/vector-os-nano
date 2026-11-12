@@ -100,6 +100,7 @@ class _Engine:
         if cap is not None:
             self._capability_registry.register(cap)
         self._registry = registry  # for code-tool discovery (None -> none)
+        self._world = RobotWorld()  # the bound world answers 'has a base'
 
 
 # --- 1. verify oracle: NO self-read detect_objects for g1 (R5 CORRECTION) ---

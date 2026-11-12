@@ -67,7 +67,7 @@ def test_bind_robot_world_without_a_camera_registers_no_capability() -> None:
     assert len(eng._capability_registry) == 0
 
 
-class _World:
+class _World(DevWorld):  # a probe world; DevWorld gives it the body facts (none)
     name = "probe"
 
     def __init__(self, *, caps: Exception | None = None, ns: Exception | None = None) -> None:

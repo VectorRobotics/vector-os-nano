@@ -42,6 +42,7 @@ start and turn end; the spine requires each False -> True.
 """
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
 import logging
@@ -57,7 +58,6 @@ from typing import Any, Callable
 from vector_os_nano.vcli.backends.types import LLMResponse
 from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.cognitive import actor_causation
-from vector_os_nano.sim.runtime import ACTOR_EPOCH
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 from vector_os_nano.vcli.cognitive.object_goal import task_contract, unbound_reason
@@ -164,7 +164,8 @@ class _NativeBaseNavigateTool:
         "required": ["x", "y"],
     }
 
-    def __init__(self, arrived: Any = None) -> None:
+    def __init__(self, arrived: Any = None, world: Any = None) -> None:
+        self._world = world  # the bound world: is the body a live sim
         self.description = (
             "Go to a world coordinate (x, y) using the navigation PLANNER, which AVOIDS "
             "obstacles (lidar + local planner). Use this to REACH a place/coordinate."
@@ -181,9 +182,8 @@ class _NativeBaseNavigateTool:
 
     def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
         # It drives the base: confirm unless the body is a live in-process sim.
-        from vector_os_nano.sim.session import is_sim_agent
-
-        return PermissionResult("allow" if is_sim_agent(getattr(context, "agent", None)) else "ask")
+        live = self._world is not None and self._world.session(getattr(context, "agent", None)) is not None
+        return PermissionResult("allow" if live else "ask")
 
     def is_read_only(self, params: dict[str, Any]) -> bool:
         return False
@@ -462,12 +462,15 @@ def _finish_tool_schema() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def actor_state(agent: Any) -> Any:
+def sim_session(world: Any, agent: Any) -> Any:
+    """*agent*'s live sim session, asked of the bound *world* (None without one)."""
+    return world.session(agent) if world is not None else None
+
+
+def actor_state(world: Any, agent: Any) -> Any:
     """The causation baseline of *agent*: its drivers' motion counters, the true pose of
     its sim session (none outside a sim: every robot channel then fails closed)."""
-    from vector_os_nano.sim.session import session_for
-
-    return actor_causation.capture(agent, session_for(agent))
+    return actor_causation.capture(agent, sim_session(world, agent))
 
 
 class NativeStepRunner:
@@ -492,8 +495,8 @@ class NativeStepRunner:
       auto-verify of another predicate stays its own row);
     - probe refusal: a model verify with no action since its last verify is refused
       unevaluated (no GT bit leak);
-    - every dispatch runs inside ``ACTOR_EPOCH.tool()``, so only the actor's own
-      commanded motion counts toward causation.
+    - every dispatch runs inside the bound world's ``actor_epoch()``, so only the
+      actor's own commanded motion counts toward causation.
     """
 
     def __init__(
@@ -505,8 +508,10 @@ class NativeStepRunner:
         tool_context: ToolContext,
         ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
         oracles: dict[str, Any] | None = None,
+        world: Any = None,
     ) -> None:
         self._agent = agent
+        self._world = world  # the bound world: the body's sim session and actor epoch
         self._verifier = verifier
         self._oracle_names = oracle_names
         # {name: OracleTag}: the channel / transition the causation grader reads.
@@ -518,7 +523,7 @@ class NativeStepRunner:
         self._ask = ask_permission
         # The actor state when the turn (or its current body) started: a turn-window
         # oracle (kept_holding) is caused only by a transition since then.
-        self._turn_baseline: Any = actor_state(agent)
+        self._turn_baseline: Any = actor_state(world, agent)
 
         # Per-step accumulator: the producing action chain (skill names) + the
         # capture baseline taken BEFORE the first skill of the current step.
@@ -611,7 +616,7 @@ class NativeStepRunner:
             self._flush_pending()  # an auto-verified step closes before the next action
         if not self._step_open:
             # First skill of a fresh step -> capture the causation baseline NOW.
-            self._baseline = actor_state(self._agent)
+            self._baseline = actor_state(self._world, self._agent)
             self._step_open = True
         self._chain.append(name)
         hint = None
@@ -625,7 +630,7 @@ class NativeStepRunner:
             hint = self._bound_hint(tool, params)
             self._note_intents(tool)
         before = self._check(hint) if hint else None  # F->T: the hint at the baseline
-        with ACTOR_EPOCH.tool():
+        with self._world.actor_epoch() if self._world is not None else contextlib.nullcontext():
             result = execute_resolved_tool(
                 tool, params, self._ctx, error_prefix=f"Skill '{name}' raised",
                 on_error=lambda _n, exc: logger.debug("native_loop: skill %r raised: %s", name, exc),
@@ -663,9 +668,7 @@ class NativeStepRunner:
         if re.search(r"<\w+>", bound) or classify_verify_expr(bound, self._oracle_names) != "GROUNDED":
             return None
         # An object the world manifest cannot resolve binds nothing (no evidence), never a guess.
-        from vector_os_nano.sim.session import session_for
-
-        world = getattr(session_for(self._agent), "world", None)
+        world = getattr(sim_session(self._world, self._agent), "world", None)
         used = {f for _, f, _, _ in string.Formatter().parse(hint) if f}
         if world is not None and any(isinstance(params[f], str) and world.resolve(params[f]) is None for f in used):
             return None
@@ -736,15 +739,16 @@ class NativeStepRunner:
             )
         )
 
-    def rebind(self, agent: Any, verifier: Any, oracles: dict[str, Any], motor_tools: dict[str, Any]) -> None:
+    def rebind(self, agent: Any, verifier: Any, oracles: dict[str, Any], motor_tools: dict[str, Any],
+               world: Any = None) -> None:
         """A lifecycle tool switched the body: later steps run, verify and grade on *agent*
-        (an attempt baseline of the old body never grades the new one)."""
-        self._agent, self._verifier = agent, verifier
+        in *world* (an attempt baseline of the old body never grades the new one)."""
+        self._agent, self._verifier, self._world = agent, verifier, world
         self._oracles, self._oracle_names = oracles, frozenset(oracles)
         self._motor_tools = motor_tools
         self._ctx.agent = agent
         self._group_baselines.clear()
-        self._turn_baseline = actor_state(agent)
+        self._turn_baseline = actor_state(world, agent)
 
     def _record(
         self, expr: str, verify_result: bool, actor_caused: Any, channels: tuple[str, ...],
@@ -898,11 +902,10 @@ class NativeStepRunner:
                 if not self._step_acted:
                     return actor_causation.ActorCaused.UNCAUSED, ("no action this step",)
                 return actor_causation.ActorCaused.NOT_GRADED, ()
-            post = actor_state(self._agent)
+            post = actor_state(self._world, self._agent)
             baseline = self._group_baseline(key) or self._baseline
-            from vector_os_nano.sim.session import session_for
-
-            world = getattr(session_for(self._agent), "world", None)  # a gripper target resolves through it
+            # a gripper target resolves through the world manifest
+            world = getattr(sim_session(self._world, self._agent), "world", None)
             return actor_causation.grade_channels(baseline, post, expr, self._oracles, self._turn_baseline, world)
         except Exception as exc:  # noqa: BLE001
             logger.debug("native_loop: grade(%r) raised: %s", expr, exc)
@@ -1068,11 +1071,10 @@ def run_turn_native(
     scope ``kept_holding`` / ``localized`` to the turn, and ``VECTOR_GT_DUMP`` gets a
     ground-truth line at both ends for the independent grader (scripts/gt_grade.py).
     """
-    from vector_os_nano.sim.session import mark_turn
-
     agent = agent if agent is not None else getattr(engine, "_agent", None)
-    body = [agent]  # the body the turn drives now: a lifecycle tool rebinds it
-    mark_turn(agent, "start", user_message)
+    # The body the turn drives now and its world: a lifecycle tool rebinds both.
+    body = [agent, getattr(engine, "_world", None)]
+    _mark_turn(body, "start", user_message)
     try:
         return _run_turn_native(
             engine, user_message, body=body, session=session, app_state=app_state,
@@ -1080,7 +1082,13 @@ def run_turn_native(
             ask_permission=ask_permission, cancel=cancel,
         )
     finally:
-        mark_turn(body[0], "end", user_message)
+        _mark_turn(body, "end", user_message)
+
+
+def _mark_turn(body: list[Any], phase: str, goal: str) -> None:
+    """Tell the body's sim session (asked of its world) where the turn starts / ends."""
+    if body[1] is not None:
+        body[1].mark_turn(body[0], phase, goal)
 
 
 def _bind_body(engine: Any, agent: Any) -> tuple[Any, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
@@ -1111,14 +1119,12 @@ def _run_turn_native(
     ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
     cancel: Any = None,
 ) -> ExecutionTrace:
-    from vector_os_nano.sim.session import mark_turn, session_for
-
     token = cancel if cancel is not None else _abort.new_run()
     agent = body[0]
     verifier, oracles, motor_tools, tool_schemas = _bind_body(engine, agent)
     oracle_names = frozenset(oracles)
     ctx = _build_tool_context(agent, session, app_state, engine, token)
-    runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx, ask_permission, oracles)
+    runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx, ask_permission, oracles, body[1])
 
     def _rebind() -> None:
         """A lifecycle tool succeeded: the next round-trip sees the new body's tools,
@@ -1126,13 +1132,14 @@ def _run_turn_native(
         nonlocal oracle_names, tool_schemas
         app = ctx.app_state
         new = app.get("agent") if app is not None and "agent" in app else getattr(engine, "_agent", None)
+        world = getattr(engine, "_world", None)
         verifier, oracles, motor_tools, tool_schemas = _bind_body(engine, new)
         oracle_names = frozenset(oracles)
-        runner.rebind(new, verifier, oracles, motor_tools)
+        runner.rebind(new, verifier, oracles, motor_tools, world)
         if new is not body[0]:
-            mark_turn(body[0], "end", user_message)
-            body[0] = new
-            mark_turn(new, "start", user_message)
+            _mark_turn(body, "end", user_message)
+            body[:] = [new, world]
+            _mark_turn(body, "start", user_message)
         _compile_contract()  # the goal against the new body (the spine grades that one)
 
     turn: dict[str, Any] = {"contract": (), "start": (), "world": "", "note": ""}
@@ -1142,7 +1149,7 @@ def _run_turn_native(
         compiles to against the body's oracles, its object / surface bound through the
         body's world manifest; read now (each must be False) and again at turn end
         (each must be True)."""
-        world = str(getattr(getattr(session_for(body[0]), "world", None), "id", "") or "")
+        world = str(getattr(getattr(sim_session(body[1], body[0]), "world", None), "id", "") or "")
         contract = task_contract(user_message, oracle_names, world)
         # Fail closed: the verifier maps an oracle error to False, so ask for ``not``
         # — an error at the start then reads as "already satisfied", never as "not yet".
@@ -1310,12 +1317,10 @@ def _run_turn_native(
     # answered from, or an action once the nudges are spent) is on the record as an
     # unproven step, never silently dropped.
     runner.close_chain()
-    from vector_os_nano.sim.session import sim_id
-
     return runner.build_trace(
         user_message, llm_error=llm_error, model=model, cancelled=token.cancelled,
         contract=turn["contract"], contract_start=turn["start"],
-        contract_end=tuple(runner._check(c) for c in turn["contract"]), scene=sim_id(body[0]),
+        contract_end=tuple(runner._check(c) for c in turn["contract"]), scene=body[1].sim_id(body[0]) if body[1] is not None else "",
         world=turn["world"],
     )
 
@@ -1373,11 +1378,10 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
     # the actor's (ACTOR_EPOCH), so a navigate that arrived grades CAUSED. The arm/dev
     # worlds (no base) do not get it.
     # The base gate is single-sourced (Rule 11) onto the capability resolver.
-    from vector_os_nano.embodiments.capability_profile import resolve_capability_profile
-
-    if resolve_capability_profile(agent).has_base:
+    world = getattr(engine, "_world", None)
+    if world is not None and world.has_base(agent):
         namespace = getattr(engine, "_build_verifier_namespace", lambda a: {})(agent)
-        tools["navigate"] = _NativeBaseNavigateTool(namespace.get(_NativeBaseNavigateTool.ARRIVAL_ORACLE))
+        tools["navigate"] = _NativeBaseNavigateTool(namespace.get(_NativeBaseNavigateTool.ARRIVAL_ORACLE), world)
     # Source 4 (S6): EVERY capability the world registered into the engine's
     # CapabilityRegistry, as a tool the model routes to by name — the SAME instances
     # the world bound (agent-bound for live perception), never a second model load.
