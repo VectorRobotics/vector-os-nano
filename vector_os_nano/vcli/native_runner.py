@@ -236,6 +236,10 @@ class NativeStepRunner:
                                        if str(result.content).strip() else name)
             return result
         self._flush_pending()  # an auto-verified step closes before the next action
+        if error and self._step_acted:
+            # An earlier action of this step succeeded unverified: its own unproven row,
+            # never folded into the failed attempt's (which a proven goal may excuse).
+            self._record_open("not verified", success=self._last_ok)
         self._open_step(pre)
         self._chain.append(name)
         if getattr(tool, "housekeeping", False) is not True:

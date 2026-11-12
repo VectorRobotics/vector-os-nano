@@ -369,10 +369,12 @@ def goal_check(trace: ExecutionTrace, oracle_names: frozenset[str]) -> tuple[Goa
 def _recovered(trace: ExecutionTrace, oracle_names: frozenset[str]) -> frozenset[int]:
     """Charter 3.5 (failed attempts and recovery): the trace indices of the failed
     attempts a proven goal recovered from -- graded rows the producer recorded as failed
-    attempts that failed, after each of which a GROUNDED graded step proved every contract
-    item again. Nothing unless the goal check is proven; a failed attempt after the last
-    proof of an item (a contract that names only part of the sentence: "go to (9,3) then
-    turn left") is not recovered from and rejects as any failed row."""
+    attempts OF a contract item (the row's own verify, its bound hint, backs one) that
+    failed, after each of which a GROUNDED graded step proved every contract item again.
+    Nothing unless the goal check is proven. A failed attempt with no hint or a hint the
+    contract does not name (a contract that covers only part of the sentence: "go to
+    (9,3) then turn left"), or one after the last proof of an item, is not recovered
+    from and rejects as any failed row."""
     if goal_check(trace, oracle_names)[0] != "proven":
         return frozenset()
     from vector_os_nano.vcli.cognitive.object_goal import backs_contract
@@ -380,10 +382,14 @@ def _recovered(trace: ExecutionTrace, oracle_names: frozenset[str]) -> frozenset
     groups, steps, sg_by_name, ev = _graded(trace, oracle_names)
     world = str(getattr(trace, "world", "") or "")
     rows = list(zip((g[-1] for g in groups), steps))
-    after = min((max((i for i, s in rows if ev[id(s)][0] == "GROUNDED"
-                      and backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)), default=-1)
+
+    def backs(s: StepRecord, item: str) -> bool:
+        return backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)
+
+    after = min((max((i for i, s in rows if ev[id(s)][0] == "GROUNDED" and backs(s, item)), default=-1)
                  for item in trace.contract), default=-1)
-    return frozenset(i for i, s in rows if getattr(s, "failed_attempt", False) is True and not s.success and i < after)
+    return frozenset(i for i, s in rows if getattr(s, "failed_attempt", False) is True and not s.success
+                     and i < after and any(backs(s, item) for item in trace.contract))
 
 
 def turn_succeeded(trace: ExecutionTrace, oracle_names: frozenset[str]) -> bool:

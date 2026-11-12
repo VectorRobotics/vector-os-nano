@@ -27,6 +27,7 @@ from vector_os_nano.vcli.tools.base import PermissionResult, ToolResult
 
 GOAL = "把绿色的瓶子拿起来"
 HOLD = f"holding_object('{GREEN}')"
+HINT = "holding_object('green bottle')"  # perception_grasp's bound hint: backs HOLD by another name
 _POS = {"rest": [10.9, 3.0, 0.71], "held": [10.9, 3.0, 0.95], "floor": [10.0, 3.0, 0.02]}
 
 
@@ -105,7 +106,8 @@ def _run(goal: str, script: list[tuple[str, dict]], *, grasp=(("held", ""),), ot
     agent._arm, agent._gripper = arm, _Grip(arm)
     unbind_fake_sim(session_for(agent))
     bind_fake_sim(agent, "go2_piper", support="pick_table")
-    for sk in (_Skill("pick_top_down", lambda: None, fail="Cannot locate target object (object_not_found)"),
+    for sk in (_Skill("pick_top_down", lambda: None, "holding_object({object_label})",  # the real skill's hint
+                      fail="Cannot locate target object (object_not_found)"),
                _read("detect"), _Act("perception_grasp", arm, *grasp), _Act("other_grasp", arm, *other),
                _Act("drop", arm, ("floor", "lift failed: the object slipped"), hint=""),
                _Act("wave", arm, ("held", ""), hint="")):
@@ -191,6 +193,22 @@ def test_an_unverified_success_after_a_recovered_contract_still_rejects() -> Non
     assert rep.reject_reason == "native_step_2: no verify", rep.reject_reason
 
 
+@pytest.mark.parametrize("calls, grasp", [
+    ([("wave", {}), GRASP, GRASP, VERIFY], (("rest", "grasp missed"), ("held", ""))),
+    ([GRASP, ("wave", {}), GRASP, GRASP, VERIFY], (("rest", "miss"), ("rest", "miss"), ("held", ""))),
+])
+def test_an_unverified_success_is_never_folded_into_a_later_failed_attempt(calls, grasp) -> None:
+    """SP1V-02: a successful, never-verified action is its own unproven row; the failed
+    attempt after it holds only the failing call, so recovery never excuses the action."""
+    _trace, rep, rows, _ = _run(GOAL, calls, grasp=grasp)
+    assert ("wave", True, False, False) in rows, rows
+    assert all(r[0] == "perception_grasp" for r in rows if r[2]), rows
+    assert [s.description.split(" | ")[0] for s in _trace.goal_tree.sub_goals if "wave" in s.description] == [
+        "native: wave"], _trace.goal_tree.sub_goals
+    assert rep.goal_check == "proven" and rep.verified is False, (rep.reject_reason, rows)
+    assert rep.reject_reason.endswith(": no verify"), rep.reject_reason
+
+
 def test_a_contract_not_met_at_turn_end_does_not_excuse_the_failed_attempts() -> None:
     """The retry grasped; a later failed action dropped the bottle."""
     grasp = (("rest", "grasp missed"), ("held", ""))
@@ -219,12 +237,17 @@ def test_a_refused_call_proves_nothing_and_a_verify_after_it_is_a_probe() -> Non
     assert "refused pick_top_down: " in text, text
 
 
-def test_without_motion_evidence_an_error_is_a_failed_attempt() -> None:
+@pytest.mark.parametrize("params, verified", [
+    ({"object_label": "green bottle"}, True),  # its hint binds: an attempt of the contract item
+    ({"object_id": GREEN}, False),             # the live call's params: no hint, no attempt of an item
+])
+def test_without_motion_evidence_an_error_is_a_failed_attempt(params, verified) -> None:
     """A body without its arm counter: the refused-looking call is a failed attempt
-    (fail closed), so it is its own FAILED row; the contract is proven after it."""
-    trace, rep, rows, _ = _run(GOAL, [REFUSED, GRASP, VERIFY], arm_counter=False)
+    (fail closed), so it is its own FAILED row; the contract proven after it excuses it
+    only when the call's bound hint backs the contract item (SP1V-01)."""
+    trace, rep, rows, _ = _run(GOAL, [("pick_top_down", params), GRASP, VERIFY], arm_counter=False)
     assert rows[0] == ("pick_top_down", False, True, False), rows
-    assert rep.goal_check == "proven" and rep.verified is True, rep.reject_reason
+    assert rep.goal_check == "proven" and rep.verified is verified, rep.reject_reason
 
 
 def test_a_call_the_owner_stopped_is_the_aborted_row_never_a_failed_attempt() -> None:
@@ -301,11 +324,13 @@ def _trace(goal: str, rows: list[tuple[str, bool, bool]], *, contract=(HOLD,), e
 
 
 @pytest.mark.parametrize("rows, contract, end, verified", [
-    ([("", False, True), (HOLD, True, False)], (HOLD,), (True,), True),            # recovered from
-    ([("", False, False), (HOLD, True, False)], (HOLD,), (True,), False),          # not a failed attempt (an abort)
-    ([(HOLD, True, False), ("", False, True)], (HOLD,), (True,), False),           # failed AFTER the proof
-    ([("", False, True), (HOLD, True, False)], (HOLD,), (False,), False),          # not met at turn end
-    ([("", False, True)], (HOLD,), (True,), False),                                # no proof at all
+    ([(HINT, False, True), (HOLD, True, False)], (HOLD,), (True,), True),          # recovered from
+    ([("", False, True), (HOLD, True, False)], (HOLD,), (True,), False),           # no hint: not an attempt of the item
+    ([("at_position(1.0, 2.0)", False, True), (HOLD, True, False)], (HOLD,), (True,), False),  # another predicate
+    ([(HINT, False, False), (HOLD, True, False)], (HOLD,), (True,), False),        # not a failed attempt (an abort)
+    ([(HOLD, True, False), (HINT, False, True)], (HOLD,), (True,), False),         # failed AFTER the proof
+    ([(HINT, False, True), (HOLD, True, False)], (HOLD,), (False,), False),        # not met at turn end
+    ([(HINT, False, True)], (HOLD,), (True,), False),                              # no proof at all
     ([("", True, True), (HOLD, True, False)], (HOLD,), (True,), False),            # "failed attempt" that ran: unproven
 ])
 def test_the_gate_excuses_only_a_failed_attempt_a_proven_goal_recovered_from(rows, contract, end, verified) -> None:
@@ -321,7 +346,7 @@ def test_the_gate_never_excuses_without_a_contract() -> None:
     from tests.unit.vcli.test_task_contract_binding import APT
     from vector_os_nano.vcli.cognitive.trace_store import turn_reject_reason, turn_succeeded
 
-    t = _trace("move the green bottle", [("", False, True), (HOLD, True, False)], contract=(), end=())
+    t = _trace("move the green bottle", [(HINT, False, True), (HOLD, True, False)], contract=(), end=())
     assert turn_succeeded(t, APT) is False
     t = replace(t, success=True)  # even a producer that claims success
     assert turn_reject_reason(t, APT).startswith("s0: the action failed")
@@ -414,8 +439,13 @@ def test_a_stop_never_launders_a_turn_failed_after_motion(expr) -> None:
     assert rep.per_step[1].failed_attempt and rep.verified is False and rep.evidence == "FAILED", rep.reject_reason
 
 
-def test_a_turn_failed_after_motion_before_a_proving_navigate_is_recovered_from() -> None:
-    rep, rows, _tr = _nav_run("走到坐标 (9.0,3.0)", [("turn_fake", {}), _NAV])
-    assert [(r[0], r[1]) for r in rows] == [("turn_fake", False), ("navigate", True)], rows
-    assert [s.evidence for s in rep.per_step] == ["FAILED", "GROUNDED"]
-    assert rep.verified is True and rep.goal_check == "proven", rep.reject_reason
+@pytest.mark.parametrize("goal", ["走到坐标 (9.0,3.0) 然后左转90度", "go to (9,3) then turn left", "走到坐标 (9.0,3.0)"])
+@pytest.mark.parametrize("script", [[("turn_fake", {}), _NAV], [("turn_fake", {}), _NAV, _AT]])
+def test_a_failed_turn_before_a_proving_navigate_is_never_recovered_from(goal, script) -> None:
+    """SP1V-01: the turn has no hint, so it is no attempt of the coordinate item; a proof
+    of that item after it excuses nothing, whatever part of the sentence the contract covers."""
+    rep, rows, tr = _nav_run(goal, script)
+    assert tr.contract == ("at_position(9.0, 3.0)",), tr.contract
+    assert [(r[0], r[1]) for r in rows][:2] == [("turn_fake", False), ("navigate", True)], rows
+    assert rep.goal_check == "proven" and rep.verified is False and rep.evidence == "FAILED", rep.reject_reason
+    assert rep.per_step[0].reject_reason.startswith("the action failed: "), rep.per_step
