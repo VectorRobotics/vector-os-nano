@@ -313,6 +313,17 @@ def test_a_base_joint_the_model_lacks_names_the_manifest_and_key():
         Body("mujoco", dataclasses.replace(cfg, base=base))
 
 
+def test_an_arm_joint_the_model_lacks_names_the_manifest_and_key():
+    """The same check for arm.joints: a typo in the go2_piper arm fails where the body is
+    built, naming the manifest file, arm.joints and the valid set."""
+    cfg = registry.load("go2_piper")
+    arm = dataclasses.replace(cfg.arm, joints=("piper_joint1x",) + tuple(cfg.arm.joints[1:]))
+    with pytest.raises(EmbodimentConfigError,
+                       match=r"^go2_piper/robot\.yaml: arm\.joints \['piper_joint1x'\] are not joints of .*go2_piper\.xml; "
+                             r"joints: \[.*'piper_joint1'"):
+        Body("mujoco", dataclasses.replace(cfg, arm=arm))
+
+
 def test_convex_mpc_is_refused_on_pybullet_with_its_reason():
     cfg = registry.load("go2")
     policy = dataclasses.replace(cfg.base.policy, by_backend={})
