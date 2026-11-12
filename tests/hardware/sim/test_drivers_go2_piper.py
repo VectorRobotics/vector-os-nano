@@ -31,6 +31,7 @@ def sim():
     go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
     try:
         go2.connect()
+        go2.stand()  # settled: IK and a later fk must see the same standing body
         rt = go2.runtime
         yield {"go2": go2, "rt": rt, "cfg": cfg,
                "piper": Arm(cfg.arm, rt, wait_mount=go2.wait_settled),
