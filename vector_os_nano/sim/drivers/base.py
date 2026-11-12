@@ -21,9 +21,12 @@ state through the scene's canonical addresses and writes joint torques through
 * ``cmd_motion`` counts the actor's commanded |vx| + |vy| + |vyaw| (causation grading):
   only writes that pass the gate while a producer-dispatched tool runs (ACTOR_EPOCH).
 
-Timed motions count SIM seconds. The base never steps physics except for a posture,
-which runs its ramp on the caller's thread with the stepper parked (deterministic at
-any real-time ratio). It reads nothing but its own robot and never moves the world.
+Timed motions count SIM seconds, and the thread that holds skill control holds the sim
+clock between its waits (``SimRuntime.wait_sim(hold=True)``): its commands land on the
+same ticks at any CPU load. The base never steps physics except for a posture, which
+runs its ramp on the caller's thread with the stepper parked. It never moves the world:
+the world side spawns and resets the body (``sim/session.py``) and tells it
+(:meth:`LeggedBase.respawned`).
 """
 from __future__ import annotations
 

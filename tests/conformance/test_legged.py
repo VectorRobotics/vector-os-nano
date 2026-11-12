@@ -177,6 +177,20 @@ def test_an_unknown_posture_names_the_valid_ones(body):
         body.base.set_posture("handstand")
 
 
+def test_a_posture_the_joints_cannot_reach_is_reported(monkeypatch):
+    """Adversarial: hips asked past their 60 deg limit end there, and set_posture says so."""
+    monkeypatch.setenv("VECTOR_SIM_LOCKSTEP", "1")
+    cfg = registry.load("go2")
+    splits = {j: (1.4 if j.endswith("hip_joint") else a) for j, a in cfg.base.stance.items()}
+    cfg = dataclasses.replace(cfg, base=dataclasses.replace(cfg.base, postures={**cfg.base.postures, "splits": splits}))
+    b = Body("mujoco", cfg)
+    try:
+        assert b.base.set_posture("stand") is True
+        assert b.base.set_posture("splits") is False
+    finally:
+        b.close()
+
+
 def test_a_stop_from_a_walk_at_the_limit_brings_it_to_rest(body):
     assert body.base.set_posture("stand")
     body.base.set_velocity(body.cfg.base.limits[0], 0.0, 0.0)
