@@ -336,8 +336,9 @@ def test_the_wp03_explore_grasp_stop_trace_verifies_under_its_contract() -> None
 
 
 @pytest.mark.parametrize("goal, contract, last", [
-    # an unproven actuating step the contract does not cover ("... then turn left")
-    ("走到坐标 (3,0) 然后左转90度", ("at_position(3.0, 0.0)",), _row("")),
+    # an unproven actuating step the contract does not cover (an extra turn; K1: "... then
+    # turn left" compiles no contract at all)
+    ("走到坐标 (3,0)", ("at_position(3.0, 0.0)",), _row("")),
     ("go to (2,3)", ("at_position(2.0, 3.0)",), _row("", ok=True, vr=False)),
     (GRAB, (HOLD,), _row("facing(0.5, 0.5)", caused=U)),
 ])
@@ -354,7 +355,9 @@ def test_an_unproven_actuating_step_fails_a_met_contract(goal, contract, last) -
     assert evidence_passed(exempt, GO2 | MANIP), turn_reject_reason(exempt, GO2 | MANIP)
 
 
-_P8 = "走到坐标 (9.0,3.0) 然后左转90度"
+# Verifier P8's sentence was "... 然后左转90度"; K1 (SP1V) compiles no contract for it, so
+# the coordinate contract these traces carry is the plain coordinate goal's.
+_P8 = "走到坐标 (9.0,3.0)"
 
 
 @pytest.mark.parametrize("turn, stop", [

@@ -144,7 +144,7 @@ def _at_position_call_xy(node: ast.Call) -> tuple[float, float] | None:
 
 def _necessary_at_position_consts(node: ast.AST) -> list[tuple[float, float]]:
     """The (x, y) consts of every ``at_position`` call that is a NECESSARY CONJUNCT of
-    *node* — reachable from the root through ``BoolOp(And)`` nodes ONLY.
+    *node* — reachable from the root through ``BoolOp(And)`` nodes and ``== True`` ONLY.
 
     Such a call's falsity forces the WHOLE verify False (an ``and``-chain is True only if
     every conjunct is True), so it genuinely GATES the verdict on reaching the
@@ -163,6 +163,11 @@ def _necessary_at_position_consts(node: ast.AST) -> list[tuple[float, float]]:
         for v in node.values:
             out.extend(_necessary_at_position_consts(v))
         return out
+    if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+        # ``<call> == True`` / ``True == <call>`` asserts the call (object_goal._asserted_calls).
+        sides = (node.left, node.comparators[0])
+        return [xy for i, s in enumerate(sides) if isinstance(s, ast.Constant) and s.value is True
+                for xy in _necessary_at_position_consts(sides[1 - i])]
     return []
 
 

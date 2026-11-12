@@ -36,7 +36,7 @@ from typing import Any, Callable
 from vector_os_nano.vcli.backends.types import LLMResponse
 from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
-from vector_os_nano.vcli.cognitive.object_goal import task_contract, unbound_reason
+from vector_os_nano.vcli.cognitive.object_goal import contract_leads, task_contract, unbound_reason
 from vector_os_nano.vcli.cognitive.trace_store import verify_oracles
 from vector_os_nano.vcli.cognitive.types import ExecutionTrace
 from vector_os_nano.vcli.native_runner import LIFECYCLE_TOOLS, NativeStepRunner, sim_session
@@ -248,23 +248,28 @@ def _run_turn_native(
             _mark_turn(body, "start", user_message)
         _compile_contract()  # the goal against the new body (the spine grades that one)
 
-    turn: dict[str, Any] = {"contract": (), "start": (), "world": "", "note": ""}
+    turn: dict[str, Any] = {"contract": (), "start": (), "world": "", "note": "", "held": ()}
 
     def _compile_contract() -> None:
         """The turn-level task contract (WP07): GT end-state predicates the goal
-        compiles to against the body's oracles, its object / surface bound through the
-        body's world manifest; read now (each must be False) and again at turn end
-        (each must be True)."""
+        compiles to against the body's oracles, its object / surface / room bound through
+        the body's world manifest (an object named 'it': the one held now, from the turn
+        baseline's grasp attachments); read now (each must be False) and again at turn
+        end (each must be True). Its lead clauses each need their own verified step."""
         world = str(getattr(getattr(sim_session(body[1], body[0]), "world", None), "id", "") or "")
-        contract = task_contract(user_message, oracle_names, world)
+        held = tuple(sorted(runner._turn_baseline.gripper_welds or {}))
+        contract = task_contract(user_message, oracle_names, world, held)
+        leads = contract_leads(user_message, oracle_names, world, held)
         # Fail closed: the verifier maps an oracle error to False, so ask for ``not``
         # — an error at the start then reads as "already satisfied", never as "not yet".
-        turn.update(contract=contract, world=world,
+        turn.update(contract=contract, world=world, held=held,
                     start=tuple(not runner._check(f"not ({c})") for c in contract))
         # The same lines reach the model (a system block, I4c): it verifies the bound
         # object and surface itself, or asks the user when a slot did not bind.
         lines = [f"Task contract: {' and '.join(contract)}"] if contract else []
-        lines += [f"Unbound: {c}: {why}" for c in contract if (why := unbound_reason(c, user_message, world))]
+        lines += [f"Verify first, each after its own action: {', '.join(leads)}"] if leads else []
+        lines += [f"Unbound: {c}: {why}" for c in (*leads, *contract)
+                  if (why := unbound_reason(c, user_message, world, held))]
         turn["note"] = "\n".join(lines)
         for line in lines:
             _emit(line)
@@ -432,7 +437,7 @@ def _run_turn_native(
         user_message, llm_error=llm_error, model=model, cancelled=token.cancelled,
         contract=turn["contract"], contract_start=turn["start"],
         contract_end=tuple(runner._check(c) for c in turn["contract"]), scene=body[1].sim_id(body[0]) if body[1] is not None else "",
-        world=turn["world"],
+        world=turn["world"], held_at_start=turn["held"],
     )
 
 
