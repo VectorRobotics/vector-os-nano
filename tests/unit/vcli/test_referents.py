@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 """REF1 — ONE rule for "which object does this phrase name" (WorldManifest.referents /
-resolve / mentions), the one answer the oracles, the contract binder, the manipulation
+resolve), the one answer the oracles, the contract binder, the manipulation
 gate and the grasp skill all ask.
 
 A text is a reference only when every character of it is a word of this world (a
@@ -58,7 +58,7 @@ _APARTMENT = [
     ("red can 2", None),
     # plurals
     ("red cans", R), ("yellow cups", Y), ("the mugs", Y), ("orange boxes", O), ("blue bottles", B),
-    # garbage before and after; a sentence is no reference (mentions reads sentences)
+    # garbage before and after; a sentence is no reference
     ("xred can", None), ("red canx", None), ("red can!", None), ("red can.", None), ("please red can", None),
     ("red can please", None), ("抓红色的罐子", None), ("红色的罐子吧", None), ("the red can, thanks", None),
     ("grab the red can", None), ("bring me the red can", None), ("把绿色瓶子拿过来", None),
@@ -115,40 +115,59 @@ def test_referents_tells_an_unbound_reference_from_no_reference(world, text, fit
     assert (None if got is None else set(got)) == fits
 
 
-@pytest.mark.parametrize("sentence, named", [
-    ("pick up the yellow banana", set()), ("grab the red can", {R}), ("把绿色瓶子拿过来", {G}),
-    ("bring me the red can", {R}), ("can you pick up the red one", set()),     # "can" is a verb here
-    ("bring me the red can and the green bottle", {R, G}), ("拿起红色的罐子", {R}),
-    ("pick up the green can", set()),                                         # a phrase fitting nothing
-    ("pick up the cup", set()),                                               # a category alone: only a slot
-    ("put the yellow cup on the coffee table", {Y}), ("the infrared scanner", set()),
-    ("拿起红色的", set()), ("grab the red can, not the green bottle", {R, G}), ("把红色罐子旁边的绿色瓶子拿来", {R, G}),
-    ("pick up the pickable_bottle_blue now", {B}), ("拿起黄色的香蕉", set()),
-    # REF1V-01: a CJK world word inside a longer word (粉红 pink, 罐头 canned food, 瓶盖 cap,
-    # 盒饭 boxed meal) or under a modifier the world has not names nothing
-    ("拿起粉红色的罐子", set()), ("拿起粉红的罐子", set()), ("拿起粉红色罐头", set()), ("拿起红色罐头", set()),
-    ("拿起绿色的瓶盖", set()), ("拿起橙色的盒饭", set()), ("把桌子上的粉红色罐头拿给我", set()),
-    ("拿起深红色的罐子", set()), ("拿起橘红色的罐子", set()), ("拿起黄色的杯垫", set()), ("拿起粉红罐子", set()),
-    ("拿起红色罐子的盖子", set()), ("拿起绿色的红罐子", set()), ("拿起大的红罐子", set()),
-    ("拿起粉红色 罐子", set()), ("把粉红色的罐子放到绿色瓶子旁边", set()), ("pick up the green red can", set()),
-    # ... while a phrase beside the verbs, particles and places of a sentence still names its object
-    ("把桌子上的红色罐子拿给我", {R}), ("帮我拿红罐子吧", {R}), ("去客厅把黄色杯子拿起来", {Y}),
-    ("我要绿色的瓶子", {G}), ("拿起我的红罐子", {R}), ("红色的罐子放到餐桌上", {R}), ("拿起红色的红罐子", {R}),
-    ("用 RynnBrain 找一下绿色瓶子", {G}), ("去绿色的瓶子那里", {G}), ("帮我拿一下红色的罐子", {R}),
-    ("拿出红罐子", {R}), ("把红罐子提起来", {R}),
-])
-def test_mentions_counts_complete_noun_phrases_only(sentence, named) -> None:
-    assert load_world("apartment").mentions(sentence) == named
+# REF1c (charter 3.5, "Manipulation needs a contract"): a free sentence names no object.
+# These rows pinned WorldManifest.mentions, the scan that read an object out of a free
+# sentence (deleted: a landmark, a part, an excluded or a negated object all mention
+# one). The gate's object is now the closed form's bound slot: OUT when the sentence is
+# no closed form (the manipulation gate rejects the turn), None when the form's slot
+# binds nothing, else the object. The comment after a row gives its old mentions value.
+OUT = "outside the closed forms"
 
 
-@pytest.mark.parametrize("sentence, named", [
-    ("粉红色 mugs", set()), ("拿起粉红色的马克杯", set()), ("拿起白色的马克杯", set()), ("拿起香蕉皮", set()),
-    ("拿起蓝色的马克杯", set()), ("拿起红色的马克杯", {"mug"}), ("拿起香蕉", {"banana"}), ("red mugs", {"mug"}),
-    # a phrase that fits nothing makes the whole sentence name nothing (not the other object)
-    ("拿起黄色的杯子和香蕉", set()), ("把蓝色的马克杯和香蕉拿过来", set()),
+def _gate_object(world: str, sentence: str) -> str | None:
+    from vector_os_nano.vcli.cognitive.object_goal import _sentence
+
+    form = _sentence(load_world(world), sentence)
+    return OUT if form is None else form[1]
+
+
+@pytest.mark.parametrize("sentence, bound", [
+    ("pick up the yellow banana", OUT), ("grab the red can", R), ("把绿色瓶子拿过来", G),
+    ("bring me the red can", R),
+    ("can you pick up the red one", R),                                      # was set(): a closed form after all
+    ("bring me the red can and the green bottle", OUT),                      # was {R, G}
+    ("拿起红色的罐子", R),
+    ("pick up the green can", None),                                         # a phrase fitting nothing
+    ("pick up the cup", Y),                                                  # was set(): a whole slot binds
+    ("put the yellow cup on the coffee table", Y), ("the infrared scanner", OUT),
+    ("拿起红色的", R),                                                       # was set(): a whole slot binds
+    ("grab the red can, not the green bottle", OUT), ("把红色罐子旁边的绿色瓶子拿来", OUT),  # were {R, G}
+    ("pick up the pickable_bottle_blue now", B), ("拿起黄色的香蕉", OUT),
+    # REF1V-01: a CJK world word inside a longer word or under a modifier the world has not
+    ("拿起粉红色的罐子", OUT), ("拿起粉红的罐子", OUT), ("拿起粉红色罐头", OUT), ("拿起红色罐头", OUT),
+    ("拿起绿色的瓶盖", OUT), ("拿起橙色的盒饭", OUT), ("把桌子上的粉红色罐头拿给我", OUT),
+    ("拿起深红色的罐子", OUT), ("拿起橘红色的罐子", None), ("拿起黄色的杯垫", OUT), ("拿起粉红罐子", OUT),
+    ("拿起红色罐子的盖子", OUT), ("拿起绿色的红罐子", None), ("拿起大的红罐子", OUT),
+    ("拿起粉红色 罐子", OUT), ("把粉红色的罐子放到绿色瓶子旁边", OUT), ("pick up the green red can", None),
+    # were {R}/{G}/{Y}: a phrase beside other words of a sentence is no closed form any more
+    ("把桌子上的红色罐子拿给我", OUT), ("帮我拿红罐子吧", R), ("去客厅把黄色杯子拿起来", OUT),
+    ("我要绿色的瓶子", OUT), ("拿起我的红罐子", OUT), ("红色的罐子放到餐桌上", OUT), ("拿起红色的红罐子", R),
+    ("用 RynnBrain 找一下绿色瓶子", OUT), ("去绿色的瓶子那里", OUT), ("帮我拿一下红色的罐子", R),
+    ("拿出红罐子", OUT), ("把红罐子提起来", OUT),
 ])
-def test_mentions_in_the_tabletop(sentence, named) -> None:
-    assert load_world("tabletop").mentions(sentence) == named
+def test_a_sentence_names_an_object_only_through_its_closed_form(sentence, bound) -> None:
+    assert _gate_object("apartment", sentence) == bound
+
+
+@pytest.mark.parametrize("sentence, bound", [
+    ("粉红色 mugs", OUT), ("拿起粉红色的马克杯", OUT), ("拿起白色的马克杯", OUT), ("拿起香蕉皮", OUT),
+    ("拿起蓝色的马克杯", None), ("拿起红色的马克杯", "mug"), ("拿起香蕉", "banana"),
+    ("red mugs", OUT),                                                       # was {"mug"}: no verb, no form
+    ("拿起黄色的杯子和香蕉", OUT), ("把蓝色的马克杯和香蕉拿过来", OUT),
+])
+def test_a_sentence_names_an_object_only_through_its_closed_form_in_the_tabletop(sentence, bound) -> None:
+    assert _gate_object("tabletop", sentence) == bound
+
 
 
 # ---------------------------------------------------------------------------

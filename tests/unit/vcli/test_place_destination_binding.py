@@ -104,13 +104,14 @@ def test_a_drop_anywhere_never_places_on_a_named_destination(goal) -> None:
 
 
 def test_a_drop_for_an_unchecked_place_never_proves_the_goal() -> None:
-    """I4d: '放到厨房' names no surface slot, so no contract: the release grounds the step
-    and the place gate, but the goal is reported unchecked, never proven. By design the
-    turn is verified (every graded step grounded, no gate rejects): a consumer that needs
-    "the task is done" reads goal_check (charter 3.5)."""
+    """I4d: '放到厨房' names no surface slot, so no contract: the release grounds the step,
+    and the goal is reported unchecked, never proven. REF1c (charter 3.5): a manipulation
+    is verified only through a proven contract, so the turn is not verified either (it
+    was until REF1c: the place gate read the can out of the sentence)."""
     trace, rep = _two("把红色罐子放到厨房", [("open_can", {}), _v("released('red can')")], held=(RED,))
     assert trace.contract == () and rep.goal_check == "unchecked"
-    assert rep.verified is True and rep.reject_reason == ""
+    assert [s.evidence for s in rep.per_step] == ["GROUNDED"]
+    assert rep.verified is False and "is outside the forms the spine can check" in rep.reject_reason
 
 
 @pytest.mark.parametrize("goal", ["put the red can down", "把红色罐子放下"])

@@ -411,13 +411,14 @@ def test_a_place_goal_that_only_grasped_is_rejected_through_the_runner(goal, con
     assert rep.verified is False and why in rep.reject_reason, rep.reject_reason
 
 
-@pytest.mark.parametrize("goal, verify", [
-    ("pick up the apple", f"holding_object('{GREEN}')"),       # the world has no apple
-    ("pick up a bottle", "holding_object('pickable_can_red')"),  # two bottles, and a can
-    ("拿起瓶子", f"holding_object('{GREEN}')"),                  # two bottles: which one is unknown
+@pytest.mark.parametrize("goal, verify, why", [
+    # the world has no apple: no closed form (REF1c: the gate says so; was "names no object")
+    ("pick up the apple", f"holding_object('{GREEN}')", "is outside the forms the spine can check"),
+    ("pick up a bottle", "holding_object('pickable_can_red')", "names no object"),  # two bottles, and a can
+    ("拿起瓶子", f"holding_object('{GREEN}')", "names no object"),                  # two bottles: which one?
 ])
-def test_a_grasp_of_an_unresolvable_object_fails_closed(goal, verify) -> None:
-    assert "names no object" in turn_reject_reason(_one_row(goal, verify), APT)
+def test_a_grasp_of_an_unresolvable_object_fails_closed(goal, verify, why) -> None:
+    assert why in turn_reject_reason(_one_row(goal, verify), APT)
 
 
 # ---------------------------------------------------------------------------

@@ -187,6 +187,10 @@ _FORMS: dict[str, tuple[str, ...]] = {
               r"拿{o}(?:过来|给我)(?:一下|一点)?",
               r"(?:拿|递|带)给我{o}", r"给我拿(?:来|过来)?{o}"),
 }
+# One goal per form above, in a world's own words ({o} an object's English name, {zo} a
+# CJK one, {s} a surface): what the manipulation gate offers a goal outside every form.
+# test_manipulation_contract proves each compiles a bound contract in every world.
+_EXAMPLES = ("pick up the {o}", "put the {o} down", "put the {o} on the {s}", "bring me the {o}", "把{zo}拿过来")
 _CLAUSES = [(kind, re.compile(f.format(o="(?P<o>.+?)", s="(?P<s>.+)"))) for kind, fs in _FORMS.items() for f in fs]
 _THEN = re.compile(r"\s*(?:,?\s*\band then\b|,?\s*\band\b|,?\s*\bthen\b|[,，、;；]|然后|再)\s*")
 # Politeness stripped at either end (a closed list, like the forms): only words that
@@ -239,15 +243,13 @@ def _sentence(world: Any, goal_text: str) -> tuple[str, str | None, str | None] 
     return clauses[-1][0], named.pop() if len(named) == 1 else None, dest and world.resolve_surface(dest)
 
 
-def goal_object(world: Any, goal_text: str | None) -> str | None:
-    """The one object a manipulation goal is about: the contract's when the goal is a
-    closed form (None when that slot is unbound), else the one pickable the sentence
-    names by a complete noun phrase (``WorldManifest.mentions``), else None."""
-    form = _sentence(world, goal_text or "")
-    if form is not None:
-        return form[1]
-    named = world.mentions(goal_text)
-    return next(iter(named)) if len(named) == 1 else None
+def checkable_goals(world: Any) -> list[str]:
+    """``_EXAMPLES`` filled with *world*'s first object and surface (the place form
+    only when the world has a surface)."""
+    pk = next(iter(world.pickables.values()))
+    zo = next((a for a in pk.aliases if not a.isascii()), pk.english)
+    s = next(iter(world.surfaces), "").replace("_", " ")
+    return [e.format(o=pk.english, zo=zo, s=s) for e in _EXAMPLES if s or "{s}" not in e]
 
 
 def unbound_reason(item: str, goal_text: str | None, world_id: str = "") -> str:

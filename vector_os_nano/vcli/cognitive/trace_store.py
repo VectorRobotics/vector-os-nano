@@ -287,12 +287,14 @@ def _manipulation_reason(
     that necessarily asserts EACH proof it needs (``proof_oracles``) — a possession
     oracle for a grasp / fetch (``placed_count`` never proves a grasp), a placement or
     release for a place, both for a pick-and-place. Scoped to a world with
-    ``holding_object``."""
+    ``holding_object``. With a world manifest (charter 3.5) the goal must be a closed
+    form, and every proof names the object its contract bound."""
     from vector_os_nano.vcli.cognitive.object_goal import (
         _manifest,
+        _sentence,
         backs_contract,
+        checkable_goals,
         goal_intents,
-        goal_object,
         has_necessary_manip_oracle,
         proof_oracles,
     )
@@ -301,17 +303,21 @@ def _manipulation_reason(
         return ""
     goal = goal_intents(trace.goal_tree.goal)
     dispatched = set(getattr(trace, "intents", ()) or ())
-    # With a world manifest every proof must name the goal's object (I4F1-D2: a hold of
-    # the red can never proves "pick up the green bottle"); an unresolvable one fails closed.
+    # I4F1-D2: a hold of the red can never proves "pick up the green bottle"; an unbound
+    # object fails closed, and a goal outside the forms binds none at all.
     world_id = str(getattr(trace, "world", "") or "")
     world = _manifest(world_id)
-    want = goal_object(world, trace.goal_tree.goal) if world is not None else None
+    form = _sentence(world, trace.goal_tree.goal or "") if world is not None else None
+    want = form[1] if form is not None else None
 
     def proves(verify: str | None, names: frozenset[str]) -> bool:
         return has_necessary_manip_oracle(verify, names) and (
             world is None or any(backs_contract(f"{n}({want!r})", verify, world_id) for n in names))
 
     for names in proof_oracles(goal, dispatched):
+        if world is not None and form is None:
+            return (f"the goal {trace.goal_tree.goal!r} is outside the forms the spine can check, so its "
+                    f"manipulation is not verified; checkable goals: {'; '.join(checkable_goals(world))}")
         if world is not None and want is None:
             return "a manipulation goal that names no object the world resolves is unprovable"
         if not any(ev[id(s)][0] == "GROUNDED" and proves(sg_by_name[s.sub_goal_name].verify, names)
