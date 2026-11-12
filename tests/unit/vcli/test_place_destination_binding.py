@@ -178,7 +178,9 @@ def _grasp_skills():
 @pytest.mark.parametrize("value, bound", [
     ("red can", "holding_object('red can')"),
     ("红色的罐子", "holding_object('红色的罐子')"),
-    ("the can", None),      # the manifest cannot resolve it: no auto-verify, never a guess
+    ("the bottle", None),   # the manifest cannot resolve it (two bottles): no auto-verify, never a guess
+    ("yellow banana", None),  # REF1: no object of this world, whatever its colour
+    ("the can", "holding_object('the can')"),  # REF1: the one can of the apartment
     (None, None),           # the parameter is missing
 ])
 def test_a_real_grasp_hint_binds_the_called_object(cls, field, value, bound) -> None:

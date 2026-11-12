@@ -292,6 +292,7 @@ def _manipulation_reason(
         _manifest,
         backs_contract,
         goal_intents,
+        goal_object,
         has_necessary_manip_oracle,
         proof_oracles,
     )
@@ -304,7 +305,7 @@ def _manipulation_reason(
     # the red can never proves "pick up the green bottle"); an unresolvable one fails closed.
     world_id = str(getattr(trace, "world", "") or "")
     world = _manifest(world_id)
-    want = world.resolve(trace.goal_tree.goal) if world is not None else None
+    want = goal_object(world, trace.goal_tree.goal) if world is not None else None
 
     def proves(verify: str | None, names: frozenset[str]) -> bool:
         return has_necessary_manip_oracle(verify, names) and (

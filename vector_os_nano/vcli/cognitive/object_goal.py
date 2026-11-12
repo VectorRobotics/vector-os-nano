@@ -199,23 +199,13 @@ _PRONOUNS = frozenset({"it", "that", "this", "them", "that one", "this one", "�
 
 def _names(world: Any, phrase: str, slot: str) -> bool:
     """*phrase* fills *slot* and nothing else: an object slot ``o`` a pronoun or an
-    object name of *world* (a body name, an alias, colour and category words), a
+    object reference in *world*'s words (``WorldManifest.referents``: bound or not), a
     destination slot ``s`` a surface name or a word for furniture (its scenery)."""
-    if slot == "o" and phrase in _PRONOUNS:
-        return True
+    if slot == "o":
+        return phrase in _PRONOUNS or world.referents(phrase) is not None
     x = re.sub(r"^(?:(?:the|a|an|this|that|my)\s+|这个|那个|这|那)", "", phrase)
-    if slot == "s":
-        names = {w.lower() for n, s in world.surfaces.items() for w in (n, n.replace("_", " "), *s.aliases)}
-        return x in names or re.fullmatch(rf"(?:{_alt(world.scenery)})(?:子|s)?", x) is not None
-    if x in {n.lower() for n in world.pickables} | {a.lower() for p in world.pickables.values() for a in p.aliases}:
-        return True
-    words = [*(w for ws in world.colours.values() for w in ws), *(p.colour for p in world.pickables.values())]
-    cats = [*(w for ws in world.categories.values() for w in ws), *(p.category for p in world.pickables.values())]
-    # a colour with a category word, or a colour marked as a reference (the red one, 红色的,
-    # 红色那个): a bare colour word is a noun ("the orange" is a fruit) and names nothing
-    c = _alt(words)
-    return re.fullmatch(rf"(?:(?:{c})\s?色?的?\s?)?(?:{_alt(cats)})(?:子|e?s)?|(?:{c})(?:\s+one|色?(?:的|那个|这个)+)",
-                        x) is not None
+    names = {w.lower() for n, s in world.surfaces.items() for w in (n, n.replace("_", " "), *s.aliases)}
+    return x in names or re.fullmatch(rf"(?:{_alt(world.scenery)})(?:子|s)?", x) is not None
 
 
 def _alt(words: Any) -> str:
@@ -247,6 +237,17 @@ def _sentence(world: Any, goal_text: str) -> tuple[str, str | None, str | None] 
     named = {world.resolve(v) for _, slots in clauses if (v := slots.get("o")) and v not in _PRONOUNS}
     dest = clauses[-1][1].get("s")
     return clauses[-1][0], named.pop() if len(named) == 1 else None, dest and world.resolve_surface(dest)
+
+
+def goal_object(world: Any, goal_text: str | None) -> str | None:
+    """The one object a manipulation goal is about: the contract's when the goal is a
+    closed form (None when that slot is unbound), else the one pickable the sentence
+    names by a complete noun phrase (``WorldManifest.mentions``), else None."""
+    form = _sentence(world, goal_text or "")
+    if form is not None:
+        return form[1]
+    named = world.mentions(goal_text)
+    return next(iter(named)) if len(named) == 1 else None
 
 
 def unbound_reason(item: str, goal_text: str | None, world_id: str = "") -> str:
