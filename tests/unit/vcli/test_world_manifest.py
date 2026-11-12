@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-"""World manifests (config/worlds/*.yaml): name resolution, and the data checked
-against the MJCF it describes (floor boxes, surfaces, pickables, grasp welds)."""
+"""World manifests (config/worlds/*.yaml): the data checked against the MJCF it
+describes (floor boxes, surfaces, pickables, grasp welds). Name resolution (the one
+referent rule) is tests/unit/vcli/test_referents.py."""
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
@@ -23,37 +24,8 @@ def apt():
     return load_world("apartment")
 
 
-@pytest.mark.parametrize("text, body", [
-    ("pickable_bottle_green", "pickable_bottle_green"),
-    ("green bottle", "pickable_bottle_green"),
-    ("the green bottle please", "pickable_bottle_green"),
-    ("绿色的瓶子", "pickable_bottle_green"),
-    ("把绿色瓶子拿过来", "pickable_bottle_green"),
-    ("绿瓶", "pickable_bottle_green"),          # colour + category, no alias
-    ("红色的", "pickable_can_red"),              # the only red object
-    ("bring me the red can", "pickable_can_red"),
-    ("黄色的杯子", "pickable_cup_yellow"),
-    ("purple box", "pickable_box_purple"),
-    ("瓶子", None),                              # two bottles: ambiguous
-    ("box", None),                               # two boxes
-    ("green can", None),                         # no such object
-    ("can you see anything", None),              # a category word alone never picks one
-    ("罐子", None),
-    ("a red stool", None),                       # a colour + scenery names furniture
-    ("红色的凳子", None),
-    ("红色的东西", "pickable_can_red"),
-    ("grab the red can, not the green bottle", None),  # two objects named: ambiguous
-    ("把红色罐子旁边的绿色瓶子拿来", None),
-    ("unicorn", None),
-    ("", None),
-])
-def test_resolve(apt, text, body) -> None:
-    assert apt.resolve(text) == body
-
-
 def test_tabletop_world(apt) -> None:
     tt = load_world("tabletop")
-    assert tt.resolve("香蕉") == "banana" and tt.resolve("pick up the duck") == "duck"
     assert tt.surfaces["tray"].box == (0.20, 0.0, 0.50, 0.25)
     assert tt.user is None and not tt.rooms
 

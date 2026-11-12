@@ -136,13 +136,15 @@ class FakeGripper:
         return self._closed and self._holding_after
 
 
-def _ctx(perception, *, arm=None, gripper=None, wm=None):
+def _ctx(perception, *, arm=None, gripper=None, wm=None, world=None):
+    """No world manifest by default: the detector pipeline is asked for the query's
+    English phrase ("banana"); in a manifest world a query must name one of its objects."""
     return SkillContext(
         arm=arm if arm is not None else FakeArm(),
         gripper=gripper if gripper is not None else FakeGripper(),
         world_model=wm if wm is not None else WorldModel(),  # EMPTY but not None
         perception=perception,
-        config={"world": "apartment"},
+        config={"world": world} if world else {},
     )
 
 
@@ -284,7 +286,7 @@ def test_color_query_threads_color_and_maps_verify_label():
     and the verify LABEL maps to the colour's scene name (pickable_can_red)."""
     perc = FrontPerception()
     arm = FakeArm()
-    res = PerceptionGraspSkill().execute({"query": "抓红色的东西"}, _ctx(perc, arm=arm))
+    res = PerceptionGraspSkill().execute({"query": "抓红色的东西"}, _ctx(perc, arm=arm, world="apartment"))
     assert res.success is True
     assert "front:red" in perc.calls               # colour threaded to the resolver
     assert not any(c.startswith("detect") for c in perc.calls)  # no VLM naming
@@ -293,7 +295,7 @@ def test_color_query_threads_color_and_maps_verify_label():
 
 def test_color_query_blue_maps_to_blue_bottle():
     perc = FrontPerception()
-    res = PerceptionGraspSkill().execute({"query": "抓蓝色的"}, _ctx(perc, arm=FakeArm()))
+    res = PerceptionGraspSkill().execute({"query": "抓蓝色的"}, _ctx(perc, arm=FakeArm(), world="apartment"))
     assert res.success is True
     assert "front:blue" in perc.calls
     assert res.result_data["detection_label"] == "pickable_bottle_blue"
@@ -423,7 +425,7 @@ def test_passed_detections_colour_selects_right_box():
         {"label": "red can", "bbox": _PRODUCER_BOX, "confidence": 0.80},
     ]
     res = PerceptionGraspSkill().execute(
-        {"query": "拿起红色的罐子", "detections": dets}, _ctx(perc, arm=FakeArm())
+        {"query": "拿起红色的罐子", "detections": dets}, _ctx(perc, arm=FakeArm(), world="apartment")
     )
     assert res.success is True
     assert res.result_data["consumed_bbox"] is True
@@ -486,7 +488,7 @@ def test_colour_noun_query_routes_to_front_hsv_not_detector():
     """
     perc = FrontPerception()
     arm = FakeArm()
-    res = PerceptionGraspSkill().execute({"query": "绿色的瓶子"}, _ctx(perc, arm=arm))
+    res = PerceptionGraspSkill().execute({"query": "绿色的瓶子"}, _ctx(perc, arm=arm, world="apartment"))
     assert res.success is True
     # HSV resolver was used with the correct colour
     assert "front:green" in perc.calls, (
@@ -501,7 +503,7 @@ def test_colour_noun_query_routes_to_front_hsv_not_detector():
 def test_colour_noun_query_red_routes_to_hsv():
     """A red+noun query ('红色的罐子') also takes the HSV route (not just green)."""
     perc = FrontPerception()
-    res = PerceptionGraspSkill().execute({"query": "红色的罐子"}, _ctx(perc, arm=FakeArm()))
+    res = PerceptionGraspSkill().execute({"query": "红色的罐子"}, _ctx(perc, arm=FakeArm(), world="apartment"))
     assert res.success is True
     assert "front:red" in perc.calls
     assert not any(c.startswith("detect") for c in perc.calls)
@@ -509,9 +511,10 @@ def test_colour_noun_query_red_routes_to_hsv():
 
 
 def test_no_colour_noun_query_still_uses_detector():
-    """A named-no-colour query ('罐子', no colour) still uses the detector route.
+    """Without a world manifest a named-no-colour query ('罐子') uses the detector route.
 
-    CHANGE 1 must not regress the noun-only -> detector path.
+    CHANGE 1 must not regress the noun-only -> detector path. (In the apartment '罐子'
+    names its one can, the red one, perceived by its hue: test_grasp_model_routing.)
     """
     perc = FrontPerception()
     # FrontPerception has detections=["banana"] by default; "罐子" has no colour

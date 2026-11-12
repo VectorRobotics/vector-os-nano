@@ -67,7 +67,7 @@ def _turn(s, script, text):
     return eng, eng.run_turn_native(text, session=session)
 
 
-def _grounded_and_caused(s, eng, trace, skill: str, oracle: str) -> None:
+def _grounded_and_caused(s, eng, trace, skill: str, oracle: str):
     from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
     from vector_os_nano.vcli.cognitive.trace_store import classify_step_evidence, verify_oracle_names
     from vector_os_nano.vcli.verdict import VerdictReport
@@ -84,6 +84,7 @@ def _grounded_and_caused(s, eng, trace, skill: str, oracle: str) -> None:
     report = VerdictReport.from_trace(trace, names)
     assert report.verified is True, f"a grounded step must verify; {report.evidence}"
     assert report.evidence == "GROUNDED" and report.exit_code() == 0
+    return report
 
 
 @pytest.mark.sim
@@ -98,8 +99,9 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
             tool_turn(("pick", {"object_label": _PICK_TARGET, "mode": "hold"})),
             tool_turn(("verify", {"expr": f"holding_object('{_PICK_TARGET}')"})),
             tool_turn(end=True),
-        ], "把香蕉抓起来拿在手里")
-        _grounded_and_caused(s, eng, trace, "pick", "holding_object")
+        ], "把香蕉抓起来")  # a closed form: a manipulation verifies only through a proven contract
+        report = _grounded_and_caused(s, eng, trace, "pick", "holding_object")
+        assert report.goal_check == "proven", report.reject_reason
 
 
 @pytest.mark.sim

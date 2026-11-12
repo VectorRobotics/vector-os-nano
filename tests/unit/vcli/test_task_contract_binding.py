@@ -46,9 +46,12 @@ GREEN = "pickable_bottle_green"
     ("把绿色瓶子放到桌子上", (f"object_on('{GREEN}', None)",)),
     # a pure release: the bottle out of the hand at turn end (I4F1-D3)
     ("put the green bottle down", (f"released('{GREEN}')",)),
-    ("put the can down", ("released(None)",)),
+    ("put the bottle down", ("released(None)",)),
+    # REF1: a category alone binds when exactly one object of the world has it (was None)
+    ("put the can down", ("released('pickable_can_red')",)),
+    ("把那个罐子拿过来", ("kept_holding('pickable_can_red')", "near_object('user')")),
     # unresolvable object: None binds, the item is no evidence (fails closed)
-    ("把那个罐子拿过来", ("kept_holding(None)", "near_object('user')")),
+    ("把那个瓶子拿过来", ("kept_holding(None)", "near_object('user')")),
     ("把瓶子放到餐桌上", ("object_on(None, 'dining_table')",)),
     # I4-V2: a grasp binds like a fetch: two bottles bind None
     ("拿起瓶子", ("holding_object(None)",)),
@@ -84,7 +87,7 @@ def _hand_trace(goal, verify, *, contract, start, end, world="apartment", attemp
 
 
 def test_an_unresolved_object_fails_closed_with_its_reason() -> None:
-    t = _hand_trace("把那个罐子拿过来", "kept_holding('red can') and near_object('user')",
+    t = _hand_trace("把那个瓶子拿过来", "kept_holding('green bottle') and near_object('user')",
                     contract=("kept_holding(None)", "near_object('user')"), start=(False, False), end=(True, True))
     assert "names no object" in turn_reject_reason(t, APT)
 
@@ -255,7 +258,7 @@ def test_an_unresolvable_fetch_object_fails_closed_through_the_runner() -> None:
         _Skill("grasp_fake", lambda: setattr(arm, "held", True), verify_hint="holding_object()"))
     backend = FakeToolScriptBackend.from_tool_script([tool_turn(_GRASP), tool_turn(("finish", {}))])
     eng = _make_engine(agent, backend)
-    trace = eng.run_turn_native("把那个罐子拿过来", session=_session())
+    trace = eng.run_turn_native("把那个瓶子拿过来", session=_session())
     assert trace.contract == ("kept_holding(None)", "near_object('user')")
     rep = _verdict(agent, eng, trace)
     assert rep.verified is False and "names no object" in rep.reject_reason
@@ -326,8 +329,12 @@ def test_a_place_naming_no_surface_the_world_resolves_fails_closed() -> None:
     assert "names no destination" in turn_reject_reason(t, APT)
     assert "names no destination" in turn_reject_reason(
         _one_row("place the red can on the table", "released('red can')"), APT)
-    # "the can" names no one object: the object slot is the one reported
-    assert "names no object" in turn_reject_reason(_one_row("place the can on the table", "released('red can')"), APT)
+    # "the bottle" names no one object: the object slot is the one reported
+    assert "names no object" in turn_reject_reason(
+        _one_row("place the bottle on the table", "released('green bottle')"), APT)
+    # REF1: "the can" names the one can, so the unbound destination is the one reported
+    assert "names no destination" in turn_reject_reason(
+        _one_row("place the can on the table", "released('red can')"), APT)
 
 
 def test_the_right_object_on_the_right_surface_grounds() -> None:
@@ -404,13 +411,14 @@ def test_a_place_goal_that_only_grasped_is_rejected_through_the_runner(goal, con
     assert rep.verified is False and why in rep.reject_reason, rep.reject_reason
 
 
-@pytest.mark.parametrize("goal, verify", [
-    ("pick up the apple", f"holding_object('{GREEN}')"),       # the world has no apple
-    ("pick up a bottle", "holding_object('pickable_can_red')"),  # two bottles, and a can
-    ("拿起瓶子", f"holding_object('{GREEN}')"),                  # two bottles: which one is unknown
+@pytest.mark.parametrize("goal, verify, why", [
+    # the world has no apple: no closed form (REF1c: the gate says so; was "names no object")
+    ("pick up the apple", f"holding_object('{GREEN}')", "is outside the forms the spine can check"),
+    ("pick up a bottle", "holding_object('pickable_can_red')", "names no object"),  # two bottles, and a can
+    ("拿起瓶子", f"holding_object('{GREEN}')", "names no object"),                  # two bottles: which one?
 ])
-def test_a_grasp_of_an_unresolvable_object_fails_closed(goal, verify) -> None:
-    assert "names no object" in turn_reject_reason(_one_row(goal, verify), APT)
+def test_a_grasp_of_an_unresolvable_object_fails_closed(goal, verify, why) -> None:
+    assert why in turn_reject_reason(_one_row(goal, verify), APT)
 
 
 # ---------------------------------------------------------------------------

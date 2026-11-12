@@ -16,7 +16,7 @@ import pytest
 
 from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from tests.unit.vcli.test_native_loop import (
-    _CAN, _NavBase, _Skill, _make_agent, _make_arm_agent, _make_engine, _session, _verdict,
+    _CAN, _NavBase, _Skill, _grasp, _make_agent, _make_arm_agent, _make_engine, _session, _verdict,
 )
 from tests.unit.vcli.test_task_contract_binding import APT, GREEN, RED, _hand_trace
 from vector_os_nano.vcli.cognitive.object_goal import task_contract
@@ -41,7 +41,12 @@ _COMPILED = {
     "拿起绿色的瓶子": (_HOLD,), "take the green bottle": (_HOLD,),
     "拿起红色的罐子": (f"holding_object('{RED}')",),
     "拿起瓶子": ("holding_object(None)",), "pick up a bottle": ("holding_object(None)",),   # two bottles
-    "拿起那个罐子": ("holding_object(None)",), "pick it up": ("holding_object(None)",),     # no one object
+    "拿起那个瓶子": ("holding_object(None)",), "pick it up": ("holding_object(None)",),     # no one object
+    # REF1: a category alone binds when exactly one object of the world has it (was None)
+    "拿起那个罐子": (f"holding_object('{RED}')",), "pick up the cup": ("holding_object('pickable_cup_yellow')",),
+    "pick up the can": (f"holding_object('{RED}')",),
+    # REF1: a well-formed reference that fits nothing binds None (a closed form: failed)
+    "pick up the blue can": ("holding_object(None)",), "拿起红色的瓶子": ("holding_object(None)",),
     # release (optionally after a grasp)
     "put the green bottle down": (_REL,), "put down the green bottle": (_REL,), "drop the green bottle": (_REL,),
     "release the green bottle": (_REL,), "let go of the green bottle": (_REL,), "把绿瓶子放下": (_REL,),
@@ -128,8 +133,9 @@ _UNCHECKED = [
     "pick up the green bottle and drop the dining table", "抓起绿瓶子放下餐桌", "拿起绿瓶子把餐桌放下",
     "pick up the green bottle and put the dining table down", "put the dining table down",
     "bring me the dining table", "give me the green bottle, the dining table",
-    # an object the world has no word for
-    "pick up the apple",
+    # an object the world has no word for (REF1: nor beside a colour, nor a noun of another world)
+    "pick up the apple", "pick up the yellow banana", "拿起黄色的香蕉", "pick up the red stool", "拿起红色的凳子",
+    "pick up the red unicorn", "拿起红色的苹果", "pick up the white cup",
     # I4D-V1: 一点 / 一下 after a release, a place or a grasp change the end state
     # (lower it a bit, let go for a moment): never stripped there
     "把绿瓶子放下一点", "放下绿瓶子一点", "把绿瓶子放到餐桌上一点", "把绿瓶子放下一下", "松开绿瓶子一下",
@@ -174,9 +180,13 @@ def test_goal_check_states_on_hand_traces() -> None:
     # ... nor does one that drops the contract its goal compiles to
     dropped = _hand_trace(goal, "holding_object('green bottle')", contract=(), start=(), end=())
     assert goal_check(dropped, APT) == ("failed", "the task contract does not match the goal")
-    none = _hand_trace("move the green bottle", "holding_object('green bottle')", contract=(), start=(), end=())
+    none = _hand_trace("move the green bottle", "near_object('green bottle')", contract=(), start=(), end=())
     assert goal_check(none, APT) == ("unchecked", "")
     assert turn_reject_reason(none, APT) == ""  # unchecked never rejects: the gates and the steps decide
+    # ... but a step that proves a hold performed a manipulation, which needs a contract (REF1c-V-01)
+    held = _hand_trace("move the green bottle", "holding_object('green bottle')", contract=(), start=(), end=())
+    assert goal_check(held, APT) == ("unchecked", "")
+    assert "is outside the forms the spine can check" in turn_reject_reason(held, APT)
 
 
 def test_the_verdict_carries_the_goal_check_and_the_repl_says_it() -> None:
@@ -194,11 +204,14 @@ def test_the_verdict_carries_the_goal_check_and_the_repl_says_it() -> None:
     failed = VerdictReport.from_trace(held, APT)
     assert failed.goal_check == "failed"
     assert _goal_line(failed, goal_check(held, APT)[1]) == f"goal not met: already satisfied at turn start: {_HOLD}"
-    un = VerdictReport.from_trace(_hand_trace("move the green bottle", "holding_object('green bottle')",
+    un = VerdictReport.from_trace(_hand_trace("move the green bottle", "near_object('green bottle')",
                                               contract=(), start=(), end=()), APT)
     assert un.goal_check == "unchecked" and un.verified is True
     assert _goal_line(un, "") == ("goal not machine-checked (no task contract for this sentence); "
-                                  "proven: holding_object('green bottle')")
+                                  "proven: near_object('green bottle')")
+    held = VerdictReport.from_trace(_hand_trace("move the green bottle", "holding_object('green bottle')",
+                                                contract=(), start=(), end=()), APT)
+    assert held.goal_check == "unchecked" and held.verified is False  # a hold needs a contract (REF1c-V-01)
     assert VerdictReport.no_trace().goal_check == "unchecked"
 
 
@@ -356,3 +369,105 @@ def test_the_contract_block_names_only_the_bound_items_and_the_candidates(goal, 
     assert block.startswith("Task contract: ")
     shown = {n for n in _manifest_names() if n in block.replace(repr(goal), "")}
     assert shown == allowed & _manifest_names(), (block, shown)
+
+
+# ---------------------------------------------------------------------------
+# REF1 (R2F2V-01): a phrase the world does not resolve is no name of any object. In the
+# apartment the robot ends holding the yellow cup after "pick up the yellow banana";
+# the cup is no banana, whatever the verify names.
+# ---------------------------------------------------------------------------
+
+_CUP = "pickable_cup_yellow"
+
+
+class _CupArm:
+    _connected = True
+
+    def __init__(self) -> None:
+        self.held = False
+
+    def get_object_positions(self):
+        return {_CUP: [1.8, 2.3, 0.95] if self.held else [1.8, 2.3, 0.71]}
+
+    def get_joint_positions(self):
+        return [0.0] * 6
+
+
+class _CupGrip:
+    def __init__(self, arm: _CupArm) -> None:
+        self._arm = arm
+
+    def is_holding(self) -> bool:
+        return self._arm.held
+
+    def weld_is_active(self) -> dict:
+        return {_CUP: self._arm.held}
+
+
+def _cup_turn(goal, verify):
+    from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
+    from vector_os_nano.sim.session import session_for
+
+    agent, _ = _make_agent(1.8, 2.0)
+    agent._base = _NavBase(1.8, 2.0)
+    arm = _CupArm()
+    agent._arm, agent._gripper = arm, _CupGrip(arm)
+    unbind_fake_sim(session_for(agent))
+    bind_fake_sim(agent, "go2_piper", support="coffee_table")
+    agent._skill_registry.register(_Skill("grasp", lambda: setattr(arm, "held", True)))
+    backend = FakeToolScriptBackend.from_tool_script(
+        [tool_turn(_GRASP), tool_turn(_v(verify)), tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native(goal, session=_session())
+    return trace, _verdict(agent, eng, trace), session_for(agent)
+
+
+@pytest.mark.parametrize("goal", ["pick up the yellow banana", "拿起黄色的香蕉", "grab the red bottle and the cup"])
+@pytest.mark.parametrize("verify", ["holding_object('yellow banana')", "holding_object('黄色的香蕉')",
+                                    f"holding_object('{_CUP}')", "holding_object('yellow cup')"])
+def test_holding_the_yellow_cup_never_verifies_a_banana(goal, verify) -> None:
+    trace, rep, _ = _cup_turn(goal, verify)
+    assert trace.contract == () and rep.goal_check == "unchecked", trace.contract
+    assert rep.verified is False, (rep.reject_reason, [s.success for s in trace.steps])
+
+
+def test_the_cup_alone_verifies_a_cup_goal() -> None:
+    """The other side: the same turn for a goal naming the cup is proven."""
+    trace, rep, _ = _cup_turn("pick up the yellow cup", "holding_object('yellow cup')")
+    assert rep.goal_check == "proven" and rep.verified is True, rep.reject_reason
+
+
+@pytest.mark.parametrize("goal", ["拿起粉红色的罐子", "拿起粉红的罐子", "拿起粉红色罐头", "拿起红色罐头",
+                                  "把桌子上的粉红色罐头拿给我"])
+@pytest.mark.parametrize("verify", [f"holding_object('{_CAN}')", "holding_object('red can')"])
+def test_holding_the_red_can_never_verifies_a_pink_can_or_canned_food(goal, verify) -> None:
+    """REF1V-01: 粉红 (pink) holds 红 and 罐头 (canned food) holds 罐; the red can is
+    neither, so the manipulation gate binds no object and the turn does not verify."""
+    agent, _arm = _make_arm_agent(_grasp)
+    backend = FakeToolScriptBackend.from_tool_script(
+        [tool_turn(("grasp_fake", {"object": "red can"})), tool_turn(_v(verify)), tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native(goal, session=_session())
+    rep = _verdict(agent, eng, trace)
+    assert trace.contract == () and rep.verified is False, (rep.goal_check, rep.reject_reason)
+
+
+def test_holding_the_red_can_verifies_a_sentence_naming_it() -> None:
+    """The other side: the same turn for a free sentence naming the red can verifies."""
+    agent, _arm = _make_arm_agent(_grasp)
+    backend = FakeToolScriptBackend.from_tool_script([tool_turn(("grasp_fake", {"object": "red can"})),
+                                                      tool_turn(_v("holding_object('red can')")),
+                                                      tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("麻烦帮我拿起红色罐子吧谢谢", session=_session())
+    rep = _verdict(agent, eng, trace)
+    assert rep.verified is True, (trace.contract, rep.reject_reason)
+
+
+@pytest.mark.parametrize("phrase", ["yellow banana", "黄色的香蕉", "red bottle", "抓红色的瓶子", "blue can",
+                                    "red unicorn", "红色的苹果", "red stool", "红色的凳子", "white cup"])
+def test_holding_object_of_an_unresolved_phrase_is_false_while_an_object_is_held(phrase) -> None:
+    _trace, _rep, session = _cup_turn("pick up the yellow cup", "holding_object('yellow cup')")
+    holding_object = session.oracles()["holding_object"]
+    assert holding_object("yellow cup") is True  # the cup IS held
+    assert holding_object(phrase) is False

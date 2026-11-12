@@ -5,8 +5,9 @@
 
 Every ``config/worlds/*.yaml`` contributes its ``vocab`` colour and category words,
 plus each pickable alias that names its object without a category word ("香蕉" ->
-banana). Grasp routing, the grounding-dino prompt and colour parsing all read this
-ONE table, so "绿色的瓶子", "green bottle" and "绿瓶" mean the same thing everywhere.
+banana). The grounding-dino prompt and colour parsing read this ONE table, so
+"绿色的瓶子", "green bottle" and "绿瓶" mean the same thing everywhere. It decides no
+target in a world with a manifest: there the manifest's own ``referents`` does.
 English words match on word boundaries ("infrared" names no colour), CJK words as
 substrings. Pure data: no MuJoCo, no torch.
 """
@@ -61,14 +62,6 @@ class Vocab:
         """The content words of an ASCII query (stop words dropped)."""
         return [w for w in re.findall(r"[a-z0-9]+", q) if w not in _STOP]
 
-    def names_object(self, text: str | None) -> bool:
-        """True when *text* names a concrete object (not only a colour or "thing")."""
-        q = str(text or "").strip().lower()
-        if self.noun(q):
-            return True
-        colour_words = {w for w, _ in self.colours}
-        return q.isascii() and any(w not in _GENERIC and w not in colour_words for w in self._words(q))
-
     def english(self, text: str | None) -> str | None:
         """An English noun phrase for *text* ("绿色的瓶子" -> "green bottle").
 
@@ -95,12 +88,18 @@ class Vocab:
         return None
 
 
-def build_vocab(world_ids: list[str]) -> Vocab:
-    """The vocabulary of the given worlds (their colour/category words and aliases)."""
+def _world_ids() -> list[str]:
+    return sorted(p.stem for p in WORLDS_DIR.glob("*.yaml"))
+
+
+@functools.lru_cache(maxsize=1)
+def vocab() -> Vocab:
+    """The vocabulary of every world manifest in ``config/worlds`` (their colour and
+    category words and aliases)."""
     colours: dict[str, str] = {}
     nouns: dict[str, str] = {}
     aliases: dict[str, str] = {}
-    for wid in world_ids:
+    for wid in _world_ids():
         w = load_world(wid)
         for colour, ws in w.colours.items():
             for word in (colour, *ws):
@@ -122,7 +121,8 @@ def build_vocab(world_ids: list[str]) -> Vocab:
     return Vocab(colours=longest_first(colours), nouns=longest_first(nouns))
 
 
-@functools.lru_cache(maxsize=1)
-def vocab() -> Vocab:
-    """The vocabulary of every world manifest in ``config/worlds``."""
-    return build_vocab(sorted(p.stem for p in WORLDS_DIR.glob("*.yaml")))
+def is_reference(text: str) -> bool:
+    """*text* is an object reference in the words of some world manifest (every
+    character accounted for: ``WorldManifest.referents``). For a robot with no manifest
+    of its own, which must not hand a detector CJK it cannot translate whole."""
+    return any(load_world(w).referents(text) is not None for w in _world_ids())

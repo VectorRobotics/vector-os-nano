@@ -241,11 +241,6 @@ class PickSkill:
 
         Returns SkillResult — does NOT retry on its own.
         """
-        # Always open gripper first — ensures clean grip regardless of current state
-        if context.gripper is not None:
-            logger.info("[PICK] Ensuring gripper is open ...")
-            context.gripper.open()
-
         cfg = context.config.get("skills", {}).get("pick", {})
         z_offset: float = cfg.get("z_offset", _DEFAULT_Z_OFFSET)
         x_offset: float = cfg.get("x_offset", 0.0)
@@ -270,6 +265,12 @@ class PickSkill:
                 },
             )
         base_pos = base_pos_result.copy()
+
+        # Open the gripper for a clean grip only once the target is found: a pick that
+        # finds nothing never drops what the gripper already holds.
+        if context.gripper is not None:
+            logger.info("[PICK] Ensuring gripper is open ...")
+            context.gripper.open()
 
         # Step 2: Apply z_offset (gripper height above table)
         base_pos[2] += z_offset
@@ -701,5 +702,5 @@ class PickSkill:
 
 def _target_of(params: dict) -> str:
     """The object the call names, whichever parameter the model bound it to."""
-    return str(next((params[k] for k in ("object_label", "object", "query", "target", "object_id")
-                     if params.get(k)), ""))
+    return next((t for k in ("object_label", "object", "query", "target", "object_id")
+                 if (t := str(params.get(k) or "").strip())), "")

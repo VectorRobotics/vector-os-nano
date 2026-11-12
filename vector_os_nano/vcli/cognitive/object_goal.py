@@ -30,6 +30,7 @@ import unicodedata
 from typing import Any
 
 from vector_os_nano.vcli.cognitive.coord_goal import parse_goal_coord
+from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
 
 # The manipulation vocabulary, by intent. A fetch also needs the grasp proof.
 _INTENT_RES: dict[str, re.Pattern[str]] = {
@@ -115,17 +116,26 @@ def has_necessary_manip_oracle(expr: str | None, names: frozenset[str] = _HOLD) 
 
 def _asserted_calls(node: ast.AST) -> list[ast.Call]:
     """Calls whose truth the verify ASSERTS: the call, an ``and`` conjunct, or
-    ``<call> == True`` — never under ``not`` / ``or`` / an ordering."""
+    ``<call> == True`` or ``True == <call>`` (the classifier grades both, REF1d-V-01) —
+    never under ``not`` / ``or`` / an ordering."""
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         return [node]
     if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
         return [c for v in node.values for c in _asserted_calls(v)]
-    if (
-        isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq)
-        and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is True
-    ):
-        return _asserted_calls(node.left)
+    if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+        sides = (node.left, node.comparators[0])
+        return [c for i, s in enumerate(sides) if isinstance(s, ast.Constant) and s.value is True
+                for c in _asserted_calls(sides[1 - i])]
     return []
+
+
+def verify_intents(expr: str | None) -> frozenset[str]:
+    """The manipulation *expr* proves was performed: "grasp" when it asserts a
+    possession oracle, "place" when it asserts a release or placement (never under
+    ``not`` / ``or``: "not holding" proves no grasp)."""
+    node = _parse(expr)
+    called = {c.func.id for c in _asserted_calls(node)} if node is not None else set()
+    return frozenset(i for i, names in (("grasp", _HOLD), ("place", _PLACE)) if called & names)
 
 
 def _manifest(world_id: str) -> Any:
@@ -187,6 +197,10 @@ _FORMS: dict[str, tuple[str, ...]] = {
               r"拿{o}(?:过来|给我)(?:一下|一点)?",
               r"(?:拿|递|带)给我{o}", r"给我拿(?:来|过来)?{o}"),
 }
+# One goal per form above, in a world's own words ({o} an object's English name, {zo} a
+# CJK one, {s} a surface): what the manipulation gate offers a goal outside every form.
+# checkable_goals offers one only where this world can prove its contract (test_manipulation_contract).
+_EXAMPLES = ("pick up the {o}", "put the {o} down", "put the {o} on the {s}", "bring me the {o}", "把{zo}拿过来")
 _CLAUSES = [(kind, re.compile(f.format(o="(?P<o>.+?)", s="(?P<s>.+)"))) for kind, fs in _FORMS.items() for f in fs]
 _THEN = re.compile(r"\s*(?:,?\s*\band then\b|,?\s*\band\b|,?\s*\bthen\b|[,，、;；]|然后|再)\s*")
 # Politeness stripped at either end (a closed list, like the forms): only words that
@@ -199,23 +213,13 @@ _PRONOUNS = frozenset({"it", "that", "this", "them", "that one", "this one", "�
 
 def _names(world: Any, phrase: str, slot: str) -> bool:
     """*phrase* fills *slot* and nothing else: an object slot ``o`` a pronoun or an
-    object name of *world* (a body name, an alias, colour and category words), a
+    object reference in *world*'s words (``WorldManifest.referents``: bound or not), a
     destination slot ``s`` a surface name or a word for furniture (its scenery)."""
-    if slot == "o" and phrase in _PRONOUNS:
-        return True
+    if slot == "o":
+        return phrase in _PRONOUNS or world.referents(phrase) is not None
     x = re.sub(r"^(?:(?:the|a|an|this|that|my)\s+|这个|那个|这|那)", "", phrase)
-    if slot == "s":
-        names = {w.lower() for n, s in world.surfaces.items() for w in (n, n.replace("_", " "), *s.aliases)}
-        return x in names or re.fullmatch(rf"(?:{_alt(world.scenery)})(?:子|s)?", x) is not None
-    if x in {n.lower() for n in world.pickables} | {a.lower() for p in world.pickables.values() for a in p.aliases}:
-        return True
-    words = [*(w for ws in world.colours.values() for w in ws), *(p.colour for p in world.pickables.values())]
-    cats = [*(w for ws in world.categories.values() for w in ws), *(p.category for p in world.pickables.values())]
-    # a colour with a category word, or a colour marked as a reference (the red one, 红色的,
-    # 红色那个): a bare colour word is a noun ("the orange" is a fruit) and names nothing
-    c = _alt(words)
-    return re.fullmatch(rf"(?:(?:{c})\s?色?的?\s?)?(?:{_alt(cats)})(?:子|e?s)?|(?:{c})(?:\s+one|色?(?:的|那个|这个)+)",
-                        x) is not None
+    names = {w.lower() for n, s in world.surfaces.items() for w in (n, n.replace("_", " "), *s.aliases)}
+    return x in names or re.fullmatch(rf"(?:{_alt(world.scenery)})(?:子|s)?", x) is not None
 
 
 def _alt(words: Any) -> str:
@@ -247,6 +251,20 @@ def _sentence(world: Any, goal_text: str) -> tuple[str, str | None, str | None] 
     named = {world.resolve(v) for _, slots in clauses if (v := slots.get("o")) and v not in _PRONOUNS}
     dest = clauses[-1][1].get("s")
     return clauses[-1][0], named.pop() if len(named) == 1 else None, dest and world.resolve_surface(dest)
+
+
+def checkable_goals(world: Any, oracle_names: frozenset[str]) -> list[str]:
+    """``_EXAMPLES`` filled with *world*'s first object and first surface other than the one
+    it starts on (a place there holds at turn start: REF1d-V-02), each only when this
+    world can prove its contract (REF1c-V-03): every item a ground-truth predicate here
+    with every slot bound, and a fetch only where the world has a user to deliver to."""
+    pk = next(iter(world.pickables.values()))
+    zo = next((a for a in pk.aliases if not a.isascii()), pk.english)
+    s = next((n for n in world.surfaces if n != pk.surface), "").replace("_", " ")
+    goals = [e.format(o=pk.english, zo=zo, s=s) for e in _EXAMPLES]
+    return [g for g in goals if (c := task_contract(g, oracle_names, world.id)) and all(
+        classify_verify_expr(i, oracle_names) == "GROUNDED" and not unbound_reason(i, g, world.id)
+        and (world.user is not None or i != "near_object('user')") for i in c)]
 
 
 def unbound_reason(item: str, goal_text: str | None, world_id: str = "") -> str:

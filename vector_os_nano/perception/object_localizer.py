@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 _REQUIRED_METHODS = ("capture", "detect_in", "segment")
 
 # --- plausibility gates (a graspable object seen by the head camera) ----------
-_MIN_SCORE = {"default": 0.30}          # detector score floor, per vocabulary noun
-_MAX_EXTENT_M = {"default": 0.35}       # object size (p5-p95 span of its points), per noun
+_MIN_SCORE = 0.30                       # detector score floor
+_MAX_EXTENT_M = 0.35                    # object size (p5-p95 span of its points)
 _DEPTH_RANGE_M = (0.2, 5.0)             # median depth of the object's points
 _Z_BAND_M = (-0.05, 1.8)                # world height of the object's points
 _ASPECT = (0.15, 6.7)                   # box width / height
@@ -91,14 +91,13 @@ def _behind_fraction(depth: np.ndarray, bbox: Any, d: float) -> float | None:
 
 def implausible(
     det: Any, mask: np.ndarray, cam_pts: np.ndarray, world_pts: np.ndarray,
-    depth: np.ndarray, rgb: np.ndarray, *, noun: str | None, colour: str | None,
+    depth: np.ndarray, rgb: np.ndarray, *, colour: str | None,
 ) -> str | None:
     """Why *det* is not a graspable object where it projects, or None if it is."""
     from vector_os_nano.perception.front_object import colour_matches
 
-    floor = _MIN_SCORE.get(noun or "", _MIN_SCORE["default"])
-    if float(det.confidence) < floor:
-        return f"score {float(det.confidence):.2f} < {floor:.2f}"
+    if float(det.confidence) < _MIN_SCORE:
+        return f"score {float(det.confidence):.2f} < {_MIN_SCORE:.2f}"
     x1, y1, x2, y2 = (float(v) for v in det.bbox)
     if x2 <= x1 or y2 <= y1 or not _ASPECT[0] <= (x2 - x1) / (y2 - y1) <= _ASPECT[1]:
         return f"box {det.bbox} is a sliver"
@@ -109,9 +108,8 @@ def implausible(
     if not _Z_BAND_M[0] <= z <= _Z_BAND_M[1]:
         return f"height {z:.2f} m outside {_Z_BAND_M}"
     span = float(np.max(np.percentile(world_pts, 95, axis=0) - np.percentile(world_pts, 5, axis=0)))
-    cap = _MAX_EXTENT_M.get(noun or "", _MAX_EXTENT_M["default"])
-    if span > cap:
-        return f"extent {span:.2f} m > {cap:.2f} m (not an object of this size)"
+    if span > _MAX_EXTENT_M:
+        return f"extent {span:.2f} m > {_MAX_EXTENT_M:.2f} m (not an object of this size)"
     behind = _behind_fraction(depth, det.bbox, d)
     if behind is not None and behind < _MIN_BEHIND_FRAC:
         return f"flush with its surroundings ({behind:.0%} behind): a surface, not an object"
@@ -154,7 +152,7 @@ def localize_objects_3d(
         stage = "the detector"
         try:
             detections = perception.detect_in(rgb, query)
-            noun, colour = vocab().noun(query), vocab().colour(query)
+            colour = vocab().colour(query)
             for det in detections or []:
                 stage = "the segmenter"
                 mask = perception.segment(rgb, det.bbox)
@@ -162,7 +160,7 @@ def localize_objects_3d(
                 pts = None if mask is None else object_points(depth, rgb, mask, K, cam_pos, cam_mat)
                 if pts is None:
                     continue
-                why = implausible(det, mask, *pts, depth, rgb, noun=noun, colour=colour)
+                why = implausible(det, mask, *pts, depth, rgb, colour=colour)
                 if why:
                     logger.info("[OBJ-LOC] %r box %s rejected: %s", query,
                                 [round(float(v)) for v in det.bbox], why)
