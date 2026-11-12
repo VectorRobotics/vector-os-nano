@@ -183,16 +183,18 @@ def test_a_dev_turn_writes_only_under_vector_home(tmp_path) -> None:
 
 
 @pytest.mark.sim
-def test_a_simulator_start_writes_only_under_vector_home(tmp_path) -> None:
-    """A real go2 start under -p: the session, the world's memory (moved in from the old
-    ~/.vector_os_nano, with its notice) and the generated scenes all land in
-    VECTOR_HOME, the default ~/.vector (the only store old memory moves into); the
-    stand-in home keeps no other state directory of any release."""
+@pytest.mark.parametrize("default", [False, True], ids=["elsewhere", "default"])
+def test_a_simulator_start_writes_only_under_vector_home(tmp_path, default) -> None:
+    """A real go2 start under -p: the session, the world's memory and the generated
+    scenes all land in VECTOR_HOME. Old memory in ~/.vector_os_nano moves in (with its
+    notice) only when VECTOR_HOME is the default ~/.vector; a store elsewhere leaves it
+    untouched, says nothing, and the stand-in home gains nothing at all."""
     real = tmp_path / "real"
-    state = real / ".vector"
+    state = real / ".vector" if default else tmp_path / "vh"
     old = real / ".vector_os_nano" / "worlds" / "apartment" / "scene_graph.yaml"
     old.parent.mkdir(parents=True)
     old.write_text("rooms: {}\n")
+    before = {p.relative_to(real).as_posix() for p in real.rglob("*")}
     script = tmp_path / "script.json"
     script.write_text(json.dumps({"turns": [{"text": "standing by"}]}))
     env = {**os.environ, **_NO_KEYS}
@@ -204,11 +206,17 @@ def test_a_simulator_start_writes_only_under_vector_home(tmp_path) -> None:
     )
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-3000:]
     said = " ".join(proc.stderr.split())  # rich wraps the console
-    assert "moved the scene memory of apartment from ~/.vector_os_nano/worlds to $VECTOR_HOME/memory" in said, said
     assert "vlm=none" in said, said  # no key reached the child
     assert len(list((state / "sessions").glob("*.jsonl"))) == 1
-    assert (state / "memory" / "apartment" / "scene_graph.yaml").is_file()
+    assert (state / "memory" / "apartment").is_dir()
     assert list((state / "cache" / "scenes").glob("*.xml"))
     left = {p.relative_to(real).as_posix() for p in real.rglob("*")}
-    assert not {p for p in left if p.split("/")[0] == ".vector_os_nano"
-                or p.startswith(".cache/vector_os_nano")}, sorted(left)
+    if default:
+        assert "moved the scene memory of apartment from ~/.vector_os_nano/worlds to $VECTOR_HOME/memory" in said, said
+        assert (state / "memory" / "apartment" / "scene_graph.yaml").is_file()
+        assert not {p for p in left if p.split("/")[0] == ".vector_os_nano"
+                    or p.startswith(".cache/vector_os_nano")}, sorted(left)
+    else:
+        assert "scene memory" not in said, said
+        assert old.read_text() == "rooms: {}\n"
+        assert left == before, sorted(left - before)
