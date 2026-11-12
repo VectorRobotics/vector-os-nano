@@ -52,6 +52,10 @@ _SENTINEL = "VECTOR_VERDICT"
 # but allow headroom for cold imports.
 _DEFAULT_TIMEOUT_SEC = 90.0
 
+# What a REPL session leaves of its test's pytest-timeout budget: the process-group
+# kill, the fixture's own work after the session, and the test body.
+_TEARDOWN_SEC = 20.0
+
 
 @dataclass(frozen=True)
 class CliTurnResult:
@@ -421,8 +425,16 @@ def run_repl_session(
         answers: replies to permission prompts, in order; a prompt with no answer
                  left is refused with ``n`` (the safe default a user would pick).
         timeout_sec: ONE deadline for the whole session (boot, every turn, the
-                 exit). On expiry the process group is killed and ``timed_out`` is set.
+                 exit), cut to end inside ``PYTEST_TIMEOUT`` when that is set. On
+                 expiry the process group is killed and ``timed_out`` is set.
     """
+    # The deadline ends inside the pytest-timeout budget of the test running the
+    # session (scripts/gate.sh exports PYTEST_TIMEOUT, pytest-timeout reads it): a
+    # stalled session returns its transcript instead of pytest-timeout killing it
+    # with nothing to read (S3aV-08: an E5 hang left no transcript at 300 s of 420).
+    budget = float(os.environ.get("PYTEST_TIMEOUT") or 0)
+    if budget:
+        timeout_sec = min(timeout_sec, budget - _TEARDOWN_SEC)
     argv = [sys.executable, "-m", "vector_os_nano.vcli.cli"]
     if sim:
         argv.append("--sim")

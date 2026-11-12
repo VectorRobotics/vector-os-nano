@@ -25,6 +25,7 @@
 #      GATE_PATHS="a b" test paths instead of the tier default
 #      GATE_OUT=<dir>   junit + logs (default: a fresh temp dir, printed)
 #      MEMMAX=16G (FILE_MEMMAX=6G per file in per-file mode)  TMO=<sec>
+#      PYTEST_TIMEOUT=300  the per-test timeout (a REPL session's deadline ends inside it)
 #      ROS_DOMAIN_ID=<n> (unset or 0 -> random 60-89; 0 is where other stacks live)
 #      VECTOR_LIVE_LLM=1 keeps the LLM keys and also runs live_llm tests (billed)
 #
@@ -42,6 +43,9 @@ if [ "$TIER" = all ]; then
   for t in hermetic sim e2e; do "$0" "$t" "$@" || rc=1; done
   exit $rc
 fi
+# The per-test timeout; exported because tests/harness/pty_cli.py ends a REPL
+# session's deadline inside it (a hang then returns its transcript).
+export PYTEST_TIMEOUT=${PYTEST_TIMEOUT:-300}
 LIVE=${VECTOR_LIVE_LLM:-}
 case "$TIER" in
   hermetic) PATHS=(tests); MARK="not sim"; IGNORE=(--ignore=tests/e2e_repl) ;;
@@ -146,7 +150,7 @@ if [ "${GATE_PER_FILE-1}" = 1 ]; then
 fi
 
 echo "[gate] $TIER: ${PATHS[*]} -m '$MARK' -> $OUT/junit.xml (ROS_DOMAIN_ID=$ROS_DOMAIN_ID)"
-capped timeout "${TMO:-7200}" "$PY" -m pytest "${CFG[@]}" -p no:cacheprovider --timeout=300 -q -rfE \
+capped timeout "${TMO:-7200}" "$PY" -m pytest "${CFG[@]}" -p no:cacheprovider --timeout="$PYTEST_TIMEOUT" -q -rfE \
   -o junit_family=xunit2 --junitxml="$OUT/junit.xml" \
   "${PATHS[@]}" ${MARK:+-m "$MARK"} "${IGNORE[@]}" "$@" 2>&1 | tee "$OUT/pytest.log"
 rc=${PIPESTATUS[0]}
