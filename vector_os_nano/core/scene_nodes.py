@@ -34,7 +34,7 @@ def _f(v: Any) -> float | None:
 
 @dataclass(frozen=True)
 class ObjectNode:
-    """An object detected by VLM in the scene."""
+    """An object instance the robot's perception observed (merged by SceneGraph.merge_object)."""
 
     object_id: str
     category: str                       # "chair", "sofa", "fridge"

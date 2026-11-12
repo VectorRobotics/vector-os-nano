@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Three-layer scene graph for spatial memory (SysNav-inspired).
+"""Three-layer scene graph for spatial memory (SysNav-inspired):
 
-Replaces flat SpatialMemory with a hierarchical representation:
-
-    RoomNode  →  ViewpointNode  →  ObjectNode
+    RoomNode  →  ViewpointNode  →  ObjectNode   (core/scene_nodes.py)
 
 Room nodes represent semantically meaningful spaces (kitchen, bedroom, etc.);
 rooms seeded from a world manifest are FIXED (their centre never drifts) and carry
@@ -15,18 +13,13 @@ of the same kind merge only within ``_MERGE_RADIUS_M`` of each other, so two
 bottles a metre apart stay two. An object's position is ``None`` until it is
 localized (never a (0, 0) sentinel); ``last_seen``/``n_obs`` track observations.
 
-Persistence is atomic (temp file + ``os.replace``, ``yaml.safe_dump`` of plain
-floats) and debounced after every mutation, and a file that cannot be read is
-moved aside (``.bad-<time>``) with a warning, never silently overwritten.
-
-Backward-compatible: implements the same public API as SpatialMemory
-(visit, observe, get_visited_rooms, get_room_summary, etc.) so existing
-skills work unchanged.
+Every mutation is saved (atomic, debounced) by the base class SceneStore
+(core/scene_store.py), which also loads the file and moves an unreadable one aside.
 
 Reference: SysNav (arxiv 2603.06914v1) — three-layer scene representation
 with VLM-guided room-level reasoning.
 
-No ROS2 dependency.  Thread-safe via threading.Lock.
+No ROS2 dependency.  Thread-safe via one threading.RLock.
 """
 from __future__ import annotations
 
@@ -82,10 +75,7 @@ class SceneGraph(SceneStore):
         viewpoints — dict[viewpoint_id, ViewpointNode]
         objects    — dict[object_id, ObjectNode]
 
-    Backward-compatible with SpatialMemory: visit(), observe(),
-    get_visited_rooms(), get_room_summary(), etc.
-
-    Thread-safe: all mutations guarded by a single Lock.
+    Thread-safe: all mutations guarded by a single RLock.
     """
 
     def __init__(
@@ -440,7 +430,7 @@ class SceneGraph(SceneStore):
         return min(1.0, total_coverage / room_area)
 
     # ------------------------------------------------------------------
-    # Backward-compatible SpatialMemory API
+    # Visits and observations
     # ------------------------------------------------------------------
 
     def visit(self, room: str, x: float, y: float) -> None:
@@ -479,7 +469,7 @@ class SceneGraph(SceneStore):
         objects: list[str],
         description: str = "",
     ) -> None:
-        """Record a names-only observation at the room centre (SpatialMemory compat).
+        """Record a names-only observation at the room centre.
 
         The names carry no position, so they are stored unlocalized (``x is None``);
         nothing downstream mistakes them for a known place.
