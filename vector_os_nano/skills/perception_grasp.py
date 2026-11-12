@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
@@ -53,32 +54,32 @@ def _fail(diagnosis: str, message: str, **extra: Any) -> SkillResult:
     return SkillResult(success=False, error_message=message, result_data=data)
 
 
-# Deictic markers: "the thing in front" — a spatial reference, no object name.
-_DEICTIC_TOKENS = (
-    "前面", "前方", "面前", "眼前", "前边", "前",
-    "front", "in front", "ahead", "nearest", "this", "that",
-)
-_GENERIC_TOKENS = ("东西", "物体", "object", "thing", "something", "it", "")
+# Deictic words: "the thing in front", "that one" — a spatial reference, no object name.
+_DEICTIC_ZH = ("前面", "前方", "面前", "眼前", "前边", "前", "那个", "这个")
+_DEICTIC_EN = re.compile(r"\b(?:in front|front|ahead|nearest|this|that|one)\b")
+# Request words around a CJK target ("抓起那个罐子"): never an object on their own.
+_FILLER_ZH = re.compile(r"[抓拿取捡起帮我把给请的一下吧个]|东西|物体|物品")
 
 
-def _is_deictic(query: str) -> bool:
-    """True when the query names no object (resolve by space/depth, not a VLM)."""
+def _target_words(query: str) -> str:
+    """*query* without its deictic words ("grab that can" -> "grab can")."""
     q = (query or "").strip().lower()
-    if q in _GENERIC_TOKENS:
-        return True
-    return any(tok in q for tok in _DEICTIC_TOKENS)
+    for tok in _DEICTIC_ZH:
+        q = q.replace(tok, " ")
+    return " ".join(_DEICTIC_EN.sub(" ", q).split())
 
 
 def _names_object(query: str) -> bool:
     """True when *query* names a concrete object (-> the learned detector route).
 
-    Distinguishes a NAMED object ("罐子"/"red can", the shared world vocabulary) from
-    a pure-colour ("抓红色的") or deictic ("前面的东西") query; those resolve on the
-    classical front_object resolver (by colour or by space), never by name.
+    Distinguishes a NAMED object ("罐子"/"red can"/"that can", the shared world
+    vocabulary) from a pure-colour ("抓红色的") or deictic ("前面的东西") query; those
+    resolve on the classical front_object resolver (by colour or by space), never by
+    name. A deictic word never hides a name: "抓前面那个罐子" goes to the detector.
     """
     from vector_os_nano.perception.vocab import vocab
 
-    return not _is_deictic(query) and vocab().names_object(query)
+    return vocab().names_object(_target_words(query))
 
 
 
@@ -92,9 +93,9 @@ def _unsupported_target(query: str) -> SkillResult | None:
     """Why the grasp cannot honestly resolve *query*, or None.
 
     A colour it cannot see, or words the world vocabulary cannot read (untranslatable
-    CJK that is neither a known object nor deictic), are refused before any motion:
-    the robot never substitutes the front-most blob or a same-noun object of another
-    colour for what was named.
+    CJK left once the deictic and request words are gone: "抓前面那个苹果"), are
+    refused before any motion: the robot never substitutes the front-most blob or a
+    same-noun object of another colour for what was named.
     """
     from vector_os_nano.perception.vocab import _has, vocab
 
@@ -105,7 +106,8 @@ def _unsupported_target(query: str) -> SkillResult | None:
                      f"{query!r} names the colour {unseen!r}, which this robot cannot tell apart; "
                      "name the object without it, or by a colour it sees "
                      "(red, orange, yellow, green, blue, purple).", query=query)
-    if not _is_deictic(query) and vocab().english(query) is None:
+    rest = _target_words(query)
+    if vocab().english(rest) is None and _FILLER_ZH.sub("", rest).strip():
         nouns = sorted({c for _, c in vocab().nouns})
         return _fail("unknown_object",
                      f"{query!r} names no object the world vocabulary knows; name one of {nouns} "

@@ -278,12 +278,40 @@ def test_an_empty_detector_answer_fails_loud_never_the_front_blob():
     ("白色的瓶子", "unsupported_colour"),       # a bottle of ANY colour was grasped
     ("grab the black can", "unsupported_colour"),
     ("抓那个苹果", "unknown_object"),           # the front-most blob was grasped
+    ("抓前面那个苹果", "unknown_object"),       # R2V-04: a deictic word hid the noun
+    ("前面的苹果", "unknown_object"),
 ])
 def test_a_target_it_cannot_read_is_refused_before_any_motion(query, diagnosis):
     perc = RoutingPerception()
     res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
     assert not res.success and res.result_data["diagnosis"] == diagnosis
     assert perc.calls == []  # nothing perceived, nothing grasped
+
+
+@pytest.mark.parametrize("query", [
+    "grab that apple", "pick this banana", "grab the apple in front", "grab that can",
+    "抓前面那个罐子", "this banana",
+])
+def test_a_deictic_word_never_hides_the_named_object(query):
+    """R2V-04: a deictic word made any query deictic, so a NAMED target ('that apple',
+    '前面那个罐子') grasped the front-most blob without asking the detector."""
+    assert _names_object(query) is True
+    perc = RoutingPerception()
+    PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
+    assert any(c.startswith("detect:") for c in perc.calls), perc.calls
+    assert not any(c.startswith("front") for c in perc.calls), perc.calls
+
+
+@pytest.mark.parametrize("query", [
+    "前面的东西", "抓前面的", "the thing in front", "grab that one", "this", "前面", "nearest object",
+])
+def test_a_pure_deictic_query_still_takes_the_front_object(query):
+    """The other side of R2V-04: a query naming no object stays on the space resolver."""
+    assert _names_object(query) is False
+    perc = RoutingPerception()
+    res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
+    assert res.success, res.error_message
+    assert "front" in perc.calls and not any(c.startswith("detect:") for c in perc.calls), perc.calls
 
 
 def test_a_producer_box_must_be_plausible_on_the_current_frame():
