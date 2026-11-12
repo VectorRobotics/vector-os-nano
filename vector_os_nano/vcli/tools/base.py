@@ -238,7 +238,7 @@ class CategorizedToolRegistry(ToolRegistry):
     """Tool registry with category-based organization.
 
     Categories group tools (code, sim, robot, diag, system); the native loop picks
-    its action surface by category (``native_loop._registry_tools``).
+    its action surface by category (``native_tools._registry_tools``).
     """
 
     def __init__(self) -> None:

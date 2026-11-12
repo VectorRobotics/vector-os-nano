@@ -4,8 +4,8 @@
 """R38 — NavigateSkill coordinate-goal path (unit, mocked base).
 
 The producer's nav step for "去桌子那里" targets the table by COORDINATE, not a
-named room (the SceneGraph has no "table" room). NavigateSkill must accept
-``strategy_params={"x": ..., "y": ...}`` (or ``target=[x, y]``) and drive the base
+named room (the SceneGraph has no "table" room). NavigateSkill must accept the
+params ``{"x": ..., "y": ...}`` (or ``target=[x, y]``) and drive the base
 via ``base.navigate_to(x, y)`` — the FAR planner path — WITHOUT requiring a
 SceneGraph room. The existing named-room path is unchanged.
 """

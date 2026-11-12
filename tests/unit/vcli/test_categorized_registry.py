@@ -2,7 +2,7 @@
 # Copyright (c) 2024-2026 Vector Robotics
 
 """Unit tests for CategorizedToolRegistry: register(category), unregister,
-list_categories (a copy) — the bookkeeping native_loop._registry_tools reads."""
+list_categories (a copy) — the bookkeeping native_tools._registry_tools reads."""
 from __future__ import annotations
 
 from typing import Any

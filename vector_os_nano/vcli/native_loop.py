@@ -1,25 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""native_loop — a frontier-model NATIVE TOOL-USE turn producer (strangler-fig core).
+"""native_loop — the turn loop of the ONE producer: the model, its prompt, the session.
 
-Campaign #13, M1 FIRST STEP. This is the producer half of the strangle move: the
-MODEL drives a native tool-use ReAct loop (skills-as-tools + a synthetic
-``verify(expr)`` + ``finish``), and the loop assembles an ``ExecutionTrace`` the
-EXISTING honest verify spine consumes BYTE-FOR-BYTE UNCHANGED. It does NOT compute
-``verified`` itself — it hands the trace to ``VerdictReport.from_trace`` /
-``evidence_passed`` (rule 5: verify is the moat, single-sourced).
+The MODEL drives a native tool-use ReAct loop (its tools from ``native_tools``, the
+synthetic ``verify(expr)`` + ``finish``); ``native_runner`` dispatches, verifies, grades
+and records, and this loop hands the resulting ``ExecutionTrace`` to the honest verify
+spine unchanged. It does NOT compute ``verified`` itself — the caller feeds the trace
+to ``VerdictReport.from_trace`` / ``evidence_passed`` (rule 5: verify is the moat,
+single-sourced).
 
 REPLACE-NOT-REBUILD, enforced BY CONSTRUCTION (review fix 5):
 
-    This module imports ONLY the honest spine — ``actor_causation``,
-    ``trace_store`` (the verdict + oracle names live one hop further), the
-    GoalVerifier namespace builder (via the engine, passed in), and
-    ``SkillWrapperTool``. The runner's ONLY logic is: capture baseline -> dispatch the skill via
-    SkillWrapperTool -> evaluate verify via the live GoalVerifier -> grade via
-    ``actor_causation.grade`` -> append ONE StepRecord. The MODEL owns
-    decompose / route / replan — there is NO replan / iteration / "landed-short"
-    bookkeeping here (that would be re-growing the planner — the tell).
+    The producer (``native_loop`` / ``native_runner`` / ``native_tools``) imports ONLY
+    the honest spine — ``actor_causation``, ``trace_store``, the GoalVerifier, the
+    task contract — and the tool layer; the body's sim facts come from the bound
+    world. The runner's ONLY logic is: capture baseline -> dispatch the tool -> evaluate
+    verify via the live GoalVerifier -> grade via ``actor_causation`` -> append ONE
+    StepRecord. The MODEL owns decompose / route / replan — there is NO replan /
+    iteration / "landed-short" bookkeeping here (that would be re-growing the planner).
 
 Turn contract (WP07): the goal compiles to GT predicates (``task_contract``),
 printed as "Task contract: ..." before the first model call and evaluated at turn
@@ -433,7 +432,7 @@ def _run_turn_native(
 
 
 # ---------------------------------------------------------------------------
-# Helpers — verifier / tools / system prompt / session glue (no planner imports)
+# Helpers — system prompt / tool context / session glue (no planner imports)
 # ---------------------------------------------------------------------------
 
 

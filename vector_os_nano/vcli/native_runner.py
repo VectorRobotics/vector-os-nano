@@ -20,7 +20,7 @@ of a step; the grade reads a FRESH post-capture immediately AFTER evaluating tha
 step's verify expr. A re-verify of the same predicate (an attempt group, WP07) that
 retried or only re-checked the latest attempt is graded against that attempt's
 baseline; after any other action it is graded on its own step. Only the actor's own
-tools count as commanded motion (``ACTOR_EPOCH``).
+tools count as commanded motion (the bound world's ``actor_epoch()``).
 """
 from __future__ import annotations
 

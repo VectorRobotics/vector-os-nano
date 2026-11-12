@@ -48,13 +48,12 @@ class StepRecord:
     # R2b — TRI-STATE actor-causation grade (NOT bool|None). Whether the ACTOR
     # caused this step's GROUNDED state change: CAUSED (commanded motion via the
     # instrumented ctrl path AND the pose changed), UNCAUSED (a satisfied-at-baseline
-    # NO-OP or a teleport — no commanded motion), or NOT_GRADED (the executor never
-    # evaluated causation for this step — a non-robot-predicate step or a legacy/
-    # hand-built trace). ``classify_step_evidence`` downgrades a GROUNDED robot step
-    # to RAN ONLY when this is ``UNCAUSED``; ``NOT_GRADED`` (the default) classifies
-    # EXACTLY as before R2b, so every existing constructor and legacy trace is
-    # byte-unaffected (rule 6). Stored as the ENUM (serialized via its ``.value``).
-    # Additive + LAST + defaulted ``NOT_GRADED`` (frozen-safe).
+    # NO-OP or a teleport — no commanded motion), or NOT_GRADED (the producer graded
+    # no causation for this step — a non-robot-predicate step or a hand-built trace).
+    # ``classify_step_evidence`` downgrades a GROUNDED robot step to RAN ONLY when
+    # this is ``UNCAUSED``; ``NOT_GRADED`` (the default) classifies EXACTLY as before
+    # R2b, so every existing constructor is byte-unaffected (rule 6). Stored as the
+    # ENUM. Additive + LAST + defaulted ``NOT_GRADED`` (frozen-safe).
     actor_caused: "ActorCaused" = field(default_factory=lambda: ActorCaused.NOT_GRADED)
     # WP07 attempt semantics (additive, rule 6). ``attempt_of`` opts the step into an
     # attempt group: steps with the same ``attempt_of`` AND the same normalized verify
