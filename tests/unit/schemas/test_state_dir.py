@@ -186,8 +186,10 @@ def test_a_dev_turn_writes_only_under_vector_home(tmp_path) -> None:
 def test_a_simulator_start_writes_only_under_vector_home(tmp_path) -> None:
     """A real go2 start under -p: the session, the world's memory (moved in from the old
     ~/.vector_os_nano, with its notice) and the generated scenes all land in
-    VECTOR_HOME; the stand-in home keeps no state directory of any release."""
-    real, state = tmp_path / "real", tmp_path / "vh"
+    VECTOR_HOME, the default ~/.vector (the only store old memory moves into); the
+    stand-in home keeps no other state directory of any release."""
+    real = tmp_path / "real"
+    state = real / ".vector"
     old = real / ".vector_os_nano" / "worlds" / "apartment" / "scene_graph.yaml"
     old.parent.mkdir(parents=True)
     old.write_text("rooms: {}\n")
@@ -208,5 +210,5 @@ def test_a_simulator_start_writes_only_under_vector_home(tmp_path) -> None:
     assert (state / "memory" / "apartment" / "scene_graph.yaml").is_file()
     assert list((state / "cache" / "scenes").glob("*.xml"))
     left = {p.relative_to(real).as_posix() for p in real.rglob("*")}
-    assert not {p for p in left if p.split("/")[0] in (".vector", ".vector_os_nano")
+    assert not {p for p in left if p.split("/")[0] == ".vector_os_nano"
                 or p.startswith(".cache/vector_os_nano")}, sorted(left)
