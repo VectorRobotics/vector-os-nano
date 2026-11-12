@@ -462,3 +462,56 @@ def _patch_mujoco_full():
 
 # Import Agent for isinstance check in TestCreateSimAgent
 from vector_os_nano.core.agent import Agent  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# create_hardware_stack: calibration comes only from Calibration.load (R2F1V-02)
+# ---------------------------------------------------------------------------
+
+
+def _hardware_agent(tmp_path, monkeypatch, body: str) -> Agent:
+    """create_hardware_stack with fake camera/VLM/tracker and *body* as calibration.file."""
+    import sys
+    import types
+
+    import vector_os_nano.mcp.server as srv
+
+    cal = tmp_path / "workspace_calibration.yaml"
+    cal.write_text(body)
+
+    class _Cam:
+        def __init__(self, **kw):
+            pass
+
+        def connect(self):
+            pass
+
+    fakes = {"realsense": {"RealSenseCamera": _Cam}, "vlm": {"VLMDetector": object},
+             "tracker": {"EdgeTAMTracker": object},
+             "pipeline": {"PerceptionPipeline": lambda **kw: object()}}
+    for mod, attrs in fakes.items():
+        fake = types.ModuleType(mod)
+        fake.__dict__.update(attrs)
+        monkeypatch.setitem(sys.modules, f"vector_os_nano.perception.{mod}", fake)
+    monkeypatch.setattr(srv, "_load_config_with_fallback",
+                        lambda: {"calibration": {"file": str(cal)}, "arm": {"port": "/nonexistent"}})
+    monkeypatch.setattr(srv, "_start_camera_viewer", lambda p: None)
+    return srv.create_hardware_stack()
+
+
+@pytest.mark.parametrize("body", ["foo: 1\n", "transform_matrix: [[1, 0], [0, 1]]\n"])
+def test_hardware_stack_never_gets_an_identity_calibration_from_a_bad_file(tmp_path, monkeypatch, body):
+    """perception:calibration-missing-silent-camera-frame on vector-os-mcp --hardware: a yaml
+    with no 4x4 transform_matrix became an identity Calibration() poked into the Agent."""
+    ctx = _hardware_agent(tmp_path, monkeypatch, body)._build_context()
+    assert ctx.calibration is None
+    assert "unreadable" in ctx.services["calibration_error"]
+
+
+def test_hardware_stack_loads_a_valid_calibration_file(tmp_path, monkeypatch):
+    import numpy as np
+
+    m = [[1, 0, 0, 0.1], [0, 1, 0, 0.2], [0, 0, 1, 0.3], [0, 0, 0, 1]]
+    ctx = _hardware_agent(tmp_path, monkeypatch, f"transform_matrix: {m}\n")._build_context()
+    assert np.allclose(ctx.calibration._matrix, m)
+    assert "calibration_error" not in ctx.services

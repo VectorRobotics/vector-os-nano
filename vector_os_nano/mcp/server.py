@@ -403,8 +403,8 @@ def create_sim_stack(headless: bool = True) -> Agent:
 def create_hardware_stack() -> Agent:
     """Create an Agent with real SO-101 hardware.
 
-    Mirrors run.py _init_hardware() for MCP use.
-    Starts: SO-101 arm + RealSense D405 + Moondream VLM + EdgeTAM tracker.
+    Starts: SO-101 arm + RealSense D405 + Moondream VLM + EdgeTAM tracker. The
+    camera->arm calibration is the config's calibration.file, loaded by the Agent.
 
     Returns:
         A fully connected Agent ready for VectorEngine use.
@@ -457,46 +457,13 @@ def create_hardware_stack() -> Agent:
     except Exception as exc:
         _log(f"[MCP] Perception not available: {exc}")
 
-    # --- Calibration ---
-    calibration = None
-    try:
-        cal_file = cfg.get("calibration", {}).get(
-            "file", "config/workspace_calibration.yaml"
-        )
-        if cal_file and os.path.exists(cal_file):
-            if cal_file.endswith((".yaml", ".yml")):
-                # Use the same YAML loader from run.py
-                import yaml  # noqa: PLC0415
-                import numpy as np  # noqa: PLC0415
-                from vector_os_nano.perception.calibration import Calibration  # noqa: PLC0415
-                with open(cal_file, "r", encoding="utf-8") as fh:
-                    data = yaml.safe_load(fh)
-                if isinstance(data, dict):
-                    calibration = Calibration()
-                    raw_matrix = data.get("transform_matrix")
-                    if raw_matrix is not None:
-                        matrix = np.array(raw_matrix, dtype=np.float64)
-                        if matrix.shape == (4, 4):
-                            calibration._matrix = matrix
-                    _log(f"[MCP] Calibration loaded from {cal_file}")
-            else:
-                from vector_os_nano.perception.calibration import Calibration  # noqa: PLC0415
-                calibration = Calibration.load(cal_file)
-                _log(f"[MCP] Calibration loaded from {cal_file}")
-        else:
-            _log(f"[MCP] No calibration file at {cal_file!r}")
-    except Exception as exc:
-        _log(f"[MCP] Calibration load failed: {exc}")
-
     agent = Agent(
         arm=arm,
         gripper=gripper,
         perception=perception,
         config=cfg,
         skills=get_so101_skills(),
-    )
-    if calibration is not None:
-        agent._calibration = calibration
+    )  # the Agent loads config calibration.file itself, refusing a malformed one
 
     # Start live camera feed (hardware mode only, daemon thread).
     _start_camera_viewer(perception)
@@ -504,7 +471,6 @@ def create_hardware_stack() -> Agent:
     _log(f"[MCP] Hardware stack ready. Skills: {agent.skills}")
     _log(f"[MCP] Arm: {'connected' if arm else 'NOT available'}")
     _log(f"[MCP] Perception: {'ready' if perception else 'NOT available'}")
-    _log(f"[MCP] Calibration: {'loaded' if calibration else 'NOT loaded'}")
     return agent
 
 
