@@ -291,7 +291,8 @@ every `os.environ` read in the package to be in the catalogue.
    `sim.ground_truth`, `sim.grasp`, `sim.backends`, the oracle module or `vcli`; calls no
    `attach` / `detach` / `reset`; `skills/` and `perception/` touch no attribute named `runtime`,
    `world`, `gt` or `get_object_positions`.
-4. The kernel (`vcli/engine.py`, `vcli/native_loop.py`, `vcli/cognitive/`) imports no concrete world,
+4. The kernel (`vcli/engine.py`, `vcli/native_loop.py`, `vcli/native_runner.py`, `vcli/native_tools.py`,
+   `vcli/cognitive/`) imports no concrete world,
    embodiment, backend or skill pack — only `interfaces` and tables.
 5. `core/` imports only `interfaces` and `schemas`.
 6. Optional heavy dependencies (torch, transformers, pybullet, casadi, pinocchio, mcp, rclpy) are
