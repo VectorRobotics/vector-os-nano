@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from vector_os_nano.schemas import paths
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, tool
 
 # ---------------------------------------------------------------------------
@@ -32,13 +33,17 @@ from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolRe
 # Store component -> the file-name globs that stay readable anywhere under it. The
 # store dir itself and every other file under it are refused: .kube and .azure hold
 # no project code; a project's .docker holds Dockerfile-style files beside docker's
-# own keys (config.json, contexts/, machine/); $VECTOR_HOME holds two user-authored
-# files beside keys, transcripts (sessions, exports, history) and traces.
+# own keys (config.json, contexts/, machine/).
 _SECRET_STORES: dict[str, tuple[str, ...]] = {
     ".ssh": (), ".aws": (), ".gnupg": (), ".git": (), ".kube": (), ".azure": (),
-    ".vector": ("vector.md", "personality.md"),
     ".docker": ("dockerfile", "dockerfile.*", "*.dockerfile", "*compose*.yml", "*compose*.yaml", ".dockerignore"),
 }
+# A Vector state directory: this user's resolved $VECTOR_HOME wherever it is, and any
+# '.vector' component (another user's store). Its direct children the user authors
+# (VECTOR.md, personality.md, embodiments/, worlds/: schemas/paths.py LAYOUT) are the
+# user's own files; the store itself and everything else in it (config.yaml, history,
+# sessions, exports, memory, cache, runs, any unlisted name) are refused.
+_STORE_KEEPS: frozenset[str] = frozenset(e.split("/")[0].casefold() for e, own in paths.LAYOUT.items() if own)
 # Consecutive components: the credential inside a directory whose name says nothing.
 _SECRET_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset({
     (".config", "gh"), (".config", "gcloud"),
@@ -64,7 +69,7 @@ _BINARY_DETECT_BYTES = 8192
 
 def real_path(path_str: str, cwd: Any = None) -> Path:
     """Expand ~, anchor a relative path at *cwd*, and resolve it (realpath)."""
-    p = Path(os.path.expanduser(path_str))
+    p = Path(paths.expand_user(path_str))
     if not p.is_absolute():
         p = Path(cwd or os.getcwd()) / p
     return Path(os.path.realpath(p))
@@ -83,16 +88,31 @@ def is_protected(path: Path) -> bool:
     parts = low.parts
     if low.name in _SECRET_FILES or _SECRET_DIR_PAIRS.intersection(zip(parts, parts[1:])):
         return True
+    below = 0  # inside $VECTOR_HOME only what lies below it can be another '.vector' store
+    home = paths.home()
+    for store in {_fold(os.path.realpath(home)), _fold(os.path.abspath(home))}:  # resolved, as spelled
+        if low.is_relative_to(store):
+            if _store_refuses(parts[len(store.parts):]):
+                return True
+            below = max(below, len(store.parts))
     for i, part in enumerate(parts):
         keep = _SECRET_STORES.get(part)
         if keep is not None and not (i < len(parts) - 1 and any(fnmatch.fnmatchcase(low.name, g) for g in keep)):
             return True
+        if part == ".vector" and i >= below and _store_refuses(parts[i + 1:]):
+            return True
     if _SECRET_NAME_RE.match(low.name) and not low.name.endswith(_ENV_TEMPLATE_SUFFIXES):
         return True
     # All of this user's ~/.claude (session transcripts, not only credentials), and /etc secrets.
-    roots = [os.path.join(os.path.realpath(Path.home()), ".claude")]
+    roots = [os.path.join(os.path.realpath(paths.user_home()), ".claude")]
     roots += [os.path.realpath(p) for p in _SYSTEM_SECRETS]
     return any(low.is_relative_to(_fold(r)) for r in roots)
+
+
+def _store_refuses(rest: tuple[str, ...]) -> bool:
+    """*rest*: the folded components below a state directory. Only a user-authored
+    entry as the store's DIRECT child (and what lies under it) is not refused."""
+    return not rest or rest[0] not in _STORE_KEEPS
 
 
 def project_root(context: Any) -> Path:
@@ -108,7 +128,7 @@ def in_project(path: Path, root: Path) -> bool:
     /Users/alice on macOS); the containment test stays exact, so case folding never
     widens what auto-allows."""
     low = _fold(root)
-    homes = {_fold(os.path.realpath(h)) for h in [Path.home(), *(e.pw_dir for e in pwd.getpwall())] if h}
+    homes = {_fold(os.path.realpath(h)) for h in [paths.user_home(), *(e.pw_dir for e in pwd.getpwall())] if h}
     pseudo = any(low.is_relative_to(p) for p in ("/proc", "/sys", "/dev"))
     return not (pseudo or any(low == h or low in h.parents for h in homes)) and path.is_relative_to(root)
 

@@ -396,6 +396,7 @@ _STORES = (".aws", ".ssh", ".gnupg", ".kube", ".azure", ".vector", ".docker")
 # everything but its named project files, so each one is refused all the same.
 _UNLISTED = {".kube/config-prod": "token", ".kube/configs/staging.yaml": "token",
              ".vector/exports/s1.md": "**You:**", ".vector/history": "+key",
+             ".vector/sessions/VECTOR.md": "**You:**", ".vector/exports/personality.md": "**You:**",
              ".azure/service_principal_entries.bin": "secret", ".docker/daemon-auth.json": "auth",
              ".docker/contexts/meta/m.json": "host", ".docker/machine/certs/ca.pem": "CERT"}
 
@@ -551,13 +552,16 @@ def test_content_free_dir_names_refuse_only_their_credentials(box: dict[str, Pat
     project = box["project"]
     readable = (".docker/Dockerfile", ".docker/php/Dockerfile.dev", ".docker/web.dockerfile",
                 ".docker/docker-compose.yml", ".docker/.dockerignore",
-                ".vector/VECTOR.md", ".vector/personality.md")
+                ".vector/VECTOR.md", ".vector/personality.md",
+                ".vector/embodiments/bot/robot.yaml", ".vector/worlds/w/world.yaml")
     refused = (".docker/config.json", ".docker/entrypoint.sh", ".docker/contexts/meta/m.json",
                ".kube/config", ".kube/README.md", ".azure/accessTokens.json", ".azure/pipelines.yml",
                ".azure/msal_token_cache.json", ".azure/service_principal_entries.json",
                ".vector/config.yaml", ".vector/oauth_credentials.json", ".vector/history",
                ".vector/exports/s1.md", ".vector/sessions/s1.json", ".vector/traces/t1.jsonl",
-               ".vector/sessions/VECTOR.md.jsonl")
+               ".vector/sessions/VECTOR.md.jsonl", ".vector/sessions/VECTOR.md",
+               ".vector/exports/personality.md", ".vector/memory/apartment/VECTOR.md",
+               ".vector/assets/embodiments/robot.yaml")
     for rel in readable + refused:
         (project / rel).parent.mkdir(parents=True, exist_ok=True)
         (project / rel).write_text(f"x {SECRET}\n")
@@ -597,3 +601,89 @@ def test_the_dev_oracle_decides_and_reads_on_one_resolution(box: dict[str, Path]
     monkeypatch.setattr(dev, "real_path", swapping)
     assert dev.path_contains("main.py", "def main")  # it read what it decided on
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# The state directory is the RESOLVED $VECTOR_HOME wherever it lives (R8a-F1-m1/m2)
+# ---------------------------------------------------------------------------
+
+_STATE_REFUSED = ("config.yaml", "history", "oauth_credentials.json", "sessions/s1.jsonl",
+                  "sessions/VECTOR.md", "exports/s1.md", "exports/personality.md",
+                  "memory/apartment/scene_graph.yaml", "memory/apartment/VECTOR.md",
+                  "cache/scenes/room.xml", "runs/20261112/crash.log", "assets/g1/LICENSE")
+_STATE_OWN = ("VECTOR.md", "personality.md", "embodiments/bot/robot.yaml", "worlds/w/world.yaml")
+
+
+@pytest.fixture()
+def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    """VECTOR_HOME in a folder whose name says nothing ('vh', no '.vector' component),
+    reached through a symlink; the project lies elsewhere."""
+    real, project = tmp_path / "data" / "vh", tmp_path / "project"
+    for rel in _STATE_REFUSED + _STATE_OWN:
+        (real / rel).parent.mkdir(parents=True, exist_ok=True)
+        (real / rel).write_text(f"x {SECRET}\n")
+    project.mkdir()
+    (tmp_path / "link").symlink_to(real)
+    (tmp_path / "home").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / "link"))
+    monkeypatch.chdir(project)
+    return {"real": real, "link": tmp_path / "link", "project": project}
+
+
+@pytest.mark.parametrize("rel", _STATE_REFUSED)
+def test_vector_home_anywhere_refuses_its_state(state: dict[str, Path], rel: str) -> None:
+    """Refused (never asked) through its real path, its VECTOR_HOME spelling, a case
+    variant and a project symlink, for reads, searches and writes."""
+    p = state["project"]
+    (p / "leak").symlink_to(state["real"] / rel)
+    for path in (str(state["real"] / rel), str(state["link"] / rel), str(state["real"] / rel).upper(),
+                 str(state["link"]).swapcase() + "/" + rel, "leak"):
+        assert _decide(FileReadTool(), {"file_path": path}, p) == "deny", path
+        for tool in (FileWriteTool(), FileEditTool()):
+            full = {"file_path": path, "content": "x", "old_string": "x", "new_string": "y"}
+            assert PermissionContext(no_permission=True).check(tool, full, _ctx(p)).behavior == "deny", path
+    assert SECRET not in FileReadTool().execute({"file_path": "leak"}, _ctx(p)).content
+    for tool in (GrepTool(), GlobTool()):  # the store itself is refused whole
+        assert _decide(tool, {"pattern": "*", "path": str(state["link"])}, p) == "deny"
+    assert (state["real"] / rel).read_text() == f"x {SECRET}\n"
+
+
+@pytest.mark.parametrize("rel", _STATE_OWN)
+def test_vector_home_user_files_are_askable_never_refused(state: dict[str, Path], rel: str) -> None:
+    """VECTOR.md, personality.md, embodiments/ and worlds/ are the user's own data: the
+    agent may read them and (asking) edit them, like any path outside the project."""
+    p = state["project"]
+    for path in (str(state["link"] / rel), str(state["real"] / rel)):
+        assert _decide(FileReadTool(), {"file_path": path}, p) == "ask", path
+        assert _decide(FileWriteTool(), {"file_path": path, "content": "x"}, p) == "ask", path
+    assert SECRET in FileReadTool().execute({"file_path": str(state["link"] / rel)}, _ctx(p)).content
+
+
+def test_a_user_folder_link_into_the_state_is_refused(state: dict[str, Path]) -> None:
+    """embodiments/ is askable, but a symlink in it resolves before the rule applies."""
+    sneaky = state["real"] / "embodiments" / "bot" / "transcript.jsonl"
+    sneaky.symlink_to(state["real"] / "sessions" / "s1.jsonl")
+    assert _decide(FileReadTool(), {"file_path": str(sneaky)}, state["project"]) == "deny"
+
+
+def test_only_the_store_itself_is_matched_never_a_name_like_it(state: dict[str, Path]) -> None:
+    """A sibling that shares the store's name as a prefix, or a project folder called
+    'vh' or 'sessions', is an ordinary path."""
+    p = state["project"]
+    for rel in ("../data/vh2/config.yaml", "vh/config.yaml", "sessions/config.yaml"):
+        (p / rel).parent.mkdir(parents=True, exist_ok=True)
+        (p / rel).write_text("plain\n")
+    assert _decide(FileReadTool(), {"file_path": "../data/vh2/config.yaml"}, p) == "ask"
+    assert _decide(FileReadTool(), {"file_path": "vh/config.yaml"}, p) == "allow"
+    assert _decide(FileReadTool(), {"file_path": "sessions/config.yaml"}, p) == "allow"
+
+
+def test_another_users_store_keeps_only_its_direct_user_files(homes: Path) -> None:
+    """The literal '.vector' rule stays for other users' stores, with the same keep set."""
+    bob = homes / "bob" / ".vector"
+    for rel in ("VECTOR.md", "embodiments/x/robot.yaml", "worlds/y/world.yaml"):
+        (bob / rel).parent.mkdir(parents=True, exist_ok=True)
+        (bob / rel).write_text("data\n")
+        assert _decide(FileReadTool(), {"file_path": f"bob/.vector/{rel}"}, homes) == "allow", rel
+    assert _decide(FileReadTool(), {"file_path": "bob/.vector/memory/a/VECTOR.md"}, homes) == "deny"
