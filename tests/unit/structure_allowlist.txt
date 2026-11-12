@@ -5,14 +5,10 @@ over-800 | vector_os_nano/hardware/sim/mujoco_go2.py
 over-800 | vector_os_nano/skills/perception_grasp.py
 target-tree | config
 target-tree | foxglove
-target-tree | vector_os_nano/hardware/arm.py
 target-tree | vector_os_nano/hardware/base.py
-target-tree | vector_os_nano/hardware/gripper.py
 target-tree | vector_os_nano/hardware/ros2
 target-tree | vector_os_nano/hardware/sim
 target-tree | vector_os_nano/hardware/urdf
-unreachable | vector_os_nano/hardware/arm.py
-unreachable | vector_os_nano/hardware/gripper.py
 unreachable | vector_os_nano/hardware/ros2/__init__.py
 unreachable | vector_os_nano/hardware/ros2/viz.py
 unreachable | vector_os_nano/hardware/sim/mjcf/go2_piper/build_go2_piper.py

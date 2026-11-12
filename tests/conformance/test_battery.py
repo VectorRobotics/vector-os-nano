@@ -1,68 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""The oracle-parity battery and the contact-gated pick (scenes/battery.xml + the Piper).
+"""The oracle-parity battery (scenes/battery.xml + the `piper` body).
 
 Ground-truth quantities are read the way the world side reads them: canonical shape
-AABBs over the backend's state (clearance), the backend's contacts, its attachments
-and its segmentation render. Only the PhysicsWorld API drives the arm, and the grasp
-is the world side's own decision (sim/grasp.py), the same on every backend.
+AABBs over the backend's state (clearance), the backend's contacts and its
+segmentation render, the same on every backend. The arm's own pick runs through the
+generic drivers in test_drivers.py.
 """
 from __future__ import annotations
 
-import dataclasses
+import math
 
-import numpy as np
 import pytest
 
-from tests.conformance.rig import clearance, ik
-from vector_os_nano.sim import grasp as g
-from vector_os_nano.sim.scene import canonical
+from tests.conformance.rig import clearance
+from vector_os_nano.embodiments import registry
+from vector_os_nano.sim.scene.compose import compose
+from vector_os_nano.sim.scene.reader import GEOM_MESH, geoms
+from vector_os_nano.vcli.worlds.world_manifest import load_world
 
 pytestmark = pytest.mark.sim
-
-DOWN = np.array([0.0, 0.0, -1.0])
-SEED = [0.0, 1.87, -0.98, 0.0, 0.77, 0.0]  # a top-down configuration over the table
-OPEN = 0.035                                # per-finger travel of joint7
-
-
-class Arm:
-    """The scripted Piper: IK on the canonical model, set-points through set_targets."""
-
-    def __init__(self, world, scene) -> None:
-        self.w, self.sc = world, scene
-        self.joints = [scene.joint(f"joint{i}") for i in range(1, 7)]
-        self.jaw = scene.joint("joint7")
-        self.site = int(scene.model.site("ee_site").id)
-        self.fingers = {scene.body("link7"), scene.body("link8")}
-        self.hand = scene.body("link6")
-        self.spec = g.GraspSpec(weld_body=self.hand, finger_bodies=tuple(sorted(self.fingers)),
-                                jaw_joint=self.jaw, closed=0.0, min_opening=0.005)
-
-    def move(self, pos: np.ndarray, jaw: float, steps: int = 750) -> None:
-        q = self.w.state()[0]
-        q[[self.sc.joint_q(j) for j in self.joints]] = SEED
-        q = ik(self.sc, q, self.site, self.joints, np.asarray(pos, dtype=float), DOWN)
-        self.w.set_targets(self.joints + [self.jaw], [*q[[self.sc.joint_q(j) for j in self.joints]], jaw])
-        self.w.step(steps)
-
-    def servo_jaw(self, jaw: float, steps: int = 500) -> float:
-        self.w.set_targets([self.jaw], [jaw])
-        self.w.step(steps)
-        return float(self.w.state()[0][self.sc.joint_q(self.jaw)])
-
-    def gripped(self, obj: int) -> bool:
-        """Every finger body touches the object."""
-        return self.fingers <= self.w.contacts(obj)
-
-    def grip(self) -> tuple[float, int]:
-        """Approach the box with open jaws, close them on it: (jaw q where they stop, box)."""
-        box = self.sc.body("box")
-        at = self.w.state()[0][self.sc.free_q(box)][:3]
-        self.move(at + [0, 0, 0.10], OPEN)
-        self.move(at, OPEN)
-        assert g.grasp(self.w, self.spec) is None and not self.w.attached()  # jaws open: no finger touches
-        return self.servo_jaw(0.0), box
 
 
 def _settled(load, backend, scene):
@@ -123,54 +81,38 @@ def test_own_shapes_and_never_colliding_pairs_are_no_contact(backend, load, batt
     assert 0 not in w.contacts(sc.body("table"))
 
 
-def test_contact_gated_pick_attach_and_lift(backend, load, battery_scene):
+@pytest.mark.parametrize("lift, touching", [(0.3e-3, True), (1.5e-3, False)])
+def test_a_box_resting_on_an_edge_keeps_the_contact_sentence(backend, load, battery_scene, lift, touching):
+    """S2cV-02, pinned: Bullet rounds box edges by its collision margin, so edge-down it
+    reads a contact only up to ~0.55 mm (corner-down ~0.25 mm), not 1 mm: conservative
+    (fewer contacts, a stricter grip gate). Within 0.3 mm both engines touch, past 1.5 mm
+    neither does."""
     sc = battery_scene
     w = _settled(load, backend, sc)
-    arm = Arm(w, sc)
-    _jaw, box = arm.grip()
-    at = w.state()[0][sc.free_q(box)][:3]
-    assert arm.gripped(box), f"finger contacts {[w.contacts(f) for f in arm.fingers]}"
-    assert g.grasp(w, arm.spec) == box
-    assert w.attached() == {box: arm.hand}
-    # attached but still resting: the attach log says held, the AABB rule says not lifted
-    assert abs(clearance(sc, w.state()[0], box)) < 3e-3
-    assert sc.body("table") in w.contacts(box)
-    arm.move(at + [0, 0, 0.05], 0.0)
+    box = sc.body("box")
     q = w.state()[0]
-    assert clearance(sc, q, box) == pytest.approx(0.05, abs=5e-3)
-    assert sc.body("table") not in w.contacts(box)
-    arm.move(at + [0, 0, 0.10], 0.0)
-    assert clearance(sc, w.state()[0], box) >= 0.05 + 0.03  # it follows the hand up
+    s = sc.free_q(box)
+    q[s.start + 3:s.start + 7] = [math.cos(math.pi / 8), math.sin(math.pi / 8), 0.0, 0.0]  # 45 deg about x
+    q[s.start + 2] -= clearance(sc, q, box) - lift
+    w.reset(q)
+    assert clearance(sc, w.state()[0], box) == pytest.approx(lift, abs=1e-6)
+    assert (sc.body("table") in w.contacts(box)) is touching, f"edge-down at {lift * 1000:.1f} mm"
 
 
-def test_fingers_3mm_away_do_not_grip(backend, load, battery_scene):
-    sc = battery_scene
-    w = _settled(load, backend, sc)
-    arm = Arm(w, sc)
-    touching, box = arm.grip()  # where the jaws stop on the box
-    assert arm.gripped(box)
-    arm.servo_jaw(touching + 0.003)
-    assert not arm.gripped(box)
-    assert not (arm.fingers & w.contacts(box))
-    assert g.grasp(w, arm.spec) is None and w.attached() == {}
-
-
-def test_grasp_needs_the_jaws_held_open_and_a_declared_pair(backend, load, battery_scene):
-    """Both fingers on the box is not enough: jaws squeezed under min_opening, or a
-    weld body with no grasp pair for the box, attach nothing."""
-    sc = battery_scene
-    w = _settled(load, backend, sc)
-    arm = Arm(w, sc)
-    jaw, box = arm.grip()
-    assert arm.gripped(box)
-    squeezed = dataclasses.replace(arm.spec, min_opening=jaw + 1e-3)
-    assert g.grasp(w, squeezed) is None
-    wrist = dataclasses.replace(arm.spec, weld_body=sc.body("link5"))  # no (link5, box) pair
-    assert g.grasp(w, wrist) is None
-    assert w.attached() == {}
-    assert g.grasp(w, arm.spec) == box
-    assert g.release(w, sc.body("link5")) == [] and w.attached() == {box: arm.hand}  # not its parent
-    assert g.release(w, arm.hand) == [] and w.attached() == {}
+def test_no_gripper_finger_or_pickable_shape_on_pybullet_is_a_mesh(battery_scene):
+    """S2cV-01, pinned: Bullet's distance query over-reports a convex hull's gap (a
+    contact at ~2.0 mm one mesh, ~2.8 mm mesh on mesh, against the 1 mm sentence), so a
+    grip gate over mesh fingers or a mesh object would be looser on PyBullet. Every
+    finger and every pickable of the bodies this release runs on PyBullet (the `piper`
+    on the battery table and on its workbench) collides through primitives only."""
+    cfg = registry.load("piper")
+    world = load_world(cfg.world)
+    workbench = compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+    for sc, objects in ((battery_scene, ("box", "cylinder")), (workbench, tuple(world.pickables))):
+        bodies = {sc.body(b) for b in (*cfg.arm.gripper.finger_bodies, *objects)}
+        shapes = [g for g in geoms(sc.model) if g.body in bodies and g.collide]
+        assert {g.body for g in shapes} == bodies  # each one collides
+        assert not [sc.body_name(g.body) for g in shapes if g.type == GEOM_MESH]
 
 
 def test_segmentation_pixel_counts_agree_across_backends(both, load, battery_scene):

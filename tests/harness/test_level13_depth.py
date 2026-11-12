@@ -13,12 +13,15 @@ import numpy as np
 import pytest
 
 from vector_os_nano.core.types import CameraIntrinsics
-from vector_os_nano.perception.depth_projection import camera_to_world, mujoco_intrinsics
+from vector_os_nano.perception import depth_projection
+from vector_os_nano.perception.depth_projection import camera_to_world
 
 
 def test_intrinsics_are_the_one_core_type():
-    """perception:duplicate-camera-intrinsics — two CameraIntrinsics classes, duck-typed."""
-    intr = mujoco_intrinsics(640, 480, vfov_deg=42.0)
+    """perception:duplicate-camera-intrinsics — two CameraIntrinsics classes, duck-typed;
+    K comes from the frame (``CameraFrame.K``), never re-derived from a fovy here."""
+    assert not hasattr(depth_projection, "mujoco_intrinsics")
+    intr = CameraIntrinsics.from_matrix([[415.7, 0, 320], [0, 415.7, 240], [0, 0, 1]], 640, 480)
     assert type(intr) is CameraIntrinsics
     assert (intr.width, intr.height, intr.cx, intr.cy) == (640, 480, 320.0, 240.0)
 

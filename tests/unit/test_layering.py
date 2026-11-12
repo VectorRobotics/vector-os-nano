@@ -55,48 +55,57 @@ def violations() -> set[str]:
     out: set[str] = set()
     for path in sorted(PKG.rglob("*.py")):
         rel = path.relative_to(PKG).as_posix()
-        if rel.startswith("third_party/"):
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        mods = _imports(tree, rel)
-        ours = {m[len(P):] for m in mods if m.startswith(P)}
-        top = {m.split(".")[0] for m in mods}
+        if not rel.startswith("third_party/"):
+            out |= file_violations(rel, path.read_text(encoding="utf-8"))
+    return out
 
-        def bad(rule: str, what: str) -> None:
-            out.add(f"{rule} | {rel} | {what}")
 
-        if rel.startswith("schemas/"):
-            for m in ours - {m for m in ours if _under(m, "schemas")}:
-                bad("1 schemas imports nothing from the package", m)
-        if rel.startswith("interfaces/"):
-            for m in ours - {m for m in ours if _under(m, "schemas", "interfaces")}:
-                bad("1 interfaces imports only schemas", m)
-        if top & {"pybullet", "pybullet_data"} and not rel.startswith("sim/backends/pybullet/"):
-            bad("2 a simulator is imported only by its backend", "pybullet")
-        if "mujoco" in top and not rel.startswith(("sim/backends/mujoco/", "sim/scene/")):
-            bad("2 a simulator is imported only by its backend", "mujoco")
-        if rel.startswith(ACTOR):
-            for m in ours:
-                if _under(m, "sim.ground_truth", "sim.grasp", "sim.backends", "vcli"):
-                    bad("3 actor code imports neither the world side nor the kernel", m)
-            for node in ast.walk(tree):
-                # ponytail: `reset` is too common a method name for a name check; an actor
-                # that cannot reach `world` / `runtime` (below) cannot call their reset.
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                        and node.func.attr in ("attach", "detach")):
-                    bad("3 actor code calls no attach / detach", node.func.attr)
-                if (rel.startswith(("skills/", "perception/")) and isinstance(node, ast.Attribute)
-                        and node.attr in ("runtime", "world", "gt", "get_object_positions")):
-                    bad("3 skills and perception touch no runtime / world / gt", node.attr)
-        if rel.startswith(KERNEL):
-            for m in ours:
-                concrete_world = _under(m, "vcli.worlds") and m not in ("vcli.worlds", "vcli.worlds.base")
-                if concrete_world or _under(m, "embodiments", "hardware", "perception", "sim") or (
-                        _under(m, "skills") and m != "skills"):
-                    bad("4 the kernel imports no concrete world, body, backend or skill pack", m)
-        if rel.startswith("core/"):
-            for m in ours - {m for m in ours if _under(m, "core", "interfaces", "schemas")}:
-                bad("5 core imports only interfaces and schemas", m)
+def file_violations(rel: str, source: str) -> set[str]:
+    """The violations of the package file *rel* (path below the package) holding *source*."""
+    out: set[str] = set()
+    tree = ast.parse(source)
+    mods = _imports(tree, rel)
+    ours = {m[len(P):] for m in mods if m.startswith(P)}
+    top = {m.split(".")[0] for m in mods}
+
+    def bad(rule: str, what: str) -> None:
+        out.add(f"{rule} | {rel} | {what}")
+
+    if rel.startswith("schemas/"):
+        for m in ours - {m for m in ours if _under(m, "schemas")}:
+            bad("1 schemas imports nothing from the package", m)
+    if rel.startswith("interfaces/"):
+        for m in ours - {m for m in ours if _under(m, "schemas", "interfaces")}:
+            bad("1 interfaces imports only schemas", m)
+    if top & {"pybullet", "pybullet_data"} and not rel.startswith("sim/backends/pybullet/"):
+        bad("2 a simulator is imported only by its backend", "pybullet")
+    if "mujoco" in top and not rel.startswith(("sim/backends/mujoco/", "sim/scene/")):
+        bad("2 a simulator is imported only by its backend", "mujoco")
+    if rel.startswith(ACTOR):
+        for m in ours:
+            if _under(m, "sim.ground_truth", "sim.grasp", "sim.backends", "vcli"):
+                bad("3 actor code imports neither the world side nor the kernel", m)
+        for node in ast.walk(tree):
+            # ponytail: `reset` is too common a method name for a name check; an actor
+            # that cannot reach `world` / `runtime` (below) cannot call their reset.
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("attach", "detach")):
+                bad("3 actor code calls no attach / detach", node.func.attr)
+            if (rel.startswith(("skills/", "perception/")) and isinstance(node, ast.Attribute)
+                    and node.attr in ("runtime", "world", "gt", "get_object_positions")):
+                bad("3 skills and perception touch no runtime / world / gt", node.attr)
+            if (rel.startswith("sim/drivers/") and isinstance(node, ast.Attribute)
+                    and node.attr in ("model", "data")):
+                bad("3 a generic driver reaches no engine model or data", node.attr)
+    if rel.startswith(KERNEL):
+        for m in ours:
+            concrete_world = _under(m, "vcli.worlds") and m not in ("vcli.worlds", "vcli.worlds.base")
+            if concrete_world or _under(m, "embodiments", "hardware", "perception", "sim") or (
+                    _under(m, "skills") and m != "skills"):
+                bad("4 the kernel imports no concrete world, body, backend or skill pack", m)
+    if rel.startswith("core/"):
+        for m in ours - {m for m in ours if _under(m, "core", "interfaces", "schemas")}:
+            bad("5 core imports only interfaces and schemas", m)
     return out
 
 
@@ -109,6 +118,23 @@ def _listed() -> set[str]:
 def test_no_new_layering_violation():
     new = sorted(violations() - _listed())
     assert not new, "new layering violations (charter section 6); fix them, never list them:\n" + "\n".join(new)
+
+
+def test_a_generic_driver_that_reaches_the_engine_is_flagged():
+    """Adversarial: a driver under sim/drivers/ that touches an engine's model or data,
+    imports MuJoCo or ground truth, or attaches, is a violation; the same code in a
+    MuJoCo-internal module is not one of rule 3's."""
+    src = ("import mujoco\nfrom vector_os_nano.sim.ground_truth import GroundTruth\n"
+           "from vector_os_nano.vcli.cognitive.abort import is_abort_requested\n"
+           "def f(rt):\n    rt.world.data.ctrl[0] = rt.world.model.nu\n    rt.world.attach(1, 2)\n")
+    got = {v.split(" | ")[0] + " | " + v.split(" | ")[2] for v in file_violations("sim/drivers/x.py", src)}
+    assert {"3 a generic driver reaches no engine model or data | data",
+            "3 a generic driver reaches no engine model or data | model",
+            "2 a simulator is imported only by its backend | mujoco",
+            "3 actor code calls no attach / detach | attach",
+            "3 actor code imports neither the world side nor the kernel | sim.ground_truth",
+            "3 actor code imports neither the world side nor the kernel | vcli.cognitive.abort"} <= got
+    assert not [v for v in file_violations("sim/backends/mujoco/x.py", src) if v.startswith("3 ")]
 
 
 def test_package_and_cli_import_on_a_base_install():

@@ -42,16 +42,12 @@ stance:
 
 sensors:
   # RealSense D435 RGB — named 'd435_rgb' camera fixed to base_link (MJCF).
+  # The camera is in go2.xml (fixed to base_link); depth over the D435's range.
   - role: camera
-    mount_body: base_link
     name: d435_rgb
-    params:
-      width: 640                  # perception render size (intrinsics follow it)
-      height: 480
-  # RealSense D435 depth — named 'd435_depth' camera, same mounting as RGB.
-  - role: depth
-    mount_body: base_link
-    name: d435_depth
+    width: 640                    # perception render size (intrinsics follow it)
+    height: 480
+    depth: [0.1, 10.0]
   # Livox MID360-like 3D lidar — _update_lidar(): offset 0.3 m forward, 0.2 m up
   # from base; beams tilted -20 deg; ~5 Hz (_LIDAR_UPDATE_INTERVAL=200 steps).
   - role: lidar

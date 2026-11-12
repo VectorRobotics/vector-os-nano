@@ -20,8 +20,9 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
 * **Reads.** :meth:`snapshot` is the latest :class:`SimSnapshot` (``world.state()``
   and sim time of one instant), republished after every tick and every mutation;
   lock-free readers slice ``q`` / ``qd`` by the scene's canonical addresses.
-  Renders and rays go to the world itself (``world.render`` / ``world.raycast``,
-  callable from any thread: the backend copies the state it observes).
+  Renders and rays go to the world itself (:meth:`render` / ``world.raycast``,
+  callable from any thread: the backend copies the state it observes);
+  :meth:`capture` is the actor's camera path (its segmentation never leaves here).
 * **Attachments.** :meth:`grasp` / :meth:`release` run the world-side grasp
   decision (``sim/grasp.py``) at a step boundary. Jobs and controllers get the
   world through :class:`_LoggingWorld`, so every ``attach`` / ``detach`` is logged
@@ -49,7 +50,8 @@ from typing import Any, Callable
 
 import numpy as np
 
-from vector_os_nano.interfaces.physics import PhysicsWorld
+from vector_os_nano.interfaces.devices import CameraFrame
+from vector_os_nano.interfaces.physics import GraspSpec, PhysicsWorld, RGBDFrame
 from vector_os_nano.sim import grasp as _grasp
 
 logger = logging.getLogger(__name__)
@@ -122,28 +124,33 @@ class ActorEpoch:
 ACTOR_EPOCH = ActorEpoch()
 
 
-class _LoggingWorld:
+def _logging_view(rt: SimRuntime) -> Any:
     """The world as jobs and controllers see it: ``attach`` / ``detach`` log at call
-    time; everything else is the world's own. Setting an attribute fails loud."""
+    time; every other public name is the world's own. The runtime and the bare world
+    are closed over, never attributes, and private names are refused, so a job cannot
+    attach around the log. Setting an attribute fails loud."""
+    world = rt.world
 
-    __slots__ = ("_rt",)
+    class _LoggingWorld:
+        __slots__ = ()
 
-    def __init__(self, rt: SimRuntime) -> None:
-        object.__setattr__(self, "_rt", rt)
+        def __getattr__(self, name: str) -> Any:
+            if name.startswith("_"):
+                raise AttributeError(f"a job cannot reach {name!r} through the world it is handed")
+            return getattr(world, name)
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._rt.world, name)
+        def __setattr__(self, name: str, value: Any) -> None:
+            raise AttributeError(f"a job cannot set {name!r} on the world it is handed")
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError(f"a job cannot set {name!r} on the world it is handed")
+        def attach(self, parent: int, child: int) -> None:
+            world.attach(parent, child)
+            rt._note_attachments()
 
-    def attach(self, parent: int, child: int) -> None:
-        self._rt.world.attach(parent, child)
-        self._rt._note_attachments()
+        def detach(self, child: int) -> None:
+            world.detach(child)
+            rt._note_attachments()
 
-    def detach(self, child: int) -> None:
-        self._rt.world.detach(child)
-        self._rt._note_attachments()
+    return _LoggingWorld()
 
 
 class SimRuntime:
@@ -181,12 +188,14 @@ class SimRuntime:
         self.dead_reason: str | None = None  # why the stepper thread died (None: it did not)
         self._stepper: int | None = None  # ident of the thread stepping right now
         self._steps = 0
+        sc = world.scene  # the robot's own bodies: what a camera's self mask covers
+        self._robot = np.array(sorted(sc.subtree(sc.robot_root)) if sc.robot_root >= 0 else [], dtype=np.int64)
         # Attachment transition log: (sim_time, child body, parent body or None for a
         # detach) per attach / detach call, and per change of world.attached() a job or
         # tick made around them (GroundTruth.attach_events reads it).
         self.attach_log: collections.deque[tuple[float, int, int | None]] = collections.deque(maxlen=4096)
         self._attached = world.attached()
-        self._view = _LoggingWorld(self)
+        self._view = _logging_view(self)
         self._snap = self._take_snapshot()
         self._rt_mark = (time.monotonic(), world.time())
         self._rt_ratio = 0.0
@@ -248,8 +257,23 @@ class SimRuntime:
         return self._snap.sim_time
 
     def snapshot(self) -> SimSnapshot:
-        """The latest published state (republished every tick and every mutation)."""
+        """The latest published state (republished every tick and every mutation).
+        Raises once the stepper has died: its last state is not now."""
+        self._alive()
         return self._snap
+
+    def render(self, camera: str, width: int, height: int,
+               kinds: tuple[str, ...] = ("rgb", "depth")) -> RGBDFrame:
+        """``world.render`` (any thread, one instant); raises once the stepper has died."""
+        self._alive()
+        return self.world.render(camera, width, height, kinds)
+
+    def capture(self, camera: str, width: int, height: int, *, depth: bool = True) -> CameraFrame:
+        """The actor's camera path: one instant of RGB (and depth) with the robot's own
+        pixels as a mask, computed here from the segmentation, which stays here."""
+        f = self.render(camera, width, height, ("rgb", "depth", "seg") if depth else ("rgb", "seg"))
+        return CameraFrame(rgb=f.rgb, depth=f.depth, self_mask=np.isin(f.seg, self._robot), K=f.K,
+                           cam_pos=f.cam_pos, cam_mat=f.cam_mat, sim_time=f.sim_time, camera=f.camera)
 
     def rt_ratio(self) -> float:
         """Measured sim-seconds per wall-second over the last measurement window."""
@@ -307,7 +331,7 @@ class SimRuntime:
             raise RuntimeError(f"{self.name}: no step boundary within {timeout:.1f} s "
                                f"(stalled physics stepper)") from None
 
-    def grasp(self, spec: _grasp.GraspSpec) -> int | None:
+    def grasp(self, spec: GraspSpec) -> int | None:
         """The grasp decision at a step boundary: the attached body, or None."""
         return self.call(lambda w: _grasp.grasp(w, spec))
 

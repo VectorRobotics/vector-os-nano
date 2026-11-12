@@ -20,10 +20,8 @@ pytest.importorskip("mujoco", reason="mujoco not installed")
 import mujoco as mj  # noqa: E402
 import numpy as np  # noqa: E402
 
-from vector_os_nano.hardware.sim.scene_builder import (  # noqa: E402
-    build_room_scene,
-    normalize_attach_defaults,
-)
+from vector_os_nano.hardware.sim.scene_builder import build_room_scene  # noqa: E402
+from vector_os_nano.sim.scene.compose import normalize_attach_defaults  # noqa: E402
 
 _SIM = Path("vector_os_nano/hardware/sim").resolve()
 _MJCF = _SIM / "mjcf" / "go2"

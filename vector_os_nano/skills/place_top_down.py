@@ -12,7 +12,7 @@ DEMO-QUALITY — mirrors pick_top_down.py assumptions. Summary:
 * Dog stands still during the drop. No base-arm coordination.
 * No collision checking against dog body, furniture, or other objects.
 * The arm must be an ``ArmProtocol`` implementation that exposes an
-  ``ik_top_down(xyz)`` method (currently just ``MuJoCoPiper``).
+  ``ik_top_down(xyz)`` method (the generic ``sim/drivers`` Arm).
 * After release, the arm lifts back to the pre-place hover pose only.
   It does NOT return to the URDF-zero "home". Moving to home after a
   top-down grasp rotates the wrist 90° and any residual object (e.g.
@@ -96,7 +96,7 @@ class PlaceTopDownSkill:
     * Gripper approaches straight down, no angled release.
     * Dog stands still; no base-arm coordination during drop.
     * No collision checking against body or furniture.
-    * ``context.arm`` must expose ``ik_top_down`` (e.g. MuJoCoPiper).
+    * ``context.arm`` must expose ``ik_top_down`` (e.g. the Piper).
     * Pre-place hover height is _DEFAULT_PRE_PLACE_HEIGHT above target z.
     * drop_height keeps end-effector _DEFAULT_DROP_HEIGHT above surface.
     * Gripper opens after descent; arm lifts back to hover, not to home.
@@ -182,7 +182,7 @@ class PlaceTopDownSkill:
                 error_message=(
                     f"Arm {getattr(arm, 'name', type(arm).__name__)!r} does not "
                     "implement ik_top_down; PlaceTopDownSkill requires a 6-DoF arm "
-                    "with orientation-constrained IK (e.g. MuJoCoPiper)."
+                    "with orientation-constrained IK (e.g. the Piper)."
                 ),
                 result_data={"diagnosis": "arm_unsupported"},
             )

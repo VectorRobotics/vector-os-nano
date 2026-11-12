@@ -14,7 +14,7 @@ import time
 import numpy as np
 
 from vector_os_nano.perception import grounding_dino
-from vector_os_nano.perception.go2_grasp_perception import Go2GraspPerception
+from vector_os_nano.perception.camera_perception import CameraPerception
 
 
 class _Overlap:
@@ -66,7 +66,7 @@ def test_shared_detector_singleton_is_built_once(monkeypatch) -> None:
     assert len(built) == 1 and len({id(g) for g in got}) == 1
 
 
-def test_go2_perception_serializes_segmenter_sessions() -> None:
+def test_camera_perception_serializes_segmenter_sessions() -> None:
     seen = _Overlap()
 
     class _Tracker:
@@ -74,7 +74,7 @@ def test_go2_perception_serializes_segmenter_sessions() -> None:
             seen.enter()
             return [{"mask": np.ones(image.shape[:2], np.uint8)}]
 
-    p = Go2GraspPerception(base=None, tracker=_Tracker(), width=8, height=6)
+    p = CameraPerception(camera=None, tracker=_Tracker())
     img = np.zeros((6, 8, 3), np.uint8)
     _hammer(lambda: p.segment(img, (1, 1, 4, 4)))
     assert seen.peak == 1

@@ -71,7 +71,7 @@ class HomeSkill:
         # pose is rejected by move_joints ("expected 6 positions, got 5"). If the
         # configured pose length doesn't match THIS arm's DoF, fall
         # back to the URDF-zero neutral home (`[0.0]*dof`, exactly what the arm's own
-        # home() uses, e.g. MuJoCoPiper.home()). SO-101 (5==5) is byte-identical —
+        # home() uses, e.g. the Piper's Arm.home()). SO-101 (5==5) is byte-identical —
         # this branch never fires for it.
         arm_dof = getattr(context.arm, "dof", None)
         if arm_dof is None:

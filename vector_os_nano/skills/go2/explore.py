@@ -42,7 +42,7 @@ _explore_running: bool = False
 _explore_backend: str = ""
 _on_event: Any = None  # callback(event_type: str, data: dict) — set by CLI
 _spatial_memory: Any = None  # SceneGraph — set by ExploreSkill.execute()
-_perception: Any = None  # Go2GraspPerception-like — set by ExploreSkill.execute()
+_perception: Any = None  # CameraPerception-like — set by ExploreSkill.execute()
 _vlm: Any = None  # VLM service — set by ExploreSkill.execute()
 _vocab: list[str] = []  # the world's object names (discovery without a VLM)
 

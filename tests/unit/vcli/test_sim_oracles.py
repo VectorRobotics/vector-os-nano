@@ -322,6 +322,7 @@ def test_so101_tabletop_oracles() -> None:
         rt.call(at_home)
         ns = rig_namespace(rt, "so101")
         assert "at_position" not in ns  # fixed base: no base oracles
+        assert ns["in_view"]("banana")  # the manifest's overhead camera sees the table
         assert ns["arm_at_home"]()
         rt.step(500)  # the objects settle onto the table (the unpowered arm sags)
         assert not ns["arm_at_home"]()

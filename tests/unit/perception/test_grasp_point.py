@@ -20,11 +20,12 @@ import pytest
 
 from vector_os_nano.core.types import Pose3D
 from vector_os_nano.perception._centroid import select_nearest_cluster
-from vector_os_nano.perception.depth_projection import camera_to_world, mujoco_intrinsics
+from tests.harness.camera import pinhole
+from vector_os_nano.perception.depth_projection import camera_to_world
 from vector_os_nano.perception.grasp_point import grasp_point_from_rgbd
 
 _W, _H = 64, 48
-_INTR = mujoco_intrinsics(_W, _H, vfov_deg=42.0)
+_INTR = pinhole(_W, _H, 42.0)
 # Identity camera pose at the world origin (cam_xmat row-major identity).
 _CAM_XPOS = np.zeros(3, dtype=np.float64)
 _CAM_XMAT = np.eye(3, dtype=np.float64).reshape(9)
@@ -207,6 +208,6 @@ def test_frame_size_mismatch_never_projects(caplog):
     assert grasp_point_from_rgbd(depth, color, mask, _INTR, _CAM_XPOS, _CAM_XMAT) is not None
     small = mask[: _H // 2, : _W // 2]
     assert grasp_point_from_rgbd(depth, color, small, _INTR, _CAM_XPOS, _CAM_XMAT) is None
-    big_k = mujoco_intrinsics(2 * _W, 2 * _H)
+    big_k = pinhole(2 * _W, 2 * _H)
     assert grasp_point_from_rgbd(depth, color, mask, big_k, _CAM_XPOS, _CAM_XMAT) is None
     assert "frame mismatch" in caplog.text

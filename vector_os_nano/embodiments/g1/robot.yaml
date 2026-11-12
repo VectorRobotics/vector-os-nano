@@ -88,17 +88,12 @@ stance:
   right_ankle_roll_joint:  0.0
 
 sensors:
-  # Head RGB camera — added to the pelvis body pre-attach, named 'head_rgb';
-  # in the compiled scene it resolves to 'g1_head_rgb' on body 'g1_pelvis'.
-  # pos=(0.04, 0, 0.42), xyaxes="0 -1 0 0 0 1" (forward-facing, go2 convention).
+  # Head RGB camera (colour only) — mujoco_g1's scene build adds it to the pelvis
+  # (pos 0.04 0 0.42, forward-facing); in the compiled scene it is 'g1_head_rgb'.
   - role: camera
-    mount_body: g1_pelvis
     name: g1_head_rgb
-    pos: [0.04, 0.0, 0.42]
-    params:
-      xyaxes: [0, -1, 0, 0, 0, 1]
-      width: 640                  # G1HeadPerception render size
-      height: 480
+    width: 640                    # G1HeadPerception render size
+    height: 480
   # Lidar mounted from pelvis — _LIDAR_OFFSET_X=0.0, _LIDAR_OFFSET_Z=0.72
   # (pelvis z ~0.793 + 0.72 = ~1.51 m head height). Delegated to g1_lidar_scan.
   - role: lidar

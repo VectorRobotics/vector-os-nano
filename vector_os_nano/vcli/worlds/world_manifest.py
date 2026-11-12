@@ -68,6 +68,10 @@ class WorldManifest:
     path: Path
     # Words naming things that are NOT pickables (furniture): "red stool" is no red can.
     scenery: tuple[str, ...] = ()
+    # The robot-free scene MJCF and where a body without a base is mounted
+    # (x, y, z, heading): what sim/scene/compose.py builds the world from.
+    scene: Path | None = None
+    spawn: tuple[float, float, float, float] | None = None
 
     def resolve(self, text: Any) -> str | None:
         """The pickable body *text* names, or None (unknown or ambiguous).
@@ -162,6 +166,12 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
         pickables[pk.name] = pk
     vocab = raw.get("vocab") or {}
     user = raw.get("user")
+    spawn = raw.get("spawn")
+    try:
+        spawn = None if spawn is None else (*_xy(spawn["xy"], f"{ctx}: spawn.xy"), float(spawn["z"]),
+                                            float(spawn.get("heading", 0.0)))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise WorldManifestError(f"{ctx}: spawn needs xy, z and an optional heading ({exc})") from exc
     return WorldManifest(
         id=world_id,
         rooms={str(k): _xy(v, f"{ctx}: rooms.{k}") for k, v in (raw.get("rooms") or {}).items()},
@@ -174,6 +184,8 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
         user=_xy(user["xy"], f"{ctx}: user.xy") if user else None,
         path=path,
         scenery=tuple(str(w) for w in (vocab.get("scenery") or ())),
+        scene=path.parent / str(raw["scene"]) if raw.get("scene") else None,
+        spawn=spawn,
     )
 
 

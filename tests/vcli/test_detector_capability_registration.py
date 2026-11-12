@@ -29,7 +29,7 @@ class _Perc:
 
 
 class _ArmAgent:
-    """go2+arm: an arm AND a bound head perception (Go2GraspPerception in the real
+    """go2+arm: an arm AND a bound head perception (CameraPerception in the real
     path always supplies get_color_frame) — the camera the detector grasps with."""
 
     def __init__(self, perception=None):
