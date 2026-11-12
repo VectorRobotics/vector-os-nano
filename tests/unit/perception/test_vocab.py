@@ -6,8 +6,8 @@ from __future__ import annotations
 import pytest
 
 from vector_os_nano.perception.front_object import parse_color
-from vector_os_nano.perception.vocab import vocab
-from vector_os_nano.skills.perception_grasp import _names_object
+from vector_os_nano.perception.vocab import is_reference, vocab
+from vector_os_nano.vcli.worlds.world_manifest import WORLDS_DIR, load_world
 
 
 @pytest.mark.parametrize("q, phrase", [
@@ -29,10 +29,18 @@ def test_colour_words_match_on_word_boundaries() -> None:
     assert parse_color("黄色的杯子") == "yellow"   # every manifest colour has a hue band
 
 
-def test_grasp_routing_and_prompt_share_one_noun_table() -> None:
-    """The routing nouns and the prompt nouns can no longer disagree (盘子 was routed
-    to the detector, which had no English for it)."""
-    for q in ("罐子", "瓶子", "the can", "red bottle", "拿起那个杯子", "banana", "香蕉"):
-        assert _names_object(q) and vocab().english(q), q
-    for q in ("前面的东西", "抓红色的", "蓝色的", "东西", "object", ""):
-        assert not _names_object(q), q
+def test_every_name_of_every_world_object_has_an_english_phrase() -> None:
+    """A query the grasp hands the detector can always be put into English (盘子 was
+    routed to the detector, which had no English for it)."""
+    for w in sorted(p.stem for p in WORLDS_DIR.glob("*.yaml")):
+        for pk in load_world(w).pickables.values():
+            for name in (*pk.aliases, pk.english):
+                assert vocab().english(name), (w, name)
+
+
+@pytest.mark.parametrize("text, ok", [
+    ("那个罐子", True), ("香蕉", True), ("红色的", True), ("红色的苹果", False), ("白色的瓶子", False),
+    ("抓红色的罐子", False), ("", False),
+])
+def test_a_reference_is_one_in_the_words_of_some_world(text, ok) -> None:
+    assert is_reference(text) is ok

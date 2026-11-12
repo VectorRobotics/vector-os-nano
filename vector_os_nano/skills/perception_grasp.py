@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
@@ -54,80 +54,77 @@ def _fail(diagnosis: str, message: str, **extra: Any) -> SkillResult:
     return SkillResult(success=False, error_message=message, result_data=data)
 
 
-# Deictic words: "the thing in front", "that one" — a spatial reference, no object name.
-_DEICTIC_ZH = ("前面", "前方", "面前", "眼前", "前边", "前", "那个", "这个")
-_DEICTIC_EN = re.compile(r"\b(?:in front|front|ahead|nearest|this|that|one)\b")
-# Request words around a CJK target ("抓起那个罐子"), and the 色 of "红色": never an object.
-_FILLER_ZH = re.compile(r"[抓拿取捡起帮我把给请的一下吧个色]|东西|物体|物品")
+# A grasp query is ONE object reference, optionally led by one of this skill's own verbs
+# ("grab the red can") and beside a spatial word ("the can in front"): nothing else.
+_SPATIAL = re.compile(r"(?<![a-z0-9_])(?:in front(?: of (?:me|you))?|ahead|nearest|closest)(?![a-z0-9_])"
+                      r"|前面|前方|面前|眼前|前边|最近")
+# A query naming nothing but "what is in front" (once its spatial words are gone).
+_DEICTIC = re.compile(r"(?:\s*(?:(?:the|that|this|a|one|thing|object|item|something)(?![a-z0-9_])"
+                      r"|的|那个|这个|那|这|东西|物体|物品|个))*\s*")
 
 
-def _target_words(query: str) -> str:
-    """*query* without its deictic words ("grab that can" -> "grab can")."""
-    q = (query or "").strip().lower()
-    for tok in _DEICTIC_ZH:
-        q = q.replace(tok, " ")
-    return " ".join(_DEICTIC_EN.sub(" ", q).split())
+class _Target(NamedTuple):
+    """What the grasp goes for, decided before any motion."""
+
+    front: bool          # the front-object resolver: by hue (colour), else by space
+    colour: str | None   # the hue it is, for the resolver, the box choice and the box check
+    prompt: str | None   # what the detector is asked for (the detector route; a stale box)
+    label: str | None    # the verify label (None: the detector's own label)
 
 
-def _names_object(query: str) -> bool:
-    """True when *query* names a concrete object (-> the learned detector route).
+def _reference(query: str) -> str:
+    """*query* without a leading grasp verb of this skill and without its spatial words."""
+    q = " ".join(query.lower().split())
+    for verb in sorted(PerceptionGraspSkill.__skill_aliases__, key=len, reverse=True):
+        if q.startswith(verb) and not (verb.isascii() and q[len(verb):len(verb) + 1].isalnum()):
+            q = q[len(verb):]
+            break
+    return " ".join(_SPATIAL.sub(" ", q).split())
 
-    Distinguishes a NAMED object ("罐子"/"red can"/"that can", the shared world
-    vocabulary) from a pure-colour ("抓红色的") or deictic ("前面的东西") query; those
-    resolve on the classical front_object resolver (by colour or by space), never by
-    name. A deictic word never hides a name: "抓前面那个罐子" goes to the detector.
+
+def _target(query: str, world_id: str | None, have_front: bool) -> _Target | SkillResult:
+    """The grasp's target, or the refusal (before any motion).
+
+    With a world manifest the reference must name ONE object of this world
+    (``WorldManifest.referents``): it is perceived by its own colour (the hue route, when
+    the front resolver has a band for it) or else its English name (the detector), and
+    labelled by its body name. A query naming only what is in front takes the front
+    route. A reference fitting several objects is refused ``ambiguous_object``, anything
+    else ``unknown_object`` with what the world has, so the model can retry by name.
+    Without a manifest: only deictic -> the front route, only a colour -> the hue route,
+    else the detector on the query's English phrase (CJK only when some world's words
+    account for all of it). No route ever falls back to another.
     """
-    from vector_os_nano.perception.vocab import vocab
+    from vector_os_nano.perception.front_object import parse_color
+    from vector_os_nano.perception.vocab import is_reference, vocab
 
-    return vocab().names_object(_target_words(query))
+    ref = _reference(query)
+    if _DEICTIC.fullmatch(ref):
+        return _Target(True, None, None, query or "front object")
+    if world_id:
+        from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-
-
-# Colour words the colour resolver has no hue band for (the world vocabulary only
-# holds the ones it can see): a query naming one is refused, never grasped as "any".
-_UNSEEN_COLOURS = ("white", "black", "grey", "gray", "pink", "brown", "silver", "gold",
-                   "白色", "黑色", "灰色", "粉色", "棕色", "银色", "金色")
-
-
-def _unsupported_target(query: str) -> SkillResult | None:
-    """Why the grasp cannot honestly resolve *query*, or None.
-
-    A colour it cannot see, words the world vocabulary cannot read (untranslatable
-    CJK left once the deictic, request and colour words are gone: "抓前面那个苹果",
-    "抓红色的苹果"), or an unknown noun beside a colour ("the red unicorn": the colour
-    route would ignore the noun) are refused before any motion: the robot never
-    substitutes the front-most blob, the only object of that colour, or a same-noun
-    object of another colour for what was named.
-    """
-    from vector_os_nano.perception.vocab import _has, vocab
-
-    q = (query or "").lower()
-    unseen = next((c for c in _UNSEEN_COLOURS if _has(q, c)), None)
-    if unseen is not None:
-        return _fail("unsupported_colour",
-                     f"{query!r} names the colour {unseen!r}, which this robot cannot tell apart; "
-                     "name the object without it, or by a colour it sees "
-                     "(red, orange, yellow, green, blue, purple).", query=query)
-    v, rest = vocab(), _target_words(query)
-    bare = v.without_colours(rest)
-    said = v.english(bare)
-    if v.noun(rest) is None and ((said and v.colour(rest)) or (said is None and _FILLER_ZH.sub("", bare).strip())):
-        nouns = sorted({c for _, c in v.nouns})
-        return _fail("unknown_object",
-                     f"{query!r} names no object the world vocabulary knows; name one of {nouns} "
-                     "(or say 'the thing in front').", query=query, known_objects=nouns)
-    return None
-
-
-def _scene_name(context: SkillContext, query: str) -> str | None:
-    """The world-manifest pickable *query* names ("绿色的瓶子" -> pickable_bottle_green),
-    or None. Only the verify LABEL comes from it; the grasp POINT is always perceived."""
-    world_id = (context.config or {}).get("world")
-    if not world_id:
-        return None
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
-
-    return load_world(world_id).resolve(query)
+        world = load_world(world_id)
+        fits = world.referents(ref)
+        if fits and len(fits) > 1:
+            names = [world.pickables[n].english for n in sorted(fits)]
+            return _fail("ambiguous_object", f"{query!r} fits {len(names)} objects here: {names}; name one.",
+                         query=query, candidates=names)
+        if not fits:
+            names = world.vocabulary()
+            return _fail("unknown_object", f"{query!r} names no object of this world; name one of {names} "
+                         "(or say 'the thing in front').", query=query, known_objects=names)
+        pk = world.pickables[next(iter(fits))]
+        hue = parse_color(pk.colour)
+        return _Target(have_front and hue is not None, hue, pk.english, pk.name)
+    colour = parse_color(ref)
+    if colour and _DEICTIC.fullmatch(vocab().without_colours(ref).replace("色", "")):
+        return _Target(True, colour, None, query)
+    phrase = vocab().english(ref)
+    if not phrase or not (ref.isascii() or is_reference(ref)):
+        return _fail("unknown_object", f"{query!r} has no English name to ask the detector for; "
+                     "name the object in English.", query=query)
+    return _Target(False, colour, phrase, None)
 
 
 # Dog-to-object planar distance (m) at which the Piper top-down envelope reaches the
@@ -576,7 +573,7 @@ class PerceptionGraspSkill:
     postconditions: list[str] = []
     effects: dict = {"gripper_state": "holding"}
     failure_modes: list[str] = [
-        "no_arm", "no_gripper", "arm_unsupported", "no_perception", "no_camera",
+        "unknown_object", "ambiguous_object", "no_arm", "no_gripper", "arm_unsupported", "no_perception", "no_camera",
         "no_detections", "perception_failed", "segmentation_failed", "no_depth_points",
         "ik_unreachable", "move_failed", "not_holding",
     ]
@@ -611,9 +608,13 @@ class PerceptionGraspSkill:
                 f"Perception backend {type(perception).__name__} lacks RGB-D grasp surface: {missing}",
             )
 
-        unsupported = _unsupported_target(query)
-        if unsupported is not None:
-            return unsupported
+        have_front = hasattr(perception, "front_object_mask")
+        target = _target(query, (context.config or {}).get("world"), have_front)
+        if isinstance(target, SkillResult):
+            return target
+        if target.front and not have_front:
+            return _fail("perception_failed", f"{query!r} needs the front-object resolver, which "
+                         f"{type(perception).__name__} lacks; nothing was grasped.", query=query)
 
         # --- stow the arm OUT of the camera FOV before perceiving (the arm at rest
         # occludes the forward head camera and corrupts the front-object mask) -----
@@ -623,14 +624,6 @@ class PerceptionGraspSkill:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[PGRASP] stow-for-view move failed: %s", exc)
 
-        # --- ATTRIBUTE grasp (D47): parse a colour from the query. When present, the
-        # perception resolver selects the blob of THAT colour (not the front-most) and
-        # the verify LABEL is the world-manifest body the query names (the grasp
-        # POINT is still perceived from depth+mask). A deictic "前面的东西" parses no colour → unchanged.
-        from vector_os_nano.perception.front_object import parse_color
-        color = parse_color(query)
-        scene = _scene_name(context, query)
-
         # --- PRODUCER->CONSUMER composition (R37): if an earlier `detect` step
         # already produced boxes (flowed in via ${detect.output.detections} /
         # ${detect.output.boxes}), CONSUME the matching box and back-project it to a
@@ -639,17 +632,17 @@ class PerceptionGraspSkill:
         # re-perceive. The 3D math is identical (segment -> grasp_point_from_rgbd);
         # only the box SOURCE differs (passed vs self-detected). FAIL LOUD if the
         # passed box yields no depth points (never a GT fallback).
-        passed_box = self._resolve_passed_box(params, color)
+        passed_box = self._resolve_passed_box(params, target.colour)
         box_frame = self._passed_box_frame(params)
         consumed_bbox = passed_box is not None
         if consumed_bbox:
             logger.info(
                 "[PGRASP] CONSUMING producer box %s (colour=%s) — re-perceive SUPPRESSED",
-                passed_box, color,
+                passed_box, target.colour,
             )
             gp, resolved, fail = self._grasp_point_from_passed_box(
-                perception, query, passed_box, color=color, scene=scene, box_frame=box_frame,
-                base=context.base, confidence=self._passed_box_confidence(params, color),
+                perception, query, passed_box, target, box_frame=box_frame,
+                base=context.base, confidence=self._passed_box_confidence(params, target.colour),
             )
         else:
             # --- perceive the target's 3D grasp point (real depth + mask, never GT).
@@ -662,9 +655,7 @@ class PerceptionGraspSkill:
             # localizes the can by LOOKING for it, never by reading GT. On the
             # scripted-from-spawn path (can dead-ahead) the first sample is already
             # plausible, so the scan returns immediately — no D34-D51 regression.
-            gp, resolved, fail = self._perceive_with_scan(
-                perception, context.base, query, color=color, scene=scene
-            )
+            gp, resolved, fail = self._perceive_with_scan(perception, context.base, query, target)
         if fail is not None:
             return fail
         approached = False
@@ -914,9 +905,8 @@ class PerceptionGraspSkill:
         return max(detections, key=_conf)
 
     def _grasp_point_from_passed_box(
-        self, perception: Any, query: str, box: tuple, *, color: str | None = None,
-        scene: str | None = None, box_frame: dict | None = None, base: Any = None,
-        confidence: float = 1.0,
+        self, perception: Any, query: str, box: tuple, target: _Target, *,
+        box_frame: dict | None = None, base: Any = None, confidence: float = 1.0,
     ):
         """Back-project a PRODUCER-passed pixel box to a WORLD grasp point.
 
@@ -940,7 +930,8 @@ class PerceptionGraspSkill:
 
         # Verify LABEL convention matches the self-detect route: the world manifest's
         # body name when the query names one; otherwise the query text.
-        resolved = scene or (query or "front object")
+        resolved = target.label or query or "front object"
+        color = target.colour
 
         # A box from an earlier frame (the camera moved since: a navigate, the arm
         # stow) is re-detected on THIS frame rather than segmented where it no longer is.
@@ -949,7 +940,7 @@ class PerceptionGraspSkill:
             logger.info("[PGRASP] producer box %s is stale (%s) — re-detecting %r", box, stale, query)
             try:
                 from vector_os_nano.perception.object_localizer import detect_on
-                dets = detect_on(perception, rgb, query)
+                dets = detect_on(perception, rgb, target.prompt or query)
             except Exception as exc:  # noqa: BLE001
                 return None, resolved, _fail(
                     "perception_failed", f"The producer box for {resolved!r} is stale ({stale}) and "
@@ -986,14 +977,11 @@ class PerceptionGraspSkill:
 
         from vector_os_nano.perception.grasp_point import grasp_point_from_points, object_points
         from vector_os_nano.perception.object_localizer import implausible
-        from vector_os_nano.perception.vocab import vocab
 
         pts = object_points(depth, rgb, mask, intrinsics, cam_xpos, cam_xmat)
         gp = None if pts is None else grasp_point_from_points(*pts, cam_xpos, cam_xmat)
         why = None if pts is None else implausible(
-            SimpleNamespace(bbox=box, confidence=confidence), mask, *pts, depth, rgb,
-            noun=vocab().noun(query), colour=color,
-        )
+            SimpleNamespace(bbox=box, confidence=confidence), mask, *pts, depth, rgb, colour=color)
         if why is None and gp is not None and base is not None:
             pos = base.get_position()
             far = math.hypot(gp.x - pos[0], gp.y - pos[1])
@@ -1056,10 +1044,7 @@ class PerceptionGraspSkill:
                 return max(matching, key=_conf)
         return max(detections, key=_conf)
 
-    def _perceive_with_scan(
-        self, perception: Any, base: Any, query: str, *, color: str | None = None,
-        scene: str | None = None,
-    ):
+    def _perceive_with_scan(self, perception: Any, base: Any, query: str, target: _Target):
         """Perceive the grasp point, turning in place to FIND the target if needed.
 
         R38 — robust to a FAR arrival heading. Perceives at the current heading
@@ -1095,7 +1080,7 @@ class PerceptionGraspSkill:
             return (d <= _SCAN_MAX_LOCAL_M, d)
 
         # First look at the current heading.
-        gp, resolved, fail = self._perceive_grasp_point(perception, query, color=color, scene=scene)
+        gp, resolved, fail = self._perceive_grasp_point(perception, query, target)
         ok, dist = _plausible(gp)
         if ok or not steerable:
             if gp is not None:
@@ -1116,7 +1101,7 @@ class PerceptionGraspSkill:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[PGRASP] scan turn raised: %s", exc)
                 break
-            g2, r2, f2 = self._perceive_grasp_point(perception, query, color=color, scene=scene)
+            g2, r2, f2 = self._perceive_grasp_point(perception, query, target)
             ok2, d2 = _plausible(g2)
             logger.info("[PGRASP] scan step %d/%d: %s d=%.2fm plausible=%s",
                         step + 1, _SCAN_MAX_STEPS,
@@ -1144,19 +1129,19 @@ class PerceptionGraspSkill:
             )
         return best[0], best[1], best[2]
 
-    def _perceive_grasp_point(
-        self, perception: Any, query: str, *, color: str | None = None, scene: str | None = None,
-    ):
-        """Acquire RGB-D, resolve the target mask, compute the WORLD grasp point.
+    def _perceive_grasp_point(self, perception: Any, query: str, target: _Target):
+        """Acquire RGB-D, resolve the *target* mask, compute the WORLD grasp point.
 
         Returns ``(gp | None, resolved_label, fail_result | None)``. Pure perception:
         the 3D point is from real depth + mask, NEVER a ground-truth pose. Callable
         twice (before/after an approach) so the point tracks the live camera pose.
 
-        ATTRIBUTE grasp (D47): when *color* is given, the front-object resolver selects
-        the salient blob of that colour (FAIL LOUD if none). The resolved LABEL is
-        *scene* (the world-manifest body the query names) when given — the grasp POINT
-        remains from depth+mask.
+        MODEL ROUTING (``_target`` chose it): the front-object resolver selects the
+        salient blob of the target's hue (CHANGE 1, R40: the D47 HSV resolver had 100%
+        colour selection among 3 close cans where grounding-dino is intermittent), or
+        the front-most blob for a deictic target; else the learned detector is asked
+        for the target's English name. The LABEL is the target's (a world body name);
+        the grasp POINT always comes from depth+mask.
         """
         import numpy as np
         from vector_os_nano.perception.object_localizer import capture_rgbd
@@ -1165,31 +1150,11 @@ class PerceptionGraspSkill:
         except Exception as exc:  # noqa: BLE001
             return None, (query or "front object"), _fail("no_camera", f"Failed to read RGB-D frame: {exc}")
 
-        # MODEL ROUTING (route each instruction to the right model+skill):
-        #   - COLOUR query ("绿色的瓶子"/pure "抓红色的", color is not None)
-        #     -> classical front_object HSV colour resolver (CHANGE 1, R40).
-        #     The D47 HSV resolver had 100% colour selection among 3 close cans;
-        #     grounding-dino is intermittent on a dense, close-packed scene.
-        #     A colour target disambiguates by hue — use the right cheap tool.
-        #   - DEICTIC ("前面的东西"/generic, no noun, no colour) -> classical
-        #     front_object resolver (geometry / depth).
-        #   - NAMED no-colour ("罐子") -> the LEARNED DETECTOR (grounding-dino).
-        # When both a noun AND a colour are present ("绿色的瓶子"), the colour wins:
-        # use_front_resolver=True so the HSV path is taken regardless of the noun.
-        named = _names_object(query)
-        deictic = not named
-        have_front = hasattr(perception, "front_object_mask")
-        # CHANGE 1 (R40): colour query forces the HSV resolver route even when a
-        # noun is also present — colour disambiguates better than text grounding on
-        # a dense, same-category scene. Keep the existing deictic path unchanged.
-        use_front_resolver = have_front and (deictic or color is not None)
-        classical = deictic  # kept for the mask-fallback and diagnostics below
+        color = target.colour
         mask = None
-        # A query that names a world-manifest object labels the verify with its body
-        # name (the grasp POINT is still perceived); otherwise the query text.
-        resolved = scene or (query or "front object")
+        resolved = target.label or query or "front object"
         detection_found = False
-        if use_front_resolver:
+        if target.front:
             try:
                 mask = perception.front_object_mask(rgb, depth, color=color)
                 _mask_px = int(np.count_nonzero(mask)) if mask is not None else 0
@@ -1209,7 +1174,7 @@ class PerceptionGraspSkill:
         else:
             try:
                 from vector_os_nano.perception.object_localizer import detect_on
-                detections = detect_on(perception, rgb, query)
+                detections = detect_on(perception, rgb, target.prompt)
             except Exception as exc:  # noqa: BLE001 — a missing model is not "found nothing"
                 return None, resolved, _fail(
                     "perception_failed",
@@ -1227,10 +1192,9 @@ class PerceptionGraspSkill:
                 # adjective), fall back to plain max-confidence. No colour → plain
                 # max-confidence, unchanged.
                 det = self._select_detection(detections, color)
-                # Verify LABEL: when a colour is named ("红色的罐子") the verify oracle
-                # grades the manifest body (pickable_can_red); otherwise the
-                # detector's own label. The grasp POINT is still from depth+mask.
-                resolved = scene or str(getattr(det, "label", query) or query)
+                # Verify LABEL: the world body the target is (pickable_can_red);
+                # without a manifest the detector's own label.
+                resolved = target.label or str(getattr(det, "label", query) or query)
                 try:
                     mask = perception.segment(rgb, det.bbox)
                 except Exception as exc:  # noqa: BLE001 — the segmenter's own failure, with its cause
@@ -1245,7 +1209,7 @@ class PerceptionGraspSkill:
                                              detection_label=resolved, query=query)
             return None, resolved, _fail("no_detections",
                                          f"Nothing localizable for {query!r} "
-                                         f"({'no salient object in front' if deictic else 'VLM found nothing'}).",
+                                         f"({'no salient object in front' if target.front else 'VLM found nothing'}).",
                                          query=query)
 
         gp = grasp_point_from_rgbd(depth, rgb, mask, intrinsics, cam_xpos, cam_xmat)
