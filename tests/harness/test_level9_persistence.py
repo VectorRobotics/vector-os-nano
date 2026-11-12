@@ -38,10 +38,10 @@ if str(_REPO_ROOT) not in sys.path:
 # Imports under test
 # ---------------------------------------------------------------------------
 
-from vector_os_nano.core.scene_graph import (  # noqa: E402
+from vector_os_nano.core.scene_graph import SceneGraph  # noqa: E402
+from vector_os_nano.core.scene_nodes import (  # noqa: E402
     ObjectNode,
     RoomNode,
-    SceneGraph,
     ViewpointNode,
 )
 

@@ -421,7 +421,7 @@ def test_localized_from_memory_is_uncaused() -> None:
 def test_localized_add_object_is_not_a_perceive() -> None:
     # I23 (stricter than INT2's row diff): inserting a node by hand (a restore, a tool
     # write) is not a localized observation, so it never causes localized.
-    from vector_os_nano.core.scene_graph import ObjectNode
+    from vector_os_nano.core.scene_nodes import ObjectNode
 
     agent, sg = _sg_agent()
     before = _cap(agent)

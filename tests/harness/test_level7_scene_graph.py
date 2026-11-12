@@ -49,15 +49,14 @@ if str(_REPO_ROOT) not in sys.path:
 # Imports under test
 # ---------------------------------------------------------------------------
 
-from vector_os_nano.core.scene_graph import (  # noqa: E402
-    ObjectNode,
-    RoomNode,
-    SceneGraph,
-    ViewpointNode,
+from vector_os_nano.core.scene_graph import _VIEWPOINT_MIN_DISTANCE, SceneGraph  # noqa: E402
+from vector_os_nano.core.scene_nodes import (  # noqa: E402
     _ROOM_AREA_DEFAULT,
     _VIEWPOINT_FOV_DEG,
-    _VIEWPOINT_MIN_DISTANCE,
     _VIEWPOINT_RANGE,
+    ObjectNode,
+    RoomNode,
+    ViewpointNode,
 )
 
 
