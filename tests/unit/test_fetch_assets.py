@@ -59,7 +59,7 @@ def fake(tmp_path, monkeypatch):
     )
     mod = _load_script()
     monkeypatch.setattr(mod, "load_embodiment_config", lambda _id: SimpleNamespace(assets=spec))
-    monkeypatch.setattr(assets, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / "state"))
     return mod, spec, tmp_path / "state" / "assets" / "fake"
 
 
@@ -83,6 +83,28 @@ def test_fetch_is_idempotent_and_check_only_verifies(fake, capsys) -> None:
     stamp = {p: p.stat().st_mtime_ns for p in dest.rglob("*")}
     assert mod.main(["fake"]) == 0 and mod.main(["fake", "--check"]) == 0
     assert {p: p.stat().st_mtime_ns for p in dest.rglob("*")} == stamp  # untouched
+
+
+def test_check_with_dest_names_the_command_for_that_folder(fake, tmp_path, capsys) -> None:
+    """C0F2V-5: the suggested command fetches into the folder --check looked at."""
+    mod, _spec, _default = fake
+    folder = tmp_path / "my assets"
+    assert mod.main(["fake", "--dest", str(folder), "--check"]) == 1
+    assert f"fetch them with: python scripts/fetch_assets.py fake --dest '{folder}'" in capsys.readouterr().err
+
+
+def test_a_revision_missing_upstream_is_one_sentence_not_a_traceback(fake, capsys, monkeypatch) -> None:
+    """C0F2V-1: a pinned rev the upstream does not have ends in one clear sentence."""
+    import dataclasses
+
+    mod, spec, dest = fake
+    spec_bad = dataclasses.replace(spec, rev="0123456789abcdef0123456789abcdef01234567")
+    monkeypatch.setattr(mod, "load_embodiment_config", lambda _id: SimpleNamespace(assets=spec_bad))
+    assert mod.main(["fake"]) == 1
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "Traceback" not in err, err
+    assert f"git could not fetch revision {spec_bad.rev} of {spec.git}" in err and "assets.rev" in err, err
+    assert "nothing was written" in err and not dest.exists()
 
 
 def test_dest_overrides_the_state_dir(fake, tmp_path) -> None:
