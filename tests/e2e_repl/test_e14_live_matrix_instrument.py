@@ -6,8 +6,9 @@
 The instrument's own cell (so101 '抓起香蕉') through a real bare REPL session and the
 real GT dump: a scripted pick that verifies is a success; the same turn graded
 against a hand-built dump in which the banana never left the table is FALSE
-GROUNDED (the instrument never trusts the verdict); a pick that happens while the
-turn does not verify is FALSE REJECT; a launch that fails is NOT RUN with its reason.
+GROUNDED (the instrument never trusts the verdict); a pick that happens in a turn
+that does not verify (the model then checks the wrong object) is FALSE REJECT; a
+launch that fails is NOT RUN with its reason.
 """
 from __future__ import annotations
 
@@ -22,24 +23,22 @@ _CELL = next(c for c in lm.load_cells() if c["id"] == "so101-mujoco-grasp")
 _OBJ = _CELL["expect"]["held_lifted"]
 
 
-def _script(*, verify: bool, embodiment: str = "so101") -> dict:
-    after_pick = ([{"when": "", "tool_calls": [{"name": "verify", "input": {"expr": f"holding_object('{_OBJ}')"}}]},
-                   {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"}]
-                  if verify else
-                  [{"when": "", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"}])
+def _script(*, verify: str = _OBJ, embodiment: str = "so101") -> dict:
+    """Launch, pick the banana, verify ``holding_object(<verify>)``, finish."""
     return {"steps": [
         {"when": _CELL["launch"], "tool_calls": [
             {"name": "start_simulation", "input": {"embodiment": embodiment, "gui": False}}]},
         {"when": "", "text": "ok", "tool_calls": []},
         {"when": _CELL["task"], "tool_calls": [{"name": "pick", "input": {"object_label": _OBJ, "mode": "hold"}}]},
-        *after_pick,
+        {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": f"holding_object('{verify}')"}}]},
+        {"when": "", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]}
 
 
 @pytest.mark.sim
 @pytest.mark.cli_main
 def test_e14_a_scripted_pick_is_a_success_and_a_dump_with_the_banana_on_the_table_is_false_grounded(tmp_path) -> None:
-    rec = lm.run_rep(_CELL, 0, tmp_path, tool_script=_script(verify=True))
+    rec = lm.run_rep(_CELL, 0, tmp_path, tool_script=_script())
     text = Path(rec["transcript"]).read_text(encoding="utf-8")
     r = lm.judge(_CELL, rec)
     assert not rec["timed_out"] and r["status"] == "ran", (r.get("reason"), text[-3000:])
@@ -65,7 +64,8 @@ def test_e14_a_scripted_pick_is_a_success_and_a_dump_with_the_banana_on_the_tabl
 @pytest.mark.sim
 @pytest.mark.cli_main
 def test_e14_a_pick_that_happened_in_a_turn_that_did_not_verify_is_false_reject(tmp_path) -> None:
-    rec = lm.run_rep(_CELL, 0, tmp_path, tool_script=_script(verify=False))
+    # the banana is picked; the model then checks the wrong object: a FAIL the spine rejects
+    rec = lm.run_rep(_CELL, 0, tmp_path, tool_script=_script(verify="mug"))
     text = Path(rec["transcript"]).read_text(encoding="utf-8")
     r = lm.judge(_CELL, rec)
     assert not rec["timed_out"] and r["status"] == "ran", (r.get("reason"), text[-3000:])
@@ -77,7 +77,7 @@ def test_e14_a_pick_that_happened_in_a_turn_that_did_not_verify_is_false_reject(
 
 @pytest.mark.cli_main
 def test_e14_a_cell_whose_launch_fails_is_not_run_with_its_reason(tmp_path) -> None:
-    rec = lm.run_rep(_CELL, 0, tmp_path, tool_script=_script(verify=True, embodiment="no_such_body"))
+    rec = lm.run_rep(_CELL, 0, tmp_path, tool_script=_script(embodiment="no_such_body"))
     r = lm.judge(_CELL, rec)
     assert r["status"] == "not_run" and "no_such_body" in r["reason"], r
     s = lm.summarize([_CELL], [r])
