@@ -194,6 +194,11 @@ A verdict states three separate facts and never merges them:
   predicates that were proven instead. There is no fallback from "the sentence mentions an object"
   to a contract, no list of prepositions and no exemption list: a closed grammar can be sound;
   what lies outside it is reported, never guessed, and never told to the model as its task.
+  An object slot binds through the world manifest's ONE resolver, which the oracles and the grasp
+  skill ask too: the WHOLE slot must be this world's own words (a body name, an alias, a colour
+  with a category or a generic head, a category, and a closed list of fillers), and it binds
+  when exactly one pickable fits every word. So a category alone names the object when the
+  world has exactly one of it ("the cup"), and names nothing when it has two ("the bottle").
 - **`verified`** — with a contract: the goal check is `proven` and every graded step that is not a
   failed attempt (below) is GROUNDED. Without one: every graded step is GROUNDED and no gate
   rejects. A consumer that needs "the task the user asked for is done" reads
