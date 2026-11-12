@@ -14,13 +14,16 @@ goal check is unchecked and the gate rejects it with the forms that can be check
 """
 from __future__ import annotations
 
+import ast
+import dataclasses
+
 import pytest
 
 from tests.unit.vcli.test_goal_check import _v
 from tests.unit.vcli.test_native_loop import _CAN, _grasp, _make_arm_agent, _make_engine, _session, _verdict
 from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
-from vector_os_nano.vcli.cognitive.object_goal import checkable_goals, task_contract
+from vector_os_nano.vcli.cognitive.object_goal import checkable_goals, task_contract, unbound_reason, verify_intents
 from vector_os_nano.vcli.cognitive.trace_store import turn_reject_reason
 from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord, SubGoal
 from vector_os_nano.vcli.worlds.world_manifest import WORLDS_DIR, load_world
@@ -95,13 +98,45 @@ def test_without_a_manifest_nothing_changes() -> None:
     assert OUTSIDE in turn_reject_reason(_one_row(t.goal_tree.goal, "holding_object('red can')", "apartment"), APT)
 
 
-@pytest.mark.parametrize("world", sorted(p.stem for p in WORLDS_DIR.glob("*.yaml")))
-def test_every_checkable_goal_the_gate_offers_compiles_a_bound_contract(world) -> None:
-    goals = checkable_goals(load_world(world))
-    assert len(goals) >= 4, goals
+WORLDS = sorted(p.stem for p in WORLDS_DIR.glob("*.yaml"))
+
+
+def _can_be_met(item: str, world) -> bool:
+    """Every argument of a contract item names a thing *world* has: a pickable, a
+    surface, or the user a fetch delivers to."""
+    call = ast.parse(item, mode="eval").body
+    args = [a.value for a in call.args]
+    return all(a in world.pickables or a in world.surfaces or (a == "user" and world.user is not None)
+               for a in args)
+
+
+@pytest.mark.parametrize("world", WORLDS)
+def test_every_checkable_goal_the_gate_offers_can_be_met_in_its_world(world) -> None:
+    """REF1c-V-03: the gate offers only goals this world can prove: every item of each
+    example's contract is a predicate whose every slot names a thing of this world (no
+    fetch where there is no user, no place where there is no surface)."""
+    w = load_world(world)
+    goals = checkable_goals(w, APT)
+    assert len(goals) >= 2, goals
     for goal in goals:
         contract = task_contract(goal, APT, world)
-        assert contract and not any("None" in item for item in contract), (goal, contract)
+        assert contract and all(_can_be_met(i, w) for i in contract), (goal, contract)
+    assert any("bring me" in g for g in goals) is (w.user is not None), goals
+
+
+def test_no_fetch_without_a_user_and_no_place_without_a_surface(monkeypatch) -> None:
+    import vector_os_nano.vcli.worlds.world_manifest as wm
+
+    apt = load_world("apartment")
+    assert any("bring me" in g for g in checkable_goals(apt, APT))
+    assert any(" on the " in g for g in checkable_goals(apt, APT))
+    bare = dataclasses.replace(apt, user=None, surfaces={},
+                               pickables={k: dataclasses.replace(p, surface="") for k, p in apt.pickables.items()})
+    # a body without a base has no near_object: no fetch either
+    assert not any("bring me" in g for g in checkable_goals(apt, APT - {"near_object"}))
+    monkeypatch.setattr(wm, "load_world", lambda _id: bare)
+    goals = checkable_goals(bare, APT)
+    assert goals and not any("bring me" in g or "拿过来" in g or " on the" in g for g in goals), goals
 
 
 @pytest.mark.parametrize("goal", ["把绿色的放到餐桌上", "put the green one on the dining table"])
@@ -112,3 +147,121 @@ def test_the_gate_takes_the_object_the_contract_bound(goal) -> None:
     assert t.contract == ("object_on('pickable_bottle_green', 'dining_table')",)
     assert turn_reject_reason(t, APT) == ""
     assert turn_reject_reason(_one_row(goal, "object_on('red can', 'dining_table')", "apartment"), APT) != ""
+
+
+# REF1c-V-01: a hold the gripper's own close made (gripper_close: its spec names no
+# gripper oracle, its driver's close is where the world attaches a gripped body) is a
+# manipulation like any grasp: the turn needs a proven contract.
+CLOSE_GOALS = ["合上夹爪", "闭合夹爪", "look around the living room", "关闭夹子", "合上夹爪然后回到初始位置"]
+
+
+def _close_turn(goal: str, verify: str, *, real: bool):
+    from types import SimpleNamespace
+
+    from tests.unit.vcli.test_native_loop import _Skill
+    from vector_os_nano.core.world_model import WorldModel
+    from vector_os_nano.skills.gripper import GripperCloseSkill
+
+    agent, arm = _make_arm_agent()
+    if real:  # the shipped skill: the driver's close() grips the red can
+        grip = agent._gripper
+        grip.close = lambda: setattr(arm, "held", True) or True
+        ctx = SimpleNamespace(base=agent._base, arm=arm, gripper=grip, services=None, world_model=WorldModel(),
+                              config={"world": "apartment"})
+        agent._build_context = lambda: ctx
+        agent._skill_registry.register(GripperCloseSkill())
+    else:
+        agent._skill_registry.register(_Skill("gripper_close", lambda: setattr(arm, "held", True)))
+    backend = FakeToolScriptBackend.from_tool_script(
+        [tool_turn(("gripper_close", {})), tool_turn(_v(verify)), tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native(goal, session=_session())
+    return trace, _verdict(agent, eng, trace)
+
+
+@pytest.mark.parametrize("real", [False, True])
+@pytest.mark.parametrize("verify", ["holding_object('red can')", f"lifted('{_CAN}')",
+                                    "holding_object('red can') and kept_holding('red can')"])
+@pytest.mark.parametrize("goal", CLOSE_GOALS)
+def test_a_hold_made_by_a_skill_without_a_gripper_hint_needs_a_contract(goal, verify, real) -> None:
+    trace, rep = _close_turn(goal, verify, real=real)
+    assert "grasp" not in trace.intents  # the dispatch alone does not say it was a grasp
+    assert [s.evidence for s in rep.per_step] == ["GROUNDED"], rep.per_step
+    assert rep.verified is False and rep.goal_check == "unchecked", (goal, rep.reject_reason)
+    assert OUTSIDE in rep.reject_reason, rep.reject_reason
+
+
+@pytest.mark.parametrize("goal", ["拿起红罐子", "pick up the red can"])
+def test_the_same_hold_under_a_closed_form_is_proven(goal) -> None:
+    trace, rep = _close_turn(goal, "holding_object('red can')", real=True)
+    assert trace.contract == (f"holding_object('{_CAN}')",)
+    assert rep.verified is True and rep.goal_check == "proven", rep.reject_reason
+
+
+@pytest.mark.parametrize("verify", ["not holding_object('red can')", "holding_object('red can') or True",
+                                    "near_object('red can')"])
+def test_a_gripper_turn_that_asserts_no_possession_or_placement_stays_as_it_was(verify) -> None:
+    """Only an ASSERTED possession or placement is a manipulation performed: a turn that
+    closes the gripper and proves nothing held keeps the verdict the manipulation gate
+    leaves it (the same as in a world with no manifest: the gate does not fire)."""
+    why = turn_reject_reason(_one_row("合上夹爪", verify, "apartment"), APT)
+    assert why == turn_reject_reason(_one_row("合上夹爪", verify, ""), APT) and OUTSIDE not in why, why
+
+
+@pytest.mark.parametrize(("expr", "want"), [
+    ("holding_object('x')", {"grasp"}), ("lifted('x')", {"grasp"}), ("kept_holding('x') == True", {"grasp"}),
+    ("object_on('x', 't')", {"place"}), ("released('x')", {"place"}), ("object_at('x', 1, 2)", {"place"}),
+    ("holding_object('x') and object_on('x', 't')", {"grasp", "place"}),
+    ("not holding_object('x')", set()), ("holding_object('x') or True", set()),
+    ("holding_object('x') == False", set()), ("near_object('x')", set()), ("holding_object(", set()), ("", set()),
+])
+def test_verify_intents_reads_only_asserted_manipulation_oracles(expr, want) -> None:
+    assert verify_intents(expr) == frozenset(want)
+
+
+# REF1c-V-02 (charter 3.5, a decision): a closed-form slot that is a category word binds
+# the world's one object of that category ("pick up the can" in the apartment: the red
+# can) and nothing when two fit ("the bottle"), the reason listing the candidates.
+def _category_rows() -> list[tuple[str, str, frozenset[str]]]:
+    rows = []
+    for world in WORLDS:
+        w = load_world(world)
+        for k in sorted({pk.category for pk in w.pickables.values()}):
+            fits = frozenset(n for n, pk in w.pickables.items() if pk.category == k)
+            for word in (k, *w.categories.get(k, ())):
+                rows += [(world, form, fits) for form in ((word,) if word.isascii() else (word, word + "子"))]
+    return rows
+
+
+def _slots(word: str) -> list[str]:
+    if word.isascii():
+        return [word, *(f"{d} {word}" for d in ("the", "a", "an", "this", "that", "my", "the the"))]
+    return [word, *(f"{d}{word}" for d in ("这个", "那个", "这", "那"))]
+
+
+def _grasp_goals(slot: str) -> list[str]:
+    if slot.isascii():
+        return [f"pick up {slot}", f"please grab {slot}", f"pick {slot} up now", f"could you hold {slot} for me"]
+    return [f"拿起{slot}", f"请把{slot}拿起来", f"帮我抓住{slot}吧", f"麻烦你捡起{slot}"]
+
+
+@pytest.mark.parametrize(("world", "word", "fits"), _category_rows())
+def test_a_bare_category_binds_the_one_object_of_it_and_nothing_when_two_fit(world, word, fits) -> None:
+    w = load_world(world)
+    one = next(iter(fits)) if len(fits) == 1 else None
+    for slot in _slots(word):
+        assert w.resolve(slot) == one, (world, slot)
+        for goal in _grasp_goals(slot):
+            contract = task_contract(goal, APT, world)
+            assert contract == (f"holding_object({one!r})",), (world, goal, contract)
+            why = unbound_reason(contract[0], goal, world)
+            if one is None:  # the reason quotes the words and lists the candidates
+                assert repr(goal) in why and all(w.pickables[n].english in why for n in fits), why
+            else:
+                assert why == "", why
+
+
+def test_the_category_table_covers_both_cases_in_both_languages() -> None:
+    rows = _category_rows()
+    assert {len(f) == 1 for _, _, f in rows} == {True, False}
+    assert {w.isascii() for _, w, _ in rows} == {True, False}

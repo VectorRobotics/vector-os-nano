@@ -282,9 +282,11 @@ def _manipulation_reason(
     trace: ExecutionTrace, graded: list[StepRecord], sg_by_name: dict[str, SubGoal],
     ev: dict[int, tuple[StepEvidence, str]], oracle_names: frozenset[str],
 ) -> str:
-    """D17/D69 manipulation gate, independent of the coordinate gate: a goal (or a
-    dispatched gripper skill) with a manipulation intent needs a GROUNDED graded step
-    that necessarily asserts EACH proof it needs (``proof_oracles``) — a possession
+    """D17/D69 manipulation gate, independent of the coordinate gate: a manipulation
+    intent -- in the goal's words, in a dispatched gripper skill's hint, or in a GROUNDED
+    graded step whose verify asserts a possession or a placement (it was performed,
+    whatever skill ran: gripper_close's driver is where the world grasps, REF1c-V-01) --
+    needs a GROUNDED graded step that necessarily asserts EACH proof it needs (``proof_oracles``) — a possession
     oracle for a grasp / fetch (``placed_count`` never proves a grasp), a placement or
     release for a place, both for a pick-and-place. Scoped to a world with
     ``holding_object``. With a world manifest (charter 3.5) the goal must be a closed
@@ -297,12 +299,14 @@ def _manipulation_reason(
         goal_intents,
         has_necessary_manip_oracle,
         proof_oracles,
+        verify_intents,
     )
 
     if "holding_object" not in oracle_names:
         return ""
     goal = goal_intents(trace.goal_tree.goal)
-    dispatched = set(getattr(trace, "intents", ()) or ())
+    dispatched = set(getattr(trace, "intents", ()) or ()).union(
+        *(verify_intents(sg_by_name[s.sub_goal_name].verify) for s in graded if ev[id(s)][0] == "GROUNDED"))
     # I4F1-D2: a hold of the red can never proves "pick up the green bottle"; an unbound
     # object fails closed, and a goal outside the forms binds none at all.
     world_id = str(getattr(trace, "world", "") or "")
@@ -317,7 +321,7 @@ def _manipulation_reason(
     for names in proof_oracles(goal, dispatched):
         if world is not None and form is None:
             return (f"the goal {trace.goal_tree.goal!r} is outside the forms the spine can check, so its "
-                    f"manipulation is not verified; checkable goals: {'; '.join(checkable_goals(world))}")
+                    f"manipulation is not verified; checkable goals: {'; '.join(checkable_goals(world, oracle_names))}")
         if world is not None and want is None:
             return "a manipulation goal that names no object the world resolves is unprovable"
         if not any(ev[id(s)][0] == "GROUNDED" and proves(sg_by_name[s.sub_goal_name].verify, names)
