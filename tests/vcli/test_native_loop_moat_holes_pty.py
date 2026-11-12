@@ -321,7 +321,9 @@ def test_a_stop_cannot_launder_a_failed_turn(sim_cleanup) -> None:
         tool_script=_STOP_LAUNDERS_FAILED_TURN,
     )
     assert r.verified is True and r.exit_code == 0, f"got {r.exit_code}: {r.verdict}"
-    assert r.verdict["contract"] == ["at_position(9.0, 3.0)"]
+    # K1 (SP1V): a coordinate with a turn after it is no closed form, so no contract covers
+    # half of it; the coordinate gate still needs the grounded walk
+    assert r.verdict["contract"] == [] and r.verdict["goal_check"] == "unchecked", r.verdict
     rows = [(s["strategy"], s["evidence"], s["superseded"]) for s in r.verdict["per_step"]]
     assert rows == [("walk", "GROUNDED", False), ("stop", "RAN", False)]
     assert [x.split(":")[0] for x in r.verdict["per_step"][1]["refused"]] == ["turn"], r.verdict
