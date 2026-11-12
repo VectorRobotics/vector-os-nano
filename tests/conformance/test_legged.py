@@ -206,6 +206,32 @@ def test_a_stop_from_a_walk_at_the_limit_brings_it_to_rest(body):
     assert all(p[2] > body.cfg.base.fall_z for p in walking) and body.upright()
 
 
+def test_a_walk_from_rest_starts_level_at_every_gait_phase(monkeypatch):
+    """convex_mpc: walks from rest that start at 24 instants across one gait cycle
+    (1 s at 0.3 m/s, a stop, 2 s of rest each) keep the trunk within 0.1 rad of level.
+    Measured with the gait clock counted from the spawn (the trot started mid-cycle):
+    0.297 rad at one phase here, and 2 falls and 8 tilts past 0.35 rad in 200 random walks
+    from rest in the room (/data/vos-analysis/scratch/vos-S4a-f2/v3); with the clock
+    started at each walk: 0.042-0.045 rad at every phase, at most 0.06 rad in 600."""
+    monkeypatch.setenv("VECTOR_SIM_LOCKSTEP", "1")
+    cfg = registry.load("go2")
+    b = Body("mujoco", cfg)
+    try:
+        period = 1.0 / cfg.base.policy.on("mujoco")[1]["gait_hz"]
+        tilts = []
+        for k in range(24):
+            assert b.base.wait_sim(period * (1 + k / 24))
+            b.base.set_velocity(0.3, 0.0, 0.0)
+            walk = list(b.run(1.0, every=0.005))
+            b.base.stop()
+            for p in walk + list(b.run(2.0, every=0.005)):
+                tilts.append(math.acos(min(1.0, 1.0 - 2.0 * (p[4] ** 2 + p[5] ** 2))))
+        assert max(tilts) < 0.1, max(tilts)
+        assert b.upright()
+    finally:
+        b.close()
+
+
 def test_a_walk_and_a_navigate_out_of_every_posture_succeed(body):
     """A held posture is not a fall (every manifest posture holds the root below fall_z):
     out of each one a walk reports success and a navigate arrives, upright."""

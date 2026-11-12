@@ -6,13 +6,17 @@
 swing / stance leg control).
 
 Moving: the MPC force plan, re-solved every ``mpc_dt`` (a sixteenth of the gait
-cycle), turned into leg torques. Zero command after moving: it BRAKES, tracking zero
-velocity for ``brake_s``, hands over to a PD hold of its four-feet-down pose once all
-feet are down, then ramps that pose to the stance over ``brake_ramp_s`` (dropping a
-trot straight onto the stance mid-stride kicked the body to 0.35-0.53 m/s). Idle: a PD
-hold of the stance. A failed solve drops the plan and holds the last torque; after
-``_MAX_FAILS`` in a row it holds the stance and warns (rate-limited in sim time) until a
-solve works (tricky-bugs Case 2: never a stale plan).
+cycle), turned into leg torques. The gait clock and the swing state start afresh at
+each motion from rest, every foot down (a clock counted from the spawn started the trot
+mid-cycle: a foot the schedule had mid-swing lifted on a full swing the schedule cut
+short and the MPC loaded it in the air; measured, 2 in 200 walks from rest fell). Zero
+command after moving: it BRAKES, tracking zero velocity for ``brake_s``, hands over to
+a PD hold of its four-feet-down pose once all feet are down, then ramps that pose to the
+stance over ``brake_ramp_s`` (dropping a trot straight onto the stance mid-stride kicked
+the body to 0.35-0.53 m/s). Idle: a PD hold of the stance. A failed solve drops the
+plan and holds the last torque; after ``_MAX_FAILS`` in a row it holds the stance and
+warns (rate-limited in sim time) until a solve works (tricky-bugs Case 2: never a stale
+plan).
 
 Keys of ``base.policy``: ``gait_hz``, ``duty`` (stance fraction), ``z_des`` (trunk
 height, m), ``brake_s``, ``brake_ramp_s``. The solver needs casadi and Pinocchio
@@ -50,6 +54,8 @@ class Policy:
             from vector_os_nano.third_party.convex_mpc.gait import Gait
             from vector_os_nano.third_party.convex_mpc.go2_robot_data import PinGo2Model
             from vector_os_nano.third_party.convex_mpc.leg_controller import LegController
+
+            self._new_legs = LegController
         except ImportError as exc:
             raise ImportError(f"{INSTALL_HINT} ({exc})") from exc
         if len(base.joints) != 3 * len(_LEGS):
@@ -61,7 +67,6 @@ class Policy:
         self._pin = PinGo2Model()
         self._gait = Gait(params["gait_hz"], params["duty"])
         self._traj = ComTraj(self._pin)
-        self._legs = LegController()
         self._mpc: Any = None  # built on the first solve
         self._dt = self._gait.gait_period / _DT_FACTOR
         self._solve_every = max(1, int(self.tick_hz // (1.0 / self._dt)))
@@ -74,6 +79,8 @@ class Policy:
         self._fails = 0
         self._tau = np.zeros(len(self._stance))
         self._was_moving = False
+        self._t0 = 0.0                          # the gait clock's zero: the last motion from rest
+        self._legs = self._new_legs()           # swing state of the last motion
         self._brake_t: float | None = None     # when the command went to zero
         self._brake_q: np.ndarray | None = None  # the four-feet-down pose of the hand-over
         self._brake_ho_t = 0.0
@@ -88,8 +95,10 @@ class Policy:
 
     def torques(self, obs: PolicyObs) -> np.ndarray:
         vx, vy, vyaw = (float(v) for v in obs.command)
-        t = obs.time
         moving = vx != 0.0 or vy != 0.0 or vyaw != 0.0
+        if moving and not self._was_moving and (self._brake_t is None or self._brake_q is not None):
+            self._t0, self._legs = obs.time, self._new_legs()  # from rest: a fresh gait cycle
+        t = obs.time - self._t0
         if moving:
             self._brake_t = self._brake_q = None
         elif self._was_moving:

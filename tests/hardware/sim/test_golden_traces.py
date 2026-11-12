@@ -38,6 +38,11 @@ sim-s earlier); every weld, contact set and verdict is unchanged
 (:func:`test_the_s4a_move_kept_every_verdict`, against the S1 values kept as
 ``release_s1_*``).
 
+S4a-fix2 regenerated go2_walk once more: convex_mpc starts its gait clock at each walk
+from rest (a clock counted from the spawn started the trot mid-cycle, and 2 in 200 walks
+from rest fell). The walk's base moved by up to 46 mm against S1 (3.6 mm before); its
+contacts and welds are the S1 ones, and go2_piper_pick replays unchanged.
+
 Two ground-truth values changed by design when GroundTruth became the one generic class
 (S1 step 4), on the release/1.0 trajectory; the release/1.0 values are kept as
 ``release_gt_clearance`` / ``release_gt_contacts``, the S1 ones as ``release_s1_*``, and
@@ -278,12 +283,14 @@ def test_ground_truth_moved_only_as_documented(scenario: str) -> None:
 
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
 def test_the_s4a_move_kept_every_verdict(scenario: str) -> None:
-    """S4a's three changes (module docstring) moved the trajectory by millimetres and
-    nothing any oracle decides: welds, contact sets and verdicts are the S1 ones."""
+    """S4a's changes (module docstring) moved the trajectory by millimetres (the walk by
+    46 mm, its gait clock) and nothing any oracle decides: welds, contact sets and verdicts
+    are the S1 ones."""
     g = np.load(GOLDEN / f"{scenario}.npz")
     assert np.array_equal(g["gt_welded"], g["release_s1_gt_welded"])
     assert np.array_equal(g["gt_contacts"], g["release_s1_gt_contacts"])
-    assert np.abs(g["gt_base"][:, :3] - g["release_s1_gt_base"][:, :3]).max() < 0.01
+    bound = {"go2_walk": 0.05, "go2_piper_pick": 0.01}[scenario]  # the walk: the gait clock (docstring)
+    assert np.abs(g["gt_base"][:, :3] - g["release_s1_gt_base"][:, :3]).max() < bound
     if "verdicts" in g.files:
         assert np.array_equal(g["verdicts"], g["release_s1_verdicts"])
 
