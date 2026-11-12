@@ -728,7 +728,7 @@ def test_one_query_of_three_failing_names_only_that_one():
 def test_a_cause_never_carries_a_machine_path():
     from vector_os_nano.perception.base import failure_cause
 
-    exc = OSError("Can't load '/home/someone/.cache/huggingface/hub/models--x/config.json' "
+    exc = OSError("Can't load '/srv/hf/hub/models--x/config.json' "
                   "(see https://huggingface.co/docs)")
     assert failure_cause(exc) == "OSError: Can't load '<path>' (see https://huggingface.co/docs)"
     assert failure_cause(no_weights()) == str(no_weights())
