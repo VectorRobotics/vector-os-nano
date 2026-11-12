@@ -49,9 +49,10 @@ def get_so101_skills() -> list:
 
 
 def get_piper_skills() -> list:
-    """The Piper manipulation set of the mobile arm (go2_piper)."""
+    """The Piper manipulation set of the mobile arm (go2_piper), its gripper included."""
     from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
     from vector_os_nano.skills.pick_top_down import PickTopDownSkill
     from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
 
-    return [PickTopDownSkill(), PlaceTopDownSkill(), PerceptionGraspSkill()]
+    return [PickTopDownSkill(), PlaceTopDownSkill(), PerceptionGraspSkill(),
+            GripperOpenSkill(), GripperCloseSkill()]

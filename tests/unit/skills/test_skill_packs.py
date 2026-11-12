@@ -18,8 +18,9 @@ from vector_os_nano.skills import get_piper_skills, get_so101_skills
 from vector_os_nano.skills.go2 import get_go2_skills
 from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
 
-_SO101 = {s.name for s in get_so101_skills()} - {"stop"}
-_PIPER = {s.name for s in get_piper_skills()}
+_GRIPPER = {"gripper_open", "gripper_close"}  # body-agnostic: any body with a gripper
+_SO101 = {s.name for s in get_so101_skills()} - {"stop"} - _GRIPPER  # the 5-DoF pose skills
+_PIPER = {s.name for s in get_piper_skills()} - _GRIPPER
 _BASE = {s.name for s in get_go2_skills()} - {"stop"}
 
 
@@ -39,7 +40,7 @@ def test_every_body_has_a_pack(embodiment: str) -> None:
 
 def test_go2_offers_no_arm_skill() -> None:
     tools = _tools("go2")
-    assert _BASE <= tools and not tools & (_SO101 | _PIPER), tools
+    assert _BASE <= tools and not tools & (_SO101 | _PIPER | _GRIPPER), tools
 
 
 def test_go2_piper_offers_the_piper_set_and_no_so101_skill() -> None:
@@ -53,7 +54,13 @@ def test_so101_offers_no_base_skill() -> None:
 
 
 def test_g1_offers_no_arm_skill() -> None:
-    assert not _tools("g1") & (_SO101 | _PIPER)
+    assert not _tools("g1") & (_SO101 | _PIPER | _GRIPPER)
+
+
+@pytest.mark.parametrize("embodiment", ["so101", "go2_piper"])
+def test_every_body_with_a_gripper_offers_open_and_close(embodiment: str) -> None:
+    """R2V-01: go2_piper lost gripper_open/close (e10's scripted mid-carry drop)."""
+    assert _GRIPPER <= _tools(embodiment)
 
 
 @pytest.mark.parametrize("embodiment", registry.embodiment_ids())
