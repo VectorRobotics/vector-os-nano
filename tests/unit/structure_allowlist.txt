@@ -1,11 +1,9 @@
 # The structure violations that existed when the ratchet was added (release/1.0 after the spine merge).
 # rule | path. Never add a row: fix it. `python tests/unit/test_structure.py --prune` drops fixed rows.
 over-800 | vector_os_nano/core/scene_graph.py
-over-800 | vector_os_nano/hardware/sim/mujoco_go2.py
 over-800 | vector_os_nano/skills/perception_grasp.py
 target-tree | config
 target-tree | foxglove
-target-tree | vector_os_nano/hardware/base.py
 target-tree | vector_os_nano/hardware/ros2
 target-tree | vector_os_nano/hardware/sim
 target-tree | vector_os_nano/hardware/urdf
