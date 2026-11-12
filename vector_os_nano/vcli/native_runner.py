@@ -336,7 +336,7 @@ class NativeStepRunner:
         )
 
     def rebind(self, agent: Any, verifier: Any, oracles: dict[str, Any], motor_tools: dict[str, Any],
-               world: Any = None) -> None:
+               world: Any) -> None:
         """A lifecycle tool switched the body: later steps run, verify and grade on *agent*
         in *world* (an attempt baseline of the old body never grades the new one)."""
         self._agent, self._verifier, self._world = agent, verifier, world

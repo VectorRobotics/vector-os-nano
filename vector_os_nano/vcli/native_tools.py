@@ -233,16 +233,11 @@ class _NativeDetectTool:
     def is_read_only(self, params: dict[str, Any]) -> bool:
         return True
 
-    @staticmethod
-    def _verify_hint(agent: Any, query: str) -> str:
-        """The GT verify the model should make after detect (it still authors it)."""
-        return f"verify(in_view({query!r}))"
-
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         query = str((params or {}).get("query", "")).strip()
         if not query:
             return ToolResult(content="detect requires a non-empty 'query'.", is_error=True)
-        hint = self._verify_hint(getattr(context, "agent", None), query)
+        hint = f"verify(in_view({query!r}))"  # the GT verify to make after detect (the model authors it)
         payload = {"query": query}
         if (params or {}).get("backend"):
             payload["backend"] = str(params["backend"])
