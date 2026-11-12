@@ -115,17 +115,19 @@ def has_necessary_manip_oracle(expr: str | None, names: frozenset[str] = _HOLD) 
 
 
 def _asserted_calls(node: ast.AST) -> list[ast.Call]:
-    """Calls whose truth the verify ASSERTS: the call, an ``and`` conjunct, or
-    ``<call> == True`` or ``True == <call>`` (the classifier grades both, REF1d-V-01) —
-    never under ``not`` / ``or`` / an ordering."""
+    """Calls whose truth the verify ASSERTS, as a contract proof: the call, an ``and``
+    conjunct, or ``<call> == True`` — never ``True == <call>`` (REF1e-V-01: release/1.0's
+    proof spelling; the gate sees that one through named_intents), nor under ``not`` /
+    ``or`` / an ordering."""
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         return [node]
     if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
         return [c for v in node.values for c in _asserted_calls(v)]
-    if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
-        sides = (node.left, node.comparators[0])
-        return [c for i, s in enumerate(sides) if isinstance(s, ast.Constant) and s.value is True
-                for c in _asserted_calls(sides[1 - i])]
+    if (
+        isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq)
+        and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is True
+    ):
+        return _asserted_calls(node.left)
     return []
 
 

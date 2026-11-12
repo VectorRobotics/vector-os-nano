@@ -24,7 +24,9 @@ from tests.unit.vcli.test_native_loop import _CAN, _grasp, _make_arm_agent, _mak
 from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
 from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
-from vector_os_nano.vcli.cognitive.object_goal import checkable_goals, named_intents, task_contract, unbound_reason
+from vector_os_nano.vcli.cognitive.object_goal import (
+    backs_contract, checkable_goals, named_intents, task_contract, unbound_reason,
+)
 from vector_os_nano.vcli.cognitive.trace_store import turn_reject_reason
 from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord, SubGoal
 from vector_os_nano.vcli.worlds.world_manifest import WORLDS_DIR, load_world
@@ -207,12 +209,21 @@ def test_a_hold_made_by_a_skill_without_a_gripper_hint_needs_a_contract(goal, ve
     assert OUTSIDE in rep.reject_reason, rep.reject_reason
 
 
-@pytest.mark.parametrize("verify", ["holding_object('red can')", *LITERAL_LEFT])
 @pytest.mark.parametrize("goal", ["拿起红罐子", "pick up the red can"])
-def test_the_same_hold_under_a_closed_form_is_proven(goal, verify) -> None:
-    trace, rep = _close_turn(goal, verify, real=True)
+def test_the_same_hold_under_a_closed_form_is_proven(goal) -> None:
+    trace, rep = _close_turn(goal, "holding_object('red can')", real=True)
     assert trace.contract == (f"holding_object('{_CAN}')",)
     assert rep.verified is True and rep.goal_check == "proven", rep.reject_reason
+
+
+@pytest.mark.parametrize("verify", LITERAL_LEFT)
+@pytest.mark.parametrize("goal", ["拿起红罐子", "pick up the red can"])
+def test_a_literal_left_spelling_never_proves_a_contract(goal, verify) -> None:
+    """REF1e-V-01: a contract is proven only by ``<call>`` or ``<call> == True``, as on
+    release/1.0; ``True == <call>`` still trips the gate (named_intents) but proves nothing."""
+    trace, rep = _close_turn(goal, verify, real=True)
+    assert trace.contract and rep.verified is False and rep.goal_check == "failed", rep.reject_reason
+    assert not backs_contract(trace.contract[0], verify, "apartment")
 
 
 @pytest.mark.parametrize("verify", LITERAL_LEFT_ALONE)
