@@ -497,26 +497,6 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     return agent
 
 
-def _build_mujoco_arm(session: SimSession, vlm_api_key: str | None) -> Any:
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
-    from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
-    from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
-    from vector_os_nano.skills.pick import SIM_PICK_CONFIG
-
-    arm = MuJoCoArm(gui=session.spec.gui)
-    session.own(f"{arm.name} disconnected", arm.disconnect)
-    arm.connect()
-    session.runtime = arm.runtime
-    return Agent(
-        arm=arm,
-        gripper=MuJoCoGripper(arm),
-        perception=MuJoCoPerception(arm),
-        config={"skills": {"pick": dict(SIM_PICK_CONFIG)}},
-        skills=_skill_pack(session.config.id),
-    )
-
-
 def _build_mujoco_g1(session: SimSession, vlm_api_key: str | None) -> Any:
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
@@ -532,6 +512,13 @@ def _build_mujoco_g1(session: SimSession, vlm_api_key: str | None) -> Any:
     agent._perception = G1HeadPerception(g1, width=cam.width, height=cam.height)
     session.notes.append(_perception_note(agent, "g1 has no scene VLM", segmenter=False))
     return agent
+
+
+# The bodies whose skill pack still reads its objects from simulator truth
+# (hardware/sim/mujoco_perception.py, with the pick parameters exact truth needs)
+# instead of the camera perception every other body uses: until R4 moves the SO-101
+# skill family onto CameraPerception and deletes both.
+_SIM_TRUTH_OBJECTS = frozenset({"so101"})
 
 
 def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
@@ -556,6 +543,14 @@ def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
     rt.start()
     session.runtime = rt
     arm, gripper, camera = _devices(cfg, rt)
+    if cfg.id in _SIM_TRUTH_OBJECTS:
+        from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
+        from vector_os_nano.sim.ground_truth import GroundTruth
+        from vector_os_nano.skills.pick import SIM_PICK_CONFIG
+
+        return Agent(arm=arm, gripper=gripper, skills=_skill_pack(cfg.id),
+                     perception=MuJoCoPerception(GroundTruth(rt).object_positions, camera),
+                     config={"skills": {"pick": dict(SIM_PICK_CONFIG)}})
     agent = Agent(arm=arm, gripper=gripper, config=_user_config(), skills=_skill_pack(cfg.id))
     agent._perception = _perception(camera)
     session.notes.append(_perception_note(agent, "a fixed arm has no scene VLM"))
@@ -565,7 +560,6 @@ def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
 _BUILDERS: dict[str, Callable[[SimSession, str | None], Any]] = {
     "generic": _build_generic,
     "mujoco_go2": _build_mujoco_go2,
-    "mujoco_arm": _build_mujoco_arm,
     "mujoco_g1": _build_mujoco_g1,
 }
 

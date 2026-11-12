@@ -16,31 +16,19 @@ from __future__ import annotations
 
 import pytest
 
-mujoco = pytest.importorskip("mujoco")  # headless sim oracle; skip if unavailable
+from tests.harness.sim_session import started
+
+pytestmark = pytest.mark.sim
 
 
 def _detect_objects():
-    """Run DetectSkill against the headless MuJoCo sim oracle, return its objects list."""
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
-    from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
-    from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
+    """Run DetectSkill against the headless sim's object source, return its objects list."""
     from vector_os_nano.skills.detect import DetectSkill
 
-    arm = MuJoCoArm(gui=False)
-    arm.connect()
-    try:
-        agent = Agent(
-            arm=arm,
-            gripper=MuJoCoGripper(arm),
-            perception=MuJoCoPerception(arm),
-        )
-        ctx = agent._build_context()
-        result = DetectSkill().execute({"query": "all objects"}, ctx)
+    with started("so101") as s:
+        result = DetectSkill().execute({"query": "all objects"}, s.agent._build_context())
         assert result.success
         return list(result.result_data.get("objects", []))
-    finally:
-        arm.disconnect()
 
 
 def test_detect_objects_expose_both_name_and_label():

@@ -1,32 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""MuJoCo-based simulated perception.
+"""MuJoCoPerception — the SO-101 skill family's object source: simulator truth.
 
-Provides ground-truth object detection and tracking using MuJoCo's
-internal scene state — no camera, VLM, or tracker needed.
-
-Implements the same interface that DetectSkill and PickSkill expect
-from a PerceptionProtocol-compatible pipeline.
+``detect`` / ``track`` / ``caption`` answer from the scene's object poses (no
+detector, no tracker); the image is the body's generic Camera, so what it shows,
+its depth and its intrinsics are the real camera's. This is declared ground-truth
+debt: R4 moves the SO-101 skills onto the model perception the other arms use and
+deletes this module.
 """
 from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any, Callable
 
-import numpy as np
-
-from vector_os_nano.core.types import (
-    CameraIntrinsics,
-    Detection,
-    Pose3D,
-    TrackedObject,
-)
+from vector_os_nano.core.types import Detection, Pose3D, TrackedObject
+from vector_os_nano.interfaces.devices import CameraFrame, CameraProtocol
 from vector_os_nano.perception.calibration import Calibration
-
-if TYPE_CHECKING:
-    from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
 
 logger = logging.getLogger(__name__)
 
@@ -40,59 +31,34 @@ _OBJECT_ALIASES: dict[str, list[str]] = {
     "lego": ["lego", "积木", "乐高", "白色", "白", "方块"],
 }
 
-# Simulated camera parameters (matches overhead camera in MJCF)
-_SIM_WIDTH = 640
-_SIM_HEIGHT = 480
-
 
 class MuJoCoPerception:
-    """Simulated perception using MuJoCo ground truth.
-
-    detect(query) matches the query string against known object names
-    in the scene and returns their positions directly from MuJoCo state.
-    No VLM or tracker needed.
+    """Simulated perception over simulator truth.
 
     Args:
-        mujoco_arm: A connected MuJoCoArm instance.
+        objects: returns ``{object: [x, y, z]}`` of the scene's objects, one instant
+            (the session's ground truth: the debt this module declares).
+        camera: the body's camera (what :meth:`capture` returns).
     """
 
-    def __init__(self, mujoco_arm: "MuJoCoArm") -> None:
-        self._arm = mujoco_arm
+    def __init__(self, objects: Callable[[], dict[str, list[float]]], camera: CameraProtocol) -> None:
+        self._objects = objects
+        self._camera = camera
         # Its tracked poses are already in the arm-base frame: the camera->arm
         # calibration it declares is the identity (the Agent needs no calibration.file).
         self.calibration = Calibration()
-        self._last_detections: list[Detection] = []
-        self._last_tracked: list[TrackedObject] = []
 
-    def get_color_frame(self) -> np.ndarray:
-        """Render RGB image from MuJoCo overhead camera."""
-        img = self._arm.render(camera_name="overhead", width=_SIM_WIDTH, height=_SIM_HEIGHT)
-        if img is None:
-            return np.zeros((_SIM_HEIGHT, _SIM_WIDTH, 3), dtype=np.uint8)
-        return img
-
-    def get_depth_frame(self) -> np.ndarray:
-        """Return synthetic depth frame (zeros — not needed for sim)."""
-        return np.zeros((_SIM_HEIGHT, _SIM_WIDTH), dtype=np.uint16)
-
-    def get_intrinsics(self) -> CameraIntrinsics:
-        """Return simulated camera intrinsics."""
-        return CameraIntrinsics(
-            fx=500.0, fy=500.0,
-            cx=_SIM_WIDTH / 2, cy=_SIM_HEIGHT / 2,
-            width=_SIM_WIDTH, height=_SIM_HEIGHT,
-        )
+    def capture(self) -> CameraFrame:
+        """One instant of the body's camera: RGB, metric depth, K from its fovy, pose."""
+        return self._camera.capture()
 
     def detect(self, query: str) -> list[Detection]:
         """Match query against scene objects by name/alias.
 
         Returns ground-truth detections with synthetic bounding boxes.
         """
-        if not self._arm._connected:
-            return []
-
         query_lower = query.lower().strip()
-        objs = self._arm.get_object_positions()
+        objs = self._objects()
         results: list[Detection] = []
 
         for obj_name, pos in objs.items():
@@ -112,87 +78,40 @@ class MuJoCoPerception:
                 matched = True
 
             if matched:
-                # Create a synthetic bbox (centered, fixed size)
-                cx, cy = _SIM_WIDTH // 2, _SIM_HEIGHT // 2
-                half = 40
-                bbox = (cx - half, cy - half, cx + half, cy + half)
-
-                # Use a human-readable label
+                # A synthetic bbox (centered, fixed size)
+                bbox = (280, 200, 360, 280)
                 label = obj_name.replace("_", " ")
-                det = Detection(label=label, bbox=bbox, confidence=1.0)
-                results.append(det)
+                results.append(Detection(label=label, bbox=bbox, confidence=1.0))
                 logger.info("[SIM DETECT] Matched '%s' → %s at (%.3f, %.3f, %.3f)",
                             query, obj_name, pos[0], pos[1], pos[2])
 
-        self._last_detections = results
         if not results:
             logger.info("[SIM DETECT] No match for query '%s' in objects: %s",
                         query, list(objs.keys()))
         return results
 
     def caption(self, length: str = "long") -> str:
-        """Describe the visible scene from MuJoCo ground truth (no VLM needed)."""
-        if not self._arm._connected:
-            return "I can't see anything — the camera is not connected."
-        objs = self._arm.get_object_positions()
+        """Describe the scene from simulator truth (no VLM needed)."""
+        objs = self._objects()
         if not objs:
             return "I don't see any objects on the table."
-        labels = [name.replace("_", " ") for name in objs]
-        return "I can see: " + ", ".join(labels) + "."
+        return "I can see: " + ", ".join(name.replace("_", " ") for name in objs) + "."
 
     def visual_query(self, question: str, **kwargs: Any) -> str:
-        """Answer a free-form question about the scene from ground truth."""
+        """Answer a free-form question about the scene from simulator truth."""
         return self.caption()
 
     def track(self, detections: list[Detection]) -> list[TrackedObject]:
-        """Return TrackedObjects with ground-truth 3D positions from MuJoCo.
-
-        Each detection is matched back to the scene object to get its pose.
-        """
-        if not self._arm._connected:
-            return []
-
-        objs = self._arm.get_object_positions()
+        """TrackedObjects with the simulator-truth 3D position of each detection."""
+        objs = self._objects()
         tracked: list[TrackedObject] = []
-
         for idx, det in enumerate(detections):
-            # Match detection label back to scene object name
-            det_key = det.label.replace(" ", "_")
-            pos = objs.get(det_key)
-            if pos is None:
-                # Try fuzzy match
-                for obj_name, obj_pos in objs.items():
-                    if obj_name.replace("_", " ") == det.label:
-                        pos = obj_pos
-                        break
-
-            pose = None
-            if pos is not None:
-                pose = Pose3D(x=pos[0], y=pos[1], z=pos[2])
-
+            pos = objs.get(det.label.replace(" ", "_"))
             tracked.append(TrackedObject(
                 track_id=idx,
                 label=det.label,
                 bbox_2d=det.bbox,
-                pose=pose,
+                pose=None if pos is None else Pose3D(x=pos[0], y=pos[1], z=pos[2]),
                 confidence=1.0,
             ))
-
-        self._last_tracked = tracked
         return tracked
-
-    def get_point_cloud(self, mask: np.ndarray | None = None) -> np.ndarray:
-        """Return empty point cloud (not used in sim mode)."""
-        return np.zeros((0, 3), dtype=np.float64)
-
-    def connect(self) -> None:
-        """No-op (perception is backed by MuJoCoArm)."""
-        pass
-
-    def disconnect(self) -> None:
-        """No-op."""
-        pass
-
-    def stop_continuous_tracking(self) -> None:
-        """No-op (no background threads in sim)."""
-        pass

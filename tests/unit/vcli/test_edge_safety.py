@@ -71,8 +71,10 @@ def test_the_sim_lifecycle_tools_do_what_they_declare(cls) -> None:
     assert tool.__tool_permission__ == tool.check_permissions({}, None).behavior == "allow"
 
 
-def test_a_window_without_mjpython_runs_headless_and_never_replaces_the_repl(monkeypatch) -> None:
-    """The NL start used to os.execve the whole CLI under mjpython (the conversation lost)."""
+@pytest.mark.parametrize("body", ["so101", "piper", "go2"])
+def test_a_window_without_mjpython_runs_headless_and_never_replaces_the_repl(monkeypatch, body) -> None:
+    """The NL start used to os.execve the whole CLI under mjpython (the conversation lost);
+    every body falls back the same way (it was the so101 alone)."""
     from vector_os_nano.sim import session as sim_session
     from vector_os_nano.vcli import runtime
     from vector_os_nano.vcli.tools.base import ToolContext
@@ -87,7 +89,7 @@ def test_a_window_without_mjpython_runs_headless_and_never_replaces_the_repl(mon
     monkeypatch.setattr(os, "execve", lambda *a: pytest.fail("the REPL was replaced"))
     ctx = ToolContext(agent=None, cwd=Path.cwd(), session=None, permissions=None,
                       abort=threading.Event(), app_state={})
-    res = SimStartTool().execute({"embodiment": "so101", "gui": True}, ctx)
+    res = SimStartTool().execute({"embodiment": body, "gui": True}, ctx)
     assert not res.is_error and started[0].gui is False and "needs mjpython" in res.content
 
 

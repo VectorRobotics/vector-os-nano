@@ -12,14 +12,15 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import mujoco as mj
 import pytest
 
 import vector_os_nano
 from vector_os_nano.embodiments import registry
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene import compiled_scene
-from vector_os_nano.sim.scene.compiled import inactive_welds
 from vector_os_nano.sim.scene.compose import compose
+from vector_os_nano.vcli.worlds.world_manifest import load_world
 
 SCENES = Path(__file__).parent / "scenes"
 SIM_DIR = Path(vector_os_nano.__file__).parent / "hardware" / "sim"
@@ -89,21 +90,40 @@ def battery_scene():
 
 
 @pytest.fixture(scope="session")
+def tabletop_scene():
+    """The `so101` body in its own world (the tabletop scene, its spawn, its six
+    pickables), by the product's scene composition."""
+    cfg = registry.load("so101")
+    world = load_world(cfg.world)
+    return compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+
+
+@pytest.fixture(scope="session")
 def flat_go2_scene():
     """go2 on flat ground (the locomotion bounds need room to walk)."""
     return compose(SCENES / "flat.xml", registry.load("go2"), spawn=(0.0, 0.0, 0.0, 0.0))
 
 
+def _inactive_welds(xml_path) -> list[tuple[str, str]]:
+    """``(body1, body2)`` names of every inactive body weld in *xml_path*: the grasp
+    pairs of a scene whose file declares them by hand (the go2 room)."""
+    m = mj.MjModel.from_xml_path(str(xml_path))
+    name = lambda b: mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, int(b))  # noqa: E731
+    return [
+        (name(m.eq_obj1id[i]), name(m.eq_obj2id[i])) for i in range(m.neq)
+        if m.eq_type[i] == mj.mjtEq.mjEQ_WELD and m.eq_objtype[i] == mj.mjtObj.mjOBJ_BODY
+        and not m.eq_active0[i]
+    ]
+
+
 def _robot_scene(name: str):
-    if name == "so101":
-        return compiled_scene(SIM_DIR / "so101_mujoco.xml", robot_root="base_link")
-    if name == "piper":
-        return compiled_scene(SIM_DIR / "mjcf" / "piper" / "piper.xml", robot_root="base_link")
+    if name in ("so101", "piper"):
+        return compiled_scene(SIM_DIR / "mjcf" / name / f"{name}.xml", robot_root="base_link")
     if name in ("go2", "go2_piper"):
         from vector_os_nano.hardware.sim import mujoco_go2
 
         path = mujoco_go2._build_room_scene_xml(with_arm=name == "go2_piper")
-        return compiled_scene(path, robot_root="base_link", grasp_pairs=inactive_welds(path),
+        return compiled_scene(path, robot_root="base_link", grasp_pairs=_inactive_welds(path),
                               timestep=mujoco_go2._SIM_DT)
     if name == "g1":
         from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir

@@ -1,40 +1,50 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 #
-# SO-101 5-DoF tabletop arm + gripper — embodiment manifest. Fixed base on the
-# so101_mujoco.xml table scene (MuJoCoArm + MuJoCoGripper + MuJoCoPerception).
+# SO-101 5-DoF arm with a rotating-jaw gripper, fixed on the tabletop. The generic Arm /
+# Gripper / Camera drive it on any backend; sim/scene/compose.py mounts it at the
+# world's spawn. Every name is the exact name in so101.xml (the scene adds no prefix).
 
 id: so101
 display_name: "SO-101 (5-DoF tabletop arm)"
-driver: mujoco_arm                # transitional (WP17: one generic driver)
-world: tabletop           # config/worlds/tabletop.yaml
+driver: generic
+world: tabletop
 
 model:
-  path: vector_os_nano/hardware/sim/so101_mujoco.xml
+  path: vector_os_nano/hardware/sim/mjcf/so101/so101.xml
   root_body: base_link
 
-spawn:
-  # Fixed base bolted to the table scene (no free joint).
-  xy: [0.0, 0.0]
-  base_height: 0.02
-
-# Home pose, by joint name (the arm_at_home oracle reads it from here).
-stance:
-  shoulder_pan:  -0.014
-  shoulder_lift: -1.238
-  elbow_flex:    0.562
-  wrist_flex:    0.858
-  wrist_roll:    0.311
-
 sensors:
-  - role: camera                  # in so101_mujoco.xml, fixed to the world
+  # Added by the scene compiler to the world, 55 cm over the floor above the table
+  # middle, looking straight down. A RealSense D405 (the real rig's camera): 640x480,
+  # 58 deg vertical field of view, depth from 7 cm.
+  - role: camera
     name: overhead
-    width: 640                    # MuJoCoPerception's render size
+    width: 640
     height: 480
+    depth: [0.07, 1.0]
+    pos: [0.20, 0.0, 0.55]
+    fovy: 58
 
-policy:
-  ref: position_actuators         # MuJoCo position servos, no gait
-  spec: {}
+arm:
+  joints: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll]
+  ee: {site: ee_site}
+  home: [-0.014, -1.238, 0.562, 0.858, 0.311]
+  # Top-down IK starts: reaching down over the table 20 cm ahead; the live arm joints
+  # are always tried too. Five joints hold a top-down tool with any jaw yaw: the pan
+  # aims the arm, three pitch joints place the tool and point it down, the wrist roll
+  # turns the jaws.
+  ik_seeds:
+    - [0.0, 0.3, 0.6, 1.2, 0.0]
+    - [0.0, -0.3, 1.2, 1.0, 0.0]
+  track_tol: 0.05
+  gripper:
+    joint: gripper                      # the moving jaw's hinge
+    open: 0.8                           # jaw tips about 6 cm apart
+    closed: -0.17                       # the servo squeezes towards the fixed jaw
+    finger_bodies: [gripper_link, jaw]  # one box pad each (colliding)
+    weld_body: gripper_link
+    min_opening: 0.03                   # rad: the jaw is held >= 2 mm open by the object
 
 capabilities:
   has_base: false

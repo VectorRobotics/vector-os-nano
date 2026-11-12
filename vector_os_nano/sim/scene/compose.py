@@ -82,9 +82,9 @@ def normalize_attach_defaults(xml: str) -> str:
 
 
 def robot_spec(model_path: Path | str, meshes_dir: Path | str | None = None) -> Any:
-    """The robot's ``MjSpec`` with every relative mesh path made absolute (MuJoCo's rule:
-    the model file's directory joined with its meshdir, unless *meshes_dir* is given),
-    so the composed scene loads from any directory."""
+    """The ``MjSpec`` of a robot (or world scene) with every relative mesh path made
+    absolute (MuJoCo's rule: the model file's directory joined with its meshdir, unless
+    *meshes_dir* is given), so the composed scene loads from any directory."""
     spec = mj.MjSpec.from_file(str(model_path))
     base = Path(meshes_dir) if meshes_dir is not None else Path(model_path).resolve().parent / (spec.meshdir or "")
     for mesh in spec.meshes:
@@ -99,7 +99,7 @@ def compose(world_scene: Path | str, robot: Any, *, spawn: Sequence[float],
     """*robot* (an EmbodimentConfig) mounted in *world_scene* at *spawn* (x, y, z,
     heading), its placed cameras added, one inactive grasp weld per gripper weld body
     and pickable; compiled with its root body as the scene's robot root."""
-    world = mj.MjSpec.from_file(str(world_scene))
+    world = robot_spec(world_scene)
     model = robot_spec(_REPO / robot.model.path)
     for cam in robot.sensors:
         if getattr(cam, "pos", None) is not None and cam.role == "camera":

@@ -26,7 +26,7 @@ Robot models and meshes:
   - SO-101 arm URDF and STL meshes (so101.urdf = so101_new_calib), from
         TheRobotStudio SO-ARM100 (https://github.com/TheRobotStudio/SO-ARM100).
         Apache-2.0. Files: vector_os_nano/hardware/urdf/so101.urdf,
-        vector_os_nano/hardware/urdf/meshes/*so101*.stl, *sts3215*.stl
+        vector_os_nano/hardware/sim/mjcf/so101/meshes/*so101*.stl, *sts3215*.stl
 
 Scene assets:
   - Furniture meshes (OBJ/MTL, some split per material), from the Kenney

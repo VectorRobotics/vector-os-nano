@@ -14,41 +14,16 @@ from __future__ import annotations
 
 import pytest
 
-mujoco = pytest.importorskip("mujoco")  # headless sim oracle; skip if unavailable
+from tests.harness.sim_session import started
 
-
-def _agent():
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.core.skill import SkillRegistry
-    from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
-    from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
-    from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
-    from vector_os_nano.skills import get_so101_skills
-    from vector_os_nano.skills.pick import SIM_PICK_CONFIG
-
-    arm = MuJoCoArm(gui=False)
-    arm.connect()
-    agent = Agent(
-        arm=arm,
-        gripper=MuJoCoGripper(arm),
-        perception=MuJoCoPerception(arm),
-        config={"skills": {"pick": dict(SIM_PICK_CONFIG)}},
-    )
-    reg = SkillRegistry()
-    for s in get_so101_skills():
-        reg.register(s)
-    agent._skill_registry = reg
-    return agent, arm
+pytestmark = pytest.mark.sim
 
 
 def test_pick_hold_then_place_releases_and_moves_object():
-    from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace
-
-    agent, arm = _agent()
-    try:
-        ns = rig_namespace(agent._arm.runtime, "so101")
+    with started("so101") as s:
+        agent, ns = s.agent, s.oracles()
         holding, released = ns["holding_object"], ns["released"]  # one GT namespace (WP10)
-        x0, y0, _ = arm.get_object_positions()["banana"]
+        x0, y0, _ = s.gt.object_positions()["banana"]
 
         assert holding() is False  # gripper starts empty
 
@@ -63,8 +38,6 @@ def test_pick_hold_then_place_releases_and_moves_object():
         assert holding() is False, "place must release the held object"
         assert released() is True and released("banana") is True  # place's verify_hint
 
-        x1, y1, _ = arm.get_object_positions()["banana"]
+        x1, y1, _ = s.gt.object_positions()["banana"]
         moved = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
         assert moved > 0.05, f"placed object should have moved (>5cm); moved {moved:.3f}m"
-    finally:
-        arm.disconnect()

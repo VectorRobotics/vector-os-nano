@@ -322,12 +322,15 @@ class PickSkill:
         # Do NOT try tip compensation — the URDF model doesn't match the real arm
         # accurately enough for model-based tip correction to help.
         current_joints = context.arm.get_joint_positions()
+        # Jaws that grip by contact must straddle the object: a top-down solve where the
+        # arm offers one (the sim Arm), else the arm's own IK (the real SO-101).
+        solve = getattr(context.arm, "ik_top_down", context.arm.ik)
 
         # Pre-grasp position (higher Z)
         pre_grasp_pos = base_pos.copy()
         pre_grasp_pos[2] += pre_grasp_h
 
-        q_pregrasp_result = context.arm.ik(
+        q_pregrasp_result = solve(
             (pre_grasp_pos[0], pre_grasp_pos[1], pre_grasp_pos[2]),
             current_joints,
         )
@@ -357,7 +360,7 @@ class PickSkill:
             q_pregrasp[4] += wrist_roll_offset
 
         # Grasp position (warm-started from pre-grasp for minimal joint change)
-        q_grasp_result = context.arm.ik(
+        q_grasp_result = solve(
             (base_pos[0], base_pos[1], base_pos[2]),
             q_pregrasp,
         )

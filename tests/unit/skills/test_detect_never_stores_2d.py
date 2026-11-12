@@ -125,7 +125,7 @@ def test_the_sim_arm_perception_needs_no_calibration_file() -> None:
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 
     p = np.array([0.1, -0.2, 0.3])
-    assert np.allclose(MuJoCoPerception(None).calibration.camera_to_base(p), p)  # identity
+    assert np.allclose(MuJoCoPerception(dict, None).calibration.camera_to_base(p), p)  # identity
     perception = _TrackedCan()
     perception.calibration = Calibration()  # what a base-frame perception declares
     res = _detect_on(Agent(arm=_Arm(), perception=perception))  # config=None: default.yaml

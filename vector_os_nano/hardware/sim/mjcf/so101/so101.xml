@@ -1,0 +1,111 @@
+<!--
+  SO-101 5-DoF arm with its rotating-jaw gripper: the robot alone (no table, no objects,
+  no world cameras). Compiled from so101.urdf (TheRobotStudio SO-ARM100) with its STL
+  meshes; sim/scene/compose.py mounts it at a world's spawn (embodiments/so101/robot.yaml).
+
+  The meshes are visual only. What collides is two box pads, one per jaw: the fixed jaw
+  (on gripper_link) and the moving jaw (body `jaw`, joint `gripper`), so a grasp is
+  decided by the contacts of both jaws (sim/grasp.py).
+  ee_site sits between the jaw tips, 5 mm above the pad bottoms and 1 cm toward the
+  moving jaw; its z axis points out of the fingers (the approach) and its x axis
+  across the jaws (the direction they open).
+-->
+<mujoco model="so101">
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <default>
+    <default class="so101">
+      <joint damping="0.5" armature="0.05"/>
+      <geom type="mesh" contype="0" conaffinity="0" rgba="1 0.82 0.12 1"/>
+      <default class="servo">
+        <geom rgba="0.1 0.1 0.1 1"/>
+      </default>
+      <default class="pad">
+        <geom type="box" group="3" contype="1" conaffinity="1" condim="4" friction="1 0.005 0.0001"
+              solimp="0.95 0.99 0.001" solref="0.02 1" mass="0.003" rgba="0.75 0.75 0.75 1"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <mesh name="base_motor_holder_so101_v1" file="base_motor_holder_so101_v1.stl"/>
+    <mesh name="base_so101_v2" file="base_so101_v2.stl"/>
+    <mesh name="sts3215_03a_v1" file="sts3215_03a_v1.stl"/>
+    <mesh name="waveshare_mounting_plate_so101_v2" file="waveshare_mounting_plate_so101_v2.stl"/>
+    <mesh name="motor_holder_so101_base_v1" file="motor_holder_so101_base_v1.stl"/>
+    <mesh name="rotation_pitch_so101_v1" file="rotation_pitch_so101_v1.stl"/>
+    <mesh name="upper_arm_so101_v1" file="upper_arm_so101_v1.stl"/>
+    <mesh name="under_arm_so101_v1" file="under_arm_so101_v1.stl"/>
+    <mesh name="motor_holder_so101_wrist_v1" file="motor_holder_so101_wrist_v1.stl"/>
+    <mesh name="sts3215_03a_no_horn_v1" file="sts3215_03a_no_horn_v1.stl"/>
+    <mesh name="wrist_roll_pitch_so101_v2" file="wrist_roll_pitch_so101_v2.stl"/>
+    <mesh name="wrist_roll_follower_so101_v1" file="wrist_roll_follower_so101_v1.stl"/>
+    <mesh name="moving_jaw_so101_v1" file="moving_jaw_so101_v1.stl"/>
+  </asset>
+
+  <worldbody>
+    <body name="base_link" childclass="so101">
+      <geom pos="-0.00636471 -9.94414e-05 -0.0024" quat="0.499998 0.5 0.500002 0.5" mesh="base_motor_holder_so101_v1" mass="0.05"/>
+      <geom pos="-0.00636471 -8.97657e-09 -0.0024" quat="0.499998 0.5 0.500002 0.5" mesh="base_so101_v2" mass="0.05"/>
+      <geom pos="0.0263353 -8.97657e-09 0.0437" class="servo" mesh="sts3215_03a_v1" mass="0.03"/>
+      <geom pos="-0.0309827 -0.000199441 0.0474" quat="0.499998 0.5 0.500002 0.5" mesh="waveshare_mounting_plate_so101_v2" mass="0.02"/>
+
+      <body name="shoulder_link" pos="0.0388353 -8.97657e-09 0.0624" quat="0 0 -1 0">
+        <inertial pos="-0.0307604 -1.66727e-05 -0.0252713" mass="0.100" diaginertia="8.4e-05 8.1e-05 2.4e-05"/>
+        <joint name="shoulder_pan" axis="0 0 1" range="-1.92 1.92"/>
+        <geom pos="-0.0303992 0.000422241 -0.0417" quat="0.499998 0.5 0.5 -0.500002" class="servo" mesh="sts3215_03a_v1"/>
+        <geom pos="-0.0675992 -0.000177759 0.0158499" quat="0.499998 0.5 -0.5 0.500002" mesh="motor_holder_so101_base_v1"/>
+        <geom pos="0.0122008 2.22413e-05 0.0464" quat="0.707105 -0.707108 0 0" mesh="rotation_pitch_so101_v1"/>
+
+        <body name="upper_arm_link" pos="-0.0303992 -0.0182778 -0.0542" quat="0.5 -0.5 -0.5 -0.5">
+          <inertial pos="-0.0898471 -0.00838224 0.0184089" quat="0.5 0.5 0.5 0.5" mass="0.103" diaginertia="0.000147 0.000142 4.1e-05"/>
+          <joint name="shoulder_lift" axis="0 0 1" range="-1.75 1.75"/>
+          <geom pos="-0.11257 -0.0155 0.0187" quat="0 -0.707105 0.707108 0" class="servo" mesh="sts3215_03a_v1"/>
+          <geom pos="-0.065085 0.012 0.0182" quat="0 1 0 0" mesh="upper_arm_so101_v1"/>
+
+          <body name="lower_arm_link" pos="-0.11257 -0.028 0" quat="0.707107 0 0 0.707107">
+            <inertial pos="-0.0980701 0.00324376 0.0182831" quat="0.5 0.5 0.5 0.5" mass="0.104" diaginertia="0.00016 0.000145 2.9e-05"/>
+            <joint name="elbow_flex" axis="0 0 1" range="-1.69 1.69"/>
+            <geom pos="-0.0648499 -0.032 0.0182" quat="0 1 0 0" mesh="under_arm_so101_v1"/>
+            <geom pos="-0.0648499 -0.032 0.018" quat="0 -1 0 0" mesh="motor_holder_so101_wrist_v1"/>
+            <geom pos="-0.1224 0.0052 0.0187" quat="0 0 1 0" class="servo" mesh="sts3215_03a_v1"/>
+
+            <body name="wrist_link" pos="-0.1349 0.0052 0" quat="0.707107 0 0 -0.707107">
+              <inertial pos="-0.000103312 -0.0386143 0.0281156" mass="0.079" diaginertia="3.7e-05 2.5e-05 2.1e-05"/>
+              <joint name="wrist_flex" axis="0 0 1" range="-1.66 1.66"/>
+              <geom pos="0 -0.0424 0.0306" quat="0.499998 0.5 0.5 -0.500002" class="servo" mesh="sts3215_03a_no_horn_v1"/>
+              <geom pos="0 -0.028 0.0181" quat="0.499998 -0.5 -0.5 -0.500002" mesh="wrist_roll_pitch_so101_v2"/>
+
+              <body name="gripper_link" pos="0 -0.0611 0.0181" quat="0.0172 -0.0172 0.7069 0.7069">
+                <inertial pos="0 0 -0.025" mass="0.087" diaginertia="4.3e-05 3.5e-05 2.8e-05"/>
+                <joint name="wrist_roll" axis="0 0 1" range="-2.74 2.84"/>
+                <geom pos="0.0077 0.0001 -0.0234" quat="0.707105 -0.707108 0 0" class="servo" mesh="sts3215_03a_v1"/>
+                <geom pos="0 -0.000218214 0.000949706" quat="0 -1 0 0" mesh="wrist_roll_follower_so101_v1"/>
+                <!-- the fixed jaw's finger: inner face at x -8 mm -->
+                <geom name="fixed_pad" class="pad" pos="-0.012 0 -0.0875" size="0.004 0.006 0.0175"/>
+                <site name="ee_site" pos="0.01 0 -0.100" quat="0 1 0 0" size="0.005" rgba="1 0 0 0.5" group="3"/>
+
+                <body name="jaw" pos="0.0202 0.0188 -0.0234" quat="0.707105 0.707108 0 0">
+                  <joint name="gripper" axis="0 0 1" range="-0.175 1.75" damping="0.3" armature="0.005"/>
+                  <geom pos="0 0 0.0189" mesh="moving_jaw_so101_v1"/>
+                  <!-- the moving jaw's finger: at gripper 0 its inner face is at x +9 mm -->
+                  <geom name="moving_pad" class="pad" pos="-0.0072 -0.0641 0.0188" size="0.004 0.0175 0.006"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- Position servos (STS3215) -->
+  <actuator>
+    <position name="act_shoulder_pan"  joint="shoulder_pan"  kp="100" ctrlrange="-1.92 1.92"/>
+    <position name="act_shoulder_lift" joint="shoulder_lift" kp="100" ctrlrange="-1.75 1.75"/>
+    <position name="act_elbow_flex"    joint="elbow_flex"    kp="80"  ctrlrange="-1.69 1.69"/>
+    <position name="act_wrist_flex"    joint="wrist_flex"    kp="60"  ctrlrange="-1.66 1.66"/>
+    <position name="act_wrist_roll"    joint="wrist_roll"    kp="60"  ctrlrange="-2.74 2.84"/>
+    <position name="act_gripper"       joint="gripper"       kp="20"  ctrlrange="-0.175 1.75" forcerange="-0.5 0.5"/>
+  </actuator>
+</mujoco>
