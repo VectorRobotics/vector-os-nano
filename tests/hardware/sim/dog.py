@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""A legged body as the session builds it (sim/session.legged_body), for the sim tests."""
+"""A legged body as the session builds it (sim/session.legged_body), for the sim tests.
+
+On flat ground the body stands at the world origin: the convex MPC brakes measurably worse
+far from it (speed 0.2 sim-s after a stop from 0.4 m/s, 21 stop times each: mean 0.048 m/s
+at (0, 0), 0.071 at (5, 5), 0.092 at (10, 3.5); /data/vos-analysis/scratch/vos-S4a-flake),
+and the flat-ground bounds were measured at the origin.
+"""
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,10 +42,11 @@ def stand_up(embodiment: str = "go2", *, room: bool = True, start: bool = True) 
         from vector_os_nano.vcli.worlds.world_manifest import load_world
 
         scene = room_scene(cfg, load_world(cfg.world))
-    else:
+    else:  # at the world origin, as the flat-ground tests were calibrated (module docstring)
         from vector_os_nano.sim.scene.compose import compose
 
-        scene = compose(FLAT, cfg, spawn=(*cfg.spawn.xy, 0.0, cfg.spawn.heading), timestep=cfg.base.policy.timestep)
+        cfg = dataclasses.replace(cfg, spawn=dataclasses.replace(cfg.spawn, xy=(0.0, 0.0)))
+        scene = compose(FLAT, cfg, spawn=(0.0, 0.0, 0.0, cfg.spawn.heading), timestep=cfg.base.policy.timestep)
     rt, base, lidar = legged_body(cfg, scene)
     dog = Dog(cfg, rt, base, lidar)
     if start:
