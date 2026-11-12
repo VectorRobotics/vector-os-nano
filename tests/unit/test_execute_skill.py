@@ -17,6 +17,7 @@ import pytest
 from vector_os_nano.core.agent import Agent
 from vector_os_nano.core.skill import skill
 from vector_os_nano.core.types import Detection, SkillResult
+from vector_os_nano.perception.calibration import Calibration
 from vector_os_nano.skills import get_so101_skills
 
 
@@ -72,6 +73,8 @@ class MockGripper:
 class _Perception:
     """Sees nothing: detect / pick fail on the perception step."""
 
+    calibration = Calibration()  # it reports arm-base points, as the sim arm's does
+
     def detect(self, query: str):
         return []
 
@@ -102,7 +105,6 @@ class _Diagnosing:
 
 
 def _agent(gripper: MockGripper | None = None, **kw) -> Agent:
-    # config={}: no calibration file is configured, so the identity one is used
     return Agent(arm=MockArm(), gripper=gripper or MockGripper(), config={},
                  skills=[*get_so101_skills(), _Diagnosing()], **kw)
 
