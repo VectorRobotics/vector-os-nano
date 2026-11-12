@@ -180,9 +180,13 @@ def test_goal_check_states_on_hand_traces() -> None:
     # ... nor does one that drops the contract its goal compiles to
     dropped = _hand_trace(goal, "holding_object('green bottle')", contract=(), start=(), end=())
     assert goal_check(dropped, APT) == ("failed", "the task contract does not match the goal")
-    none = _hand_trace("move the green bottle", "holding_object('green bottle')", contract=(), start=(), end=())
+    none = _hand_trace("move the green bottle", "near_object('green bottle')", contract=(), start=(), end=())
     assert goal_check(none, APT) == ("unchecked", "")
     assert turn_reject_reason(none, APT) == ""  # unchecked never rejects: the gates and the steps decide
+    # ... but a step that proves a hold performed a manipulation, which needs a contract (REF1c-V-01)
+    held = _hand_trace("move the green bottle", "holding_object('green bottle')", contract=(), start=(), end=())
+    assert goal_check(held, APT) == ("unchecked", "")
+    assert "is outside the forms the spine can check" in turn_reject_reason(held, APT)
 
 
 def test_the_verdict_carries_the_goal_check_and_the_repl_says_it() -> None:
@@ -200,11 +204,14 @@ def test_the_verdict_carries_the_goal_check_and_the_repl_says_it() -> None:
     failed = VerdictReport.from_trace(held, APT)
     assert failed.goal_check == "failed"
     assert _goal_line(failed, goal_check(held, APT)[1]) == f"goal not met: already satisfied at turn start: {_HOLD}"
-    un = VerdictReport.from_trace(_hand_trace("move the green bottle", "holding_object('green bottle')",
+    un = VerdictReport.from_trace(_hand_trace("move the green bottle", "near_object('green bottle')",
                                               contract=(), start=(), end=()), APT)
     assert un.goal_check == "unchecked" and un.verified is True
     assert _goal_line(un, "") == ("goal not machine-checked (no task contract for this sentence); "
-                                  "proven: holding_object('green bottle')")
+                                  "proven: near_object('green bottle')")
+    held = VerdictReport.from_trace(_hand_trace("move the green bottle", "holding_object('green bottle')",
+                                                contract=(), start=(), end=()), APT)
+    assert held.goal_check == "unchecked" and held.verified is False  # a hold needs a contract (REF1c-V-01)
     assert VerdictReport.no_trace().goal_check == "unchecked"
 
 
