@@ -130,9 +130,9 @@ def _asserted_calls(node: ast.AST) -> list[ast.Call]:
 
 
 def named_intents(expr: str | None) -> frozenset[str]:
-    """"grasp" / "place" when a possession / a release or placement oracle's NAME appears
-    anywhere in *expr* (REF1e): what it asserts is never read, so no spelling the
-    classifier grounds can hide a manipulation from the gate, which asks this of GROUNDED verifies."""
+    """The intents whose oracle NAME appears anywhere in *expr* (REF1e): "grasp" for a
+    possession oracle, "place" for a release or placement. What it asserts is never read,
+    so no spelling the classifier grounds hides a manipulation from the gate."""
     node = _parse(expr)
     names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} if node is not None else set()
     return frozenset(i for i, ns in (("grasp", _HOLD), ("place", _PLACE)) if names & ns)
