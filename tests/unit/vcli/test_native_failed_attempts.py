@@ -227,6 +227,26 @@ def test_without_motion_evidence_an_error_is_a_failed_attempt() -> None:
     assert rep.goal_check == "proven" and rep.verified is True, rep.reject_reason
 
 
+def test_a_call_the_owner_stopped_is_the_aborted_row_never_a_failed_attempt() -> None:
+    """A stop lands while the walk runs and it then reports an error after moving: the
+    abort row records it ("walk -> aborted", FAILED, never excused)."""
+    from vector_os_nano.vcli.cognitive import abort
+
+    agent, base = _make_agent()
+    real_walk = base.walk
+
+    def walk_stopped(*a: Any) -> bool:
+        real_walk(*a)
+        abort.request_abort()
+        return False  # the walk skill then fails (walk_failed)
+
+    base.walk = walk_stopped
+    backend = _script(tool_turn(("walk", {"distance": 1.0})), tool_turn(end=True))
+    trace = _make_engine(agent, backend).run_turn_native("walk", session=_session())
+    assert [(s.strategy, s.success, s.failed_attempt, s.error) for s in trace.steps] == [
+        ("walk", False, False, "aborted")]
+
+
 class _Flaky:
     """A dev-world side-effecting tool: errors on its first call, then succeeds."""
 

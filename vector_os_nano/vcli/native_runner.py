@@ -223,7 +223,11 @@ class NativeStepRunner:
         before = self._check(hint) if hint else None  # F->T: the hint at the baseline
         pre = actor_state(self._world, self._agent)
         result = self._run(tool, name, params)
-        if result.is_error and actor_causation.commanded_nothing(
+        # A call the owner stopped mid-run stays on the open step: the abort row records
+        # it (``record_abort``); only another error is refused or a failed attempt.
+        abort = getattr(self._ctx, "abort", None)
+        error = result.is_error and not (abort is not None and abort.is_set())
+        if error and actor_causation.commanded_nothing(
                 self._agent, pre, actor_state(self._world, self._agent)):
             # Charter 3.5: REFUSED — an error with no commanded motion is not an action.
             # The model reads its message; the row of the step it is in records the try.
@@ -239,7 +243,7 @@ class NativeStepRunner:
         self._step_acted = self._acted_since_verify = True
         self._acting.add(name)
         self._last_ok, self._last_result = not result.is_error, result
-        if result.is_error:
+        if error:
             # Charter 3.5: a FAILED ATTEMPT (it commanded motion) closes its step at once,
             # under its bound hint, so it neither fails nor backs a later action's row;
             # what follows is graded on a fresh baseline, never an earlier attempt's.
@@ -247,7 +251,7 @@ class NativeStepRunner:
                          "", self._result_data(), note="failed attempt", failed=True)
             self._group_baselines.clear()
             return result
-        if hint:
+        if hint and self._last_ok:
             ok = self._check(hint)
             caused, channels = self._grade(hint)
             # F->T for THIS action — unless it re-attempts a group whose earlier attempt
