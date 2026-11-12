@@ -22,6 +22,7 @@ from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.perception.base import failure_cause
 from vector_os_nano.perception.object_localizer import localize_objects_3d
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,8 @@ def observe_scene(
         frame = perception.capture() if callable(getattr(perception, "capture", None)) else None
         rgb = frame.rgb if frame is not None else base.get_camera_frame()
     except Exception as exc:  # noqa: BLE001
-        raise ObserveFailed("camera_failed", f"Camera capture failed: {exc}") from exc
+        logger.warning("[LOOK] camera capture raised: %s: %s", type(exc).__name__, exc)
+        raise ObserveFailed("camera_failed", f"Camera capture failed: {failure_cause(exc)}") from exc
     pos, heading = base.get_position(), float(base.get_heading())
 
     scene = room_id = None
@@ -70,7 +72,8 @@ def observe_scene(
                 scene, room_id = vlm.describe_scene(rgb), vlm.identify_room(rgb)
                 seen = {o.name: o for o in scene.objects if o.name}
         except Exception as exc:  # noqa: BLE001
-            raise ObserveFailed("vlm_failed", f"VLM inference failed: {exc}") from exc
+            logger.warning("[LOOK] VLM raised: %s: %s", type(exc).__name__, exc)
+            raise ObserveFailed("vlm_failed", f"VLM inference failed: {failure_cause(exc)}") from exc
 
     asked = list(dict.fromkeys([*names, *seen]))
     found, failed = localize_objects_3d(perception, asked, frame) if frame is not None and asked else ([], {})

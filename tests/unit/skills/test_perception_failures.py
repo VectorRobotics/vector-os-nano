@@ -68,6 +68,28 @@ def test_look_whose_capture_raises_is_a_camera_failure_with_its_cause() -> None:
     assert "EGL context lost" in res.error_message
 
 
+def _oom_on_gpu1_with_a_path() -> BaseException:
+    torch = pytest.importorskip("torch")
+    return torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 20.00 MiB. GPU 1 has a "
+                                       "total capacity of 23.6 GiB; /home/alice/x/y.py")
+
+
+def test_a_capture_out_of_gpu_memory_is_named_with_its_device_and_no_path() -> None:
+    res = LookSkill().execute({}, _ctx(Raising("capture", _oom_on_gpu1_with_a_path())))
+    assert not res.success and res.diagnosis_code == "camera_failed"
+    assert "Camera capture failed: out of GPU memory on cuda:1" in res.error_message, res.error_message
+    assert "/home" not in res.error_message
+
+
+def test_a_vlm_that_raises_is_a_vlm_failure_with_no_machine_path() -> None:
+    vlm = mock.MagicMock()
+    vlm.describe_scene.side_effect = RuntimeError("cannot read /data/models/m.bin or /tmp/zz/q")
+    res = DescribeSceneSkill().execute({}, _ctx(Raising("none", None), vlm))
+    assert not res.success and res.diagnosis_code == "vlm_failed"
+    assert res.error_message == "VLM inference failed: RuntimeError: cannot read <path> or <path>", \
+        res.error_message
+
+
 def test_one_name_of_three_failing_is_named_and_the_rest_still_report() -> None:
     names = ["green bottle", "blue bottle", "red can"]
     perc = Raising("detect", RuntimeError("boom"), only=("blue bottle",))
@@ -136,6 +158,16 @@ def test_explore_reports_the_looks_on_the_way_that_could_not_run(tmp_path, monke
                     "the detector failed: out of GPU memory on cuda:0", note), note
     assert "nothing localized" not in note
     assert explore.get_explore_status()["perception_failed"] == note
+
+
+def test_explore_note_for_a_look_whose_capture_ran_out_of_gpu_memory_has_no_path(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VECTOR_RUN_DIR", str(tmp_path))
+    from vector_os_nano.skills.go2 import explore
+
+    ctx = SkillContext(base=_Tour(10.0, 3.0), perception=Raising("capture", _oom_on_gpu1_with_a_path()),
+                       config={"world": "apartment"}, services={"spatial_memory": _sg()})
+    note = explore.ExploreSkill().execute({}, ctx).result_data["perception_failed"]
+    assert "Camera capture failed: out of GPU memory on cuda:1" in note and "/home" not in note, note
 
 
 def test_detect_skill_whose_detector_cannot_run_names_the_cause() -> None:
