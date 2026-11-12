@@ -203,12 +203,14 @@ A verdict states three separate facts and never merges them:
   read on the world side) did not change across the call, it was REFUSED: it is not an action; it
   neither fails the step it is in nor proves anything. Otherwise it is a FAILED ATTEMPT: it closes
   its step at once as a FAILED row with its message, so it neither fails nor backs a later
-  action's row. Without motion evidence (no body) every error is a failed attempt. A failed
-  attempt does not by itself reject a turn whose contract is `proven`: the end state the sentence
-  names was reached and proven after it, which is what recovery is; the failed rows stay in the
-  report. Without a contract nothing changes: a failed row that no later attempt of the same
-  predicate supersedes rejects the turn. An action that succeeded and was never verified is
-  still an unproven step and still rejects the turn, with or without a contract.
+  action's row, and it holds nothing but the failing call (an action that succeeded before it in
+  the same step is closed first, as its own unproven row). Without motion evidence (no body)
+  every error is a failed attempt. A failed attempt AT A CONTRACT ITEM (its own verify hint is
+  that item's predicate) does not by itself reject a turn whose contract is `proven`: the end
+  state the sentence names was reached and proven after it, which is what recovery is; the failed
+  rows stay in the report. Every other failed attempt rejects the turn as before, with or
+  without a contract, unless a later attempt of the same predicate supersedes it. An action that
+  succeeded and was never verified is still an unproven step and still rejects the turn.
 
 The gates that only reject stay (coordinate goals; verify probes): they never make a goal proven.
 
