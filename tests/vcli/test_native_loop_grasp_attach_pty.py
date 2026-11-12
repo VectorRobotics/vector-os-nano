@@ -14,7 +14,7 @@ was this test hand-building the rig instead of using the product launcher):
 
 Only the network LLM is replaced (``VECTOR_FAKE_LLM_TOOLS`` replays the model's tool
 calls); the REPL is driven by the shared tests/harness/pty_cli.run_repl_session.
-Everything else is the product: SimSession (MuJoCoGo2 + the generic Arm +
+Everything else is the product: SimSession (the generic LeggedBase + Arm +
 Gripper + Camera), bind_body, the native producer, perception_grasp (colour
 resolve -> rendered depth -> IK -> weld, never ground truth) and the untouched
 verify spine.
@@ -34,7 +34,7 @@ from tests.harness.pty_cli import run_repl_session
 pytest.importorskip("mujoco")
 
 _LAUNCH = "启动 go2 仿真 带机械臂 无窗口"
-_READY = re.compile(r"Started go2_piper simulation, ready in ([0-9.]+)s: MuJoCoGo2 \+ Arm")
+_READY = re.compile(r"Started go2_piper simulation, ready in ([0-9.]+)s: LeggedBase \+ Arm")
 
 _SCRIPT = {"turns": [
     # turn 1 (native since WP14: every REPL turn; start_simulation is a lifecycle tool)

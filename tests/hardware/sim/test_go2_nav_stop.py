@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Real go2 sim (MPC gait): a navigate or walk that is interrupted always leaves the
+"""Real go2 sim (LeggedBase + convex_mpc): a navigate or walk that is interrupted always leaves the
 dog stopped and the control token free.
 
 Pins skills-nav:inprocess-nav-no-abort-stall (a stop from another thread ends the
@@ -20,34 +20,34 @@ import pytest
 
 mujoco = pytest.importorskip("mujoco")
 
+from tests.hardware.sim.dog import stand_up  # noqa: E402
 from vector_os_nano.core.skill import SkillContext  # noqa: E402
-from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2  # noqa: E402
 from vector_os_nano.skills.go2.stop import StopSkill  # noqa: E402
 from vector_os_nano.vcli.cognitive import abort  # noqa: E402
 
 _STUDY = (17.0, 7.5)  # a ~9 m leg from the spawn
 
 
+pytestmark = pytest.mark.sim
+
+
 @pytest.fixture(scope="module")
 def go2():
-    dog = MuJoCoGo2(gui=False, room=True, backend="mpc")
-    dog.connect()
-    dog.stand()
-    try:
-        yield dog
-    finally:
-        dog.disconnect()
+    dog = stand_up("go2")
+    yield dog.base
+    dog.close()
 
 
-def _drift(dog: MuJoCoGo2, seconds: float) -> float:
+def _drift(dog, seconds: float) -> float:
     a = dog.get_position()
     dog.wait_sim(seconds)
     b = dog.get_position()
     return math.hypot(b[0] - a[0], b[1] - a[1])
 
 
-def _released(dog: MuJoCoGo2) -> bool:
-    return dog._cmd_vel == (0.0, 0.0, 0.0) and dog._skill_ctrl_tid == 0
+def _released(dog) -> bool:
+    """The command is zero, no thread holds skill control and none holds the clock."""
+    return dog._cmd == (0.0, 0.0, 0.0) and not dog._owners and dog._rt._hold is None
 
 
 def test_ctrl_c_mid_navigate_stops_the_dog(go2) -> None:

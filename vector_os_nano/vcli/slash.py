@@ -203,11 +203,16 @@ def _clear_memory(rt: Any, args: list[str]) -> None:
 
 
 def _reset(rt: Any, args: list[str]) -> None:
-    reset_pose = getattr(getattr(rt.agent, "_base", None), "reset_pose", None)
-    if not callable(reset_pose):
-        console.print("[dim]  No running base to reset (a legged sim body stands up again).[/dim]")
+    from vector_os_nano.sim.session import session_for
+
+    session = session_for(rt.agent)
+    try:
+        if session is None:
+            raise RuntimeError("no simulation is running")
+        session.reset_pose()
+    except RuntimeError as exc:
+        console.print(f"[dim]  Nothing to reset: {escape(str(exc))} (a legged sim body stands up again).[/dim]")
         return
-    reset_pose()
     console.print("[dim]  Robot pose reset: standing at its current position.[/dim]")
 
 

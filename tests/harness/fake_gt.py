@@ -162,15 +162,16 @@ def bind_fake_sim(agent: Any, embodiment: str = "so101", **gt_kwargs: Any) -> Si
     return s
 
 
-def bind_real_sim(agent: Any, embodiment: str) -> Any:
-    """Register a SimSession with the REAL GroundTruth over *agent*'s own runtime
-    (a test rig built without SimSession.start); ``unbind_fake_sim`` removes it."""
+def bind_real_sim(agent: Any, embodiment: str, runtime: Any = None) -> Any:
+    """Register a SimSession with the REAL GroundTruth over *runtime* (by default the
+    agent's arm's own) for a test rig built without SimSession.start;
+    ``unbind_fake_sim`` removes it."""
     from vector_os_nano.embodiments import registry
     from vector_os_nano.sim import session as sim_session
 
     s = sim_session.SimSession(sim_session.SimSpec(embodiment, gui=False), registry.load(embodiment))
     s.agent = agent
-    s.runtime = getattr(agent._base, "runtime", None) or getattr(agent._arm, "runtime", None)
+    s.runtime = runtime or getattr(agent._arm, "runtime", None)
     s._bind_ground_truth()
     sim_session._LIVE.append(s)
     return s

@@ -47,7 +47,7 @@ from typing import Any
 
 import numpy as np
 from vector_os_nano.embodiments.assets import asset_dir
-from vector_os_nano.embodiments.config import load_embodiment_config
+from vector_os_nano.embodiments.config import NavSpec, load_embodiment_config
 from vector_os_nano.embodiments.dof_layout import DofLayout
 from vector_os_nano.hardware.sim.sensors.g1_lidar import g1_lidar_scan
 from vector_os_nano.sim.nav import vgraph as vg
@@ -292,16 +292,16 @@ class MuJoCoG1:
         self._last_pointcloud: list[tuple[float, float, float, float]] = []
 
     # ------------------------------------------------------------------
-    # Capability properties (BaseProtocol) — uniform with MuJoCoGo2
+    # Capability properties (the legged BaseProtocol surface, until S4b)
     # ------------------------------------------------------------------
 
     @property
     def name(self) -> str:
-        """BaseProtocol identifier (mirrors MuJoCoGo2.name = 'mujoco_go2')."""
+        """The driver's identifier."""
         return "mujoco_g1"
 
     @property
-    def supports_holonomic(self) -> bool:
+    def holonomic(self) -> bool:
         """G1 is a biped — not omnidirectional (cannot true-strafe)."""
         return False
 
@@ -412,7 +412,7 @@ class MuJoCoG1:
     def disconnect(self) -> None:
         """BaseProtocol teardown — alias of :meth:`close` (idempotent).
 
-        Uniform with MuJoCoGo2.disconnect(). sim_tool.SimTool.stop() calls
+        Uniform with the legged base's disconnect(). sim_tool.SimTool.stop() calls
         ``base.disconnect()`` on the wrapped base; before this alias existed that
         call silently failed for G1 (only ``close()`` was defined), so the G1 sim
         was never actually torn down on stop. ``close()`` is retained — this is an
@@ -554,8 +554,11 @@ class MuJoCoG1:
         self._require_connection()
         mj = _get_mujoco()
         self.runtime.call(lambda w: mj.mj_forward(w.model, w.data))
-        obstacles = vg.obstacles_from_model(self._model, self._data, self._offsets.robot_geom_ids)
-        res = follow(self, (x, y), obstacles, body=self._config.nav, tol=tol, speed=speed,
+        d = self._data
+        obstacles = vg.obstacles_from_model(self._model, d.geom_xpos, d.geom_xmat, self._offsets.robot_geom_ids)
+        nav = dict(self._config.nav)
+        fall_z = float(nav.pop("fall_z"))
+        res = follow(self, (x, y), obstacles, nav=NavSpec(**nav), fall_z=fall_z, tol=tol, speed=speed,
                      timeout=timeout, cancel=cancel, on_progress=on_progress)
         logger.info("navigate_to(%.2f, %.2f): %s", x, y, res)
         return res
@@ -591,7 +594,7 @@ class MuJoCoG1:
     def get_velocity(self) -> list[float]:
         """Return pelvis linear velocity [vx, vy, vz] in world frame.
 
-        BaseProtocol accessor, uniform with MuJoCoGo2.get_velocity() (which reads
+        BaseProtocol accessor, uniform with LeggedBase.get_velocity() (which reads
         qvel[0:3]). The pelvis freejoint linear DoFs sit at qvel[pelvis_dof_adr:+3]
         in the combined scene.
         """
@@ -605,7 +608,7 @@ class MuJoCoG1:
     def get_odometry(self) -> Any:
         """Return full odometry snapshot as Odometry dataclass.
 
-        BaseProtocol accessor, uniform with MuJoCoGo2.get_odometry(). Pose comes
+        BaseProtocol accessor, uniform with LeggedBase.get_odometry(). Pose comes
         from the pelvis freejoint qpos (x,y,z + wxyz quat), velocity from its qvel
         (linear xyz + angular; vyaw is the world-z angular rate). Quaternion is
         MuJoCo (w,x,y,z); Odometry stores qx/qy/qz/qw like the go2 path.

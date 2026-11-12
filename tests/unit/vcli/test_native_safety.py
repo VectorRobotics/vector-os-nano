@@ -290,19 +290,33 @@ def test_engine_runs_are_single_flight_and_preempt_the_previous_run() -> None:
     assert not eng.busy
 
 
-def test_drive_for_ends_the_motion_on_a_stop() -> None:
-    """A stop during a long open-loop walk ends it now, not when the timer runs out."""
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+def test_a_walk_ends_on_a_stop() -> None:
+    """A stop during a long open-loop walk ends it now, not when the timer runs out: the
+    base polls the run's stop signal the session hands it (is_abort_requested)."""
+    import numpy as np
 
-    def wait_sim(seconds: float, cancel: Any = None) -> bool:  # a wall-clock stand-in
-        return not (cancel or threading.Event()).wait(seconds)
+    from vector_os_nano.sim.drivers.base import LeggedBase, _Abort
 
-    body = SimpleNamespace(runtime=SimpleNamespace(wait_sim=wait_sim))
+    def wait_sim(seconds: float, cancel: Any = None, hold: bool = False) -> bool:  # a wall-clock stand-in
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if cancel is not None and cancel.is_set():
+                return False
+            time.sleep(0.01)
+        return True
+
+    base = LeggedBase.__new__(LeggedBase)
+    base._lock, base._owners, base._cmd, base._hold, base._cmd_motion = threading.Lock(), [], (0.0,) * 3, None, 0.0
+    base._spec = SimpleNamespace(limits=(0.8, 0.4, 4.0), fall_z=0.15)
+    base._rt = SimpleNamespace(wait_sim=wait_sim, release=lambda: None,
+                               snapshot=lambda: SimpleNamespace(q=np.array([0, 0, 0.3, 1.0, 0, 0, 0])))
+    base._fq, base._cancel = slice(0, 7), _Abort(abort.is_abort_requested)
     abort.clear_abort()
     threading.Timer(0.2, abort.request_abort).start()
     t0 = time.monotonic()
-    MuJoCoGo2._drive_for(body, 5.0)
-    assert time.monotonic() - t0 < 1.5
+    assert base.walk(0.3, 0.0, 0.0, 5.0) is False
+    assert time.monotonic() - t0 < 1.5 and base._cmd == (0.0, 0.0, 0.0) and not base._owners
+    abort.clear_abort()
 
 
 class _StopLandsMidCall:

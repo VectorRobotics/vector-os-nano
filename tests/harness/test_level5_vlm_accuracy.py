@@ -34,7 +34,7 @@ def _rgb(go2: Any) -> np.ndarray:
     from vector_os_nano.embodiments import registry
     from vector_os_nano.sim.drivers.camera import Camera
 
-    return Camera(registry.load("go2").camera, go2.runtime).capture().rgb
+    return Camera(registry.load("go2").camera, go2._rt).capture().rgb
 
 # Billed VLM calls: opt in with VECTOR_LIVE_LLM=1 (a key in the env or
 # config is NOT consent; tests:missed2).
@@ -141,12 +141,11 @@ class TestLevel5VLMAccuracy:
 
     @pytest.fixture(scope="class")
     def go2(self):
-        from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-        robot = MuJoCoGo2(gui=False, room=True, backend="sinusoidal")
-        robot.connect()
-        robot.stand()
-        yield robot
-        robot.disconnect()
+        from tests.hardware.sim.dog import stand_up
+
+        dog = stand_up("go2")
+        yield dog.base
+        dog.close()
 
     @pytest.fixture(scope="class")
     def vlm(self):

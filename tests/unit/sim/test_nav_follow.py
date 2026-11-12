@@ -15,10 +15,11 @@ import threading
 import pytest
 
 from tests.harness.kin_base import KinBase
+from vector_os_nano.embodiments.config import NavSpec
 from vector_os_nano.sim.nav import vgraph as vg
 from vector_os_nano.sim.nav.follow import NAV_REASONS, NavResult, arrival_radius, follow, turn_by
 
-GO2 = {"body_radius": 0.28, "speed": 0.4, "vyaw_max": 0.8, "fall_z": 0.15}
+GO2 = NavSpec(body_radius=0.28, speed=0.4, vyaw_max=0.8)
 
 
 class Never:
@@ -46,18 +47,18 @@ BOXED = [vg.box_polygon(10, 12, 3, 0.2), vg.box_polygon(10, 8, 3, 0.2),
 def _run(reason: str) -> NavResult:
     """One scenario per NavResult reason."""
     if reason == "arrived":
-        return follow(KinBase(), (4, 0), [WALL], body=GO2, cancel=Never())
+        return follow(KinBase(), (4, 0), [WALL], nav=GO2, fall_z=0.15, cancel=Never())
     if reason == "unreachable":
-        return follow(KinBase(), (10, 10), BOXED, body=GO2, cancel=Never())
+        return follow(KinBase(), (10, 10), BOXED, nav=GO2, fall_z=0.15, cancel=Never())
     if reason == "timeout":
-        return follow(KinBase(), (4, 0), [WALL], body=GO2, timeout=1.0, cancel=Never())
+        return follow(KinBase(), (4, 0), [WALL], nav=GO2, fall_z=0.15, timeout=1.0, cancel=Never())
     if reason == "aborted":
-        return follow(KinBase(), (4, 0), [WALL], body=GO2, cancel=After(5))
+        return follow(KinBase(), (4, 0), [WALL], nav=GO2, fall_z=0.15, cancel=After(5))
     if reason == "stalled":  # an obstacle the map lacks, forever
         base = KinBase(blocked=lambda x, y, t: 1.0 < x < 1.4)
-        return follow(base, (3, 0), [], body=GO2, cancel=Never())
+        return follow(base, (3, 0), [], nav=GO2, fall_z=0.15, cancel=Never())
     if reason == "fell":
-        return follow(KinBase(z_at=lambda t: 0.3 if t < 1.0 else 0.05), (4, 0), [], body=GO2,
+        return follow(KinBase(z_at=lambda t: 0.3 if t < 1.0 else 0.05), (4, 0), [], nav=GO2, fall_z=0.15,
                       cancel=Never())
     raise AssertionError(reason)
 
@@ -72,13 +73,13 @@ def test_every_reason_is_reachable_and_honest(reason):
 
 
 def test_arrival_never_looser_than_the_arrival_radius():
-    res = follow(KinBase(), (3, 0), [], body=GO2, tol=5.0, cancel=Never())
+    res = follow(KinBase(), (3, 0), [], nav=GO2, fall_z=0.15, tol=5.0, cancel=Never())
     assert res and math.dist(res["pos"][:2], (3, 0)) <= arrival_radius()
 
 
 def test_goal_in_furniture_is_snapped_and_reported():
     table = vg.box_polygon(3, 0, 0.84, 0.45)
-    res = follow(KinBase(), (3, 0), [table], body=GO2, cancel=Never())
+    res = follow(KinBase(), (3, 0), [table], nav=GO2, fall_z=0.15, cancel=Never())
     assert res and res["snapped"] and res["goal"] == [3.0, 0.0]
     assert not vg.point_in_polygon(tuple(res["target"]), vg.inflate_polygon(table, 0.28))
 
@@ -86,7 +87,7 @@ def test_goal_in_furniture_is_snapped_and_reported():
 def test_stall_recovers_by_backing_off_and_replanning():
     # skills-nav:inprocess-nav-no-abort-stall: a bump the map lacks (for 8 sim-s)
     base = KinBase(blocked=lambda x, y, t: t < 8.0 and 1.0 < x < 1.4)
-    res = follow(base, (3, 0), [], body=GO2, cancel=Never())
+    res = follow(base, (3, 0), [], nav=GO2, fall_z=0.15, cancel=Never())
     assert res and res["recoveries"] >= 1
 
 
@@ -98,7 +99,7 @@ def test_the_base_is_stopped_on_every_exit_even_ctrl_c():
 
     base.wait_sim = boom
     with pytest.raises(KeyboardInterrupt):
-        follow(base, (4, 0), [], body=GO2, cancel=Never())
+        follow(base, (4, 0), [], nav=GO2, fall_z=0.15, cancel=Never())
     assert base.stops == 1 and base.cmd == (0.0, 0.0, 0.0)
 
 
@@ -115,7 +116,7 @@ def test_default_cancel_is_the_run_abort_signal():
 
     base.wait_sim = wait_then_stop
     try:
-        res = follow(base, (4, 0), [], body=GO2)
+        res = follow(base, (4, 0), [], nav=GO2, fall_z=0.15)
     finally:
         abort.clear_abort()
     assert res.reason == "aborted" and base.cmd == (0.0, 0.0, 0.0)
@@ -133,7 +134,7 @@ def test_velocity_is_streamed_not_stop_and_go():
         orig(vx, vy, vyaw)
 
     base.set_velocity = record
-    res = follow(base, (6, 0), [], body=GO2, cancel=Never())
+    res = follow(base, (6, 0), [], nav=GO2, fall_z=0.15, cancel=Never())
     assert res
     assert all(v > 0 for v in commands)  # no zero command until the final stop()
     assert res["elapsed_s"] < 6.0 / 0.4 + 2.0  # ~ the commanded speed, no halving
@@ -145,7 +146,7 @@ def test_budget_is_one_global_sim_time_deadline():
     zig = [vg.box_polygon(2, 0.6, 0.1, 1.0), vg.box_polygon(4, -0.6, 0.1, 1.0),
            vg.box_polygon(6, 0.6, 0.1, 1.0)]
     base = KinBase()
-    res = follow(base, (8, 0), zig, body=GO2, timeout=6.0, cancel=Never())
+    res = follow(base, (8, 0), zig, nav=GO2, fall_z=0.15, timeout=6.0, cancel=Never())
     assert res.reason == "timeout" and res["elapsed_s"] <= 6.0 + 0.11
 
 
@@ -171,7 +172,7 @@ def test_follower_can_run_on_another_thread_and_be_cancelled():
 
     base.wait_sim = wait
     out = {}
-    th = threading.Thread(target=lambda: out.update(r=follow(base, (9, 0), [], body=GO2, cancel=stop)))
+    th = threading.Thread(target=lambda: out.update(r=follow(base, (9, 0), [], nav=GO2, fall_z=0.15, cancel=stop)))
     th.start()
     th.join(10)
     assert out["r"].reason == "aborted"
@@ -190,7 +191,7 @@ def test_pure_pursuit_pulls_a_drifting_gait_back_onto_the_line():
     # drift too slowly and the body grazed the hallway wall (centre clearance 0.15 m).
     wall = vg.box_polygon(4.0, 0.4, 4.0, 0.05)  # its inflated face sits at y = 0.07
     base = Drifting()
-    res = follow(base, (8.0, 0.0), [wall], body=GO2, cancel=Never())
+    res = follow(base, (8.0, 0.0), [wall], nav=GO2, fall_z=0.15, cancel=Never())
     assert res
     assert min(vg.distance_to_polygon(p, wall) for p in base.trace) >= 0.19 + 0.05
 
@@ -212,7 +213,22 @@ def test_steady_gait_slip_is_estimated_and_steered_out():
     # Pure pursuit alone settles where its heading correction balances the slip
     # (L x tan(10 deg) ~ 0.11 m off the line); the slip estimate removes that offset.
     base = Crab()
-    res = follow(base, (10.0, 0.0), [], body=GO2, cancel=Never())
+    res = follow(base, (10.0, 0.0), [], nav=GO2, fall_z=0.15, cancel=Never())
     assert res
     late = [p for p in base.trace if 5.0 <= p[0] <= 9.0]
     assert late and max(abs(p[1]) for p in late) < 0.04
+
+
+def test_a_frozen_sim_clock_ends_the_follow_as_a_timeout():
+    """ledger sim-runtime:follow-ignores-wait-sim-result: with a stopped stepper every
+    wait_sim gives up (False) and sim time never reaches the deadline; the follower
+    looped forever."""
+    class Frozen(KinBase):
+        def wait_sim(self, seconds, cancel=None):
+            self.waits += 1
+            assert self.waits < 100, "the follower loops on a frozen clock"
+            return False  # the wall-clock cap passed; sim time did not move
+
+    base = Frozen()
+    res = follow(base, (4, 0), [], nav=GO2, fall_z=0.15, cancel=Never())
+    assert res.reason == "timeout" and base.waits == 1 and base.cmd == (0.0, 0.0, 0.0)

@@ -10,10 +10,12 @@ Quaternions are ``w x y z``; poses are relative to the parent body frame.
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import NamedTuple, Sequence
 
 import mujoco as mj
 import numpy as np
+
+from vector_os_nano.interfaces.physics import CompiledScene
 
 _J, _G = mj.mjtJoint, mj.mjtGeom
 JNT_FREE, JNT_BALL, JNT_SLIDE, JNT_HINGE = (int(t) for t in (_J.mjJNT_FREE, _J.mjJNT_BALL, _J.mjJNT_SLIDE, _J.mjJNT_HINGE))
@@ -238,3 +240,16 @@ def no_collide_pairs(m: mj.MjModel) -> frozenset[tuple[int, int]]:
                     or (a, b) in excluded or (b, a) in excluded):
                 out.add((a, b))
     return frozenset(out)
+
+
+def motor_limits(scene: CompiledScene, joints: Sequence[int]) -> np.ndarray:
+    """The torque bound |tau| <= limit of each joint's motor actuator (gear x gain x its
+    control range); a joint without a range-limited motor is a ``KeyError`` naming the
+    joints that have one."""
+    motors = {a.joint: a for a in actuators(scene.model) if a.kind == "motor" and a.ctrlrange is not None}
+    try:
+        acts = [motors[int(j)] for j in joints]
+    except KeyError as exc:
+        have = sorted(scene.model.joint(j).name for j in motors)
+        raise KeyError(f"joint {exc.args[0]} has no range-limited motor; joints with one: {have}") from None
+    return np.array([abs(a.gear * a.gain) * min(-a.ctrlrange[0], a.ctrlrange[1]) for a in acts])

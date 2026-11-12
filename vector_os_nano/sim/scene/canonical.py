@@ -36,6 +36,12 @@ def body_poses(scene: CompiledScene, q: np.ndarray) -> tuple[np.ndarray, np.ndar
     return d.xpos.copy(), d.xquat.copy()
 
 
+def geom_poses(scene: CompiledScene, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(pos (ngeom, 3), mat (ngeom, 9) row-major)`` of every geom in the world."""
+    d = _kinematics(scene, q)
+    return d.geom_xpos.copy(), d.geom_xmat.copy()
+
+
 def site_poses(scene: CompiledScene, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """``(pos (nsite, 3), mat (nsite, 3, 3))`` of every site in the world."""
     d = _kinematics(scene, q)

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Unit tests for the embodiment config schema + loader (Stage 1).
+"""Unit tests for the embodiment config schema + loader.
 
-Offline + fast: pure YAML parsing, NO sim / MuJoCo / torch. Asserts that the
-go2 + g1 manifests faithfully carry the constants the drivers hardcode today,
-so Stage 2 can wire the generic driver to READ them with confidence.
+Offline + fast: pure YAML parsing, NO sim / MuJoCo / torch. The go2 manifests carry
+every constant the generic LeggedBase and its policies read (the ``base:`` block and
+the lidar); the g1 manifest the constants its driver hardcodes until S4b.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from vector_os_nano.embodiments.config import (
 
 
 # ---------------------------------------------------------------------------
-# go2 manifest — must match mujoco_go2.py constants
+# go2 manifest — the base block the generic LeggedBase reads
 # ---------------------------------------------------------------------------
 
 
@@ -36,21 +36,21 @@ def test_go2_loads_and_is_frozen() -> None:
 
 def test_go2_spawn_and_root_body() -> None:
     cfg = load_embodiment_config("go2")
-    # connect(): qpos[0]=10.0, qpos[1]=3.0, qpos[2]=0.35
-    assert cfg.spawn.xy == (10.0, 3.0)
-    assert cfg.spawn.base_height == pytest.approx(0.35)
-    # _Go2Model.base_bid = mj_name2id(..., "base_link")
+    # the entry hall; a legged base stands there at its base.height (no drop height)
+    assert cfg.spawn.xy == (10.0, 3.0) and cfg.spawn.base_height is None
     assert cfg.model.root_body == "base_link"
 
 
-def test_go2_stance_matches_stand_joints() -> None:
-    cfg = load_embodiment_config("go2")
-    # _STAND_JOINTS = [0.0, 0.9, -1.8] * 4 (hip, thigh, calf per leg).
-    assert len(cfg.stance) == 12
-    for leg in ("FL", "FR", "RL", "RR"):
-        assert cfg.stance[f"{leg}_hip"] == pytest.approx(0.0)
-        assert cfg.stance[f"{leg}_thigh"] == pytest.approx(0.9)
-        assert cfg.stance[f"{leg}_calf"] == pytest.approx(-1.8)
+def test_go2_base_block() -> None:
+    b = load_embodiment_config("go2").base
+    legs = [f"{leg}_{part}_joint" for leg in ("FL", "FR", "RL", "RR") for part in ("hip", "thigh", "calf")]
+    assert b.joints == tuple(legs)  # the order the policy sees: qpos order
+    assert [b.stance[j] for j in legs] == [0.0, 0.9, -1.8] * 4
+    assert [b.postures["sit"][j] for j in legs] == [0.0, 1.5, -2.5] * 4
+    assert [b.postures["lie_down"][j] for j in legs] == [0.0, 2.0, -2.7] * 4
+    assert (b.kp, b.kd, b.torque_scale) == (120.0, 3.5, 0.9)
+    assert (b.height, b.holonomic, b.limits, b.fall_z) == (0.279, True, (0.8, 0.4, 4.0), 0.15)
+    assert (b.nav.body_radius, b.nav.speed, b.nav.vyaw_max, b.nav.explorer) == (0.28, 0.4, 0.8, "tare")
 
 
 def test_go2_sensors() -> None:
@@ -60,34 +60,64 @@ def test_go2_sensors() -> None:
     cam = cfg.camera
     assert by_role["camera"] is cam and (cam.name, cam.width, cam.height) == ("d435_rgb", 640, 480)
     assert cam.depth == (0.1, 10.0) and cam.pos is None  # in the model, not placed by the compiler
-    # Lidar offset 0.3 m forward, 0.2 m up (_LIDAR_OFFSET_X / _LIDAR_OFFSET_Z).
-    lidar = by_role["lidar"]
-    assert lidar.pos == (0.3, 0.0, 0.2)
-    assert lidar.params["tilt_deg"] == pytest.approx(-20.0)
-    assert lidar.params["update_interval_steps"] == 200
-    assert lidar.params["range_max"] == pytest.approx(12.0)
+    lidar = cfg.lidar
+    assert by_role["lidar"] is lidar and (lidar.body, lidar.pos) == ("base_link", (0.3, 0.0, 0.2))
+    assert lidar.elevations_deg == tuple(float(e) for e in range(-8, 53, 2))
+    assert (lidar.tilt_deg, lidar.n_azimuth, lidar.range, lidar.period_s) == (-20.0, 360, 12.0, 0.2)
 
 
 def test_go2_capabilities() -> None:
-    cfg = load_embodiment_config("go2")
-    cap = cfg.capabilities
-    assert cap.has_base is True
-    assert cap.has_arm is False
-    assert cap.has_gripper is False
-    assert cap.camera is True
-    assert cap.lidar is True
-    # supports_holonomic -> True is carried as a base motion trait in policy.spec.
-    assert cfg.policy.spec["holonomic"] is True
+    cap = load_embodiment_config("go2").capabilities
+    assert (cap.has_base, cap.has_arm, cap.has_gripper, cap.camera, cap.lidar) == (True, False, False, True, True)
 
 
 def test_go2_policy() -> None:
-    cfg = load_embodiment_config("go2")
-    assert cfg.policy.ref == "convex_mpc"
-    # _MPC_Z_DES = 0.27 and velocity limits _VX_MAX/_VY_MAX/_VYAW_MAX.
-    assert cfg.policy.spec["mpc_z_des"] == pytest.approx(0.27)
-    assert cfg.policy.spec["vx_max"] == pytest.approx(0.8)
-    assert cfg.policy.spec["vy_max"] == pytest.approx(0.4)
-    assert cfg.policy.spec["vyaw_max"] == pytest.approx(4.0)
+    p = load_embodiment_config("go2").base.policy
+    assert (p.ref, p.timestep, p.tick_hz) == ("convex_mpc", 0.001, 200.0)
+    assert p.params == {"gait_hz": 3, "duty": 0.6, "z_des": 0.27, "brake_s": 0.35, "brake_ramp_s": 1.0}
+    assert p.on("mujoco") == ("convex_mpc", p.params)
+    assert p.on("pybullet") == ("sinusoidal", {"freq_hz": 2.0, "thigh_amp": 0.25, "calf_amp": 0.25, "hip_amp": 0.10})
+
+
+def _legged(**base) -> dict:
+    """A minimal legged manifest whose base block is the go2's, overridden by *base*."""
+    import yaml
+
+    from vector_os_nano.embodiments.config import _EMBODIMENTS_DIR
+
+    raw = yaml.safe_load((_EMBODIMENTS_DIR / "go2" / "robot.yaml").read_text())
+    raw["base"].update(base)
+    return raw
+
+
+@pytest.mark.parametrize("change, error", [
+    ({"stance": {"FL_hip_joint": 0.0}}, r"base\.stance: no angle for \['FL_thigh_joint'"),
+    ({"stance_typo": 1}, r"base: unknown key 'stance_typo'"),
+    ({"postures": {"stand": {}}}, r"'stand' is the stance"),
+    ({"limits": {"vx": 1.0, "vy": 1.0}}, r"base\.limits: missing required field 'vyaw'"),
+    ({"joints": ["FL_hip_joint", "FL_hip_joint"]}, r"each base joint once"),
+    ({"policy": {"ref": "convex_mpc", "timestep": 0.001, "tick_hz": 300}}, r"tick_hz=300.0 must divide"),
+    ({"policy": {"ref": "convex_mpc", "timestep": 0.001, "tick_hz": 200, "by_backend": {"bullet": {"ref": "s"}}}},
+     r"unknown backend 'bullet'"),
+    ({"policy": {"ref": "convex_mpc", "timestep": 0.001, "tick_hz": 200, "by_backend": {"pybullet": {}}}},
+     r"by_backend\.pybullet must be a mapping with a 'ref'"),
+    ({"nav": {"body_radius": 0.3, "speed": 0.4, "vyaw_max": 1.0, "fall_z": 0.1}}, r"nav: unknown key 'fall_z'"),
+])
+def test_a_bad_base_block_fails_naming_the_key(change: dict, error: str) -> None:
+    with pytest.raises(EmbodimentConfigError, match=error):
+        parse_embodiment_config(_legged(**change), ctx="quad/robot.yaml")
+
+
+@pytest.mark.parametrize("lidar, error", [
+    ({"elevations_deg": [-2, 2]}, r"must include 0"),
+    ({"mount_body": "base_link"}, r"unknown key 'mount_body'"),
+    ({"role": "sonar"}, r"unknown role 'sonar'"),
+])
+def test_a_bad_lidar_entry_fails_naming_the_key(lidar: dict, error: str) -> None:
+    raw = _legged()
+    raw["sensors"][1] = {**raw["sensors"][1], **lidar}
+    with pytest.raises(EmbodimentConfigError, match=error):
+        parse_embodiment_config(raw, ctx="quad/robot.yaml")
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +250,8 @@ def test_both_embodiments_distinct() -> None:
     g1 = load_embodiment_config("g1")
     assert go2.id != g1.id
     assert go2.model.root_body != g1.model.root_body
-    # g1 spawn height clearly higher than go2 (biped vs quadruped).
-    assert g1.spawn.base_height > go2.spawn.base_height
+    # g1 stands clearly higher than go2 (biped vs quadruped).
+    assert g1.spawn.base_height > go2.base.height
     assert not math.isnan(g1.spawn.base_height)
 
 

@@ -123,7 +123,6 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
     """
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.types import SkillResult
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
     from vector_os_nano.skills.go2 import get_go2_skills
     from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
@@ -147,22 +146,24 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         effects = {"is_moving": False}
 
         def execute(self, params, context):
-            base = context.base  # the root freejoint is NOT qpos[0] once pickables precede it
-            adr, x = base._mj.layout.root_qpos_adr, float(params.get("x", 9.0))
-            base.runtime.call(lambda w: w.data.qpos.__setitem__(adr, x))  # at a step boundary
+            base, rt = context.base, dog.rt  # the root freejoint is NOT qpos[0] once pickables precede it
+            sc = rt.world.scene
+            adr, x = sc.free_q(sc.robot_root).start, float(params.get("x", 9.0))
+            rt.call(lambda w: w.data.qpos.__setitem__(adr, x))  # at a step boundary
             base.wait_sim(0.15)
             return SkillResult(success=True, result_data={"x": params.get("x")})
 
     from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 
-    base = MuJoCoGo2(gui=False, room=True, backend="auto")
-    base.connect()
+    from tests.hardware.sim.dog import stand_up
+
+    dog = stand_up("go2")
+    base = dog.base
     try:
-        base.stand()
         agent = Agent(base=base, config={})
         from tests.harness.fake_gt import bind_real_sim
 
-        bind_real_sim(agent, "go2")  # the GT oracles of a live session
+        bind_real_sim(agent, "go2", dog.rt)  # the GT oracles of a live session
         for s in get_go2_skills():
             agent._skill_registry.register(s)
         agent._skill_registry.register(_TeleportSkill())
@@ -202,7 +203,4 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         assert report.evidence == "RAN"
         assert report.exit_code() == 2
     finally:
-        try:
-            base.disconnect()
-        except Exception:  # noqa: BLE001
-            pass
+        dog.close()

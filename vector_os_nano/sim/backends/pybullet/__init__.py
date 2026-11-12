@@ -24,9 +24,12 @@ class PyBulletBackend:
     def supports(self, robot: Any, world: Any) -> str | None:
         if importlib.util.find_spec("pybullet") is None:
             return INSTALL_HINT
-        # ponytail: today's manifests name a TorchScript policy by its file (g1: motion.pt);
-        # the schema-1 robot.yaml (C1) names it `torchscript`.
-        ref = str(getattr(getattr(robot, "policy", None), "ref", "") or "")
+        # A legged base runs the policy its manifest picks for this backend; the others
+        # name theirs at the top level (ponytail: the G1 names its TorchScript file,
+        # motion.pt, until it runs on the generic base as `torchscript`).
+        base = getattr(robot, "base", None)
+        ref = base.policy.on(self.name)[0] if base is not None else str(
+            getattr(getattr(robot, "policy", None), "ref", "") or "")
         if ref == "torchscript" or ref.endswith(".pt"):
             return "a TorchScript (RL) policy is not run on PyBullet in 1.0: it was trained for MuJoCo"
         if ref == "convex_mpc":

@@ -166,12 +166,18 @@ def test_clear_memory_clears_the_one_scene_graph_in_place(home, out, tmp_path) -
     assert sg.cleared == 1 and rt.app_state["scene_graph"] is sg and not persist.exists()
 
 
-def test_reset_stands_the_body_up(home, out) -> None:
-    """The old /reset wrote a flag file nothing read; it calls the base now."""
+def test_reset_stands_the_body_up(home, out, monkeypatch) -> None:
+    """The old /reset wrote a flag file nothing read; the session (the world side)
+    stands its body up now, and without one nothing is reset."""
+    from vector_os_nano.sim import session as sim_session
+
     calls: list[int] = []
-    rt = _rt(agent=SimpleNamespace(_base=SimpleNamespace(reset_pose=lambda: calls.append(1))))
-    slash.dispatch(rt, "/reset")
+    agent = SimpleNamespace()
+    monkeypatch.setattr(sim_session, "_LIVE", [SimpleNamespace(agent=agent, reset_pose=lambda: calls.append(1))])
+    slash.dispatch(_rt(agent=agent), "/reset")
     assert calls == [1] and "pose reset" in out.getvalue()
+    slash.dispatch(_rt(agent=SimpleNamespace()), "/reset")
+    assert calls == [1] and "Nothing to reset: no simulation is running" in out.getvalue()
 
 
 def test_copy_export_clear(home, out, monkeypatch) -> None:

@@ -19,7 +19,7 @@ import numpy as np
 class PolicyObs:
     """What a policy observes at one control tick. Frames are fixed here, not per policy."""
 
-    time: float                 # sim seconds since the policy was reset
+    time: float                 # sim seconds since the body was spawned or reset (a posture keeps it running)
     base_pos: np.ndarray        # (3,) world
     base_quat: np.ndarray       # (4,) w x y z, world <- body
     base_lin_vel: np.ndarray    # (3,) WORLD frame
@@ -38,6 +38,11 @@ class ControlPolicy(Protocol):
     """
 
     tick_hz: float              # how often torques() is called; physics substeps = physics_hz / tick_hz
+
+    @property
+    def braking(self) -> bool:
+        """True while it is still bringing the body to rest after a zero command (the body
+        moves); a mount (an arm on the base) waits for it to end."""
 
     def reset(self, obs: PolicyObs) -> None:
         """Start from *obs* (after a spawn, a posture, or a body reset)."""

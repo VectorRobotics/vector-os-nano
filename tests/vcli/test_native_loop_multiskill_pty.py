@@ -15,7 +15,7 @@ of that surface. This module is the multi-skill proof on the REAL go2 sim:
 
 A SCRIPTED ``FakeToolScriptBackend`` replays the two action->verify pairs (the same
 deterministic seam the trichotomy teleport case uses), so the test is network-free,
-but the ACTIONS run on a REAL ``MuJoCoGo2`` base and the trace is graded by the
+but the ACTIONS run on the REAL go2 ``LeggedBase`` and the trace is graded by the
 UNTOUCHED honest spine (``VerdictReport.from_trace`` + ``verify_oracle_names``). The
 second pair (skill ``turn`` -> predicate ``facing``) is what proves the producer
 subsumes a distinct (skill, predicate) the first acceptance never exercised:
@@ -58,7 +58,7 @@ _TARGET_TURN_RAD: float = math.radians(90.0)  # the heading the step must PROVE
 def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> None:
     """walk->at_position THEN turn->facing, both GROUNDED+CAUSED through the spine.
 
-    Mirrors the trichotomy teleport case's setup (real MuJoCoGo2 + a scripted
+    Mirrors the trichotomy teleport case's setup (the real go2 LeggedBase + a scripted
     backend + ``eng.run_turn_native``), but drives a SECOND distinct (skill,
     predicate) pair to prove the native producer subsumes more of the planner's
     routing — not a hand-built engine loop, the real ``run_turn_native``.
@@ -66,7 +66,6 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
     from pathlib import Path as _Path
 
     from vector_os_nano.core.agent import Agent
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
     from vector_os_nano.skills.go2 import get_go2_skills
     from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
     from vector_os_nano.vcli.cognitive.trace_store import (
@@ -82,14 +81,15 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
 
     from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 
-    base = MuJoCoGo2(gui=False, room=True, backend="auto")
-    base.connect()
+    from tests.hardware.sim.dog import stand_up
+
+    dog = stand_up("go2")
+    base = dog.base
     try:
-        base.stand()
         agent = Agent(base=base, config={})
         from tests.harness.fake_gt import bind_real_sim
 
-        bind_real_sim(agent, "go2")  # the GT oracles of a live session
+        bind_real_sim(agent, "go2", dog.rt)  # the GT oracles of a live session
         for s in get_go2_skills():
             agent._skill_registry.register(s)
 
@@ -163,7 +163,4 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
         assert report.evidence == "GROUNDED"
         assert report.exit_code() == 0
     finally:
-        try:
-            base.disconnect()
-        except Exception:  # noqa: BLE001
-            pass
+        dog.close()

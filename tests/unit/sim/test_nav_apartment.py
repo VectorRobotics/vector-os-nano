@@ -4,7 +4,7 @@
 """The planner + follower + coverage tour on the REAL go2 apartment geometry.
 
 The scene is compiled (no physics, no driver) and its obstacle set extracted
-exactly as MuJoCoGo2.navigate_to does; a kinematic body replays the follower.
+exactly as LeggedBase.navigate_to does; a kinematic body replays the follower.
 
 Pins: skills-nav:room-centers-in-furniture (every layout point is free floor in
 its own room), the clearance of every planned leg (>= the inflation radius) and of
@@ -26,8 +26,9 @@ from vector_os_nano.sim.nav.follow import follow
 
 _HALF_WIDTH = 0.19  # go2 body half-width (m)
 _SPAWN = (10.0, 3.0)
-BODY = load_embodiment_config("go2").nav
-R = float(BODY["body_radius"])
+GO2 = load_embodiment_config("go2")
+BODY = GO2.base.nav
+R = BODY.body_radius
 
 
 class Never:
@@ -36,17 +37,17 @@ class Never:
         return False
 
 
+def _scene(body: str):
+    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
+
+    return room_scene(load_embodiment_config(body), load_world("apartment"))
+
+
 @pytest.fixture(scope="module")
 def obstacles():
-    import mujoco
-
-    from vector_os_nano.embodiments.dof_layout import DofLayout
-    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
-
-    model = mujoco.MjModel.from_xml_path(str(_build_room_scene_xml(with_arm=False)))
-    data = mujoco.MjData(model)
-    mujoco.mj_forward(model, data)
-    polys = vg.obstacles_from_model(model, data, DofLayout(model, "base_link", 12).robot_geom_ids)
+    scene = _scene("go2")
+    polys = vg.scene_obstacles(scene, scene.model.qpos0)
     assert len(polys) > 40  # walls + furniture, robot and pickables excluded
     return polys
 
@@ -81,7 +82,7 @@ def test_planned_leg_keeps_the_inflation_radius(obstacles, room):
 @pytest.mark.parametrize("room", sorted(room_layout()["rooms"]))
 def test_executed_leg_keeps_the_body_half_width(obstacles, room):
     base = KinBase(*_SPAWN)
-    res = follow(base, room_layout()["rooms"][room], obstacles, body=BODY, cancel=Never())
+    res = follow(base, room_layout()["rooms"][room], obstacles, nav=BODY, fall_z=GO2.base.fall_z, cancel=Never())
     assert res, res
     assert _clearance(base.trace[::5], obstacles) >= _HALF_WIDTH
 
@@ -89,7 +90,7 @@ def test_executed_leg_keeps_the_body_half_width(obstacles, room):
 def test_coverage_tour_enters_every_room_by_ground_truth(obstacles, tmp_path):
     class Body(KinBase):
         def navigate_to(self, x, y, cancel=None, **_):
-            return follow(self, (x, y), obstacles, body=BODY, cancel=cancel)
+            return follow(self, (x, y), obstacles, nav=BODY, fall_z=GO2.base.fall_z, cancel=cancel)
 
     base = Body(*_SPAWN)
     events = []
@@ -109,24 +110,18 @@ def test_coverage_tour_enters_every_room_by_ground_truth(obstacles, tmp_path):
 def test_an_extended_arm_or_held_object_grows_the_footprint():
     """(WP08 graft e) the navigation inflation grows by how far a mounted arm, or a
     body welded to it, reaches past the dog; the stowed Piper adds nothing."""
-    import mujoco
+    from vector_os_nano.sim.session import standing_state
 
-    from vector_os_nano.embodiments.dof_layout import DofLayout
-    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
-
-    m = mujoco.MjModel.from_xml_path(str(_build_room_scene_xml(with_arm=True)))
-    d = mujoco.MjData(m)
-    lay = DofLayout(m, "base_link", 12)
-    d.qpos[lay.root_qpos_adr:lay.root_qpos_adr + 3] = [10.0, 3.0, 0.35]
-    d.qpos[lay.joint_qpos_start:lay.joint_qpos_start + 12] = lay.build_stance_vector(
-        m, load_embodiment_config("go2").stance)
-    extra = lay.joint_qpos_start + lay.num_actuated
-    mujoco.mj_forward(m, d)
-    assert vg.overhang(m, d, lay.root_bid, extra) == 0.0  # stowed
-    d.qpos[extra + 1], d.qpos[extra + 2] = 1.57, -1.0     # reach forward and down
-    mujoco.mj_forward(m, d)
-    reach = vg.overhang(m, d, lay.root_bid, extra)
+    cfg = load_embodiment_config("go2_piper")
+    scene = _scene("go2_piper")
+    q = standing_state(scene, cfg, scene.model.qpos0, cfg.spawn.xy, 0.0)
+    legs = {scene.joint(j) for j in cfg.base.joints}
+    assert vg.scene_overhang(scene, q, legs, {}) == 0.0  # stowed
+    q[scene.joint_q(scene.joint("piper_joint2"))] = 1.57  # reach forward and down
+    q[scene.joint_q(scene.joint("piper_joint3"))] = -1.0
+    reach = vg.scene_overhang(scene, q, legs, {})
     assert reach > 0.02
-    weld = next(i for i in range(m.neq) if m.eq(i).name == "grasp_pickable_can_red")
-    d.eq_active[weld] = 1  # the can counts as part of the arm once welded to it
-    assert vg.overhang(m, d, lay.root_bid, extra) > reach
+    can, wrist = scene.body("pickable_can_red"), scene.body("piper_link6")
+    # the can counts as part of the arm once attached to it
+    assert vg.scene_overhang(scene, q, legs, {can: wrist}) > reach
+    assert vg.scene_overhang(scene, q, legs, {can: scene.body("base_link")}) == reach  # not to the arm

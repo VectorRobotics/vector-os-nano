@@ -5,8 +5,9 @@
 
 These are the CRITICAL Rule-11 guardrail: they prove that reading spawn/stance
 from ``embodiments/<id>/robot.yaml`` and introspecting the qpos/qvel slice
-addresses from the compiled model produces BYTE-IDENTICAL values to the
-constants the mujoco_go2 / mujoco_g1 drivers used to hardcode.
+addresses from the compiled model produces the values the mujoco_g1 driver used
+to hardcode (the go2 runs on the generic LeggedBase; its room scene still serves
+as a second model for the generic address logic).
 
 A regression here means the refactor changed robot behavior — which is forbidden
 (the mandate is behavior-preserving). The model-compiling tests are headless
@@ -32,10 +33,6 @@ from vector_os_nano.embodiments.dof_layout import (
 )
 
 # Driver constants (the values behavior must stay identical to).
-from vector_os_nano.hardware.sim.mujoco_go2 import (
-    _STAND_JOINTS,
-    _build_room_scene_xml,
-)
 from vector_os_nano.hardware.sim.mujoco_g1 import (
     _DEFAULT_ANGLES,
     _G1_PELVIS_Z,
@@ -54,10 +51,10 @@ from vector_os_nano.hardware.sim.mujoco_g1 import (
 
 @pytest.fixture(scope="module")
 def go2_model():
-    import mujoco
+    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-    scene = _build_room_scene_xml()
-    return mujoco.MjModel.from_xml_path(str(scene))
+    return room_scene(load_embodiment_config("go2"), load_world("apartment")).model
 
 
 @pytest.fixture
@@ -110,13 +107,14 @@ def test_g1_layout_matches_g1offsets(g1_model) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_go2_stance_vector_equals_stand_joints(go2_model) -> None:
+def test_go2_stance_vector_is_the_manifest_stance_in_float64(go2_model) -> None:
+    """ledger sim-locomotion:doflayout-no-freejoint-check: the vector was float32 (0.9 ->
+    0.8999999761581421); it carries the manifest's angles exactly now."""
     layout = DofLayout(go2_model, "base_link", 12)
-    cfg = load_embodiment_config("go2")
-    stance_vec = layout.build_stance_vector(go2_model, cfg.stance)
-    expected = np.asarray(_STAND_JOINTS, dtype=np.float32)
-    assert stance_vec.shape == expected.shape
-    np.testing.assert_array_equal(stance_vec, expected)
+    stance = load_embodiment_config("go2").base.stance
+    stance_vec = layout.build_stance_vector(go2_model, stance)
+    assert stance_vec.dtype == np.float64
+    np.testing.assert_array_equal(stance_vec, [0.0, 0.9, -1.8] * 4)
 
 
 def test_g1_stance_vector_equals_default_angles(g1_model) -> None:
@@ -124,10 +122,10 @@ def test_g1_stance_vector_equals_default_angles(g1_model) -> None:
     cfg = load_embodiment_config("g1")
     stance_vec = layout.build_stance_vector(g1_model, cfg.stance)
     expected = np.asarray(_DEFAULT_ANGLES, dtype=np.float32)
-    assert stance_vec.shape == expected.shape
+    assert stance_vec.shape == expected.shape and stance_vec.dtype == np.float64
     # _DEFAULT_ANGLES is the qpos-slice order (left leg 6, right leg 6); the
-    # vector must match exactly, position-for-position.
-    np.testing.assert_array_equal(stance_vec, expected)
+    # vector matches it position-for-position, to float32 precision.
+    np.testing.assert_allclose(stance_vec, expected, atol=1e-7)
 
 
 # ---------------------------------------------------------------------------
@@ -135,12 +133,19 @@ def test_g1_stance_vector_equals_default_angles(g1_model) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_go2_spawn_from_config_matches_constants() -> None:
+def test_go2_spawns_standing_at_its_manifest_height() -> None:
     cfg = load_embodiment_config("go2")
-    # connect(): qpos[0]=10.0, qpos[1]=3.0, qpos[2]=0.35
-    assert cfg.spawn.xy[0] == 10.0
-    assert cfg.spawn.xy[1] == 3.0
-    assert cfg.spawn.base_height == pytest.approx(0.35)
+    assert cfg.spawn.xy == (10.0, 3.0) and cfg.spawn.base_height is None
+    assert cfg.base.height == pytest.approx(0.279)
+
+
+def test_a_root_without_a_free_joint_is_refused(go2_model) -> None:
+    """ledger sim-locomotion:doflayout-no-freejoint-check: a hinged or fixed root used to
+    be addressed through jnt_adr -1 (numpy's last joint), silently."""
+    with pytest.raises(ValueError, match="'FL_hip' has no free joint"):
+        DofLayout(go2_model, "FL_hip", 12)
+    with pytest.raises(ValueError, match="'world' has no free joint"):
+        DofLayout(go2_model, "world", 12)
 
 
 def test_g1_spawn_from_config_matches_constants() -> None:

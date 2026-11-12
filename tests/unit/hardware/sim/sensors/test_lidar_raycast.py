@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Equivalence tests for the shared lidar ray loop (STAGE 3a de-triplication).
+"""Equivalence tests for the ONE lidar ray grid (sim/drivers/lidar.raycast_lidar).
 
-These pin that the extracted :func:`raycast_lidar` (one ``world.raycast`` call) is
-BYTE-IDENTICAL to the two original inline ``mj_ray`` loops it replaces.  Each test
+These pin that :func:`raycast_lidar` (one ``world.raycast`` call; the generic Lidar's
+grid, which the G1 helper shares) is BYTE-IDENTICAL to the two original inline
+``mj_ray`` loops it replaced.  Each test
 embeds a verbatim copy of the relevant original loop body (the g1 copy from
-``g1_lidar.py`` and the go2 copy from ``mujoco_go2._update_lidar``) as a golden
+``g1_lidar.py`` and the go2 copy from the deleted ``mujoco_go2._update_lidar``) as a golden
 reference, runs it on the tiny inline MJCF at a fixed pose, and asserts the shared
 loop produces identical output.  No Go2 / g1 model is imported (sensor unit tests stay light per
 ``feedback_no_parallel_agents``).
@@ -17,7 +18,7 @@ import math
 
 import numpy as np
 
-from vector_os_nano.hardware.sim.sensors.lidar_raycast import raycast_lidar
+from vector_os_nano.sim.drivers.lidar import raycast_lidar
 
 
 # ----------------------------------------------------------------------------
@@ -80,7 +81,7 @@ def _golden_g1(model, data, *, pos_lidar, heading, pelvis_bid, robot_geom_ids):
 
 
 def _golden_go2(model, data, *, pos_lidar, heading, robot_body_id, robot_geom_ids):
-    """Verbatim copy of the original mujoco_go2._update_lidar loop (max_range 12.0)."""
+    """Verbatim copy of the original (deleted) mujoco_go2._update_lidar loop (max_range 12.0)."""
     import mujoco as mj
 
     tilt_rad = math.radians(-20.0)

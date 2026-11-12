@@ -3,7 +3,7 @@
 
 """Shared fixtures for the Go2 locomotion harness.
 
-All harness tests require mujoco. convex_mpc is intentionally excluded.
+All harness tests require mujoco. The go2 runs its manifest's policy (convex_mpc).
 Fixtures are scope="function" so each test gets a clean simulation state.
 """
 from __future__ import annotations
@@ -22,32 +22,22 @@ if str(_REPO_ROOT) not in sys.path:
 pytest.importorskip("mujoco", reason="mujoco not installed — skipping locomotion harness")
 
 
-def _import_mujoco_go2():
-    """The ONE MuJoCoGo2 class (a by-path re-load made a second copy in sys.modules)."""
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-
-    return MuJoCoGo2
-
-
 @pytest.fixture
 def go2_flat():
-    """Connect a headless MuJoCoGo2 on flat ground (room=False).
+    """The go2's generic LeggedBase on flat ground, headless, as the session builds it.
 
-    Yields the connected instance; disconnects after test completes.
+    Yields the connected base (its runtime running); closes both after the test.
     """
-    MuJoCoGo2 = _import_mujoco_go2()
-    robot = MuJoCoGo2(gui=False, room=False)
-    robot.connect()
-    yield robot
-    robot.disconnect()
+    from tests.hardware.sim.dog import stand_up
+
+    dog = stand_up("go2", room=False, start=False)
+    dog.rt.start()
+    yield dog.base
+    dog.close()
 
 
 @pytest.fixture
 def go2_standing(go2_flat):
-    """Connect and stand the robot before the test.
-
-    Builds on go2_flat; calls stand(duration=2.0) so tests start from
-    a stable standing posture.
-    """
-    go2_flat.stand(duration=2.0)
+    """The base after its stand posture (2 s), so tests start from a stable stance."""
+    assert go2_flat.set_posture("stand", duration=2.0)
     return go2_flat

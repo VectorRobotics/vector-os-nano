@@ -77,7 +77,7 @@ class TestNavigateSkillMetadata:
 
 class TestNavigateWithNavStack:
     def test_proxy_navigate_to_used_when_available(self):
-        """Mode 0: base.navigate_to() takes priority when present (MuJoCoGo2 / MuJoCoG1)."""
+        """Mode 0: base.navigate_to() takes priority when present (LeggedBase / MuJoCoG1)."""
         from vector_os_nano.skills.navigate import NavigateSkill
         ctx = _make_context()
         skill = NavigateSkill()

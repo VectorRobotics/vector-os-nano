@@ -47,6 +47,8 @@ import pytest
 
 pytest.importorskip("mujoco")
 
+pytestmark = pytest.mark.sim
+
 GOLDEN = Path(__file__).with_name("golden")
 _SEAT = (10.46, 3.0)  # the dog 42 cm behind the green bottle, head-on (test_piper_grasp)
 _GREEN = "pickable_bottle_green"
@@ -56,10 +58,6 @@ _SAMPLE_S = 0.1
 # -- ground truth, read through today's API ------------------------------------------
 
 
-def _ground_truth(go2: Any) -> Any:
-    from vector_os_nano.sim.ground_truth import GroundTruth
-
-    return GroundTruth(go2.runtime)
 
 
 def _gt_row(gt: Any, objects: list[str], camera: tuple[str, int, int], arm: tuple[str, ...]) -> dict:
@@ -82,11 +80,10 @@ def _gt_row(gt: Any, objects: list[str], camera: tuple[str, int, int], arm: tupl
 # -- the scenarios ---------------------------------------------------------------------
 
 
-def _free_pose(go2: Any, body: str) -> np.ndarray:
+def _free_pose(rt: Any, body: str) -> np.ndarray:
     """x y z qw qx qy qz of a free body, from the published state."""
-    m = go2._mj.model
-    a = int(m.jnt_qposadr[m.body(body).jntadr[0]])
-    return go2.runtime.snapshot().q[a:a + 7].copy()
+    sc = rt.world.scene
+    return rt.snapshot().q[sc.free_q(sc.body(body))].copy()
 
 
 def _camera(embodiment: str) -> tuple[str, int, int]:
@@ -97,8 +94,11 @@ def _camera(embodiment: str) -> tuple[str, int, int]:
 
 
 class _Recorder:
-    def __init__(self, go2: Any, gt: Any, embodiment: str, arm: tuple[str, ...] = ()) -> None:
-        self.go2, self.gt, self.arm = go2, gt, arm
+    def __init__(self, rt: Any, embodiment: str, arm: tuple[str, ...] = ()) -> None:
+        from vector_os_nano.sim.ground_truth import GroundTruth
+
+        self.rt, self.gt, self.arm = rt, GroundTruth(rt), arm
+        gt = self.gt
         self.objects = sorted(gt.bid)
         self.camera = _camera(embodiment)
         self.t: list[float] = []
@@ -107,7 +107,7 @@ class _Recorder:
         self.rows: list[dict] = []
 
     def state(self) -> None:
-        s = self.go2.runtime.snapshot()
+        s = self.rt.snapshot()
         self.t.append(s.sim_time)
         self.q.append(s.q.copy())
         self.qd.append(s.qd.copy())
@@ -117,7 +117,7 @@ class _Recorder:
 
     def sample(self, n: int, *, truth_every: int = 1) -> None:
         for i in range(n):
-            assert self.go2.wait_sim(_SAMPLE_S)
+            assert self.rt.wait_sim(_SAMPLE_S)
             self.state()
             if i % truth_every == 0:
                 self.truth()
@@ -127,7 +127,7 @@ class _Recorder:
                "objects": np.array(self.objects)}
         for k in ("t", "base", "pos", "speed", "clearance", "welded", "pixels", "arm"):
             out[f"gt_{k}"] = np.array([r[k] for r in self.rows])
-        nb = int(self.go2._mj.model.nbody)
+        nb = int(self.rt.world.scene.model.nbody)
         touch = np.zeros((len(self.rows), len(self.objects), nb), dtype=bool)
         for i, r in enumerate(self.rows):
             for k, ids in enumerate(r["contacts"]):
@@ -138,51 +138,47 @@ class _Recorder:
 
 def run_go2_walk() -> dict[str, np.ndarray]:
     """Scenario 1 (+ its half of scenario 3)."""
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from tests.hardware.sim.dog import stand_up
 
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+    dog = stand_up("go2")  # lockstep: the runtime starts no thread
+    rt, base = dog.rt, dog.base
     try:
-        go2.connect()
-        go2.stand()
-        rec = _Recorder(go2, _ground_truth(go2), "go2")
+        assert base.gait_backend == "convex_mpc"
+        rec = _Recorder(rt, "go2")
         rec.state()
         rec.truth()
-        go2.set_velocity(0.4, 0.0, 0.0)
+        base.set_velocity(0.4, 0.0, 0.0)
         rec.sample(30, truth_every=2)
-        go2.set_velocity(0.0, 0.0, 0.0)
+        base.set_velocity(0.0, 0.0, 0.0)
         n = 0
-        while not go2.wait_settled(timeout=0.0):
+        while not base.wait_settled(timeout=0.0):
             rec.sample(1, truth_every=2 if n % 2 else 1)
             n += 1
             assert n < 60, "the brake never settled"
         rec.sample(5, truth_every=2)
         return rec.arrays()
     finally:
-        go2.disconnect()
+        dog.close()
 
 
 def run_go2_piper_pick() -> dict[str, np.ndarray]:
     """Scenario 2 (+ its half of scenario 3)."""
-    from vector_os_nano.embodiments import registry
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from tests.hardware.sim.dog import stand_up
     from vector_os_nano.sim.drivers.arm import Arm
     from vector_os_nano.sim.drivers.gripper import Gripper
+    from vector_os_nano.sim.session import respawn
     from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-    cfg = registry.load("go2_piper")
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
+    dog = stand_up("go2_piper")
+    cfg, rt, base = dog.cfg, dog.rt, dog.base
     try:
-        go2.connect()
-        go2.stand()
-        arm = Arm(cfg.arm, go2.runtime, wait_mount=go2.wait_settled)
-        grip = Gripper(cfg.arm.gripper, go2.runtime)
-        rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
-        go2.reset_pose()
-        assert go2.wait_sim(1.5)
-        gt = _ground_truth(go2)
-        rec = _Recorder(go2, gt, "go2_piper", tuple(cfg.arm.joints))
+        arm = Arm(cfg.arm, rt, wait_mount=base.wait_settled)
+        grip = Gripper(cfg.arm.gripper, rt)
+        respawn(rt, base, cfg, xy=_SEAT)
+        assert rt.wait_sim(1.5)
+        rec = _Recorder(rt, "go2_piper", tuple(cfg.arm.joints))
+        gt = rec.gt
         rec.sample(5)
         g = gt.object_positions()[_GREEN]
         q_above = arm.ik_top_down((g[0], g[1], g[2] + 0.02))
@@ -208,12 +204,12 @@ def run_go2_piper_pick() -> dict[str, np.ndarray]:
         out["weld_t"] = np.array([t for t, _n, _p in events])
         out["weld_body"] = np.array([n for _t, n, _p in events])
         out["weld_on"] = np.array([p == cfg.arm.gripper.weld_body for _t, _n, p in events])
-        out["final_pose"] = _free_pose(go2, _GREEN)
+        out["final_pose"] = _free_pose(rt, _GREEN)
         out["verdicts"] = np.array([ns["holding_object"](_GREEN), ns["lifted"](_GREEN),
                                     ns["holding_object"]()])
         return out
     finally:
-        go2.disconnect()
+        dog.close()
 
 
 SCENARIOS = {"go2_walk": run_go2_walk, "go2_piper_pick": run_go2_piper_pick}

@@ -19,8 +19,8 @@ import pytest
 mj = pytest.importorskip("mujoco")
 
 from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph  # noqa: E402
-from vector_os_nano.embodiments.dof_layout import DofLayout  # noqa: E402
-from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml, _grasp_pairs  # noqa: E402
+from vector_os_nano.embodiments import registry  # noqa: E402
+from vector_os_nano.hardware.sim.scene_builder import room_scene  # noqa: E402
 from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: E402
 from vector_os_nano.sim.ground_truth import GroundTruth  # noqa: E402
 from vector_os_nano.sim.runtime import SimRuntime  # noqa: E402
@@ -38,10 +38,11 @@ class Rig:
     """The compiled scene + a kinematic pin for the robot's root, legs, arm and jaws."""
 
     def __init__(self) -> None:
-        world = MuJoCoWorld(compiled_scene(
-            _build_room_scene_xml(with_arm=True), robot_root="base_link", grasp_pairs=_grasp_pairs(True)))
+        world = MuJoCoWorld(room_scene(registry.load("go2_piper"), load_world("apartment")))
         m = self.m = world.model
-        self.L = DofLayout(m, "base_link", 12)
+        sc = world.scene
+        self.root_q, self.root_qd = sc.free_q(sc.robot_root).start, sc.free_qd(sc.robot_root).start
+        self.legs_q = sc.joint_q(sc.joint("FL_hip_joint"))  # the 12 leg joints are contiguous
         jq = lambda n: int(m.jnt_qposadr[m.joint(n).id])  # noqa: E731
         self.arm_adr = [jq(f"piper_joint{i}") for i in range(1, 7)]
         self.j7, self.j8 = jq("piper_joint7"), jq("piper_joint8")
@@ -60,14 +61,14 @@ class Rig:
 
     def _pin(self, w) -> None:
         m, d = w.model, w.data
-        a = self.L.root_qpos_adr
+        a = self.root_q
         x, y, z, yaw = self.base
         d.qpos[a:a + 3] = [x, y, z]
         d.qpos[a + 3:a + 7] = [math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)]
-        d.qpos[self.L.joint_qpos_start:self.L.joint_qpos_start + 12] = _STAND
+        d.qpos[self.legs_q:self.legs_q + 12] = _STAND
         d.qpos[self.arm_adr] = self.arm
         d.qpos[self.j7], d.qpos[self.j8] = self.jaw, -self.jaw
-        d.qvel[self.L.root_dof_adr:self.L.root_dof_adr + 26] = 0.0
+        d.qvel[self.root_qd:self.root_qd + 26] = 0.0
         mj.mj_forward(m, d)
 
     def reset(self) -> None:

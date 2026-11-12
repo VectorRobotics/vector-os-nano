@@ -18,7 +18,6 @@ import vector_os_nano
 from vector_os_nano.embodiments import registry
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene import compiled_scene
-from vector_os_nano.sim.scene.compiled import inactive_welds
 from vector_os_nano.sim.scene.compose import compose
 
 SCENES = Path(__file__).parent / "scenes"
@@ -90,8 +89,9 @@ def battery_scene():
 
 @pytest.fixture(scope="session")
 def flat_go2_scene():
-    """go2 on flat ground (the locomotion bounds need room to walk)."""
-    return compose(SCENES / "flat.xml", registry.load("go2"), spawn=(0.0, 0.0, 0.0, 0.0))
+    """go2 on flat ground, at its policy's timestep."""
+    go2 = registry.load("go2")
+    return compose(SCENES / "flat.xml", go2, spawn=(0.0, 0.0, 0.0, 0.0), timestep=go2.base.policy.timestep)
 
 
 def _robot_scene(name: str):
@@ -100,11 +100,11 @@ def _robot_scene(name: str):
     if name == "piper":
         return compiled_scene(SIM_DIR / "mjcf" / "piper" / "piper.xml", robot_root="base_link")
     if name in ("go2", "go2_piper"):
-        from vector_os_nano.hardware.sim import mujoco_go2
+        from vector_os_nano.hardware.sim.scene_builder import room_scene
+        from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-        path = mujoco_go2._build_room_scene_xml(with_arm=name == "go2_piper")
-        return compiled_scene(path, robot_root="base_link", grasp_pairs=inactive_welds(path),
-                              timestep=mujoco_go2._SIM_DT)
+        cfg = registry.load(name)
+        return room_scene(cfg, load_world(cfg.world))
     if name == "g1":
         from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
         from vector_os_nano.embodiments.config import load_embodiment_config

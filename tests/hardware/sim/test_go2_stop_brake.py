@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""WP05 E5 on the real MPC go2 (flat ground, headless): every stop brakes the body.
+"""WP05 E5 on the go2 (LeggedBase + convex_mpc, flat ground, headless): every stop brakes the body.
 
 Dropping a 0.4 m/s trot straight onto the PD stance mid-stride kicked it to
 0.35-0.53 m/s at 0.2 sim-s (measured, 8 trials) — after a stop() and after a walk's
 own zero command alike (navigate pauses between its steps, so a Ctrl-C mid-navigate
-often lands in that kick). The brake keeps the MPC tracking zero velocity, hands
-over to the stance with all four feet down, then ramps to the stand pose.
+often lands in that kick). The convex_mpc policy brakes: it keeps the MPC tracking zero
+velocity, hands over to the stance with all four feet down, then ramps to the stand pose.
 """
 from __future__ import annotations
 
@@ -19,7 +19,9 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2  # noqa: E402
+from tests.hardware.sim.dog import stand_up  # noqa: E402
+
+pytestmark = pytest.mark.sim
 
 # Measured with the brake (in-process, 0.4 m/s trot, 24 trials on flat ground, 8 in the
 # room): 0.005-0.12 m/s at 0.2 sim-s, peak <= 0.12 m/s from there to 1.0 sim-s; the
@@ -29,27 +31,24 @@ _STOPPED_MPS = 0.15
 
 @pytest.fixture(scope="module")
 def go2():
-    dog = MuJoCoGo2(gui=False, room=False, backend="mpc")
-    dog.connect()
-    dog.stand()
-    try:
-        yield dog
-    finally:
-        dog.disconnect()
+    dog = stand_up("go2", room=False)
+    assert dog.base.gait_backend == "convex_mpc"
+    yield dog.base
+    dog.close()
 
 
-def _wait_sim(dog: MuJoCoGo2, seconds: float) -> None:
+def _wait_sim(dog, seconds: float) -> None:
     t0 = dog.get_sim_time()
     while dog.get_sim_time() - t0 < seconds:
         time.sleep(0.002)
 
 
-def _speed(dog: MuJoCoGo2) -> float:
+def _speed(dog) -> float:
     v = dog.get_velocity()
     return math.hypot(v[0], v[1])
 
 
-def _stop_profile(dog: MuJoCoGo2, stop: Any) -> tuple[float, float]:
+def _stop_profile(dog, stop: Any) -> tuple[float, float]:
     """(speed at 0.2 sim-s, peak speed from 0.2 to 1.0 sim-s) after *stop*()."""
     t0 = dog.get_sim_time()
     stop()
@@ -73,15 +72,15 @@ def test_a_stop_brakes_a_walking_body_within_0_2_sim_s(go2, cmd, how) -> None:
     assert at_02 < _STOPPED_MPS and peak < _STOPPED_MPS, (at_02, peak)
     _wait_sim(go2, 1.0)  # the stance ramp ends; the dog stands still and upright
     assert _speed(go2) < 0.02 and go2.get_position()[2] > 0.2
-    assert go2._brake_t is None
+    assert not go2._policy.braking and go2.wait_settled(timeout=0.0)
 
 
 def test_a_standing_body_is_left_alone(go2) -> None:
     _wait_sim(go2, 0.1)
-    assert go2._brake_t is None
+    assert not go2._policy.braking
     go2.stop()  # standing still: nothing to brake
     _wait_sim(go2, 0.05)
-    assert go2._brake_t is None
+    assert not go2._policy.braking and go2.wait_settled(timeout=0.0)
 
 
 def test_a_new_motion_ends_the_brake(go2) -> None:
@@ -89,9 +88,9 @@ def test_a_new_motion_ends_the_brake(go2) -> None:
     _wait_sim(go2, 1.0)
     go2.stop()
     _wait_sim(go2, 0.05)
-    assert go2._brake_t is not None
+    assert go2._policy.braking and not go2.wait_settled(timeout=0.0)
     go2.set_velocity(0.3, 0.0, 0.0)
     _wait_sim(go2, 0.05)
-    assert go2._brake_t is None
+    assert not go2._policy.braking
     go2.stop()
     _wait_sim(go2, 2.0)
