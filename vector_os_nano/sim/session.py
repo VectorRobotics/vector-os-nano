@@ -437,13 +437,20 @@ def legged_body(cfg: Any, scene: Any, *, backend: str = "mujoco", gui: bool = Fa
     """``(runtime, base, lidar)``: the legged body of *cfg* loaded on *backend* in
     *scene*, spawned standing at its spawn, with ONE SimRuntime ticking at its policy's
     rate (not started yet), the generic LeggedBase connected and its manifest's Lidar
-    (None without one)."""
+    (None without one). A manifest joint the compiled scene lacks fails first, naming
+    the manifest file and its key."""
+    from vector_os_nano.embodiments.config import EmbodimentConfigError
     from vector_os_nano.sim import backends
     from vector_os_nano.sim.drivers.base import LeggedBase
     from vector_os_nano.sim.drivers.lidar import Lidar
     from vector_os_nano.sim.runtime import SimRuntime
     from vector_os_nano.vcli.cognitive.abort import is_abort_requested
 
+    for key, names in (("base.joints", cfg.base.joints), ("arm.joints", cfg.arm.joints if cfg.arm else ())):
+        missing = [n for n in names if n not in scene.joint_ids]
+        if missing:
+            raise EmbodimentConfigError(f"{cfg.id}/robot.yaml: {key} {missing} are not joints of "
+                                        f"{cfg.model.path}; joints: {sorted(scene.joint_ids)}")
     world = backends.get(backend).load(scene, gui=gui)
     rt = SimRuntime(world, substeps=round(1.0 / (cfg.base.policy.tick_hz * scene.timestep)),
                     threaded=not world.caller_thread_only, name=cfg.id)
