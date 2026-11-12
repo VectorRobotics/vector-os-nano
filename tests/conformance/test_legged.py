@@ -206,12 +206,16 @@ def test_a_stop_from_a_walk_at_the_limit_brings_it_to_rest(body):
 
 
 def test_a_tipped_body_reports_the_fall(body):
+    """Started on its back, legs in the air: the trunk lies below the manifest's fall_z, so
+    a walk reports the fall (fall detection is the root height, nothing else)."""
     q = body.rt.snapshot().q.copy()
     sc = body.rt.world.scene
     root = sc.free_q(sc.robot_root)
-    q[root.start + 2] = 0.12  # on its side, below fall_z
-    q[root.start + 3:root.stop] = [math.cos(math.pi / 4), math.sin(math.pi / 4), 0.0, 0.0]
+    q[root.start + 2] = 0.2
+    q[root.start + 3:root.stop] = [0.0, 1.0, 0.0, 0.0]  # rolled 180 deg
     body.rt.call(lambda w: w.reset(q))
+    assert body.base.wait_sim(1.0)
+    assert body.base.get_position()[2] < body.cfg.base.fall_z
     assert body.base.walk(0.3, 0.0, 0.0, 0.5) is False
 
 

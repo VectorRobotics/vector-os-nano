@@ -16,9 +16,11 @@ import json
 import logging
 import math
 import os
+import random
 import subprocess
 import sys
 import threading
+import time
 import types
 from pathlib import Path
 
@@ -156,8 +158,13 @@ def test_a_walk_holds_the_clock_so_the_load_cannot_move_its_commands(monkeypatch
             monkeypatch.delenv("VECTOR_SIM_LOCKSTEP", raising=False)
         dog = stand_up("go2", room=False, start=False)
         stop = threading.Event()
-        hogs = [threading.Thread(target=lambda: [sum(range(2000)) for _ in iter(stop.is_set, True)], daemon=True)
-                for _ in range(3)]
+        def jitter() -> None:  # grabs the GIL in short bursts at random moments
+            rng = random.Random()
+            while not stop.is_set():
+                sum(range(rng.randrange(20000)))
+                time.sleep(rng.random() * 0.002)
+
+        hogs = [threading.Thread(target=jitter, daemon=True) for _ in range(3)]
         try:
             assert dog.rt.threaded is not lockstep
             # Hold the clock at the spawn before the stepper starts: it parks at its first
@@ -165,7 +172,7 @@ def test_a_walk_holds_the_clock_so_the_load_cannot_move_its_commands(monkeypatch
             dog.rt.wait_sim(0.0, hold=True)
             dog.rt.start()
             assert dog.base.set_posture("stand")
-            for t in hogs:  # three threads fighting the walk for the GIL
+            for t in hogs:  # three threads jittering the walk's and the stepper's GIL turns
                 t.start()
             assert dog.base.walk(0.4, 0.0, 0.3, 1.5)
             return dog.rt.snapshot().q.copy()
