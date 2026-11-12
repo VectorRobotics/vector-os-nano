@@ -215,7 +215,7 @@ def check(flow: str, turns: list[tuple[str, dict[str, Any] | None]], text: str, 
         return []
     dump.with_name(dump.name.replace(".gt.jsonl", ".transcript.txt")).write_text(text, encoding="utf-8")
     recs = audit(flow, turns, dump)
-    with open(dump.parent / "turns.jsonl", "a", encoding="utf-8") as fh:
+    with open(out_dir() / "turns.jsonl", "a", encoding="utf-8") as fh:  # the run's, wherever the dump is
         fh.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in recs)
     red = [r for r in recs if r["outcome"] in RED]
     assert not red, "the independent GT audit denies this flow:\n" + "\n".join(map(why, red))

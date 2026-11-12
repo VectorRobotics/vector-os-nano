@@ -181,19 +181,23 @@ def test_the_same_sentence_twice_is_graded_on_its_own_turn(tmp_path) -> None:
 
 def test_check_fails_the_flow_with_the_sentence_the_verdict_and_the_grade(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(gt_audit, "load_table", lambda: _TABLE)
+    monkeypatch.setenv(gt_audit.AUDIT_DIR_ENV, str(tmp_path / "run"))
     dump = _dump(tmp_path / "s.gt.jsonl", ("抓起香蕉", 0.02, False, None))
     text = "vector> 启动\n  ▸ Started so101 simulation, ready in 1.0s\nvector> 抓起香蕉\n  " + _YES["line"] + "\n"
     with pytest.raises(AssertionError) as e:
         gt_audit.check("standin", [("启动", None), ("抓起香蕉", _YES)], text, dump)
     msg = str(e.value)
     assert "FALSE_GROUNDED standin '抓起香蕉'" in msg and _YES["line"] in msg and "grade False" in msg, msg
-    assert (tmp_path / "s.transcript.txt").read_text(encoding="utf-8") == text
+    assert (tmp_path / "s.transcript.txt").read_text(encoding="utf-8") == text  # beside its dump
+    # recorded in the run's folder, wherever the dump is (the live matrix keeps its own)
+    assert len((tmp_path / "run" / "turns.jsonl").read_text(encoding="utf-8").splitlines()) == 2
     # a session that started no simulator (the dev world) is not audited at all
     assert gt_audit.check("standin", [("挥挥手", _YES)], "vector> 挥挥手\n", dump) == []
 
 
 def test_the_run_report_counts_every_outcome_and_lists_the_reasons(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setattr(gt_audit, "load_table", lambda: _TABLE)
+    monkeypatch.setenv(gt_audit.AUDIT_DIR_ENV, str(tmp_path))
     dump = _dump(tmp_path / "s.gt.jsonl", ("抓起香蕉", 0.12, True, None), ("回到初始位置", 0.12, True, None))
     text = "  ▸ Started so101 simulation, ready in 1.0s\n"
     gt_audit.check("standin", [("启动", None), ("抓起香蕉", _YES), ("回到初始位置", _YES)], text, dump)
@@ -249,8 +253,8 @@ def standin(tmp_path, monkeypatch):
     monkeypatch.setenv(gt_audit.AUDIT_DIR_ENV, str(tmp_path / "audit"))
     monkeypatch.setattr(gt_audit, "current_flow", lambda: "standin")  # as if tests/e2e_repl/test_standin.py
 
-    def run(lines, **env):
-        return pty_cli.run_repl_session(lines, timeout_sec=20.0, cwd=tmp_path, extra_env=env)
+    def run(lines, out_dir=None, **env):
+        return pty_cli.run_repl_session(lines, timeout_sec=20.0, cwd=tmp_path, out_dir=out_dir, extra_env=env)
     return run
 
 
@@ -260,7 +264,10 @@ def test_every_repl_session_dumps_and_an_e2e_flow_is_audited(standin, tmp_path) 
     assert Path(r.dump).parent == tmp_path / "audit" and Path(r.dump).name.startswith("standin-")
     assert [json.loads(x)["phase"] for x in Path(r.dump).read_text().splitlines()] == ["start", "end"]
     assert [(a["sentence"], a["outcome"]) for a in r.audit] == [("启动", "not_gradable"), ("抓起香蕉", "agree")]
-    assert (tmp_path / "audit" / "turns.jsonl").is_file()
+    # a caller's own folder (a live-matrix cell) keeps the dump; the run's folder still records the turns
+    cell = standin(["启动", "抓起香蕉"], out_dir=tmp_path / "cell", STANDIN_LIFT="0.1")
+    assert Path(cell.dump).parent == tmp_path / "cell"
+    assert len((tmp_path / "audit" / "turns.jsonl").read_text(encoding="utf-8").splitlines()) == 4
 
 
 def test_a_flow_the_dump_denies_is_red_inside_the_harness(standin) -> None:

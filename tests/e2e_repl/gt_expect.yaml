@@ -84,6 +84,9 @@ flows:
     turns:
       启动 go2 仿真 带机械臂 无窗口: {none: a launch claims nothing}
       看看周围有什么: {none: a look (the dump carries no perception belief)}
+      去绿色的瓶子那里: {none: "to an object: gt_grade has no near-an-object grade (the turn is not claimed: it ends with no verify)"}
+      go to the green bottle: {none: "to an object: gt_grade has no near-an-object grade (the turn is not claimed: it ends with no verify)"}
+      再去绿色的瓶子那里: {none: "to an object from memory: gt_grade has no near-an-object grade (the product leaves it RAN)"}
       用 RynnBrain 找一下绿色瓶子: {none: a detect (the dump carries no perception belief)}
   e12_navigate_recover:
     bodies: [go2]

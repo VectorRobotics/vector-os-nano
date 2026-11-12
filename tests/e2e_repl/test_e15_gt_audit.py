@@ -14,7 +14,7 @@ turn, and the audit, never an assertion of this file, turns the session red:
   * '抓起马克杯': the model picks the banana and verifies the banana. A task contract
     bound to another object than the sentence names would prove it.
   * '去厨房': the model stops on the hallway side of the kitchen door and verifies a
-    point inside the kitchen 0.75 m from it. A doubled arrival tolerance would verify it.
+    point inside the kitchen 0.78 m from it. A doubled arrival tolerance would verify it.
 
 This file asserts only that the audit graded the turn and found nothing happened.
 """
@@ -58,8 +58,9 @@ def test_e15_a_pick_of_the_wrong_object_is_never_a_pick_of_the_mug(verify: str) 
 
 
 # The kitchen-hallway door is (13.5, 3.0) (config/worlds/apartment.yaml); the kitchen floor
-# starts at x = 14.0. The base stops at the door, outside the kitchen.
-_DOOR, _INSIDE = (13.5, 3.0), (14.25, 3.0)
+# starts at x = 14.0. Lockstep, the base stops at (13.27, 2.94), outside the kitchen and
+# 0.78 m from the point it verifies: beyond the 0.5 m arrival tolerance, within twice it.
+_DOOR, _INSIDE = (13.5, 3.0), (14.05, 3.0)
 
 
 @pytest.mark.sim
