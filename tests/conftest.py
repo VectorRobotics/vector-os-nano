@@ -23,6 +23,8 @@ Hygiene (WP01) — every test runs as if it were alone on a shared box:
 - a test that leaves a child process behind is failed and its process groups
   are killed (pytest is a child subreaper, so orphans are caught too);
 - ROS defaults to an isolated domain (never 0, where other stacks live);
+- outside the gate, VECTOR_HOME is a throwaway directory (the real state directory
+  is never written; scripts/gate.sh isolates its own runs);
 - tests/known_reds.txt: the committed, commented list of known reds.
 """
 from __future__ import annotations
@@ -78,6 +80,19 @@ if os.environ.get("ROS_DOMAIN_ID", "").strip() in ("", "0"):
 # setdefault made the GL backend depend on which file was collected first).
 if sys.platform.startswith("linux"):
     os.environ.setdefault("MUJOCO_GL", "egl")
+
+# A bare `pytest` never writes the real state directory either: a throwaway VECTOR_HOME,
+# set before any test imports the package, with the provisioned robot assets linked
+# (read only) the way scripts/gate.sh links them. A gate run is already isolated.
+if not os.environ.get("GATE_HOME_SET"):
+    from vector_os_nano.schemas import paths as _paths
+
+    _ASSETS = _paths.home() / "assets"
+    _STATE = Path(tempfile.mkdtemp(prefix="vos_test_state_"))
+    atexit.register(shutil.rmtree, _STATE, True)
+    if _ASSETS.is_dir():
+        (_STATE / "assets").symlink_to(_ASSETS)
+    os.environ["VECTOR_HOME"] = str(_STATE)
 
 _LLM_KEYS = re.compile(r"^(DEEPSEEK_|OPENROUTER_|ANTHROPIC_|OPENAI_|VECTOR_LLM_|VECTOR_PROVIDER$)")
 if not _LIVE:
@@ -201,7 +216,7 @@ def sim_preflight() -> str:
     Runs tests/harness/sim_preflight.py in a child (an EGL or MuJoCo crash must not
     take the session down): vendored convex_mpc imports, the go2 and go2_piper
     scenes compile from a temp copy of the tracked tree, an EGL Renderer opens, and
-    the grounding-dino weights are in the HF cache.
+    the default perception stack's pinned weights are in the HF cache.
     """
     try:
         r = subprocess.run(

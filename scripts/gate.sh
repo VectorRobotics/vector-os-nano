@@ -29,7 +29,8 @@
 #      VECTOR_LIVE_LLM=1 keeps the LLM keys and also runs live_llm tests (billed)
 #
 # Safe on a shared box: memory-capped cgroup, own ROS domain (random 60-89), a
-# throwaway HOME for every tier (model caches read from the real one), and the
+# throwaway HOME and VECTOR_HOME for every tier (model caches read from the real
+# ones), and the
 # suite fails any test that runs rosm/pkill/killall or leaves a child process.
 set -o pipefail
 TIER=${1:?usage: scripts/gate.sh <hermetic|sim|e2e|all> [pytest args...]}
@@ -72,17 +73,17 @@ if [ "$LIVE" != 1 ]; then
   unset VECTOR_PROVIDER
 fi
 if [ -z "${GATE_HOME_SET:-}" ]; then
-  # Every tier: a throwaway HOME, so nothing reads or writes the real ~/.vector (or
-  # ~/.vector_os_nano, ~/.cache/vector_os_nano). The model weights stay found, read
-  # only: the real HF cache, offline. So do the robot assets scripts/fetch_assets.py
-  # provisioned (~/.vector/assets, linked; no test writes it).
+  # Every tier: a throwaway HOME and VECTOR_HOME, so nothing reads or writes the real
+  # state directory (nor ~/.vector_os_nano). The model weights stay found, read only:
+  # the real HF cache, offline. So do the robot assets scripts/fetch_assets.py
+  # provisioned ($VECTOR_HOME/assets, linked; no test writes it).
+  REAL_STATE=${VECTOR_HOME:-$HOME/.vector}
   export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface} HF_HUB_OFFLINE=1 GATE_HOME_SET=1
   GATE_HOME=$(mktemp -d -t vos_gate_home_XXXX) || exit 2
   trap 'rm -rf "$GATE_HOME"' EXIT
-  if [ -d "$HOME/.vector/assets" ]; then
-    mkdir -p "$GATE_HOME/.vector" && ln -s "$HOME/.vector/assets" "$GATE_HOME/.vector/assets"
-  fi
-  HOME=$GATE_HOME; export HOME
+  mkdir -p "$GATE_HOME/.vector" || exit 2
+  [ -d "$REAL_STATE/assets" ] && ln -s "$REAL_STATE/assets" "$GATE_HOME/.vector/assets"
+  HOME=$GATE_HOME VECTOR_HOME=$GATE_HOME/.vector; export HOME VECTOR_HOME
 fi
 # Always the repo's pytest config (addopts disable ROS's broken pytest plugins),
 # whatever paths are passed: a path outside the repo would otherwise run config-less.
