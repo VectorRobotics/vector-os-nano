@@ -308,8 +308,11 @@ _STOP_LAUNDERS_FAILED_TURN = {
 @pytest.mark.capability
 def test_a_stop_cannot_launder_a_failed_turn(sim_cleanup) -> None:
     """(G) '走到坐标 (9,3) 然后左转90度': the walk GROUNDs the contract, the turn skill
-    FAILS, then stop + the same vacuous re-verify. Before the fix the stop row was an
-    exempt housekeeping row and the turn verified GROUNDED / exit 0."""
+    errs ('sideways'), then stop + the same vacuous re-verify. Charter 3.5 (SP1): the turn
+    erred before commanding motion, so it was REFUSED — not an action: the verify right
+    after it is a probe (refused unevaluated), and the stop's row carries the refusal;
+    nothing is laundered. A turn that fails AFTER motion is its own FAILED row and still
+    rejects (tests/unit/vcli/test_native_failed_attempts.py)."""
     r = run_cli_turn(
         "走到坐标 (9.0,3.0) 然后左转90度",
         sim_go2=True,
@@ -317,9 +320,8 @@ def test_a_stop_cannot_launder_a_failed_turn(sim_cleanup) -> None:
         extra_args=["--headless"],
         tool_script=_STOP_LAUNDERS_FAILED_TURN,
     )
-    assert r.verified is False, f"a stop must not launder the failed turn; got {r.verdict}"
-    assert r.exit_code == 2, f"got {r.exit_code}"
+    assert r.verified is True and r.exit_code == 0, f"got {r.exit_code}: {r.verdict}"
     assert r.verdict["contract"] == ["at_position(9.0, 3.0)"]
     rows = [(s["strategy"], s["evidence"], s["superseded"]) for s in r.verdict["per_step"]]
-    assert rows == [("walk", "GROUNDED", False), ("turn", "FAILED", True), ("stop", "RAN", False)]
-    assert r.verdict["reject_reason"] == "native_step_2: the verify is not ground-truth evidence"
+    assert rows == [("walk", "GROUNDED", False), ("stop", "RAN", False)]
+    assert [x.split(":")[0] for x in r.verdict["per_step"][1]["refused"]] == ["turn"], r.verdict

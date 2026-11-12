@@ -70,6 +70,10 @@ class StepRecord:
     # (when another graded row proved the turn), and only when its whole attempt group
     # is housekeeping; the default (False) is an actuating row (fail closed).
     housekeeping: bool = False
+    # Charter 3.5: the producer recorded a tool that reported an error after commanding
+    # motion as its own row. A FAILED one does not reject a turn whose goal check is
+    # proven (``trace_store.turn_reject_reason``); it never makes a row GROUNDED.
+    failed_attempt: bool = False
 
 
 @dataclass(frozen=True)

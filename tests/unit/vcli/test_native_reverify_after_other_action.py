@@ -46,18 +46,25 @@ def test_noop_turn_reverifies_the_proven_target() -> None:
 
 
 def test_failed_turn_then_read_then_reverify() -> None:
+    # Charter 3.5: the turn erred before commanding motion — REFUSED, not an action — so
+    # the re-verify after only a read is a probe (refused unevaluated), and the read's
+    # row carries the refusal. Its failed-after-motion twin still rejects
+    # (test_native_failed_attempts).
     rep, rows, _tr = _run("走到坐标 (9.0,3.0) 然后左转90度",
                           [NAV, V, ("turn_fake", {}), ("where_fake", {}), V],
                           _Skill("turn_fake", lambda: None, fail="Unknown turn direction"), _ro("where_fake"))
-    assert rep.verified is False, rows
-    assert rows[-1][1] is False, rows  # the failed turn fails the row, whatever tool ran last
+    assert rep.verified is True, (rep.reject_reason, rows)
+    assert rows[-1] == ("where_fake", True, False, "NOT_GRADED", False, ""), rows
+    assert rep.per_step[-1].refused == ("turn_fake: Unknown turn direction",), rep.per_step
 
 
 def test_failed_turn_then_reverify_no_contract() -> None:
+    # Charter 3.5: a refused turn is not an action, with or without a contract (the
+    # failed-after-motion twin rejects: test_native_failed_attempts).
     rep, rows, _tr = _run("go to the kitchen then turn left",
                           [NAV, V, ("turn_fake", {}), ("where_fake", {}), V],
                           _Skill("turn_fake", lambda: None, fail="Unknown turn direction"), _ro("where_fake"))
-    assert rep.verified is False, rows
+    assert rep.verified is True and rep.goal_check == "unchecked", (rep.reject_reason, rows)
 
 
 def test_walk_variant_noop_turn() -> None:
@@ -82,12 +89,14 @@ def test_a_stop_recheck_cannot_launder_the_unproven_attempt() -> None:
 
 
 def test_a_failed_action_before_an_auto_verified_one_fails_its_row() -> None:
-    """The auto post-verify row of a chain inherits the failure of an earlier actuating
-    tool in that chain (it is the same step): turn fails, navigate auto-verifies."""
+    """Charter 3.5: the turn erred before commanding motion (REFUSED), so it fails no
+    row: two facts, a refused call and a proven goal. (Erring AFTER motion it would be
+    its own FAILED row: test_native_failed_attempts.)"""
     rep, rows, _tr = _run("走到坐标 (9.0,3.0)", [("turn_fake", {}), NAV],
                           _Skill("turn_fake", lambda: None, fail="Unknown turn direction"))
-    assert [r[1] for r in rows] == [False], rows
-    assert rep.verified is False and rep.evidence == "FAILED", rows
+    assert [r[1] for r in rows] == [True], rows
+    assert rep.verified is True and rep.evidence == "GROUNDED" and rep.goal_check == "proven", rows
+    assert rep.per_step[0].refused == ("turn_fake: Unknown turn direction",), rep.per_step
 
 
 def test_re_dispatching_the_same_action_still_recovers() -> None:

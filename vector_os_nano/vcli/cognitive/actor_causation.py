@@ -310,6 +310,21 @@ def _commanded(before: float | None, after: float | None) -> bool:
     return before is not None and after is not None and after - before >= MOTION_EPS
 
 
+def commanded_nothing(agent: Any, before: ActorBaseline, after: ActorBaseline) -> bool:
+    """Charter 3.5: *agent* commanded no motion between the captures *before* and *after*
+    of one call — every device it has (base, arm, gripper) was read both times and its
+    commanded-motion counter or its attachments did not change at all. A body with no
+    such device, a device that could not be read, or a session switch is no evidence:
+    False (the call is then a failed attempt, never refused)."""
+    channels = [(b, a) for dev, b, a in (
+        ("_base", before.base_cmd_motion, after.base_cmd_motion),
+        ("_arm", before.arm_ctrl_motion, after.arm_ctrl_motion),
+        ("_gripper", before.gripper_welds, after.gripper_welds),
+    ) if getattr(agent, dev, None) is not None]
+    return (bool(channels) and before.session == after.session
+            and all(b is not None and b == a for b, a in channels))
+
+
 def _gripper_caused(want: str, call: ast.Call, b: ActorBaseline, p: ActorBaseline, world: Any = None) -> bool:
     """A weld transition of the wanted polarity: 0->1 for ``rise`` (a grasp), 1->0 for
     ``fall`` (a release), either for ``level``. Target-aware when the call names an

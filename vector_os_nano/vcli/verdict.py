@@ -74,6 +74,12 @@ class StepVerdict:
     actor_caused: str = "NOT_GRADED"
     reject_reason: str = ""
     superseded: bool = False
+    # Charter 3.5 (additive): the row is a failed attempt (evidence FAILED, its own
+    # reject_reason; it rejects the turn unless a later attempt of its predicate
+    # superseded it), and
+    # the calls refused in its step ("<tool>: <message>": tried, not an action).
+    failed_attempt: bool = False
+    refused: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -164,6 +170,8 @@ class VerdictReport:
                     actor_caused=getattr(getattr(s, "actor_caused", None), "value", "NOT_GRADED"),
                     reject_reason=why,
                     superseded=i not in graded,
+                    failed_attempt=getattr(s, "failed_attempt", False) is True,
+                    refused=tuple((getattr(s, "result_data", None) or {}).get("refused", ())),
                 )
             )
 
