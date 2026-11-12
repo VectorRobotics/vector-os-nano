@@ -286,9 +286,9 @@ def _manipulation_reason(
     intent -- in the goal's words, in a dispatched gripper skill's hint, or in a GROUNDED
     graded step whose verify asserts a possession or a placement (it was performed,
     whatever skill ran: gripper_close's driver is where the world grasps, REF1c-V-01) --
-    needs a GROUNDED graded step that necessarily asserts EACH proof it needs (``proof_oracles``) — a possession
-    oracle for a grasp / fetch (``placed_count`` never proves a grasp), a placement or
-    release for a place, both for a pick-and-place. Scoped to a world with
+    needs a GROUNDED graded step that necessarily asserts EACH proof it needs
+    (``proof_oracles``) — a possession oracle for a grasp / fetch (``placed_count`` never
+    proves a grasp), a placement or release for a place, both for a pick-and-place. Scoped to a world with
     ``holding_object``. With a world manifest (charter 3.5) the goal must be a closed
     form, and every proof names the object its contract bound."""
     from vector_os_nano.vcli.cognitive.object_goal import (
