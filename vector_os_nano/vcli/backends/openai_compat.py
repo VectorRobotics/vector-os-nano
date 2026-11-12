@@ -333,13 +333,18 @@ class OpenAICompatBackend:
         llm_tool_calls: list[LLMToolCall] = []
         for idx in sorted(tool_call_acc.keys()):
             acc = tool_call_acc[idx]
+            parsed_input: Any = {}
+            error = ""
             try:
                 parsed_input = json.loads(acc["arguments"]) if acc["arguments"] else {}
-            except json.JSONDecodeError:
-                parsed_input = {"_raw": acc["arguments"]}
-                logger.warning("Failed to parse tool arguments for %s", acc["name"])
+            except json.JSONDecodeError as exc:
+                error = f"arguments are not valid JSON ({exc.msg})"
+            if not isinstance(parsed_input, dict):
+                parsed_input, error = {}, "arguments are not a JSON object"
+            if error:
+                logger.warning("tool call %s: %s", acc["name"], error)
             llm_tool_calls.append(
-                LLMToolCall(id=acc["id"], name=acc["name"], input=parsed_input)
+                LLMToolCall(id=acc["id"], name=acc["name"], input=parsed_input, parse_error=error)
             )
 
         stop = _STOP_REASON_MAP.get(finish_reason or "stop", "end_turn")

@@ -166,7 +166,7 @@ def _hygiene(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
 # tests ride along into the sim tier; split such files if hermetic coverage matters.
 _SIM_SOURCE = re.compile(
     r"MuJoCo(Go2|Arm|Piper|G1)\(|mujoco\.MjModel|MjModel\.from_xml|build_room_scene"
-    r"|sim_go2=True|\bsim=True|\"--sim(-go2)?\"|_init_agent\(|^import mujoco",
+    r"|sim_go2=True|\bsim=True|\"--sim(-go2)?\"|start_sim\(|^import mujoco",
     re.M,
 )
 @functools.cache

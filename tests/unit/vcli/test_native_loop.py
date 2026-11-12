@@ -26,7 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
 from vector_os_nano.vcli.cognitive.trace_store import (
     evidence_passed,
@@ -493,7 +493,7 @@ def test_dev_verify_tool_reads_the_oracles_own_docstrings() -> None:
     eng = VectorEngine(backend=None)
     eng.bind(None, DevWorld())
     desc = _verify_description(eng, None)
-    assert "\n- file_exists(path): True if *path* (relative to cwd, inside the project) exists" in desc
+    assert "\n- file_exists(path): True if the file *path* (relative to cwd, inside the project) exists" in desc
     assert "\n- grep_count(pattern, path): Number of regex *pattern* matches in the ONE regular file" in desc
     assert "(path has no default)" in desc
     assert desc.count("'and' the calls together") == 2  # grep_count and path_contains
@@ -645,7 +645,7 @@ class _FakeStartSim:
         from vector_os_nano.vcli.worlds.robot import RobotWorld
 
         agent, _ = _make_agent(0.0, 0.0)
-        context.app_state["agent"] = agent  # what rebind_world does
+        context.app_state["agent"] = agent  # what bind_body does
         self._engine[0].bind(agent, RobotWorld())
         return ToolResult(content="Started go2 simulation, ready in 1.0s")
 

@@ -57,6 +57,7 @@ DENY_PATTERNS: list[str] = [
 
 @tool(
     name="bash",
+    category="code",
     description="Execute a shell command and return captured stdout/stderr",
     read_only=False,
     permission="ask",
@@ -150,26 +151,29 @@ class BashTool:
 
 
 def _wait(proc: subprocess.Popen, timeout_sec: float, abort: Any) -> str:
-    """Wait for *proc*; on timeout or abort kill its whole process group.
+    """Wait for *proc*; on timeout, abort, or the caller leaving (SIGTERM, Ctrl-C),
+    kill its whole process group.
 
     Returns "" when the command finished, else the reason it was stopped.
     """
     deadline = time.monotonic() + timeout_sec
-    while True:
-        try:
-            proc.wait(timeout=min(0.1, max(deadline - time.monotonic(), 0.0)))
-            return ""
-        except subprocess.TimeoutExpired:
-            pass
-        reason = ""
-        if abort is not None and abort.is_set():
-            reason = "Command aborted"
-        elif time.monotonic() >= deadline:
-            reason = f"Command timed out after {timeout_sec}s"
-        if reason:
+    reason = ""
+    try:
+        while not reason:
+            try:
+                proc.wait(timeout=min(0.1, max(deadline - time.monotonic(), 0.0)))
+                return ""
+            except subprocess.TimeoutExpired:
+                pass
+            if abort is not None and abort.is_set():
+                reason = "Command aborted"
+            elif time.monotonic() >= deadline:
+                reason = f"Command timed out after {timeout_sec}s"
+    finally:
+        if proc.returncode is None:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             proc.wait()
-            return reason
+    return reason

@@ -200,3 +200,25 @@ def test_the_model_is_told_one_file_per_call() -> None:
         assert "directory" in lines[name]
     assert lines["grep_count"].startswith("grep_count(pattern, path): ")  # no default path
     assert "not file_exists" in lines["file_exists"]
+
+
+@pytest.mark.parametrize("expr", [
+    "file_exists('.')", "not file_exists('.')",                    # the project root always exists
+    "file_exists('pkg')", "not file_exists('pkg')",                # any directory
+    "path_contains('a.py', '')", "not path_contains('a.py', '')",  # every file contains ''
+    "grep_count('', 'a.py') > 0", "grep_count('', 'a.py') == 0",   # '' matches everywhere
+])
+def test_a_vacuous_argument_verifies_false_in_both_polarities(tmp_path: Path, monkeypatch, expr: str) -> None:
+    """spine:dev-world-trivial-evidence: file_exists('.') and path_contains(f, '') were
+    True for any project and any file, so either grounded any dev write."""
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "a.py").write_text("print(1)\n")
+    monkeypatch.chdir(tmp_path)
+    assert _verify(expr) is False, expr
+
+
+def test_the_guards_leave_real_predicates_grounding(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "a.py").write_text("print(1)\n")
+    monkeypatch.chdir(tmp_path)
+    assert _verify("file_exists('a.py') and not file_exists('b.py')")
+    assert _verify("path_contains('a.py', 'print') and grep_count('print', 'a.py') == 1")

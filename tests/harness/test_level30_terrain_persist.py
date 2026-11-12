@@ -224,13 +224,16 @@ class TestBridgeTerrainWiring:
 
 class TestClearMemoryTerrain:
 
-    def test_clear_memory_deletes_terrain(self):
-        """CLI /clear_memory handler should delete terrain_map.npz."""
-        cli_path = os.path.join(
-            _REPO, "vector_os_nano", "vcli", "cli.py"
-        )
-        with open(cli_path) as f:
-            src = f.read()
-        assert "terrain_map" in src, (
-            "/clear_memory handler must delete terrain_map.npz"
-        )
+    def test_clear_memory_deletes_terrain(self, tmp_path, monkeypatch):
+        """The /clear_memory command deletes terrain_map.npz (no body running too)."""
+        from types import SimpleNamespace
+
+        from vector_os_nano.vcli import render, slash
+        from vector_os_nano.vcli.tools import nav_tools
+
+        terrain = tmp_path / "terrain_map.npz"
+        terrain.write_bytes(b"x")
+        monkeypatch.setattr(nav_tools, "_TERRAIN_PATH", str(terrain))
+        monkeypatch.setattr(render.console, "file", open(os.devnull, "w"))
+        slash.dispatch(SimpleNamespace(app_state={}), "/clear_memory")
+        assert not terrain.exists(), "/clear_memory must delete terrain_map.npz"

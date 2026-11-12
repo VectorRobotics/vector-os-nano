@@ -20,9 +20,11 @@ from typing import Any
 
 import pytest
 
-from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from tests.unit.vcli.test_native_loop import _make_agent, _make_engine, _session
-from vector_os_nano.vcli import cli
+from rich.console import Console
+
+from vector_os_nano.vcli import cli, render, repl
 from vector_os_nano.vcli.cognitive import abort
 from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
 from vector_os_nano.vcli.permissions import PermissionContext
@@ -79,7 +81,7 @@ def test_a_denied_tool_is_never_executed() -> None:
     trace = eng.run_turn_native("run it", session=_session())
     assert spy.calls == 0
     assert trace.refused == ("bash: scripted",) and trace.actions_dispatched == 0
-    assert not cli._chat_turn(trace)  # a refusal is shown with its verdict, never re-run
+    assert not render._chat_turn(trace)  # a refusal is shown with its verdict, never re-run
 
 
 def test_rm_rf_root_is_blocked_by_the_bash_deny_list_on_the_native_path(monkeypatch) -> None:
@@ -325,7 +327,7 @@ def test_a_stop_during_the_llm_call_owns_the_turn_and_runs_nothing() -> None:
     trace = _make_engine(agent, backend).run_turn_native("往前走一米", session=_session())
     assert walks == [] and backend.calls == 1
     assert trace.cancelled and trace.actions_dispatched == 0
-    assert not cli._chat_turn(trace)
+    assert not render._chat_turn(trace)
 
 
 def test_a_stop_anywhere_in_a_turn_stops_every_run_the_turn_starts_later() -> None:
@@ -394,7 +396,7 @@ def test_an_llm_failure_after_an_action_returns_the_partial_trace() -> None:
     assert trace.actions_dispatched == 1
     assert "503" in trace.llm_error and trace.model == "fake-model-1"
     assert trace.steps[-1].strategy == "walk" and trace.steps[-1].success is False
-    assert not cli._chat_turn(trace)  # graded, never re-run
+    assert not render._chat_turn(trace)  # graded, never re-run
     report = VerdictReport.from_trace(trace, verify_oracle_names(agent, None))
     assert report.llm_unavailable and report.model == "fake-model-1"
     assert report.exit_code() == 1 and not report.verified
@@ -425,13 +427,16 @@ def _p_turn(monkeypatch, capsys, trace: Any, answer: str = "") -> tuple[int, dic
         kw["session"].append_assistant(answer)
         return trace
 
-    engine = SimpleNamespace(_agent=None, is_stop=lambda t: False, run_turn_native=run_turn_native)
-    monkeypatch.setattr(cli, "_build_turn_context",
-                        lambda args: SimpleNamespace(engine=engine, session=_session(), app_state={}))
-    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
+    from vector_os_nano.vcli.runtime import Runtime
+
+    engine = SimpleNamespace(_agent=None, _backend=object(), is_stop=lambda t: False,
+                             run_turn_native=run_turn_native)
+    monkeypatch.setattr(cli, "_build",
+                        lambda args, face: Runtime(engine=engine, session=_session(), app_state={}))
+    monkeypatch.setattr(render.console, "file", open(os.devnull, "w"))
     code = cli.run_one_turn(SimpleNamespace(print_prompt="walk 1 m", json=True))
     line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("VECTOR_VERDICT "))
-    assert "ask_permission" not in seen  # cli-entry:missed3: -p never prompts on stdin
+    assert seen["ask_permission"] is None  # cli-entry:missed3: -p never prompts on stdin
     return code, json.loads(line.split(" ", 1)[1])
 
 
@@ -487,13 +492,23 @@ def test_repl_turn_renders_the_verdict_of_an_unverified_acted_turn(owned) -> Non
 
     from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree
 
-    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=()), (), False, 0.0,
+    from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
+    from vector_os_nano.vcli.cognitive.types import StepRecord, SubGoal
+    from vector_os_nano.vcli.runtime import Runtime
+
+    # R1V-4: the acted case carries a real step (walk, then a FAILED verify).
+    sub = SubGoal(name="native_step_0", description="d", verify="at_position(9.0, 9.0)", strategy="walk")
+    step = StepRecord("native_step_0", "walk", True, False, 0.0, actor_caused=ActorCaused.CAUSED)
+    acted = ExecutionTrace(GoalTree(goal="g", sub_goals=(sub,) if owned == "acted" else ()),
+                           (step,) if owned == "acted" else (), False, 0.0,
                            actions_dispatched=int(owned == "acted"), cancelled=owned == "cancelled")
     engine = SimpleNamespace(_agent=None, run_turn_native=lambda *a, **k: acted)
     out = io.StringIO()
-    cli._repl_turn(engine, "walk", _session(), {}, cli.Console(file=out, width=200))
-    if owned == "cancelled":
-        assert "verified=False" in out.getvalue()
+    repl._repl_turn(Runtime(engine=engine, session=_session(), app_state={}), "walk",
+                   Console(file=out, width=200))
+    assert "verified=False" in out.getvalue(), out.getvalue()
+    if owned == "acted":
+        assert "walk → verify at_position(9.0, 9.0)" in out.getvalue()
 
 
 @pytest.mark.parametrize("tool", ["file_read", "bash"])
@@ -512,9 +527,11 @@ def test_a_dev_turn_native_owns_shows_the_models_answer(tmp_path, monkeypatch, t
     backend = _script(tool_turn(call), tool_turn(text="README 说这是一个 agent runtime。", end=True))
     eng = _dev_engine(backend, FileReadTool(), bash_tool.BashTool(),
                       permissions=PermissionContext(no_permission=True))
-    monkeypatch.setattr(cli, "create_session", lambda **k: _session())
+    from vector_os_nano.vcli.runtime import Runtime
+
     out = io.StringIO()
-    cli._repl_turn(eng, "总结一下 README.md 的内容", _session(), {}, cli.Console(file=out, width=200))
+    repl._repl_turn(Runtime(engine=eng, session=_session(), app_state={}), "总结一下 README.md 的内容",
+                   Console(file=out, width=200))
     assert "README 说这是一个 agent runtime。" in out.getvalue(), out.getvalue()
     if tool == "file_read":
         assert backend._cursor == 2  # the read, the answer: no 'verify' nudges
@@ -581,7 +598,7 @@ def test_without_the_opt_in_an_llm_outage_is_an_infrastructure_verdict(monkeypat
     trace = _make_engine(agent, _DiesAfter()).run_turn_native("hi", session=_session())
     report = VerdictReport.from_trace(trace, frozenset())
     assert report.llm_unavailable and report.evidence == "NO_TRACE" and report.exit_code() == 1
-    assert not cli._chat_turn(trace)  # shown as an infrastructure verdict, not as a chat
+    assert not render._chat_turn(trace)  # shown as an infrastructure verdict, not as a chat
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +629,7 @@ def typed(monkeypatch):
     """Replace stdin with a pipe; returns a function that 'types' a line."""
     r, w = os.pipe()
     monkeypatch.setattr(sys, "stdin", os.fdopen(r, "r"))
-    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
+    monkeypatch.setattr(render.console, "file", open(os.devnull, "w"))
     yield lambda line: os.write(w, (line + "\n").encode())
     os.close(w)
 
@@ -621,7 +638,7 @@ def test_a_typed_stop_mid_turn_stops_the_robot_without_the_llm(typed) -> None:
     eng = _ReplEngine()
     threading.Timer(0.2, typed, args=("停",)).start()
     t0 = time.monotonic()
-    nxt = cli._run_turn_busy(eng, lambda: eng.stopped.wait(5), {})
+    nxt = repl._run_turn_busy(eng, lambda: eng.stopped.wait(5), {})
     assert eng.stops == ["停"] and nxt is None
     assert time.monotonic() - t0 < 2.0
 
@@ -629,7 +646,7 @@ def test_a_typed_stop_mid_turn_stops_the_robot_without_the_llm(typed) -> None:
 def test_another_command_mid_turn_cancels_then_runs_next(typed) -> None:
     eng = _ReplEngine()
     threading.Timer(0.2, typed, args=("往后走",)).start()
-    assert cli._run_turn_busy(eng, lambda: eng.stopped.wait(5), {}) == "往后走"
+    assert repl._run_turn_busy(eng, lambda: eng.stopped.wait(5), {}) == "往后走"
     assert eng.stops == ["往后走"]  # the running turn was stopped first
 
 
@@ -639,7 +656,7 @@ def test_a_stop_typed_after_another_command_drops_that_command(typed) -> None:
     eng = _ReplEngine()
     threading.Timer(0.1, typed, args=("往后走",)).start()
     threading.Timer(0.3, typed, args=("停",)).start()
-    assert cli._run_turn_busy(eng, lambda: time.sleep(0.6), {}) is None
+    assert repl._run_turn_busy(eng, lambda: time.sleep(0.6), {}) is None
     assert eng.stops == ["往后走", "停"]
 
 
@@ -671,12 +688,12 @@ def test_ctrl_c_mid_turn_stops_and_never_exits(typed, monkeypatch, sigints, stdi
     """A Ctrl-C lands wherever the REPL thread is — reading stdin, or waiting on the
     turn (stdin_idle: the loop then lives in the wait) — and never escapes."""
     if stdin_idle:
-        monkeypatch.setattr(cli, "_read_line", lambda timeout: None)
+        monkeypatch.setattr(repl, "_read_line", lambda timeout: None)
     eng = _ReplEngine()
     for at in (0.2, 0.35):  # a panicked double Ctrl-C
         threading.Timer(at, os.kill, args=(os.getpid(), signal.SIGINT)).start()
     try:
-        nxt = cli._run_turn_busy(eng, lambda: _until(lambda: len(sigints) == 2), {})
+        nxt = repl._run_turn_busy(eng, lambda: _until(lambda: len(sigints) == 2), {})
     except KeyboardInterrupt:
         pytest.fail("Ctrl-C escaped the REPL turn loop (the REPL would exit)")
     assert nxt is None and len(sigints) == 2
@@ -693,11 +710,11 @@ def test_ctrl_c_during_a_stops_speed_report_never_exits(typed, sigints) -> None:
     threading.Timer(0.3, os.kill, args=(os.getpid(), signal.SIGINT)).start()
 
     def stop_turn() -> None:
-        cli._p0_stop(eng, "停下", app)
+        repl._p0_stop(eng, "停下", app)
         _until(lambda: len(sigints) == 1)  # a late Ctrl-C still lands inside the turn
 
     try:
-        cli._run_turn_busy(eng, stop_turn, app)
+        repl._run_turn_busy(eng, stop_turn, app)
     except KeyboardInterrupt:
         pytest.fail("Ctrl-C during the stop report escaped the REPL")
     assert eng.stops == ["停下", "interrupt"]
@@ -718,34 +735,34 @@ def test_the_stop_report_shows_a_lurch_between_its_marks() -> None:
         return (0.3 if t < 0.1 else 0.12 if 0.4 <= t < 0.5 else 0.02, 0.0, 0.0)
 
     base = SimpleNamespace(get_velocity=velocity, get_sim_time=sim_time)
-    assert cli._stop_report(SimpleNamespace(_base=base)) == (
+    assert repl._stop_report(SimpleNamespace(_base=base)) == (
         "base 0.02 m/s at 0.2 sim-s, peak 0.12 m/s to 1.0 sim-s, 0.02 m/s at 1.0 sim-s"
     )
 
 
 def test_a_stopped_turns_worker_never_prompts(typed, monkeypatch) -> None:
     """A stopped (stale) turn's permission ask is denied, never shown to the owner."""
-    monkeypatch.setattr(cli.Prompt, "ask", lambda *a, **k: pytest.fail("a stopped turn prompted"))
+    monkeypatch.setattr(repl.Prompt, "ask", lambda *a, **k: pytest.fail("a stopped turn prompted"))
     answers: list[str] = []
 
     def turn() -> None:
         abort.request_abort()
-        answers.append(cli.ask_permission("bash", {"command": "rm -rf build"}))
+        answers.append(repl.ask_permission("bash", {"command": "rm -rf build"}))
 
-    cli._run_turn_busy(_ReplEngine(), turn, {})
+    repl._run_turn_busy(_ReplEngine(), turn, {})
     assert answers == ["n"]
 
 
 def test_a_permission_prompt_from_the_turn_worker_is_answered_by_the_repl_thread(typed, monkeypatch) -> None:
     eng = _ReplEngine()
     asked_on: list[str] = []
-    monkeypatch.setattr(cli.Prompt, "ask", lambda *a, **k: asked_on.append(threading.current_thread().name) or "y")
+    monkeypatch.setattr(repl.Prompt, "ask", lambda *a, **k: asked_on.append(threading.current_thread().name) or "y")
     answers: list[str] = []
-    cli._run_turn_busy(eng, lambda: answers.append(cli.ask_permission("file_write", {"p": 1})), {})
+    repl._run_turn_busy(eng, lambda: answers.append(repl.ask_permission("file_write", {"p": 1})), {})
     assert answers == ["y"] and asked_on == ["MainThread"]
     # Off the main thread with no REPL loop to answer, an ask fails closed.
     out: list[str] = []
-    t = threading.Thread(target=lambda: out.append(cli.ask_permission("bash", {})))
+    t = threading.Thread(target=lambda: out.append(repl.ask_permission("bash", {})))
     t.start()
     t.join(5)
     assert out == ["n"]
@@ -828,14 +845,9 @@ def test_the_dev_world_can_launch_a_sim() -> None:
     dev world's native toolset holds the sim lifecycle, so '启动 go2 仿真' is the
     model's to route, like a dev write."""
     from vector_os_nano.vcli.native_loop import _build_motor_tools
-    from vector_os_nano.vcli.tools import discover_categorized_tools
-    from vector_os_nano.vcli.tools.base import CategorizedToolRegistry
+    from vector_os_nano.vcli.runtime import build_registry
 
-    registry = CategorizedToolRegistry()
-    tools, cats = discover_categorized_tools()
-    for t in tools:
-        registry.register(t, category=next((c for c, ns in cats.items() if t.name in ns), "default"))
-    dev = SimpleNamespace(_registry=registry)
+    dev = SimpleNamespace(_registry=build_registry())
     assert {"start_simulation", "stop_simulation"} <= set(_build_motor_tools(None, dev))
 
 
@@ -850,9 +862,10 @@ def test_the_chat_llm_key_is_never_handed_to_the_vlm(monkeypatch) -> None:
         return SimpleNamespace(summary=lambda: "ok")
 
     monkeypatch.setattr(sim_session.SimSession, "start", staticmethod(fake_start))
-    monkeypatch.setattr(cli, "console", cli.Console(file=open(os.devnull, "w")))
+    monkeypatch.setattr(render.console, "file", open(os.devnull, "w"))
     # Spelled so tests/conftest.py's sim-tier source regex keeps this file hermetic.
-    args = SimpleNamespace(api_key="sk-ant-secret", headless=True, embodiment="go2")
-    start = cli._init_agent
-    start(args)
+    from vector_os_nano.vcli import runtime
+
+    start = runtime.start_sim
+    start("go2", gui=False, notice=lambda msg: None)
     assert seen.get("vlm_api_key") in (None, "")

@@ -5,7 +5,7 @@ must not downgrade a verified turn — with or without a task contract — while
 that only read, or a read that failed, still never verifies."""
 from __future__ import annotations
 
-from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from tests.unit.vcli.test_native_loop import _Skill, _make_agent, _make_engine, _session, _verdict
 
 

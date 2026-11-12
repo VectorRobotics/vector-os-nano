@@ -89,7 +89,7 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
     from vector_os_nano.vcli.verdict import VerdictReport
     from vector_os_nano.vcli.worlds.robot import RobotWorld
 
-    from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+    from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 
     # Build the arm agent EXACTLY as the --sim CLI branch does (cli.py:543-557):
     # MuJoCoArm + MuJoCoGripper + MuJoCoPerception + SIM_PICK_CONFIG, default skills.

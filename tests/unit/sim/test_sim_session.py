@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-"""WP03 — SimSession / start_simulation / rebind_world, hermetic (no MuJoCo).
+"""WP03 — SimSession / start_simulation / bind_body, hermetic (no MuJoCo).
 
 The real-physics half (switch cycle, dead physics thread, renderer sizes, the
 relocated checkout) lives in tests/hardware/sim/test_sim_session_mujoco.py.
@@ -17,8 +17,9 @@ import pytest
 from vector_os_nano.embodiments import config as emb_config
 from vector_os_nano.embodiments import registry
 from vector_os_nano.sim import session as sess
-from vector_os_nano.sim.session import SimSession, SimSpec, SimStartError, rebind_world
-from vector_os_nano.vcli.tools.base import CategorizedToolRegistry, ToolContext
+from vector_os_nano.sim.session import SimSession, SimSpec, SimStartError
+from vector_os_nano.vcli.runtime import bind_body, build_registry
+from vector_os_nano.vcli.tools.base import ToolContext
 from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
 
 
@@ -280,7 +281,7 @@ def test_switch_to_a_typo_never_stops_the_running_session(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# rebind_world — the ONE re-init path
+# bind_body — the ONE re-init path
 # ---------------------------------------------------------------------------
 
 
@@ -298,13 +299,7 @@ class _Engine:
 
 
 def _app(**extra: Any) -> dict[str, Any]:
-    reg = CategorizedToolRegistry()
-    from vector_os_nano.vcli.tools import discover_categorized_tools
-
-    tools, cats = discover_categorized_tools()
-    for t in tools:
-        reg.register(t, category=next((c for c, n in cats.items() if t.name in n), "default"))
-    app = {"registry": reg, "engine": _Engine()}
+    app = {"registry": build_registry(), "engine": _Engine()}
     app.update(extra)
     return app
 
@@ -320,19 +315,19 @@ def _skill_tools(reg: Any) -> list[str]:
     return [n for n in reg.list_tools() if getattr(reg.get(n), "_is_skill_wrapper", False)]
 
 
-def test_rebind_world_binds_the_engine_and_adds_the_skill_tools() -> None:
+def test_bind_body_binds_the_engine_and_adds_the_skill_tools() -> None:
     app = _app()
     s = _robot_session()
-    rebind_world(app, s)
+    bind_body(app, s)
     assert app["engine"].bound == [(s.agent, "robot")]
     assert _skill_tools(app["registry"])
     assert app["agent"] is s.agent and app["sim_session"] is s
 
 
-def test_rebind_world_to_none_binds_the_dev_world_and_drops_the_skill_tools() -> None:
+def test_bind_body_to_none_binds_the_dev_world_and_drops_the_skill_tools() -> None:
     app = _app()
-    rebind_world(app, _robot_session())
-    rebind_world(app, None)
+    bind_body(app, _robot_session())
+    bind_body(app, None)
     assert app["engine"].bound[-1] == (None, "dev")
     assert not _skill_tools(app["registry"])
     assert app["agent"] is None and app["sim_session"] is None
@@ -359,7 +354,7 @@ def test_a_failed_bind_changes_nothing() -> None:
     app = _app()
     app["engine"].fail = RuntimeError("cannot bind")
     with pytest.raises(RuntimeError):
-        rebind_world(app, _robot_session())
+        bind_body(app, _robot_session())
     assert "agent" not in app and not _skill_tools(app["registry"])
 
 
@@ -369,14 +364,18 @@ def test_a_failed_bind_changes_nothing() -> None:
 
 
 def test_sim_flag_failure_exits_2_instead_of_dev_world(monkeypatch) -> None:
-    from vector_os_nano.vcli import cli
+    from vector_os_nano.vcli import cli, runtime
 
     def boom(*_a: Any, **_k: Any) -> Any:
         raise SimStartError("not ready", "camera frame is empty/black")
 
     monkeypatch.setattr(SimSession, "start", staticmethod(boom))
+    with pytest.raises(SimStartError):
+        runtime.start_sim("go2", gui=False)
+    monkeypatch.setattr(cli, "_maybe_reexec_under_mjpython", lambda args: None)
+    monkeypatch.setattr(cli, "_setup_logging", lambda verbose: None)
     with pytest.raises(SystemExit) as ei:
-        cli._init_agent(cli.parse_args(["--sim-go2", "--headless"]))
+        cli.main(["--sim-go2", "--headless"])
     assert ei.value.code == 2
 
 

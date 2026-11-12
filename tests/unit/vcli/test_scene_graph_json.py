@@ -207,6 +207,6 @@ class TestToolDiscovery:
         assert "open_foxglove" in names
 
     def test_foxglove_tool_in_system_category(self):
-        from vector_os_nano.vcli.tools import _TOOL_CATEGORIES
+        from vector_os_nano.vcli.runtime import build_registry
 
-        assert "open_foxglove" in _TOOL_CATEGORIES["system"]
+        assert "open_foxglove" in build_registry().list_categories()["system"]

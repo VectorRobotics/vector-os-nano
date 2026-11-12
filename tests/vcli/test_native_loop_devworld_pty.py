@@ -14,8 +14,8 @@ module now PINS the fix.
 THE LEAK (was) AND THE FIX (now):
 
     ``native_loop._build_motor_tools(agent)`` USED to build the loop's action surface
-    from ``wrap_skills(agent)`` ONLY. In the dev world ``cli._init_agent`` returns
-    ``None`` (no ``--sim``/``--sim-go2``), so there was no agent and no skill registry:
+    from ``wrap_skills(agent)`` ONLY. In the dev world ``runtime.build_runtime`` starts
+    no body (no ``--sim``/``--sim-go2``), so there was no agent and no skill registry:
     the loop offered ONLY ``verify`` + ``finish`` and ZERO action tools. STEP 6 extends
     ``_build_motor_tools(agent, engine)`` to ALSO surface the engine registry's
     ``code``-category tools (file_read/file_write/file_edit/bash/glob/grep — the SAME
@@ -144,7 +144,7 @@ def test_native_devworld_grounds_when_dev_action_skill_is_wrapped() -> None:
     from vector_os_nano.vcli.verdict import VerdictReport
     from vector_os_nano.vcli.worlds.dev import DevWorld
 
-    from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+    from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 
     # A test-only DEV action skill: writes a file (relative to cwd, the same tree the
     # dev ``path_contains`` predicate reads). No robot, no motor — a pure dev action.

@@ -20,7 +20,6 @@ Pure-logic tests run with zero robot deps; sim tests skip if mujoco is absent.
 """
 from __future__ import annotations
 
-import argparse
 import threading
 from pathlib import Path
 
@@ -58,9 +57,9 @@ def test_robot_context_no_hardware_still_disconnected():
 
 
 def test_start_simulation_in_sim_category():
-    from vector_os_nano.vcli.tools import discover_categorized_tools
+    from vector_os_nano.vcli.runtime import build_registry
 
-    _, cat_map = discover_categorized_tools()
+    cat_map = build_registry().list_categories()
     assert "start_simulation" in cat_map.get("sim", [])
     assert "stop_simulation" in cat_map.get("sim", [])
     assert "start_simulation" not in cat_map.get("system", [])
@@ -107,13 +106,11 @@ def arm():
 
 def test_sim_agent_has_gripper_and_perception():
     pytest.importorskip("mujoco")
-    from vector_os_nano.vcli import cli
+    from vector_os_nano.vcli import runtime
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 
-    # cli._init_agent reads `headless` (not `gui`): without it a viewer opens.
-    ns = argparse.Namespace(sim=True, sim_go2=False, headless=True, api_key=None)
-    session = cli._init_agent(ns)  # --sim -> the so101 SimSession
+    session = runtime.start_sim("so101", gui=False)  # what --sim starts
     try:
         agent = session.agent
         assert getattr(agent._arm, "_viewer", None) is None
@@ -177,8 +174,8 @@ def test_skill_wrapper_pick_honors_auto_steps(arm, monkeypatch):
 
 def test_sim_tool_lifecycle_dev_to_arm_to_dev():
     pytest.importorskip("mujoco")
-    from vector_os_nano.vcli.tools.base import CategorizedToolRegistry, ToolContext
-    from vector_os_nano.vcli.tools import discover_categorized_tools
+    from vector_os_nano.vcli.runtime import build_registry
+    from vector_os_nano.vcli.tools.base import ToolContext
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
 
     class _FakeEngine:
@@ -188,10 +185,7 @@ def test_sim_tool_lifecycle_dev_to_arm_to_dev():
         def bind(self, agent, world):
             self.bound.append((agent, world.name))
 
-    reg = CategorizedToolRegistry()
-    tools, cat_map = discover_categorized_tools()
-    for t in tools:
-        reg.register(t, category=next((c for c, n in cat_map.items() if t.name in n), "default"))
+    reg = build_registry()
     eng = _FakeEngine()
     app = {"agent": None, "registry": reg, "engine": eng}
     ctx = ToolContext(agent=None, cwd=Path.cwd(), session=None, permissions=None,

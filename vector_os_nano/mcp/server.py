@@ -184,51 +184,12 @@ class VectorMCPServer:
 
 
 def _build_engine(agent: Agent) -> tuple[Any, Any]:
-    """Build a VectorEngine + Session from an Agent (hardware container).
+    """The engine + session for *agent* (an initialised hardware container), from the
+    ONE runtime builder every face uses (``vcli.runtime.build_runtime``)."""
+    from vector_os_nano.vcli.runtime import build_runtime  # noqa: PLC0415
 
-    Mirrors the CLI engine creation flow in vcli/cli.py.
-
-    Args:
-        agent: A fully initialised Agent (hardware container).
-
-    Returns:
-        (engine, session) tuple ready for VectorMCPServer.
-    """
-    from vector_os_nano.vcli.config import resolve_credentials  # noqa: PLC0415
-    from vector_os_nano.vcli.backends import create_backend  # noqa: PLC0415
-    from vector_os_nano.vcli.tools import CategorizedToolRegistry, discover_categorized_tools  # noqa: PLC0415
-    from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills  # noqa: PLC0415
-    from vector_os_nano.vcli.engine import VectorEngine  # noqa: PLC0415
-    from vector_os_nano.vcli.session import create_session  # noqa: PLC0415
-    from vector_os_nano.vcli.worlds import resolve_world  # noqa: PLC0415
-
-    # 1. Resolve credentials (Claude OAuth > env > config)
-    api_key, provider, model, base_url = resolve_credentials()
-
-    # 2. LLM backend
-    backend = create_backend(provider=provider, api_key=api_key, model=model, base_url=base_url)
-
-    # 3. Tool registry: built-in tools + skill wrappers
-    registry: CategorizedToolRegistry = CategorizedToolRegistry()
-    tools_list, cat_map = discover_categorized_tools()
-    for t in tools_list:
-        cat = "default"
-        for c, names in cat_map.items():
-            if t.name in names:
-                cat = c
-                break
-        registry.register(t, category=cat)
-    for skill_tool in wrap_skills(agent):
-        registry.register(skill_tool, category="robot")
-
-    # 4. Engine, bound to the agent and its world
-    engine = VectorEngine(backend=backend, registry=registry)
-    engine.bind(agent, resolve_world(agent))
-
-    # 5. Session
-    session = create_session(metadata={"source": "mcp", "model": model})
-
-    return engine, session
+    rt = build_runtime(agent=agent, face="mcp", notice=_log)
+    return rt.engine, rt.session
 
 
 # ---------------------------------------------------------------------------

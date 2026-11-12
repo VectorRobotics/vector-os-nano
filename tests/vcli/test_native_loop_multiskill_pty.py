@@ -80,7 +80,7 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
     from vector_os_nano.vcli.verdict import VerdictReport
     from vector_os_nano.vcli.worlds.robot import RobotWorld
 
-    from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+    from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 
     base = MuJoCoGo2(gui=False, room=True, backend="auto")
     base.connect()

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.harness.fake_backend import FakeToolScriptBackend, tool_turn
+from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from tests.unit.vcli.test_native_loop import (
     _CAN, _NavBase, _Skill, _make_agent, _make_arm_agent, _make_engine, _session, _verdict,
 )
@@ -180,7 +180,7 @@ def test_goal_check_states_on_hand_traces() -> None:
 
 
 def test_the_verdict_carries_the_goal_check_and_the_repl_says_it() -> None:
-    from vector_os_nano.vcli.cli import _goal_line
+    from vector_os_nano.vcli.render import _goal_line
     from vector_os_nano.vcli.verdict import VerdictReport
 
     t = _hand_trace("pick up the green bottle", "holding_object('green bottle')",

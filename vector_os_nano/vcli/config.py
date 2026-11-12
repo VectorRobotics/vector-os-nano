@@ -1,208 +1,125 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Persistent configuration for Vector CLI.
+"""LLM credentials: the provider is a choice, its key comes from the environment.
 
-Stores API keys, default model, provider preferences in ~/.vector/config.yaml.
-Also discovers Claude Code OAuth tokens from ~/.claude/.credentials.json.
+``provider``, ``model`` and ``base_url`` resolve as: CLI flag > the ``llm:`` block of
+``~/.vector/config.yaml`` > the built-in default. The key is read ONLY from the
+provider's environment variable (a repo-root ``.env`` is loaded first); the config
+file never holds a key, and no other application's credentials are ever read.
 
-Config file location: ~/.vector/config.yaml
+    # ~/.vector/config.yaml
+    llm:
+      provider: deepseek        # deepseek | openrouter | anthropic | openai_compat
+      model: deepseek-v4-flash  # optional: the provider's default otherwise
+      base_url: ...             # optional
+      api_key_env: MY_KEY       # optional: read the key from this variable instead
 """
 from __future__ import annotations
 
-import json
-import time
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-_CONFIG_DIR = Path.home() / ".vector"
-_CONFIG_PATH = _CONFIG_DIR / "config.yaml"
-_CLAUDE_CREDS_PATH = Path.home() / ".claude" / ".credentials.json"
+_CONFIG_PATH = Path.home() / ".vector" / "config.yaml"
 
-# Defaults when no config file exists
-_DEFAULTS: dict[str, Any] = {
-    "provider": "openrouter",
-    "model": "claude-haiku-4-5",
-    "anthropic_api_key": "",
-    "openrouter_api_key": "",
-    "base_url": "",
+
+@dataclass(frozen=True)
+class Provider:
+    key_env: str
+    model: str
+    base_url: str | None
+
+
+PROVIDERS: dict[str, Provider] = {
+    "deepseek": Provider("DEEPSEEK_API_KEY", "deepseek-v4-flash", "https://api.deepseek.com"),
+    "openrouter": Provider("OPENROUTER_API_KEY", "anthropic/claude-sonnet-4-6", "https://openrouter.ai/api/v1"),
+    "anthropic": Provider("ANTHROPIC_API_KEY", "claude-sonnet-4-6", None),
+    "openai_compat": Provider("OPENAI_API_KEY", "", None),
 }
+DEFAULT_PROVIDER = "deepseek"
+
+# Keys an older config file held; each names the variable it belongs in now.
+_LEGACY_KEYS = {"anthropic_api_key": "ANTHROPIC_API_KEY", "openrouter_api_key": "OPENROUTER_API_KEY",
+                "deepseek_api_key": "DEEPSEEK_API_KEY"}
+
+
+@dataclass(frozen=True)
+class Credentials:
+    """The resolved LLM selection. ``api_key`` is '' when its variable is unset."""
+
+    provider: str
+    model: str
+    base_url: str | None
+    key_env: str
+    api_key: str = field(default="", repr=False)
+    notice: str = ""  # one line about an old config file, else ''
+
+    def instruction(self) -> str:
+        """What to do when the key is missing: the exact variable to set."""
+        return (f"No {self.key_env} set: the {self.provider} provider reads its key from the "
+                f"environment. Add {self.key_env}=<your key> to .env in the repo root (or export "
+                f"it), then type /login. Another provider: vector-cli --provider <name>, or "
+                f"llm.provider in {_CONFIG_PATH}.")
 
 
 def load_config() -> dict[str, Any]:
-    """Load config from ~/.vector/config.yaml, merging with defaults."""
-    config = dict(_DEFAULTS)
+    """The config file as a dict ({} when it is absent or unreadable)."""
     if not _CONFIG_PATH.exists():
-        return config
+        return {}
     try:
         import yaml  # noqa: PLC0415
+
         raw = yaml.safe_load(_CONFIG_PATH.read_text(encoding="utf-8"))
-        if isinstance(raw, dict):
-            config.update(raw)
-    except ImportError:
-        # No PyYAML — fall back to simple key=value parsing
-        config.update(_load_simple(_CONFIG_PATH))
-    except Exception:
-        pass
-    return config
+    except Exception:  # noqa: BLE001 — an unreadable file is an absent one
+        return {}
+    return raw if isinstance(raw, dict) else {}
 
 
-def save_config(config: dict[str, Any]) -> None:
-    """Write config to ~/.vector/config.yaml."""
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        import yaml  # noqa: PLC0415
-        _CONFIG_PATH.write_text(
-            yaml.dump(config, default_flow_style=False, allow_unicode=True),
-            encoding="utf-8",
-        )
-    except ImportError:
-        _save_simple(_CONFIG_PATH, config)
-
-
-def _load_simple(path: Path) -> dict[str, str]:
-    """Parse a simple key: value file (YAML subset)."""
-    result: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if ":" in line:
-            k, v = line.split(":", 1)
-            result[k.strip()] = v.strip().strip("'\"")
-    return result
-
-
-def _save_simple(path: Path, config: dict[str, Any]) -> None:
-    """Write a simple key: value file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"{k}: {v}" for k, v in config.items() if v]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def load_claude_oauth() -> dict[str, Any] | None:
-    """Load Claude Code OAuth credentials from ~/.claude/.credentials.json.
-
-    Returns the OAuth data dict if valid and not expired, else None.
-    """
-    if not _CLAUDE_CREDS_PATH.exists():
-        return None
-    try:
-        raw = json.loads(_CLAUDE_CREDS_PATH.read_text(encoding="utf-8"))
-        oauth = raw.get("claudeAiOauth")
-        if not isinstance(oauth, dict):
-            return None
-        access_token = oauth.get("accessToken", "")
-        expires_at = oauth.get("expiresAt", 0)
-        if not access_token:
-            return None
-        # Check expiry (expiresAt is ms timestamp)
-        if expires_at and time.time() * 1000 > expires_at:
-            return None
-        return oauth
-    except (json.JSONDecodeError, OSError, KeyError):
-        return None
+def _legacy_notice(config: dict[str, Any], key_env: str) -> str:
+    """One line naming key material an old config file still holds (never its value)."""
+    llm = config.get("llm") if isinstance(config.get("llm"), dict) else {}
+    moves = [f"{k} -> {v}" for k, v in _LEGACY_KEYS.items() if config.get(k)]
+    if llm.get("api_key"):
+        moves.append(f"llm.api_key -> {key_env}")
+    if not moves:
+        return ""
+    return (f"{_CONFIG_PATH} holds an API key, which is not read (keys come only from the "
+            f"environment); move it: {', '.join(moves)}. The file is left as it is.")
 
 
 def resolve_credentials(
-    cli_api_key: str | None = None,
-    cli_base_url: str | None = None,
-    cli_model: str | None = None,
-) -> tuple[str, str, str, str | None]:
-    """Resolve API key, provider, model, and base_url from all sources.
+    provider: str | None = None, model: str | None = None, base_url: str | None = None,
+) -> Credentials:
+    """Resolve the LLM selection (flag > config ``llm:`` > default) and read its key.
 
-    Priority: CLI flags > DeepSeek (env/config) > Vector OAuth > Claude OAuth >
-              ANTHROPIC_API_KEY (env/config) > OPENROUTER_API_KEY (env/config).
-
-    A repo-root .env is loaded first so env vars set there participate in the
-    same priority order as real env vars. load_dotenv() is a no-op when no .env
-    exists, so all existing behaviour is byte-identical when .env is absent.
-
-    Returns:
-        (api_key, provider, model, base_url)
+    A repo-root ``.env`` is loaded into the environment first (an already-set
+    variable wins). An unknown provider raises with the valid set.
     """
-    import os  # noqa: PLC0415
     from dotenv import load_dotenv  # noqa: PLC0415
 
-    # Load repo-root .env into the process environment BEFORE reading any env var.
-    # Standard find-from-cwd behaviour: walks up from cwd until it finds .env.
-    # No-op when absent; existing env vars are NOT overwritten (override=False default).
     load_dotenv()
-
     config = load_config()
-
-    api_key = cli_api_key or ""
-    provider = "anthropic"
-    base_url = cli_base_url
-
-    # DeepSeek branch: OpenAI-compatible provider (model ids carry no slash and must
-    # NOT be mangled by the OpenRouter "anthropic/" prefix below).  Activated when:
-    #   - DEEPSEEK_API_KEY is present in env/.env, OR
-    #   - config explicitly sets ``provider: deepseek`` with a key.
-    # Opt-out: if VECTOR_PROVIDER is explicitly set to 'openrouter' or 'anthropic',
-    # skip this branch so the user can force the fallback even when a DS key exists.
-    ds_key = os.environ.get("DEEPSEEK_API_KEY", "") or config.get("deepseek_api_key", "")
-    _forced_provider = os.environ.get("VECTOR_PROVIDER", "").lower()
-    deepseek_selected = (
-        _forced_provider == "deepseek"
-        or bool(os.environ.get("DEEPSEEK_API_KEY", ""))
-        or config.get("provider") == "deepseek"
+    llm = config.get("llm") if isinstance(config.get("llm"), dict) else {}
+    name = provider or llm.get("provider") or DEFAULT_PROVIDER
+    if name not in PROVIDERS:
+        raise ValueError(f"unknown LLM provider {name!r}; one of {sorted(PROVIDERS)}")
+    spec = PROVIDERS[name]
+    # The file's model / base_url / key variable belong to the file's provider: a flag
+    # that picks another provider starts from that provider's defaults.
+    own = llm if name == (llm.get("provider") or DEFAULT_PROVIDER) else {}
+    key_env = str(own.get("api_key_env") or spec.key_env)
+    creds = Credentials(
+        provider=name,
+        model=str(model or own.get("model") or spec.model),
+        base_url=base_url or own.get("base_url") or spec.base_url,
+        key_env=key_env,
+        api_key=os.environ.get(key_env, "").strip(),
+        notice=_legacy_notice(config, key_env),
     )
-    deepseek_opted_out = _forced_provider in ("openrouter", "anthropic")
-
-    if not cli_api_key and deepseek_selected and not deepseek_opted_out and ds_key:
-        ds_model = (
-            cli_model
-            or os.environ.get("DEEPSEEK_MODEL")
-            or config.get("deepseek_model")
-            or "deepseek-v4-flash"
-        )
-        ds_base = (
-            cli_base_url
-            or os.environ.get("DEEPSEEK_BASE_URL")
-            or config.get("deepseek_base_url")
-            or "https://api.deepseek.com"
-        )
-        return ds_key, "openai_compat", ds_model, ds_base
-
-    if not api_key:
-        # Vector CLI's own OAuth credentials (independent rate limits)
-        from vector_os_nano.vcli.oauth import load_credentials
-        own_creds = load_credentials()
-        if own_creds:
-            api_key = own_creds["accessToken"]
-            provider = "anthropic"
-
-    if not api_key:
-        # Claude Code OAuth fallback (shared rate limits)
-        oauth = load_claude_oauth()
-        if oauth:
-            api_key = oauth["accessToken"]
-            provider = "anthropic"
-
-    if not api_key:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        api_key = config.get("anthropic_api_key", "")
-
-    if api_key:
-        provider = "anthropic"
-    else:
-        api_key = os.environ.get("OPENROUTER_API_KEY", "")
-        if not api_key:
-            api_key = config.get("openrouter_api_key", "")
-        if api_key:
-            provider = "openrouter"
-            if not base_url:
-                base_url = config.get("base_url", "") or "https://openrouter.ai/api/v1"
-
-    # Model resolution: CLI flag > VECTOR_MODEL env > config > default
-    model = cli_model or os.environ.get("VECTOR_MODEL") or config.get("model", "claude-sonnet-4-6")
-
-    # Auto-prefix for OpenRouter, strip prefix for Anthropic direct
-    if provider == "openrouter" and "/" not in model:
-        model = f"anthropic/{model}"
-    elif provider == "anthropic" and "/" in model:
-        model = model.split("/", 1)[1]
-
-    return api_key, provider, model, base_url or None
+    if not (creds.model and creds.base_url) and name == "openai_compat":
+        # Never default an OpenAI-compatible key to some other host.
+        raise ValueError("the openai_compat provider needs a model and a base_url "
+                         f"(--model / --base-url, or llm.model / llm.base_url in {_CONFIG_PATH})")
+    return creds
