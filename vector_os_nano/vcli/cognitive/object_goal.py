@@ -115,27 +115,28 @@ def has_necessary_manip_oracle(expr: str | None, names: frozenset[str] = _HOLD) 
 
 
 def _asserted_calls(node: ast.AST) -> list[ast.Call]:
-    """Calls whose truth the verify ASSERTS: the call, an ``and`` conjunct, or
-    ``<call> == True`` or ``True == <call>`` (the classifier grades both, REF1d-V-01) —
-    never under ``not`` / ``or`` / an ordering."""
+    """Calls whose truth the verify ASSERTS (a contract proof): the call, an ``and``
+    conjunct, or ``<call> == True`` — never ``True == <call>`` (REF1e-V-01), nor under
+    ``not`` / ``or`` / an ordering."""
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         return [node]
     if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
         return [c for v in node.values for c in _asserted_calls(v)]
-    if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
-        sides = (node.left, node.comparators[0])
-        return [c for i, s in enumerate(sides) if isinstance(s, ast.Constant) and s.value is True
-                for c in _asserted_calls(sides[1 - i])]
+    if (
+        isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq)
+        and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is True
+    ):
+        return _asserted_calls(node.left)
     return []
 
 
-def verify_intents(expr: str | None) -> frozenset[str]:
-    """The manipulation *expr* proves was performed: "grasp" when it asserts a
-    possession oracle, "place" when it asserts a release or placement (never under
-    ``not`` / ``or``: "not holding" proves no grasp)."""
+def named_intents(expr: str | None) -> frozenset[str]:
+    """The intents whose oracle NAME appears anywhere in *expr* (REF1e): "grasp" for a
+    possession oracle, "place" for a release or placement. What it asserts is never read,
+    so no spelling the classifier grounds hides a manipulation from the gate."""
     node = _parse(expr)
-    called = {c.func.id for c in _asserted_calls(node)} if node is not None else set()
-    return frozenset(i for i, names in (("grasp", _HOLD), ("place", _PLACE)) if called & names)
+    names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} if node is not None else set()
+    return frozenset(i for i, ns in (("grasp", _HOLD), ("place", _PLACE)) if names & ns)
 
 
 def _manifest(world_id: str) -> Any:

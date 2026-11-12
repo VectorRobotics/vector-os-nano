@@ -313,8 +313,8 @@ def _manipulation_reason(
 ) -> str:
     """D17/D69 manipulation gate, independent of the coordinate gate: a manipulation
     intent -- in the goal's words, in a dispatched gripper skill's hint, or in a GROUNDED
-    graded step whose verify asserts a possession or a placement (it was performed,
-    whatever skill ran: gripper_close's driver is where the world grasps, REF1c-V-01) --
+    graded step whose verify names a possession or a placement oracle anywhere (it was
+    performed, whatever skill ran and however it is spelt: REF1c-V-01, REF1d-V-01) --
     needs a GROUNDED graded step that necessarily asserts EACH proof it needs
     (``proof_oracles``) — a possession oracle for a grasp / fetch (``placed_count`` never
     proves a grasp), a placement or release for a place, both for a pick-and-place. Scoped to a world with
@@ -327,15 +327,15 @@ def _manipulation_reason(
         checkable_goals,
         goal_intents,
         has_necessary_manip_oracle,
+        named_intents,
         proof_oracles,
-        verify_intents,
     )
 
     if "holding_object" not in oracle_names:
         return ""
     goal = goal_intents(trace.goal_tree.goal)
     dispatched = set(getattr(trace, "intents", ()) or ()).union(
-        *(verify_intents(sg_by_name[s.sub_goal_name].verify) for s in graded if ev[id(s)][0] == "GROUNDED"))
+        *(named_intents(sg_by_name[s.sub_goal_name].verify) for s in graded if ev[id(s)][0] == "GROUNDED"))
     # I4F1-D2: a hold of the red can never proves "pick up the green bottle"; an unbound
     # object fails closed, and a goal outside the forms binds none at all.
     world_id = str(getattr(trace, "world", "") or "")
