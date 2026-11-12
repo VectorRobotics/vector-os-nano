@@ -325,3 +325,96 @@ def test_the_category_table_covers_both_cases_in_both_languages() -> None:
     rows = _category_rows()
     assert {len(f) == 1 for _, _, f in rows} == {True, False}
     assert {w.isascii() for _, w, _ in rows} == {True, False}
+
+
+# REF1d-V-02 / REF1c-V-03 through the runner: every goal the reject reason offers is proven
+# in its world when the scripted body does what it says. Each world's first pickable
+# starts where its shipped scene puts it (so101_mujoco.xml: the banana at 0.12, 0.12).
+_BODIES = {"apartment": ("go2_piper", (10.9, 3.0, 0.71)), "tabletop": ("so101", (0.12, 0.12, 0.06))}
+
+
+class _OneArm:
+    """The world's first pickable: at an (x, y, z), or "held" 0.24 m above its start."""
+
+    _connected = True
+
+    def __init__(self, name: str, start: tuple[float, float, float], at) -> None:
+        self.name, self.start, self.at = name, start, at
+
+    def get_object_positions(self):
+        x, y, z = self.start
+        return {self.name: [x, y, z + 0.24] if self.at == "held" else list(self.at)}
+
+    def get_joint_positions(self):
+        return [0.0] * 6
+
+
+class _OneGrip:
+    def __init__(self, arm: _OneArm) -> None:
+        self._arm = arm
+
+    def is_holding(self) -> bool:
+        return self._arm.at == "held"
+
+    def weld_is_active(self) -> dict:
+        return {self._arm.name: self.is_holding()}
+
+
+def _offer_run(world: str, goal: str, script: list, at, dest_body: str = "", skills: dict | None = None):
+    from tests.harness.fake_gt import bind_fake_sim, unbind_fake_sim
+    from tests.unit.vcli.test_native_loop import _NavBase, _Skill, _make_agent
+    from vector_os_nano.sim.session import session_for
+
+    body, start = _BODIES[world]
+    w = load_world(world)
+    agent, _ = _make_agent(10.0, 3.0)
+    agent._base = _NavBase(10.0, 3.0)
+    arm = _OneArm(next(iter(w.pickables)), start, start if at == "rest" else at)
+    agent._arm, agent._gripper = arm, _OneGrip(arm)
+    unbind_fake_sim(session_for(agent))
+    s = bind_fake_sim(agent, body, support=dest_body or w.surfaces[w.pickables[arm.name].surface].body)
+    for name, to in (skills or {}).items():
+        agent._skill_registry.register(_Skill(name, lambda to=to: setattr(arm, "at", to)))
+    backend = FakeToolScriptBackend.from_tool_script([*(tool_turn(c) for c in script), tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    try:
+        trace = eng.run_turn_native(goal, session=_session())
+        return trace, _verdict(agent, eng, trace)
+    finally:
+        unbind_fake_sim(s)
+
+
+def _offered(world: str) -> list[str]:
+    """The goals a free sentence's rejection offers in *world* (its live oracle names)."""
+    _, rep = _offer_run(world, "look around", [("grasp", {}), _v("holding_object()")], "rest",
+                        skills={"grasp": "held"})
+    assert OUTSIDE in rep.reject_reason, rep.reject_reason
+    return rep.reject_reason.split("checkable goals: ", 1)[1].split("; ")
+
+
+@pytest.mark.parametrize("world", sorted(_BODIES))
+def test_every_goal_the_reject_reason_offers_is_proven_through_the_runner(world) -> None:
+    w = load_world(world)
+    pk = next(iter(w.pickables.values()))
+    x, y, z = _BODIES[world][1]
+    goals = _offered(world)
+    assert len(goals) >= 3, goals
+    for goal in goals:
+        contract = task_contract(goal, APT, world)
+        call = ast.parse(contract[0], mode="eval").body
+        grasp = [("grasp", {}), _v(f"holding_object({pk.english!r})")]
+        at, script, dest, box = "rest", grasp, "", (0.0, 0.0, 0.0, 0.0)
+        if call.func.id == "released":
+            at, script = "held", [("open", {}), _v(f"released({pk.english!r})")]
+        elif call.func.id == "object_on":
+            surface = w.surfaces[call.args[1].value]
+            dest, box = surface.body, surface.box
+            script = [*grasp, ("place", {}), _v(f"object_on({pk.english!r}, {call.args[1].value!r})")]
+        elif call.func.id == "kept_holding":
+            ux, uy = w.user
+            script = [*grasp, ("navigate", {"x": ux, "y": uy}),
+                      _v(f"kept_holding({pk.english!r}) and near_object('user')")]
+        trace, rep = _offer_run(world, goal, script, at, dest, skills={
+            "grasp": "held", "open": (x + 0.05, y, z), "place": ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2, z)})
+        assert trace.contract == contract and rep.goal_check == "proven", (world, goal, rep.reject_reason)
+        assert rep.verified is True, (world, goal, rep.reject_reason)
