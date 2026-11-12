@@ -432,4 +432,4 @@ def test_the_ci_install_declares_what_the_hermetic_tier_imports() -> None:
     names = {re.split(r"[<>=!~\[ ]", d, maxsplit=1)[0].lower() for x in named for d in extras[x]}
     assert {"opencv-python", "pillow"} <= names, (named, sorted(names))
     assert "opencv-python" in {d.split(">")[0] for d in extras["sim"]}   # front_object is a sim path
-    assert "pillow" in {d.split(">")[0] for d in extras["mcp"]}          # mcp/resources encodes PNG
+    assert "pillow" in {d.split(">")[0] for d in extras["mcp"]}          # mcp/server.py encodes PNG
