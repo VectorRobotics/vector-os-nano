@@ -95,12 +95,14 @@ def scene_cache() -> Path:
 def migrate_old_memory() -> str:
     """Move each ``~/.vector_os_nano/worlds/<world>/`` into ``memory/<world>/``, once.
 
+    Only into the default store ``~/.vector``: any other $VECTOR_HOME may be a throwaway
+    (a bare pytest's, a benchmark trial's) deleted afterwards, so nothing moves into it.
     Returns one notice, '' when there was nothing to move. A world whose
     ``memory/<world>/`` already exists, or whose move fails, is left where it is and
     named (shutil.move removes the source only after a complete copy).
     """
     old = Path(expand_user(_OLD_MEMORY))
-    if not old.is_dir():
+    if not old.is_dir() or os.path.realpath(home()) != os.path.realpath(user_home() / ".vector"):
         return ""
     moved, kept = [], []
     for src in sorted(p for p in old.iterdir() if p.is_dir()):

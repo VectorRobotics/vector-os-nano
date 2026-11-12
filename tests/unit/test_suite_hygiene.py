@@ -380,11 +380,15 @@ def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_p
 
 def test_a_bare_pytest_never_writes_the_real_state_directory(tmp_path) -> None:
     """tests-inventory:tests-leave-no-home-guard: outside the gate, tests/conftest.py
-    points VECTOR_HOME at a throwaway directory before the package is imported, with
-    the provisioned assets linked; a test writing a session leaves the real one alone."""
-    real = tmp_path / "real_state"
+    points HOME and VECTOR_HOME at throwaway directories before the package is imported,
+    with the real HF cache and the provisioned assets linked; a test writing a session
+    or starting a sim (which moves old scene memory in, C1a-V-D2) leaves the real home
+    and the real state directory alone."""
+    real, home = tmp_path / "real_state", tmp_path / "real_home"
     (real / "assets" / "g1_gait").mkdir(parents=True)
     (real / "assets" / "g1_gait" / "motion.pt").write_text("provisioned")
+    (home / ".vector_os_nano" / "worlds" / "apartment").mkdir(parents=True)
+    (home / ".vector_os_nano" / "worlds" / "apartment" / "scene_graph.yaml").write_text("rooms: precious\n")
     probe = tmp_path / "test_probe_state.py"
     probe.write_text(
         "import json, os, pathlib\n"
@@ -392,24 +396,30 @@ def test_a_bare_pytest_never_writes_the_real_state_directory(tmp_path) -> None:
         "from vector_os_nano.vcli.session import create_session\n\n"
         "def test_state():\n"
         "    s = create_session(); s.append_user('hi'); s.save()\n"
-        "    seen = {'home': str(paths.home()), 'session': str(s._path),\n"
+        "    seen = {'home': str(paths.home()), 'session': str(s._path), 'HOME': os.environ['HOME'],\n"
+        "            'HF_HOME': os.environ['HF_HOME'], 'migrated': paths.migrate_old_memory(),\n"
         "            'assets': (paths.assets('g1_gait') / 'motion.pt').read_text()}\n"
         "    pathlib.Path(os.environ['PROBE_OUT']).write_text(json.dumps(seen))\n"
     )
     out = tmp_path / "seen.json"
-    env = {k: v for k, v in os.environ.items() if k != "GATE_HOME_SET"}
+    env = {k: v for k, v in os.environ.items() if k not in ("GATE_HOME_SET", "HF_HOME")}
     r = subprocess.run(
         [sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
          "-c", str(_REPO / "pyproject.toml"), "-q", "--rootdir", str(tmp_path), str(probe)],
-        env={**env, "VECTOR_HOME": str(real), "PROBE_OUT": str(out)},
+        env={**env, "HOME": str(home), "VECTOR_HOME": str(real), "PROBE_OUT": str(out)},
         cwd=_REPO, capture_output=True, text=True, timeout=300,
     )
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
     seen = json.loads(out.read_text())
     assert not seen["home"].startswith(str(real)) and seen["session"].startswith(seen["home"])
     assert seen["assets"] == "provisioned" and not Path(seen["home"]).exists()  # removed at exit
+    assert seen["home"] == str(Path(seen["HOME"]) / ".vector") and not Path(seen["HOME"]).exists()
+    assert seen["HF_HOME"] == str(home / ".cache" / "huggingface") and seen["migrated"] == ""
     assert sorted(str(p.relative_to(real)) for p in real.rglob("*")) == [
         "assets", "assets/g1_gait", "assets/g1_gait/motion.pt"]
+    assert sorted(str(p.relative_to(home)) for p in home.rglob("*")) == [
+        ".vector_os_nano", ".vector_os_nano/worlds", ".vector_os_nano/worlds/apartment",
+        ".vector_os_nano/worlds/apartment/scene_graph.yaml"]
 
 
 def test_a_pty_child_home_finds_the_provisioned_robot_assets(tmp_path, monkeypatch) -> None:

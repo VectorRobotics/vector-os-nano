@@ -89,8 +89,9 @@ def test_the_ban_catches_every_spelling(src: str) -> None:
 
 @pytest.fixture
 def old(tmp_path, monkeypatch) -> Path:
+    """Old memory under HOME; the store is the default ~/.vector (spelled out, as the gate does)."""
     monkeypatch.setenv("HOME", str(tmp_path / "h"))
-    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / "vh"))
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / "h" / ".vector"))
     worlds = tmp_path / "h" / ".vector_os_nano" / "worlds"
     for world in ("apartment", "tabletop"):
         (worlds / world).mkdir(parents=True)
@@ -105,6 +106,29 @@ def test_old_memory_is_moved_in_once_with_one_notice(old, tmp_path) -> None:
     assert (paths.memory("apartment") / "scene_graph.yaml").read_text() == "rooms: apartment\n"
     assert not (tmp_path / "h" / ".vector_os_nano").exists()  # emptied, so removed
     assert paths.migrate_old_memory() == ""  # once
+
+
+@pytest.mark.parametrize("store", ["vh", "h/state", "h/.vector/../vh"])
+def test_a_store_other_than_the_default_takes_nothing(old, tmp_path, monkeypatch, store) -> None:
+    """C1a-V-D2: a throwaway VECTOR_HOME (a bare pytest's, a benchmark trial's) that is
+    deleted afterwards must never receive the user's only copy: nothing moves."""
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / store))
+    assert paths.migrate_old_memory() == ""
+    for world in ("apartment", "tabletop"):
+        assert (old / world / "scene_graph.yaml").read_text() == f"rooms: {world}\n"
+        assert not paths.memory(world).exists()
+
+
+def test_the_default_store_is_recognised_however_it_is_spelled(old, tmp_path, monkeypatch) -> None:
+    """VECTOR_HOME unset, or set through a symlink to ~/.vector: the default store, moved in."""
+    monkeypatch.delenv("VECTOR_HOME")
+    (tmp_path / "h" / ".vector").mkdir()
+    (tmp_path / "alias").symlink_to(tmp_path / "h" / ".vector")
+    assert "apartment, tabletop" in paths.migrate_old_memory()
+    (tmp_path / "h" / ".vector_os_nano" / "worlds" / "kitchen").mkdir(parents=True)
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / "alias"))
+    assert "kitchen" in paths.migrate_old_memory()
+    assert (tmp_path / "h" / ".vector" / "memory" / "kitchen").is_dir()
 
 
 def test_an_existing_world_memory_is_never_overwritten(old) -> None:

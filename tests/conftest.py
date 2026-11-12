@@ -23,8 +23,8 @@ Hygiene (WP01) — every test runs as if it were alone on a shared box:
 - a test that leaves a child process behind is failed and its process groups
   are killed (pytest is a child subreaper, so orphans are caught too);
 - ROS defaults to an isolated domain (never 0, where other stacks live);
-- outside the gate, VECTOR_HOME is a throwaway directory (the real state directory
-  is never written; scripts/gate.sh isolates its own runs);
+- outside the gate, HOME and VECTOR_HOME are throwaway directories (the real home
+  and state directory are never written; scripts/gate.sh isolates its own runs);
 - tests/known_reds.txt: the committed, commented list of known reds.
 """
 from __future__ import annotations
@@ -81,18 +81,21 @@ if os.environ.get("ROS_DOMAIN_ID", "").strip() in ("", "0"):
 if sys.platform.startswith("linux"):
     os.environ.setdefault("MUJOCO_GL", "egl")
 
-# A bare `pytest` never writes the real state directory either: a throwaway VECTOR_HOME,
-# set before any test imports the package, with the provisioned robot assets linked
-# (read only) the way scripts/gate.sh links them. A gate run is already isolated.
+# A bare `pytest` never reads or writes the real home or state directory either: a
+# throwaway HOME and VECTOR_HOME (its ~/.vector), set before any test imports the
+# package, with the real HF cache and the provisioned robot assets linked (read only)
+# the way scripts/gate.sh does it. A gate run is already isolated.
 if not os.environ.get("GATE_HOME_SET"):
     from vector_os_nano.schemas import paths as _paths
 
     _ASSETS = _paths.home() / "assets"
-    _STATE = Path(tempfile.mkdtemp(prefix="vos_test_state_"))
-    atexit.register(shutil.rmtree, _STATE, True)
+    os.environ.setdefault("HF_HOME", str(_paths.user_home() / ".cache" / "huggingface"))
+    _HOME = Path(tempfile.mkdtemp(prefix="vos_test_home_"))
+    atexit.register(shutil.rmtree, _HOME, True)
+    (_HOME / ".vector").mkdir()
     if _ASSETS.is_dir():
-        (_STATE / "assets").symlink_to(_ASSETS)
-    os.environ["VECTOR_HOME"] = str(_STATE)
+        (_HOME / ".vector" / "assets").symlink_to(_ASSETS)
+    os.environ["HOME"], os.environ["VECTOR_HOME"] = str(_HOME), str(_HOME / ".vector")
 
 _LLM_KEYS = re.compile(r"^(DEEPSEEK_|OPENROUTER_|ANTHROPIC_|OPENAI_|VECTOR_LLM_|VECTOR_PROVIDER$)")
 if not _LIVE:
