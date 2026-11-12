@@ -59,7 +59,7 @@ surfaces:
                   aliases: [console table, 玄关桌]}
 
 # Graspable objects: MJCF body name -> what NL calls it. The scene build adds one
-# inactive grasp weld per entry (mujoco_go2._build_room_scene_xml), so a pickable is
+# inactive grasp weld per entry (hardware/sim/scene_builder.room_scene), so a pickable is
 # added by adding its MJCF body + an entry here.
 pickables:
   pickable_bottle_green:

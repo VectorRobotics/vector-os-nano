@@ -7,7 +7,7 @@ Tests verify that MuJoCo renders a valid camera frame, the frame can be
 encoded, and GPT-4o via OpenRouter parses it correctly.
 
 Pipeline under test:
-    MuJoCoGo2.get_camera_frame() -> Go2VLMPerception -> SceneDescription / RoomIdentification
+    the go2 head camera -> Go2VLMPerception -> SceneDescription / RoomIdentification
 
 Prerequisites:
 - mujoco installed (harness conftest enforces this)
@@ -34,7 +34,7 @@ def _rgb(go2: Any) -> np.ndarray:
     from vector_os_nano.embodiments import registry
     from vector_os_nano.sim.drivers.camera import Camera
 
-    return Camera(registry.load("go2").camera, go2.runtime).capture().rgb
+    return Camera(registry.load("go2").camera, go2._rt).capture().rgb
 
 # Billed VLM calls: opt in with VECTOR_LIVE_LLM=1 (a key in the env or
 # config is NOT consent; tests:missed2).
@@ -81,13 +81,6 @@ def _get_api_key() -> str:
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
-def _import_mujoco_go2():
-    """The ONE MuJoCoGo2 class (a by-path re-load made a second copy in sys.modules)."""
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-
-    return MuJoCoGo2
-
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -106,12 +99,11 @@ class TestLevel1CameraVLM:
     @pytest.fixture
     def go2(self):
         """Create headless Go2 sim with room scene, stand, yield, disconnect."""
-        MuJoCoGo2 = _import_mujoco_go2()
-        robot = MuJoCoGo2(gui=False, room=True, backend="sinusoidal")
-        robot.connect()
-        robot.stand()
-        yield robot
-        robot.disconnect()
+        from tests.hardware.sim.dog import stand_up
+
+        dog = stand_up("go2")
+        yield dog.base
+        dog.close()
 
     @pytest.fixture
     def vlm(self):

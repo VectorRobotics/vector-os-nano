@@ -16,11 +16,12 @@ checks the cancel signal (a stop), a fall, the sim-time budget and progress: no
 sidestep + replan recovery, ``max_recoveries`` times, then an honest "stalled".
 
 The result is a :class:`NavResult` (a dict whose truth is "reached") with a
-``reason`` from :data:`NAV_REASONS` — never a bare bool (Rule 4). The base duck
-type: ``get_position() -> [x, y, z]``, ``get_heading()``, ``set_velocity(vx,
-vy, vyaw)``, ``stop()``, ``get_sim_time()`` and ``wait_sim(seconds, cancel)``.
-Tuning comes from ``config/nav.yaml`` (``follower`` + ``navigation.arrival_radius``)
-and the body's manifest ``nav`` block (radius, speed, yaw rate, fall height).
+``reason`` from :data:`NAV_REASONS` — never a bare bool (Rule 4). The base is an
+``interfaces.BaseProtocol`` (pose, heading, ``holonomic``, ``set_velocity``,
+``stop``, ``get_sim_time`` and ``wait_sim``); a sim clock that stops advancing ends
+the follow as "timeout", never as an endless loop. Tuning comes from
+``config/nav.yaml`` (``follower`` + ``navigation.arrival_radius``) and the body's
+manifest ``base.nav`` block (radius, speed, yaw rate) and ``base.fall_z``.
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from typing import Any, Callable
 
 import yaml
 
+from vector_os_nano.embodiments.config import NavSpec
 from vector_os_nano.sim.nav import vgraph as vg
 
 NAV_REASONS: tuple[str, ...] = ("arrived", "unreachable", "timeout", "aborted", "stalled", "fell")
@@ -124,7 +126,8 @@ def follow(
     goal: "tuple[float, float]",
     obstacles: "list[list[tuple[float, float]]]",
     *,
-    body: dict[str, Any],
+    nav: NavSpec,
+    fall_z: float,
     inflation: float | None = None,
     tol: float | None = None,
     speed: float | None = None,
@@ -134,18 +137,18 @@ def follow(
 ) -> NavResult:
     """Drive *base* to *goal* around *obstacles*; see the module docstring.
 
-    *body* is the manifest nav block (``body_radius``, ``speed``, ``vyaw_max``,
-    ``fall_z``, optional ``goal_tol``). *inflation* defaults to ``body_radius``;
-    *tol* to the body's ``goal_tol`` else ``follower.goal_tol``, and never exceeds
+    *nav* is the manifest ``base.nav`` block; the body has fallen once its root is
+    below *fall_z*. *inflation* defaults to ``nav.body_radius``;
+    *tol* to ``nav.goal_tol`` else ``follower.goal_tol``, and never exceeds
     the arrival radius; *timeout* (sim s) to ``budget_factor x geodesic / speed +
     budget_pad_s``. *cancel* is anything
     with ``is_set()``; None means the run's abort signal.
     """
     cfg = nav_config()["follower"]
-    r = float(body["body_radius"] if inflation is None else inflation)
-    v_max = float(speed or body["speed"])
-    vyaw_max, fall_z = float(body["vyaw_max"]), float(body["fall_z"])
-    tol = min(float(tol if tol is not None else body.get("goal_tol", cfg["goal_tol"])),
+    r = float(nav.body_radius if inflation is None else inflation)
+    v_max = float(speed or nav.speed)
+    vyaw_max = nav.vyaw_max
+    tol = min(float(tol if tol is not None else nav.goal_tol if nav.goal_tol is not None else cfg["goal_tol"]),
               arrival_radius())
     cancel = cancel if cancel is not None else _AbortFlag()
     tick = float(cfg["tick_s"])
@@ -187,7 +190,7 @@ def follow(
     slip, straight = 0.0, False
     best, best_t = _remaining((x0, y0), path, i), t0
     next_progress = t0
-    holonomic = bool(getattr(base, "supports_holonomic", False))
+    holonomic = base.holonomic
     try:
         while True:
             if cancel.is_set():
@@ -256,7 +259,8 @@ def follow(
             # only plain straight walking measures the slip (a pivot or strafe would bias it)
             straight = abs(err) < 0.15 and abs(vy) < 0.05
             base.set_velocity(vx, vy, vyaw)
-            base.wait_sim(tick, cancel)
+            if not base.wait_sim(tick, cancel) and not cancel.is_set():
+                return result("timeout")  # the sim clock stopped: never loop on it
     finally:
         base.stop()
 
@@ -264,7 +268,7 @@ def follow(
 def _recover(base: Any, inflated: list, cfg: dict, cancel: Any) -> None:
     """Back off, then (a holonomic base) step sideways toward the freer side."""
     _drive(base, -float(cfg["reverse_speed"]), 0.0, 0.0, float(cfg["reverse_s"]), cancel)
-    if not getattr(base, "supports_holonomic", False) or cancel.is_set():
+    if not base.holonomic or cancel.is_set():
         return
     x, y, _ = _xyz(base)
     h = base.get_heading()

@@ -58,8 +58,8 @@ def _start(app: dict[str, Any], eid: str) -> Any:
 
 
 def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> None:
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
     from vector_os_nano.sim.drivers.arm import Arm
+    from vector_os_nano.sim.drivers.base import LeggedBase
 
     monkeypatch.delenv("VECTOR_NAV_STACK", raising=False)
     monkeypatch.setenv("VECTOR_SIM_WITH_ARM", "1")  # must NOT pick the arm any more
@@ -80,8 +80,8 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
         agent = app["sim_session"].agent
         if eid == "go2_piper":
             # In-process rig, never the ROS2 proxies / launch_explore.sh subprocess.
-            assert type(agent._base) is MuJoCoGo2 and type(agent._arm) is Arm
-            assert agent._base._mj.model.nu == 19
+            assert type(agent._base) is LeggedBase and type(agent._arm) is Arm
+            assert app["sim_session"].runtime.world.scene.model.nu == 19
             # One perception at the manifest size; a 640x480 render of the same
             # camera by another caller (look) must not change what it gets.
             agent._perception._camera.capture(640, 480)
@@ -90,7 +90,7 @@ def test_switch_cycle_returns_threads_and_children_to_baseline(monkeypatch) -> N
             assert f.rgb.shape == (240, 320, 3) and f.depth.shape == (240, 320)
             assert (f.K[0, 2], f.K[1, 2]) == (160, 120)
         if eid == "go2":
-            assert agent._arm is None and agent._base._mj.model.nu == 12  # env ignored
+            assert agent._arm is None and app["sim_session"].runtime.world.scene.model.nu == 12  # env ignored
             assert "explore: coverage (VECTOR_NAV_STACK unset)" in res.content
 
     stop = SimStopTool().execute({}, _ctx(app))
@@ -172,8 +172,11 @@ def test_go2_piper_scene_compiles_from_a_relocated_checkout(tmp_path) -> None:
     shutil.copytree(_REPO / "config", tmp_path / "config")  # world manifests (grasp welds)
     code = (
         "import mujoco, vector_os_nano as v\n"
-        "from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml as b\n"
-        "p = b(with_arm=True)\n"
+        "from vector_os_nano.embodiments import registry\n"
+        "from vector_os_nano.hardware.sim.scene_builder import room_scene\n"
+        "from vector_os_nano.vcli.worlds.world_manifest import load_world\n"
+        "cfg = registry.load('go2_piper')\n"
+        "p = room_scene(cfg, load_world(cfg.world)).xml_path\n"
         "m = mujoco.MjModel.from_xml_path(str(p))\n"
         "print(v.__file__, p, m.nu)\n"
     )

@@ -98,9 +98,10 @@ def test_manifest_matches_the_compiled_scene(apt) -> None:
     mj = pytest.importorskip("mujoco")
     import numpy as np
 
-    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.hardware.sim.scene_builder import room_scene
 
-    m = mj.MjModel.from_xml_path(str(_build_room_scene_xml(with_arm=True)))
+    m = mj.MjModel.from_xml_path(str(room_scene(registry.load("go2_piper"), apt).xml_path))
     d = mj.MjData(m)
     mj.mj_forward(m, d)
     free = {

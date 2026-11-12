@@ -228,7 +228,7 @@ def test_turn_fails_when_the_heading_never_arrives():
 
 
 def test_lie_down_on_a_base_without_it_fails_loud():
-    # skills-nav:missed5: the proxy base has no lie_down -> AttributeError
+    # skills-nav:missed5: the proxy base has no posture -> AttributeError
     from vector_os_nano.skills.go2.stance import LieDownSkill
 
     res = LieDownSkill().execute({}, SkillContext(base=MagicMock(spec=["get_position"])))
@@ -251,8 +251,9 @@ def test_a_posture_reports_what_it_measured_and_never_claims_the_posture():
     heights = iter([0.30, 0.18])
     base = MagicMock()
     base.get_position.side_effect = lambda: [0.0, 0.0, next(heights)]
-    base.sit.return_value = True
+    base.set_posture.return_value = True
     res = SitSkill().execute({}, SkillContext(base=base))
+    base.set_posture.assert_called_once_with("sit")
     assert res.success and res.result_data["posture_verified"] is False
     assert (res.result_data["height_before_m"], res.result_data["height_after_m"]) == (0.30, 0.18)
 

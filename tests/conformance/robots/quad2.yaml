@@ -1,0 +1,87 @@
+# A second quadruped that exists only as data (tests/conformance/test_legged.py): the
+# go2's model and policy with its own spawn, stance, gains and lidar mount. Nothing in
+# the package names it; the generic LeggedBase stands it up and walks it.
+
+id: quad2
+display_name: "A test quadruped (the go2 model, its own manifest)"
+driver: legged
+
+model:
+  path: vector_os_nano/hardware/sim/mjcf/go2/go2.xml
+  meshes_dir: vector_os_nano/hardware/sim/mjcf/go2/assets
+  root_body: base_link
+
+spawn:
+  xy: [2.0, -1.0]
+  heading: 0.5
+
+base:
+  height: 0.31                    # the root height it stands at in its stance (measured)
+  holonomic: true                 # it can strafe
+  limits: {vx: 0.8, vy: 0.4, vyaw: 4.0}
+  fall_z: 0.15                    # root below this = fallen
+  # The order the policy sees: per leg (FL, FR, RL, RR) hip, thigh, calf.
+  joints: [FL_hip_joint, FL_thigh_joint, FL_calf_joint, FR_hip_joint, FR_thigh_joint, FR_calf_joint,
+           RL_hip_joint, RL_thigh_joint, RL_calf_joint, RR_hip_joint, RR_thigh_joint, RR_calf_joint]
+  stance: {FL_hip_joint: 0.0, FL_thigh_joint: 0.8, FL_calf_joint: -1.6,
+           FR_hip_joint: 0.0, FR_thigh_joint: 0.8, FR_calf_joint: -1.6,
+           RL_hip_joint: 0.0, RL_thigh_joint: 0.8, RL_calf_joint: -1.6,
+           RR_hip_joint: 0.0, RR_thigh_joint: 0.8, RR_calf_joint: -1.6}
+  postures:
+    sit: {FL_hip_joint: 0.0, FL_thigh_joint: 1.5, FL_calf_joint: -2.5,
+          FR_hip_joint: 0.0, FR_thigh_joint: 1.5, FR_calf_joint: -2.5,
+          RL_hip_joint: 0.0, RL_thigh_joint: 1.5, RL_calf_joint: -2.5,
+          RR_hip_joint: 0.0, RR_thigh_joint: 1.5, RR_calf_joint: -2.5}
+    lie_down: {FL_hip_joint: 0.0, FL_thigh_joint: 2.0, FL_calf_joint: -2.7,
+               FR_hip_joint: 0.0, FR_thigh_joint: 2.0, FR_calf_joint: -2.7,
+               RL_hip_joint: 0.0, RL_thigh_joint: 2.0, RL_calf_joint: -2.7,
+               RR_hip_joint: 0.0, RR_thigh_joint: 2.0, RR_calf_joint: -2.7}
+  kp: 100.0
+  kd: 3.0
+  torque_scale: 0.9               # of the motors' range (23.7 / 45.43 N m in go2.xml)
+  policy:
+    ref: convex_mpc               # needs casadi + pin: uv pip install -e '.[go2]'
+    timestep: 0.001
+    tick_hz: 200
+    gait_hz: 3                    # trot cycles per second
+    duty: 0.6                     # stance fraction of a cycle
+    z_des: 0.29                   # the trunk height the MPC holds (m)
+    brake_s: 0.35                 # after a zero command it trots to rest this long,
+    brake_ramp_s: 1.0             # then ramps from its four-feet-down pose to the stance
+    by_backend:
+      # measured on PyBullet: the convex-MPC trot falls within 2 s; this gait walks 0.37 m/s
+      pybullet: {ref: sinusoidal, freq_hz: 2.0, thigh_amp: 0.25, calf_amp: 0.25, hip_amp: 0.10}
+  nav:
+    # The in-process follower (sim/nav/follow.py). Half-width is 0.19 m; the planning
+    # radius adds the gait's sway. A mounted arm or a held object reaching past the
+    # body's own footprint grows the inflation by that overhang at plan time.
+    body_radius: 0.28
+    speed: 0.4                    # m/s forward
+    vyaw_max: 0.8                 # rad/s
+    explorer: tare                # with VECTOR_NAV_STACK; else the in-process coverage tour
+
+sensors:
+  # The RealSense head camera, fixed to base_link in the model; depth over the D435's range.
+  - role: camera
+    name: d435_rgb
+    width: 640                    # perception render size (intrinsics follow it)
+    height: 480
+    depth: [0.1, 10.0]
+  # A Livox MID360-like 3-D lidar on the head, above every leg geom; at -20 deg the
+  # nearest ground hit is ~0.9 m ahead. The nav stack's sensorOffset must match pos.
+  - role: lidar
+    body: base_link
+    pos: [0.25, 0.0, 0.15]
+    tilt_deg: -15.0
+    elevations_deg: [-8, -6, -4, -2, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30,
+                     32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52]
+    n_azimuth: 360
+    range: 12.0
+    period_s: 0.2                 # 5 Hz of sim time
+
+capabilities:
+  has_base: true
+  has_arm: false
+  has_gripper: false
+  camera: true
+  lidar: true

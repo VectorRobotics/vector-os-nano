@@ -31,6 +31,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from vector_os_nano.interfaces.physics import CompiledScene
+from vector_os_nano.sim.scene.compiled import compiled_scene
 from vector_os_nano.sim.scene.compose import normalize_attach_defaults, robot_spec, write_scene
 
 # A weld is (equality_name, body1, body2); created inactive (gripper activates it).
@@ -138,3 +140,26 @@ def build_room_scene(
     if cache_stem is None:
         return model, None
     return model, write_scene(cache_stem, normalize_attach_defaults(room_spec.to_xml()))
+
+
+_ROOM_XML = Path(__file__).with_name("go2_room.xml")
+_ROOM_ASSETS = Path(__file__).parent / "mjcf" / "go2" / "assets"
+_REPO = Path(__file__).resolve().parents[3]
+
+
+def room_scene(robot: Any, world: Any) -> CompiledScene:
+    """The apartment room (go2_room.xml) with *robot* (an EmbodimentConfig with a base)
+    attached at its spawn and one inactive grasp weld per (gripper weld body x pickable
+    of *world*), compiled at the robot's policy timestep."""
+    gripper = robot.arm.gripper if robot.arm is not None else None
+    pairs = [(gripper.weld_body, p) for p in world.pickables] if gripper is not None else []
+    meshes = robot.model.meshes_dir
+    _model, path = build_room_scene(
+        robot_model_path=_REPO / robot.model.path, room_template_path=_ROOM_XML,
+        room_assets_dir=_ROOM_ASSETS, attach_prefix="", spawn_xy=robot.spawn.xy,
+        welds=[(f"grasp_{child}", parent, child) for parent, child in pairs],
+        cache_stem=f"scene_{robot.id}_room", robot_meshes_dir=_REPO / meshes if meshes else None,
+    )
+    assert path is not None
+    return compiled_scene(path, robot_root=robot.model.root_body, grasp_pairs=pairs,
+                          timestep=robot.base.policy.timestep)

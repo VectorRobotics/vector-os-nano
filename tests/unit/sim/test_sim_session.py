@@ -47,7 +47,7 @@ def test_go2_piper_manifest_carries_the_arm_and_the_grasp_camera_size() -> None:
     assert cfg.model.path.endswith("go2_piper/go2_piper.xml")
     assert (cfg.camera.width, cfg.camera.height) == (320, 240)
     assert registry.load("go2").arm is None
-    assert registry.load("go2").nav["explorer"] == "tare"
+    assert registry.load("go2").base.nav.explorer == "tare"
 
 
 def test_start_simulation_enum_is_generated_from_the_registry() -> None:
@@ -78,7 +78,7 @@ def test_corrupt_manifest_is_error_naming_the_key(tmp_path, monkeypatch) -> None
     bad = tmp_path / "broken"
     bad.mkdir()
     (bad / "robot.yaml").write_text(
-        "id: broken\ndisplay_name: x\ndriver: mujoco_go2\n"
+        "id: broken\ndisplay_name: x\ndriver: legged\n"
         "model: {path: a.xml, root_body: b}\nstance: {}\n"
         "policy: {ref: none}\ncapabilities: {}\n"  # no 'spawn'
     )
@@ -92,7 +92,7 @@ def test_unknown_driver_is_error_naming_the_field(tmp_path, monkeypatch) -> None
     src = (Path(emb_config.__file__).parent / "go2" / "robot.yaml").read_text()
     (tmp_path / "odd").mkdir()
     (tmp_path / "odd" / "robot.yaml").write_text(
-        src.replace("id: go2\n", "id: odd\n").replace("driver: mujoco_go2", "driver: warp_drive")
+        src.replace("id: go2\n", "id: odd\n").replace("driver: legged", "driver: warp_drive")
     )
     monkeypatch.setattr(emb_config, "_EMBODIMENTS_DIR", tmp_path)
     with pytest.raises(SimStartError, match="driver='warp_drive'"):
@@ -205,7 +205,7 @@ def test_failed_start_tears_down_what_it_built(monkeypatch) -> None:
     closed: list[str] = []
     hooks = _Atexit()
     monkeypatch.setattr(sess, "atexit", hooks)
-    monkeypatch.setitem(sess._BUILDERS, "mujoco_go2", _fake_builder(closed, fail=True))
+    monkeypatch.setitem(sess._BUILDERS, "legged", _fake_builder(closed, fail=True))
     with pytest.raises(SimStartError, match="boom"):
         SimSession.start(SimSpec("go2", gui=False))
     assert closed == ["closed"] and not sess._LIVE and not hooks.hooks
@@ -215,7 +215,7 @@ def test_stop_is_idempotent_and_unregisters_atexit(monkeypatch) -> None:
     closed: list[str] = []
     hooks = _Atexit()
     monkeypatch.setattr(sess, "atexit", hooks)
-    monkeypatch.setitem(sess._BUILDERS, "mujoco_go2", _fake_builder(closed))
+    monkeypatch.setitem(sess._BUILDERS, "legged", _fake_builder(closed))
     s = SimSession.start(SimSpec("go2", gui=False))
     assert s in sess._LIVE and hooks.hooks == [s.stop]
     assert "device closed" in s.stop()
@@ -424,22 +424,6 @@ def test_print_path_stops_live_sessions_before_os_exit(monkeypatch) -> None:
     with pytest.raises(SystemExit):
         cli.main(["-p", "hi"])
     assert hard_exits == [0, 0]
-
-
-def test_go2_scene_never_silently_drops_the_arm(monkeypatch, tmp_path) -> None:
-    from vector_os_nano.hardware.sim import mujoco_go2
-
-    monkeypatch.setattr(mujoco_go2, "_GO2_PIPER_XML", tmp_path / "missing.xml")
-    with pytest.raises(FileNotFoundError, match="missing.xml"):
-        mujoco_go2._build_room_scene_xml(with_arm=True)
-
-
-def test_arm_choice_comes_from_the_ctor_not_the_env(monkeypatch) -> None:
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-
-    monkeypatch.setenv("VECTOR_SIM_WITH_ARM", "1")
-    assert MuJoCoGo2()._with_arm is False
-    assert MuJoCoGo2(with_arm=True)._with_arm is True
 
 
 def test_nav_teardown_kills_every_group_in_its_session_and_nothing_else() -> None:

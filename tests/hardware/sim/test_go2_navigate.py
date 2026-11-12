@@ -1,19 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Sim test: MuJoCoGo2.navigate_to — obstacle-aware path planning.
+"""Sim test: LeggedBase.navigate_to on the go2 in the apartment — obstacle-aware planning.
 
-Verifies that:
-  1. navigate_to(10.46, 3.0) returns True (dog arrived within tolerance).
-  2. The dog's final position is within 0.25 m of the goal.
-  3. The dog did NOT end up inside the pick_table footprint
-     (x ∈ [10.80, 11.10], y ∈ [2.75, 3.25]) — i.e. it stopped in front,
-     not rammed through.
-  4. obstacles_from_model is importable for the go2 model (generic function).
+1. navigate_to(10.46, 3.0) arrives within 0.25 m, and the dog did not end inside the
+   pick_table footprint (x in [10.80, 11.10], y in [2.75, 3.25]): it stopped in front.
+2. The planner reads the static scene's obstacles at an instant (vgraph.scene_obstacles).
+3. With the Piper mounted (go2_piper) navigate_to returns in bounded wall time, moving.
 
-Run with:
-  MUJOCO_GL=egl PATH=/usr/bin:$PATH .venv/bin/python -m pytest \
-      tests/hardware/sim/test_go2_navigate.py -q -s -m sim
+The body stands up as the session builds it (connect, then the stand posture), and a
+walk or navigate holds the sim clock between its commands, so a loaded box changes
+nothing about the motion (ledger flake:go2-navigate-fall).
 """
 from __future__ import annotations
 
@@ -22,152 +19,59 @@ import time
 
 import pytest
 
-mujoco = pytest.importorskip("mujoco")
+pytest.importorskip("mujoco")
 
-from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-from vector_os_nano.sim.nav.vgraph import obstacles_from_model
+from tests.hardware.sim.dog import stand_up  # noqa: E402
+from vector_os_nano.sim.nav import vgraph as vg  # noqa: E402
 
-# Pick-table footprint (x ∈ [10.80, 11.10], y ∈ [2.75, 3.25])
-_TABLE_X_MIN: float = 10.80
-_TABLE_X_MAX: float = 11.10
-_TABLE_Y_MIN: float = 2.75
-_TABLE_Y_MAX: float = 3.25
+pytestmark = pytest.mark.sim
 
-# Navigate goal: clear point in front of the pick_table
-_GOAL_X: float = 10.46
-_GOAL_Y: float = 3.0
-_NAV_TOL: float = 0.25
-
-
-# ---------------------------------------------------------------------------
-# Session-scope fixture: one Go2 sim for all tests in this module
-# ---------------------------------------------------------------------------
+_TABLE_X = (10.80, 11.10)
+_TABLE_Y = (2.75, 3.25)
+_GOAL = (10.46, 3.0)
+_NAV_TOL = 0.25
 
 
 @pytest.fixture(scope="module")
-def go2_sim():
-    """Headless MPC Go2 in the room scene. Torn down after module."""
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
-    go2.connect()
-    # Allow physics to settle before navigating
-    time.sleep(0.5)
-    try:
-        yield go2
-    finally:
-        go2.disconnect()
+def dog():
+    d = stand_up("go2")
+    yield d
+    d.close()
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+def test_the_planner_reads_the_static_scene(dog) -> None:
+    polys = vg.scene_obstacles(dog.rt.world.scene, dog.rt.snapshot().q)
+    assert len(polys) > 10  # furniture, walls, the pick table
+    table = [p for p in polys if all(_TABLE_X[0] - 0.01 <= x <= _TABLE_X[1] + 0.01
+                                       and _TABLE_Y[0] - 0.01 <= y <= _TABLE_Y[1] + 0.01 for x, y in p)]
+    assert table, "the pick table is not an obstacle"
 
 
-@pytest.mark.sim
-def test_obstacles_from_model_importable_for_go2(go2_sim: MuJoCoGo2) -> None:
-    """obstacles_from_model is generic and works with the go2 scene."""
-    # At a step boundary, on the stepper: reading (or mj_forward-ing) the live MjData
-    # from this thread raced mj_step and segfaulted about one full sim tier in three.
-    polys = go2_sim.runtime.call(
-        lambda w: obstacles_from_model(w.model, w.data, robot_geom_ids=go2_sim._mj.layout.robot_geom_ids)
-    )
-    # The go2 room has furniture, walls, and pick_table — expect multiple polygons
-    assert len(polys) > 0, (
-        f"Expected obstacles in the room scene, got {len(polys)}"
-    )
-    print(f"\n[test] obstacles_from_model: {len(polys)} polygons enumerated")
+def test_navigate_to_arrives_and_avoids_table(dog) -> None:
+    res = dog.base.navigate_to(*_GOAL, tol=_NAV_TOL, timeout=90.0)
+    fx, fy, fz = dog.base.get_position()
+    dist = math.hypot(fx - _GOAL[0], fy - _GOAL[1])
+    print(f"\n[test] navigate_to{_GOAL}: {res.reason} in {res['elapsed_s']:.2f} sim-s, "
+          f"final ({fx:.3f}, {fy:.3f}, {fz:.3f}), {dist:.3f} m from the goal")
+    assert res, f"{res.reason}: final ({fx:.3f}, {fy:.3f}, {fz:.3f})"
+    assert dist <= _NAV_TOL
+    assert not (_TABLE_X[0] <= fx <= _TABLE_X[1] and _TABLE_Y[0] <= fy <= _TABLE_Y[1]), "rammed the table"
 
 
-@pytest.mark.sim
-def test_navigate_to_arrives_and_avoids_table(go2_sim: MuJoCoGo2) -> None:
-    """navigate_to reaches the goal in front of the table without ramming through.
-
-    Acceptance criteria:
-      - Returns True (arrived within tol).
-      - Final position within _NAV_TOL of (_GOAL_X, _GOAL_Y).
-      - Final position NOT inside the table footprint.
-    """
-    print(
-        f"\n[test] navigate_to({_GOAL_X}, {_GOAL_Y}) — "
-        f"start pos: {go2_sim.get_position()}"
-    )
-
-    arrived = go2_sim.navigate_to(_GOAL_X, _GOAL_Y, tol=_NAV_TOL, timeout=90.0)
-
-    final_pos = go2_sim.get_position()
-    fx, fy = final_pos[0], final_pos[1]
-    dist_to_goal = math.hypot(fx - _GOAL_X, fy - _GOAL_Y)
-
-    print(
-        f"[test] navigate_to returned: {arrived}, "
-        f"final pos=({fx:.3f}, {fy:.3f}), "
-        f"dist_to_goal={dist_to_goal:.3f} m"
-    )
-
-    # --- Assertion 1: function reported arrival ---
-    assert arrived, (
-        f"navigate_to returned False — dog did not arrive within {_NAV_TOL} m. "
-        f"Final pos=({fx:.3f}, {fy:.3f}), dist={dist_to_goal:.3f} m"
-    )
-
-    # --- Assertion 2: distance to goal ---
-    assert dist_to_goal <= _NAV_TOL, (
-        f"Dog ended {dist_to_goal:.3f} m from goal ({_GOAL_X}, {_GOAL_Y}), "
-        f"tolerance={_NAV_TOL} m. Final pos=({fx:.3f}, {fy:.3f})"
-    )
-
-    # --- Assertion 3: dog did NOT end inside the table footprint ---
-    inside_table = (
-        _TABLE_X_MIN <= fx <= _TABLE_X_MAX
-        and _TABLE_Y_MIN <= fy <= _TABLE_Y_MAX
-    )
-    assert not inside_table, (
-        f"Dog ended INSIDE the pick_table footprint at ({fx:.3f}, {fy:.3f})! "
-        f"Table footprint: x∈[{_TABLE_X_MIN},{_TABLE_X_MAX}], "
-        f"y∈[{_TABLE_Y_MIN},{_TABLE_Y_MAX}]. "
-        "The dog rammed through instead of stopping in front."
-    )
-
-    print(
-        f"[test] PASS — arrived={arrived}, dist={dist_to_goal:.3f} m, "
-        f"inside_table={inside_table}"
-    )
-
-
-@pytest.mark.sim
-def test_navigate_to_with_piper_attached_does_not_crash(monkeypatch) -> None:
-    """REGRESSION (R12): navigate_to must not segfault/hang with the Piper attached.
-
-    The grasp path runs navigate_to with the Piper's Arm built and a tight tol. The
-    original navigate_to called mj_forward to snapshot the pose — that WRITES derived
-    fields and RACED the 1 kHz gait daemon's mj_step, segfaulting/hanging (the green
-    grasp "hang"). The fix reads the pose via the thread-safe accessor and never calls
-    mj_forward on the live model. This test reproduces the crashing configuration
-    (arm-enabled scene + Piper attached + tight tol) and asserts navigate_to returns
-    in bounded wall-time having moved the dog. Self-contained (own arm-enabled sim).
-    """
-    from vector_os_nano.embodiments import registry
+def test_navigate_to_with_piper_attached_does_not_crash() -> None:
+    """REGRESSION (R12): navigate_to with the Piper attached and a tight tol must not
+    segfault or hang (the original raced the stepper with mj_forward on the live data)."""
     from vector_os_nano.sim.drivers.arm import Arm
 
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
+    d = stand_up("go2_piper")
     try:
-        go2.connect()
-        Arm(registry.load("go2_piper").arm, go2.runtime, wait_mount=go2.wait_settled)
-        time.sleep(0.5)
-        start = go2.get_position()
+        Arm(d.cfg.arm, d.rt, wait_mount=d.base.wait_settled)
+        start = d.base.get_position()
         t0 = time.time()
-        # Tight tol (the grasp-context value) toward the table-front standoff.
-        arrived = go2.navigate_to(10.46, 3.0, tol=0.12, timeout=30.0)
+        d.base.navigate_to(*_GOAL, tol=0.12, timeout=30.0)
         elapsed = time.time() - t0
-        end = go2.get_position()
-        moved = math.hypot(end[0] - start[0], end[1] - start[1])
-        print(
-            f"\n[test] navigate_to(+piper) -> {arrived} in {elapsed:.1f}s, "
-            f"moved {moved:.2f} m, end=({end[0]:.2f},{end[1]:.2f})"
-        )
-        # Bounded wall-time (no hang/segfault — the test completing at all proves no
-        # crash; this also rules out a hang).
-        assert elapsed < 60.0, f"navigate_to took {elapsed:.1f}s — possible hang"
-        # Dog actually advanced toward the goal (didn't no-op).
-        assert moved > 0.15, f"dog barely moved ({moved:.2f} m)"
+        end = d.base.get_position()
+        assert elapsed < 60.0, f"navigate_to took {elapsed:.1f} s: a hang"
+        assert math.hypot(end[0] - start[0], end[1] - start[1]) > 0.15, "the dog did not move"
     finally:
-        go2.disconnect()  # the Piper rides on the go2 sim
+        d.close()

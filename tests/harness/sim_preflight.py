@@ -53,14 +53,17 @@ def missing() -> list[str]:
         _copy_tracked_tree(tmp)
         sys.path.insert(0, str(tmp))
         try:
-            from vector_os_nano.hardware.sim import mujoco_go2
+            from vector_os_nano.embodiments import registry
+            from vector_os_nano.hardware.sim import scene_builder
+            from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-            assert Path(mujoco_go2.__file__).is_relative_to(tmp), mujoco_go2.__file__
-            for with_arm in (False, True):
+            assert Path(scene_builder.__file__).is_relative_to(tmp), scene_builder.__file__
+            for body in ("go2", "go2_piper"):
                 try:
-                    mujoco.MjModel.from_xml_path(str(mujoco_go2._build_room_scene_xml(with_arm=with_arm)))
+                    cfg = registry.load(body)
+                    scene_builder.room_scene(cfg, load_world(cfg.world))
                 except Exception as exc:  # noqa: BLE001
-                    problems.append(f"{'go2_piper' if with_arm else 'go2'} scene does not compile from a clean checkout ({exc})")
+                    problems.append(f"{body} scene does not compile from a clean checkout ({exc})")
             try:
                 import casadi  # noqa: F401
                 from vector_os_nano.third_party.convex_mpc.go2_robot_data import PinGo2Model

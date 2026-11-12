@@ -29,7 +29,9 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
   with its sim time (:attr:`attach_log`) at call time, two inside one job included;
   a change made around them (a raw engine write) is logged when its job ends.
 * **Sim time.** :meth:`wait_sim` waits for SIM seconds, so a timed motion means
-  the same thing at any real-time ratio.
+  the same thing at any real-time ratio. A controlling thread waits with ``hold``:
+  the stepper parks at its target until it waits again (or :meth:`release_clock`), so its
+  commands land on the same ticks as in a caller-stepped run, under any CPU load.
 * **Failure is loud.** :meth:`call` gives up after ``_CALL_TIMEOUT_S`` of wall time
   (a stalled stepper never hangs a caller), and once the stepper thread has died
   every later call, wait, step and ``sim_time`` read raises its :attr:`dead_reason`.
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import itertools
 import logging
 import os
 import threading
@@ -69,6 +72,9 @@ _MIN_REALTIME = 0.05
 _MIN_WALL_CAP_S = 5.0
 # How long call() waits for a step boundary before it gives up on a stalled stepper.
 _CALL_TIMEOUT_S = 5.0
+# A clock hold (wait_sim(hold=True)) the holder does not renew within this much wall
+# time is dropped: a holder that never comes back must not freeze the simulation.
+_HOLD_WALL_S = 2.0
 _RT_LOG_EVERY_S = 60.0
 
 Controller = Callable[[PhysicsWorld], None]
@@ -200,6 +206,11 @@ class SimRuntime:
         self._rt_mark = (time.monotonic(), world.time())
         self._rt_ratio = 0.0
         self._pace_t = 0.0
+        # The clock hold (wait_sim(hold=True)): (thread, sim time the stepper parks at).
+        self._hold: tuple[int, int, float] | None = None  # (hold number, thread, target)
+        self._holds = itertools.count()
+        self._parked = -1      # the hold number the stepper is parked at
+        self._parked_at = 0.0  # since when (wall)
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -382,6 +393,8 @@ class SimRuntime:
         seconds: float,
         cancel: Any = None,
         wall_timeout: float | None = None,
+        *,
+        hold: bool = False,
     ) -> bool:
         """Block until SIM time has advanced by *seconds*.
 
@@ -389,8 +402,18 @@ class SimRuntime:
         (anything with ``is_set()``) fires, the runtime closes, or the wall-clock
         safety cap passes (physics slower than ``_MIN_REALTIME``); raises when the
         stepper thread has died.
+
+        With *hold* the calling thread holds the clock: the stepper parks at the target
+        until this thread waits again or calls :meth:`release_clock`, and the wait returns once
+        it is parked there. What the thread commands next then lands on the very next
+        tick at any real-time ratio, so a control loop over sim time runs as it does
+        caller-stepped. A hold not renewed within ``_HOLD_WALL_S`` is dropped (logged).
         """
         target = self.sim_time + max(0.0, float(seconds))
+        if hold:  # also before the stepper starts: it parks at its first boundary then
+            mine = next(self._holds)
+            self._hold = (mine, threading.get_ident(), target)
+            self._wake.set()
         cap = wall_timeout if wall_timeout is not None else max(
             _MIN_WALL_CAP_S, float(seconds) / _MIN_REALTIME
         )
@@ -411,12 +434,19 @@ class SimRuntime:
                     self._stepper = prev
             return True
         with self._published:
-            while self.sim_time < target - 1e-9:
+            while self.sim_time < target - 1e-9 or (hold and self._parked != mine):
                 if (self._stop.is_set() or (cancel is not None and cancel.is_set())
                         or time.monotonic() > deadline):
                     return False
                 self._published.wait(timeout=0.05)
         return True
+
+    def release_clock(self) -> None:
+        """End the calling thread's hold on the clock (a no-op without one)."""
+        h = self._hold
+        if h is not None and h[1] == threading.get_ident():
+            self._hold = None
+            self._wake.set()
 
     # ------------------------------------------------------------------
     # internals (callers hold self.lock)
@@ -484,12 +514,28 @@ class SimRuntime:
         if ahead > 0:
             time.sleep(ahead)
 
+    def _held(self) -> bool:
+        """A thread holds the clock at a target this stepper has reached; a hold parked
+        longer than _HOLD_WALL_S of wall time is dropped."""
+        h = self._hold
+        if h is None or self._snap.sim_time < h[2] - 1e-9:
+            return False
+        if self._parked != h[0]:
+            self._parked, self._parked_at = h[0], time.monotonic()
+            with self._published:
+                self._published.notify_all()
+        elif time.monotonic() - self._parked_at > _HOLD_WALL_S:
+            logger.info("%s: a clock hold was not renewed within %.0f s; running on", self.name, _HOLD_WALL_S)
+            self._hold = None
+            return False
+        return True
+
     def _loop(self) -> None:
         self._stepper = threading.get_ident()
         last_log = time.monotonic()
         while not self._stop.is_set():
             with self.lock:
-                stepped = self._pauses == 0
+                stepped = self._pauses == 0 and not self._held()
                 try:
                     if stepped:
                         self._tick(None)

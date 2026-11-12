@@ -238,14 +238,16 @@ def test_build_room_scene_g1_byte_identical(g1_assets):
 
 
 # ---------------------------------------------------------------------------
-# go2 driver builder writes a RELOADABLE file (the corruption regression test)
+# the legged room scene is a RELOADABLE file (the corruption regression test)
 # ---------------------------------------------------------------------------
 
 def test_go2_builder_file_reloads():
-    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     for with_arm in (True, False):
-        path = _build_room_scene_xml(with_arm=with_arm)
+        path = room_scene(registry.load("go2_piper" if with_arm else "go2"), load_world("apartment")).xml_path
         m = mj.MjModel.from_xml_path(str(path))  # must NOT raise 'empty class name'
         # Class defaults survive the round-trip.
         fl_hip = m.jnt_range[mj.mj_name2id(m, mj.mjtObj.mjOBJ_JOINT, "FL_hip_joint")]

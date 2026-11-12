@@ -66,7 +66,7 @@ def _p_navigate(robot: object, goal: Tuple[float, float], timeout_s: float) -> b
     """Drive robot to goal using a proportional controller.
 
     Args:
-        robot: MuJoCoGo2 instance (must already be standing).
+        robot: the go2 LeggedBase (must already be standing).
         goal: (x, y) target in world frame.
         timeout_s: Maximum time allowed.
 

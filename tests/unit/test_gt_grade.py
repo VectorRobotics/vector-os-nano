@@ -99,13 +99,13 @@ def test_base_in_and_base_at_need_the_base_to_arrive_in_this_turn(tmp_path) -> N
 def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypatch) -> None:
     mj = pytest.importorskip("mujoco")
     from vector_os_nano.embodiments import registry
-    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+    from vector_os_nano.hardware.sim.scene_builder import room_scene
     from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld
     from vector_os_nano.sim.runtime import SimRuntime
-    from vector_os_nano.sim.scene import compiled_scene
     from vector_os_nano.sim.session import SimSession, SimSpec
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-    world = MuJoCoWorld(compiled_scene(_build_room_scene_xml(with_arm=True), robot_root="base_link"))
+    world = MuJoCoWorld(room_scene(registry.load("go2_piper"), load_world("apartment")))
     m = world.model
     rt = SimRuntime(world, threaded=False, paced=False, name="dump_test")
     try:

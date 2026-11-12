@@ -333,15 +333,17 @@ _OBS_MAX_HALF_EXTENT = 9.0  # m: skip room-spanning slabs (both x and y huge)
 
 def obstacles_from_model(
     model: Any,
-    data: Any,
+    geom_xpos: Any,
+    geom_xmat: Any,
     robot_geom_ids: "set[int] | frozenset[int]" = frozenset(),
 ) -> "list[list[tuple[float, float]]]":
-    """Planar routing polygons of the static scene in a compiled, forwarded model.
+    """Planar routing polygons of the static scene of a compiled model, its geoms at
+    *geom_xpos* / *geom_xmat* (world, from one state).
 
     Includes every colliding BOX/CYLINDER geom that rises above the floor, except
     the robot's own geoms (*robot_geom_ids*: the body subtree, which also covers a
     mounted arm), freejoint bodies (pickables), visual-only names and room-spanning
-    slabs. The caller runs ``mj_forward`` first so ``geom_xpos/xmat`` are current.
+    slabs.
     """
     polys: list[list[tuple[float, float]]] = []
     for gid in range(int(model.ngeom)):
@@ -360,12 +362,12 @@ def obstacles_from_model(
         size = model.geom_size[gid]
         if float(size[0]) >= _OBS_MAX_HALF_EXTENT and float(size[1]) >= _OBS_MAX_HALF_EXTENT:
             continue
-        cx, cy, cz = (float(v) for v in data.geom_xpos[gid])
+        cx, cy, cz = (float(v) for v in geom_xpos[gid])
         half_h = float(size[2]) if gtype == GEOM_BOX else float(size[1])
         if cz + half_h < _OBS_MIN_Z_TOP:
             continue
         if gtype == GEOM_BOX:
-            xm = data.geom_xmat[gid]
+            xm = geom_xmat[gid]
             yaw = math.atan2(float(xm[3]), float(xm[0]))
             polys.append(box_polygon(cx, cy, float(size[0]), float(size[1]), yaw))
         else:
@@ -373,66 +375,66 @@ def obstacles_from_model(
     return polys
 
 
-EQ_WELD = 1   # mjtEq
-OBJ_BODY = 1  # mjtObj
+def _robot_geoms(scene: Any) -> "set[int]":
+    m, robot = scene.model, scene.subtree(scene.robot_root)
+    return {g for g in range(int(m.ngeom)) if int(m.geom_bodyid[g]) in robot}
 
 
-def _planar_reach(model: Any, data: Any, gids: "list[int]", ox: float, oy: float) -> float:
+def scene_obstacles(scene: Any, q: Any) -> "list[list[tuple[float, float]]]":
+    """:func:`obstacles_from_model` of a ``CompiledScene`` at state *q* (canonical
+    kinematics), the robot's own geoms excluded."""
+    from vector_os_nano.sim.scene import canonical
+
+    pos, mat = canonical.geom_poses(scene, q)
+    return obstacles_from_model(scene.model, pos, mat, _robot_geoms(scene))
+
+
+def _planar_reach(model: Any, pos: Any, mat: Any, gids: "list[int]", ox: float, oy: float) -> float:
     """Farthest horizontal distance from (ox, oy) of any corner of the geoms' AABBs."""
     best = 0.0
     for g in gids:
         c, h = model.geom_aabb[g][:3], model.geom_aabb[g][3:]
-        rot = data.geom_xmat[g].reshape(3, 3)
+        rot = mat[g].reshape(3, 3)
         for sx in (-1.0, 1.0):
             for sy in (-1.0, 1.0):
                 for sz in (-1.0, 1.0):
-                    p = data.geom_xpos[g] + rot @ (c + h * (sx, sy, sz))
+                    p = pos[g] + rot @ (c + h * (sx, sy, sz))
                     best = max(best, math.hypot(float(p[0]) - ox, float(p[1]) - oy))
     return best
 
 
-def overhang(model: Any, data: Any, root_bid: int, first_extra_qpos: int) -> float:
-    """How far (m) a mounted arm, plus any body welded to it, reaches past the base.
+def scene_overhang(scene: Any, q: Any, base_joints: "set[int]", attached: "dict[int, int]") -> float:
+    """How far (m) a mounted arm, plus what it holds, reaches past the base at state *q*.
 
-    The arm is every body under *root_bid* whose own joint sits at or beyond
-    *first_extra_qpos* (the joints after the legged layout), with its descendants;
-    a held object is a body an ACTIVE weld ties to the arm. Returns the arm's
-    horizontal reach minus the rest of the robot's, floored at 0 (a stowed arm
-    inside the body's footprint adds nothing).
+    The arm is every body below the robot root whose own joint is not one of
+    *base_joints* (the legs), with its descendants; a held object is a body *attached*
+    (``{child: parent}``) to the arm. Returns the arm's horizontal reach minus the rest
+    of the robot's, floored at 0 (a stowed arm inside the body's footprint adds nothing).
     """
-    parent = model.body_parentid
+    from vector_os_nano.sim.scene import canonical
 
-    def chain(b: int):
-        while True:
-            yield b
-            if b == 0:
-                return
-            b = int(parent[b])
+    model, root = scene.model, scene.robot_root
+    parent = model.body_parentid
+    robot = scene.subtree(root)
 
     def is_arm(b: int) -> bool:
-        for a in chain(b):
-            if a == root_bid:
-                return False
-            j = int(model.body_jntadr[a])
-            if j >= 0 and int(model.jnt_qposadr[j]) >= first_extra_qpos:
+        while b != root:
+            j = int(model.body_jntadr[b])
+            if j >= 0 and j not in base_joints:
                 return True
+            b = int(parent[b])
         return False
 
-    robot = {b for b in range(int(model.nbody)) if root_bid in chain(b)}
     arm = {b for b in robot if is_arm(b)}
-    for i in range(int(model.neq)):
-        if (int(model.eq_type[i]) == EQ_WELD and bool(data.eq_active[i])
-                and int(model.eq_objtype[i]) == OBJ_BODY):
-            a, b = int(model.eq_obj1id[i]), int(model.eq_obj2id[i])
-            if a in arm or b in arm:
-                arm.add(b if a in arm else a)
+    arm |= {c for c, p in attached.items() if p in arm}
     if not arm:
         return 0.0
 
-    def colliding(bodies: set) -> "list[int]":
+    def colliding(bodies: "set[int] | frozenset[int]") -> "list[int]":
         return [g for g in range(int(model.ngeom)) if int(model.geom_bodyid[g]) in bodies
                 and (int(model.geom_contype[g]) or int(model.geom_conaffinity[g]))]
 
-    ox, oy = float(data.xpos[root_bid][0]), float(data.xpos[root_bid][1])
-    return max(0.0, _planar_reach(model, data, colliding(arm), ox, oy)
-               - _planar_reach(model, data, colliding(robot - arm), ox, oy))
+    pos, mat = canonical.geom_poses(scene, q)
+    ox, oy = (float(v) for v in canonical.body_poses(scene, q)[0][root][:2])
+    return max(0.0, _planar_reach(model, pos, mat, colliding(arm), ox, oy)
+               - _planar_reach(model, pos, mat, colliding(robot - arm), ox, oy))

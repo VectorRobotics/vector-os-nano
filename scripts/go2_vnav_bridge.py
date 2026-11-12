@@ -20,42 +20,11 @@ from __future__ import annotations
 import math
 import os
 import struct
-import sys
 import time
-import types
 from pathlib import Path
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Bootstrap
-# ---------------------------------------------------------------------------
 _repo = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_repo))
-
-pkg = types.ModuleType("vector_os_nano")
-pkg.__path__ = [str(_repo / "vector_os_nano")]
-pkg.__package__ = "vector_os_nano"
-sys.modules.setdefault("vector_os_nano", pkg)
-
-core = types.ModuleType("vector_os_nano.core")
-core.__path__ = [str(_repo / "vector_os_nano" / "core")]
-core.__package__ = "vector_os_nano.core"
-sys.modules.setdefault("vector_os_nano.core", core)
-
-hw = types.ModuleType("vector_os_nano.hardware")
-hw.__path__ = [str(_repo / "vector_os_nano" / "hardware")]
-sys.modules.setdefault("vector_os_nano.hardware", hw)
-
-sim_mod = types.ModuleType("vector_os_nano.hardware.sim")
-sim_mod.__path__ = [str(_repo / "vector_os_nano" / "hardware" / "sim")]
-sys.modules.setdefault("vector_os_nano.hardware.sim", sim_mod)
-
-import importlib.util
-_types_path = _repo / "vector_os_nano" / "core" / "types.py"
-_ts = importlib.util.spec_from_file_location("vector_os_nano.core.types", str(_types_path))
-_tm = importlib.util.module_from_spec(_ts)
-sys.modules.setdefault("vector_os_nano.core.types", _tm)
-_ts.loader.exec_module(_tm)
 
 # ---------------------------------------------------------------------------
 # ROS2
@@ -70,8 +39,6 @@ from std_msgs.msg import Float32, Header
 from tf2_ros import TransformBroadcaster
 import numpy as np
 
-from vector_os_nano.hardware.sim.mujoco_go2 import _ROOM_XML, MuJoCoGo2
-from vector_os_nano.schemas import paths
 from vector_os_nano.hardware.sim.sim_clock import sim_tick_dt
 from vector_os_nano.core.run_dir import run_path
 
@@ -119,7 +86,7 @@ def _nav(key: str, default: float) -> float:
 
 
 # Sensor mounting offset — on top of Go2 head, above all leg geoms.
-# Must match mujoco_go2.py _LIDAR_OFFSET and nav stack sensorOffset.
+# Must match the body manifest's lidar pos (robot.yaml sensors) and nav stack sensorOffset.
 _SENSOR_X: float = 0.3
 _SENSOR_Y: float = 0.0
 _SENSOR_Z: float = 0.2
@@ -205,12 +172,17 @@ class TerrainAccumulator:
 
 
 class Go2VNavBridge(Node):
-    """ROS2 node bridging MuJoCoGo2 to Vector Navigation Stack."""
+    """ROS2 node bridging a legged sim base (interfaces.BaseProtocol) to the Vector
+    Navigation Stack: its camera and lidar drivers, and the session's ``reset`` (stand
+    the body up again) for the reset flag file."""
 
-    def __init__(self, go2: MuJoCoGo2, camera: Any, *, terrain_map: os.PathLike, quiet: bool = False) -> None:
+    def __init__(self, go2: Any, camera: Any, lidar: Any, reset: Any, *, terrain_map: os.PathLike,
+                 quiet: bool = False) -> None:
         super().__init__("go2_vnav_bridge")
         self._go2 = go2
         self._camera = camera  # the head camera (sim/drivers/camera.Camera)
+        self._lidar = lidar    # the head lidar (sim/drivers/lidar.Lidar)
+        self._reset = reset
         self._last_cmd_time = time.time()
         # Suppress verbose logging when embedded in CLI (floods terminal)
         if quiet or os.environ.get("VECTOR_BRIDGE_QUIET"):
@@ -404,7 +376,7 @@ class Go2VNavBridge(Node):
             except OSError:
                 pass
             self.get_logger().warn("RESET POSE — standing up at current position")
-            self._go2.reset_pose()
+            self._reset()
             self._current_path = []
             self._pf_speed = 0.0
             self._pf_lat = 0.0
@@ -608,7 +580,7 @@ class Go2VNavBridge(Node):
         Ceiling-filtered: points above _CEILING_FILTER_HEIGHT are excluded.
         TARE subscribes to this topic for frontier detection — must be LOCAL ONLY.
         """
-        points = self._go2.get_3d_pointcloud()
+        points = self._lidar.points()
         if not points:
             return
 
@@ -656,7 +628,7 @@ class Go2VNavBridge(Node):
 
     def _publish_scan(self) -> None:
         """Publish /scan (LaserScan) for compatibility."""
-        scan = self._go2.get_lidar_scan()
+        scan = self._lidar.scan()
         now = self.get_clock().now().to_msg()
 
         msg = LaserScanMsg()
@@ -943,12 +915,8 @@ class Go2VNavBridge(Node):
 
         if time.time() < self._teleop_until:
             return
-        # Skill-level override: walk/turn/etc. acquires exclusive control via
-        # go2._skill_ctrl_until so our 20 Hz loop doesn't clobber its
-        # set_velocity call. Poll each tick and yield while active.
-        _skill_until = getattr(self._go2, "_skill_ctrl_until", 0.0)
-        if time.time() < _skill_until:
-            return
+        # A walk / navigate skill holds the base's control: it ignores this thread's
+        # set_velocity until the skill ends.
 
         # --- Wall escape mode: reactive, direction-aware ---
         # Re-scans surroundings EVERY tick to adapt to changing obstacles.
@@ -1527,51 +1495,3 @@ class Go2VNavBridge(Node):
             self._sg_json_pub.publish(msg)
         except Exception as e:
             self.get_logger().warn(f"scene_graph_json publish error: {e}")
-
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Go2 Vector Nav Bridge")
-    parser.add_argument("--no-gui", action="store_true")
-    parser.add_argument("--sinusoidal", action="store_true")
-    args = parser.parse_args()
-
-    backend = "sinusoidal" if args.sinusoidal else "auto"
-    gui = not args.no_gui
-
-    print(f"Starting MuJoCoGo2 (gui={gui}, backend={backend})...")
-    # Standalone subprocess bridge (launch_explore.sh, retired by WP04): the arm
-    # choice still arrives via this script's own env contract.
-    go2 = MuJoCoGo2(gui=gui, room=True, backend=backend,
-                    with_arm=os.environ.get("VECTOR_SIM_WITH_ARM") == "1")
-    go2.connect()
-    print("Standing up...")
-    go2.stand(duration=2.0)
-    pos = go2.get_position()
-    print(f"Go2 at ({pos[0]:.1f}, {pos[1]:.1f}), z={pos[2]:.3f}m")
-
-    print("Starting Vector Nav Bridge...")
-    rclpy.init()
-    from vector_os_nano.embodiments import registry
-    from vector_os_nano.sim.drivers.camera import Camera
-
-    cfg = registry.load("go2_piper" if os.environ.get("VECTOR_SIM_WITH_ARM") == "1" else "go2")
-    node = Go2VNavBridge(go2, Camera(cfg.camera, go2.runtime),
-                         terrain_map=paths.memory(_ROOM_XML.stem) / paths.TERRAIN_MAP)  # the world-less room
-
-    try:
-        rclpy.spin(node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        try:
-            rclpy.shutdown()
-        except Exception:
-            pass
-        go2.disconnect()
-        print("Bridge stopped.")
-
-
-if __name__ == "__main__":
-    main()

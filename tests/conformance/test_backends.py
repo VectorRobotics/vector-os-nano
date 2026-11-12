@@ -47,6 +47,16 @@ def test_supports_gives_a_reason_or_none(monkeypatch):
     assert "not certified" in pb.supports(_robot("my_new_mpc"), None)  # an unknown policy is a no
     assert "TorchScript" in pb.supports(_robot("motion.pt"), None)
     assert "TorchScript" in pb.supports(_robot("torchscript"), None)
+    # a legged base runs the policy its manifest picks for the backend (base.policy.by_backend)
+    import dataclasses
+
+    from vector_os_nano.embodiments import registry
+
+    go2 = registry.load("go2")
+    assert pb.supports(go2, None) is None and go2.base.policy.on("pybullet")[0] == "sinusoidal"
+    bare = dataclasses.replace(go2, base=dataclasses.replace(
+        go2.base, policy=dataclasses.replace(go2.base.policy, by_backend={})))
+    assert "falls" in pb.supports(bare, None) and backends.get("mujoco").supports(bare, None) is None
     monkeypatch.setattr(importlib.util, "find_spec", lambda n, *a: None if n == "pybullet" else real(n, *a))
     assert "pip install" in pb.supports(_robot("sinusoidal"), None)
     with pytest.raises(ImportError, match="pip install"):

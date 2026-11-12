@@ -203,7 +203,7 @@ class TestObstaclesFromModel:
             if bname.startswith("g1_"):
                 robot_geom_ids.add(gid)
 
-        polys = obstacles_from_model(model, data, robot_geom_ids=robot_geom_ids)
+        polys = obstacles_from_model(model, data.geom_xpos, data.geom_xmat, robot_geom_ids=robot_geom_ids)
         return polys, model, data
 
     def test_returns_list(self, tiny_result) -> None:
@@ -307,7 +307,7 @@ class TestObstaclesFromModel:
 def test_obstacles_from_model_without_robot_ids_includes_the_robot() -> None:
     """With no robot_geom_ids there is no name-prefix guess: the robot box counts."""
     model, data = _build_tiny_model()
-    polys = vg.obstacles_from_model(model, data)
+    polys = vg.obstacles_from_model(model, data.geom_xpos, data.geom_xmat)
     assert isinstance(polys, list)
     near_pelvis = [p for p in polys
                    if math.hypot(sum(q[0] for q in p) / len(p) - 10.0,

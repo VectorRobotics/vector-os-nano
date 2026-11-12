@@ -52,9 +52,7 @@ def g1_lidar_scan(
     """
     from vector_os_nano.core.types import LaserScan  # noqa: PLC0415
 
-    from vector_os_nano.hardware.sim.sensors.lidar_raycast import (  # noqa: PLC0415
-        raycast_lidar,
-    )
+    from vector_os_nano.sim.drivers.lidar import raycast_lidar  # noqa: PLC0415
 
     # ------------------------------------------------------------------
     # Constants (mirrors the inline code exactly)
@@ -64,7 +62,7 @@ def g1_lidar_scan(
 
     # ------------------------------------------------------------------
     # Ray-casting loop (shared impl — byte-identical to the old inline body;
-    # see sensors/lidar_raycast.py). g1: tilt -10, max_range 15, mid-ring bound.
+    # see sim/drivers/lidar.py). g1: tilt -10, max_range 15, mid-ring bound.
     # ------------------------------------------------------------------
     raw = raycast_lidar(
         raycast,

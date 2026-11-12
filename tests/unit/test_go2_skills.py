@@ -25,9 +25,7 @@ def _make_go2_context():
         return True
 
     base.walk.side_effect = walk
-    base.stand.return_value = True
-    base.sit.return_value = True
-    base.lie_down.return_value = True
+    base.set_posture.return_value = True
     base.get_position.side_effect = lambda: (pos[0], pos[1], 0.27)
     base.get_heading.side_effect = lambda: yaw[0]
     return SkillContext(
@@ -115,7 +113,7 @@ class TestStanceSkills:
         skill = StandSkill()
         result = skill.execute({}, ctx)
         assert result.success
-        ctx.base.stand.assert_called_once()
+        ctx.base.set_posture.assert_called_once_with("stand")
 
     def test_sit(self):
         from vector_os_nano.skills.go2.stance import SitSkill
@@ -123,7 +121,7 @@ class TestStanceSkills:
         skill = SitSkill()
         result = skill.execute({}, ctx)
         assert result.success
-        ctx.base.sit.assert_called_once()
+        ctx.base.set_posture.assert_called_once_with("sit")
 
     def test_lie_down(self):
         from vector_os_nano.skills.go2.stance import LieDownSkill
@@ -131,7 +129,22 @@ class TestStanceSkills:
         skill = LieDownSkill()
         result = skill.execute({}, ctx)
         assert result.success
-        ctx.base.lie_down.assert_called_once()
+        ctx.base.set_posture.assert_called_once_with("lie_down")
+
+    def test_a_posture_the_joints_did_not_reach_fails(self):
+        from vector_os_nano.skills.go2.stance import SitSkill
+        ctx = _make_go2_context()
+        ctx.base.set_posture.return_value = False  # the base read its joints back off the posture
+        result = SitSkill().execute({}, ctx)
+        assert not result.success and result.diagnosis_code == "sit_failed"
+        assert result.result_data["joints_at_posture"] is False
+
+    def test_a_body_without_the_posture_fails_naming_the_valid_ones(self):
+        from vector_os_nano.skills.go2.stance import LieDownSkill
+        ctx = _make_go2_context()
+        ctx.base.set_posture.side_effect = KeyError("no posture 'lie_down'; postures: ['stand', 'sit']")
+        result = LieDownSkill().execute({}, ctx)
+        assert not result.success and "postures: ['stand', 'sit']" in result.error_message
 
     def test_stance_no_base(self):
         from vector_os_nano.skills.go2.stance import StandSkill

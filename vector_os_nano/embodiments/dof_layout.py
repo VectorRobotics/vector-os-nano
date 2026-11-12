@@ -22,8 +22,9 @@ embodiment manifest and reads the slice addresses back.
 
 It also builds the nominal-stance vector FROM the manifest's ``stance`` dict, in
 the model's actual leg-qpos order (matched by joint-name suffix so the "g1_"
-attach prefix is transparent). For go2 that vector equals ``_STAND_JOINTS``; for
-g1 it equals ``_DEFAULT_ANGLES`` — byte-identical, by construction.
+attach prefix is transparent), in float64: for g1 it equals ``_DEFAULT_ANGLES``.
+The go2 runs on the generic LeggedBase (canonical addresses); only the G1 driver
+reads this module, until it does too (S4b).
 
 No torch import; ``mujoco`` is imported lazily so the module stays importable
 offline (the pure-logic ``build_stance_vector`` needs only a model object, which
@@ -103,6 +104,9 @@ class DofLayout:
         # Root body + its freejoint (the floating base).
         self.root_bid: int = int(model.body(root_body).id)
         jnt_adr = int(model.body_jntadr[self.root_bid])
+        if jnt_adr < 0 or int(model.jnt_type[jnt_adr]) != int(_get_mujoco().mjtJoint.mjJNT_FREE):
+            raise ValueError(f"DofLayout: root body {root_body!r} has no free joint (a fixed or "
+                             f"jointed root cannot be addressed as a floating base)")
         self.root_qpos_adr: int = int(model.jnt_qposadr[jnt_adr])
         self.root_dof_adr: int = int(model.jnt_dofadr[jnt_adr])
         # Orientation quaternion (w,x,y,z): 4 floats after the 3 position floats.
@@ -164,7 +168,7 @@ class DofLayout:
         g1: ``_DEFAULT_ANGLES``).
         """
         names = self._leg_joint_names_in_qpos_order(model)
-        out = np.empty(self.num_actuated, dtype=np.float32)
+        out = np.empty(self.num_actuated, dtype=np.float64)
         for i, jname in enumerate(names):
             out[i] = float(_resolve_stance_angle(jname, stance))
         return out

@@ -7,12 +7,15 @@ The world owns a private copy of the compiled ``MjModel`` (attach writes the wel
 anchor into ``eq_data``) and one ``MjData``. Commands live in ``data.ctrl``, so
 ``mj_step`` holds them across steps by construction. Renders run on one worker
 thread (a GL context is bound to its thread) and rays on a scratch copy, each from a
-state copied under the lock, so neither holds up the stepper. ``model`` / ``data`` are
-for MuJoCo-internal code only (the drivers under hardware/sim, on the runtime's thread).
+state copied under the lock, so neither holds up the stepper. With ``gui`` a passive
+viewer shows the world and follows a mobile robot (a free robot root). ``model`` /
+``data`` are for MuJoCo-internal code only (the drivers under hardware/sim, on the
+runtime's thread).
 """
 from __future__ import annotations
 
 import copy
+import os
 import sys
 import threading
 import time as _time
@@ -27,6 +30,7 @@ from vector_os_nano.sim.scene import reader
 
 _KINDS = ("rgb", "depth", "seg")
 _VIEWER_SYNC_S = 1.0 / 60.0
+_TRACK_Z = 0.3  # the viewer looks at a mobile robot's root, this high above the floor
 
 
 def intrinsics(width: int, height: int, fovy_deg: float) -> np.ndarray:
@@ -68,11 +72,24 @@ class MuJoCoWorld:
         self._viewer: Any = None
         self._synced = 0.0
         self.caller_thread_only = False
+        # A mobile robot (a free root) is followed by the viewer camera.
+        root = scene.robot_root
+        free = root >= 0 and m.body_jntnum[root] and m.jnt_type[m.body_jntadr[root]] == mj.mjtJoint.mjJNT_FREE
+        self._track = root if free else -1
         if gui:
             import mujoco.viewer  # noqa: PLC0415
 
-            self._viewer = mujoco.viewer.launch_passive(m, d, show_left_ui=False, show_right_ui=False)
+            if os.environ.get("MUJOCO_GL", "").lower() == "egl":
+                # EGL offscreen contexts must exist before the viewer's GLFW/GLX init.
+                # ponytail: the camera sizes the bodies render (640x480, 320x240); another
+                # size with the window open fails loud (_renderer).
+                self.warm_renderers(_KINDS, ((320, 240), (640, 480)))
+            self._viewer = v = mujoco.viewer.launch_passive(m, d, show_left_ui=False, show_right_ui=False)
             self.caller_thread_only = sys.platform == "darwin"  # Apple GLFW: main thread only
+            if v is not None and self._track >= 0:
+                v.cam.type = mj.mjtCamera.mjCAMERA_FREE
+                v.cam.lookat[:] = [*d.xpos[self._track][:2], _TRACK_Z]
+                v.cam.distance, v.cam.elevation, v.cam.azimuth = 5.5, -20.0, -90.0
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -95,6 +112,8 @@ class MuJoCoWorld:
         with self._lock:
             mj.mj_step(self.model, self.data, nstep=int(n))
             if self._viewer is not None and _time.monotonic() - self._synced > _VIEWER_SYNC_S:
+                if self._track >= 0:
+                    self._viewer.cam.lookat[:] = [*self.data.xpos[self._track][:2], _TRACK_Z]
                 self._viewer.sync()
                 self._synced = _time.monotonic()
 

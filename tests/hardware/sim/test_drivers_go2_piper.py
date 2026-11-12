@@ -3,7 +3,7 @@
 
 """The generic Arm / Gripper / Camera (sim/drivers) on go2_piper's runtime.
 
-Runs a single MuJoCoGo2+Piper sim for the whole module (module-scope fixture). All
+Runs a single go2_piper sim (the generic LeggedBase + Arm) for the whole module (module-scope fixture). All
 tests are read-only or perform small arm motions; object positions in the shared scene
 are NOT touched.
 """
@@ -16,28 +16,27 @@ import pytest
 
 mujoco = pytest.importorskip("mujoco")
 
-from vector_os_nano.embodiments import registry  # noqa: E402
-from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2  # noqa: E402
+from tests.hardware.sim.dog import stand_up  # noqa: E402
 from vector_os_nano.interfaces import ArmProtocol, CameraProtocol, GripperProtocol  # noqa: E402
 from vector_os_nano.sim.drivers.arm import Arm  # noqa: E402
 from vector_os_nano.sim.drivers.camera import Camera  # noqa: E402
 from vector_os_nano.sim.drivers.gripper import Gripper  # noqa: E402
 
 
+pytestmark = pytest.mark.sim
+
+
 @pytest.fixture(scope="module")
 def sim():
-    """Module-scope Go2+Piper sim, headless (the arm is selected by with_arm)."""
-    cfg = registry.load("go2_piper")
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
+    """Module-scope go2_piper sim, headless, standing (IK and a later fk see the same body)."""
+    dog = stand_up("go2_piper")
+    cfg, rt = dog.cfg, dog.rt
     try:
-        go2.connect()
-        go2.stand()  # settled: IK and a later fk must see the same standing body
-        rt = go2.runtime
-        yield {"go2": go2, "rt": rt, "cfg": cfg,
-               "piper": Arm(cfg.arm, rt, wait_mount=go2.wait_settled),
+        yield {"go2": dog.base, "rt": rt, "cfg": cfg,
+               "piper": Arm(cfg.arm, rt, wait_mount=dog.base.wait_settled),
                "gripper": Gripper(cfg.arm.gripper, rt), "camera": Camera(cfg.camera, rt)}
     finally:
-        go2.disconnect()
+        dog.close()
 
 
 def test_the_drivers_conform_and_keep_the_world_private(sim):
@@ -60,7 +59,7 @@ def test_get_joint_positions_returns_six_floats(sim):
 def test_kinematics_run_on_a_private_copy(sim):
     """IK runs on its own MjData of the canonical model, never the data the stepper steps."""
     kin = sim["piper"]._kin
-    assert kin._d is not sim["go2"]._mj.data and kin._m is sim["rt"].world.scene.model
+    assert kin._d is not sim["rt"].world.data and kin._m is sim["rt"].world.scene.model
 
 
 # -- FK -------------------------------------------------------------------------------

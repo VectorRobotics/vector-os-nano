@@ -6,7 +6,7 @@
 Captured in lockstep (VECTOR_SIM_LOCKSTEP=1, headless) on release/1.0 before S1 touched
 anything, and replayed here bit for bit:
 
-1. go2: connect, stand, walk(0.4, 0, 0) for 3 sim-s, zero command, wait until the brake
+1. go2: spawn, stand, walk(0.4, 0, 0) for 3 sim-s, zero command, wait until the brake
    has settled; (sim_time, q, qd) every 0.1 s.
 2. go2_piper: the scripted pick of the green bottle on the pick table (ik_top_down ->
    move_joints -> close -> lift; since S3a through the generic sim/drivers Arm and
@@ -21,10 +21,32 @@ States compare with ``np.array_equal`` and oracle values exactly. Regenerate (on
 a documented, justified change) with ``python -m tests.hardware.sim.test_golden_traces
 <dir>`` under scripts/gate.sh's environment; the ``release_*`` arrays are kept.
 
+S4a moved both bodies onto the generic LeggedBase + convex_mpc policy. That code path
+replays the S1 goldens bit for bit once three deliberate changes are undone (proved by
+re-applying them: /data/vos-analysis/scratch/vos-S4a-flake/proof_patch.py), and the
+goldens were regenerated for them:
+
+* the body spawns (and a reset stands it) at its manifest stand height, base.height
+  0.279 m, instead of being dropped from 0.35 m;
+* the stance is the manifest's angles in float64 (the go2 driver used float32:
+  0.9 -> 0.8999999761581421);
+* the go2_piper seat placement is the world-side reset (``world.reset``, which also
+  zeroes the solver warm start) instead of raw qpos writes.
+
+The dog's trajectory moved by millimetres (base position <= 6.4 mm, the scripted pick 0.02
+sim-s earlier); every weld, contact set and verdict is unchanged
+(:func:`test_the_s4a_move_kept_every_verdict`, against the S1 values kept as
+``release_s1_*``).
+
+S4a-fix2 regenerated go2_walk once more: convex_mpc starts its gait clock at each walk
+from rest (a clock counted from the spawn started the trot mid-cycle, and 2 in 200 walks
+from rest fell). The walk's base moved by up to 46 mm against S1 (3.6 mm before); its
+contacts and welds are the S1 ones, and go2_piper_pick replays unchanged.
+
 Two ground-truth values changed by design when GroundTruth became the one generic class
-(S1 step 4); the release/1.0 values are kept as ``release_gt_clearance`` /
-``release_gt_contacts`` and :func:`test_ground_truth_moved_only_as_documented` bounds the
-change:
+(S1 step 4), on the release/1.0 trajectory; the release/1.0 values are kept as
+``release_gt_clearance`` / ``release_gt_contacts``, the S1 ones as ``release_s1_*``, and
+:func:`test_ground_truth_moved_only_as_documented` bounds that change:
 
 * clearance is today's AABB rule over CANONICAL shape AABBs of the published state;
   the old one read the stepped data's geom poses, one physics step behind it. Every
@@ -47,6 +69,8 @@ import pytest
 
 pytest.importorskip("mujoco")
 
+pytestmark = pytest.mark.sim
+
 GOLDEN = Path(__file__).with_name("golden")
 _SEAT = (10.46, 3.0)  # the dog 42 cm behind the green bottle, head-on (test_piper_grasp)
 _GREEN = "pickable_bottle_green"
@@ -56,10 +80,6 @@ _SAMPLE_S = 0.1
 # -- ground truth, read through today's API ------------------------------------------
 
 
-def _ground_truth(go2: Any) -> Any:
-    from vector_os_nano.sim.ground_truth import GroundTruth
-
-    return GroundTruth(go2.runtime)
 
 
 def _gt_row(gt: Any, objects: list[str], camera: tuple[str, int, int], arm: tuple[str, ...]) -> dict:
@@ -82,11 +102,10 @@ def _gt_row(gt: Any, objects: list[str], camera: tuple[str, int, int], arm: tupl
 # -- the scenarios ---------------------------------------------------------------------
 
 
-def _free_pose(go2: Any, body: str) -> np.ndarray:
+def _free_pose(rt: Any, body: str) -> np.ndarray:
     """x y z qw qx qy qz of a free body, from the published state."""
-    m = go2._mj.model
-    a = int(m.jnt_qposadr[m.body(body).jntadr[0]])
-    return go2.runtime.snapshot().q[a:a + 7].copy()
+    sc = rt.world.scene
+    return rt.snapshot().q[sc.free_q(sc.body(body))].copy()
 
 
 def _camera(embodiment: str) -> tuple[str, int, int]:
@@ -97,8 +116,11 @@ def _camera(embodiment: str) -> tuple[str, int, int]:
 
 
 class _Recorder:
-    def __init__(self, go2: Any, gt: Any, embodiment: str, arm: tuple[str, ...] = ()) -> None:
-        self.go2, self.gt, self.arm = go2, gt, arm
+    def __init__(self, rt: Any, embodiment: str, arm: tuple[str, ...] = ()) -> None:
+        from vector_os_nano.sim.ground_truth import GroundTruth
+
+        self.rt, self.gt, self.arm = rt, GroundTruth(rt), arm
+        gt = self.gt
         self.objects = sorted(gt.bid)
         self.camera = _camera(embodiment)
         self.t: list[float] = []
@@ -107,7 +129,7 @@ class _Recorder:
         self.rows: list[dict] = []
 
     def state(self) -> None:
-        s = self.go2.runtime.snapshot()
+        s = self.rt.snapshot()
         self.t.append(s.sim_time)
         self.q.append(s.q.copy())
         self.qd.append(s.qd.copy())
@@ -117,7 +139,7 @@ class _Recorder:
 
     def sample(self, n: int, *, truth_every: int = 1) -> None:
         for i in range(n):
-            assert self.go2.wait_sim(_SAMPLE_S)
+            assert self.rt.wait_sim(_SAMPLE_S)
             self.state()
             if i % truth_every == 0:
                 self.truth()
@@ -127,7 +149,7 @@ class _Recorder:
                "objects": np.array(self.objects)}
         for k in ("t", "base", "pos", "speed", "clearance", "welded", "pixels", "arm"):
             out[f"gt_{k}"] = np.array([r[k] for r in self.rows])
-        nb = int(self.go2._mj.model.nbody)
+        nb = int(self.rt.world.scene.model.nbody)
         touch = np.zeros((len(self.rows), len(self.objects), nb), dtype=bool)
         for i, r in enumerate(self.rows):
             for k, ids in enumerate(r["contacts"]):
@@ -138,51 +160,47 @@ class _Recorder:
 
 def run_go2_walk() -> dict[str, np.ndarray]:
     """Scenario 1 (+ its half of scenario 3)."""
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from tests.hardware.sim.dog import stand_up
 
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc")
+    dog = stand_up("go2")  # lockstep: the runtime starts no thread
+    rt, base = dog.rt, dog.base
     try:
-        go2.connect()
-        go2.stand()
-        rec = _Recorder(go2, _ground_truth(go2), "go2")
+        assert base.gait_backend == "convex_mpc"
+        rec = _Recorder(rt, "go2")
         rec.state()
         rec.truth()
-        go2.set_velocity(0.4, 0.0, 0.0)
+        base.set_velocity(0.4, 0.0, 0.0)
         rec.sample(30, truth_every=2)
-        go2.set_velocity(0.0, 0.0, 0.0)
+        base.set_velocity(0.0, 0.0, 0.0)
         n = 0
-        while not go2.wait_settled(timeout=0.0):
+        while not base.wait_settled(timeout=0.0):
             rec.sample(1, truth_every=2 if n % 2 else 1)
             n += 1
             assert n < 60, "the brake never settled"
         rec.sample(5, truth_every=2)
         return rec.arrays()
     finally:
-        go2.disconnect()
+        dog.close()
 
 
 def run_go2_piper_pick() -> dict[str, np.ndarray]:
     """Scenario 2 (+ its half of scenario 3)."""
-    from vector_os_nano.embodiments import registry
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from tests.hardware.sim.dog import stand_up
     from vector_os_nano.sim.drivers.arm import Arm
     from vector_os_nano.sim.drivers.gripper import Gripper
+    from vector_os_nano.sim.session import respawn
     from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-    cfg = registry.load("go2_piper")
-    go2 = MuJoCoGo2(gui=False, room=True, backend="mpc", with_arm=True)
+    dog = stand_up("go2_piper")
+    cfg, rt, base = dog.cfg, dog.rt, dog.base
     try:
-        go2.connect()
-        go2.stand()
-        arm = Arm(cfg.arm, go2.runtime, wait_mount=go2.wait_settled)
-        grip = Gripper(cfg.arm.gripper, go2.runtime)
-        rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
-        go2.reset_pose()
-        assert go2.wait_sim(1.5)
-        gt = _ground_truth(go2)
-        rec = _Recorder(go2, gt, "go2_piper", tuple(cfg.arm.joints))
+        arm = Arm(cfg.arm, rt, wait_mount=base.wait_settled)
+        grip = Gripper(cfg.arm.gripper, rt)
+        respawn(rt, base, cfg, xy=_SEAT)
+        assert rt.wait_sim(1.5)
+        rec = _Recorder(rt, "go2_piper", tuple(cfg.arm.joints))
+        gt = rec.gt
         rec.sample(5)
         g = gt.object_positions()[_GREEN]
         q_above = arm.ik_top_down((g[0], g[1], g[2] + 0.02))
@@ -208,12 +226,12 @@ def run_go2_piper_pick() -> dict[str, np.ndarray]:
         out["weld_t"] = np.array([t for t, _n, _p in events])
         out["weld_body"] = np.array([n for _t, n, _p in events])
         out["weld_on"] = np.array([p == cfg.arm.gripper.weld_body for _t, _n, p in events])
-        out["final_pose"] = _free_pose(go2, _GREEN)
+        out["final_pose"] = _free_pose(rt, _GREEN)
         out["verdicts"] = np.array([ns["holding_object"](_GREEN), ns["lifted"](_GREEN),
                                     ns["holding_object"]()])
         return out
     finally:
-        go2.disconnect()
+        dog.close()
 
 
 SCENARIOS = {"go2_walk": run_go2_walk, "go2_piper_pick": run_go2_piper_pick}
@@ -247,18 +265,34 @@ def test_golden_trace_replays_bit_for_bit(scenario: str, monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
 def test_ground_truth_moved_only_as_documented(scenario: str) -> None:
-    """The step-4 change of clearance and contacts against release/1.0 (module docstring)."""
+    """The step-4 change of clearance and contacts against release/1.0 (module docstring),
+    both on the release/1.0 trajectory."""
     g = np.load(GOLDEN / f"{scenario}.npz")
-    new, old = g["gt_clearance"], g["release_gt_clearance"]
+    new, old = g["release_s1_gt_clearance"], g["release_gt_clearance"]
     assert np.array_equal(np.isinf(new), np.isinf(old))
     fin = np.isfinite(old)
-    step = 1.5 * g["gt_speed"] * 1e-3  # one 1 ms physics step of the object's own motion
+    step = 1.5 * g["release_s1_gt_speed"] * 1e-3  # one 1 ms physics step of the object's own motion
     assert (np.abs(new - old)[fin] <= step[fin] + 1e-9).all()
     assert ((new >= 0.03) == (old >= 0.03)).all() and ((np.abs(new) < 5e-3) == (np.abs(old) < 5e-3)).all()
-    moved = np.argwhere(g["gt_contacts"] != g["release_gt_contacts"])
-    assert all(g["gt_contacts"][tuple(i)] for i in moved)  # only contacts gained, none lost
-    assert all(g["gt_clearance"][i, k] < 1e-3 for i, k, _b in moved)  # each within the 1 mm sentence
+    contacts = g["release_s1_gt_contacts"]
+    moved = np.argwhere(contacts != g["release_gt_contacts"])
+    assert all(contacts[tuple(i)] for i in moved)  # only contacts gained, none lost
+    assert all(new[i, k] < 1e-3 for i, k, _b in moved)  # each within the 1 mm sentence
     assert len(moved) == {"go2_walk": 0, "go2_piper_pick": 1}[scenario]
+
+
+@pytest.mark.parametrize("scenario", sorted(SCENARIOS))
+def test_the_s4a_move_kept_every_verdict(scenario: str) -> None:
+    """S4a's changes (module docstring) moved the trajectory by millimetres (the walk by
+    46 mm, its gait clock) and nothing any oracle decides: welds, contact sets and verdicts
+    are the S1 ones."""
+    g = np.load(GOLDEN / f"{scenario}.npz")
+    assert np.array_equal(g["gt_welded"], g["release_s1_gt_welded"])
+    assert np.array_equal(g["gt_contacts"], g["release_s1_gt_contacts"])
+    bound = {"go2_walk": 0.05, "go2_piper_pick": 0.01}[scenario]  # the walk: the gait clock (docstring)
+    assert np.abs(g["gt_base"][:, :3] - g["release_s1_gt_base"][:, :3]).max() < bound
+    if "verdicts" in g.files:
+        assert np.array_equal(g["verdicts"], g["release_s1_verdicts"])
 
 
 def write(out: Path) -> None:

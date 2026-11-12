@@ -4,17 +4,18 @@
 """SimSession — the ONE in-process simulation behind NL ``start_simulation``.
 
 ``start_simulation(embodiment=...)`` and the ``--sim`` / ``--sim-go2`` /
-``--embodiment`` flags all call :meth:`SimSession.start`. The body is the proven
-in-process rig (MuJoCoGo2 + the generic Arm / Gripper / Camera, every measured
-grasp number came from it), chosen by the embodiment manifest
-(``embodiments/<id>/robot.yaml``) — never by an env var.
+``--embodiment`` flags all call :meth:`SimSession.start`. The body is built from the
+embodiment manifest (``embodiments/<id>/robot.yaml``) — never from an env var: a
+legged body on the generic LeggedBase + Lidar (:func:`legged_body`), its arm on the
+generic Arm / Gripper / Camera. The world side spawns it (:func:`standing_state`) and
+stands it up again on ``/reset`` (:func:`respawn`).
 
 * ``start`` fails loud with :class:`SimStartError` (reason + detail) and tears
   down whatever it built; it returns only after the readiness probe passed
   (sim time advancing, a non-black camera frame, finite arm joints).
-* ``stop`` is idempotent: it disconnects the devices (renderers close with the
-  base), kills only the process groups this session spawned and unregisters its
-  atexit hook.
+* ``stop`` is idempotent: it disconnects the devices, closes the runtime (the
+  renderers and the viewer close with the world), kills only the process groups this
+  session spawned and unregisters its atexit hook.
 * ``vcli.runtime.bind_body`` is the ONE path that points the REPL at a session (or
   at no session): the engine binding (agent + world) and the skill tools.
 """
@@ -251,6 +252,12 @@ class SimSession:
         if path:
             _append_gt_dump(path, self, phase, goal)
 
+    def reset_pose(self) -> None:
+        """Stand the legged body up where it is (sim-only recovery: ``/reset``)."""
+        if self.config.base is None or self.runtime is None:
+            raise RuntimeError(f"{self.config.id} has no legged base to stand up")
+        respawn(self.runtime, self.agent._base, self.config)
+
     def own(self, what: str, cleanup: Callable[[], Any]) -> None:
         """Register a teardown step (run LIFO by stop)."""
         self._cleanups.append((what, cleanup))
@@ -428,23 +435,91 @@ def _skill_pack(embodiment: str) -> list:
     }[embodiment]()
 
 
-def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
+def standing_state(scene: Any, cfg: Any, q: Any, xy: Any, heading: float) -> Any:
+    """*q* with the body standing: its root at (*xy*, ``base.height``) facing *heading*,
+    its base joints in the stance, its arm (if any) at home."""
+    import numpy as np
+
+    q = np.array(q, dtype=np.float64)
+    q[scene.free_q(scene.robot_root)] = [xy[0], xy[1], cfg.base.height,
+                                         math.cos(heading / 2), 0.0, 0.0, math.sin(heading / 2)]
+    for name, angle in cfg.base.stance.items():
+        q[scene.joint_q(scene.joint(name))] = angle
+    for name, angle in zip(cfg.arm.joints, cfg.arm.home) if cfg.arm else ():
+        q[scene.joint_q(scene.joint(name))] = angle
+    return q
+
+
+def legged_body(cfg: Any, scene: Any, *, backend: str = "mujoco", gui: bool = False) -> tuple[Any, Any, Any]:
+    """``(runtime, base, lidar)``: the legged body of *cfg* loaded on *backend* in
+    *scene*, spawned standing at its spawn, with ONE SimRuntime ticking at its policy's
+    rate (not started yet), the generic LeggedBase connected and its manifest's Lidar
+    (None without one). A manifest joint the compiled scene lacks fails first, naming
+    the manifest file and its key."""
+    from vector_os_nano.embodiments.config import EmbodimentConfigError
+    from vector_os_nano.sim import backends
+    from vector_os_nano.sim.drivers.base import LeggedBase
+    from vector_os_nano.sim.drivers.lidar import Lidar
+    from vector_os_nano.sim.runtime import SimRuntime
+    from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+
+    for key, names in (("base.joints", cfg.base.joints), ("arm.joints", cfg.arm.joints if cfg.arm else ())):
+        missing = [n for n in names if n not in scene.joint_ids]
+        if missing:
+            raise EmbodimentConfigError(f"{cfg.id}/robot.yaml: {key} {missing} are not joints of "
+                                        f"{cfg.model.path}; joints: {sorted(scene.joint_ids)}")
+    world = backends.get(backend).load(scene, gui=gui)
+    rt = SimRuntime(world, substeps=round(1.0 / (cfg.base.policy.tick_hz * scene.timestep)),
+                    threaded=not world.caller_thread_only, name=cfg.id)
+    try:
+        spawn = standing_state(scene, cfg, scene.model.qpos0, cfg.spawn.xy, cfg.spawn.heading)
+        rt.call(lambda w: w.reset(spawn))
+        lidar = Lidar(cfg.lidar, rt) if cfg.lidar is not None else None
+        base = LeggedBase(cfg.base, rt, lidar=lidar, abort=is_abort_requested)
+        base.connect()
+    except BaseException:
+        rt.close()
+        raise
+    return rt, base, lidar
+
+
+def respawn(rt: Any, base: Any, cfg: Any, xy: Any = None, heading: float | None = None) -> None:
+    """Stand the body up again (sim-only recovery: the ``/reset`` command) at *xy*
+    facing *heading*, by default where it is: ONE step-boundary job writes the standing
+    state (``world.reset``: velocities and torques zeroed), points the arm's servos at
+    home and restarts the base."""
+    scene = rt.world.scene
+
+    def job(w: Any) -> None:
+        q = w.state()[0]
+        x, y, z, qw, qx, qy, qz = q[scene.free_q(scene.robot_root)]
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        w.reset(standing_state(scene, cfg, q, (x, y) if xy is None else xy, yaw if heading is None else heading))
+        if cfg.arm is not None:  # the arm's servos hold it at home
+            w.set_targets([scene.joint(j) for j in cfg.arm.joints], cfg.arm.home)
+        base.respawned()
+
+    rt.call(job)
+
+
+def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
+    """A legged body (go2, go2_piper): the apartment room with the body attached, ONE
+    SimRuntime, the generic LeggedBase + Lidar, and the generic Arm / Gripper / Camera
+    of its manifest."""
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.scene_graph import SceneGraph
-    from vector_os_nano.hardware.sim.mujoco_go2 import _ROOM_XML, MuJoCoGo2
+    from vector_os_nano.hardware.sim.scene_builder import room_scene
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     cfg, spec = session.config, session.spec
-    world = load_world(cfg.world) if cfg.world else None
-    base = MuJoCoGo2(
-        gui=spec.gui, room=True, backend=str(cfg.policy.spec.get("backend", "auto")),
-        with_arm=cfg.arm is not None,
-    )
-    session.own(f"{base.name} disconnected", base.disconnect)
-    base.connect()
-    base.stand()
-    session.runtime = base.runtime
-    arm, gripper, camera = _devices(cfg, base.runtime, wait_mount=base.wait_settled)
+    world = load_world(cfg.world)
+    rt, base, lidar = legged_body(cfg, room_scene(cfg, world), gui=spec.gui)
+    session.own(f"{cfg.id} runtime closed", rt.close)
+    session.own("base disconnected", base.disconnect)
+    rt.start()
+    base.set_posture("stand")
+    session.runtime = rt
+    arm, gripper, camera = _devices(cfg, rt, wait_mount=base.wait_settled)
 
     user_cfg = _user_config()
     api_key, vlm_cfg, key_note = _scene_vlm_config(user_cfg, vlm_api_key)
@@ -460,7 +535,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
             from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
 
             agent._vlm = Go2VLMPerception(config={
-                "api_key": api_key, "rooms": sorted(world.rooms) if world else [],
+                "api_key": api_key, "rooms": sorted(world.rooms),
                 **vlm_cfg,
             })
         except Exception as exc:  # noqa: BLE001 — VLM is optional; the capability line says why
@@ -472,20 +547,20 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
     # VECTOR_HOME isolates it). The world's rooms are seeded from its manifest, fixed at
     # their centres. Memory an older release kept in ~/.vector_os_nano is moved in once.
     moved = paths.migrate_old_memory()
-    sg_path = paths.memory(cfg.world or _ROOM_XML.stem) / paths.SCENE_GRAPH
+    sg_path = paths.memory(cfg.world) / paths.SCENE_GRAPH
     sg_path.parent.mkdir(parents=True, exist_ok=True)
-    agent._spatial_memory = SceneGraph(persist_path=str(sg_path), resolve=world.resolve if world else None)
+    agent._spatial_memory = SceneGraph(persist_path=str(sg_path), resolve=world.resolve)
     agent._spatial_memory.load()
-    if world is not None:
-        agent._spatial_memory.load_layout(str(world.path))
+    agent._spatial_memory.load_layout(str(world.path))
 
-    if cfg.nav.get("explorer") == "tare":
+    if cfg.base.nav.explorer == "tare":
         if not os.environ.get("VECTOR_NAV_STACK"):
             session.notes.append("explore: coverage (VECTOR_NAV_STACK unset)")
         else:
             try:
                 session.own("nav stack stopped", _launch_ros2_stack(
-                    base, camera, gui=spec.gui, terrain_map=sg_path.with_name(paths.TERRAIN_MAP)))
+                    base, camera, lidar, session.reset_pose, gui=spec.gui,
+                    terrain_map=sg_path.with_name(paths.TERRAIN_MAP)))
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
@@ -559,7 +634,7 @@ def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
 
 _BUILDERS: dict[str, Callable[[SimSession, str | None], Any]] = {
     "generic": _build_generic,
-    "mujoco_go2": _build_mujoco_go2,
+    "legged": _build_legged,
     "mujoco_g1": _build_mujoco_g1,
 }
 
@@ -602,7 +677,8 @@ def _kill_sessions(sids: set[int], grace_s: float = 5.0) -> None:
             time.sleep(0.1)
 
 
-def _launch_ros2_stack(go2: Any, camera: Any, *, gui: bool, terrain_map: Path) -> Callable[[], None]:
+def _launch_ros2_stack(base: Any, camera: Any, lidar: Any, reset: Callable[[], None], *,
+                       gui: bool, terrain_map: Path) -> Callable[[], None]:
     """Start the ROS2 bridge (thread, persisting the world's *terrain_map*) + nav stack (its own session).
 
     Returns the cleanup the session owns: stops the monitor and kills every
@@ -625,7 +701,7 @@ def _launch_ros2_stack(go2: Any, camera: Any, *, gui: bool, terrain_map: Path) -
     mod = importlib.util.module_from_spec(spec)
     sys.modules["_vnav_bridge"] = mod
     spec.loader.exec_module(mod)
-    node = mod.Go2VNavBridge(go2, camera, terrain_map=terrain_map)
+    node = mod.Go2VNavBridge(base, camera, lidar, reset, terrain_map=terrain_map)
 
     def _spin() -> None:
         try:

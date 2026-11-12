@@ -414,16 +414,15 @@ def test_a_failing_non_contract_step_still_fails_the_turn() -> None:
 
 
 def _bare_go2():
-    """A MuJoCoGo2 with just the state set_velocity touches (no sim)."""
+    """The generic LeggedBase with just the state set_velocity touches (no sim)."""
     import threading
+    from types import SimpleNamespace
 
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from vector_os_nano.sim.drivers.base import LeggedBase
 
-    go2 = MuJoCoGo2.__new__(MuJoCoGo2)
-    go2._connected, go2.runtime = True, object()
-    go2._skill_ctrl_until, go2._skill_ctrl_tid = 0.0, 0
-    go2._cmd_lock, go2._cmd_vel = threading.Lock(), (0.0, 0.0, 0.0)
-    go2._cmd_writes, go2._cmd_motion = 0, 0.0
+    go2 = LeggedBase.__new__(LeggedBase)
+    go2._spec = SimpleNamespace(limits=(0.8, 0.4, 4.0))
+    go2._lock, go2._owners, go2._cmd, go2._hold, go2._cmd_motion = threading.Lock(), [], (0.0,) * 3, None, 0.0
     return go2
 
 

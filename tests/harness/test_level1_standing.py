@@ -30,6 +30,11 @@ _TIMEOUT_S = 30.0         # per-test hard timeout
 # Tests
 # ---------------------------------------------------------------------------
 
+def _joints(base) -> list[float]:
+    """The 12 leg joints of one instant (manifest order), read off the base's runtime."""
+    return base._rt.snapshot().q[base._qa].tolist()
+
+
 @pytest.mark.level1
 def test_stand_height(go2_standing):
     """After stand(), base z > 0.25 m (robot is upright, not on ground)."""
@@ -70,7 +75,7 @@ def test_stand_stability(go2_standing):
 @pytest.mark.level1
 def test_stand_joint_tracking(go2_standing):
     """After stand(), all 12 joint positions within 0.15 rad of target."""
-    joints = go2_standing.get_joint_positions()
+    joints = _joints(go2_standing)
 
     assert len(joints) == 12, f"Expected 12 joints, got {len(joints)}"
 
@@ -107,7 +112,7 @@ def test_stand_no_nan_in_state(go2_standing):
     """After stand(), position, heading, joints, and odometry are all NaN-free."""
     pos = go2_standing.get_position()
     heading = go2_standing.get_heading()
-    joints = go2_standing.get_joint_positions()
+    joints = _joints(go2_standing)
     vel = go2_standing.get_velocity()
     odom = go2_standing.get_odometry()
 

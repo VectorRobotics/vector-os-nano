@@ -6,7 +6,7 @@
 `_NativeBaseNavigateTool` (native_loop.py) dispatches coordinate navigation POLYMORPHICALLY:
 it calls ``base.navigate_to(x, y, timeout=...)`` on whatever base is connected — there is
 NO go2-vs-g1 branch in the kernel/tool layer (Rule 11 at the tool layer is already met).
-Both in-process drivers implement it (``MuJoCoGo2.navigate_to`` / ``MuJoCoG1.navigate_to``).
+Both in-process bases implement it (``LeggedBase.navigate_to`` / ``MuJoCoG1.navigate_to``).
 
 This test PINS the polymorphic contract both must honor so the one navigate tool keeps
 dispatching to either without a per-embodiment branch. A future change that diverges one
@@ -28,9 +28,9 @@ def _navigate_params(cls) -> dict:
 def test_go2_and_g1_navigate_to_share_the_polymorphic_contract():
     """Both drivers accept the (x, y, timeout=...) call _NativeBaseNavigateTool makes."""
     from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+    from vector_os_nano.sim.drivers.base import LeggedBase
 
-    for cls in (MuJoCoGo2, MuJoCoG1):
+    for cls in (LeggedBase, MuJoCoG1):
         params = _navigate_params(cls)
         assert "x" in params and "y" in params, (
             f"{cls.__name__}.navigate_to must accept x, y; got {list(params)}"
@@ -53,7 +53,7 @@ def test_native_navigate_tool_is_embodiment_agnostic():
     # No coupling to a CONCRETE driver class inside the tool (Rule 11 at the tool layer) —
     # docstring prose may mention 'go2'/'g1' as examples, but the code must not import or
     # isinstance-check a driver class (that would be a per-embodiment fork).
-    for concrete in ("MuJoCoGo2", "MuJoCoG1", "isinstance("):
+    for concrete in ("LeggedBase", "MuJoCoG1", "isinstance("):
         assert concrete not in src, (
             f"_NativeBaseNavigateTool must stay embodiment-agnostic; found {concrete!r}"
         )

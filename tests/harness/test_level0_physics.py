@@ -3,7 +3,7 @@
 
 """Level 0 — MuJoCo physics verification.
 
-Tests at this level use mujoco directly (no MuJoCoGo2 wrapper, no convex_mpc).
+Tests at this level use mujoco directly (no base driver, no convex_mpc).
 They verify the model file is sane and physics produces expected results.
 
 Actuator ordering in go2.xml (ctrl[0..11]):

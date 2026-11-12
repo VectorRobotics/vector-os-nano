@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""What the actor (skills, perception) may touch of a body: arm, gripper, camera.
+"""What the actor (skills, perception) may touch of a body: base, arm, gripper, camera.
 
 One generic driver per morphology class implements each protocol (``sim/drivers``);
 a body is a manifest, never a class. No method returns the pose of anything but the
@@ -11,7 +11,7 @@ Positions are world-frame metres, joints radians in ``joint_names`` order.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -92,3 +92,62 @@ class GripperProtocol(Protocol):
 @runtime_checkable
 class CameraProtocol(Protocol):
     def capture(self, width: int, height: int) -> CameraFrame: ...
+
+
+@runtime_checkable
+class BaseProtocol(Protocol):
+    """A mobile base driven by body-frame velocity commands. Velocities are vx, vy
+    (m/s, body frame, +y left) and vyaw (rad/s, counter-clockwise); timed calls count
+    SIM seconds. Postures (``stand`` and the manifest's others) are held until a non-zero
+    velocity command."""
+
+    @property
+    def limits(self) -> tuple[float, float, float]:
+        """The largest |vx|, |vy|, |vyaw| a command may ask; larger ones are clipped."""
+
+    @property
+    def holonomic(self) -> bool:
+        """True when it can strafe (vy)."""
+
+    def connect(self) -> None: ...
+
+    def disconnect(self) -> None:
+        """Idempotent."""
+
+    def stop(self) -> None:
+        """Zero the command now, from any thread; idempotent and never raises."""
+
+    def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0) -> bool:
+        """Hold the command for *duration* sim seconds, then stop; True iff it ran its full
+        time and the body was up (its root above the fall height) at the start and the end."""
+
+    def set_velocity(self, vx: float, vy: float, vyaw: float) -> None:
+        """Set the command now (non-blocking); it holds until replaced."""
+
+    def set_posture(self, name: str, duration: float = 2.0) -> bool:
+        """Move the joints to the posture *name* over *duration* sim seconds and hold it;
+        True iff it was reached. An unknown name is a ``KeyError`` naming the valid ones."""
+
+    def get_position(self) -> list[float]:
+        """[x, y, z] of the base in the world (m)."""
+
+    def get_heading(self) -> float:
+        """Yaw in the world (rad, counter-clockwise from +x)."""
+
+    def get_velocity(self) -> list[float]:
+        """[vx, vy, vz] of the base in the WORLD frame (m/s)."""
+
+    def get_odometry(self) -> Any:
+        """``core.types.Odometry`` of one instant."""
+
+    def get_lidar_scan(self) -> Any:
+        """The latest ``core.types.LaserScan``, or None without a lidar."""
+
+    def get_sim_time(self) -> float: ...
+
+    def wait_sim(self, seconds: float, cancel: Any = None) -> bool:
+        """Block until *seconds* of sim time pass; False when *cancel* (anything with
+        ``is_set()``) fires or the clock stops advancing."""
+
+    def cmd_motion(self) -> float:
+        """Cumulative commanded |vx| + |vy| + |vyaw| of the actor (causation grading)."""

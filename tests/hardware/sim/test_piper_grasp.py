@@ -20,12 +20,14 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-from vector_os_nano.embodiments import registry
-from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+from tests.hardware.sim.dog import stand_up
 from vector_os_nano.sim.drivers.arm import Arm
 from vector_os_nano.sim.drivers.gripper import Gripper
 from vector_os_nano.sim.ground_truth import GroundTruth
+from vector_os_nano.sim.session import respawn
 from vector_os_nano.vcli.cognitive import abort
+
+pytestmark = pytest.mark.sim
 
 _SEAT = (10.46, 3.0)  # dog body 42 cm behind the green bottle, head-on
 _GREEN = "pickable_bottle_green"
@@ -33,20 +35,15 @@ _GREEN = "pickable_bottle_green"
 
 @pytest.fixture(scope="module")
 def rig():
-    cfg = registry.load("go2_piper")
-    go2 = MuJoCoGo2(gui=False, room=True, backend="auto", with_arm=True)
+    go2 = stand_up("go2_piper")
     try:
-        go2.connect()
-        go2.stand()
-        arm = Arm(cfg.arm, go2.runtime, abort=abort.is_abort_requested, wait_mount=go2.wait_settled)
-        grip = Gripper(cfg.arm.gripper, go2.runtime)
-        rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
-        go2.reset_pose()
-        go2.wait_sim(1.5)
+        arm = Arm(go2.cfg.arm, go2.rt, abort=abort.is_abort_requested, wait_mount=go2.base.wait_settled)
+        grip = Gripper(go2.cfg.arm.gripper, go2.rt)
+        respawn(go2.rt, go2.base, go2.cfg, xy=_SEAT)
+        go2.rt.wait_sim(1.5)
         yield go2, arm, grip
     finally:
-        go2.disconnect()
+        go2.close()
 
 
 def _restore_objects(w) -> None:
@@ -70,8 +67,8 @@ def seated(rig):
     abort.clear_abort()
     assert grip.open()
     arm.home(duration=1.5)
-    go2.runtime.call(_restore_objects)
-    go2.wait_sim(0.3)
+    go2.rt.call(_restore_objects)
+    go2.rt.wait_sim(0.3)
     yield rig
     abort.clear_abort()
 
@@ -84,7 +81,7 @@ def _top_down_to(arm, xyz, duration=3.0) -> bool:
 
 def _objects(go2) -> dict[str, list[float]]:
     """Where the scene's objects are: ground truth, read by the test, never by a driver."""
-    return GroundTruth(go2.runtime).object_positions()
+    return GroundTruth(go2.rt).object_positions()
 
 
 def test_the_robot_is_not_a_scene_object(seated) -> None:
@@ -105,7 +102,7 @@ def test_an_object_beside_the_jaws_is_never_welded(seated) -> None:
     assert math.dist(ee, g) < 0.06  # the magnet would have welded this
     assert grip.close()
     assert grip.is_holding() is False
-    assert go2.runtime.attachments() == {}
+    assert go2.rt.attachments() == {}
 
 
 def test_an_object_between_the_jaws_is_gripped_lifted_and_released(seated) -> None:
@@ -116,14 +113,14 @@ def test_an_object_between_the_jaws_is_gripped_lifted_and_released(seated) -> No
     assert grip.close()
     assert grip.is_holding() and grip.is_holding(_GREEN)
     assert not grip.is_holding("pickable_can_red")  # target-aware
-    sc = go2.runtime.world.scene
-    assert go2.runtime.attachments() == {sc.body(_GREEN): sc.body("piper_link6")}
+    sc = go2.rt.world.scene
+    assert go2.rt.attachments() == {sc.body(_GREEN): sc.body("piper_link6")}
     lift = arm.get_joint_positions()
     lift[1] = max(0.0, lift[1] - 0.5)
     assert arm.move_joints(lift, duration=2.0)
     assert _objects(go2)[_GREEN][2] > g[2] + 0.03
     assert grip.open()
-    assert grip.is_holding() is False and go2.runtime.attachments() == {}
+    assert grip.is_holding() is False and go2.rt.attachments() == {}
 
 
 def test_a_failed_release_is_reported_and_keeps_the_hold(seated, monkeypatch) -> None:
@@ -135,7 +132,7 @@ def test_a_failed_release_is_reported_and_keeps_the_hold(seated, monkeypatch) ->
     def _refuse(_fn):
         raise RuntimeError("sim: runtime closed")
 
-    monkeypatch.setattr(go2.runtime, "call", _refuse)
+    monkeypatch.setattr(go2.rt, "call", _refuse)
     assert grip.open() is False  # reported, and the held state is not dropped
     monkeypatch.undo()
     assert grip.is_holding(_GREEN)  # still welded, still known
@@ -167,9 +164,9 @@ def _move_in_thread(arm, rt, q, duration):
 
 def test_stop_preempts_a_move_within_50_sim_ms(seated) -> None:
     go2, arm, _grip = seated
-    rt = go2.runtime
+    rt = go2.rt
     t, out = _move_in_thread(arm, rt, [0.8, 1.2, -1.0, 0.3, 0.5, 0.5], 3.0)
-    go2.wait_sim(0.5)
+    rt.wait_sim(0.5)
     t_stop = rt.sim_time
     q_stop = np.array(arm.get_joint_positions())
     arm.stop()
@@ -178,16 +175,16 @@ def test_stop_preempts_a_move_within_50_sim_ms(seated) -> None:
     assert out["t"] - t_stop <= 0.05, f"move returned {out['t'] - t_stop:.3f} sim-s after stop()"
     joints = list(arm._joints)
     ctrl = rt.call(lambda w: w.targets(joints))
-    go2.wait_sim(0.3)
+    rt.wait_sim(0.3)
     np.testing.assert_allclose(rt.call(lambda w: w.targets(joints)), ctrl)  # nothing written after the hold
     assert np.max(np.abs(np.array(arm.get_joint_positions()) - q_stop)) < 0.1
 
 
 def test_an_abort_preempts_a_move(seated) -> None:
     go2, arm, _grip = seated
-    t, out = _move_in_thread(arm, go2.runtime, [0.8, 1.2, -1.0, 0.3, 0.5, 0.5], 3.0)
-    go2.wait_sim(0.3)
-    t_abort = go2.runtime.sim_time
+    t, out = _move_in_thread(arm, go2.rt, [0.8, 1.2, -1.0, 0.3, 0.5, 0.5], 3.0)
+    go2.rt.wait_sim(0.3)
+    t_abort = go2.rt.sim_time
     abort.request_abort()
     t.join(timeout=10.0)
     assert out["ok"] is False and out["t"] - t_abort <= 0.05
@@ -199,20 +196,17 @@ def test_ik_right_after_a_walk_solves_for_the_stopped_body(seated) -> None:
     transient planned for a body that was gone when the arm arrived: E3a's approach
     move dragged the fingers into the trunk, 0/3 (INT1)."""
     go2, arm, _grip = seated
-    if not go2._use_mpc:
-        pytest.skip("the stop brake is the MPC gait's")
+    assert go2.base.gait_backend == "convex_mpc"  # the policy that brakes
     try:
-        go2.walk(0.0, 0.0, 0.4, 0.6)  # turn in place a little, then stop
-        x, y, _ = go2.get_position()
-        h = go2.get_heading()
+        go2.base.walk(0.0, 0.0, 0.4, 0.6)  # turn in place a little, then stop
+        x, y, _ = go2.base.get_position()
+        h = go2.base.get_heading()
         target = (x + 0.38 * math.cos(h), y + 0.38 * math.sin(h), 0.34)
         q = arm.ik_top_down(target)
         assert q is not None
-        go2.wait_sim(2.0)  # whatever is left of the brake
+        go2.rt.wait_sim(2.0)  # whatever is left of the brake
         pos, _ = arm.fk(q)
         assert math.dist(pos, target) < 0.01, pos
     finally:  # back to the seat for the module's other tests
-        rq = go2._mj.layout.root_qpos_adr
-        go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 7), [*_SEAT, 0.3, 1.0, 0.0, 0.0, 0.0]))
-        go2.reset_pose()
-        go2.wait_sim(1.5)
+        respawn(go2.rt, go2.base, go2.cfg, xy=_SEAT, heading=0.0)
+        go2.rt.wait_sim(1.5)

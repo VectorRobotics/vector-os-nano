@@ -14,7 +14,7 @@ class KinBase:
     a step into it does not move the body (it pushes against it).
     """
 
-    supports_holonomic = True
+    holonomic = True
 
     def __init__(self, x=0.0, y=0.0, yaw=0.0, blocked=None, z_at=None):
         self.x, self.y, self.yaw, self.t = x, y, yaw, 0.0

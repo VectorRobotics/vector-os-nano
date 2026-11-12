@@ -36,15 +36,15 @@ if str(_REPO_ROOT) not in sys.path:
 pytest.importorskip("mujoco", reason="mujoco not installed — skipping depth projection tests")
 
 # ---------------------------------------------------------------------------
-# Helpers: load MuJoCoGo2 via path to avoid optional-dependency cascade
+# Helpers: the go2 standing in the apartment (the session's legged body)
 # ---------------------------------------------------------------------------
 
 
-def _import_mujoco_go2():
-    """The ONE MuJoCoGo2 class (a by-path re-load made a second copy in sys.modules)."""
-    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+def _go2():
+    """The go2 standing in the apartment, as the session builds it."""
+    from tests.hardware.sim.dog import stand_up
 
-    return MuJoCoGo2
+    return stand_up("go2")
 
 
 # ---------------------------------------------------------------------------
@@ -54,29 +54,23 @@ def _import_mujoco_go2():
 
 @pytest.fixture(scope="module")
 def go2_room():
-    """Single MuJoCoGo2 instance with room=True for the whole module.
+    """Single standing go2 in the apartment for the whole module.
 
     scope=module to avoid the overhead of reloading the room XML per test.
     Each test that moves the robot must restore the pose or request its own
     fixture instance.
     """
-    MuJoCoGo2 = _import_mujoco_go2()
-    robot = MuJoCoGo2(gui=False, room=True)
-    robot.connect()
-    robot.stand(duration=2.0)
-    yield robot
-    robot.disconnect()
+    dog = _go2()
+    yield dog.base
+    dog.close()
 
 
 @pytest.fixture
 def go2_room_fn():
-    """Function-scoped MuJoCoGo2 with room=True. Disconnects after each test."""
-    MuJoCoGo2 = _import_mujoco_go2()
-    robot = MuJoCoGo2(gui=False, room=True)
-    robot.connect()
-    robot.stand(duration=2.0)
-    yield robot
-    robot.disconnect()
+    """Function-scoped standing go2 in the apartment. Closed after each test."""
+    dog = _go2()
+    yield dog.base
+    dog.close()
 
 
 def _capture(go2):
@@ -84,7 +78,7 @@ def _capture(go2):
     from vector_os_nano.embodiments import registry
     from vector_os_nano.sim.drivers.camera import Camera
 
-    return Camera(registry.load("go2").camera, go2.runtime).capture()
+    return Camera(registry.load("go2").camera, go2._rt).capture()
 
 
 def _pixel_to_camera(u, v, depth_m, intr):
