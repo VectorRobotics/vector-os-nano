@@ -63,6 +63,39 @@ def test_object_on_rejects_beside_and_above_the_surface() -> None:
     assert not gt_grade.object_on(end, "b", "t")  # under the top (on the floor below)
 
 
+def test_held_lifted_needs_a_new_weld_and_a_rise() -> None:
+    start = _line("start", 1, (1.0, 1.0, 0.50))
+    assert gt_grade.held_lifted(start, _line("end", 1, (1.0, 1.0, 0.60), welded=True), "b")
+    # adversarial: attached but still resting on the table (a weld alone is no pick)
+    assert not gt_grade.held_lifted(start, _line("end", 1, (1.0, 1.0, 0.51), welded=True), "b")
+    # risen but not held (knocked up, tossed)
+    assert not gt_grade.held_lifted(start, _line("end", 1, (1.0, 1.0, 0.60)), "b")
+    # already held at the start: nothing was picked up in this turn
+    held = _line("start", 1, (1.0, 1.0, 0.50), welded=True)
+    assert not gt_grade.held_lifted(held, _line("end", 1, (1.0, 1.0, 0.60), welded=True), "b")
+    assert not gt_grade.held_lifted(start, _line("end", 1, (1.0, 1.0, 0.60), welded=True), "other")
+
+
+def _base(phase: str, xy) -> dict:
+    return {"phase": phase, "turn": 1, "goal": "去厨房", "objects": {}, "surfaces": {}, "user": None,
+            "base": None if xy is None else [*xy, 0.3, 0.0]}
+
+
+def test_base_in_and_base_at_need_the_base_to_arrive_in_this_turn(tmp_path) -> None:
+    kitchen, point = [14.0, 0.0, 20.0, 5.0], [3.0, 2.5]
+    assert gt_grade.base_in(_base("start", (10, 3)), _base("end", (17, 1.7)), kitchen)
+    assert not gt_grade.base_in(_base("start", (10, 3)), _base("end", (13.9, 1.7)), kitchen)  # at the door
+    assert not gt_grade.base_in(_base("start", (15, 2)), _base("end", (17, 1.7)), kitchen)  # already there
+    assert not gt_grade.base_in(_base("start", None), _base("end", None), kitchen)  # a fixed base never arrives
+    assert gt_grade.base_at(_base("start", (10, 3)), _base("end", (3.3, 2.2)), point)
+    assert not gt_grade.base_at(_base("start", (10, 3)), _base("end", (3.0, 3.1)), point)  # 0.6 m off
+    assert not gt_grade.base_at(_base("start", (3.1, 2.5)), _base("end", (3.0, 2.5)), point)  # already there
+    dump = tmp_path / "gt.jsonl"
+    dump.write_text("\n".join(json.dumps(x) for x in (_base("start", (10, 3)), _base("end", (17, 1.7)))) + "\n")
+    assert gt_grade.grade(str(dump), box=kitchen, at=point) == [
+        {"turn": 1, "goal": "去厨房", "base_in": True, "base_at": False}]
+
+
 def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypatch) -> None:
     mj = pytest.importorskip("mujoco")
     from vector_os_nano.embodiments import registry

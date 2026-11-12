@@ -1,0 +1,126 @@
+# The live matrix (acceptance A10): body x backend x task, each cell N bare-REPL
+# sessions with the REAL model, graded by scripts/gt_grade.py. Run by
+# tests/harness/live_matrix.py, which documents the fields:
+#   launch / task   the two sentences typed into bare vector-cli
+#   kind            navigate | grasp | fetch | place | home (the report groups by it)
+#   expect          exactly one independent grade that must hold at the task turn's end:
+#                     base_in: [x0, y0, x1, y1]   the base entered this xy box (a room's floor)
+#                     base_at: [x, y]             the base reached this point
+#                     held_lifted: <object>       this object held and lifted
+#                     delivered: <object>         this object brought to the user
+#                     object_on: [<object>, <surface>]
+#   n               repetitions (the runner's --n overrides it)
+#   timeout_s       one deadline for the whole session (boot, both turns, exit)
+#   not_yet         a reason: the cell is listed and reported, never run
+# The numbers are copied from the world files on purpose (the grade shares no code and no
+# data path with the product): apartment = config/worlds/apartment.yaml, go2 spawn (10, 3).
+schema: 1
+cells:
+  - id: go2-mujoco-room
+    body: go2
+    backend: mujoco
+    launch: 启动 go2 仿真 无窗口
+    task: 去厨房
+    kind: navigate
+    expect: {base_in: [14.0, 0.0, 20.0, 5.0]}    # the kitchen floor box
+    n: 2
+    timeout_s: 420
+  - id: go2-mujoco-point
+    body: go2
+    backend: mujoco
+    launch: 启动 go2 仿真 无窗口
+    task: 走到坐标 (3.0, 2.5)
+    kind: navigate
+    expect: {base_at: [3.0, 2.5]}                # the living room's free floor point
+    n: 2
+    timeout_s: 420
+  - id: go2_piper-mujoco-grasp
+    body: go2_piper
+    backend: mujoco
+    launch: 启动 go2 仿真 带机械臂 无窗口
+    task: 拿起绿色的瓶子
+    kind: grasp
+    expect: {held_lifted: pickable_bottle_green}
+    n: 2
+    timeout_s: 480
+  - id: go2_piper-mujoco-fetch
+    body: go2_piper
+    backend: mujoco
+    launch: 启动 go2 仿真 带机械臂 无窗口
+    task: 把绿色瓶子拿过来
+    kind: fetch
+    expect: {delivered: pickable_bottle_green}   # user point (8, 3)
+    n: 2
+    timeout_s: 600
+  - id: piper-mujoco-grasp
+    body: piper
+    backend: mujoco
+    launch: start the piper simulation, headless
+    task: pick up the red box
+    kind: grasp
+    expect: {held_lifted: red_box}
+    n: 2
+    timeout_s: 360
+  - id: so101-mujoco-grasp
+    body: so101
+    backend: mujoco
+    launch: 启动 so101 机械臂仿真 无窗口
+    task: 抓起香蕉
+    kind: grasp
+    expect: {held_lifted: banana}
+    n: 2
+    timeout_s: 360
+  - id: so101-mujoco-home
+    body: so101
+    backend: mujoco
+    launch: 启动 so101 机械臂仿真 无窗口
+    task: 回到初始位置
+    kind: home
+    expect: {}
+    n: 2
+    not_yet: the VECTOR_GT_DUMP lines carry no arm joint state, so no independent home grade exists
+  - id: so101-mujoco-place
+    body: so101
+    backend: mujoco
+    launch: 启动 so101 机械臂仿真 无窗口
+    task: 把香蕉放到托盘上
+    kind: place
+    expect: {object_on: [banana, tray]}
+    n: 2
+    not_yet: the one place skill is open (a place on a named surface is not proven by any flow yet)
+  - id: go2_piper-mujoco-place
+    body: go2_piper
+    backend: mujoco
+    launch: 启动 go2 仿真 带机械臂 无窗口
+    task: 把绿色的瓶子放到咖啡桌上
+    kind: place
+    expect: {object_on: [pickable_bottle_green, coffee_table]}
+    n: 2
+    not_yet: the one place skill is open (a place on a named surface is not proven by any flow yet)
+  - id: go2-pybullet-room
+    body: go2
+    backend: pybullet
+    launch: 启动 go2 仿真 用 pybullet 无窗口
+    task: 去厨房
+    kind: navigate
+    expect: {base_in: [14.0, 0.0, 20.0, 5.0]}
+    n: 2
+    not_yet: start_simulation takes no backend, so PyBullet is not reachable from the bare REPL
+  - id: so101-pybullet-grasp
+    body: so101
+    backend: pybullet
+    launch: 启动 so101 机械臂仿真 用 pybullet 无窗口
+    task: 抓起香蕉
+    kind: grasp
+    expect: {held_lifted: banana}
+    n: 2
+    not_yet: start_simulation takes no backend, so PyBullet is not reachable from the bare REPL
+  - id: g1-mujoco-room
+    body: g1
+    backend: mujoco
+    launch: 启动 g1 仿真 无窗口
+    task: 去厨房
+    kind: navigate
+    expect: {base_in: [14.0, 0.0, 20.0, 5.0]}
+    n: 2
+    not_yet: no bare-REPL g1 flow is green yet (A2 G1 stand / walk / navigate is open)
