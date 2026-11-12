@@ -5,7 +5,7 @@
 
 Two classes of tests:
 
-1. TestDepthProjectionGroundTruth — validates pixel_to_camera + camera_to_world
+1. TestDepthProjectionGroundTruth — validates camera_to_world (with a pinhole oracle)
    against known geometry from MuJoCo sim. Uses the d435_rgb/d435_depth named
    cameras so the projection math is exact. These tests use manually
    placed pixels for ground-truth validation.
@@ -87,13 +87,18 @@ def _capture(go2):
     return Camera(registry.load("go2").camera, go2.runtime).capture()
 
 
+def _pixel_to_camera(u, v, depth_m, intr):
+    """The test's own pinhole oracle (OpenCV axes: x right, y down, z forward)."""
+    return ((u - intr.cx) * depth_m / intr.fx, (v - intr.cy) * depth_m / intr.fy, depth_m)
+
+
 # ---------------------------------------------------------------------------
 # Test 1 — Center pixel ground-truth round-trip
 # ---------------------------------------------------------------------------
 
 
 class TestDepthProjectionGroundTruth:
-    """Validate pixel_to_camera + camera_to_world against MuJoCo camera pose.
+    """Validate camera_to_world against the MuJoCo camera pose.
 
     Manually pick pixels (center, off-center) and verify the projected
     world point is geometrically correct.
@@ -103,7 +108,6 @@ class TestDepthProjectionGroundTruth:
     def test_center_pixel_projects_to_camera_forward(self, go2_room):
         """Center pixel should project to a point directly in front of the camera."""
         from vector_os_nano.perception.depth_projection import (
-            pixel_to_camera,
             camera_to_world,
         )
 
@@ -126,7 +130,7 @@ class TestDepthProjectionGroundTruth:
                 pytest.fail("No valid depth at center — scene may not be visible")
             d_center = float(np.median(valid))
 
-        x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d_center, intrinsics)
+        x_cam, y_cam, z_cam = _pixel_to_camera(cx, cy, d_center, intrinsics)
 
         # Center pixel → x_cam ≈ 0, y_cam ≈ 0
         assert abs(x_cam) < 0.05 * d_center, (
@@ -164,7 +168,6 @@ class TestDepthProjectionGroundTruth:
         the projected world point should match cam_pos + depth * cam_forward exactly.
         """
         from vector_os_nano.perception.depth_projection import (
-            pixel_to_camera,
             camera_to_world,
         )
 
@@ -179,7 +182,7 @@ class TestDepthProjectionGroundTruth:
         if d <= 0.1 or d > 10.0:
             pytest.fail("No valid depth at center pixel")
 
-        x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
+        x_cam, y_cam, z_cam = _pixel_to_camera(cx, cy, d, intrinsics)
 
         # Ground-truth: cam_pos + d * cam_forward
         xmat = np.array(cam_xmat, dtype=np.float64).reshape(3, 3)
@@ -206,7 +209,6 @@ class TestDepthProjectionGroundTruth:
         displaced to the right (in camera's right direction) relative to center.
         """
         from vector_os_nano.perception.depth_projection import (
-            pixel_to_camera,
             camera_to_world,
         )
 
@@ -223,7 +225,7 @@ class TestDepthProjectionGroundTruth:
             pytest.fail("No valid depth at center pixel")
 
         # Center
-        xc_cam, yc_cam, zc_cam = pixel_to_camera(cx, cy, d, intrinsics)
+        xc_cam, yc_cam, zc_cam = _pixel_to_camera(cx, cy, d, intrinsics)
         pos = go2_room.get_position()
         heading = go2_room.get_heading()
 
@@ -234,7 +236,7 @@ class TestDepthProjectionGroundTruth:
 
         # 40px to the right of center, same depth
         u_right = cx + 40.0
-        xr_cam, yr_cam, zr_cam = pixel_to_camera(u_right, cy, d, intrinsics)
+        xr_cam, yr_cam, zr_cam = _pixel_to_camera(u_right, cy, d, intrinsics)
         wxr, wyr, _ = camera_to_world(
             xr_cam, yr_cam, zr_cam,
             cam_xpos=cam_xpos, cam_xmat=cam_xmat,
@@ -286,7 +288,6 @@ class TestDepthProjectionGroundTruth:
     def test_projection_within_room_bounds(self, go2_room):
         """The projected center pixel should land inside the house (0..20, 0..14)."""
         from vector_os_nano.perception.depth_projection import (
-            pixel_to_camera,
             camera_to_world,
         )
 
@@ -301,7 +302,7 @@ class TestDepthProjectionGroundTruth:
         if d <= 0.1 or d > 10.0:
             pytest.fail("No valid depth at center")
 
-        x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
+        x_cam, y_cam, z_cam = _pixel_to_camera(cx, cy, d, intrinsics)
         pos = go2_room.get_position()
         heading = go2_room.get_heading()
         wx, wy, wz = camera_to_world(
@@ -338,7 +339,6 @@ class TestTimingMismatchBug:
         should be wrong by the distance the robot moved.
         """
         from vector_os_nano.perception.depth_projection import (
-            pixel_to_camera,
             camera_to_world,
         )
 
@@ -359,7 +359,7 @@ class TestTimingMismatchBug:
             pytest.fail("No valid center depth at position A")
 
         # Ground-truth world point (correct: depth A + pose A)
-        x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
+        x_cam, y_cam, z_cam = _pixel_to_camera(cx, cy, d, intrinsics)
         wx_correct, wy_correct, _ = camera_to_world(
             x_cam, y_cam, z_cam, cam_xpos=cam_xpos_a, cam_xmat=cam_xmat_a,
         )
@@ -407,7 +407,6 @@ class TestTimingMismatchBug:
         pose all at the same simulation step.
         """
         from vector_os_nano.perception.depth_projection import (
-            pixel_to_camera,
             camera_to_world,
         )
 
@@ -427,7 +426,7 @@ class TestTimingMismatchBug:
         if d <= 0.1 or d > 10.0:
             pytest.fail("No valid depth at center")
 
-        x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
+        x_cam, y_cam, z_cam = _pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
             cam_xpos=cam_xpos, cam_xmat=cam_xmat,
@@ -466,7 +465,6 @@ class TestAtomicCapturePattern:
         """
         import time
         from vector_os_nano.perception.depth_projection import (
-            pixel_to_camera,
             camera_to_world,
         )
 
@@ -491,7 +489,7 @@ class TestAtomicCapturePattern:
         if d <= 0.1 or d > 10.0:
             pytest.fail("No valid center depth in cached frame")
 
-        x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
+        x_cam, y_cam, z_cam = _pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
             cam_xpos=cam_xpos_cached, cam_xmat=cam_xmat_cached,
@@ -516,7 +514,6 @@ class TestAtomicCapturePattern:
         This test simulates that ordering and checks correctness.
         """
         from vector_os_nano.perception.depth_projection import (
-            pixel_to_camera,
             camera_to_world,
         )
 
@@ -538,7 +535,7 @@ class TestAtomicCapturePattern:
         if d <= 0.1 or d > 10.0:
             pytest.fail("No valid center depth")
 
-        x_cam, y_cam, z_cam = pixel_to_camera(cx, cy, d, intrinsics)
+        x_cam, y_cam, z_cam = _pixel_to_camera(cx, cy, d, intrinsics)
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
             cam_xpos=cam_xpos, cam_xmat=cam_xmat,

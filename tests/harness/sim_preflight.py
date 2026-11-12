@@ -12,7 +12,8 @@ the sim tier can run, else ONE line naming every missing prerequisite. Checks:
   that exist locally but were never committed, e.g. an ignored ``assets/``);
 - the vendored convex_mpc stack (casadi + the Pinocchio go2 model) initialises;
 - an EGL ``mujoco.Renderer`` opens;
-- the grounding-dino weights are in the HF cache (perception never downloads).
+- the default perception stack's pinned weights are in the HF cache (the gate runs
+  with HF_HUB_OFFLINE=1, so a test never downloads).
 """
 from __future__ import annotations
 
@@ -24,7 +25,6 @@ import tempfile
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-GDINO_REPO = "IDEA-Research/grounding-dino-tiny"
 
 
 def _copy_tracked_tree(dst: Path) -> None:
@@ -68,6 +68,13 @@ def missing() -> list[str]:
                 PinGo2Model()
             except Exception as exc:  # noqa: BLE001
                 problems.append(f"vendored convex_mpc unusable ({type(exc).__name__}: {exc})")
+            try:
+                from vector_os_nano.perception import weights
+
+                problems += [f"{w} weights not in the HF cache ({weights.FETCH_COMMAND})"
+                             for w in weights.default_stack() if not weights.cached_dir(w)]
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"HF cache unreadable ({type(exc).__name__}: {exc})")
         except Exception as exc:  # noqa: BLE001
             problems.append(f"sim package does not import from a clean checkout ({exc})")
     finally:
@@ -77,13 +84,6 @@ def missing() -> list[str]:
         mujoco.Renderer(model, 32, 32).close()
     except Exception as exc:  # noqa: BLE001
         problems.append(f"no offscreen GL (MUJOCO_GL={os.environ.get('MUJOCO_GL')}: {exc})")
-    try:
-        from huggingface_hub import try_to_load_from_cache
-
-        if not isinstance(try_to_load_from_cache(GDINO_REPO, "config.json"), str):
-            problems.append(f"{GDINO_REPO} weights not in the HF cache")
-    except Exception as exc:  # noqa: BLE001
-        problems.append(f"HF cache unreadable ({exc})")
     return problems
 
 

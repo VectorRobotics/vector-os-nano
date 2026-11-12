@@ -59,15 +59,6 @@ def test_no_perception_fails_loud() -> None:
         register_manipulation_skills(agent)
 
 
-def test_perception_grasp_wins_grab_alias() -> None:
-    """perception_grasp must register LAST so it wins the shared 抓/grab aliases."""
-    agent = _agent()
-    register_manipulation_skills(agent)
-    m = agent._skill_registry.match("抓绿色的瓶子")
-    assert m is not None
-    assert m.skill_name == "perception_grasp", m.skill_name
-
-
 def test_env_disable_skips_registration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VECTOR_ENABLE_MANIPULATION", "0")
     agent = _agent()

@@ -564,7 +564,7 @@ class PerceptionGraspSkill:
     effects: dict = {"gripper_state": "holding"}
     failure_modes: list[str] = [
         "no_arm", "no_gripper", "arm_unsupported", "no_perception", "no_camera",
-        "no_detections", "segmentation_failed", "no_depth_points",
+        "no_detections", "perception_failed", "segmentation_failed", "no_depth_points",
         "ik_unreachable", "move_failed", "not_holding",
     ]
 
@@ -992,14 +992,17 @@ class PerceptionGraspSkill:
                 )
             box = tuple(float(v) for v in self._select_detection(dets, color).bbox)
 
-        # Segment the PASSED box — reuse the perception segmenter (EdgeTAM, box-rect
-        # fallback). NO perception.detect / front_object_mask call here (that is the
-        # re-perceive we are suppressing).
+        # Segment the PASSED box — reuse the perception segmenter (EdgeTAM; a box-rect
+        # mask when it finds nothing). NO perception.detect / front_object_mask call
+        # here (that is the re-perceive we are suppressing).
         try:
             mask = perception.segment(rgb, box)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[PGRASP] segment(passed box) raised: %s", exc)
-            mask = None
+        except Exception as exc:  # noqa: BLE001 — the segmenter's own failure, with its cause
+            return None, resolved, _fail(
+                "perception_failed",
+                f"The segmenter failed on producer box {box} ({resolved!r}): {type(exc).__name__}: {exc}",
+                detection_label=resolved, query=query, consumed_bbox=True,
+            )
         if mask is None or int(np.count_nonzero(mask)) == 0:
             return None, resolved, _fail(
                 "segmentation_failed",
@@ -1227,9 +1230,9 @@ class PerceptionGraspSkill:
             try:
                 from vector_os_nano.perception.object_localizer import detect_on
                 detections = detect_on(perception, rgb, query)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[PGRASP] detect raised: %s", exc)
-                detections = []
+            except Exception as exc:  # noqa: BLE001 — a missing model is not "found nothing"
+                return None, resolved, _fail("perception_failed", f"The detector failed for {query!r}: "
+                                             f"{type(exc).__name__}: {exc}", query=query)
             if detections:
                 detection_found = True
                 # PERCEPTUAL colour selection (D48 caveat 1): grounding-dino is
@@ -1248,8 +1251,10 @@ class PerceptionGraspSkill:
                 resolved = scene or str(getattr(det, "label", query) or query)
                 try:
                     mask = perception.segment(rgb, det.bbox)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("[PGRASP] segment raised: %s", exc)
+                except Exception as exc:  # noqa: BLE001 — the segmenter's own failure, with its cause
+                    return None, resolved, _fail("perception_failed", f"The segmenter failed for {resolved!r}: "
+                                                 f"{type(exc).__name__}: {exc}",
+                                                 detection_label=resolved, query=query)
             elif have_front:
                 logger.info("[PGRASP] VLM empty for %r -> front-object fallback", query)
                 mask = perception.front_object_mask(rgb, depth)

@@ -10,11 +10,7 @@
 # ---- Re-verified 2026-11-11 (R8a, release-1.0 base 2eeb6c6): every xfail row below still fails
 # (hermetic 234/234 files green with them strict; the sim rows in the sim tier). Rows are xfail, never
 # deselected; each names its ledger key and the 2026-10 owner WP, whose release-1.0 owner is:
-# WP15 legacy producer -> R1, WP15 MCP -> R6, WP09 / WP12 skills -> R2, WP17 G1 assets -> C1 / S4.
-
-# legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
-tests/harness/test_level50_phase2_integration.py::TestGoalExecutorStatsRecording::test_executor_records_success_true | xfail | legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
-tests/harness/test_level56_vgg_harness.py::TestHarnessEdgeCases::test_harness_stats_recording_called_per_step | xfail | legacy VGG GoalExecutor no longer records strategy stats per step (legacy-cognitive:B17-stats-starvation family; producer retired in WP15)
+# WP15 legacy producer -> R1, WP15 MCP -> R6, WP09 / WP12 skills -> R2.
 
 # stale skill-count pin (13 go2 skills now); docs-vs-code:tool-menu-noise decides the menu (WP12)
 tests/unit/test_go2_skills.py::TestSkillRegistration::test_get_go2_skills | xfail | stale skill-count pin (13 go2 skills now); docs-vs-code:tool-menu-noise decides the menu (WP12)
@@ -30,7 +26,6 @@ tests/unit/test_mcp_server.py::TestVectorMCPServer::test_list_resources_uris | x
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_natural_language | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_direct_skill | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_with_arguments | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
-tests/unit/test_mcp_server.py::TestVectorMCPServer::test_call_tool_legacy_flag_uses_run_turn | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_world_state | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_world_objects | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
 tests/unit/test_mcp_server.py::TestVectorMCPServer::test_read_resource_robot_state | xfail | MCP server vs the installed mcp SDK: Server.list_tools is gone (MCP surface: WP15)
@@ -47,11 +42,3 @@ tests/unit/test_skill_diagnostics.py::TestHomeSkillDiagnosticsSuccess::test_home
 # stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
 tests/unit/test_skill_schemas.py::TestGetDefaultSkills::test_returns_all_skills | xfail | stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
 tests/unit/test_skill_schemas.py::TestGetDefaultSkills::test_all_skill_names_present | xfail | stale default-skill pin: 'handover' joined the defaults (skills-manip:so101-poses-on-piper; WP12)
-
-# sim tier, rest of the per-file run (2026-10-04)
-tests/unit/embodiments/test_dof_layout.py::test_g1_layout_matches_g1offsets | xfail | sim-locomotion:g1-assets-unshipped (assets/g1_gait/g1_12dof.xml absent, its setup script missing; WP17)
-tests/unit/embodiments/test_dof_layout.py::test_g1_stance_vector_equals_default_angles | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/hardware/sim/test_g1_room.py::test_scene_compiles_with_pick_table_and_g1_pelvis | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/hardware/sim/test_g1_room.py::test_g1_head_camera_in_compiled_model | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/hardware/sim/test_g1_room.py::test_g1_self_geom_set_nonempty | xfail | sim-locomotion:g1-assets-unshipped (WP17)
-tests/unit/hardware/sim/test_g1_room.py::test_walk_forward_displacement | xfail | sim-locomotion:g1-assets-unshipped (WP17)

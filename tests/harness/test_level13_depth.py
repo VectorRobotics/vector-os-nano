@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Level 13: pixel -> camera -> world projection (pure Python, no MuJoCo).
+"""Level 13: camera intrinsics and camera -> world projection (pure Python, no MuJoCo).
 
 The MJCF-pose projection is ground-truth-tested in
 test_depth_projection_groundtruth.py; the old robot-heading fallback (whose mount
@@ -12,41 +12,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tests.harness.camera import pinhole
 from vector_os_nano.core.types import CameraIntrinsics
 from vector_os_nano.perception import depth_projection
-from vector_os_nano.perception.depth_projection import camera_to_world, pixel_to_camera
-
-
-class TestPixelToCamera:
-    """Test pixel to camera-frame 3D projection."""
-
-    def test_center_pixel_straight_ahead(self):
-        """Center pixel at 2m depth → (0, 0, 2) in camera frame."""
-        intr = pinhole(320, 240)
-        x, y, z = pixel_to_camera(intr.cx, intr.cy, 2.0, intr)
-        assert abs(x) < 0.001
-        assert abs(y) < 0.001
-        assert abs(z - 2.0) < 0.001
-
-    def test_right_pixel_positive_x(self):
-        """Pixel to the right of center → positive x_cam."""
-        intr = pinhole(320, 240)
-        x, y, z = pixel_to_camera(intr.cx + 50, intr.cy, 2.0, intr)
-        assert x > 0
-        assert abs(y) < 0.001
-
-    def test_bottom_pixel_positive_y(self):
-        """Pixel below center → positive y_cam (OpenCV: Y down)."""
-        intr = pinhole(320, 240)
-        x, y, z = pixel_to_camera(intr.cx, intr.cy + 50, 2.0, intr)
-        assert abs(x) < 0.001
-        assert y > 0
-
-    def test_depth_preserved(self):
-        intr = pinhole()
-        _, _, z = pixel_to_camera(100, 100, 3.5, intr)
-        assert abs(z - 3.5) < 0.001
+from vector_os_nano.perception.depth_projection import camera_to_world
 
 
 def test_intrinsics_are_the_one_core_type():

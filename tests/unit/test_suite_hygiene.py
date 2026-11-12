@@ -275,7 +275,8 @@ def test_sim_preflight_skips_the_tier_with_one_reason(tmp_path) -> None:
     assert r.returncode == 0, out[-3000:]
     assert "2 skipped" in out, out[-3000:]
     reasons = [ln for ln in r.stdout.splitlines() if ln.startswith("SKIPPED")]
-    assert len(reasons) == 1 and "sim preflight: no offscreen GL" in reasons[0], out[-3000:]
+    # ONE aggregated reason that names the GL cause (it also names unprovisioned weights, if any)
+    assert len(reasons) == 1 and "sim preflight: " in reasons[0] and "no offscreen GL" in reasons[0], out[-3000:]
 
 
 def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
@@ -291,6 +292,25 @@ def test_gate_counts_a_file_that_fails_to_collect_as_red(tmp_path) -> None:
     )
     assert r.returncode != 0, r.stdout[-2000:] + r.stderr[-2000:]
     assert "RED rc=2 collection" in r.stdout, r.stdout[-2000:]
+
+
+@pytest.mark.parametrize("tier", ["sim", "e2e"])
+def test_gate_counts_a_tier_skipped_by_the_sim_preflight_as_red(tmp_path, tier) -> None:
+    """C0F1V-1 — with EdgeTAM missing from the HF cache the preflight skipped all 573
+    sim tests and the gate printed green; a tier that ran nothing proved nothing."""
+    probe = tmp_path / "test_probe_sim.py"
+    probe.write_text("import pytest\n\n@pytest.mark.sim\ndef test_a():\n    pass\n\n"
+                     "@pytest.mark.sim\ndef test_b():\n    pass\n")
+    r = subprocess.run(
+        ["bash", str(_REPO / "scripts" / "gate.sh"), tier, "-p", "tests.conftest"],
+        env={**os.environ, "GATE_PER_FILE": "0", "GATE_PATHS": str(probe),
+             "GATE_OUT": str(tmp_path / "out"), "MUJOCO_GL": "egl",
+             "__EGL_VENDOR_LIBRARY_FILENAMES": "/nonexistent/egl_vendor.json"},
+        cwd=_REPO, capture_output=True, text=True, timeout=600,
+    )
+    assert r.returncode != 0, r.stdout[-2000:] + r.stderr[-2000:]
+    assert f"[gate] RED: the {tier} tier skipped on the sim preflight" in r.stdout, r.stdout[-2000:]
+    assert "[gate] 2 tests, 2 skipped" in r.stdout, r.stdout[-2000:]
 
 
 def test_own_process_tests_run_in_a_child_a_self_signal_ends_only_it(tmp_path) -> None:
@@ -321,16 +341,20 @@ def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_p
     """tests-gate-e2e:sim-tier-uses-real-home — only the hermetic tier swapped HOME, so
     the sim and e2e tiers wrote the owner's ~/.vector (strategy stats, traces, sessions)."""
     real, out = tmp_path / "real_home", tmp_path / "env.json"
-    real.mkdir()
+    (real / ".vector" / "assets" / "g1_gait").mkdir(parents=True)
+    (real / ".vector" / "assets" / "g1_gait" / "motion.pt").write_text("provisioned")
     probe = tmp_path / "test_probe_env.py"
     probe.write_text(
         "import json, os, pathlib, pytest\n\n"
         + ("@pytest.mark.sim\n" if tier == "sim" else "")
         + "def test_env():\n"
-        "    keys = ('HOME', 'HF_HOME', 'VECTOR_MODEL_DIR', 'HF_HUB_OFFLINE')\n"
-        "    pathlib.Path(os.environ['PROBE_OUT']).write_text(json.dumps({k: os.environ.get(k) for k in keys}))\n"
+        "    keys = ('HOME', 'HF_HOME', 'HF_HUB_OFFLINE')\n"
+        "    seen = {k: os.environ.get(k) for k in keys}\n"
+        "    pt = pathlib.Path.home() / '.vector' / 'assets' / 'g1_gait' / 'motion.pt'\n"
+        "    seen['assets'] = pt.read_text() if pt.is_file() else None\n"
+        "    pathlib.Path(os.environ['PROBE_OUT']).write_text(json.dumps(seen))\n"
     )
-    env = {k: v for k, v in os.environ.items() if k not in ("GATE_HOME_SET", "HF_HOME", "VECTOR_MODEL_DIR")}
+    env = {k: v for k, v in os.environ.items() if k not in ("GATE_HOME_SET", "HF_HOME")}
     r = subprocess.run(
         ["bash", str(_REPO / "scripts" / "gate.sh"), tier],
         env={**env, "HOME": str(real), "GATE_PER_FILE": "0", "GATE_PATHS": str(probe),
@@ -341,8 +365,25 @@ def test_gate_gives_every_tier_a_throwaway_home_with_the_real_model_caches(tmp_p
     seen = json.loads(out.read_text())
     assert seen["HOME"] != str(real) and not Path(seen["HOME"]).exists()  # throwaway, removed after
     assert seen["HF_HOME"] == str(real / ".cache" / "huggingface") and seen["HF_HUB_OFFLINE"] == "1"
-    assert seen["VECTOR_MODEL_DIR"] == str(real / ".cache" / "vector_os" / "models")
-    assert list(real.iterdir()) == []  # the gate wrote nothing into the real home
+    assert seen["assets"] == "provisioned"  # fetched robot assets are found, like the caches
+    # the gate wrote nothing into the real home
+    assert sorted(str(p.relative_to(real)) for p in real.rglob("*")) == [
+        ".vector", ".vector/assets", ".vector/assets/g1_gait", ".vector/assets/g1_gait/motion.pt"]
+
+
+def test_a_pty_child_home_finds_the_provisioned_robot_assets(tmp_path, monkeypatch) -> None:
+    import shutil
+
+    from tests.harness import pty_cli
+
+    (tmp_path / ".vector" / "assets").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    _env, home = pty_cli._child_env(live=False, home_prefix="c0_probe_")
+    try:
+        assert (Path(home) / ".vector" / "assets").resolve() == (tmp_path / ".vector" / "assets")
+    finally:
+        shutil.rmtree(home)
+    assert (tmp_path / ".vector" / "assets").is_dir()  # removing the child home left it alone
 
 
 def test_every_known_red_row_names_an_existing_test_file() -> None:

@@ -1,12 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Robot world shim.
-
-Phase A keeps the robot path working exactly as before: this shim is the
-registration *surface* (persona + "use kernel defaults" for vocab), while the
-robot verify namespace and skill tools continue to be built by the engine/CLI
-as today. It deliberately imports nothing robot-specific at module load.
+"""Robot world: the persona composed from the body's manifests, the sim session's
+ground-truth oracles and the learned detector capability. Skill tools come from the
+agent's skill registry (``wrap_skills``). It imports nothing robot-specific at
+module load.
 """
 
 from __future__ import annotations
@@ -125,20 +123,13 @@ class RobotWorld:
         policy = task_policy(agent)
         return ROBOT_ROLE_PROMPT, ROBOT_TOOL_INSTRUCTIONS + ("\n" + policy if policy else "")
 
-    def register_tools(self, registry: Any, agent: Any) -> None:
-        # Robot/diag/sim tools are registered by the CLI from discover_*; skill
-        # wrappers are added via wrap_skills(agent) at startup. No-op here in
-        # Phase A (the full robot-world migration is Phase C).
-        return None
-
     def build_verify_namespace(self, agent: Any) -> dict[str, Any]:
         """The GT oracles of the live sim session that owns *agent*.
 
         Every predicate reads the session's ground truth (``vcli/worlds/sim_oracles``),
         never an agent or device attribute. Real hardware / no session contributes
-        nothing, so every verify there grades RAN. The engine merges this over its
-        own bindings, so the GT ``get_position`` / ``get_heading`` replace its
-        agent-read ones in a sim.
+        nothing, so every verify there grades RAN. This is the engine's whole verify
+        namespace: the kernel adds no predicate of its own.
         """
         from vector_os_nano.sim.session import session_for
 
@@ -181,7 +172,7 @@ class RobotWorld:
         # this the routed detector returns "no RGB frame". World-side wiring only —
         # the kernel/cognitive seam is untouched.
         #
-        # COLD-TURN rebind (R37 Task B): register_capabilities runs at init_vgg,
+        # COLD-TURN rebind (R37 Task B): register_capabilities runs at engine.bind,
         # which can precede the NL sim-start that actually boots the arm+camera — so
         # ``agent._perception`` may be None RIGHT NOW. Bind the AGENT (not the
         # current snapshot) so the capability pulls the LIVE ``_perception`` lazily at
@@ -196,16 +187,3 @@ class RobotWorld:
             type(perception).__name__ if perception else None,
         )
         return None
-
-    def decompose_vocab(self) -> None:
-        # None => the engine derives the vocab from the live skill registry
-        # (see derive_vocab_from_registry); falls back to GoalDecomposer class
-        # defaults if no registry/namespace is available.
-        return None
-
-    def derive_vocab_from_registry(self) -> bool:
-        # Single-source the decompose vocabulary from the skill registry so the
-        # prompt, the validator allowlist, and the params-help can never drift.
-        # Serves both go2 (has_base=True) and the arm (has_base=False); the
-        # engine inspects the agent to decide has_base.
-        return True

@@ -12,12 +12,13 @@ harness spawns the ACTUAL entrypoint::
 under a stdlib ``pty`` (so the child sees a TTY, exactly like real use), waits for
 the fixed ``VECTOR_VERDICT {<json>}`` sentinel line on the child's stdout, parses
 the JSON into a ``VerdictReport``-shaped dict, captures the child's exit code, and
-asserts the machine invariant ``parsed["verified"] == (exit_code == 0)``.
+asserts the machine invariant: exit 0 iff the turn verified or was a chat turn (no
+action, no verify: a ``NO_TRACE`` verdict without an error).
 
-Deterministic, network-free runs use the ``VECTOR_FAKE_LLM`` seam: pass a
-``fake_plan`` dict (written to a temp file the child reads) to inject a canned
-decompose plan, so the REAL decomposer / validator / GoalVerifier / evidence-gate
-all run on a fixed plan with no live LLM.
+Deterministic, network-free runs use the ``VECTOR_FAKE_LLM_TOOLS`` seam: pass a
+``tool_script`` dict (written to a temp file the child reads) that a
+``FakeToolScriptBackend`` replays as the model's native tool_use turns, so every
+tool, GoalVerifier, evidence gate and verdict of the product runs with no live LLM.
 
 STDLIB ONLY — uses ``pty`` + ``subprocess`` + ``os``; deliberately NO ``pexpect``
 (a new dependency would be a CEO gate this build avoids).
@@ -73,20 +74,12 @@ class CliTurnResult:
         return str(self.verdict.get("goal", ""))
 
 
-def _write_fake_plan(fake_plan: dict[str, Any]) -> str:
-    """Write a canned decompose plan to a temp file; return its path."""
-    fd, path = tempfile.mkstemp(prefix="vector_fake_plan_", suffix=".json")
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(fake_plan, fh, ensure_ascii=False)
-    return path
-
-
 def _write_tool_script(tool_script: dict[str, Any]) -> str:
     """Write a canned NATIVE tool-use script to a temp file; return its path.
 
-    The M1 native-loop seam (VECTOR_FAKE_LLM_TOOLS) — a ``{"turns": [...]}`` JSON
-    object the child's ``FakeToolScriptBackend`` replays as ordered native tool_use
-    turns. Parallel to ``_write_fake_plan`` but for the strangler-fig native path.
+    The VECTOR_FAKE_LLM_TOOLS seam — a ``{"turns": [...]}`` (open-loop) or
+    ``{"steps": [...]}`` (reactive) JSON object the child's ``FakeToolScriptBackend``
+    replays as the model's native tool_use turns.
     """
     fd, path = tempfile.mkstemp(prefix="vector_tool_script_", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -103,15 +96,12 @@ def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
     unless *live* — no route to a real LLM/VLM or the external nav stack
     (placeholder Anthropic key; blank DeepSeek/OpenRouter keys and VECTOR_NAV_STACK,
     so the child's ``load_dotenv`` cannot fill them from the repo-root ``.env``).
-    Producer-selection env seams are stripped; the caller opts in.
     """
     env = dict(os.environ)
     # The child must import `tests` (the fake backends live under tests/harness).
     env["PYTHONPATH"] = os.pathsep.join(
         [str(_REPO_ROOT), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
-    env.pop("VECTOR_NATIVE_LOOP", None)
-    env.pop("VECTOR_NATIVE_FIRST", None)
     if not live:
         env.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
         env["DEEPSEEK_API_KEY"] = ""
@@ -122,11 +112,15 @@ def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
     # Per-run HOME: a compiled template / session / history from a prior run must
     # never leak into this one, and the developer's real ~/.vector stays untouched.
     # Model weights are a read-only shared cache, not run state: keep finding them
-    # (the detector loads offline from the HF cache, never the network).
+    # (perception loads its pinned weights from the HF cache).
     env.setdefault("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
-    env.setdefault("VECTOR_MODEL_DIR", str(Path.home() / ".cache" / "vector_os" / "models"))
     home = tempfile.mkdtemp(prefix=home_prefix)
     env["HOME"] = home
+    # So are the robot assets scripts/fetch_assets.py provisioned (linked, never written).
+    provisioned = Path.home() / ".vector" / "assets"
+    if provisioned.is_dir():
+        (Path(home) / ".vector").mkdir()
+        (Path(home) / ".vector" / "assets").symlink_to(provisioned)
     return env, home
 
 
@@ -219,9 +213,7 @@ def _find_verdict_line(output: str) -> dict[str, Any] | None:
 def run_cli_turn(
     prompt: str,
     *,
-    fake_plan: dict[str, Any] | None = None,
     tool_script: dict[str, Any] | None = None,
-    scenario: str | None = None,
     sim: bool = False,
     sim_go2: bool = False,
     live: bool = False,
@@ -234,9 +226,8 @@ def run_cli_turn(
 
     Args:
         prompt:     the user turn text (passed as ``-p <prompt>``).
-        fake_plan:  optional canned decompose plan dict; injected via the
-                    ``VECTOR_FAKE_LLM`` seam (deterministic, no live LLM).
-        scenario:   optional ``--scenario <id>`` (playground world).
+        tool_script: the model's native tool_use turns, replayed through the
+                    ``VECTOR_FAKE_LLM_TOOLS`` seam (deterministic, no live LLM).
         sim/sim_go2: pass ``--sim`` / ``--sim-go2`` (heavy — caller serializes).
         live:       run against the REAL LLM provider (no fake seam). When True the
                     harness does NOT inject the placeholder ``ANTHROPIC_API_KEY`` —
@@ -248,15 +239,13 @@ def run_cli_turn(
         timeout_sec: max wait for the child to finish.
         cwd:        working dir for the child (defaults to repo root).
 
-    Asserts the machine invariant ``verified == (exit_code == 0)`` before returning.
+    Asserts the machine invariant (exit 0 iff verified or a chat turn) before returning.
     Raises AssertionError if no VECTOR_VERDICT line was emitted.
     """
     argv = [
         sys.executable, "-m", "vector_os_nano.vcli.cli",
         "-p", prompt, "--json", "--no-permission",
     ]
-    if scenario:
-        argv += ["--scenario", scenario]
     if sim:
         argv.append("--sim")
     if sim_go2:
@@ -265,27 +254,12 @@ def run_cli_turn(
         argv += list(extra_args)
 
     env, home_dir = _child_env(live=live, home_prefix="vector_pty_home_")
-    # Test ISOLATION (M1): each PTY child's turn path is decided by ITS OWN args,
-    # never by an ambient global env (_child_env strips VECTOR_NATIVE_LOOP/FIRST).
-    _native_first = bool(extra_args) and "--native-first" in extra_args
-    if extra_args and "--native-loop" in extra_args:
-        env["VECTOR_NATIVE_LOOP"] = "1"
-    if _native_first:
-        env["VECTOR_NATIVE_FIRST"] = "1"
-    plan_path = _write_fake_plan(fake_plan) if fake_plan is not None else None
-    if plan_path is not None:
-        env["VECTOR_FAKE_LLM"] = plan_path
     script_path = _write_tool_script(tool_script) if tool_script is not None else None
     if extra_env:
         env.update(extra_env)
     if script_path is not None:
-        # A native tool-script IS an opt-in to the native path: the real written path
-        # wins over any placeholder in extra_env. Select the always-on native loop
-        # UNLESS the caller asked for native-first (that flag is then the
-        # producer-selection seam and VECTOR_NATIVE_LOOP would shadow it).
+        # The real written path wins over any placeholder in extra_env.
         env["VECTOR_FAKE_LLM_TOOLS"] = script_path
-        if not _native_first:
-            env["VECTOR_NATIVE_LOOP"] = "1"
 
     # ONE deadline for the whole turn: drain to EOF, then give the child whatever is
     # left to exit; past the deadline the whole process group is killed.
@@ -301,12 +275,11 @@ def run_cli_turn(
     finally:
         _kill_group(proc)  # also reaps anything the child left in its group
         os.close(master_fd)
-        for path in (plan_path, script_path):
-            if path is not None:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
+        if script_path is not None:
+            try:
+                os.unlink(script_path)
+            except OSError:
+                pass
         shutil.rmtree(home_dir, ignore_errors=True)
 
     verdict = _find_verdict_line(output)
@@ -314,9 +287,11 @@ def run_cli_turn(
         "no VECTOR_VERDICT line emitted by cli.main "
         f"(exit={exit_code}). Raw output:\n{output}"
     )
-    # The machine invariant the whole instrument rests on.
-    assert bool(verdict.get("verified", False)) == (exit_code == 0), (
-        f"verified={verdict.get('verified')} but exit_code={exit_code} "
+    # The machine invariant the whole instrument rests on: exit 0 iff the turn
+    # verified, or it was a chat turn (no action, no claim: NO_TRACE, no error).
+    chat = verdict.get("evidence") == "NO_TRACE" and not verdict.get("error") and not verdict.get("acted")
+    assert (bool(verdict.get("verified", False)) or chat) == (exit_code == 0), (
+        f"verified={verdict.get('verified')} chat={chat} but exit_code={exit_code} "
         f"(must agree). verdict={verdict}"
     )
     return CliTurnResult(verdict=verdict, exit_code=exit_code, raw_output=output)
@@ -423,7 +398,6 @@ def run_repl_session(
     live: bool = False,
     sim: bool = False,
     sim_go2: bool = False,
-    native: bool = True,
     extra_env: dict[str, str] | None = None,
     extra_args: list[str] | None = None,
     timeout_sec: float = 240.0,
@@ -446,7 +420,6 @@ def run_repl_session(
                  ``quit`` is appended unless the last line already exits.
         answers: replies to permission prompts, in order; a prompt with no answer
                  left is refused with ``n`` (the safe default a user would pick).
-        native:  False sets ``VECTOR_REPL_NATIVE=0`` (the pure-legacy REPL).
         timeout_sec: ONE deadline for the whole session (boot, every turn, the
                  exit). On expiry the process group is killed and ``timed_out`` is set.
     """
@@ -462,10 +435,6 @@ def run_repl_session(
     env, home_dir = _child_env(live=live, home_prefix="vector_pty_repl_home_")
     env.setdefault("TERM", "xterm-256color")
     env["PROMPT_TOOLKIT_NO_CPR"] = "1"  # no cursor-position round-trips on a PTY
-    if native:
-        env.pop("VECTOR_REPL_NATIVE", None)  # default ON
-    else:
-        env["VECTOR_REPL_NATIVE"] = "0"
     script_path = _write_tool_script(tool_script) if tool_script is not None else None
     if script_path is not None:
         env["VECTOR_FAKE_LLM_TOOLS"] = script_path

@@ -3,10 +3,10 @@
 
 """Pixel + depth -> world projection through the EXACT camera pose.
 
-Pixel -> camera frame (OpenCV: x right, y down, z forward; the intrinsics are the
-frame's own ``K``), and camera -> world through the frame's ``cam_pos``/``cam_mat``
-(columns right, up, -forward). There is no robot-pose approximation: a world point
-needs the camera pose of its pixels.
+Pixels -> camera frame is pointcloud.rgbd_to_pointcloud_fast (OpenCV axes: x right,
+y down, z forward; the intrinsics are the frame's own ``K``), and camera -> world
+through the frame's ``cam_pos``/``cam_mat`` (columns right, up, -forward). There is
+no robot-pose approximation: a world point needs the camera pose of its pixels.
 """
 from __future__ import annotations
 
@@ -14,25 +14,6 @@ from typing import Any
 
 import numpy as np
 
-from vector_os_nano.core.types import CameraIntrinsics
-
-
-def pixel_to_camera(
-    u: float,
-    v: float,
-    depth_m: float,
-    intrinsics: CameraIntrinsics,
-) -> tuple[float, float, float]:
-    """Project a pixel (u, v) at depth_m to camera-frame 3D point.
-
-    Camera frame: Z forward, X right, Y down (OpenCV convention).
-
-    Returns (x_cam, y_cam, z_cam) in metres.
-    """
-    z = depth_m
-    x = (u - intrinsics.cx) * z / intrinsics.fx
-    y = (v - intrinsics.cy) * z / intrinsics.fy
-    return (x, y, z)
 
 
 def camera_to_world(

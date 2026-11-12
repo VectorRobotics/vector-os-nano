@@ -60,8 +60,8 @@ def go2_model():
     return mujoco.MjModel.from_xml_path(str(scene))
 
 
-@pytest.fixture(scope="module")
-def g1_model():
+@pytest.fixture
+def g1_model(g1_assets):
     import mujoco
 
     scene = _build_g1_room_scene_xml()

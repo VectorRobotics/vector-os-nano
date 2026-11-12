@@ -45,8 +45,25 @@ Vendored source:
         kinematics-only URDF load via pin.buildModelFromUrdf (no meshes).
 
 Python dependencies are installed from PyPI under their own licenses (see
-pyproject.toml); none is redistributed here. Model weights (GroundingDINO,
-EdgeTAM) are downloaded by the user from their upstream hubs.
+pyproject.toml); none is redistributed here.
+
+------------------------------------------------------------------------
+Fetched by the user, not bundled
+------------------------------------------------------------------------
+
+  - Unitree G1 12-DoF MJCF, its meshes and the pretrained walking policy
+        (motion.pt), from unitree_rl_gym
+        (https://github.com/unitreerobotics/unitree_rl_gym) @ 276801e,
+        BSD-3-Clause, Copyright (c) 2016-2023 HangZhou YuShu TECHNOLOGY CO.,LTD.
+        ("Unitree Robotics"). `python scripts/fetch_assets.py g1` copies the
+        files pinned (sha256) in vector_os_nano/embodiments/g1/robot.yaml into
+        ~/.vector/assets/g1_gait/ and writes the upstream LICENSE beside them.
+  - Perception model weights, at the revisions pinned in the package
+        (perception/weights.py), into the Hugging Face cache, by
+        `python scripts/fetch_assets.py --weights` or on first use:
+        IDEA-Research/grounding-dino-tiny (Apache-2.0), yonigozlan/EdgeTAM-hf
+        (Apache-2.0) and the timm/repvit_m1.dist_in1k backbone config it reads
+        (Apache-2.0).
 
 ------------------------------------------------------------------------
 Referenced, not bundled

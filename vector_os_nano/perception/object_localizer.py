@@ -15,7 +15,8 @@ the size of an object (not a wall or a sofa), standing in front of what surround
 it, and of the colour the query names. Anything else is dropped, never stored.
 
 GUARD contract: an unusable perception (None or missing a method) gives [];
-per-query failures are skipped (debug-logged). This function NEVER raises.
+per-query failures are skipped with a WARNING naming the cause (a missing model, an
+ungroundable name). This function NEVER raises.
 """
 from __future__ import annotations
 
@@ -139,7 +140,7 @@ def localize_objects_3d(
     try:
         rgb, depth, K, cam_pos, cam_mat = _unpack(frame if frame is not None else perception.capture())
     except Exception as exc:  # noqa: BLE001
-        logger.debug("[OBJ-LOC] capture failed: %s", exc)
+        logger.warning("[OBJ-LOC] capture failed: %s: %s", type(exc).__name__, exc)
         return []
 
     found: list[Localized] = []
@@ -147,7 +148,7 @@ def localize_objects_3d(
         try:
             detections = perception.detect_in(rgb, query)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("[OBJ-LOC] detect(%r) failed: %s", query, exc)
+            logger.warning("[OBJ-LOC] detect(%r) failed: %s: %s", query, type(exc).__name__, exc)
             continue
         noun, colour = vocab().noun(query), vocab().colour(query)
         for det in detections or []:
@@ -163,7 +164,7 @@ def localize_objects_3d(
                     continue
                 gp = grasp_point_from_points(*pts, cam_pos, cam_mat)
             except Exception as exc:  # noqa: BLE001
-                logger.debug("[OBJ-LOC] %r: %s", query, exc)
+                logger.warning("[OBJ-LOC] %r: localization failed: %s: %s", query, type(exc).__name__, exc)
                 continue
             found.append(Localized(query, gp.x, gp.y, gp.z, float(det.confidence),
                                    getattr(perception, "last_segmenter", None)))

@@ -30,9 +30,6 @@ _GO2_ASSETS = (_MJCF / "assets").resolve()
 _GO2_PIPER = _SIM / "mjcf" / "go2_piper" / "go2_piper.xml"
 _GO2_BARE = _MJCF / "go2.xml"
 
-_G1_12DOF = Path("assets/g1_gait/g1_12dof.xml").resolve()
-_G1_MESHES = Path("assets/g1_gait/meshes").resolve()
-
 _WELDS = (
     ("grasp_pickable_bottle_blue", "piper_link6", "pickable_bottle_blue"),
     ("grasp_pickable_bottle_green", "piper_link6", "pickable_bottle_green"),
@@ -63,7 +60,7 @@ def _legacy_go2(with_arm: bool) -> mj.MjModel:
     return mj.MjModel.from_xml_path(str(out))
 
 
-def _legacy_g1() -> mj.MjModel:
+def _legacy_g1(g1_xml: Path, g1_meshes: Path) -> mj.MjModel:
     import os
 
     xml = _ROOM.read_text()
@@ -77,10 +74,10 @@ def _legacy_g1() -> mj.MjModel:
         room_tmp = fh.name
     try:
         room_spec = mj.MjSpec.from_file(room_tmp)
-        g1_spec = mj.MjSpec.from_file(str(_G1_12DOF))
+        g1_spec = mj.MjSpec.from_file(str(g1_xml))
         for mesh in g1_spec.meshes:
             if not os.path.isabs(mesh.file):
-                mesh.file = str(_G1_MESHES / mesh.file)
+                mesh.file = str(g1_meshes / mesh.file)
         g1_spec.meshdir = ""
         pelvis = next(b for b in g1_spec.bodies if b.name == "pelvis")
         pelvis.add_camera(name="head_rgb", pos=[0.04, 0.0, 0.42], xyaxes=[0, -1, 0, 0, 0, 1])
@@ -218,17 +215,17 @@ def test_build_room_scene_bare_go2_byte_identical():
     assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "base_link") >= 0
 
 
-@pytest.mark.skipif(not _G1_12DOF.exists(), reason="g1_12dof.xml asset not present")
-def test_build_room_scene_g1_byte_identical():
-    legacy = _legacy_g1()
+def test_build_room_scene_g1_byte_identical(g1_assets):
+    g1_xml, g1_meshes = g1_assets / "g1_12dof.xml", g1_assets / "meshes"
+    legacy = _legacy_g1(g1_xml, g1_meshes)
     model, _ = build_room_scene(
-        robot_model_path=_G1_12DOF,
+        robot_model_path=g1_xml,
         room_template_path=_ROOM,
         room_assets_dir=_GO2_ASSETS,
         attach_prefix="g1_",
         spawn_xy=[10.0, 3.0],
         welds=(),
-        robot_meshes_dir=_G1_MESHES,
+        robot_meshes_dir=g1_meshes,
         camera={
             "mount_body": "pelvis",
             "name": "head_rgb",

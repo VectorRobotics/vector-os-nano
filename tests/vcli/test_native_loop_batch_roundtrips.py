@@ -58,10 +58,7 @@ def _run(tool_script, on_progress=None, skill=None):
         backend = _CountingBackend(FakeToolScriptBackend.from_tool_script(tool_script))
         eng = VectorEngine(backend=backend, registry=CategorizedToolRegistry(),
                            permissions=PermissionContext(no_permission=True))  # harness grants asks
-        eng._world = DevWorld()
-        eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=DevWorld())
-        eng._vgg_agent = agent
-        eng._backend = backend
+        eng.bind(agent, DevWorld())
         session = Session(session_id="batch", created_at="t", updated_at="t",
                           path=Path(work) / "s.jsonl")
         trace = eng.run_turn_native("create out.txt containing ready", session=session,

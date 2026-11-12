@@ -6,8 +6,8 @@ The verify namespace holds every callable a verify expression may call. Only a
 callable tagged ``@oracle(scope=...)`` whose scope matches the active world —
 ``"robot"`` in a robot world, ``"dev"`` in the dev world — is an evidence oracle
 (``evidence_names``). Everything else stays callable but can never ground a step:
-untagged constant stubs, the actor's own memory readers (SceneGraph / ObjectMemory /
-predict), and dev file predicates inside a robot world all fail closed (rule 5).
+untagged helpers, the actor's own memory readers (SceneGraph), and dev file
+predicates inside a robot world all fail closed (rule 5).
 
 The registry is the tag itself — no second list to drift from the namespace. A world
 that brings a new GT predicate tags it at its definition; nothing in the kernel
@@ -76,27 +76,18 @@ def oracle(
     return mark
 
 
-def oracle_tags(ns: Mapping[str, Any], scope: str | None = None) -> dict[str, OracleTag]:
+def oracle_tags(ns: Mapping[str, Any], scope: str) -> dict[str, OracleTag]:
     """``{name: OracleTag}`` for the evidence oracles of *ns* (same rule as
     ``evidence_names``) — what the causation grader reads channel/transition from."""
     names = evidence_names(ns, scope)
     return {n: ns[n].__oracle__ for n in names}
 
 
-def evidence_names(ns: Mapping[str, Any], scope: str | None = None) -> frozenset[str]:
-    """Names in *ns* whose callable carries an ``@oracle`` tag.
-
-    *scope* restricts to that scope (``"robot"`` / ``"dev"``) — the done-gate passes
-    the active world's scope so a dev predicate can never ground in a robot world.
-    ``None`` (the reward gate, which has no world handle) takes the namespace's one
-    scope; a namespace mixing scopes fails closed to the empty set, since the engine
-    never merges dev predicates into a robot world.
-    """
-    tagged = {
-        name: fn.__oracle__.scope
-        for name, fn in ns.items()
-        if isinstance(getattr(fn, "__oracle__", None), OracleTag)
-    }
-    if scope is None and len(set(tagged.values())) > 1:
-        return frozenset()
-    return frozenset(n for n, s in tagged.items() if scope is None or s == scope)
+def evidence_names(ns: Mapping[str, Any], scope: str) -> frozenset[str]:
+    """Names in *ns* whose callable carries an ``@oracle`` tag of *scope*
+    (``"robot"`` / ``"dev"``): the done-gate passes the active world's scope, so a
+    dev predicate can never ground in a robot world."""
+    return frozenset(
+        name for name, fn in ns.items()
+        if isinstance(tag := getattr(fn, "__oracle__", None), OracleTag) and tag.scope == scope
+    )

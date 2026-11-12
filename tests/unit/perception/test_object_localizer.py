@@ -299,6 +299,25 @@ def test_localize_skips_object_when_segment_raises():
     assert results == []
 
 
+class _StubPerceptionNoDetector(_StubPerception):
+    def detect_in(self, rgb: np.ndarray, query: str) -> list[Detection]:
+        raise RuntimeError("org/model@0123456 is not in the Hugging Face cache")
+
+
+@pytest.mark.parametrize("perc, cause", [
+    (_StubPerception(fail_segment=True), "RuntimeError: segment: simulated failure"),
+    (_StubPerceptionNoDetector(), "RuntimeError: org/model@0123456 is not in the Hugging Face cache"),
+])
+def test_a_failed_localization_is_a_warning_with_its_cause(perc, cause, caplog):
+    """perception:localizer-failure-silent: a missing model read as 'found nothing'
+    at DEBUG level, invisible on a normal run."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="vector_os_nano.perception.object_localizer"):
+        assert localize_objects_3d(perc, ["apple"]) == []
+    assert any(cause in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
+
+
 def test_localize_skips_object_when_mask_has_no_depth():
     """Mask over all-zero depth → grasp_point_from_rgbd returns None → skip."""
     zero_mask = np.ones((_H, _W), dtype=np.uint8)

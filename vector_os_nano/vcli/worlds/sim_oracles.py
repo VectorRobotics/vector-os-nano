@@ -17,6 +17,7 @@ state read) instead of raising into the verifier.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import math
 from typing import Any, Callable
@@ -56,6 +57,7 @@ def _safe(default: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Fail safe: a GT read error returns *default*, never raises into the verifier."""
 
     def wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(fn)  # the verify tool reads its signature and docstring
         def inner(*args: Any, **kwargs: Any) -> Any:
             try:
                 return fn(*args, **kwargs)
@@ -63,8 +65,6 @@ def _safe(default: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
                 logger.debug("oracle %s%r failed: %s", fn.__name__, args, exc)
                 return default
 
-        inner.__name__ = fn.__name__
-        inner.__doc__ = fn.__doc__
         return inner
 
     return wrap

@@ -16,7 +16,7 @@ grasp number came from it), chosen by the embodiment manifest
   base), kills only the process groups this session spawned and unregisters its
   atexit hook.
 * :func:`rebind_world` is the ONE path that points the REPL at a session (or at
-  no session): skill tools, tool categories, world, system prompt and VGG.
+  no session): the engine binding (agent + world) and the skill tools.
 """
 from __future__ import annotations
 
@@ -163,6 +163,12 @@ class SimSession:
                 "bad embodiment manifest",
                 f"{cfg.id}/robot.yaml.driver={cfg.driver!r}; valid: {sorted(_BUILDERS)}",
             )
+        from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
+
+        try:
+            asset_dir(cfg)
+        except AssetsMissing as exc:
+            raise SimStartError("assets not provisioned", str(exc)) from exc
         return cfg, builder
 
     @classmethod
@@ -360,27 +366,32 @@ def _perception(camera: Any) -> Any:
     return CameraPerception(camera) if camera is not None else None
 
 
-def _perception_note(agent: Any) -> str:
-    """The startup capability line: which models perception will actually use."""
+def _perception_note(agent: Any, vlm_why: str = "", *, segmenter: bool = True) -> str:
+    """The startup capability line: which models perception will use, or why not."""
     from vector_os_nano.perception.rynnbrain import RynnBrainDetector
-    from vector_os_nano.perception.tracker import EdgeTAMTracker
 
     import importlib.util
 
-    # ponytail: the device the detector WILL use, without importing torch at sim start
-    # (that inits CUDA and spawns ldconfig); the load logs the real one ("[GDINO] loaded on").
-    visible = os.environ.get("CUDA_VISIBLE_DEVICES") not in ("", "-1")
-    if importlib.util.find_spec("torch") is None:
-        device = "unavailable (no torch)"
+    if importlib.util.find_spec("torch") is None or importlib.util.find_spec("transformers") is None:
+        detector = seg = "unavailable (torch/transformers not installed: uv pip install -e '.[all]')"
     else:
+        from vector_os_nano.perception.grounding_dino import GroundingDinoDetector
+        from vector_os_nano.perception.tracker import EdgeTAMTracker
+        from vector_os_nano.perception.weights import status
+
+        # ponytail: the device the detector WILL use, without importing torch at sim start
+        # (that inits CUDA and spawns ldconfig); the load logs the real one ("[GDINO] loading").
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES") not in ("", "-1")
         device = "cuda" if visible and Path("/proc/driver/nvidia/version").exists() else "cpu"
+        detector = f"grounding-dino@{device} ({status(GroundingDinoDetector.WEIGHTS)})"
+        seg = f"edgetam ({status(EdgeTAMTracker.WEIGHTS)})"
     perception, vlm = getattr(agent, "_perception", None), getattr(agent, "_vlm", None)
-    vlm_s = "none" if vlm is None else f"{'local' if vlm._local else 'openrouter'}:{vlm._model}"
+    vlm_s = f"none ({vlm_why})" if vlm is None else f"{'local' if vlm._local else 'openrouter'}:{vlm._model}"
     return (
-        f"perception: detector=grounding-dino@{device}, "
-        f"segmenter={'edgetam' if EdgeTAMTracker.weights_available() else 'box_rect'}, "
-        f"self_mask={'yes' if callable(getattr(perception, 'capture', None)) else 'no'}, "
-        f"vlm={vlm_s}, rynnbrain={'up' if RynnBrainDetector().available() else 'down'}"
+        f"perception: detector={detector}, "
+        + (f"segmenter={seg}, self_mask={'yes' if callable(getattr(perception, 'capture', None)) else 'no'}, "
+           if segmenter else "")
+        + f"vlm={vlm_s}, rynnbrain={'up' if RynnBrainDetector().available() else 'down'}"
     )
 
 
@@ -419,6 +430,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
 
     # The scene VLM is optional naming sugar: an OpenRouter key OR a local server
     # (VECTOR_VLM_URL, e.g. Ollama). Discovery never needs it.
+    vlm_why = "no OPENROUTER_API_KEY or VECTOR_VLM_URL"
     if api_key or os.environ.get("VECTOR_VLM_URL"):
         try:
             from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
@@ -427,8 +439,8 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
                 "api_key": api_key, "rooms": sorted(world.rooms) if world else [],
                 **(user_cfg.get("vlm") or {}),
             })
-        except Exception as exc:  # noqa: BLE001 — VLM is optional
-            logger.info("[sim] Go2VLMPerception unavailable: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — VLM is optional; the capability line says why
+            vlm_why = f"failed: {type(exc).__name__}: {exc}"
             agent._vlm = None
 
     # Spatial memory is keyed by WORLD (shared by every body that stands in it,
@@ -450,7 +462,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
-    session.notes.append(_perception_note(agent))  # last: the explore note stays up front
+    session.notes.append(_perception_note(agent, vlm_why))  # last: the explore note stays up front
     return agent
 
 
@@ -486,6 +498,7 @@ def _build_mujoco_g1(session: SimSession, vlm_api_key: str | None) -> Any:
     agent = Agent(base=g1)
     # Read-only head-camera perception for the detector capability (no arm).
     agent._perception = G1HeadPerception(g1, width=cam.width, height=cam.height)
+    session.notes.append(_perception_note(agent, "g1 has no scene VLM", segmenter=False))
     return agent
 
 
@@ -517,7 +530,7 @@ def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
         from vector_os_nano.skills.manipulation_setup import register_manipulation_skills
 
         register_manipulation_skills(agent)
-    session.notes.append(_perception_note(agent))
+    session.notes.append(_perception_note(agent, "a fixed arm has no scene VLM"))
     return agent
 
 
@@ -648,18 +661,18 @@ def _launch_ros2_stack(go2: Any, camera: Any, *, gui: bool) -> Callable[[], None
 
 
 def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
-    """Point the REPL at *session* (or at none): tools, world, prompt and VGG.
+    """Point the REPL at *session* (or at none): the engine binding, then the skill tools.
 
-    Used by start/stop_simulation (the CLI startup builds the same state). An
-    active playground scenario keeps its world; otherwise the agent picks it.
+    Used by start/stop_simulation (the CLI startup builds the same state). The engine
+    is bound first: a bind failure raises before anything else changed.
     """
-    from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
-    from vector_os_nano.vcli.prompt import build_system_prompt
-    from vector_os_nano.vcli.robot_context import RobotContextProvider
     from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
     from vector_os_nano.vcli.worlds import resolve_world
 
     agent = session.agent if session is not None else None
+    engine = app_state.get("engine")
+    if engine is not None:
+        engine.bind(agent, resolve_world(agent))
     sg = getattr(agent, "_spatial_memory", None)
     skill_registry = getattr(agent, "_skill_registry", None)
     app_state.update(sim_session=session, agent=agent, scene_graph=sg,
@@ -673,36 +686,3 @@ def rebind_world(app_state: dict[str, Any], session: SimSession | None) -> None:
         if agent is not None:
             for t in wrap_skills(agent):
                 registry.register(t, category="robot")
-        for cat in ("robot", "diag", "system"):
-            if agent is not None:
-                registry.enable_category(cat)
-            else:
-                registry.disable_category(cat)
-
-    world = app_state.get("world") if app_state.get("scenario") else resolve_world(agent)
-    app_state["world"] = world
-
-    engine = app_state.get("engine")
-    if engine is None:
-        return
-    provider = RobotContextProvider.for_agent(agent)
-    app_state["robot_ctx_provider"] = provider
-    engine._system_prompt = DynamicSystemPrompt(
-        build_system_prompt(agent=agent, cwd=Path.cwd(), robot_context=provider, world=world),
-        provider,
-    )
-    # The native path reads engine._vgg_agent: never leave it on a torn-down body,
-    # even if init_vgg below bails out early.
-    engine._vgg_agent = agent
-    try:
-        engine.init_vgg(
-            agent=agent,
-            skill_registry=skill_registry,
-            on_vgg_step=app_state.get("vgg_step_callback"),
-            on_vgg_step_view=app_state.get("vgg_step_view_callback"),
-            world=world,
-            tool_permission_resolver=app_state.get("tool_permission_resolver"),
-            persist_dir=(Path.home() / ".vector") if not world.is_robot() else None,
-        )
-    except Exception as exc:  # noqa: BLE001 — the REPL keeps the tool_use path
-        logger.warning("init_vgg after sim rebind failed: %s", exc)

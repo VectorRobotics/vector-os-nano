@@ -1,22 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""FakeBackend — a deterministic test LLM that drives the REAL cli.main.
+"""Scripted test LLMs that drive the REAL cli.main through the native producer.
 
-R2a PART B: the backend-injection seam in ``cli.create_backend_with_fake_seam``
-is gated ONLY on the env var ``VECTOR_FAKE_LLM=<json-path>``. When set, the
-network LLM is replaced by this ``FakeBackend``, which returns a canned
-``LLMResponse(text=<decompose-plan JSON>)`` — the plan the GoalDecomposer parses.
-
-This replaces ONLY the network LLM. The REAL decomposer / validator / skill /
-GoalVerifier / evidence-gate / verdict all still run on the canned plan, so the
-verdict stays HONEST by construction: a canned step whose ``verify`` is the
-sentinel ``"True"`` STILL classifies RAN (not GROUNDED) and the verdict is False.
-The seam never bypasses any verify or permission layer.
-
-Ported from the mock helper in
-``tests/integration/vcli/test_end_to_end.py`` (``make_mock_client`` /
-``make_response``) — a ``.call(...)`` matching the ``LLMBackend`` Protocol.
+The backend-injection seam in ``cli.create_backend_with_fake_seam`` is gated ONLY on
+the env var ``VECTOR_FAKE_LLM_TOOLS=<json-path>``: the network LLM is replaced by a
+``FakeToolScriptBackend`` (an open-loop ``{"turns"}`` script) or a
+``ReactiveFakeBackend`` (a ``{"steps"}`` script keyed on what the model observes).
+Only the network LLM is replaced: every tool, GoalVerifier, actor-causation grade
+and verdict still runs, so the verdict stays honest by construction.
 """
 from __future__ import annotations
 
@@ -30,52 +22,6 @@ from vector_os_nano.vcli.backends.types import LLMResponse
 from vector_os_nano.vcli.session import TokenUsage
 
 
-class FakeBackend:
-    """A canned ``LLMBackend``: every ``.call()`` returns the same plan JSON.
-
-    The decomposer's ``.call()`` is the only LLM call on the ``-p`` VGG path
-    (the fast single-skill path is byte-identical and never hits the backend),
-    so returning the canned decompose-plan JSON as ``LLMResponse.text`` drives a
-    fully deterministic plan through the REAL pipeline.
-    """
-
-    def __init__(self, plan: dict[str, Any]) -> None:
-        # The exact decompose-plan JSON the GoalDecomposer will parse + validate.
-        self._plan_text = json.dumps(plan, ensure_ascii=False)
-
-    @classmethod
-    def from_json_file(cls, path: str | Path) -> "FakeBackend":
-        """Build from a JSON file containing the canned decompose plan.
-
-        The file's top-level object is the plan: ``{"goal", "sub_goals", ...}``.
-        Fails LOUD (raises) on a missing / unparseable file — a silent empty plan
-        would let a broken harness masquerade as a real run.
-        """
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"VECTOR_FAKE_LLM plan must be a JSON object, got {type(data).__name__}")
-        return cls(data)
-
-    def call(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        system: list[dict[str, Any]],
-        max_tokens: int,
-        on_text: Callable[[str], None] | None = None,
-        on_reasoning: Callable[[str], None] | None = None,
-    ) -> LLMResponse:
-        """Return the canned plan as response text (matches LLMBackend.call)."""
-        if on_text is not None:
-            on_text(self._plan_text)
-        return LLMResponse(
-            text=self._plan_text,
-            tool_calls=[],
-            stop_reason="end_turn",
-            usage=TokenUsage(input_tokens=0, output_tokens=0),
-        )
-
-
 class FakeToolScriptBackend:
     """A canned ``LLMBackend`` that REPLAYS a SCRIPT of native tool_use turns.
 
@@ -87,9 +33,7 @@ class FakeToolScriptBackend:
         turn2: tool_calls=[verify('at_position(11,3)')] stop_reason='tool_use'  (after the tool_result)
         turn3: tool_calls=[finish()] (or text)          stop_reason='end_turn'
 
-    Unlike ``FakeBackend`` (single-plan decompose JSON for the LEGACY path), this
-    seam never returns a decompose plan — it returns the ordered native turns the
-    model "would" issue. The REAL native runner still dispatches every skill via
+    It returns the ordered native turns the model "would" issue. The REAL native runner still dispatches every skill via
     SkillWrapperTool, evaluates ``verify`` via the REAL GoalVerifier, grades
     actor-causation, and hands the assembled trace to the EXISTING verdict gate —
     so the verdict stays honest by construction (a verify-only script with no walk
@@ -106,7 +50,7 @@ class FakeToolScriptBackend:
         self._turns: list[LLMResponse] = list(turns)
         self._cursor: int = 0
 
-    # -- serialization seam (parity with FakeBackend.from_json_file) ----------
+    # -- serialization seam ----------------------------------------------------
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> "FakeToolScriptBackend":
@@ -198,8 +142,7 @@ class ReactiveFakeBackend:
     or the user's text). The first not-yet-used step fires iff ``when`` is a substring
     of the observation, ``is_error`` (if given) equals the observation's error flag,
     and every tool it calls is in the offered ``tools`` (a real model cannot call a
-    tool it was not offered, so a native attempt that lacks ``start_simulation`` never
-    consumes the legacy turn's step). Each step fires once; tool-call ids are unique
+    tool it was not offered). Each step fires once; tool-call ids are unique
     per step (``call_<step>_<j>``). No match -> ``end_turn`` with no tools and a
     ``[reactive-fake] no step matched`` text, so a broken script fails visibly.
 

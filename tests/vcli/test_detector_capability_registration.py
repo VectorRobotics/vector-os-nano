@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sys
 
-from vector_os_nano.vcli.cognitive.capabilities import CapabilityRegistry
+from vector_os_nano.vcli.cognitive.capabilities.registry import CapabilityRegistry
 from vector_os_nano.vcli.worlds.robot import RobotWorld
 
 

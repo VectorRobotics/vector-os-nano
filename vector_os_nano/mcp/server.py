@@ -198,7 +198,6 @@ def _build_engine(agent: Agent) -> tuple[Any, Any]:
     from vector_os_nano.vcli.backends import create_backend  # noqa: PLC0415
     from vector_os_nano.vcli.tools import CategorizedToolRegistry, discover_categorized_tools  # noqa: PLC0415
     from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills  # noqa: PLC0415
-    from vector_os_nano.vcli.prompt import build_system_prompt  # noqa: PLC0415
     from vector_os_nano.vcli.engine import VectorEngine  # noqa: PLC0415
     from vector_os_nano.vcli.session import create_session  # noqa: PLC0415
     from vector_os_nano.vcli.worlds import resolve_world  # noqa: PLC0415
@@ -222,24 +221,11 @@ def _build_engine(agent: Agent) -> tuple[Any, Any]:
     for skill_tool in wrap_skills(agent):
         registry.register(skill_tool, category="robot")
 
-    # 4. System prompt
-    system_prompt = build_system_prompt(agent=agent)
+    # 4. Engine, bound to the agent and its world
+    engine = VectorEngine(backend=backend, registry=registry)
+    engine.bind(agent, resolve_world(agent))
 
-    # 5. Engine
-    engine = VectorEngine(backend=backend, registry=registry, system_prompt=system_prompt)
-
-    # 6. VGG cognitive layer
-    # Pass world= so engine._world (and thus the learning-tier is_robot gate) is set
-    # for this LIVE robot-control entry point — without it the executor would treat a
-    # robot motor step as a dev step and the W1.1 reward gate would record a passing
-    # verify="True" motor step as a FAILURE (robot-learning regression).
-    engine.init_vgg(
-        agent=agent,
-        skill_registry=agent._skill_registry,
-        world=resolve_world(agent),
-    )
-
-    # 7. Session
+    # 5. Session
     session = create_session(metadata={"source": "mcp", "model": model})
 
     return engine, session

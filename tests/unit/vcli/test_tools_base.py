@@ -6,7 +6,7 @@
 Covers:
 - @tool decorator metadata storage
 - @tool without args using class defaults
-- ToolRegistry register/list/get/to_anthropic_schemas
+- ToolRegistry register/list/get
 - ToolResult frozen dataclass
 - ToolContext fields
 - Tool Protocol runtime checkable
@@ -243,40 +243,6 @@ class TestToolRegistry:
 
         registry = ToolRegistry()
         assert registry.get("nonexistent") is None
-
-    def test_tool_registry_to_anthropic_schemas(self) -> None:
-        from vector_os_nano.vcli.tools import ToolRegistry
-        from vector_os_nano.vcli.tools.base import tool, ToolResult, ToolContext
-
-        @tool(
-            name="schema_tool",
-            description="A schema tool",
-            input_schema={"type": "object", "properties": {"x": {"type": "number"}}},
-        )
-        class SchemaTool:
-            def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-                return ToolResult(content="ok")
-
-        registry = ToolRegistry()
-        registry.register(SchemaTool())
-        schemas = registry.to_anthropic_schemas()
-        assert len(schemas) == 1
-        schema = schemas[0]
-        assert schema["name"] == "schema_tool"
-        assert schema["description"] == "A schema tool"
-        assert "input_schema" in schema
-        assert schema["input_schema"]["type"] == "object"
-
-    def test_tool_registry_to_anthropic_schemas_required_keys(self) -> None:
-        from vector_os_nano.vcli.tools import ToolRegistry
-
-        registry = ToolRegistry()
-        ToolC = self._make_tool_class("tool_c", "C desc")
-        registry.register(ToolC())
-        schemas = registry.to_anthropic_schemas()
-        assert all(
-            {"name", "description", "input_schema"}.issubset(s.keys()) for s in schemas
-        )
 
 
 # ---------------------------------------------------------------------------

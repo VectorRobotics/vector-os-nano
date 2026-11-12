@@ -111,10 +111,7 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
             backend=backend, registry=CategorizedToolRegistry(),
             permissions=PermissionContext(no_permission=True),  # a hand-built rig is no SimSession: grant asks
         )
-        eng._world = RobotWorld()
-        eng.init_vgg(agent=agent, skill_registry=agent._skill_registry, world=RobotWorld())
-        eng._vgg_agent = agent
-        eng._backend = backend
+        eng.bind(agent, RobotWorld())
 
         session = Session(
             session_id="native-multiskill", created_at="t", updated_at="t",

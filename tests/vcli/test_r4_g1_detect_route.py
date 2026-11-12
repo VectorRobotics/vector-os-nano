@@ -94,7 +94,7 @@ class _Ctx:
 
 class _Engine:
     def __init__(self, cap=None, registry=None):
-        from vector_os_nano.vcli.cognitive.capabilities import CapabilityRegistry
+        from vector_os_nano.vcli.cognitive.capabilities.registry import CapabilityRegistry
 
         self._capability_registry = CapabilityRegistry() if cap is not None else None
         if cap is not None:

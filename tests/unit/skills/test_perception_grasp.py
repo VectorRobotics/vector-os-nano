@@ -188,6 +188,27 @@ def test_no_detections_fails_loud():
     assert res.result_data["diagnosis"] == "no_detections"
 
 
+@pytest.mark.parametrize("stage", ["detect", "segment"])
+def test_a_model_that_cannot_run_is_reported_with_its_cause_not_as_nothing_found(stage):
+    """perception:no-weights-provisioning: a missing detector read as 'VLM found
+    nothing' and a missing segmenter as 'no mask'; the result now names the cause."""
+    from vector_os_nano.perception.weights import WeightsUnavailable
+
+    class Broken(FakePerception):
+        def detect(self, query):
+            if stage == "detect":
+                raise WeightsUnavailable("org/model@0123456 is not in the Hugging Face cache")
+            return super().detect(query)
+
+        def segment(self, image, bbox):
+            raise WeightsUnavailable("org/edgetam@c266ce5 is not in the Hugging Face cache")
+
+    res = PerceptionGraspSkill().execute({"query": "banana"}, _ctx(Broken()))
+    assert res.success is False and res.result_data["diagnosis"] == "perception_failed"
+    assert f"The {'detector' if stage == 'detect' else 'segmenter'} failed" in res.error_message
+    assert "WeightsUnavailable" in res.error_message and "Hugging Face cache" in res.error_message
+
+
 def test_empty_mask_fails_segmentation():
     perc = FakePerception(mask=np.zeros((_H, _W), dtype=np.uint8))
     res = PerceptionGraspSkill().execute({"query": "banana"}, _ctx(perc))

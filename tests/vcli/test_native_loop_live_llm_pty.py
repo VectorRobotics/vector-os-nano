@@ -8,7 +8,7 @@ backend (``FakeToolScriptBackend`` replays walk->verify->finish). It did NOT pro
 the THESIS: that the REAL frontier model, handed the go2-walk tool-set + NL, drives
 the loop ITSELF. This module is that proof.
 
-It drives the REAL ``cli.main -p "<NL>" --json --sim-go2 --native-loop`` PTY with NO
+It drives the REAL ``cli.main -p "<NL>" --json --sim-go2`` PTY with NO
 tool_script — the REAL provider backend resolved from the repo-root ``.env`` (the
 product default, see ``vcli.config.resolve_credentials``) on the REAL go2 MuJoCo sim.
 The MODEL must AUTONOMOUSLY decompose / route / verify:
@@ -174,7 +174,7 @@ def test_live_walk_to_coordinate_routes_and_grounds(sim_cleanup) -> None:
         sim_go2=True,
         live=True,
         timeout_sec=_LIVE_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
     )
     _assert_walk_at_position(r, prompt=prompt)
 
@@ -197,6 +197,6 @@ def test_live_walk_natural_phrasing_routes_and_grounds(sim_cleanup) -> None:
         sim_go2=True,
         live=True,
         timeout_sec=_LIVE_TIMEOUT_SEC,
-        extra_args=["--headless", "--native-loop"],
+        extra_args=["--headless"],
     )
     _assert_walk_at_position(r, prompt=prompt)

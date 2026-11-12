@@ -76,9 +76,9 @@ def test_namespace_empty_without_a_live_sim_session() -> None:
 def test_engine_merges_robot_world_grounding(sim_agent) -> None:
     from vector_os_nano.vcli.engine import VectorEngine
 
-    engine = VectorEngine(backend=MagicMock(), intent_router=MagicMock())
+    engine = VectorEngine(backend=MagicMock())
     engine._world = RobotWorld()
-    engine._vgg_agent = sim_agent
+    engine._agent = sim_agent
 
     ns = engine._build_verifier_namespace(sim_agent)
     assert "holding_object" in ns and "object_on" in ns
