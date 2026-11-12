@@ -59,10 +59,19 @@ def _seen_by_a_turn(rt: Runtime) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("body", ["dev", "robot"])
-def test_the_repl_and_print_faces_build_the_same_runtime(home: Path, body: str) -> None:
-    agent = _robot() if body == "robot" else None
-    repl = build_runtime(agent=agent, face="repl", notice=lambda msg: None)
-    printed = build_runtime(agent=agent, face="print", notice=lambda msg: None)
+def test_the_repl_and_print_faces_build_the_same_runtime(
+    home: Path, body: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each face through its own call (``cli._build`` from its own argv), so a face
+    that maps a flag differently (e.g. ``-p`` forcing no_permission) diverges here."""
+    import functools
+
+    from vector_os_nano.vcli import cli
+
+    if body == "robot":  # the body a sim start would bind, without starting one
+        monkeypatch.setattr(cli, "build_runtime", functools.partial(build_runtime, agent=_robot()))
+    repl = cli._build(cli.parse_args([]), "repl")
+    printed = cli._build(cli.parse_args(["-p", "x"]), "print")
     seen = _seen_by_a_turn(repl)
     assert seen == _seen_by_a_turn(printed)
     assert seen["world"] == body

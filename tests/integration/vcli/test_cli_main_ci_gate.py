@@ -142,3 +142,32 @@ def test_cli_help_exits_zero() -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["--help"])
     assert exc_info.value.code == 0
+
+
+@pytest.mark.cli_main
+@pytest.mark.timeout(180)
+def test_a_print_turn_is_saved_as_a_print_session(tmp_path) -> None:
+    """R5V-D2: ``-p`` saves its turn (``run_turn``'s flush is the only save before
+    the process exits): one session file, face ``print``, the user and model lines."""
+    import os
+
+    from vector_os_nano.vcli.session import load_session
+
+    home = tmp_path / "home"
+    home.mkdir()
+    script = tmp_path / "script.json"
+    script.write_text(json.dumps({"turns": [{"text": "hello back"}]}), encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.endswith("_API_KEY")}
+    env.update(HOME=str(home), PYTHONPATH=str(_REPO_ROOT), VECTOR_FAKE_LLM_TOOLS=str(script))
+    proc = subprocess.run(
+        [sys.executable, "-m", "vector_os_nano.vcli.cli", "-p", "hi there", "--json"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=150,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    sessions = home / ".vector" / "sessions"
+    files = list(sessions.glob("*.jsonl"))
+    assert len(files) == 1, files
+    saved = load_session(files[0].stem, directory=sessions)
+    assert saved.metadata["face"] == "print"
+    texts = json.dumps(saved._entries)
+    assert "hi there" in texts and "hello back" in texts, saved._entries
