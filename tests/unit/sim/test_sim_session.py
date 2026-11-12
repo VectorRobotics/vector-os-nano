@@ -183,7 +183,6 @@ def _fake_builder(cleanups: list[str], *, fail: bool = False):
         session.own("device closed", lambda: cleanups.append("closed"))
         if fail:
             raise RuntimeError("boom")
-        session.runtime = _Clock(0.2)
         return _agent(arm=SimpleNamespace(get_joint_positions=lambda: [0.0]))
     return build
 

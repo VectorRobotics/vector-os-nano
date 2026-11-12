@@ -167,12 +167,16 @@ def test_missing_embodiment_raises_clear_error() -> None:
     assert "robot.yaml" in str(exc.value)
 
 
-def test_missing_required_field_raises_clear_error() -> None:
-    # A manifest missing 'model' must fail loud, naming the field.
-    raw = {"id": "broken", "display_name": "Broken", "capabilities": {}}
+@pytest.mark.parametrize("missing", ["model", "spawn", "stance", "policy"])
+def test_missing_required_field_raises_clear_error(missing: str) -> None:
+    # A body with a base (capabilities default to one) needs every one of these.
+    raw = {"id": "broken", "display_name": "Broken", "model": {"path": "x.xml", "root_body": "b"},
+           "spawn": {"xy": [0, 0], "base_height": 0.1}, "stance": {"j": 0.0}, "policy": {"ref": "p"},
+           "capabilities": {}}
+    del raw[missing]
     with pytest.raises(EmbodimentConfigError) as exc:
         parse_embodiment_config(raw, ctx="broken/robot.yaml")
-    assert "model" in str(exc.value) and "broken/robot.yaml" in str(exc.value)
+    assert f"'{missing}'" in str(exc.value) and "broken/robot.yaml" in str(exc.value)
 
 
 def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
@@ -195,7 +199,8 @@ def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
 ])
 def test_an_unknown_key_fails_naming_the_file_the_key_and_the_valid_set(where: str, raw: dict) -> None:
     """Strict manifests: a misspelt or retired key is an error, never silently ignored."""
-    full = {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"}, "capabilities": {}, **raw}
+    full = {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
+            "capabilities": {"has_base": False}, **raw}
     with pytest.raises(EmbodimentConfigError) as exc:
         parse_embodiment_config(full, ctx="broken/robot.yaml")
     msg = str(exc.value)
@@ -203,7 +208,8 @@ def test_an_unknown_key_fails_naming_the_file_the_key_and_the_valid_set(where: s
 
 
 def test_a_camera_placed_without_a_position_fails_loud() -> None:
-    raw = {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"}, "capabilities": {},
+    raw = {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
+           "capabilities": {"has_base": False},
            "sensors": [{"role": "camera", "name": "c", "width": 2, "height": 2, "body": "b"}]}
     with pytest.raises(EmbodimentConfigError, match=r"sensors\[0\]\.body places a camera"):
         parse_embodiment_config(raw, ctx="a/robot.yaml")
@@ -227,7 +233,7 @@ def test_both_embodiments_distinct() -> None:
 def _with_arm(arm: dict) -> dict:
     return {
         "id": "a", "display_name": "A", "model": {"path": "x.xml", "root_body": "b"},
-        "capabilities": {}, "arm": arm,
+        "capabilities": {"has_base": False}, "arm": arm,
     }
 
 

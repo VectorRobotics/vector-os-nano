@@ -78,7 +78,8 @@ def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypa
     try:
         rt.call(lambda w: mj.mj_forward(w.model, w.data))
         s = SimSession(SimSpec("go2_piper", gui=False), registry.load("go2_piper"))
-        s.agent = SimpleNamespace(_base=SimpleNamespace(runtime=rt), _arm=None, _config={})
+        s.agent = SimpleNamespace(_base=SimpleNamespace(), _arm=None, _config={})
+        s.runtime = rt  # what a builder hands the session; the agent never carries it
         s._bind_ground_truth()
         assert s.agent._config["world"] == "apartment"  # skills resolve names by world id
         assert not any(v is s.gt for v in vars(s.agent).values())  # GT never rides on the agent

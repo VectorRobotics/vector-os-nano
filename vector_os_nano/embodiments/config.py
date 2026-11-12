@@ -403,12 +403,16 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> Emb
         raise EmbodimentConfigError(f"{ctx}.stance must be a mapping of joint_name -> angle")
     spawn = _optional_mapping(raw, "spawn", ctx)
     policy = _optional_mapping(raw, "policy", ctx)
+    caps = _parse_capabilities(raw, ctx)
+    if caps.has_base:  # a base stands at its own spawn, in its stance, driven by its policy
+        for key in ("spawn", "stance", "policy"):
+            _require(raw, key, ctx)
     return EmbodimentConfig(
         id=str(_require(raw, "id", ctx)),
         display_name=str(_require(raw, "display_name", ctx)),
         model=_parse_model(raw, ctx),
         sensors=_parse_sensors(raw, ctx),
-        capabilities=_parse_capabilities(raw, ctx),
+        capabilities=caps,
         spawn=None if spawn is None else _parse_spawn(spawn, f"{ctx}.spawn"),
         stance={str(k): float(v) for k, v in stance.items()},
         policy=None if policy is None else PolicySpec(
