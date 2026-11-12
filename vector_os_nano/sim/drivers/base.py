@@ -12,7 +12,9 @@ state through the scene's canonical addresses and writes joint torques through
 * A posture (``stand`` = the stance, or one of the manifest's ``postures``) is a PD
   ramp to its joint angles, then a PD hold that lasts until a non-zero velocity command.
   ``connect`` and a body reset hold the stance. A velocity command out of another
-  posture first ramps the body back to its stance (``_RISE_S``), then hands over.
+  posture first ramps the body back to its stance (``_RISE_S``), then hands over; a
+  walk or a navigate out of one waits for that rise before it starts (a held posture
+  is not a fall).
 * Otherwise the manifest's control policy (``sim/policies``) gets a ``PolicyObs`` and
   returns the torques; braking and the stance at zero command are its own.
 * Velocity commands are clipped to the manifest's limits. A walk or a navigate holds
@@ -279,15 +281,25 @@ class LeggedBase:
             pending = self._cmd == _ZERO and self._ticked != _ZERO  # a brake about to start
         return not (pending or self._policy.braking)
 
+    def _rising(self) -> bool:
+        with self._lock:
+            return self._hold is not None and self._hold.rise
+
     @contextlib.contextmanager
     def _control(self):
         """Skill control for the block (nested and concurrent holders stack: the latest
-        one commands); the command is zeroed on any exit, KeyboardInterrupt included."""
+        one commands), out of the stance: a held posture first rises to it, so a walk or a
+        navigate measures its start (and its fall) on the body standing. The command is
+        zeroed on any exit, KeyboardInterrupt included."""
         me = threading.get_ident()
         with self._lock:
             self._owners.append(me)
+            if self._hold is not None and self._hold.target is not self._stance:
+                self._hold = _Hold(self._stance, _RISE_S, self._rt.tick_dt, rise=True)
         try:
             self.wait_sim(0.0)  # park the clock here: the motion starts on the next tick
+            while self._rising() and self.wait_sim(self._rt.tick_dt, cancel=self._cancel):
+                pass
             yield
         finally:
             with self._lock:

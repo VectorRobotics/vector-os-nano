@@ -21,7 +21,7 @@ import yaml
 
 from tests.conformance.rig import yaw
 from vector_os_nano.embodiments import registry
-from vector_os_nano.embodiments.config import parse_embodiment_config
+from vector_os_nano.embodiments.config import EmbodimentConfigError, parse_embodiment_config
 from vector_os_nano.interfaces import BaseProtocol
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene.compose import compose
@@ -205,10 +205,25 @@ def test_a_stop_from_a_walk_at_the_limit_brings_it_to_rest(body):
     assert all(p[2] > body.cfg.base.fall_z for p in walking) and body.upright()
 
 
-def test_a_tipped_body_reports_the_fall(body):
-    """Started on its back, legs in the air: the trunk lies below the manifest's fall_z, so
-    a walk reports the fall, whatever the policy's legs do to the trunk meanwhile (fall
-    detection is the root height at the start and the end of the walk)."""
+def test_a_walk_and_a_navigate_out_of_every_posture_succeed(body):
+    """A held posture is not a fall (every manifest posture holds the root below fall_z):
+    out of each one a walk reports success and a navigate arrives, upright."""
+    assert body.cfg.base.postures
+    for name in body.cfg.base.postures:
+        assert body.base.set_posture(name)
+        assert body.base.get_position()[2] < body.cfg.base.fall_z, name  # the case this pins
+        assert body.base.walk(0.3, 0.0, 0.0, 2.0) is True, name
+        assert body.upright(), name
+        assert body.base.set_posture(name)
+        x, y, _ = body.base.get_position()
+        h = body.base.get_heading()
+        res = body.base.navigate_to(x + 0.6 * math.cos(h), y + 0.6 * math.sin(h), timeout=20.0)
+        assert res, (name, dict(res))
+        assert body.upright(), name
+
+
+def _tip(body) -> None:
+    """Roll the body onto its back, legs in the air, and let it settle there."""
     q = body.rt.snapshot().q.copy()
     sc = body.rt.world.scene
     root = sc.free_q(sc.robot_root)
@@ -217,7 +232,31 @@ def test_a_tipped_body_reports_the_fall(body):
     body.rt.call(lambda w: w.reset(q))
     assert body.base.wait_sim(1.0)
     assert body.base.get_position()[2] < body.cfg.base.fall_z
+
+
+def test_a_tipped_body_reports_the_fall(body):
+    """Started on its back: the trunk lies below the manifest's fall_z, so a walk reports
+    the fall, whatever the policy's legs do to the trunk meanwhile (fall detection is the
+    root height at the start and the end of the walk), and a navigate ends 'fell'. The
+    navigate goes first: the convex MPC's flailing walk can roll the body back onto its
+    feet (measured: on its side at z 0.22 after the 0.5 s walk, then upright)."""
+    _tip(body)
+    x, y, _ = body.base.get_position()
+    assert body.base.navigate_to(x + 1.0, y, timeout=5.0).reason == "fell"
     assert body.base.walk(0.3, 0.0, 0.0, 0.5) is False
+
+
+def test_a_body_tipped_in_a_posture_reports_the_fall(body):
+    """Adversarial for the rise out of a posture: tipped while it holds one, the rise to
+    the stance does not right it, and a walk and a navigate still report the fall."""
+    name = next(iter(body.cfg.base.postures))
+    assert body.base.set_posture(name)
+    _tip(body)
+    assert body.base.walk(0.3, 0.0, 0.0, 0.5) is False
+    body.base.set_posture(name)  # held again, still on its back (legs free: it may reach it)
+    assert body.base.get_position()[2] < body.cfg.base.fall_z
+    x, y, _ = body.base.get_position()
+    assert body.base.navigate_to(x + 1.0, y, timeout=5.0).reason == "fell"
 
 
 def test_the_lidar_sees_from_its_mount(body):
@@ -230,6 +269,23 @@ def test_the_lidar_sees_from_its_mount(body):
     hits = np.array(body.lidar.points())[:, :3]
     assert len(hits) and (np.linalg.norm(hits[:, :2] - body.pose()[:2], axis=1) < spec.range + 1.0).all()
     assert abs(hits[:, 2]).min() < 0.02  # the beams pitched down hit the flat floor
+
+
+def test_a_base_joint_the_model_lacks_names_the_manifest_and_key():
+    """A typo in base.joints (stance and postures renamed with it, so the manifest parses)
+    fails where the body is built, naming the manifest file, base.joints and the valid set."""
+    cfg = registry.load("go2")
+
+    def typo(m):
+        return {("FL_hipp_joint" if j == "FL_hip_joint" else j): a for j, a in m.items()}
+
+    base = dataclasses.replace(cfg.base, joints=tuple(typo(dict.fromkeys(cfg.base.joints))),
+                               stance=typo(cfg.base.stance),
+                               postures={n: typo(q) for n, q in cfg.base.postures.items()})
+    with pytest.raises(EmbodimentConfigError,
+                       match=r"^go2/robot\.yaml: base\.joints \['FL_hipp_joint'\] are not joints of .*go2\.xml; "
+                             r"joints: \[.*'FL_hip_joint'"):
+        Body("mujoco", dataclasses.replace(cfg, base=base))
 
 
 def test_convex_mpc_is_refused_on_pybullet_with_its_reason():
