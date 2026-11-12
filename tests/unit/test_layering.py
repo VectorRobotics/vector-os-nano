@@ -23,7 +23,7 @@ ALLOW = Path(__file__).with_name("layering_allowlist.txt")
 P = "vector_os_nano."
 
 ACTOR = ("skills/", "perception/", "sim/drivers/", "sim/policies/")
-KERNEL = ("vcli/engine.py", "vcli/native_loop.py", "vcli/cognitive/")
+KERNEL = ("vcli/engine.py", "vcli/native_loop.py", "vcli/native_runner.py", "vcli/native_tools.py", "vcli/cognitive/")
 # Rule 6: a base install has none of these; the package and the CLI must import without them.
 HEAVY = ("torch", "transformers", "pybullet", "casadi", "pinocchio", "mcp", "rclpy")
 

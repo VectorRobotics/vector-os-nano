@@ -10,7 +10,10 @@ by contributing:
 1. a persona (role prompt + tool instructions),
 2. a verify namespace (the callables GoalVerifier evaluates predicates against;
    the ``@oracle``-tagged ones are evidence),
-3. routable capabilities (detectors, planners, VLA policies).
+3. routable capabilities (detectors, planners, VLA policies),
+4. the facts the kernel needs about the body it drives (its sim session, the turn
+   marks, its embodiment id, whether it has a base, the actor epoch), so the kernel
+   never imports the simulator or an embodiment.
 
 The default ``DevWorld`` ships with the kernel; ``RobotWorld`` is the robot
 adapter. The kernel never imports a concrete world at module load.
@@ -55,4 +58,25 @@ class World(Protocol):
         contract (a detector, a planner, a VLA policy); the native loop offers each
         as a tool. Must not import heavy deps at module load.
         """
+        ...
+
+    def session(self, agent: Any) -> Any:
+        """The live sim session that owns *agent* (its ground truth, its world
+        manifest), or None: real hardware, no body, the dev world."""
+        ...
+
+    def mark_turn(self, agent: Any, phase: str, goal: str = "") -> None:
+        """Tell *agent*'s sim session a turn starts or ends (``phase``). Never raises."""
+        ...
+
+    def sim_id(self, agent: Any) -> str:
+        """The embodiment id of the sim session whose body is *agent*, else ''."""
+        ...
+
+    def has_base(self, agent: Any) -> bool:
+        """True iff *agent* has a mobile base (the capability profile's flag)."""
+        ...
+
+    def actor_epoch(self) -> Any:
+        """A context manager: while it is open, commanded motion is the actor's own."""
         ...

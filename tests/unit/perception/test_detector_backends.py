@@ -63,7 +63,7 @@ def test_rynnbrain_reply_is_scaled_from_thousandths_to_pixels():
 
 def test_native_detect_tool_passes_the_backend_and_names_it():
     pytest.importorskip("PIL", reason="pillow ([perception] extra): rynnbrain encodes the frame first")
-    from vector_os_nano.vcli.native_loop import _NativeDetectTool
+    from vector_os_nano.vcli.native_tools import _NativeDetectTool
 
     gd, rb = _Det("a can"), _Det("can")
     tool = _NativeDetectTool(DetectorCapability(detector=gd, perception=_Snap(), rynnbrain=rb))

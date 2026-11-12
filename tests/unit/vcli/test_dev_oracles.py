@@ -192,7 +192,7 @@ def test_root_or_proc_as_cwd_is_no_probe_of_the_process_environment(monkeypatch,
 
 def test_the_model_is_told_one_file_per_call() -> None:
     """The verify tool shows each oracle's signature + first docstring paragraph."""
-    from vector_os_nano.vcli.native_loop import _oracle_line
+    from vector_os_nano.vcli.native_tools import _oracle_line
 
     lines = {n: _oracle_line(n, f) for n, f in dev_verify_namespace().items()}
     for name in ("grep_count", "path_contains"):

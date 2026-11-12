@@ -42,7 +42,8 @@ def _robot() -> Any:
 
 def _seen_by_a_turn(rt: Runtime) -> dict[str, Any]:
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracles
-    from vector_os_nano.vcli.native_loop import _build_motor_tools, _native_system_prompt
+    from vector_os_nano.vcli.native_loop import _native_system_prompt
+    from vector_os_nano.vcli.native_tools import _build_motor_tools
 
     engine, agent = rt.engine, rt.agent
     oracles = frozenset(verify_oracles(agent, engine))

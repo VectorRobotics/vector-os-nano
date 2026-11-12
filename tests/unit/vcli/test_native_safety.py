@@ -125,7 +125,7 @@ def test_headless_denies_an_ask_tool_unless_granted(tmp_path, monkeypatch) -> No
 def test_a_side_effecting_capability_is_surfaced_and_asks_first() -> None:
     """S6: every registered capability is a native tool; one that acts asks first."""
     from vector_os_nano.vcli.cognitive.capabilities.registry import CapabilityRegistry
-    from vector_os_nano.vcli.native_loop import _build_motor_tools
+    from vector_os_nano.vcli.native_tools import _build_motor_tools
 
     calls: list[dict] = []
     cap = SimpleNamespace(
@@ -827,7 +827,7 @@ def test_a_partly_answered_tool_use_is_completed_in_the_same_message() -> None:
 
 def test_navigate_is_not_rerun_when_the_base_raises_a_type_error_mid_way() -> None:
     """producers:missed4: ANY TypeError re-ran navigate_to without a timeout."""
-    from vector_os_nano.vcli.native_loop import _NativeBaseNavigateTool
+    from vector_os_nano.vcli.native_tools import _NativeBaseNavigateTool
 
     calls: list[tuple] = []
 
@@ -844,7 +844,7 @@ def test_the_dev_world_can_launch_a_sim() -> None:
     """producers:keyword-gate-default-producer: no keyword router decides anything; the
     dev world's native toolset holds the sim lifecycle, so '启动 go2 仿真' is the
     model's to route, like a dev write."""
-    from vector_os_nano.vcli.native_loop import _build_motor_tools
+    from vector_os_nano.vcli.native_tools import _build_motor_tools
     from vector_os_nano.vcli.runtime import build_registry
 
     dev = SimpleNamespace(_registry=build_registry())

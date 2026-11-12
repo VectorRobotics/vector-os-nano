@@ -31,6 +31,7 @@ _PREEMPT_WAIT_S = 30.0
 # What a world must implement to be bound (vcli/worlds/base.py World).
 _WORLD_MEMBERS: tuple[str, ...] = (
     "is_robot", "persona_blocks", "build_verify_namespace", "register_capabilities",
+    "session", "mark_turn", "sim_id", "has_base", "actor_epoch",
 )
 
 

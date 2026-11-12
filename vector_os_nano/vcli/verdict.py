@@ -20,14 +20,14 @@ verdict with its own logic. The contract test pins this:
         == evidence_passed(trace, oracle_names)
 
 so the machine signal can only ever AGREE with the gate the engine itself uses.
-An empty oracle set, a sentinel ``""``/``"True"`` verify, an absent oracle, a
-tautology, or a VLM visual override all classify RAN (not GROUNDED), so the
-signal fails CLOSED — the moat only ever gets stricter.
+An empty oracle set, a sentinel ``""``/``"True"`` verify, an absent oracle or a
+tautology all classify RAN (not GROUNDED), so the signal fails CLOSED — the moat
+only ever gets stricter.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from vector_os_nano.vcli.cognitive.trace_store import (

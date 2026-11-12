@@ -1,40 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""native_loop — a frontier-model NATIVE TOOL-USE turn producer (strangler-fig core).
+"""native_loop — the turn loop of the ONE producer: the model, its prompt, the session.
 
-Campaign #13, M1 FIRST STEP. This is the producer half of the strangle move: the
-MODEL drives a native tool-use ReAct loop (skills-as-tools + a synthetic
-``verify(expr)`` + ``finish``), and the loop assembles an ``ExecutionTrace`` the
-EXISTING honest verify spine consumes BYTE-FOR-BYTE UNCHANGED. It does NOT compute
-``verified`` itself — it hands the trace to ``VerdictReport.from_trace`` /
-``evidence_passed`` (rule 5: verify is the moat, single-sourced).
+The MODEL drives a native tool-use ReAct loop (its tools from ``native_tools``, the
+synthetic ``verify(expr)`` + ``finish``); ``native_runner`` dispatches, verifies, grades
+and records, and this loop hands the resulting ``ExecutionTrace`` to the honest verify
+spine unchanged. It does NOT compute ``verified`` itself — the caller feeds the trace
+to ``VerdictReport.from_trace`` / ``evidence_passed`` (rule 5: verify is the moat,
+single-sourced).
 
 REPLACE-NOT-REBUILD, enforced BY CONSTRUCTION (review fix 5):
 
-    This module imports ONLY the honest spine — ``actor_causation``,
-    ``trace_store`` (the verdict + oracle names live one hop further), the
-    GoalVerifier namespace builder (via the engine, passed in), and
-    ``SkillWrapperTool``. The runner's ONLY logic is: capture baseline -> dispatch the skill via
-    SkillWrapperTool -> evaluate verify via the live GoalVerifier -> grade via
-    ``actor_causation.grade`` -> append ONE StepRecord. The MODEL owns
-    decompose / route / replan — there is NO replan / iteration / "landed-short"
-    bookkeeping here (that would be re-growing the planner — the tell).
-
-StepRecord granularity (review fix 2): EXACTLY ONE StepRecord per
-(action-chain -> verify) pair. Intermediate bare skill calls between two
-``verify`` calls are NOT each a checked sub-goal and are NOT sentinel-verified
-(that would re-open the no-op/teleport hole). The ``verify`` tool HANDLER is what
-appends the StepRecord, binding the just-run skill calls as the producing action
-and the model's expr as the SubGoal.verify.
-
-Capture/grade timing (review fix 3):
-the actor-causation baseline is captured immediately BEFORE the first skill call
-of a step; the grade reads a FRESH post-capture immediately AFTER evaluating that
-step's verify expr. A re-verify of the same predicate (an attempt group, WP07) that
-retried or only re-checked the latest attempt is graded against that attempt's
-baseline; after any other action it is graded on its own step. Only the actor's own
-tools count as commanded motion (``ACTOR_EPOCH``).
+    The producer (``native_loop`` / ``native_runner`` / ``native_tools``) imports ONLY
+    the honest spine — ``actor_causation``, ``trace_store``, the GoalVerifier, the
+    task contract — and the tool layer; the body's sim facts come from the bound
+    world. The runner's ONLY logic is: capture baseline -> dispatch the tool -> evaluate
+    verify via the live GoalVerifier -> grade via ``actor_causation`` -> append ONE
+    StepRecord. The MODEL owns decompose / route / replan — there is NO replan /
+    iteration / "landed-short" bookkeeping here (that would be re-growing the planner).
 
 Turn contract (WP07): the goal compiles to GT predicates (``task_contract``),
 printed as "Task contract: ..." before the first model call and evaluated at turn
@@ -42,43 +26,31 @@ start and turn end; the spine requires each False -> True.
 """
 from __future__ import annotations
 
-import inspect
-import json
 import logging
 import math
 import os
-import re
-import string
 import threading
 import time
-from dataclasses import replace
 from typing import Any, Callable
 
 from vector_os_nano.vcli.backends.types import LLMResponse
 from vector_os_nano.vcli.cognitive import abort as _abort
-from vector_os_nano.vcli.cognitive import actor_causation
-from vector_os_nano.sim.runtime import ACTOR_EPOCH
-from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 from vector_os_nano.vcli.cognitive.object_goal import task_contract, unbound_reason
-from vector_os_nano.vcli.cognitive.trace_store import attempt_key, graded_indices, verify_oracles
-from vector_os_nano.vcli.cognitive.types import (
-    ExecutionTrace,
-    GoalTree,
-    StepRecord,
-    SubGoal,
+from vector_os_nano.vcli.cognitive.trace_store import verify_oracles
+from vector_os_nano.vcli.cognitive.types import ExecutionTrace
+from vector_os_nano.vcli.native_runner import LIFECYCLE_TOOLS, NativeStepRunner, sim_session
+from vector_os_nano.vcli.native_tools import (
+    FINISH_TOOL,
+    VERIFY_TOOL,
+    _agent_base,
+    _build_motor_tools,
+    _native_tool_schemas,
 )
-from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.prompt import user_prompt_files
-from vector_os_nano.vcli.tool_execution import execute_resolved_tool, resolve_permission
-from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
-from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
+from vector_os_nano.vcli.tools.base import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
-
-# Synthetic tool names the runner OWNS (never wrapped from a skill).
-VERIFY_TOOL = "verify"
-FINISH_TOOL = "finish"
 
 # A hard cap on native round-trips so a misbehaving model / script can never spin
 # forever. Mirrors the engine's _max_turns spirit; the loop also stops on finish.
@@ -89,869 +61,6 @@ _MAX_NATIVE_TURNS = 24
 # verify still terminates — the unverified action then grades honestly (empty/RAN),
 # never a false green. The verify stays MODEL-authored; the runner never invents it.
 _MAX_VERIFY_NUDGES = 2
-
-# The registry category whose tools are the kernel's domain-general ACTION surface
-# (file_read/file_write/file_edit/bash/glob/grep — each tool declares its category).
-# The native loop offers
-# these as motor tools alongside the world's skills, so the dev world (no robot agent,
-# hence no wrapped skills) can still ACT — and the robot world gains the same code
-# tools. World-agnostic BY CONSTRUCTION: native asks the ENGINE'S registry for its
-# registered action tools; there is NO "if dev" branch.
-_CODE_TOOL_CATEGORY = "code"
-_SIM_TOOL_CATEGORY = "sim"
-_ROBOT_TOOL_CATEGORY = "robot"
-
-# The sim lifecycle tools: they change WHICH body the turn drives. They count as an
-# action (the turn is owned; nothing re-runs them) but prove nothing themselves, so
-# they never open a graded step; after one succeeds the runner rebinds the turn to
-# the new body (tools, verifier, oracle names, causation baseline).
-LIFECYCLE_TOOLS: frozenset[str] = frozenset({"start_simulation", "stop_simulation"})
-
-# The MUTATING code tools — the ones whose effect is a file/shell WRITE the model can
-# author at will (so it can "accomplish" a task by writing a marker file or running a
-# shell command), NEVER a read-only diagnostic. In a ROBOT world these must NOT be an
-# action path to a PHYSICAL goal: the fakeable-grasp defect was deepseek satisfying
-# "抓前面的东西" by ``file_write('grabbed.txt')`` then ``verify(file_exists('grabbed.txt'))``
-# (D17). A physical robot task is accomplished by a robot SKILL and proven by a GT
-# oracle the actor cannot author — never by touching a file. So a robot world drops
-# these from the loop's ACTION toolset (Prong 1) while KEEPING the read-only diagnostics
-# (file_read / glob / grep) the persona uses to inspect code. The DEV world is untouched
-# — it has no robot agent, so the gate below never fires there. Prong 2 (the goal-
-# authenticity gate in the frozen spine) is the un-fakeable backstop if a model ever
-# reaches a file oracle another way; this prong removes the easy path by construction.
-_MUTATING_CODE_TOOLS: frozenset[str] = frozenset({"file_write", "file_edit", "bash"})
-
-
-# D9 #1 — the avoidance NAVIGATION route.
-_NAV_TIMEOUT_S = 60.0
-
-
-def _agent_base(context: ToolContext) -> Any:
-    """The connected mobile base from the tool context's agent (the WIRED accessor).
-
-    The ``walk`` skill, the verify oracles, and actor-causation all reach the live base
-    via ``agent._base``, so native does too.
-    """
-    agent = getattr(context, "agent", None)
-    return getattr(agent, "_base", None)
-
-
-class _NativeBaseNavigateTool:
-    """Coordinate navigation through the nav-stack AVOIDANCE route (D9 #1).
-
-    ``execute`` calls the connected base's ``navigate_to(x, y)``: the in-process
-    planner (vgraph + the one sim-time follower) plans around the scene's obstacles and
-    blocks until arrival, a stop, or timeout. This is the obstacle avoidance the
-    open-loop ``walk`` lacks. The follower streams velocity inside the producer's
-    ``ACTOR_EPOCH`` (the dispatch is open), so its commanded motion counts and a
-    ``navigate`` step's ``at_position`` verify grades CAUSED when the base really moved
-    there (closes D14's "nav RAN-only"); an external TARE/FAR follower driving the base
-    between tools is never counted. ``verify_hint`` auto-verifies the target after it
-    returns; it and the sentence about it are read off the world's arrival oracle
-    (``ARRIVAL_ORACLE``): its own parameters bind the call's ``x`` / ``y``, its own
-    signature and docstring are what the model reads. A world without that oracle gets
-    no hint. Duck-typed like a ``Tool`` so ``dispatch_skill`` runs it uniformly.
-    """
-
-    name = "navigate"
-    ARRIVAL_ORACLE = "at_position"
-    input_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "x": {"type": "number", "description": "Target x (world frame, metres)."},
-            "y": {"type": "number", "description": "Target y (world frame, metres)."},
-        },
-        "required": ["x", "y"],
-    }
-
-    def __init__(self, arrived: Any = None) -> None:
-        self.description = (
-            "Go to a world coordinate (x, y) using the navigation PLANNER, which AVOIDS "
-            "obstacles (lidar + local planner). Use this to REACH a place/coordinate."
-        )
-        self.verify_hint = ""
-        try:
-            params = list(inspect.signature(arrived).parameters) if callable(arrived) else []
-        except (TypeError, ValueError):
-            params = []
-        bound = [p for p in params if p in self.input_schema["required"]]
-        if bound:
-            self.verify_hint = f"{self.ARRIVAL_ORACLE}({', '.join('{%s}' % p for p in bound)})"
-            self.description += (f" It is then verified with {_oracle_line(self.ARRIVAL_ORACLE, arrived)}")
-
-    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
-        # It drives the base: confirm unless the body is a live in-process sim.
-        from vector_os_nano.sim.session import is_sim_agent
-
-        return PermissionResult("allow" if is_sim_agent(getattr(context, "agent", None)) else "ask")
-
-    def is_read_only(self, params: dict[str, Any]) -> bool:
-        return False
-
-    def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        try:
-            x = float(params["x"])
-            y = float(params["y"])
-        except (KeyError, TypeError, ValueError):
-            return ToolResult(content="navigate requires numeric x and y.", is_error=True)
-
-        base = _agent_base(context)
-        navigate_to = getattr(base, "navigate_to", None)
-        if not callable(navigate_to):
-            return ToolResult(
-                content="navigate: the connected base has no navigate_to (no nav stack).",
-                is_error=True,
-            )
-
-        res = None
-        # Pass a timeout only to a base that takes one: retrying on ANY TypeError
-        # would re-run a navigation that raised one mid-way.
-        try:
-            params_ = inspect.signature(navigate_to).parameters.values()
-            takes_timeout = any(p.name == "timeout" or p.kind is p.VAR_KEYWORD for p in params_)
-        except (TypeError, ValueError):
-            takes_timeout = False
-        try:
-            res = navigate_to(x, y, timeout=_NAV_TIMEOUT_S) if takes_timeout else navigate_to(x, y)
-            ok = bool(res)
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(content=f"navigate({x}, {y}) failed: {exc}", is_error=True)
-
-        pos = None
-        getter = getattr(base, "get_position", None)
-        if callable(getter):
-            try:
-                pos = getter()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("native_loop: navigate get_position failed: %s", exc)
-        where = f"({pos[0]:.2f}, {pos[1]:.2f})" if pos else "unknown"
-        reason = getattr(res, "reason", None)  # the in-process planner's NavResult (Rule 4)
-        if ok:
-            status = "arrived"
-            if reason is not None and res.get("snapped"):
-                status += f" at {tuple(res['target'])}, the nearest free point (the target is inside an obstacle)"
-        elif getattr(getattr(context, "abort", None), "is_set", lambda: False)():
-            status = "was STOPPED before arrival"
-        elif reason is not None:
-            status = f"did NOT arrive ({reason})"
-        else:
-            status = "did NOT confirm arrival (FAR graph unavailable or timeout)"
-        return ToolResult(
-            content=f"navigate: {status}; now at {where} (target ({x}, {y}))."
-        )
-
-
-class _NativeDetectTool:
-    """Route a NAMED/COLOUR query to the learned grounding-dino DETECTOR capability.
-
-    R4 — composes the two North-Star axes on ONE turn: this surfaces the registered
-    ``DetectorCapability`` (the learned SECOND model family, grounding-dino-tiny) into
-    the native loop so a bare-cli detect command reaches it on whatever camera-bearing
-    embodiment is connected — go2+arm OR g1 (the humanoid, camera but NO arm). It does
-    NOT re-implement detection: ``execute`` pulls the SAME capability instance the world
-    registered into the engine's ``CapabilityRegistry`` (agent-bound for the live
-    perception) and invokes it — single-sourced, no second model load (rule 3).
-
-    Read-only PERCEPTION: the detector only localizes, it does not act on the world.
-    The capability never self-certifies: the suggested verify is the GT ``in_view``
-    oracle (segmentation of the robot's own camera, which the detector never sees), and
-    it grades on the base channel, so a detect without a base move grades RAN — the
-    honest grade for a perceive-only route. ``localized`` (the scene graph vs GT) holds
-    once look/explore have put the object on the map.
-
-    Duck-typed like a ``Tool`` so ``dispatch_skill`` runs it uniformly. Only surfaced
-    when a ``detect`` capability is registered AND the agent has a camera (see
-    ``_build_motor_tools``) — sensorless/dev paths never see it.
-    """
-
-    name = "detect"
-    description = (
-        "Localize a named or coloured object in the robot's CAMERA view with a learned "
-        "detector. Pass the target as 'query' (e.g. 'red object', 'a red stool', "
-        "'红色的东西'). 'backend' picks the model: 'grounding-dino' (default: local, "
-        "~0.1 s, scored boxes, best with an English noun phrase) or 'rynnbrain' (an "
-        "external embodied VLM: ~1 s, one unscored box, reads Chinese and relations like "
-        "'the bottle left of the red can'; use it when the user asks for RynnBrain or "
-        "the target is described by relation). Returns box(es) + label(s) + score(s). "
-        "PERCEPTION only (read-only). After it returns, call the verify expression the "
-        "tool result tells you to use."
-    )
-    input_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Natural-language target to localize (named or coloured).",
-            },
-            "backend": {
-                "type": "string",
-                "enum": ["grounding-dino", "rynnbrain"],
-                "description": "Detector model (default grounding-dino).",
-            },
-        },
-        "required": ["query"],
-    }
-
-    def __init__(self, capability: Any) -> None:
-        # The SAME registered DetectorCapability the world bound to the agent's live
-        # perception — never a fresh instance, never a second model load.
-        self._capability = capability
-        self.name = str(getattr(capability, "name", "") or "detect")
-
-    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
-        return PermissionResult("allow")  # perception only
-
-    def is_read_only(self, params: dict[str, Any]) -> bool:
-        return True
-
-    @staticmethod
-    def _verify_hint(agent: Any, query: str) -> str:
-        """The GT verify the model should make after detect (it still authors it)."""
-        return f"verify(in_view({query!r}))"
-
-    def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        query = str((params or {}).get("query", "")).strip()
-        if not query:
-            return ToolResult(content="detect requires a non-empty 'query'.", is_error=True)
-        hint = self._verify_hint(getattr(context, "agent", None), query)
-        payload = {"query": query}
-        if (params or {}).get("backend"):
-            payload["backend"] = str(params["backend"])
-        try:
-            result = self._capability.invoke(payload, context)
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(content=f"detect({query!r}) raised: {exc}", is_error=True)
-
-        output = dict(getattr(result, "output", {}) or {})
-        boxes = output.get("boxes") or []
-        labels = output.get("labels") or []
-        scores = output.get("scores") or []
-        model = output.get("backend") or payload.get("backend") or "grounding-dino"
-
-        # MOAT DISCIPLINE (R6 audit): the detector's OWN output is never stashed on
-        # the agent for a verify to read back (the D61 self-certifying tautology); it
-        # flows only to the human-readable tool output below.
-        if not getattr(result, "success", False) and not boxes:
-            err = getattr(result, "error", "")
-            if err:  # the model did not run on this query (down, ungroundable, bad backend)
-                return ToolResult(content=f"detect({query!r}) via {model} failed: {err}", is_error=True)
-            return ToolResult(
-                content=(
-                    f"detect({query!r}): {model} RAN but localized nothing. "
-                    f"{hint} checks whether it is in the camera view at all."
-                )
-            )
-        first = (
-            f"label={labels[0]!r} box={[round(float(v), 1) for v in boxes[0]]} "
-            f"score={float(scores[0]):.2f}"
-            if boxes and labels and scores
-            else "(box)"
-        )
-        return ToolResult(
-            content=(
-                f"detect({query!r}): {model} localized {len(boxes)} object(s); "
-                f"top {first}. Call {hint} to confirm."
-            )
-        )
-
-
-class _NativeCapabilityTool:
-    """Any registered Capability as a native tool (S6): the model routes to it by name.
-
-    A ``side_effecting`` capability (a VLA, a planner that moves the robot) goes
-    through the permission gate as ``ask``; a read-only one is allowed. The
-    capability never self-certifies — its output is tool text, the verify is the moat.
-    """
-
-    def __init__(self, capability: Any) -> None:
-        self._capability = capability
-        self.name = str(capability.name)
-        self.description = str(
-            getattr(capability, "description", "")
-            or f"Routable {getattr(capability, 'kind', 'model')} capability '{self.name}'."
-        )
-        self.input_schema = dict(
-            getattr(capability, "input_schema", None) or {"type": "object", "properties": {}}
-        )
-        self._side_effecting = bool(getattr(capability, "side_effecting", True))
-
-    def check_permissions(self, params: dict[str, Any], context: ToolContext) -> PermissionResult:
-        return PermissionResult("ask" if self._side_effecting else "allow")
-
-    def is_read_only(self, params: dict[str, Any]) -> bool:
-        return not self._side_effecting
-
-    def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        result = self._capability.invoke(dict(params or {}), context)
-        if not getattr(result, "success", False):
-            return ToolResult(
-                content=f"{self.name} failed: {getattr(result, 'error', '') or 'no output'}",
-                is_error=True,
-            )
-        output = json.dumps(getattr(result, "output", {}) or {}, ensure_ascii=False, default=str)
-        return ToolResult(content=f"{self.name}: {output[:2000]}")
-
-
-# ---------------------------------------------------------------------------
-# Synthetic tool schemas (the verify/finish/motor tool-set the model is offered)
-# ---------------------------------------------------------------------------
-
-
-def _oracle_line(name: str, fn: Any) -> str:
-    """``name(args): <first paragraph of the oracle's docstring>`` — what the model reads."""
-    try:
-        params = inspect.signature(fn).parameters.values()
-        sig = str(inspect.Signature([p.replace(annotation=inspect.Parameter.empty) for p in params]))
-    except (TypeError, ValueError):
-        sig = "(...)"
-    doc = " ".join((inspect.getdoc(fn) or "").split("\n\n")[0].split())
-    return f"{name}{sig}: {doc}" if doc else f"{name}{sig}"
-
-
-def _verify_tool_schema(namespace: dict[str, Any], oracle_names: frozenset[str]) -> dict[str, Any]:
-    """Anthropic-shaped schema for the synthetic ``verify(expr)`` tool.
-
-    The predicates are listed from ONE source: for every evidence oracle of the
-    active world (``verify_oracle_names``), its signature and the first paragraph of
-    its own docstring, read off the SAME namespace the verifier evaluates.
-    """
-    lines = "\n".join(f"- {_oracle_line(n, namespace[n])}" for n in sorted(oracle_names) if n in namespace)
-    desc = (
-        "Check a deterministic post-condition predicate against real world state, "
-        "then bind it as this step's verification. Call this AFTER the action skill(s) "
-        "that should have achieved the goal. The predicate is evaluated by an "
-        "independent verifier over real sensor/sim ground truth — it cannot be faked. "
-        "Pass the FULL predicate expression as 'expr' (combine predicates with and / "
-        "or / not). After a retry, verify the SAME predicate again: the latest attempt "
-        "counts, and a different, easier predicate never replaces a FAIL. Each verify "
-        "must follow an action. Predicates:\n" + (lines or "(none)")
-    )
-    return {
-        "name": VERIFY_TOOL,
-        "description": desc,
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "expr": {
-                    "type": "string",
-                    "description": "The deterministic verify predicate to evaluate.",
-                },
-                "goal_id": {
-                    "type": "string",
-                    "description": "Optional: a short id of the sub-goal this verify proves.",
-                },
-            },
-            "required": ["expr"],
-        },
-    }
-
-
-def _finish_tool_schema() -> dict[str, Any]:
-    return {
-        "name": FINISH_TOOL,
-        "description": (
-            "Signal the task is complete. Call this once every step has been "
-            "executed and verified."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    }
-
-
-# ---------------------------------------------------------------------------
-# NativeStepRunner — the ONLY stateful piece (capture -> dispatch -> verify -> grade)
-# ---------------------------------------------------------------------------
-
-
-def actor_state(agent: Any) -> Any:
-    """The causation baseline of *agent*: its drivers' motion counters, the true pose of
-    its sim session (none outside a sim: every robot channel then fails closed)."""
-    from vector_os_nano.sim.session import session_for
-
-    return actor_causation.capture(agent, session_for(agent))
-
-
-class NativeStepRunner:
-    """Assemble an ExecutionTrace from a native tool-use turn loop.
-
-    Holds the live GoalVerifier namespace + oracle names/tags + the motor tool-set,
-    and the per-step accumulator (the action chain + its capture baseline). The
-    MODEL issues the tool calls; this runner only dispatches, verifies, grades, and
-    records — never decides what to do next.
-
-    WP07 bookkeeping (no planning):
-    - attempt groups: a verify is keyed by its normalized AST (+ an optional model
-      ``goal_id``); a re-verify of the same predicate supersedes the earlier row (the
-      spine grades the latest only — ``trace_store.graded_indices``) and is graded
-      against the group's baseline only when it retried or re-checked the latest
-      attempt (``_group_baseline``), else on its own step;
-    - a step FAILED when any side-effecting tool of its chain reported an error, not
-      only its last tool;
-    - auto post-verify: an actuating tool whose ``verify_hint`` binds from its call
-      params is checked right after it runs; that check closes the step unless the
-      model verifies first (then the model's predicate is the step's — but a FAILED
-      auto-verify of another predicate stays its own row);
-    - probe refusal: a model verify with no action since its last verify is refused
-      unevaluated (no GT bit leak);
-    - every dispatch runs inside ``ACTOR_EPOCH.tool()``, so only the actor's own
-      commanded motion counts toward causation.
-    """
-
-    def __init__(
-        self,
-        agent: Any,
-        verifier: Any,
-        oracle_names: frozenset[str],
-        motor_tools: dict[str, Any],
-        tool_context: ToolContext,
-        ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
-        oracles: dict[str, Any] | None = None,
-    ) -> None:
-        self._agent = agent
-        self._verifier = verifier
-        self._oracle_names = oracle_names
-        # {name: OracleTag}: the channel / transition the causation grader reads.
-        self._oracles = oracles if oracles is not None else {}
-        self._motor_tools = motor_tools
-        self._ctx = tool_context
-        # Resolves an "ask" permission (the REPL's prompt). None denies: the
-        # headless default — only --no-permission (PermissionContext) allows.
-        self._ask = ask_permission
-        # The actor state when the turn (or its current body) started: a turn-window
-        # oracle (kept_holding) is caused only by a transition since then.
-        self._turn_baseline: Any = actor_state(agent)
-
-        # Per-step accumulator: the producing action chain (skill names) + the
-        # capture baseline taken BEFORE the first skill of the current step.
-        self._chain: list[str] = []
-        self._baseline: Any = None
-        self._step_open: bool = False
-        self._step_acted: bool = False  # a side-effecting tool ran this step
-        # Every tool of the step's chain is read-only or a declared housekeeping
-        # action (stop): the row may stay un-GROUNDED when another row proved the turn
-        # (trace_store.turn_reject_reason), and a re-verify after it only re-checks.
-        self._housekeeping: bool = True
-        self._last_ok: bool = True      # the chain's last tool did not report an error
-        self._acting: set[str] = set()  # the step's side-effecting tools
-        self._acting_failed: bool = False  # one of them reported an error
-        self._last_result: ToolResult | None = None
-        # The auto post-verify of the last actuating tool, until the step closes.
-        self._pending: dict[str, Any] | None = None
-        # Probe refusal: a model verify needs a side-effecting action since the last.
-        self._acted_since_verify: bool = True
-        # attempt group -> (the baseline its LATEST attempt was graded against, that
-        # attempt's side-effecting tools). See ``_group_baseline``.
-        self._group_baselines: dict[tuple[str, str], tuple[Any, frozenset[str]]] = {}
-        # Manipulation intents of the dispatched skills ("grasp" / "place").
-        self.intents: set[str] = set()
-
-        # Side-effecting tool calls over the whole turn: nonzero means the turn
-        # acted, so no other producer may re-run it (no double execution).
-        self.actions_dispatched: int = 0
-        # Calls the permission gate refused ("<tool>: <why>"): the user sees them, and
-        # no other producer re-attempts what was just refused.
-        self.refused: list[str] = []
-
-        # The assembled trace pieces (one SubGoal + one StepRecord per verify pair).
-        self._sub_goals: list[SubGoal] = []
-        self._steps: list[StepRecord] = []
-        self._step_idx: int = 0
-
-    @property
-    def has_unverified_action(self) -> bool:
-        """True iff a SIDE-EFFECTING tool ran for the current step and nothing proved
-        it yet — neither a model verify nor an auto post-verify (D23: weak models skip
-        verify on easy tasks). A read (file_read, detect, where_am_i) changes nothing,
-        so it is never nudged: the model answers from it.
-        """
-        return self._step_acted and self._pending is None
-
-    # ------------------------------------------------------------------
-    # Skill dispatch (capture baseline before the first skill of a step)
-    # ------------------------------------------------------------------
-
-    def dispatch_skill(self, name: str, params: dict[str, Any]) -> ToolResult:
-        """Gate, then run a motor/skill tool; open a step if needed.
-
-        Every dispatch goes through the permission gate (``resolve_permission``):
-        an intrinsic deny (the bash deny-list, a
-        protected path) never runs; an ``ask`` runs only on an explicit yes from the
-        resolver (None denies — the headless default). A denied call is not an action.
-
-        The actor-causation baseline is captured immediately BEFORE the FIRST skill
-        call of the current step (review fix 3), then frozen — advancing the robot
-        afterwards cannot mutate it (ActorBaseline is a value snapshot).
-        """
-        tool = self._motor_tools.get(name)
-        if tool is None:
-            return ToolResult(content=f"Unknown tool '{name}'.", is_error=True)
-        decision = resolve_permission(
-            tool, params, self._ctx, self._ctx.permissions or PermissionContext(), self._ask,
-        )
-        if not decision.allowed:
-            why = decision.reason if decision.kind == "deny" else (
-                "not allowed (permission was not granted)" if decision.kind == "ask_deny"
-                else f"permission check failed: {decision.reason}"
-            )
-            self.refused.append(f"{name}: {why}")
-            return ToolResult(content=f"Permission denied for {name}: {why}. The tool did NOT run.",
-                              is_error=True)
-        if name in LIFECYCLE_TOOLS:
-            # The body is about to change: a chain on the old one is never verified now.
-            self.close_chain()
-            self.actions_dispatched += 1
-            return execute_resolved_tool(
-                tool, params, self._ctx, error_prefix=f"Tool '{name}' raised",
-                on_error=lambda _n, exc: logger.debug("native_loop: %r raised: %s", name, exc),
-            )
-        try:
-            read_only = bool(tool.is_read_only(params))
-        except Exception:  # noqa: BLE001 — no/broken declaration: fail closed (it acts)
-            read_only = False
-        if not read_only:
-            self._flush_pending()  # an auto-verified step closes before the next action
-        if not self._step_open:
-            # First skill of a fresh step -> capture the causation baseline NOW.
-            self._baseline = actor_state(self._agent)
-            self._step_open = True
-        self._chain.append(name)
-        hint = None
-        if not read_only and getattr(tool, "housekeeping", False) is not True:
-            self._housekeeping = False
-        if not read_only:
-            self.actions_dispatched += 1
-            self._step_acted = True
-            self._acted_since_verify = True
-            self._acting.add(name)
-            hint = self._bound_hint(tool, params)
-            self._note_intents(tool)
-        before = self._check(hint) if hint else None  # F->T: the hint at the baseline
-        with ACTOR_EPOCH.tool():
-            result = execute_resolved_tool(
-                tool, params, self._ctx, error_prefix=f"Skill '{name}' raised",
-                on_error=lambda _n, exc: logger.debug("native_loop: skill %r raised: %s", name, exc),
-            )
-        self._last_ok = not result.is_error
-        self._acting_failed |= result.is_error and not read_only
-        self._last_result = result
-        if hint and self._last_ok:
-            ok = self._check(hint)
-            caused, channels = self._grade(hint)
-            # F->T for THIS action — unless it re-attempts a group whose earlier attempt
-            # made it true: then the group baseline (in _grade) is the judge.
-            if before and self._group_baseline(("native", attempt_key(hint))) is None:
-                caused, channels = actor_causation.ActorCaused.UNCAUSED, ("already true before the action",)
-            # The auto check belongs to THIS tool: keep its own result for the record
-            # (a later read in the same step must not stand in for it).
-            self._pending = {"expr": hint, "ok": ok, "caused": caused, "channels": channels,
-                             "data": self._result_data(), "chain": len(self._chain)}
-            result = ToolResult(
-                content=f"{result.content}\nauto-verify {hint} -> {verify_word(ok)}",
-                is_error=result.is_error, metadata=result.metadata,
-            )
-        return result
-
-    def _bound_hint(self, tool: Any, params: dict[str, Any]) -> str | None:
-        """The tool's ``verify_hint`` bound from its call params, if it binds to a GT
-        evidence predicate (``at_position({x}, {y})`` -> ``at_position(2.0, 3.0)``)."""
-        hint = str(getattr(tool, "verify_hint", "") or "").strip()
-        if not hint or hint == "True":
-            return None
-        try:
-            bound = hint.format_map({k: repr(v) for k, v in (params or {}).items()})
-        except (KeyError, IndexError, ValueError):
-            return None  # a placeholder the call did not fill
-        if re.search(r"<\w+>", bound) or classify_verify_expr(bound, self._oracle_names) != "GROUNDED":
-            return None
-        # An object the world manifest cannot resolve binds nothing (no evidence), never a guess.
-        from vector_os_nano.sim.session import session_for
-
-        world = getattr(session_for(self._agent), "world", None)
-        used = {f for _, f, _, _ in string.Formatter().parse(hint) if f}
-        if world is not None and any(isinstance(params[f], str) and world.resolve(params[f]) is None for f in used):
-            return None
-        return bound
-
-    def _note_intents(self, tool: Any) -> None:
-        """A dispatched skill whose hint names a gripper oracle is a manipulation:
-        a rising one (holding) a grasp, a falling / level one (release, placement) a place.
-        A skill whose spec releases what is held (``effects['held_object'] = None``:
-        gripper_open, handover) is a place even without a hint."""
-        effects = getattr(tool, "effects", None)
-        if isinstance(effects, dict) and "held_object" in effects and effects["held_object"] is None:
-            self.intents.add("place")
-        for _name, _call, channel, want in actor_causation.robot_calls(
-            str(getattr(tool, "verify_hint", "") or ""), self._oracles
-        ):
-            if channel == "gripper":
-                self.intents.add("grasp" if want == "rise" else "place")
-
-    def _check(self, expr: str) -> bool:
-        try:
-            return bool(self._verifier.verify(expr))
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("native_loop: verify(%r) raised: %s", expr, exc)
-            return False
-
-    # ------------------------------------------------------------------
-    # The verify-tool HANDLER — appends EXACTLY ONE StepRecord per pair
-    # ------------------------------------------------------------------
-
-    def handle_verify(self, expr: str, goal_id: str = "") -> ToolResult:
-        """Evaluate *expr* via the live GoalVerifier, grade causation, record ONE step.
-
-        The (action-chain -> verify) pair becomes ONE StepRecord whose SubGoal.verify
-        is the model's expr and whose strategy is the producing action chain. A verify
-        with no action since the model's last one is refused unevaluated. The loop
-        NEVER computes verified — the spine does, from this trace.
-        """
-        expr = (expr or "").strip()
-        if not self._acted_since_verify:
-            return ToolResult(
-                content=(f"verify({expr}) refused: no action ran since your last verify. "
-                         "Act first; a verify alone cannot change the world."),
-                is_error=True,
-            )
-        self._acted_since_verify = False
-        auto = self._pending
-        if auto is not None and not auto["ok"] and attempt_key(auto["expr"]) != attempt_key(expr):
-            # The model may ADD a verify, never replace a FAILED auto-verify of a
-            # different predicate: that FAIL is its own graded row.
-            self._flush_pending()
-            auto = None
-        self._pending = None  # the model's own predicate is this step's verify
-        verify_result = self._check(expr)
-        # Why the predicate could not be evaluated (its exception's type and message,
-        # or the sandbox's refusal), so the model can correct it. Never a value it read.
-        why = "" if verify_result else str(getattr(self._verifier, "last_error", "") or "")
-        actor_caused, channels = self._grade(expr, goal_id)
-        data = self._result_data()
-        if auto is not None:
-            data["auto_verify"] = {"expr": auto["expr"], "result": auto["ok"]}
-        self._record(expr, verify_result, actor_caused, channels, goal_id, data)
-        return ToolResult(
-            content=(
-                f"verify({expr}) -> {verify_word(verify_result)} "
-                f"(result={verify_result}, actor={actor_caused.value})"
-                + (f"; it could not be evaluated: {why}" if why else "")
-            )
-        )
-
-    def rebind(self, agent: Any, verifier: Any, oracles: dict[str, Any], motor_tools: dict[str, Any]) -> None:
-        """A lifecycle tool switched the body: later steps run, verify and grade on *agent*
-        (an attempt baseline of the old body never grades the new one)."""
-        self._agent, self._verifier = agent, verifier
-        self._oracles, self._oracle_names = oracles, frozenset(oracles)
-        self._motor_tools = motor_tools
-        self._ctx.agent = agent
-        self._group_baselines.clear()
-        self._turn_baseline = actor_state(agent)
-
-    def _record(
-        self, expr: str, verify_result: bool, actor_caused: Any, channels: tuple[str, ...],
-        goal_id: str, data: dict[str, Any], note: str = "verify", failed: bool | None = None,
-    ) -> None:
-        strategy = self._chain[-1] if self._chain else ""
-        step_name = f"native_step_{self._step_idx}"
-        self._step_idx += 1
-        self._sub_goals.append(SubGoal(
-            name=step_name,
-            description=f"native: {' -> '.join(self._chain) or '(no action)'} | {note} {expr}",
-            verify=expr,
-            strategy=strategy,
-        ))
-        # The step "ran" (success) iff no side-effecting tool of its chain and not its
-        # LAST tool reported an error; a pure check (no tool) records success=True so
-        # the gate keys on GROUNDED/RAN. A failed skill followed by a read and a true
-        # verify is FAILED, never GROUNDED: the skill's own failure is kept, with its
-        # message, in error / result_data (rule 4).
-        if failed is None:
-            failed = self._acting_failed or (bool(self._chain) and not self._last_ok)
-        key = (goal_id or "native", attempt_key(expr))
-        if self._baseline is not None and not self._rechecks(key):  # a new attempt of the group
-            self._group_baselines[key] = (self._group_baseline(key) or self._baseline,
-                                          frozenset(self._acting))
-        self._steps.append(StepRecord(
-            sub_goal_name=step_name,
-            strategy=strategy,
-            success=not failed,
-            verify_result=verify_result,
-            duration_sec=0.0,
-            error=str(data.get("content", ""))[:300] if failed else "",
-            result_data=data,
-            actor_caused=actor_caused,
-            attempt_of=goal_id or "native",
-            channels=channels,
-            housekeeping=self._housekeeping,
-        ))
-        self._close_step()
-
-    def _result_data(self) -> dict[str, Any]:
-        """The producing tool's own result (content, is_error, data) for the record."""
-        res = self._last_result
-        if res is None or not self._chain:
-            return {}
-        out: dict[str, Any] = {"tool": self._chain[-1], "content": str(res.content)[:2000],
-                               "is_error": bool(res.is_error)}
-        if isinstance(getattr(res, "metadata", None), dict) and res.metadata:
-            out["output"] = res.metadata
-        return out
-
-    def _flush_pending(self) -> None:
-        """Record a pending auto post-verify as its step's verify (the model did not
-        verify the action itself)."""
-        auto, self._pending = self._pending, None
-        if auto is not None:
-            del self._chain[auto["chain"]:]  # reads after the action are not its producer
-            # The hinted tool succeeded (else no auto-verify), but an earlier actuating
-            # tool of the same step may not have: the row is FAILED then.
-            self._record(auto["expr"], auto["ok"], auto["caused"], ("auto-verify", *auto["channels"]),
-                         "", auto["data"], note="auto-verify", failed=self._acting_failed)
-
-    def _close_step(self) -> None:
-        # Reset the action chain + baseline for the next pair. NEVER carry a baseline
-        # across a verify (else the next step's causation folds in).
-        self._chain = []
-        self._baseline = None
-        self._step_open = False
-        self._step_acted = False
-        self._housekeeping = True
-        self._last_ok = True
-        self._acting = set()
-        self._acting_failed = False
-        self._last_result = None
-
-    def _rechecks(self, key: tuple[str, str]) -> bool:
-        """This step only re-checks the group's latest attempt: its chain is all
-        read-only or declared housekeeping (a stop), which changes no task state."""
-        return key in self._group_baselines and self._housekeeping and bool(self._chain)
-
-    def _group_baseline(self, key: tuple[str, str]) -> Any:
-        """The baseline a re-verify of the attempt group *key* is graded against, or
-        None (graded on its own step).
-
-        A RETRY (this step re-ran one of the latest attempt's side-effecting tools) or
-        a RE-CHECK (``_rechecks``) is graded against the baseline the latest attempt
-        was, so a FAIL -> navigate -> PASS recovery counts the whole motion. After any
-        other action — a different one, a no-op — the re-verify is graded on its own
-        step and never inherits an earlier attempt's motion; that attempt then becomes
-        the group's latest, so a later stop cannot launder it either.
-        """
-        entry = self._group_baselines.get(key)
-        if entry is None:
-            return None
-        return entry[0] if entry[1] & self._acting or self._rechecks(key) else None
-
-    def record_abort(self, reason: str) -> None:
-        """Close the turn with ONE failed step: it was stopped (or its LLM died).
-
-        The unverified action chain (if any) is its producing strategy, so an
-        interrupted action is on the record — never silently dropped — and grades
-        FAILED (success=False), never GROUNDED. Its auto post-verify is dropped: the
-        aborted row is that action's record.
-        """
-        self._pending = None
-        self._record_open(reason, success=False)
-
-    def close_chain(self) -> None:
-        """At turn end (or before a lifecycle tool switches the body): an auto-verified
-        step is recorded; an open chain the model never verified is on the record as an
-        unproven step (grades RAN at best)."""
-        self._flush_pending()
-        if self._step_open:
-            self._record_open("not verified", success=self._last_ok and not self._acting_failed)
-
-    def _record_open(self, reason: str, *, success: bool) -> None:
-        step_name = f"native_step_{self._step_idx}"
-        self._step_idx += 1
-        strategy = self._chain[-1] if self._chain else ""
-        self._sub_goals.append(SubGoal(
-            name=step_name,
-            description=f"native: {' -> '.join(self._chain) or '(no action)'} | {reason}",
-            verify="",
-            strategy=strategy,
-        ))
-        self._steps.append(StepRecord(
-            sub_goal_name=step_name, strategy=strategy, success=success,
-            verify_result=False, duration_sec=0.0, error=reason, result_data=self._result_data(),
-            housekeeping=self._housekeeping,
-        ))
-        self._close_step()
-
-    def _grade(self, expr: str, goal_id: str = "") -> tuple[Any, tuple[str, ...]]:
-        """Grade actor-causation for the just-verified step.
-
-        ROBOT predicate (a call to a base / arm / gripper / perception oracle): a fresh
-        post-capture vs the step's baseline -> CAUSED / UNCAUSED, per channel. A retry
-        or a re-check of the attempt group's latest attempt is graded against that
-        attempt's baseline instead (``_group_baseline``). No baseline (no skill ran) grades
-        UNCAUSED (grade fail-closes).
-
-        NON-ROBOT predicate (a dev / state oracle): no displacement to attribute, so
-        grounding is tied to whether the ACTOR ACTED this step — no side-effecting
-        action -> UNCAUSED (the verify reads ambient state), else NOT_GRADED.
-
-        Fail-safe to NOT_GRADED on any unexpected error (never raises).
-        """
-        key = (goal_id or "native", attempt_key(expr))
-        try:
-            if not actor_causation.is_robot_predicate(expr, self._oracles):
-                if not self._step_acted:
-                    return actor_causation.ActorCaused.UNCAUSED, ("no action this step",)
-                return actor_causation.ActorCaused.NOT_GRADED, ()
-            post = actor_state(self._agent)
-            baseline = self._group_baseline(key) or self._baseline
-            from vector_os_nano.sim.session import session_for
-
-            world = getattr(session_for(self._agent), "world", None)  # a gripper target resolves through it
-            return actor_causation.grade_channels(baseline, post, expr, self._oracles, self._turn_baseline, world)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("native_loop: grade(%r) raised: %s", expr, exc)
-            return actor_causation.ActorCaused.NOT_GRADED, ()
-
-    # ------------------------------------------------------------------
-    # Trace assembly
-    # ------------------------------------------------------------------
-
-    def build_trace(
-        self, goal: str, *, llm_error: str = "", model: str = "", cancelled: bool = False,
-        contract: tuple[str, ...] = (), contract_start: tuple[bool, ...] = (),
-        contract_end: tuple[bool, ...] = (), scene: str = "", world: str = "",
-    ) -> ExecutionTrace:
-        """Assemble the ExecutionTrace from the recorded (chain -> verify) steps.
-
-        ``success`` is True iff at least one step was recorded AND every GRADED step
-        (the latest attempt of each sub-goal) succeeded — the structural success flag
-        the verdict reads (the moat is GROUNDED/RAN, not this flag). A superseded
-        attempt is marked for the audit row. An empty trace (no verify ever called) is
-        success=False, so the verdict gate fails closed.
-        """
-        goal_tree = GoalTree(goal=goal, sub_goals=tuple(self._sub_goals))
-        probe = ExecutionTrace(goal_tree=goal_tree, steps=tuple(self._steps), success=False,
-                               total_duration_sec=0.0)
-        graded = set(graded_indices(probe))
-        steps = tuple(s if i in graded else replace(s, superseded=True) for i, s in enumerate(self._steps))
-        success = bool(steps) and all(steps[i].success for i in graded)
-        return ExecutionTrace(
-            goal_tree=goal_tree,
-            steps=steps,
-            success=success,
-            total_duration_sec=0.0,
-            actions_dispatched=self.actions_dispatched,
-            llm_error=llm_error,
-            model=model,
-            refused=tuple(self.refused),
-            cancelled=cancelled,
-            contract=tuple(contract),
-            contract_start=tuple(contract_start),
-            contract_end=tuple(contract_end),
-            intents=tuple(sorted(self.intents)),
-            scene=scene,
-            world=world,
-        )
-
-
-def verify_word(ok: bool) -> str:
-    return "PASS" if ok else "FAIL"
 
 
 # ---------------------------------------------------------------------------
@@ -1068,11 +177,10 @@ def run_turn_native(
     scope ``kept_holding`` / ``localized`` to the turn, and ``VECTOR_GT_DUMP`` gets a
     ground-truth line at both ends for the independent grader (scripts/gt_grade.py).
     """
-    from vector_os_nano.sim.session import mark_turn
-
     agent = agent if agent is not None else getattr(engine, "_agent", None)
-    body = [agent]  # the body the turn drives now: a lifecycle tool rebinds it
-    mark_turn(agent, "start", user_message)
+    # The body the turn drives now and its world: a lifecycle tool rebinds both.
+    body = [agent, getattr(engine, "_world", None)]
+    _mark_turn(body, "start", user_message)
     try:
         return _run_turn_native(
             engine, user_message, body=body, session=session, app_state=app_state,
@@ -1080,7 +188,13 @@ def run_turn_native(
             ask_permission=ask_permission, cancel=cancel,
         )
     finally:
-        mark_turn(body[0], "end", user_message)
+        _mark_turn(body, "end", user_message)
+
+
+def _mark_turn(body: list[Any], phase: str, goal: str) -> None:
+    """Tell the body's sim session (asked of its world) where the turn starts / ends."""
+    if body[1] is not None:
+        body[1].mark_turn(body[0], phase, goal)
 
 
 def _bind_body(engine: Any, agent: Any) -> tuple[Any, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
@@ -1111,14 +225,12 @@ def _run_turn_native(
     ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
     cancel: Any = None,
 ) -> ExecutionTrace:
-    from vector_os_nano.sim.session import mark_turn, session_for
-
     token = cancel if cancel is not None else _abort.new_run()
     agent = body[0]
     verifier, oracles, motor_tools, tool_schemas = _bind_body(engine, agent)
     oracle_names = frozenset(oracles)
     ctx = _build_tool_context(agent, session, app_state, engine, token)
-    runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx, ask_permission, oracles)
+    runner = NativeStepRunner(agent, verifier, oracle_names, motor_tools, ctx, ask_permission, oracles, body[1])
 
     def _rebind() -> None:
         """A lifecycle tool succeeded: the next round-trip sees the new body's tools,
@@ -1126,13 +238,14 @@ def _run_turn_native(
         nonlocal oracle_names, tool_schemas
         app = ctx.app_state
         new = app.get("agent") if app is not None and "agent" in app else getattr(engine, "_agent", None)
+        world = getattr(engine, "_world", None)
         verifier, oracles, motor_tools, tool_schemas = _bind_body(engine, new)
         oracle_names = frozenset(oracles)
-        runner.rebind(new, verifier, oracles, motor_tools)
+        runner.rebind(new, verifier, oracles, motor_tools, world)
         if new is not body[0]:
-            mark_turn(body[0], "end", user_message)
-            body[0] = new
-            mark_turn(new, "start", user_message)
+            _mark_turn(body, "end", user_message)
+            body[:] = [new, world]
+            _mark_turn(body, "start", user_message)
         _compile_contract()  # the goal against the new body (the spine grades that one)
 
     turn: dict[str, Any] = {"contract": (), "start": (), "world": "", "note": ""}
@@ -1142,7 +255,7 @@ def _run_turn_native(
         compiles to against the body's oracles, its object / surface bound through the
         body's world manifest; read now (each must be False) and again at turn end
         (each must be True)."""
-        world = str(getattr(getattr(session_for(body[0]), "world", None), "id", "") or "")
+        world = str(getattr(getattr(sim_session(body[1], body[0]), "world", None), "id", "") or "")
         contract = task_contract(user_message, oracle_names, world)
         # Fail closed: the verifier maps an oracle error to False, so ask for ``not``
         # — an error at the start then reads as "already satisfied", never as "not yet".
@@ -1310,164 +423,17 @@ def _run_turn_native(
     # answered from, or an action once the nudges are spent) is on the record as an
     # unproven step, never silently dropped.
     runner.close_chain()
-    from vector_os_nano.sim.session import sim_id
-
     return runner.build_trace(
         user_message, llm_error=llm_error, model=model, cancelled=token.cancelled,
         contract=turn["contract"], contract_start=turn["start"],
-        contract_end=tuple(runner._check(c) for c in turn["contract"]), scene=sim_id(body[0]),
+        contract_end=tuple(runner._check(c) for c in turn["contract"]), scene=body[1].sim_id(body[0]) if body[1] is not None else "",
         world=turn["world"],
     )
 
 
 # ---------------------------------------------------------------------------
-# Helpers — verifier / tools / system prompt / session glue (no planner imports)
+# Helpers — system prompt / tool context / session glue (no planner imports)
 # ---------------------------------------------------------------------------
-
-
-def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
-    """Assemble the loop's ACTION surface: the world's skills + the engine's code tools.
-
-    Two sources, both world-agnostic by construction:
-
-    1. ``wrap_skills(agent)`` — the world's robot skills (``walk`` etc.). The world's
-       room ``navigate`` skill (door-chain walk) is replaced by the coordinate
-       ``navigate`` route below. When ``agent`` is None (the dev world), this source is
-       empty.
-    2. The engine registry's ``code``-category tools (file_read/file_write/file_edit/
-       bash/glob/grep) — the kernel's domain-general action surface. These
-       are real ``Tool`` objects whose ``.execute(params, ctx)`` is the interface
-       ``dispatch_skill`` already calls, so they slot in directly. This is what lets the
-       dev world (no agent -> no skills) ACT, and adds the code tools to the robot world
-       too. Native asks the ENGINE for its registered action tools — there is NO
-       embodiment/"if dev" branch in this module (rule 7).
-
-    The synthetic ``verify``/``finish`` names are loop-owned and never collide with a
-    registry tool; a code tool can never shadow them. A wrapped skill that happens to
-    share a code-tool name (none do today) would take precedence — skills are layered
-    AFTER the code tools so the world's own skill wins if a clash ever arises.
-    """
-    tools: dict[str, Any] = {}
-    # Source 2: the engine registry's code tools (present in every world). In a ROBOT
-    # world (a connected robot ``agent``), the MUTATING code tools (file_write/file_edit/
-    # bash) are DROPPED from the action surface — a physical robot goal must be achieved
-    # by a robot SKILL and proven by a GT oracle, never by writing a marker file or
-    # running a shell command (the D17 fakeable-grasp path). The READ-ONLY diagnostics
-    # (file_read/glob/grep) are kept so the persona can still inspect code. The dev world
-    # (no robot agent) keeps the full set unchanged.
-    is_robot_world = agent is not None
-    for name, code_tool in _registry_tools(engine, _CODE_TOOL_CATEGORY).items():
-        if is_robot_world and name in _MUTATING_CODE_TOOLS:
-            continue  # Prong 1: no file/shell WRITE as a path to a physical robot task
-        tools[name] = code_tool
-    # The sim lifecycle (start/stop_simulation) in every world: a dev-world turn can
-    # bring a body up and use it in the same turn (the runner rebinds after it).
-    tools.update(_registry_tools(engine, _SIM_TOOL_CATEGORY))
-    # A robot world's registry tools that are not skill wrappers: scene_graph_query
-    # (read-only memory), go_to_room. Skills come fresh from wrap_skills below.
-    if is_robot_world:
-        tools.update({n: t for n, t in _registry_tools(engine, _ROBOT_TOOL_CATEGORY).items()
-                      if not getattr(t, "_is_skill_wrapper", False)})
-    # Source 3 (D9 #1): the avoidance NAVIGATION route, only for a world with a mobile
-    # base: the base's planner routes around obstacles; its follower's commands count as
-    # the actor's (ACTOR_EPOCH), so a navigate that arrived grades CAUSED. The arm/dev
-    # worlds (no base) do not get it.
-    # The base gate is single-sourced (Rule 11) onto the capability resolver.
-    from vector_os_nano.embodiments.capability_profile import resolve_capability_profile
-
-    if resolve_capability_profile(agent).has_base:
-        namespace = getattr(engine, "_build_verifier_namespace", lambda a: {})(agent)
-        tools["navigate"] = _NativeBaseNavigateTool(namespace.get(_NativeBaseNavigateTool.ARRIVAL_ORACLE))
-    # Source 4 (S6): EVERY capability the world registered into the engine's
-    # CapabilityRegistry, as a tool the model routes to by name — the SAME instances
-    # the world bound (agent-bound for live perception), never a second model load.
-    # A detector keeps its verify-hint adapter (R4); any other capability is generic,
-    # and a side-effecting one asks permission first. Layered before the world skills
-    # so a learned route WINS a name clash (the bare-cli 'detect' is the MODEL route,
-    # not the classical DetectSkill).
-    cap_names: set[str] = set()
-    for cap in _registered_capabilities(engine):
-        tool = _NativeDetectTool(cap) if getattr(cap, "kind", "") == "detector" else _NativeCapabilityTool(cap)
-        tools[tool.name] = tool
-        cap_names.add(tool.name)
-    # Source 1: the world's skills (robot worlds only; dev world has no agent). The
-    # world's own ``navigate`` skill (door-chain walk, NOT lidar avoidance) stays
-    # excluded; our coordinate ``navigate`` above is the planner/avoidance route.
-    if agent is not None:
-        try:
-            for skill_tool in wrap_skills(agent):
-                if skill_tool.name == "navigate":
-                    continue  # world room-navigate is door-chain walk; ours is the avoidance route
-                if skill_tool.name in cap_names:
-                    continue  # a registered capability (Source 4) wins over a same-named skill
-                tools[skill_tool.name] = skill_tool
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("native_loop: wrap_skills failed: %s", exc)
-    return tools
-
-
-def _registered_capabilities(engine: Any) -> list[Any]:
-    """Every Capability in the ENGINE's CapabilityRegistry (``engine._capability_registry``).
-
-    The engine owns the registry the world populated at bind, so the native loop
-    surfaces the EXACT instances —
-    never a fresh construction (rule 3). No registry / a lookup failure -> none.
-    """
-    registry = getattr(engine, "_capability_registry", None)
-    if registry is None:
-        return []
-    try:
-        return [c for c in (registry.get(n) for n in sorted(registry.names())) if c is not None]
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("native_loop: capability discovery failed: %s", exc)
-        return []
-
-
-def _registry_tools(engine: Any, category: str) -> dict[str, Any]:
-    """Return the engine registry's *category* Tool objects, keyed by name.
-
-    Pulls the live, instantiated tools out of the engine's ``CategorizedToolRegistry``
-    so the native loop offers the EXACT action surface the kernel registered (no
-    duplicate construction, no hand-authored allowlist here — single-sourced from the
-    registry, rule 3). Defensive: a registry without the categorized API, a missing
-    category, or any lookup failure yields an empty set (the caller gates robot tools
-    on a connected agent).
-    """
-    registry = getattr(engine, "_registry", None)
-    if registry is None:
-        return {}
-    list_categories = getattr(registry, "list_categories", None)
-    get = getattr(registry, "get", None)
-    if list_categories is None or get is None:
-        return {}  # a plain ToolRegistry (no categories) -> no code tools to surface
-    tools: dict[str, Any] = {}
-    try:
-        names = list_categories().get(category, [])
-        for name in names:
-            code_tool = get(name)
-            if code_tool is not None:
-                tools[name] = code_tool
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("native_loop: %s-tool discovery failed: %s", category, exc)
-    return tools
-
-
-def _native_tool_schemas(
-    motor_tools: dict[str, Any], namespace: dict[str, Any], oracle_names: frozenset[str]
-) -> list[dict[str, Any]]:
-    """The Anthropic-shaped tool schemas the model is offered for a native turn."""
-    schemas: list[dict[str, Any]] = []
-    for name, tool in motor_tools.items():
-        schemas.append(
-            {
-                "name": name,
-                "description": getattr(tool, "description", name),
-                "input_schema": getattr(tool, "input_schema", {"type": "object", "properties": {}}),
-            }
-        )
-    schemas.append(_verify_tool_schema(namespace, oracle_names))
-    schemas.append(_finish_tool_schema())
-    return schemas
 
 
 # The KERNEL loop rules: how any turn acts and proves, in every world. How a body

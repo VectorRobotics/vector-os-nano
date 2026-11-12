@@ -5,7 +5,7 @@
 
 ``resolve_capability_profile(agent)`` consolidates three scattered duck-typed
 "what can this body do" checks (CLAUDE.md Rule 11 — no capability-by-code drift):
-  - ``native_loop._build_motor_tools``  (``agent._base is not None`` -> offer navigate)
+  - ``native_tools._build_motor_tools``  (``agent._base is not None`` -> offer navigate)
   - ``worlds/robot._agent_has_camera``   (perception/base/arm RGB-frame source)
   - ``engine._has_base``                 (``agent._base is not None`` -> nav vocab)
 
