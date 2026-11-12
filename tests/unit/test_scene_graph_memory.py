@@ -159,11 +159,3 @@ def test_zh_and_en_names_find_the_same_instance() -> None:
     assert sg.find_objects_by_category("can") == []  # never 'candle'
     # an observation named in zh merges into the en-named instance
     assert sg.merge_object("绿色的瓶子", "hallway", "vp2", x=10.89, y=3.01).object_id == o.object_id
-
-
-def test_update_object_records_a_pick_event() -> None:
-    sg = SceneGraph()
-    o = sg.merge_object("green bottle", "hallway", "vp", x=10.88, y=3.0, z=0.32)
-    held = sg.update_object(o.object_id, state="held", x=10.5, y=3.0, z=0.6)
-    assert held.attributes["state"] == "held" and (held.x, held.z) == (10.5, 0.6)
-    assert sg.update_object("nope", state="held") is None

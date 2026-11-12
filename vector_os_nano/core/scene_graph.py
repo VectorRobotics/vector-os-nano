@@ -357,26 +357,6 @@ class SceneGraph(SceneStore):
         words = re.findall(r"[a-z0-9]+|[^\x00-\x7f]+", q)
         return [o for o in objs if all(_has_word(o.category.lower(), w) for w in words)]
 
-    def update_object(
-        self, object_id: str, *, state: str | None = None,
-        x: Any = None, y: Any = None, z: Any = None,
-    ) -> ObjectNode | None:
-        """Record an event on an instance (``state`` "held"/"placed", a new position)."""
-        with self._lock:
-            o = self._objects.get(object_id)
-            if o is None:
-                return None
-            attrs = dict(o.attributes)
-            if state is not None:
-                attrs["state"] = state
-            pos = {} if x is None or y is None else {"x": _f(x), "y": _f(y), "z": _f(z)}
-            if pos:
-                pos["room_id"] = self.room_at(pos["x"], pos["y"]) or o.room_id
-            o = replace(o, attributes=attrs, last_seen=time.time(), **pos)
-            self._objects[object_id] = o
-        self._autosave()
-        return o
-
     def find_objects_in_room(self, room_id: str) -> list[ObjectNode]:
         with self._lock:
             return [
