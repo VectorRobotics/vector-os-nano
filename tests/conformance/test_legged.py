@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -220,6 +221,30 @@ def test_a_walk_and_a_navigate_out_of_every_posture_succeed(body):
         res = body.base.navigate_to(x + 0.6 * math.cos(h), y + 0.6 * math.sin(h), timeout=20.0)
         assert res, (name, dict(res))
         assert body.upright(), name
+
+
+def test_a_stop_during_the_rise_out_of_a_posture_is_kept(body):
+    """A walk out of a posture first rises to the stance; a stop() from another thread
+    0.3 sim-s into that rise ends the walk unmoved (False), not a walk that starts once
+    risen (measured before the fix: 0.59 m on the go2)."""
+    name = next(iter(body.cfg.base.postures))
+    assert body.base.set_posture(name)
+    t0, wait, at_stop = body.base.get_sim_time(), body.base.wait_sim, []
+
+    def wait_and_stop(seconds, cancel=None):  # the rise waits one tick at a time
+        if not at_stop and body.base.get_sim_time() >= t0 + 0.3:
+            at_stop.append(body.pose().copy())
+            t = threading.Thread(target=body.base.stop)
+            t.start()
+            t.join()
+        return wait(seconds, cancel)
+
+    body.base.wait_sim = wait_and_stop
+    assert body.base.walk(0.3, 0.0, 0.0, 2.0) is False
+    assert at_stop and body.base.get_sim_time() < t0 + 1.5  # stopped in the rise, never walked 2 s
+    del body.base.wait_sim
+    list(body.run(1.0))
+    assert math.hypot(*(body.pose()[:2] - at_stop[0][:2])) < 0.1 and body.upright()
 
 
 def _tip(body) -> None:

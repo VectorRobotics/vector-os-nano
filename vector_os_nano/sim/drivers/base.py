@@ -19,7 +19,8 @@ state through the scene's canonical addresses and writes joint torques through
   returns the torques; braking and the stance at zero command are its own.
 * Velocity commands are clipped to the manifest's limits. A walk or a navigate holds
   skill control: another thread's ``set_velocity`` is ignored until it ends, and the
-  command is zeroed on any exit. ``stop`` zeroes it from any thread, always.
+  command is zeroed on any exit. ``stop`` zeroes it from any thread, always; one that
+  lands during the rise before a walk ends that walk unmoved.
 * ``cmd_motion`` counts the actor's commanded |vx| + |vy| + |vyaw| (causation grading):
   only writes that pass the gate while a producer-dispatched tool runs (ACTOR_EPOCH).
 
@@ -116,6 +117,7 @@ class LeggedBase:
         self._cmd = _ZERO
         self._hold: _Hold | None = None
         self._owners: list[int] = []    # threads holding skill control, latest last
+        self._stops = 0                 # stop() calls so far: a control block sees one land
         self._cmd_motion = 0.0
         self._origin: float | None = None  # sim time of the spawn: PolicyObs.time counts from it
         self._handover = True           # the policy starts fresh at its next tick
@@ -157,24 +159,34 @@ class LeggedBase:
     def stop(self) -> None:
         with self._lock:
             self._cmd = _ZERO
+            self._stops += 1
 
     def set_velocity(self, vx: float, vy: float, vyaw: float) -> None:
+        self._command(vx, vy, vyaw)
+
+    def _command(self, vx: float, vy: float, vyaw: float, stops: int | None = None) -> bool:
+        """set_velocity; with *stops* (the stop count a control block began with), False
+        and nothing set when a stop has landed since."""
         lx, ly, lyaw = self._spec.limits
         cmd = (float(np.clip(vx, -lx, lx)), float(np.clip(vy, -ly, ly)), float(np.clip(vyaw, -lyaw, lyaw)))
         with self._lock:
             if self._owners and self._owners[-1] != threading.get_ident():
-                return  # another thread's walk or navigate holds control
+                return False  # another thread's walk or navigate holds control
+            if stops is not None and stops != self._stops:
+                return False
             self._cmd = cmd
             if cmd != _ZERO and self._hold is not None and not self._hold.rise:
                 stood = self._hold.target is self._stance
                 self._hold = None if stood else _Hold(self._stance, _RISE_S, self._rt.tick_dt, rise=True)
             if ACTOR_EPOCH.active:  # a stop (0, 0, 0) adds nothing
                 self._cmd_motion += abs(cmd[0]) + abs(cmd[1]) + abs(cmd[2])
+        return True
 
     def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0) -> bool:
-        with self._control():
+        with self._control() as stops:
             start_z = self.get_position()[2]  # a body that starts fallen has fallen
-            self.set_velocity(vx, vy, vyaw)
+            if not self._command(vx, vy, vyaw, stops):
+                return False  # stopped during the rise: it never starts
             ran = self.wait_sim(duration, cancel=self._cancel)
             self.set_velocity(0.0, 0.0, 0.0)
             self.wait_sim(_WALK_SETTLE_S, cancel=self._cancel)
@@ -290,17 +302,18 @@ class LeggedBase:
         """Skill control for the block (nested and concurrent holders stack: the latest
         one commands), out of the stance: a held posture first rises to it, so a walk or a
         navigate measures its start (and its fall) on the body standing. The command is
-        zeroed on any exit, KeyboardInterrupt included."""
+        zeroed on any exit, KeyboardInterrupt included. Yields the stop count at entry."""
         me = threading.get_ident()
         with self._lock:
             self._owners.append(me)
+            stops = self._stops
             if self._hold is not None and self._hold.target is not self._stance:
                 self._hold = _Hold(self._stance, _RISE_S, self._rt.tick_dt, rise=True)
         try:
             self.wait_sim(0.0)  # park the clock here: the motion starts on the next tick
             while self._rising() and self.wait_sim(self._rt.tick_dt, cancel=self._cancel):
                 pass
-            yield
+            yield stops
         finally:
             with self._lock:
                 self._owners.remove(me)
