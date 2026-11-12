@@ -44,6 +44,8 @@ NOT_IT = [
     "拿起粉红色的罐子", "拿起红色罐头", "拿起深红色的罐子",
     "pick up the pink red can", "pick up the green red can", "pick up the big red can", "pick up the empty red can",
     "pick up the other red can", "pick up the old red can", "pick up two red cans",
+    # REF1F1V-03: an ASCII modifier beside a CJK reference, and English ones
+    "拿起pink红罐子", "拿起 pink 红罐子", "pick up the dark red can", "pick up the fake red can",
 ]
 # The closed forms of the same object: still verified, with the goal proven.
 IT = ["拿起红罐子", "pick up the red can", "麻烦帮我把红色的罐子拿起来吧", "could you grab the red can for me"]
