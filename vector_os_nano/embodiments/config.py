@@ -181,8 +181,8 @@ class EmbodimentConfig:
     spawn: SpawnSpec | None = None
     stance: dict[str, float] = field(default_factory=dict)
     policy: PolicySpec | None = None
-    # Which in-process builder stands the body up (mujoco_go2 | mujoco_g1 | mujoco_arm |
-    # generic). Transitional: one generic builder for every body (S4 / S5).
+    # Which in-process builder stands the body up (mujoco_go2 | mujoco_g1 | generic).
+    # Transitional: one generic builder for every body (S4 / S5).
     driver: str = ""
     # Arm mounted on the body (e.g. the Piper on go2_piper), or None.
     arm: ArmSpec | None = None

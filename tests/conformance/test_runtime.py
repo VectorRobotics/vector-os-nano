@@ -54,7 +54,7 @@ def test_submit_runs_at_a_step_boundary(backend, load, contract_scene):
 
 
 def test_grasp_and_release_log_at_call_time(backend, load, battery_scene):
-    b = Body(load(backend, battery_scene))
+    b = Body("piper", load(backend, battery_scene))
     rt, box, spec = b.rt, b.around("box"), b.gripper._grasp
     try:
         b.servo_jaw(0.0)
@@ -71,7 +71,7 @@ def test_every_attach_and_detach_inside_one_job_is_logged(backend, load, battery
     """Adversarial: a detach and a re-attach inside ONE job leave the attachments as they
     were, yet both transitions are logged; so is a release + attach through sim/grasp,
     and a re-attach to the same parent changes nothing and logs nothing."""
-    b = Body(load(backend, battery_scene))
+    b = Body("piper", load(backend, battery_scene))
     rt, box, hand = b.rt, b.around("box"), b.hand
     try:
         b.servo_jaw(0.0)

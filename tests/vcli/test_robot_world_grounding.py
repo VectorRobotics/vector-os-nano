@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""RobotWorld sim-oracle grounding on the real headless SO-101 (MuJoCoArm).
+"""RobotWorld sim-oracle grounding on the real headless SO-101 session.
 
 RobotWorld.build_verify_namespace binds the GT oracles of the live sim session
 that owns the agent (``vcli/worlds/sim_oracles``); with no session (real hardware,
@@ -15,33 +15,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.harness.sim_session import started
 from vector_os_nano.vcli.worlds import RobotWorld
-
-mujoco = pytest.importorskip("mujoco")
 
 
 @pytest.fixture()
 def sim_agent():
-    """A connected headless MuJoCoArm + gripper in a real Agent, bound to a session."""
-    from tests.harness.fake_gt import bind_real_sim, unbind_fake_sim
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
-    from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
-
-    arm = MuJoCoArm(gui=False)
-    arm.connect()
-    agent = Agent(arm=arm, gripper=MuJoCoGripper(arm), config={})
-    sim = bind_real_sim(agent, "so101")
-    try:
-        yield agent
-    finally:
-        unbind_fake_sim(sim)
-        try:
-            arm.disconnect()
-        except Exception:  # noqa: BLE001 — teardown best-effort
-            pass
+    """The agent of a live headless so101 session (its GT oracles bound)."""
+    with started("so101") as s:
+        yield s.agent
 
 
+@pytest.mark.sim
 def test_namespace_is_the_tabletop_gt_oracle_set(sim_agent) -> None:
     ns = RobotWorld().build_verify_namespace(sim_agent)
     assert set(ns) == {
@@ -52,8 +37,9 @@ def test_namespace_is_the_tabletop_gt_oracle_set(sim_agent) -> None:
     assert all(callable(fn) for fn in ns.values())
 
 
+@pytest.mark.sim
 def test_oracles_read_the_tabletop(sim_agent) -> None:
-    sim_agent._arm.step(300)  # the objects settle onto the table
+    sim_agent._arm.home(duration=0.6)  # sim time passes: the objects settle onto the table
     ns = RobotWorld().build_verify_namespace(sim_agent)
     assert ns["holding_object"]() is False
     assert ns["object_on"]("banana", "table") is True
@@ -73,6 +59,7 @@ def test_namespace_empty_without_a_live_sim_session() -> None:
     assert RobotWorld().build_verify_namespace(agent) == {}
 
 
+@pytest.mark.sim
 def test_engine_merges_robot_world_grounding(sim_agent) -> None:
     from vector_os_nano.vcli.engine import VectorEngine
 

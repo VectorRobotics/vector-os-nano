@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,14 +27,14 @@ def _compose(cfg, world):
     return compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
 
 
-def test_the_shipped_piper_fingers_collide(piper):
-    cfg, world = piper
-    check_fingers(_compose(cfg, world), cfg.arm.gripper.finger_bodies)
+@pytest.mark.parametrize("robot", ["piper", "so101"])
+def test_the_shipped_fingers_collide(robot, piper):
+    cfg = registry.load(robot)
+    check_fingers(_compose(cfg, load_world(cfg.world)), cfg.arm.gripper.finger_bodies)
 
 
-def test_a_finger_without_a_colliding_geom_is_refused(piper, tmp_path):
-    """link8's two collision pads made non-colliding: the guard names link8 (not link7)."""
-    cfg, world = piper
+def _numb_link8(cfg, world, tmp_path):
+    """*cfg* with link8's two collision pads made non-colliding, and its scene."""
     src = _REPO / cfg.model.path
     root = ET.parse(src).getroot()
     root.find("compiler").set("meshdir", str(src.parent / root.find("compiler").get("meshdir")))
@@ -44,10 +45,25 @@ def test_a_finger_without_a_colliding_geom_is_refused(piper, tmp_path):
     model = tmp_path / "piper_numb_link8.xml"
     model.write_text(ET.tostring(root, encoding="unicode"))
     numb = dataclasses.replace(cfg, model=dataclasses.replace(cfg.model, path=str(model)))
-    scene = _compose(numb, world)
+    return numb, _compose(numb, world)
+
+
+def test_a_finger_without_a_colliding_geom_is_refused(piper, tmp_path):
+    """link8's two collision pads made non-colliding: the guard names link8 (not link7)."""
+    cfg, world = piper
+    _numb, scene = _numb_link8(cfg, world, tmp_path)
     check_fingers(scene, ("link7",))
     with pytest.raises(ValueError, match="finger body 'link8' has no colliding geom"):
         check_fingers(scene, cfg.arm.gripper.finger_bodies)
+
+
+def test_the_session_refuses_a_numb_finger(piper, tmp_path):
+    """The session's device wiring runs the guard (deleting its call left every test green)."""
+    from vector_os_nano.sim.session import _devices
+
+    numb, scene = _numb_link8(*piper, tmp_path)
+    with pytest.raises(ValueError, match="finger body 'link8' has no colliding geom"):
+        _devices(numb, SimpleNamespace(world=SimpleNamespace(scene=scene)))
 
 
 def test_a_camera_on_a_body_the_model_lacks_is_refused(piper):

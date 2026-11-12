@@ -131,10 +131,31 @@ def test_pybullet_refuses_what_it_cannot_reproduce(tmp_path, body, extra, why):
     assert why in (unsupported(scene.model) or "")
 
 
-def test_pybullet_accepts_every_shipped_body(robot_scene, battery_scene, contract_scene, flat_go2_scene):
+def test_pybullet_refuses_a_pickable_that_collides_as_a_mesh(tmp_path):
+    """Bullet reads a mesh hull as touching ~3 mm away (S2cV-01): a grasp decided on
+    contact would not be MuJoCo's. The same mesh merely seen, or a primitive, loads."""
+    pytest.importorskip("pybullet", reason="pybullet is not installed: uv pip install -e '.[pybullet]'")
+    from vector_os_nano.sim import backends
+
+    def scene(shape: str):
+        return compiled_scene(_xml(tmp_path, f'<body name="hand" pos="0 0 1"><freejoint/><geom size=".02"/></body>'
+                                   f'<body name="obj" pos="0 0 .1"><freejoint/>{shape}</body>',
+                                   '<asset><mesh name="m" vertex="0 0 0 .04 0 0 0 .04 0 0 0 .04"/></asset>'
+                                   '<equality><weld body1="hand" body2="obj" active="false"/></equality>'),
+                              grasp_pairs=[("hand", "obj")])
+
+    with pytest.raises(ValueError, match="collides as a mesh"):
+        backends.get("pybullet").load(scene('<geom type="mesh" mesh="m"/>'))
+    for ok in ('<geom type="mesh" mesh="m" contype="0" conaffinity="0"/><geom size=".02"/>', '<geom size=".02"/>'):
+        backends.get("pybullet").load(scene(ok)).close()
+
+
+def test_pybullet_accepts_every_shipped_body(robot_scene, battery_scene, tabletop_scene, contract_scene,
+                                            flat_go2_scene):
     pytest.importorskip("pybullet", reason="pybullet is not installed: uv pip install -e '.[pybullet]'")
     from vector_os_nano.sim.backends.pybullet.world import unsupported
 
-    for sc in [robot_scene(n) for n in ("so101", "piper", "go2", "go2_piper")] + [battery_scene, contract_scene, flat_go2_scene]:
-        assert unsupported(sc.model) is None, sc.xml_path
+    shipped = [robot_scene(n) for n in ("so101", "piper", "go2", "go2_piper")]
+    for sc in shipped + [battery_scene, tabletop_scene, contract_scene, flat_go2_scene]:
+        assert unsupported(sc.model, (c for _p, c in sc.grasp_pairs)) is None, sc.xml_path
     assert SIM_DIR.is_dir()

@@ -28,18 +28,9 @@ try:
 except ImportError:
     SO101 = None  # type: ignore[assignment, misc]
 
-try:
-    from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
-    from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
-except ImportError:
-    MuJoCoArm = None  # type: ignore[assignment, misc]
-    MuJoCoGripper = None  # type: ignore[assignment, misc]
-
 __all__ = [
     "__version__",
     "Agent",
-    "MuJoCoArm",
-    "MuJoCoGripper",
     "SO101",
     "Skill",
     "SkillResult",

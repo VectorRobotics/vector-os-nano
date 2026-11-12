@@ -197,11 +197,9 @@ def build_namespace(
     ns["localized"] = localized
 
     # ---------------------------------------------------------------- arm
-    caps = getattr(cfg, "capabilities", None)
-    if caps is not None and caps.has_arm:
-        arm = cfg.arm
-        joints = tuple(arm.joints) if arm else tuple(cfg.stance)
-        home = tuple(arm.home) if arm else tuple(cfg.stance.values())
+    arm = getattr(cfg, "arm", None)
+    if arm is not None:
+        joints, home = tuple(arm.joints), tuple(arm.home)
 
         @oracle(scope="robot", channel="arm", transition="rise", domain="bool")
         @_safe(False)
@@ -213,27 +211,20 @@ def build_namespace(
         ns["arm_at_home"] = arm_at_home
 
     # ---------------------------------------------------------------- gripper
-    gripper = getattr(getattr(cfg, "arm", None), "gripper", None)
-    fingers = tuple(gt.body_id(b) for b in (gripper.finger_bodies if gripper else ()))
-    # The body a grasp attaches to; a manifest without a gripper block (SO-101) has only
-    # its scene's grasp pairs, whose parent is its gripper link.
-    weld_body = gripper.weld_body if gripper else None
-    if caps is not None and caps.has_gripper:
+    gripper = getattr(arm, "gripper", None)
+    if gripper is not None:
+        fingers = frozenset(gt.body_id(b) for b in gripper.finger_bodies)
+        weld_body = gripper.weld_body
 
         def on_gripper(parent: str | None) -> bool:
-            return parent is not None and (weld_body is None or parent == weld_body)
+            return parent == weld_body
 
         def welded(name: str) -> bool:
             return on_gripper(gt.attached_to(name))
 
-        def gripped(name: str) -> bool:
-            # A gripper with finger bodies in its manifest grasps by contact: every
-            # finger must touch the object. A weld-only gripper (SO-101: visual jaws,
-            # no finger bodies declared) is graded on the weld + the lift alone.
-            return not fingers or set(fingers) <= gt.contacts(name)
-
         def held(name: str) -> bool:
-            return welded(name) and gripped(name) and gt.clearance(name) >= LIFT_M
+            # attached to the gripper, touched by every finger, lifted
+            return welded(name) and fingers <= gt.contacts(name) and gt.clearance(name) >= LIFT_M
 
         def resting(name: str) -> bool:
             return (not welded(name) and not (gt.contacts(name) & gt.robot_bodies)

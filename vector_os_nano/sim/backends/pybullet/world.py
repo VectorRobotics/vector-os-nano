@@ -30,7 +30,7 @@ import tempfile
 import threading
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 import pybullet as pb
@@ -96,8 +96,10 @@ def _matq(R: np.ndarray) -> np.ndarray:
     return q / np.linalg.norm(q)
 
 
-def unsupported(m: Any) -> str | None:
-    """Why this backend cannot load the compiled model *m*, or None."""
+def unsupported(m: Any, pickables: Iterable[int] = ()) -> str | None:
+    """Why this backend cannot load the compiled model *m* (whose grasp pairs hold the
+    bodies *pickables*), or None."""
+    pickables = frozenset(pickables)
     why: list[str] = []
     joints = reader.joints(m)
     for b in reader.bodies(m)[1:]:
@@ -117,6 +119,9 @@ def unsupported(m: Any) -> str | None:
             why.append(f"geom type {g.type} ({g.name or g.id})")
         if g.collide and (int(m.geom_contype[g.id]), int(m.geom_conaffinity[g.id])) != (1, 1):
             why.append(f"geom {g.name or g.id}: contype/conaffinity other than 0/0 or 1/1")
+        if g.collide and g.type == GEOM_MESH and g.body in pickables:  # S2cV-01
+            why.append(f"pickable geom {g.name or g.id} collides as a mesh: Bullet reads its hull as "
+                       "touching ~3 mm away, and a grasp is decided on contact (use primitives)")
     for a in reader.actuators(m):
         if a.kind == "other":
             why.append(f"actuator {a.name!r} is neither a joint motor nor a joint position servo")
@@ -140,7 +145,7 @@ class PyBulletWorld:
 
     def __init__(self, scene: CompiledScene, *, gui: bool = False) -> None:
         m = scene.model
-        why = unsupported(m)
+        why = unsupported(m, (c for _p, c in scene.grasp_pairs))
         if why:
             raise ValueError(f"PyBullet cannot load {scene.xml_path}: {why}")
         self.scene = scene

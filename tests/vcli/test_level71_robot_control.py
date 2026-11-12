@@ -90,80 +90,65 @@ def test_wave_scan_classified_motor():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def arm():
-    pytest.importorskip("mujoco")
-    from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
-
-    a = MuJoCoArm(gui=False)
-    a.connect()
-    yield a
-    try:
-        a.disconnect()
-    except Exception:
-        pass
+_TABLETOP = {n: [0.2, 0.0, 0.03] for n in ("banana", "mug", "bottle", "screwdriver", "duck", "lego")}
 
 
+@pytest.mark.sim
 def test_sim_agent_has_gripper_and_perception():
-    pytest.importorskip("mujoco")
-    from vector_os_nano.vcli import runtime
-    from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
+    from vector_os_nano.sim.drivers.gripper import Gripper
+    from vector_os_nano.vcli import runtime
 
     session = runtime.start_sim("so101", gui=False)  # what --sim starts
     try:
         agent = session.agent
-        assert getattr(agent._arm, "_viewer", None) is None
-        assert isinstance(agent._gripper, MuJoCoGripper)
+        assert session.runtime.world._viewer is None
+        assert isinstance(agent._gripper, Gripper)
         assert isinstance(agent._perception, MuJoCoPerception)
         assert agent.execute_skill("gripper_open").success
     finally:
         session.stop()
 
 
-def test_perception_detect_word_boundary(arm):
+def test_perception_detect_word_boundary():
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 
-    p = MuJoCoPerception(arm)
+    p = MuJoCoPerception(lambda: _TABLETOP, None)
     assert p.detect("red ball") == []   # 'all' must not fire on 'ball'
     assert p.detect("ball") == []
     assert len(p.detect("all objects")) > 0
     assert len(p.detect("all")) > 0
 
 
-def test_perception_caption_and_describe(arm):
-    from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
-    from vector_os_nano.core.agent import Agent
+@pytest.mark.sim
+def test_perception_caption_and_describe():
+    from tests.harness.sim_session import started
 
-    p = MuJoCoPerception(arm)
-    cap = p.caption()
-    assert isinstance(cap, str) and cap
-    assert p.visual_query("what is there?") == cap
-    from vector_os_nano.skills import get_so101_skills
-
-    agent = Agent(arm=arm, perception=p, skills=get_so101_skills())
-    assert agent.execute_skill("describe").success
+    with started("so101") as s:
+        p = s.agent._perception
+        cap = p.caption()
+        assert isinstance(cap, str) and cap
+        assert p.visual_query("what is there?") == cap
+        assert s.agent.execute_skill("describe").success
 
 
-def test_skill_wrapper_pick_returns_picks_own_data(arm):
-    from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
-    from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.skills import get_so101_skills
-    from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
+@pytest.mark.sim
+def test_skill_wrapper_pick_returns_picks_own_data():
+    from tests.harness.sim_session import started
     from vector_os_nano.vcli.tools.base import ToolContext
+    from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
 
-    agent = Agent(arm=arm, gripper=MuJoCoGripper(arm), perception=MuJoCoPerception(arm),
-                  skills=get_so101_skills(),
-                  config={"skills": {"pick": {"hardware_offsets": False}}})
-    pick = agent._skill_registry.get("pick")
-    ctx = ToolContext(agent=agent, cwd=Path("."), session=None, permissions=None,
-                      abort=threading.Event())
-    result = SkillWrapperTool(pick, agent).execute({"object_label": "mug", "mode": "hold"}, ctx)
-    assert not result.is_error, result.content  # mug is in the scene -> grasp succeeds (physics)
-    assert result.metadata["picked_object"] == "mug"  # pick's own data, nothing appended
+    with started("so101") as s:
+        agent = s.agent
+        pick = agent._skill_registry.get("pick")
+        ctx = ToolContext(agent=agent, cwd=Path("."), session=None, permissions=None,
+                          abort=threading.Event())
+        result = SkillWrapperTool(pick, agent).execute({"object_label": "mug", "mode": "hold"}, ctx)
+        assert not result.is_error, result.content  # mug is in the scene -> grasp succeeds (physics)
+        assert result.metadata["picked_object"] == "mug"  # pick's own data, nothing appended
 
 
+@pytest.mark.sim
 def test_sim_tool_lifecycle_dev_to_arm_to_dev():
     pytest.importorskip("mujoco")
     from vector_os_nano.vcli.runtime import build_registry
@@ -190,7 +175,7 @@ def test_sim_tool_lifecycle_dev_to_arm_to_dev():
     assert eng.bound[-1] == (app["agent"], "robot")
     assert app["agent"] is not None
     # gui=False: no viewer in-process (the product default is a window)
-    assert getattr(app["agent"]._arm, "_viewer", None) is None
+    assert app["sim_session"].runtime.world._viewer is None
 
     SimStopTool().execute({}, ctx)
     assert eng.bound[-1] == (None, "dev")
