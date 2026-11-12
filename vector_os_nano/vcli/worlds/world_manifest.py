@@ -58,6 +58,16 @@ _FILLERS = {
     "head": ("one", "thing", "object", "item", "东西", "物体", "物品", "个", "的"),
 }
 
+# The ONE closed list of CJK characters that may stand beside a noun phrase in a sentence
+# (``mentions``): the verbs, particles and places of a grasp / place / fetch sentence. Any
+# other CJK character there makes a longer word of it (粉红 pink, 罐头 canned food, 瓶盖 a
+# cap) or modifies it (深红, 大的), so the sentence names no object of this world.
+_CJK_EDGE = {
+    "before": frozenset("把将拿起抓取握捡拾提递给带找要想请帮我你是在从和与及跟或还个这那只到放看用移搬推举来去了"),
+    "after": frozenset("拿抓取放给递带送来去到上下里内中旁前后左右和与及跟或吧呢啊吗呀了在是也都搬移交"),
+    "of": frozenset("上下里内外中边面侧前后左右旁我你他她它"),  # X的 <phrase>: a place or an owner
+}
+
 
 def _norm(text: Any) -> str:
     return text.strip().lower() if isinstance(text, str) else ""
@@ -81,6 +91,17 @@ def _match(text: str, i: int, word: str) -> int | None:
 
 def _ascii_word(ch: str) -> bool:
     return ch.isascii() and (ch.isalnum() or ch == "_")
+
+
+def _stands_alone(q: str, i: int, j: int) -> bool:
+    """*q*[i:j] is a word of its own: each CJK character beside it (spaces skipped) is in
+    ``_CJK_EDGE``, and the one before an attributive 的 is a place or an owner."""
+    left, right = q[:i].rstrip(), q[j:].lstrip()
+    edge = _CJK_EDGE["before"]
+    if left.endswith("的"):
+        left, edge = left[:-1].rstrip(), _CJK_EDGE["of"]
+    return all(ch in ok or not (ch.isalpha() and not ch.isascii())
+               for ch, ok in ((left[-1:], edge), (right[:1], _CJK_EDGE["after"])))
 
 
 def _has(text: str, word: str) -> bool:
@@ -160,9 +181,11 @@ class WorldManifest:
 
     def mentions(self, sentence: Any) -> frozenset[str]:
         """The pickables named inside a free *sentence* by complete noun phrases only: a
-        body name or an alias, or a colour word attached to a category word ("red can",
-        红色的罐子). A lone colour, a category alone and a generic head are references
-        only as a whole slot (in a sentence "can" is a verb and 的 an attributive)."""
+        body name or an alias, or a colour word attached to a category word or an alias
+        ("red can", 红色的罐子, 红色的马克杯). A lone colour, a category alone and a generic
+        head are references only as a whole slot (in a sentence "can" is a verb and 的 an
+        attributive). Fails closed like ``referents``: when a phrase is no word of its own
+        in CJK text (``_stands_alone``: 粉红色的罐子, 红色罐头) the sentence names nothing."""
         q, spans = _norm(sentence), []
         for i in range(len(q)):
             for w, kind, fits in self._lexicon:
@@ -174,9 +197,12 @@ class WorldManifest:
                 k = j + q.startswith("的", j)
                 k += q.startswith(" ", k)
                 spans += [(i, e, fits & f) for w2, kind2, f in self._lexicon
-                          if kind2 == "category" and (e := _match(q, k, w2)) is not None]
+                          if kind2 in ("category", "name") and (e := _match(q, k, w2)) is not None]
         inner = {s for s in spans for t in spans if t[0] <= s[0] and s[1] <= t[1] and t[:2] != s[:2]}
-        return frozenset().union(*(s[2] for s in spans if s not in inner))
+        outer = [s for s in spans if s not in inner]
+        if not all(_stands_alone(q, i, j) for i, j, _ in outer):
+            return frozenset()
+        return frozenset().union(*(s[2] for s in outer))
 
     def resolve_surface(self, text: Any) -> str | None:
         """The support surface *text* names (its name, or the longest alias inside the

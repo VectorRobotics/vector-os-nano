@@ -124,9 +124,27 @@ def test_referents_tells_an_unbound_reference_from_no_reference(world, text, fit
     ("put the yellow cup on the coffee table", {Y}), ("the infrared scanner", set()),
     ("拿起红色的", set()), ("grab the red can, not the green bottle", {R, G}), ("把红色罐子旁边的绿色瓶子拿来", {R, G}),
     ("pick up the pickable_bottle_blue now", {B}), ("拿起黄色的香蕉", set()),
+    # REF1V-01: a CJK world word inside a longer word (粉红 pink, 罐头 canned food, 瓶盖 cap,
+    # 盒饭 boxed meal) or under a modifier the world has not names nothing
+    ("拿起粉红色的罐子", set()), ("拿起粉红的罐子", set()), ("拿起粉红色罐头", set()), ("拿起红色罐头", set()),
+    ("拿起绿色的瓶盖", set()), ("拿起橙色的盒饭", set()), ("把桌子上的粉红色罐头拿给我", set()),
+    ("拿起深红色的罐子", set()), ("拿起橘红色的罐子", set()), ("拿起黄色的杯垫", set()), ("拿起粉红罐子", set()),
+    ("拿起红色罐子的盖子", set()), ("拿起绿色的红罐子", set()), ("拿起大的红罐子", set()),
+    ("拿起粉红色 罐子", set()), ("把粉红色的罐子放到绿色瓶子旁边", set()), ("pick up the green red can", set()),
+    # ... while a phrase beside the verbs, particles and places of a sentence still names its object
+    ("把桌子上的红色罐子拿给我", {R}), ("帮我拿红罐子吧", {R}), ("去客厅把黄色杯子拿起来", {Y}),
+    ("我要绿色的瓶子", {G}), ("拿起我的红罐子", {R}), ("红色的罐子放到餐桌上", {R}), ("拿起红色的红罐子", {R}),
 ])
 def test_mentions_counts_complete_noun_phrases_only(sentence, named) -> None:
     assert load_world("apartment").mentions(sentence) == named
+
+
+@pytest.mark.parametrize("sentence, named", [
+    ("粉红色 mugs", set()), ("拿起粉红色的马克杯", set()), ("拿起白色的马克杯", set()), ("拿起香蕉皮", set()),
+    ("拿起蓝色的马克杯", set()), ("拿起红色的马克杯", {"mug"}), ("拿起香蕉", {"banana"}), ("red mugs", {"mug"}),
+])
+def test_mentions_in_the_tabletop(sentence, named) -> None:
+    assert load_world("tabletop").mentions(sentence) == named
 
 
 # ---------------------------------------------------------------------------

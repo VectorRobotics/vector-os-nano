@@ -16,7 +16,7 @@ import pytest
 
 from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from tests.unit.vcli.test_native_loop import (
-    _CAN, _NavBase, _Skill, _make_agent, _make_arm_agent, _make_engine, _session, _verdict,
+    _CAN, _NavBase, _Skill, _grasp, _make_agent, _make_arm_agent, _make_engine, _session, _verdict,
 )
 from tests.unit.vcli.test_task_contract_binding import APT, GREEN, RED, _hand_trace
 from vector_os_nano.vcli.cognitive.object_goal import task_contract
@@ -428,6 +428,33 @@ def test_the_cup_alone_verifies_a_cup_goal() -> None:
     """The other side: the same turn for a goal naming the cup is proven."""
     trace, rep, _ = _cup_turn("pick up the yellow cup", "holding_object('yellow cup')")
     assert rep.goal_check == "proven" and rep.verified is True, rep.reject_reason
+
+
+@pytest.mark.parametrize("goal", ["拿起粉红色的罐子", "拿起粉红的罐子", "拿起粉红色罐头", "拿起红色罐头",
+                                  "把桌子上的粉红色罐头拿给我"])
+@pytest.mark.parametrize("verify", [f"holding_object('{_CAN}')", "holding_object('red can')"])
+def test_holding_the_red_can_never_verifies_a_pink_can_or_canned_food(goal, verify) -> None:
+    """REF1V-01: 粉红 (pink) holds 红 and 罐头 (canned food) holds 罐; the red can is
+    neither, so the manipulation gate binds no object and the turn does not verify."""
+    agent, _arm = _make_arm_agent(_grasp)
+    backend = FakeToolScriptBackend.from_tool_script(
+        [tool_turn(("grasp_fake", {"object": "red can"})), tool_turn(_v(verify)), tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native(goal, session=_session())
+    rep = _verdict(agent, eng, trace)
+    assert trace.contract == () and rep.verified is False, (rep.goal_check, rep.reject_reason)
+
+
+def test_holding_the_red_can_verifies_a_sentence_naming_it() -> None:
+    """The other side: the same turn for a free sentence naming the red can verifies."""
+    agent, _arm = _make_arm_agent(_grasp)
+    backend = FakeToolScriptBackend.from_tool_script([tool_turn(("grasp_fake", {"object": "red can"})),
+                                                      tool_turn(_v("holding_object('red can')")),
+                                                      tool_turn(("finish", {}))])
+    eng = _make_engine(agent, backend)
+    trace = eng.run_turn_native("麻烦帮我拿起红色罐子吧谢谢", session=_session())
+    rep = _verdict(agent, eng, trace)
+    assert rep.verified is True, (trace.contract, rep.reject_reason)
 
 
 @pytest.mark.parametrize("phrase", ["yellow banana", "黄色的香蕉", "red bottle", "抓红色的瓶子", "blue can",
