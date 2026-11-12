@@ -94,7 +94,7 @@ def file_violations(rel: str, source: str) -> set[str]:
             if (rel.startswith(("skills/", "perception/")) and isinstance(node, ast.Attribute)
                     and node.attr in ("runtime", "world", "gt", "get_object_positions")):
                 bad("3 skills and perception touch no runtime / world / gt", node.attr)
-            if (rel.startswith("sim/drivers/") and isinstance(node, ast.Attribute)
+            if (rel.startswith(("sim/drivers/", "sim/policies/")) and isinstance(node, ast.Attribute)
                     and node.attr in ("model", "data")):
                 bad("3 a generic driver reaches no engine model or data", node.attr)
     if rel.startswith(KERNEL):
@@ -135,6 +135,9 @@ def test_a_generic_driver_that_reaches_the_engine_is_flagged():
             "3 actor code imports neither the world side nor the kernel | sim.ground_truth",
             "3 actor code imports neither the world side nor the kernel | vcli.cognitive.abort"} <= got
     assert not [v for v in file_violations("sim/backends/mujoco/x.py", src) if v.startswith("3 ")]
+    policy = {v.split(" | ")[0] + " | " + v.split(" | ")[2] for v in file_violations("sim/policies/x.py", src)}
+    assert {"3 a generic driver reaches no engine model or data | data",
+            "2 a simulator is imported only by its backend | mujoco"} <= policy  # a policy sees only PolicyObs
 
 
 def test_package_and_cli_import_on_a_base_install():
