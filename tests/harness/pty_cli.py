@@ -54,9 +54,25 @@ _SENTINEL = "VECTOR_VERDICT"
 # but allow headroom for cold imports.
 _DEFAULT_TIMEOUT_SEC = 90.0
 
-# What a REPL session leaves of its test's pytest-timeout budget: the process-group
+# What a PTY child leaves of its test's pytest-timeout budget: the process-group
 # kill, the fixture's own work after the session, and the test body.
 _TEARDOWN_SEC = 20.0
+
+
+def _session_deadline(timeout_sec: float) -> float:
+    """The one deadline of a PTY child (run_cli_turn, run_repl_session): *timeout_sec*
+    from now, cut to end inside the pytest-timeout budget of the test running it.
+
+    scripts/gate.sh exports PYTEST_TIMEOUT and pytest-timeout reads it: a stalled
+    child then returns its transcript instead of pytest-timeout killing the test with
+    nothing to read (S3aV-08: an E5 hang left no transcript at 300 s of 420). The cut
+    leaves _TEARDOWN_SEC, but never takes the child below a few seconds or past half
+    the budget (a budget of 20 s or less once left it zero or negative).
+    """
+    budget = float(os.environ.get("PYTEST_TIMEOUT") or 0)
+    if budget:
+        timeout_sec = min(timeout_sec, max(budget - _TEARDOWN_SEC, min(3.0, budget / 2)))
+    return _now() + timeout_sec
 
 
 @dataclass(frozen=True)
@@ -243,7 +259,8 @@ def run_cli_turn(
                     reaches the child). Scripted callers leave this False so a fake
                     key keeps deterministic runs network-free.
         extra_env / extra_args: escape hatches for additional env / CLI flags.
-        timeout_sec: max wait for the child to finish.
+        timeout_sec: max wait for the child to finish, cut to end inside
+                    ``PYTEST_TIMEOUT`` when that is set (:func:`_session_deadline`).
         cwd:        working dir for the child (defaults to repo root).
 
     Asserts the machine invariant (exit 0 iff verified or a chat turn) before returning.
@@ -270,7 +287,7 @@ def run_cli_turn(
 
     # ONE deadline for the whole turn: drain to EOF, then give the child whatever is
     # left to exit; past the deadline the whole process group is killed.
-    deadline = _now() + timeout_sec
+    deadline = _session_deadline(timeout_sec)
     proc, master_fd = _spawn(argv, env, cwd or _REPO_ROOT)
     try:
         output, _eof = _drain(master_fd, deadline, proc)
@@ -292,7 +309,7 @@ def run_cli_turn(
     verdict = _find_verdict_line(output)
     assert verdict is not None, (
         "no VECTOR_VERDICT line emitted by cli.main "
-        f"(exit={exit_code}). Raw output:\n{output}"
+        f"(exit={exit_code}{', deadline reached' if _now() >= deadline else ''}). Raw output:\n{output}"
     )
     # The machine invariant the whole instrument rests on: exit 0 iff the turn
     # verified, or it was a chat turn (no action, no claim: NO_TRACE, no error).
@@ -337,6 +354,19 @@ class ReplSessionResult:
     @property
     def text(self) -> str:
         return strip_ansi(self.transcript)
+
+
+_PROGRESS_KEY = re.compile(r"(\S+) (\d+)s")
+
+
+def _has_run(text: str, key: str) -> bool:
+    """Has the action of *key* ('navigate 3s') been running for at least that long in
+    *text*: any of its progress frames ('navigate 4s · 1.2 m to go') at n >= N s?"""
+    m = _PROGRESS_KEY.fullmatch(key)
+    if m is None:
+        raise ValueError(f"a progress key is '<action> <N>s' (e.g. 'navigate 3s'), got {key!r}")
+    frames = re.findall(rf"(?<!\S){re.escape(m[1])} (\d+)s\b", text)
+    return any(int(n) >= int(m[2]) for n in frames)
 
 
 def _is_echo(after_prompt: str, typed: str) -> bool:
@@ -422,22 +452,18 @@ def run_repl_session(
         lines:   a ``str`` is typed once the REPL is idle at its prompt; a
                  ``(delay_sec, text)`` tuple is typed ``delay_sec`` after the previous
                  line WITHOUT waiting (mid-turn input; ``"\x03"`` is a Ctrl-C);
-                 a ``(str, text)`` tuple is typed once that str shows in the output
-                 after the previous line (keyed on observed progress, not a clock).
+                 a ``("<action> <N>s", text)`` tuple is typed once that action has
+                 been running for at least N seconds: any of its progress frames
+                 ``<action> <n>s`` with n >= N after the previous line (keyed on
+                 observed progress, not a clock; one skipped frame never stalls it).
                  ``quit`` is appended unless the last line already exits.
         answers: replies to permission prompts, in order; a prompt with no answer
                  left is refused with ``n`` (the safe default a user would pick).
         timeout_sec: ONE deadline for the whole session (boot, every turn, the
-                 exit), cut to end inside ``PYTEST_TIMEOUT`` when that is set. On
-                 expiry the process group is killed and ``timed_out`` is set.
+                 exit), cut to end inside ``PYTEST_TIMEOUT`` when that is set
+                 (:func:`_session_deadline`). On expiry the process group is killed
+                 and ``timed_out`` is set.
     """
-    # The deadline ends inside the pytest-timeout budget of the test running the
-    # session (scripts/gate.sh exports PYTEST_TIMEOUT, pytest-timeout reads it): a
-    # stalled session returns its transcript instead of pytest-timeout killing it
-    # with nothing to read (S3aV-08: an E5 hang left no transcript at 300 s of 420).
-    budget = float(os.environ.get("PYTEST_TIMEOUT") or 0)
-    if budget:
-        timeout_sec = min(timeout_sec, budget - _TEARDOWN_SEC)
     argv = [sys.executable, "-m", "vector_os_nano.vcli.cli"]
     if sim:
         argv.append("--sim")
@@ -464,15 +490,18 @@ def run_repl_session(
     timed_out = False
     proc, master_fd = _spawn(argv, env, cwd or _REPO_ROOT)
     tty = _Pty(master_fd)
-    deadline = _now() + timeout_sec
+    deadline = _session_deadline(timeout_sec)
     try:
         typed = ""
         for step in steps:
             if isinstance(step, tuple):
                 delay, text = step
-                if isinstance(delay, str):  # keyed on progress: wait for this output
-                    while delay not in tty.text()[tty.mark:] and _now() < deadline and not tty.eof:
+                if isinstance(delay, str):  # keyed on progress: the action ran >= N s
+                    while not _has_run(tty.text()[tty.mark:], delay) and _now() < deadline and not tty.eof:
                         tty.pump(0.1)
+                    if not _has_run(tty.text()[tty.mark:], delay):  # it never got there
+                        timed_out = not tty.eof
+                        break
                 else:
                     until = min(_now() + delay, deadline)
                     while _now() < until and not tty.eof:

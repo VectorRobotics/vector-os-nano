@@ -27,6 +27,29 @@ def test_a_stalled_session_returns_its_transcript_inside_the_pytest_budget(monke
     assert time.monotonic() - t0 < 20
 
 
+@pytest.mark.timeout(60)
+def test_a_stalled_cli_turn_returns_its_transcript_inside_the_pytest_budget(monkeypatch) -> None:
+    """S3aF1V-02: run_cli_turn had no cut, and its callers declare 300-360 s against
+    the gate's 300 s pytest budget: a hang there was killed with nothing to read."""
+    spawn = pty_cli._spawn
+    stall = [sys.executable, "-c", "print('booting', flush=True); import time; time.sleep(600)"]
+    monkeypatch.setattr(pty_cli, "_spawn", lambda argv, env, cwd: spawn(stall, env, cwd))
+    monkeypatch.setenv("PYTEST_TIMEOUT", "24")
+    t0 = time.monotonic()
+    with pytest.raises(AssertionError, match=r"(?s)deadline reached\). Raw output:.*booting"):
+        pty_cli.run_cli_turn("停下", timeout_sec=360)
+    assert time.monotonic() - t0 < 20
+
+
+@pytest.mark.parametrize("budget, left", [("300", 280.0), ("24", 4.0), ("10", 3.0), ("4", 2.0)])
+def test_the_cut_never_leaves_a_child_without_time(monkeypatch, budget, left) -> None:
+    """A budget of 20 s or less made the cut zero or negative (the child got no time)."""
+    monkeypatch.setenv("PYTEST_TIMEOUT", budget)
+    assert pty_cli._session_deadline(420) - time.monotonic() == pytest.approx(left, abs=0.5)
+    monkeypatch.delenv("PYTEST_TIMEOUT")
+    assert pty_cli._session_deadline(420) - time.monotonic() == pytest.approx(420, abs=0.5)
+
+
 def test_the_session_budget_is_the_timeout_pytest_runs_under(request) -> None:
     """The harness reads PYTEST_TIMEOUT; the gate must run pytest under that same value
     (a bare --timeout without the export would leave every session's deadline uncut)."""

@@ -60,7 +60,8 @@ class DetectSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {}
-    failure_modes: list[str] = ["no_perception", "no_detections", "track_failed", "calibration_error"]
+    failure_modes: list[str] = ["no_perception", "perception_failed", "no_detections", "track_failed",
+                                "calibration_error"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         if context.perception is None:
@@ -88,16 +89,17 @@ class DetectSkill:
         logger.info("[DETECT] Running detection for query: %r", query)
 
         # Step 1: VLM 2D detection
-        try:
-            from vector_os_nano.perception.base import detect_query
+        from vector_os_nano.perception.base import detect_query, failure_cause
 
+        try:
             detections = detect_query(context.perception, query)
-        except Exception as exc:
-            logger.error("[DETECT] Perception error: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — the camera or detector could not run: say why
+            logger.error("[DETECT] perception failed: %s: %s", type(exc).__name__, exc)
             return SkillResult(
                 success=False,
-                error_message=f"Perception error: {exc}",
-                result_data={"diagnosis": "no_perception", "error_detail": str(exc)},
+                error_message=(f"Perception could not run for {query!r} (nothing was checked): "
+                               f"{failure_cause(exc)}"),
+                result_data={"diagnosis": "perception_failed", "query": query},
             )
 
         if not detections:
@@ -134,9 +136,9 @@ class DetectSkill:
         track_warning: str | None = None
         try:
             tracked_objects = context.perception.track(detections)
-        except Exception as exc:
-            logger.warning("[DETECT] Tracking failed, storing 2D-only: %s", exc)
-            track_warning = str(exc)
+        except Exception as exc:  # noqa: BLE001 — the boxes stand, 2D-only, with the cause
+            logger.warning("[DETECT] Tracking failed, storing 2D-only: %s: %s", type(exc).__name__, exc)
+            track_warning = failure_cause(exc)
 
         # Step 3: Store in world model
         now = time.time()

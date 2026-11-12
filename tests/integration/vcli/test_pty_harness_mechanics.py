@@ -78,6 +78,39 @@ def test_repl_session_is_one_deadline_not_one_per_step(tmp_path, monkeypatch) ->
     assert elapsed < 3.5, f"session ran {elapsed:.1f}s on a 2s budget (a deadline per step?)"
 
 
+# A turn whose progress ticker skips its third second, as a drifting ticker did.
+_SKIPPING_TICKER = textwrap.dedent('''
+    import sys, time
+    print("vector> ", end="", flush=True)
+    sys.stdin.readline()
+    for n in (1, 2, 4, 5, 6, 7, 8):
+        print(f"native navigate {n}s · 1.0 m to go", flush=True)
+        time.sleep(0.2)
+    print(f"got {sys.stdin.readline().strip()}", flush=True)
+    print("vector> ", end="", flush=True)
+    sys.stdin.readline()
+''')
+
+
+def test_a_progress_key_is_met_by_a_later_frame_when_its_second_is_never_drawn(tmp_path, monkeypatch) -> None:
+    """S3aF1V-05: E5 waited for the exact frame 'navigate 3s ·', which a drifting
+    ticker skipped (2s -> 4s): the session then waited out its whole deadline."""
+    script = tmp_path / "ticker.py"
+    script.write_text(_SKIPPING_TICKER)
+    fake = tmp_path / "fake_python"
+    fake.write_text(f"#!/bin/sh\nexec {sys.executable} {script}\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(pty_cli.sys, "executable", str(fake))
+
+    t0 = time.monotonic()
+    r = pty_cli.run_repl_session(["go", ("navigate 3s", "halt")], timeout_sec=20.0, cwd=tmp_path)
+    assert not r.timed_out and "got halt" in r.text, r.text
+    assert time.monotonic() - t0 < 10
+    assert "navigate 3s" not in r.text  # the awaited second was never drawn
+    with pytest.raises(ValueError, match="'<action> <N>s'"):
+        pty_cli.run_repl_session(["go", ("navigate 3s ·", "halt")], timeout_sec=5.0, cwd=tmp_path)
+
+
 _FAKE_REPL = textwrap.dedent('''
     import sys, time
     print("banner"); print("vector> ", end="", flush=True)

@@ -20,14 +20,17 @@ perception code that the robot world registers into the kernel's registry.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
-BACKENDS = ("grounding-dino", "rynnbrain")
-
 import numpy as np
 
+from vector_os_nano.perception.base import failure_cause
 from vector_os_nano.vcli.cognitive.capabilities.types import CapabilityResult
+
+BACKENDS = ("grounding-dino", "rynnbrain")
+logger = logging.getLogger(__name__)
 
 
 class DetectorCapability:
@@ -137,20 +140,22 @@ class DetectorCapability:
                 success=False, error=f"unknown detector backend {backend!r}; valid: {list(BACKENDS)}",
             )
 
-        frame, rgb = self._resolve_frame(payload, context, self._live_perception())
+        frame, rgb, capture_failed = self._resolve_frame(payload, context, self._live_perception())
         if rgb is None:
             return CapabilityResult(
                 success=False,
-                error="no RGB frame: supply 'rgb' or a 'perception' with capture()/get_color_frame()",
+                error=(f"the camera capture failed: {capture_failed}" if capture_failed else
+                       "no RGB frame: supply 'rgb' or a 'perception' with capture()/get_color_frame()"),
                 latency_sec=time.monotonic() - start,
             )
 
         try:
             detections = self._get_detector(backend).detect(rgb, query)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — the model could not run: say why
+            logger.warning("[DETECT-CAP] %s failed on %r: %s: %s", backend, query, type(exc).__name__, exc)
             return CapabilityResult(
                 success=False,
-                error=f"{backend} error: {exc}",
+                error=f"{backend} error: {failure_cause(exc)}",
                 output={"backend": backend},
                 latency_sec=time.monotonic() - start,
             )
@@ -175,9 +180,10 @@ class DetectorCapability:
     @staticmethod
     def _resolve_frame(
         payload: dict[str, Any], context: Any, bound_perception: Any = None
-    ) -> tuple[Any, np.ndarray | None]:
-        """``(frame, rgb)``: an explicit ``rgb`` (no frame), else the first source's
-        snapshot (``capture()``: pixels + pose of one instant), else its RGB.
+    ) -> tuple[Any, np.ndarray | None, str]:
+        """``(frame, rgb, why_not)``: an explicit ``rgb`` (no frame), else the first
+        source's snapshot (``capture()``: pixels + pose of one instant), else its RGB;
+        ``why_not`` is the cause of the first source that raised ("" if none did).
 
         Source priority: the payload's ``perception``, the capability's
         REGISTRATION-BOUND perception, then a ``context`` that yields a frame (itself
@@ -186,21 +192,23 @@ class DetectorCapability:
         """
         rgb = payload.get("rgb")
         if isinstance(rgb, np.ndarray) and rgb.ndim == 3:
-            return None, rgb
+            return None, rgb, ""
+        why_not = ""
         for src in (payload.get("perception"), bound_perception, context,
                     getattr(context, "perception", None)):
             try:
                 if callable(getattr(src, "capture", None)):
                     f = src.capture()
                     if isinstance(f.rgb, np.ndarray) and f.rgb.ndim == 3:
-                        return f, f.rgb
+                        return f, f.rgb, ""
                 elif callable(getattr(src, "get_color_frame", None)):
                     img = src.get_color_frame()
                     if isinstance(img, np.ndarray) and img.ndim == 3:
-                        return None, img
-            except Exception:  # noqa: BLE001 — best-effort frame source; try the next
-                continue
-        return None, None
+                        return None, img, ""
+            except Exception as exc:  # noqa: BLE001 — try the next source; keep the first cause
+                logger.warning("[DETECT-CAP] frame source failed: %s: %s", type(exc).__name__, exc)
+                why_not = why_not or failure_cause(exc)
+        return None, None, why_not
 
 
 def _provenance(frame: Any, rgb: np.ndarray) -> dict[str, Any]:
