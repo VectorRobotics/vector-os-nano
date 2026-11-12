@@ -358,7 +358,7 @@ def test_the_gate_never_excuses_without_a_contract() -> None:
 _RED_HOLD = "holding_object('pickable_can_red')"
 
 
-@pytest.mark.parametrize("rows, attempts, verified, superseded", [
+@pytest.mark.parametrize("rows, attempts, recovered, superseded", [
     ([(HINT, False, True), (HOLD, True, False)], ("native", "grasp_green"), True, True),         # another goal_id, alias
     ([(HOLD, False, True), (HOLD, True, False)], ("native", "grasp_green"), True, True),         # another goal_id
     ([(HINT, False, True), (HOLD, True, False)], ("native", "native"), True, True),              # alias, same goal_id
@@ -371,17 +371,20 @@ _RED_HOLD = "holding_object('pickable_can_red')"
     ([(HINT, False, True), (HOLD, False, False)], ("native", "g"), False, True),            # the retry failed too
 ])
 def test_without_a_contract_a_later_attempt_of_the_same_predicate_supersedes_a_failed_one(
-        rows, attempts, verified, superseded) -> None:
+        rows, attempts, recovered, superseded) -> None:
     """SP1F1V-01 (charter 3.5): the failed attempt is superseded by the next opted-in row
     that necessarily asserts its predicate (an object by any name the world resolves),
-    whatever goal_id each carries; it never supersedes a row before it."""
+    whatever goal_id each carries; it never supersedes a row before it. None of these
+    turns verifies (a manipulation needs a contract): where the retry recovered, the
+    missing contract is the ONLY reason left, never the failed attempt."""
     from tests.unit.vcli.test_task_contract_binding import APT
     from vector_os_nano.vcli.cognitive.trace_store import graded_indices, turn_reject_reason, turn_succeeded
 
     t = _trace("move the green bottle", rows, contract=(), end=())
     t = replace(t, steps=tuple(replace(s, attempt_of=a) for s, a in zip(t.steps, attempts)))
     t = replace(t, success=turn_succeeded(t))
-    assert (turn_reject_reason(t, APT) == "") is verified, turn_reject_reason(t, APT)
+    why = turn_reject_reason(t, APT)
+    assert why and ("outside the forms" in why) is recovered, why
     assert graded_indices(t) == ([1] if superseded else [0, 1]), graded_indices(t)
 
 
@@ -418,14 +421,17 @@ def test_a_failed_navigate_then_a_retry_verifies_whatever_the_goal_id(goal, gid)
     assert rep.verified is True and trace.success is True, rep.reject_reason
 
 
-def test_a_missed_grasp_then_a_retry_verified_by_another_name_verifies_without_a_contract() -> None:
+def test_a_missed_grasp_then_a_retry_verified_by_another_name_is_superseded_and_needs_a_contract() -> None:
     """SP1F1V-01 (fuzz seed 11973): the failed grasp's hint names the bottle one way, the
-    model's verify another; the world resolves both to the same object."""
+    model's verify another; the world resolves both to the same object, so the retry
+    supersedes the miss and the turn succeeded. It is still not verified: the goal is
+    outside the closed forms (charter 3.5: a manipulation needs a contract)."""
     grasp = (("rest", "grasp missed"), ("held", ""))
     trace, rep, rows, _ = _run("move the green bottle", [GRASP, GRASP, VERIFY], grasp=grasp)
     assert trace.contract == () and rows == [("perception_grasp", False, True, True),
                                              ("perception_grasp", True, False, False)], rows
-    assert rep.verified is True and rep.goal_check == "unchecked", rep.reject_reason
+    assert trace.success is True and rep.verified is False and rep.goal_check == "unchecked", rep.reject_reason
+    assert "outside the forms" in rep.reject_reason
 
 
 # ---------------------------------------------------------------------------
