@@ -5,6 +5,7 @@ rooms, atomic world-keyed persistence. Each test names the ledger bug it pins.""
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -118,6 +119,21 @@ def test_save_is_atomic_and_autosaves_after_a_mutation(tmp_path) -> None:
         time.sleep(0.05)
     assert "blue bottle" in p.read_text(), "the last change of a burst is saved too"
     assert [f.name for f in tmp_path.iterdir()] == ["sg.yaml"], "no temp file left behind"
+
+
+def test_persisted_format_is_unchanged(tmp_path) -> None:
+    """golden/scene_graph.yaml was written by the SceneGraph of release/1.0 before the
+    SG1 split (fixed and discovered rooms, doors, viewpoints, localized, half-localized
+    and unlocalized objects, zh text, attributes); loading it and saving it back must
+    give the same bytes, so a file on disk survives an upgrade and a downgrade."""
+    golden = Path(__file__).with_name("golden") / "scene_graph.yaml"
+    p = tmp_path / "scene_graph.yaml"
+    p.write_bytes(golden.read_bytes())
+    sg = SceneGraph(persist_path=str(p))
+    sg.load()
+    assert sg.stats() == {"rooms": 3, "viewpoints": 2, "objects": 4, "visited_rooms": 3}
+    sg.save()
+    assert p.read_bytes() == golden.read_bytes()
 
 
 def test_clear_is_in_place_and_keeps_the_world_layout() -> None:
