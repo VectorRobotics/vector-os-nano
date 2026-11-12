@@ -250,3 +250,43 @@ def run_turn(
         session.compact(keep_recent=12)
     flush(rt)
     return trace, answer, entries
+
+
+def graded_turn(
+    rt: Runtime,
+    text: str,
+    *,
+    ask_permission: Callable[[str, dict[str, Any]], str] | None = None,
+) -> tuple[str, Any, Any]:
+    """Run ONE turn and grade it with the existing gate: ``(answer, report, trace)``.
+
+    The headless faces (``-p``, MCP) read this. ``report`` is the turn's
+    ``VerdictReport`` (``from_trace`` over the SAME oracle names GoalVerifier uses),
+    None for a chat turn (nothing claimed, nothing graded), and a fail-closed
+    ``no_trace`` report when there is no LLM, the turn raised (``trace`` None) or the
+    gate could not be read.
+    """
+    from dataclasses import replace
+
+    from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
+    from vector_os_nano.vcli.render import _chat_turn, _gait_backend, _trace_acted
+    from vector_os_nano.vcli.verdict import VerdictReport
+
+    engine = rt.engine
+    if engine._backend is None:
+        key_env = rt.app_state["credentials"].key_env
+        return "", VerdictReport.no_trace(goal=text, error=f"no LLM: {key_env} is not set"), None
+    try:
+        trace, answer, _ = run_turn(rt, text, ask_permission=ask_permission)
+    except Exception as exc:  # noqa: BLE001
+        return "", VerdictReport.no_trace(goal=text, error=f"native turn failed: {exc}"), None
+    if _chat_turn(trace):
+        return answer, None, trace
+    try:
+        agent = getattr(engine, "_agent", None)
+        report = VerdictReport.from_trace(trace, verify_oracle_names(agent, engine),
+                                          gait_backend=_gait_backend(agent))
+    except Exception as exc:  # noqa: BLE001 — fail CLOSED on any error reading the gate
+        report = replace(VerdictReport.no_trace(goal=text, error=f"verdict failed: {exc}"),
+                         acted=_trace_acted(trace))
+    return answer, report, trace
