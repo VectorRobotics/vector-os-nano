@@ -112,6 +112,33 @@ def test_e11_look_localizes_remembers_and_resolves_zh_en_to_one_instance(tmp_pat
     assert "verdict GROUNDED" not in recall, recall[-3000:]
 
 
+_UNREADY = {"steps": LAUNCH_STEPS + [
+    {"when": _LOOK, "tool_calls": [{"name": "look", "input": {}}]},
+    {"when": "(perception_failed)", "is_error": True, "text": "看不了：检测模型没有就绪。", "tool_calls": []},
+]}
+
+
+@pytest.mark.sim
+@pytest.mark.cli_main
+def test_e11_a_look_without_the_weights_fails_loud_with_the_prefetch_command(tmp_path) -> None:
+    """perception:look-reports-crashed-detector-as-nothing: a detector that cannot run
+    made look answer 'nothing localized'; it is a failed look with its cause now."""
+    hf = tmp_path / "empty_hf_home"
+    hf.mkdir()
+    log = tmp_path / "llm.jsonl"
+    r = run_repl_session([LAUNCH, _LOOK], tool_script=_UNREADY, answers=["y"],
+                         extra_env={"HF_HOME": str(hf), "HF_HUB_OFFLINE": "1",
+                                    "VECTOR_FAKE_LLM_LOG": str(log)}, timeout_sec=300)
+    assert not r.timed_out, r.text[-3000:]
+    look = _turn(r.text, _LOOK)
+    assert "python scripts/fetch_assets.py --weights" in look, look[-3000:]
+    assert "nothing localized" not in look and "verdict GROUNDED" not in look, look[-3000:]
+    told = next(o for o in _observations(log) if "(perception_failed)" in o)
+    assert told.startswith("Perception could not run for any of the "), told
+    assert "the detector failed: IDEA-Research/grounding-dino-tiny@" in told, told
+    assert "pre-fetch with: python scripts/fetch_assets.py --weights" in told and str(hf) not in told, told
+
+
 _RYNN = "用 RynnBrain 找一下绿色瓶子"
 _RYNN_SCRIPT = {"steps": LAUNCH_STEPS + [
     {"when": _RYNN, "tool_calls": [
