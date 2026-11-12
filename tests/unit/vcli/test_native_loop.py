@@ -980,14 +980,15 @@ def test_a_failed_skill_is_recorded_with_its_message() -> None:
     # Charter 3.5: no arm counter, so no motion evidence: a failed attempt, closed at once
     # as its own FAILED row; the model's verify after it is a row of its own, and it
     # asserts the hint's predicate (holding the red can is holding an object), so it
-    # supersedes the failed row (SP1F1V-01) and is graded: nothing acted, UNCAUSED.
+    # supersedes the failed row (SP1F1V-01) and is graded: it FAILs, nothing acted, UNCAUSED.
     step, _after = trace.steps
     assert step.failed_attempt is True
     assert step.success is False and "ik_unreachable" in step.error
     assert step.result_data["is_error"] is True and "ik_unreachable" in step.result_data["content"]
     rep = _verdict(agent, eng, trace)
     assert [(s.evidence, s.superseded) for s in rep.per_step] == [("FAILED", True), ("RAN", False)]
-    assert rep.verified is False and rep.per_step[1].reject_reason.startswith("UNCAUSED"), rep.reject_reason
+    assert rep.per_step[1].actor_caused == "UNCAUSED" and rep.per_step[1].verify_result is False
+    assert rep.verified is False and rep.reject_reason == "native_step_1: verify FAIL", rep.reject_reason
 
 
 def test_navigate_retry_recovers_and_the_contract_is_printed_first() -> None:
