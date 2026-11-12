@@ -1,0 +1,90 @@
+<!--
+  The tabletop world: a table and six objects on it. Plain MJCF: no robot, no cameras,
+  no grasp welds (sim/scene/compose.py adds the robot at the spawn in tabletop.yaml,
+  its cameras and one inactive weld per gripper x pickable).
+
+  Each object collides as primitives fitted to its mesh (the mesh is what is seen), with
+  its body origin at its centre, and lies with its narrow side along world x: across
+  the jaws of an arm on the spawn reaching straight down (jaw opening per object:
+  embodiments/so101/robot.yaml).
+-->
+<mujoco model="tabletop">
+  <compiler angle="radian" meshdir="meshes"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <statistic extent="0.6" center="0.2 0 0.1"/>
+
+  <!-- In a class of its own: the composed scene's main default holds the robot's. -->
+  <default>
+    <default class="tabletop">
+      <geom condim="4" friction="1 0.005 0.0001" solimp="0.95 0.99 0.001" solref="0.02 1"/>
+      <default class="look">
+        <geom type="mesh" contype="0" conaffinity="0" mass="0"/>
+      </default>
+      <default class="shape">
+        <geom group="3"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1="0.9 0.9 0.9" rgb2="0.7 0.7 0.7"/>
+    <material name="grid" texture="grid" texrepeat="8 8"/>
+    <mesh name="banana" file="banana.stl"/>
+    <mesh name="mug" file="mug.stl"/>
+    <mesh name="bottle" file="bottle.stl" scale="0.7 0.7 0.7"/>
+    <mesh name="screwdriver" file="screwdriver.stl"/>
+    <mesh name="duck" file="duck.stl" scale="0.8 0.8 0.8"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0.3 0 0.8" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
+    <light pos="0 0.3 0.6" dir="0 -0.3 -1" diffuse="0.4 0.4 0.4"/>
+    <geom name="floor" class="tabletop" type="plane" size="1 1 0.01" material="grid" condim="3"/>
+
+    <!-- top at z 0.02 -->
+    <body name="table" childclass="tabletop" pos="0.20 0 0">
+      <geom name="tabletop" type="box" size="0.30 0.25 0.01" pos="0 0 0.01" rgba="0.72 0.62 0.45 1" mass="100"/>
+    </body>
+
+    <body name="banana" childclass="tabletop" pos="0.12 0.12 0.040" quat="0.707107 0 0 0.707107">
+      <freejoint name="banana"/>
+      <geom class="look" mesh="banana" rgba="1.0 0.9 0.2 1"/>
+      <geom class="shape" type="box" pos="-0.0012 0 -0.0008" size="0.0236 0.006 0.018" mass="0.020"/>
+    </body>
+
+    <body name="mug" childclass="tabletop" pos="0.22 0.05 0.038" quat="0.707107 0 0 0.707107">
+      <freejoint name="mug"/>
+      <geom class="look" mesh="mug" pos="0 0 -0.0175" rgba="0.85 0.15 0.15 1"/>
+      <geom class="shape" type="cylinder" size="0.015 0.0175" mass="0.027"/>
+      <geom class="shape" type="box" pos="0.0205 0 0" size="0.0055 0.004 0.012" mass="0.003"/>
+    </body>
+
+    <body name="bottle" childclass="tabletop" pos="0.18 0.14 0.045">
+      <freejoint name="bottle"/>
+      <geom class="look" mesh="bottle" pos="0 0 -0.0245" rgba="0.2 0.4 0.9 1"/>
+      <geom class="shape" type="cylinder" size="0.0098 0.0245" mass="0.025"/>
+    </body>
+
+    <!-- lying along world y (a box: a lying cylinder rolls) -->
+    <body name="screwdriver" childclass="tabletop" pos="0.20 -0.17 0.0285" quat="0.707107 0.707107 0 0">
+      <freejoint name="screwdriver"/>
+      <geom class="look" mesh="screwdriver" pos="0 0 -0.04" rgba="0.1 0.7 0.2 1"/>
+      <geom class="shape" type="box" size="0.008 0.008 0.04" mass="0.015"/>
+    </body>
+
+    <body name="duck" childclass="tabletop" pos="0.13 -0.09 0.040" quat="0.707107 0 0 0.707107">
+      <freejoint name="duck"/>
+      <geom class="look" mesh="duck" pos="0 0 -0.0188" rgba="1.0 0.6 0.1 1"/>
+      <geom class="shape" type="box" pos="0.0044 0 0" size="0.0188 0.0144 0.0188" mass="0.020"/>
+    </body>
+
+    <body name="lego" childclass="tabletop" pos="0.25 -0.06 0.027" quat="0.707107 0 0 0.707107">
+      <freejoint name="lego"/>
+      <geom type="box" size="0.016 0.008 0.006" rgba="0.95 0.2 0.2 1" mass="0.008"/>
+      <geom type="cylinder" size="0.003 0.002" pos="-0.008 -0.004 0.008" rgba="0.95 0.2 0.2 1" mass="0.0005"/>
+      <geom type="cylinder" size="0.003 0.002" pos="0.008 -0.004 0.008" rgba="0.95 0.2 0.2 1" mass="0.0005"/>
+      <geom type="cylinder" size="0.003 0.002" pos="-0.008 0.004 0.008" rgba="0.95 0.2 0.2 1" mass="0.0005"/>
+      <geom type="cylinder" size="0.003 0.002" pos="0.008 0.004 0.008" rgba="0.95 0.2 0.2 1" mass="0.0005"/>
+    </body>
+  </worldbody>
+</mujoco>

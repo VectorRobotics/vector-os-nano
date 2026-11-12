@@ -131,10 +131,12 @@ def test_pybullet_refuses_what_it_cannot_reproduce(tmp_path, body, extra, why):
     assert why in (unsupported(scene.model) or "")
 
 
-def test_pybullet_accepts_every_shipped_body(robot_scene, battery_scene, contract_scene, flat_go2_scene):
+def test_pybullet_accepts_every_shipped_body(robot_scene, battery_scene, tabletop_scene, contract_scene,
+                                            flat_go2_scene):
     pytest.importorskip("pybullet", reason="pybullet is not installed: uv pip install -e '.[pybullet]'")
     from vector_os_nano.sim.backends.pybullet.world import unsupported
 
-    for sc in [robot_scene(n) for n in ("so101", "piper", "go2", "go2_piper")] + [battery_scene, contract_scene, flat_go2_scene]:
+    shipped = [robot_scene(n) for n in ("so101", "piper", "go2", "go2_piper")]
+    for sc in shipped + [battery_scene, tabletop_scene, contract_scene, flat_go2_scene]:
         assert unsupported(sc.model) is None, sc.xml_path
     assert SIM_DIR.is_dir()

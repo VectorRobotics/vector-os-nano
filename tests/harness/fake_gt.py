@@ -11,7 +11,7 @@ tested on the compiled scene in tests/unit/vcli/test_sim_oracles.py):
 - object poses   <- ``arm.get_object_positions()`` (or ``objects=`` given here)
 - attachments    <- ``gripper.weld_is_active()``; else the object nearest the EE
                     (``arm.fk``) within 8 cm while ``gripper.is_holding()``; the
-                    parent is always the Piper's weld body
+                    parent is the manifest gripper's weld body
 - lifted         <- z above the lowest z the object has been seen at
 - contacts       <- the fingers while welded, else *support* while resting
 - arm joints     <- ``arm.get_joint_positions()``
@@ -27,18 +27,24 @@ from types import SimpleNamespace
 from typing import Any
 
 _EE_RADIUS = 0.08
-_PARENT = "piper_link6"  # the go2_piper manifest's weld body (the SO-101 accepts any)
 
 
 class FakeGT:
+    """*embodiment*: the manifest whose gripper names the weld body and the fingers."""
+
     def __init__(self, agent: Any = None, *, objects: dict[str, list[float]] | None = None,
-                 finger_contact: bool = True, support: str = "table") -> None:
+                 finger_contact: bool = True, support: str = "table", embodiment: str = "go2_piper") -> None:
+        from vector_os_nano.embodiments import registry
+
         self.agent = agent
         self._objects = objects
-        self.robot_bodies: frozenset[int] = frozenset({9001, 9002})
+        arm = registry.load(embodiment).arm
+        grip = arm.gripper if arm is not None else None
+        self._parent = grip.weld_body if grip is not None else ""
+        self._ids: dict[str, int] = {f: 9001 + i for i, f in enumerate(grip.finger_bodies if grip else ())}
+        self.robot_bodies: frozenset[int] = frozenset(self._ids.values())
         self.finger_contact = finger_contact
         self.support = support
-        self._ids: dict[str, int] = {"piper_link7": 9001, "piper_link8": 9002}
         self.events: list[tuple[float, str, str | None]] = []
         self.sim_time = 0.0
         self._rest: dict[str, float] = {}
@@ -97,12 +103,12 @@ class FakeGT:
                 pass
         for n, on in welds.items():
             if self._last_welds.get(n, False) != on:
-                self.events.append((self.sim_time, n, _PARENT if on else None))
+                self.events.append((self.sim_time, n, self._parent if on else None))
         self._last_welds = welds
         return welds
 
     def attachments(self) -> dict[str, str]:
-        return {n: _PARENT for n, on in self._welds().items() if on}
+        return {n: self._parent for n, on in self._welds().items() if on}
 
     def attached_to(self, name: str) -> str | None:
         return self.attachments().get(name)
@@ -137,7 +143,7 @@ def fake_namespace(agent: Any = None, embodiment: str = "go2_piper", **kwargs: A
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     cfg = registry.load(embodiment)
-    gt = kwargs.pop("gt", None) or FakeGT(agent)
+    gt = kwargs.pop("gt", None) or FakeGT(agent, embodiment=embodiment)
     return build_namespace(gt, load_world(cfg.world), cfg, **kwargs)
 
 
@@ -150,7 +156,7 @@ def bind_fake_sim(agent: Any, embodiment: str = "so101", **gt_kwargs: Any) -> Si
     from vector_os_nano.sim import session as sim_session
     from vector_os_nano.vcli.worlds.world_manifest import load_world
 
-    gt = FakeGT(agent, **gt_kwargs)
+    gt = FakeGT(agent, embodiment=embodiment, **gt_kwargs)
     turn = [(-math.inf, -math.inf)]
     world_id = registry.load(embodiment).world
     s = SimpleNamespace(agent=agent, gt=gt, world=load_world(world_id) if world_id else None)
@@ -170,7 +176,7 @@ def bind_real_sim(agent: Any, embodiment: str) -> Any:
 
     s = sim_session.SimSession(sim_session.SimSpec(embodiment, gui=False), registry.load(embodiment))
     s.agent = agent
-    s.runtime = getattr(agent._base, "runtime", None) or getattr(agent._arm, "runtime", None)
+    s.runtime = agent._base.runtime
     s._bind_ground_truth()
     sim_session._LIVE.append(s)
     return s

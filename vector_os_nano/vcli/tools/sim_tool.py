@@ -117,7 +117,7 @@ class SimStartTool:
             return ToolResult(content=f"{spec.embodiment} simulation already running ({current.summary()}).")
 
         note = ""
-        if spec.embodiment == "so101" and spec.gui and not self._viewer_available():
+        if spec.gui and not self._viewer_available():
             # macOS: the viewer needs mjpython. The running REPL (and its conversation)
             # is never replaced: run headless and say how to get a window.
             spec = SimSpec(embodiment=spec.embodiment, gui=False)

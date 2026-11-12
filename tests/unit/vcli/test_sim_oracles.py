@@ -25,7 +25,6 @@ from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: E402
 from vector_os_nano.sim.ground_truth import GroundTruth  # noqa: E402
 from vector_os_nano.sim.runtime import SimRuntime  # noqa: E402
 from vector_os_nano.sim.scene import compiled_scene  # noqa: E402
-from vector_os_nano.sim.scene.compiled import inactive_welds  # noqa: E402
 from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace  # noqa: E402
 from vector_os_nano.vcli.worlds.world_manifest import load_world  # noqa: E402
 
@@ -304,36 +303,31 @@ def test_unknown_object_fails_closed(ns) -> None:
 # --------------------------------------------------------------------- so101 tabletop
 
 def test_so101_tabletop_oracles() -> None:
-    from vector_os_nano.hardware.sim.mujoco_arm import _DEFAULT_SCENE_XML
-    from vector_os_nano.embodiments import registry
+    """The so101 is graded like the Piper: holding needs every jaw on the object."""
+    from tests.harness.sim_session import started
 
-    world = MuJoCoWorld(compiled_scene(
-        _DEFAULT_SCENE_XML, robot_root="base_link", grasp_pairs=inactive_welds(_DEFAULT_SCENE_XML)))
-    m = world.model
-    stance = registry.load("so101").stance
-    rt = SimRuntime(world, threaded=False, paced=False, name="so101_test")
-
-    def at_home(w) -> None:
-        for j, v in stance.items():
-            w.data.qpos[m.jnt_qposadr[m.joint(j).id]] = v
-        mj.mj_forward(w.model, w.data)
-
-    try:
-        rt.call(at_home)
-        ns = rig_namespace(rt, "so101")
+    with started("so101") as s:
+        ns, sc = s.oracles(), s.runtime.world.scene
         assert "at_position" not in ns  # fixed base: no base oracles
         assert ns["in_view"]("banana")  # the manifest's overhead camera sees the table
-        assert ns["arm_at_home"]()
-        rt.step(500)  # the objects settle onto the table (the unpowered arm sags)
-        assert not ns["arm_at_home"]()
+        assert not ns["arm_at_home"]()  # qpos0: stretched out
+        assert s.agent._arm.home(duration=2.0) and ns["arm_at_home"]()
         assert ns["object_on"]("banana", "table") and not ns["holding_object"]("banana")
-        i = next(i for i in range(m.neq)
-                 if mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, int(m.eq_obj2id[i])) == "banana")
-        rt.call(lambda w: w.data.eq_active.__setitem__(i, 1))
-        assert not ns["holding_object"]("banana")  # welded, not lifted
-        a = int(m.jnt_qposadr[m.body("banana").jntadr[0]])
-        rt.call(lambda w: (w.data.qpos.__setitem__(a + 2, w.data.qpos[a + 2] + 0.10), mj.mj_forward(w.model, w.data)))
-        assert ns["holding_object"]("banana")  # a weld-only gripper: weld + lift
-        assert ns["holding_object"]("香蕉")
-    finally:
-        rt.close()
+
+        # Adversarial: attached and lifted, but no jaw touches it. The SO-101 used to
+        # be graded on the weld + the lift alone (its jaws had no collision).
+        banana, hand = sc.body("banana"), sc.body("gripper_link")
+
+        def weld_and_lift(w) -> None:
+            w.attach(hand, banana)
+            q, _qd = w.state()
+            q[sc.free_q(banana).start + 2] += 0.10
+            w.reset(q)
+
+        s.runtime.call(weld_and_lift)
+        assert ns["lifted"]("banana") and not ns["holding_object"]("banana")
+        s.runtime.release(hand)
+        s.runtime.wait_sim(1.0)  # it falls back onto the table
+
+        assert s.agent.execute_skill("pick", {"object_label": "banana", "mode": "hold"}).success
+        assert ns["holding_object"]("banana") and ns["holding_object"]("香蕉")

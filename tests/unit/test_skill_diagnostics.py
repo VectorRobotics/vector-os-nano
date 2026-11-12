@@ -507,7 +507,9 @@ def _make_pick_context(
 
 
 def _default_pick_arm() -> Mock:
+    """The real SO-101's surface: its own position IK, no top-down solve."""
     arm = Mock()
+    del arm.ik_top_down
     arm.get_joint_positions = Mock(return_value=[0.0, 0.0, 0.0, 0.0, 0.0])
     arm.ik = Mock(return_value=[0.1, 0.2, 0.3, 0.4, 0.5])
     arm.move_joints = Mock(return_value=True)

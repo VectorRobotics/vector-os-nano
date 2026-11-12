@@ -39,8 +39,8 @@ from tests.harness.fake_gt import bind_fake_sim, fake_namespace
 from vector_os_nano.embodiments import registry
 from vector_os_nano.vcli.worlds.robot import RobotWorld
 
-# The SO-101 home pose (its manifest stance; the arm_at_home oracle reads it there).
-_HOME_JOINTS = tuple(registry.load("so101").stance.values())
+# The SO-101 home pose (its manifest arm.home; the arm_at_home oracle reads it there).
+_HOME_JOINTS = registry.load("so101").arm.home
 
 # Robot verify-namespace oracle names (the sim arm/base subset). Mirrors what
 # verify_oracle_names(agent, engine) single-sources from the live namespace.
