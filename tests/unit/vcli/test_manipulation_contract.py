@@ -189,7 +189,8 @@ def _close_turn(goal: str, verify: str, *, real: bool):
 
 
 # REF1d-V-01: the literal-left spellings the classifier grounds and the gate once missed.
-LITERAL_LEFT = ["True == holding_object('red can')", "(True == holding_object('red can')) and (True == lifted('red can'))"]
+LITERAL_LEFT = ["True == holding_object('red can')",
+                "(True == holding_object('red can')) and (True == lifted('red can'))"]
 LITERAL_LEFT_ALONE = [f"True == lifted('{_CAN}')", "True == kept_holding('red can')"]
 
 
@@ -229,6 +230,16 @@ def test_a_gripper_turn_that_asserts_no_possession_or_placement_stays_as_it_was(
     (the same as in a world with no manifest: the gate does not fire)."""
     why = turn_reject_reason(_one_row("合上夹爪", verify, "apartment"), APT)
     assert why == turn_reject_reason(_one_row("合上夹爪", verify, ""), APT) and OUTSIDE not in why, why
+
+
+@pytest.mark.parametrize("verify", ["not holding_object('red can')",
+                                    "released('red can') and not holding_object('red can')"])
+def test_not_holding_never_proves_a_release(verify) -> None:
+    """``not`` never grounds (the classifier): the step is not evidence, so the turn is
+    not verified under the release goal, as on rel/REF1d-fix1; ``released`` alone is."""
+    t = _one_row("put the red can down", verify, "apartment")
+    assert t.contract == (f"released('{_CAN}')",) and turn_reject_reason(t, APT).startswith("s0: ")
+    assert turn_reject_reason(_one_row("put the red can down", "released('red can')", "apartment"), APT) == ""
 
 
 @pytest.mark.parametrize(("expr", "want"), [
