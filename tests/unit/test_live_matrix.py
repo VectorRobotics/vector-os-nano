@@ -20,7 +20,8 @@ _READY = "  ▸ Started so101 simulation, ready in 2.1s: MuJoCoArm, sim_time=3.0
 
 def _transcript(verified: bool, goal: str = "proven", ready: str = _READY) -> str:
     ev = "GROUNDED" if verified else "FAILED"
-    return (f"vector> 启动 so101 机械臂仿真 无窗口\n{ready}vector> 抓起香蕉\n"
+    return (f"  Model: deepseek-v4 | Provider: deepseek | Arm: none\n"
+            f"vector> 启动 so101 机械臂仿真 无窗口\n{ready}vector> 抓起香蕉\n"
             f"  ▸ pick → verify holding_object('banana') ✓ (actor=CAUSED)\n"
             f"  verdict {ev} verified={verified} (1/1 grounded) goal={goal}\nvector> quit\n")
 
@@ -104,8 +105,29 @@ def test_a_turn_with_no_verdict_line_is_not_verified(tmp_path) -> None:
 def test_a_verified_turn_with_no_gt_is_ungraded_never_a_success(tmp_path) -> None:
     r = lm.judge(_CELL, _rec(tmp_path, _transcript(True), None))
     assert r["grade"] is None and r["outcome"] == "ungraded" and "no GT dump" in r["grade_note"]
-    c = lm.summarize([_CELL], [r])["cells"][0]
+    s = lm.summarize([_CELL], [r])
+    c = s["cells"][0]
     assert c["success"] == 0 and c["ungraded"] == [r["transcript"]]
+    # L1-V03: a run in which nothing was graded proved nothing: never exit 0
+    assert (s["reps_run"], s["graded"], lm.exit_code(s)) == (1, 0, 2)
+
+
+def test_the_report_names_the_model_that_ran(tmp_path) -> None:
+    """L1-V02: a scripted model leaking into a 'live' run was invisible in the report."""
+    r = lm.judge(_CELL, _rec(tmp_path, _transcript(True), _dump(0.12, True)))
+    assert r["model"] == "deepseek-v4 (deepseek)"
+    s = lm.summarize([_CELL], [r])
+    assert s["models"] == ["deepseek-v4 (deepseek)"] and "model: deepseek-v4 (deepseek)" in lm.markdown(s)
+    blind = lm.judge(_CELL, _rec(tmp_path, _transcript(True).split("\n", 1)[1], _dump(0.12, True)))
+    assert lm.summarize([_CELL], [blind])["models"] == ["unknown"]
+
+
+def test_a_proven_goal_that_the_grade_denies_is_false_grounded_too(tmp_path) -> None:
+    """I4D: done is read from goal_check == 'proven', not from verified alone."""
+    r = lm.judge(_CELL, _rec(tmp_path, _transcript(False, "proven"), _dump(0.02, False)))
+    assert r["verdict"]["verified"] is False and r["outcome"] == "FALSE_GROUNDED"
+    agree = lm.judge(_CELL, _rec(tmp_path, _transcript(False, "proven"), _dump(0.12, True)))
+    assert agree["outcome"] == "agree"
 
 
 def test_success_agrees_and_reads_the_task_turn_tools(tmp_path) -> None:

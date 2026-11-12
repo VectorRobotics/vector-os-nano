@@ -80,5 +80,7 @@ def test_e14_a_cell_whose_launch_fails_is_not_run_with_its_reason(tmp_path) -> N
     rec = lm.run_rep(_CELL, 0, tmp_path, tool_script=_script(embodiment="no_such_body"))
     r = lm.judge(_CELL, rec)
     assert r["status"] == "not_run" and "no_such_body" in r["reason"], r
+    # a failed launch bills no task turn: the task sentence is never typed
+    assert f"vector> {_CELL['task']}" not in Path(rec["transcript"]).read_text(encoding="utf-8"), r
     s = lm.summarize([_CELL], [r])
     assert s["cells"][0]["status"] == "not_run" and lm.exit_code(s) == 2

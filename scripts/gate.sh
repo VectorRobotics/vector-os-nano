@@ -11,7 +11,9 @@
 #             session sim_preflight skips the tier with ONE reason if this box
 #             cannot run MuJoCo (no EGL, missing weights, scene does not compile),
 #             and the gate counts such a skip RED in the sim and e2e tiers
-#   e2e       tests/e2e_repl: bare vector-cli on a PTY, one REPL per scenario
+#   e2e       tests/e2e_repl: bare vector-cli on a PTY, one REPL per scenario; every
+#             turn of a sim session graded by scripts/gt_grade.py against
+#             tests/e2e_repl/gt_expect.yaml (the gt_audit line, $GATE_OUT/gt_audit/report.json)
 #   all       hermetic, then sim, then e2e
 #
 # Env: GATE_PER_FILE=1  (default) one capped pytest process per test file, so a
@@ -24,6 +26,8 @@
 #                       CodeExecutor's runaway `while True` thread (WP03/WP04/WP15).
 #      GATE_PATHS="a b" test paths instead of the tier default
 #      GATE_OUT=<dir>   junit + logs (default: a fresh temp dir, printed)
+#      VECTOR_GT_AUDIT_DIR=<dir>  set by the e2e tier ($GATE_OUT/gt_audit): the sessions'
+#                       GT dumps, transcripts and graded turns (turns.jsonl)
 #      MEMMAX=16G (FILE_MEMMAX=6G per file in per-file mode)  TMO=<sec>
 #      PYTEST_TIMEOUT=300  the per-test timeout (a REPL session's deadline ends inside it)
 #      ROS_DOMAIN_ID=<n> (unset or 0 -> random 60-89; 0 is where other stacks live)
@@ -94,6 +98,17 @@ fi
 CFG=(-c "$REPO/pyproject.toml" --rootdir "$REPO")
 OUT=${GATE_OUT:-$(mktemp -d -t "vos_gate_${TIER}_XXXX")}
 mkdir -p "$OUT"
+# The e2e tier's independent ground-truth audit (tests/harness/gt_audit.py): every REPL
+# session of the run dumps ground truth and records its graded turns in ONE folder; the
+# invocation that made it (per-file runs inherit it) prints the run's line and is red on
+# a FALSE GROUNDED, a claimed turn with no row, or a claimed turn with no ground truth.
+AUDIT=
+if [ "$TIER" = e2e ] && [ -z "${VECTOR_GT_AUDIT_DIR:-}" ]; then
+  AUDIT=$OUT/gt_audit
+  rm -rf "$AUDIT" && mkdir -p "$AUDIT" || exit 2
+  export VECTOR_GT_AUDIT_DIR=$AUDIT
+fi
+gt_audit() { [ -z "$AUDIT" ] || "$PY" -m tests.harness.gt_audit "$AUDIT"; }
 
 # Run "$@" in its own memory-capped, named scope (MEMMAX), then stop the scope: if
 # pytest dies (timeout, OOM), every process the run left behind dies with it.
@@ -146,6 +161,7 @@ if [ "${GATE_PER_FILE-1}" = 1 ]; then
   ' "$0" {} "$@" < "$OUT/files.txt"
   red=$(awk '$1 != 0 && $1 != 5' "$OUT/rc.txt" | wc -l)
   echo "[gate] $TIER per-file: $red of $(wc -l < "$OUT/rc.txt") runs red (one per file, plus collection if it failed); $(counts "$OUT"/*/junit.xml) ($OUT/rc.txt)"
+  gt_audit || red=$((red + 1))
   [ "$red" = 0 ]
   exit
 fi
@@ -161,4 +177,5 @@ if [ "$TIER" != hermetic ] && grep -q 'message="sim preflight: ' "$OUT/junit.xml
   echo "[gate] RED: the $TIER tier skipped on the sim preflight, so it ran nothing (provision what the SKIPPED reason names)"
   [ "$rc" = 0 ] && rc=1
 fi
+gt_audit || { [ "$rc" = 0 ] && rc=1; }
 exit "$rc"

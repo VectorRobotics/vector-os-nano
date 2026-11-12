@@ -465,3 +465,45 @@ def test_nav_teardown_kills_every_group_in_its_session_and_nothing_else() -> Non
     finally:
         bystander.kill()
         bystander.wait()
+
+
+def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypatch) -> None:
+    """What scripts/gt_grade.py reads (VECTOR_GT_DUMP), graded through the e2e audit's join."""
+    import json
+
+    mj = pytest.importorskip("mujoco")
+    from tests.harness import gt_audit
+    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+    from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld
+    from vector_os_nano.sim.runtime import SimRuntime
+    from vector_os_nano.sim.scene import compiled_scene
+
+    world = MuJoCoWorld(compiled_scene(_build_room_scene_xml(with_arm=True), robot_root="base_link"))
+    m = world.model
+    rt = SimRuntime(world, threaded=False, paced=False, name="dump_test")
+    try:
+        rt.call(lambda w: mj.mj_forward(w.model, w.data))
+        s = SimSession(SimSpec("go2_piper", gui=False), registry.load("go2_piper"))
+        s.agent = SimpleNamespace(_base=SimpleNamespace(), _arm=None, _config={})
+        s.runtime = rt  # what a builder hands the session; the agent never carries it
+        s._bind_ground_truth()
+        assert s.agent._config["world"] == "apartment"  # skills resolve names by world id
+        assert not any(v is s.gt for v in vars(s.agent).values())  # GT never rides on the agent
+
+        dump = tmp_path / "gt.jsonl"
+        monkeypatch.setenv("VECTOR_GT_DUMP", str(dump))
+        s.mark_turn("start", "把绿色瓶子拿过来")
+        a = int(m.jnt_qposadr[m.body("pickable_bottle_green").jntadr[0]])
+        rt.call(lambda w: (w.data.qpos.__setitem__(slice(a, a + 3), [8.2, 3.0, 0.4]), mj.mj_forward(w.model, w.data)))
+        s.mark_turn("end", "把绿色瓶子拿过来")
+
+        lines = [json.loads(ln) for ln in dump.read_text(encoding="utf-8").splitlines()]
+        assert [ln["phase"] for ln in lines] == ["start", "end"]
+        assert "base_link" not in lines[0]["objects"]
+        assert lines[0]["user"] == [8.0, 3.0] and "pick_table" in lines[0]["surfaces"]
+        assert gt_audit.grade(dump, {"delivered": "pickable_bottle_green"}, "把绿色瓶子拿过来") == (True, "")
+        # the oracles see the same turn start (kept_holding / localized freshness)
+        assert s._turn[0] == lines[0]["sim_time"]
+        assert "kept_holding" in s.oracles() and "localized" in s.oracles()
+    finally:
+        rt.close()
