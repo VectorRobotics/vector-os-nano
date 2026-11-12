@@ -71,14 +71,14 @@ def test_look_whose_capture_raises_is_a_camera_failure_with_its_cause() -> None:
 def _oom_on_gpu1_with_a_path() -> BaseException:
     torch = pytest.importorskip("torch")
     return torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 20.00 MiB. GPU 1 has a "
-                                       "total capacity of 23.6 GiB; /home/alice/x/y.py")
+                                       "total capacity of 23.6 GiB; /srv/models/x/y.py")
 
 
 def test_a_capture_out_of_gpu_memory_is_named_with_its_device_and_no_path() -> None:
     res = LookSkill().execute({}, _ctx(Raising("capture", _oom_on_gpu1_with_a_path())))
     assert not res.success and res.diagnosis_code == "camera_failed"
     assert "Camera capture failed: out of GPU memory on cuda:1" in res.error_message, res.error_message
-    assert "/home" not in res.error_message
+    assert "/srv" not in res.error_message
 
 
 def test_a_vlm_that_raises_is_a_vlm_failure_with_no_machine_path() -> None:
@@ -167,7 +167,7 @@ def test_explore_note_for_a_look_whose_capture_ran_out_of_gpu_memory_has_no_path
     ctx = SkillContext(base=_Tour(10.0, 3.0), perception=Raising("capture", _oom_on_gpu1_with_a_path()),
                        config={"world": "apartment"}, services={"spatial_memory": _sg()})
     note = explore.ExploreSkill().execute({}, ctx).result_data["perception_failed"]
-    assert "Camera capture failed: out of GPU memory on cuda:1" in note and "/home" not in note, note
+    assert "Camera capture failed: out of GPU memory on cuda:1" in note and "/srv" not in note, note
 
 
 def test_detect_skill_whose_detector_cannot_run_names_the_cause() -> None:
