@@ -60,18 +60,15 @@ class RGBDFrame:
 
 
 @dataclass(frozen=True)
-class CameraFrame:
-    """What the actor (skills, perception) gets from a camera: an :class:`RGBDFrame`
-    without the segmentation. ``self_mask`` (H, W) bool marks the robot's own pixels."""
+class GraspSpec:
+    """One gripper in canonical ids: the input of the world-side grasp decision
+    (``SimRuntime.grasp``), built by the gripper driver from its manifest block."""
 
-    rgb: np.ndarray
-    depth: np.ndarray | None
-    self_mask: np.ndarray | None
-    K: np.ndarray
-    cam_pos: np.ndarray
-    cam_mat: np.ndarray
-    sim_time: float
-    camera: str
+    weld_body: int                    # the body a gripped object is attached to
+    finger_bodies: tuple[int, ...]    # every one must touch the object
+    jaw_joint: int                    # its q minus ``closed`` is the jaw opening
+    closed: float
+    min_opening: float                # held at least this far open by the object
 
 
 @dataclass(frozen=True)

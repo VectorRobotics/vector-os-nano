@@ -7,14 +7,12 @@ The minimal perception adapter g1 needs so the learned grounding-dino
 :class:`DetectorCapability` can run on the SECOND embodiment's sensor (R4). It
 exposes exactly the one method the detector's frame resolver looks for —
 ``get_color_frame()`` — and delegates to ``MuJoCoG1.get_camera_frame()`` (the
-``g1_head_rgb`` camera). It mirrors :meth:`Go2GraspPerception.get_color_frame`
-so both embodiments speak the SAME frame-source contract to the detector; the
-detector code stays embodiment-agnostic (it never knows which body it perceives
-through).
+``g1_head_rgb`` camera), so the detector stays embodiment-agnostic (it never knows
+which body it perceives through).
 
 Deliberately NARROW: g1 has a camera but NO arm, so this adapter carries NO
 depth / intrinsics / segmentation / grasp-point machinery (all of which the
-go2+arm Go2GraspPerception needs for manipulation). g1 only LOCALIZES with the
+CameraPerception gives a body with a depth camera). g1 only LOCALIZES with the
 detector — read-only perception. Adding depth/IK is a future round when g1 grows
 a manipulator.
 """

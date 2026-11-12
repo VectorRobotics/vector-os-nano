@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-"""Go2GraspPerception: one snapshot, self-filtered depth, segmenter provenance."""
+"""CameraPerception: one snapshot, self-filtered depth, segmenter provenance."""
 from __future__ import annotations
 
 import logging
@@ -8,25 +8,22 @@ import logging
 import numpy as np
 import pytest
 
-from vector_os_nano.interfaces.physics import RGBDFrame
-from vector_os_nano.perception import go2_grasp_perception as g2
+from vector_os_nano.interfaces.devices import CameraFrame
+from vector_os_nano.perception import camera_perception as cp
 
 
-class _Base:
+class _Camera:
     def __init__(self) -> None:
-        self.calls = []
+        self.calls = 0
 
-    def get_rgbd_frame(self, w, h, kinds):
-        self.calls.append((w, h, kinds))
-        seg = np.full((h, w), -1, np.int32)
-        seg[:2] = 7  # the arm's body
-        K = np.array([[30.0, 0.0, w / 2], [0.0, 30.0, h / 2], [0.0, 0.0, 1.0]])
-        return RGBDFrame(rgb=np.zeros((h, w, 3), np.uint8), depth=np.ones((h, w), np.float32),
-                         seg=seg, K=K, cam_pos=np.zeros(3), cam_mat=np.eye(3), sim_time=3.0,
-                         camera="d435_rgb")
-
-    def self_mask(self, seg):
-        return seg == 7
+    def capture(self, width: int = 32, height: int = 24) -> CameraFrame:
+        self.calls += 1
+        mask = np.zeros((height, width), bool)
+        mask[:2] = True  # the arm's pixels
+        K = np.array([[30.0, 0.0, width / 2], [0.0, 30.0, height / 2], [0.0, 0.0, 1.0]])
+        return CameraFrame(rgb=np.zeros((height, width, 3), np.uint8), depth=np.ones((height, width), np.float32),
+                           self_mask=mask, K=K, cam_pos=np.zeros(3), cam_mat=np.eye(3), sim_time=3.0,
+                           camera="d435_rgb")
 
 
 class _NoEdgeTAM:
@@ -34,12 +31,13 @@ class _NoEdgeTAM:
         raise RuntimeError("weights absent")
 
 
-def test_capture_is_one_frame_with_the_arm_zeroed():
-    base = _Base()
-    f = g2.Go2GraspPerception(base, width=32, height=24).capture()
-    assert base.calls == [(32, 24, ("rgb", "depth", "seg"))]  # ONE render, every field
+def test_capture_is_one_frame_with_the_robot_zeroed():
+    cam = _Camera()
+    f = cp.CameraPerception(cam).capture()
+    assert cam.calls == 1  # ONE camera instant, every field
     assert (f.depth[:2] == 0).all() and (f.depth[2:] == 1).all()
-    assert (f.K[0, 2], f.K[1, 2]) == (16, 12) and f.sim_time == 3.0  # the base's frame, depth replaced
+    assert (f.K[0, 2], f.K[1, 2]) == (16, 12) and f.sim_time == 3.0
+    assert not hasattr(f, "seg")  # no segmentation ever reaches perception
 
 
 class _EmptyEdgeTAM:
@@ -50,7 +48,7 @@ class _EmptyEdgeTAM:
 def test_a_segmenter_that_cannot_run_is_an_error_never_a_box_rect():
     """perception:edgetam-silent-boxrect-fallback: a missing/failed EdgeTAM was
     replaced by a box-rectangle mask; now the caller sees the failure and its cause."""
-    p = g2.Go2GraspPerception(_Base(), tracker=_NoEdgeTAM(), width=32, height=24)
+    p = cp.CameraPerception(_Camera(), tracker=_NoEdgeTAM())
     p.last_segmenter = "edgetam"  # from an earlier call: must not survive a failure
     with pytest.raises(RuntimeError, match="weights absent"):
         p.segment(np.zeros((24, 32, 3), np.uint8), (4, 4, 10, 12))
@@ -59,8 +57,8 @@ def test_a_segmenter_that_cannot_run_is_an_error_never_a_box_rect():
 
 def test_segmenter_provenance_and_a_loud_box_rect_for_an_empty_mask(caplog, monkeypatch):
     """perception:segmenter-provenance-missing: which segmenter made the mask is recorded."""
-    monkeypatch.setattr(g2, "_warned_box_rect", False)
-    p = g2.Go2GraspPerception(_Base(), tracker=_EmptyEdgeTAM(), width=32, height=24)
+    monkeypatch.setattr(cp, "_warned_box_rect", False)
+    p = cp.CameraPerception(_Camera(), tracker=_EmptyEdgeTAM())
     rgb = np.zeros((24, 32, 3), np.uint8)
     with caplog.at_level(logging.WARNING):
         m = p.segment(rgb, (4, 4, 10, 12))

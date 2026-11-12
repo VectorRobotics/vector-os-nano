@@ -43,13 +43,13 @@ def _has_member(agent: Any, name: str) -> bool:
 def _runtime_camera(agent: Any) -> bool:
     """True iff *agent* can supply an RGB frame — the ``_agent_has_camera`` logic (R4).
 
-    A frame source is a bound ``_perception`` exposing ``get_color_frame()`` OR a
-    base/arm exposing ``get_camera_frame()`` (the raw MuJoCo camera). Reaching it
-    through the SAME duck-typed accessors the detector uses keeps this embodiment-
+    A frame source is a bound ``_perception`` exposing ``capture()`` (a body camera)
+    or ``get_color_frame()``, OR a base/arm exposing ``get_camera_frame()``. Reaching
+    it through the SAME duck-typed accessors the detector uses keeps this embodiment-
     agnostic — the detector needs a camera, not an arm.
     """
     perception = getattr(agent, "_perception", None)
-    if perception is not None and callable(getattr(perception, "get_color_frame", None)):
+    if perception is not None and any(callable(getattr(perception, m, None)) for m in ("capture", "get_color_frame")):
         return True
     for member in (getattr(agent, "_base", None), getattr(agent, "_arm", None)):
         if member is not None and callable(getattr(member, "get_camera_frame", None)):

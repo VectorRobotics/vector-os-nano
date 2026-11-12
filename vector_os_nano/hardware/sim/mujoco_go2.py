@@ -45,7 +45,6 @@ from typing import Any
 import numpy as np
 from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.embodiments.dof_layout import DofLayout
-from vector_os_nano.interfaces.physics import RGBDFrame
 from vector_os_nano.sim.nav import vgraph as vg
 from vector_os_nano.sim.nav.follow import NavResult, follow
 from vector_os_nano.sim.runtime import ACTOR_EPOCH, SimRuntime
@@ -223,7 +222,7 @@ def _build_flat_scene_xml() -> Path:
     The <compiler> comes AFTER the include so its absolute meshdir overrides
     go2.xml's relative one, and the file loads from the cache dir.
     """
-    from vector_os_nano.hardware.sim.scene_builder import write_scene
+    from vector_os_nano.sim.scene.compose import write_scene
 
     xml = """\
 <mujoco model="go2_flat">
@@ -308,8 +307,7 @@ def _build_room_scene_xml(with_arm: bool = False) -> Path:
 
     # ONE scene-build path (Rule 11): MjSpec.attach + compile() (proven byte-
     # identical to the legacy <include>), then a reloadable file is written to
-    # the scene cache, never the package dir (scene_xml_path consumers:
-    # MuJoCoPiper IK). connect() loads that file via from_xml_path.
+    # the scene cache, never the package dir. connect() compiles that file.
     _model, scene_path = build_room_scene(
         robot_model_path=go2_xml,
         room_template_path=_ROOM_XML,
@@ -532,9 +530,6 @@ class MuJoCoGo2:
             ))
             model, data = world.model, world.data
             self._mj = _Go2Model(model, data)
-            # Expose for downstream consumers that need to load an isolated
-            # MjModel from the same MJCF (e.g. MuJoCoPiper's IK).
-            self._scene_xml_path = str(scene_path)
 
             # Build the nominal-stance qpos vector from the manifest, in the
             # model's leg-qpos order (byte-identical to _STAND_JOINTS).
@@ -566,7 +561,6 @@ class MuJoCoGo2:
             world = MuJoCoWorld(compiled_scene(scene_path, robot_root="base_link", timestep=_SIM_DT))
             model, data = world.model, world.data
             self._mj = _Go2Model(model, data)
-            self._scene_xml_path = str(scene_path)
 
             # Apply home keyframe (standing pose at origin)
             key_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_KEY, "stand")
@@ -1072,68 +1066,6 @@ class MuJoCoGo2:
     def get_3d_pointcloud(self) -> list[tuple[float, float, float, float]]:
         """The most recent 3D point cloud as (x, y, z, intensity)."""
         return self._lidar()[2]
-
-    def get_rgbd_frame(
-        self, width: int = 640, height: int = 480,
-        kinds: tuple[str, ...] = ("rgb", "depth"),
-    ) -> RGBDFrame:
-        """RGB / depth / segmentation + camera pose of the d435 head camera, ONE instant.
-
-        Rendered by the world from a copy of one instant, so every field shares the
-        frame's ``sim_time``; ``K`` comes from the camera fovy and the frame shape,
-        ``seg`` holds canonical body ids. Depth is metres with the D435 range
-        (0.1-10 m) applied (0 = invalid).
-        """
-        self._require_connection()
-        f = self.runtime.world.render("d435_rgb", width, height, kinds)
-        if f.depth is not None:
-            f.depth[(f.depth < 0.1) | (f.depth > 10.0)] = 0.0
-        return f
-
-    def get_camera_frame(
-        self, width: int = 640, height: int = 480,
-    ) -> "np.ndarray":
-        """Render first-person RGB from the d435_rgb camera mounted on Go2 head.
-
-        Returns an (H, W, 3) uint8 numpy array in RGB order.
-        """
-        return self.get_rgbd_frame(width, height, ("rgb",)).rgb
-
-    def get_depth_frame(
-        self, width: int = 640, height: int = 480,
-    ) -> "np.ndarray":
-        """Render depth (H, W) float32 metres from the head camera (rgb-aligned)."""
-        return self.get_rgbd_frame(width, height, ("depth",)).depth
-
-    def get_camera_pose(self) -> tuple:
-        """Return (cam_xpos (3,), cam_xmat (9,) row-major) of the d435_rgb camera.
-
-        Prefer :meth:`get_rgbd_frame`, whose pose belongs to its pixels.
-        """
-        self._require_connection()
-        cam_id = self._mj.model.cam("d435_rgb").id
-        return self.runtime.call(
-            lambda w: (w.data.cam_xpos[cam_id].copy(), w.data.cam_xmat[cam_id].copy())
-        )
-
-    def self_mask(self, seg: "np.ndarray") -> "np.ndarray":
-        """Bool mask of the pixels of *seg* (canonical body ids) showing the robot's OWN
-        Piper arm.
-
-        The honest real-robot self-filter (by IDENTITY, pose/colour/group-agnostic):
-        the arm at rest occludes the table in the head camera and would otherwise be
-        picked as the grasp target (D30 — site/geom-group hides are no-ops after
-        MjSpec.attach). Every body in the arm subtree counts — not just "piper*"-named
-        ones (the gripper/finger bodies are named differently; R15: a name-prefix
-        filter left the gripper as a distractor).
-        """
-        self._require_connection()
-        if not hasattr(self, "_piper_bodies"):
-            scene = self.runtime.world.scene
-            arm = scene.subtree(scene.body_ids["piper_base_link"]) if "piper_base_link" in scene.body_ids else ()
-            self._piper_bodies = np.asarray(
-                sorted(set(arm) | {b for n, b in scene.body_ids.items() if n.startswith("piper")}), dtype=np.int32)
-        return np.isin(seg, self._piper_bodies)
 
     # ------------------------------------------------------------------
     # Sensor update helpers

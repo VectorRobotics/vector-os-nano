@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Piper arm + gripper physics, the dog seated at the pick table (one sim per module).
+"""The generic Arm + Gripper on go2_piper, the dog seated at the pick table (one sim per module).
 
 * a grasp is a contact-gated weld: an object beside the jaws (inside the old 6 cm
   "magnet" radius) is never welded; one between them is, and lifts;
@@ -20,9 +20,11 @@ import pytest
 
 pytest.importorskip("mujoco")
 
+from vector_os_nano.embodiments import registry
 from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
-from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
-from vector_os_nano.hardware.sim.mujoco_piper_gripper import MuJoCoPiperGripper
+from vector_os_nano.sim.drivers.arm import Arm
+from vector_os_nano.sim.drivers.gripper import Gripper
+from vector_os_nano.sim.ground_truth import GroundTruth
 from vector_os_nano.vcli.cognitive import abort
 
 _SEAT = (10.46, 3.0)  # dog body 42 cm behind the green bottle, head-on
@@ -31,23 +33,19 @@ _GREEN = "pickable_bottle_green"
 
 @pytest.fixture(scope="module")
 def rig():
+    cfg = registry.load("go2_piper")
     go2 = MuJoCoGo2(gui=False, room=True, backend="auto", with_arm=True)
-    arm = grip = None
     try:
         go2.connect()
         go2.stand()
-        arm, grip = MuJoCoPiper(go2), MuJoCoPiperGripper(go2)
-        arm.connect()
-        grip.connect()
+        arm = Arm(cfg.arm, go2.runtime, abort=abort.is_abort_requested, wait_mount=go2.wait_settled)
+        grip = Gripper(cfg.arm.gripper, go2.runtime)
         rq = go2._mj.layout.root_qpos_adr
         go2.runtime.call(lambda w: w.data.qpos.__setitem__(slice(rq, rq + 2), _SEAT))
         go2.reset_pose()
         go2.wait_sim(1.5)
         yield go2, arm, grip
     finally:
-        for dev in (grip, arm):
-            if dev is not None:
-                dev.disconnect()
         go2.disconnect()
 
 
@@ -84,9 +82,14 @@ def _top_down_to(arm, xyz, duration=3.0) -> bool:
     return arm.move_joints(q, duration=duration)
 
 
+def _objects(go2) -> dict[str, list[float]]:
+    """Where the scene's objects are: ground truth, read by the test, never by a driver."""
+    return GroundTruth(go2.runtime).object_positions()
+
+
 def test_the_robot_is_not_a_scene_object(seated) -> None:
-    _go2, arm, _grip = seated
-    objs = arm.get_object_positions()
+    go2, _arm, _grip = seated
+    objs = _objects(go2)
     assert _GREEN in objs and "base_link" not in objs
     assert not any(n.startswith(("piper_", "base_")) for n in objs)
 
@@ -94,7 +97,7 @@ def test_the_robot_is_not_a_scene_object(seated) -> None:
 def test_an_object_beside_the_jaws_is_never_welded(seated) -> None:
     """EE 5 cm from the bottle centre (inside the old 6 cm magnet), jaws beside it."""
     go2, arm, grip = seated
-    g = arm.get_object_positions()[_GREEN]
+    g = _objects(go2)[_GREEN]
     beside = (g[0] - 0.05, g[1], g[2])
     assert _top_down_to(arm, (beside[0], beside[1], beside[2] + 0.02), 4.0)
     assert _top_down_to(arm, beside, 2.0)
@@ -107,7 +110,7 @@ def test_an_object_beside_the_jaws_is_never_welded(seated) -> None:
 
 def test_an_object_between_the_jaws_is_gripped_lifted_and_released(seated) -> None:
     go2, arm, grip = seated
-    g = arm.get_object_positions()[_GREEN]
+    g = _objects(go2)[_GREEN]
     assert _top_down_to(arm, (g[0], g[1], g[2] + 0.02), 4.0)
     assert _top_down_to(arm, tuple(g), 2.0)
     assert grip.close()
@@ -118,14 +121,14 @@ def test_an_object_between_the_jaws_is_gripped_lifted_and_released(seated) -> No
     lift = arm.get_joint_positions()
     lift[1] = max(0.0, lift[1] - 0.5)
     assert arm.move_joints(lift, duration=2.0)
-    assert arm.get_object_positions()[_GREEN][2] > g[2] + 0.03
+    assert _objects(go2)[_GREEN][2] > g[2] + 0.03
     assert grip.open()
     assert grip.is_holding() is False and go2.runtime.attachments() == {}
 
 
 def test_a_failed_release_is_reported_and_keeps_the_hold(seated, monkeypatch) -> None:
     go2, arm, grip = seated
-    g = arm.get_object_positions()[_GREEN]
+    g = _objects(go2)[_GREEN]
     assert _top_down_to(arm, (g[0], g[1], g[2] + 0.02), 4.0) and _top_down_to(arm, tuple(g), 2.0)
     assert grip.close() and grip.is_holding(_GREEN)
 
@@ -150,12 +153,12 @@ def test_a_move_blocked_by_the_table_returns_false(seated) -> None:
     assert err > arm._spec.track_tol
 
 
-def _move_in_thread(arm, q, duration):
+def _move_in_thread(arm, rt, q, duration):
     out: dict = {}
 
     def run() -> None:
         out["ok"] = arm.move_joints(q, duration=duration)
-        out["t"] = arm._go2.runtime.sim_time
+        out["t"] = rt.sim_time
 
     t = threading.Thread(target=run, daemon=True)
     t.start()
@@ -165,7 +168,7 @@ def _move_in_thread(arm, q, duration):
 def test_stop_preempts_a_move_within_50_sim_ms(seated) -> None:
     go2, arm, _grip = seated
     rt = go2.runtime
-    t, out = _move_in_thread(arm, [0.8, 1.2, -1.0, 0.3, 0.5, 0.5], 3.0)
+    t, out = _move_in_thread(arm, rt, [0.8, 1.2, -1.0, 0.3, 0.5, 0.5], 3.0)
     go2.wait_sim(0.5)
     t_stop = rt.sim_time
     q_stop = np.array(arm.get_joint_positions())
@@ -173,16 +176,16 @@ def test_stop_preempts_a_move_within_50_sim_ms(seated) -> None:
     t.join(timeout=10.0)
     assert out["ok"] is False
     assert out["t"] - t_stop <= 0.05, f"move returned {out['t'] - t_stop:.3f} sim-s after stop()"
-    ids = arm._arm_actuator_ids
-    ctrl = rt.call(lambda w: w.data.ctrl[ids].copy())
+    joints = list(arm._joints)
+    ctrl = rt.call(lambda w: w.targets(joints))
     go2.wait_sim(0.3)
-    np.testing.assert_allclose(rt.call(lambda w: w.data.ctrl[ids].copy()), ctrl)  # nothing written after the hold
+    np.testing.assert_allclose(rt.call(lambda w: w.targets(joints)), ctrl)  # nothing written after the hold
     assert np.max(np.abs(np.array(arm.get_joint_positions()) - q_stop)) < 0.1
 
 
 def test_an_abort_preempts_a_move(seated) -> None:
     go2, arm, _grip = seated
-    t, out = _move_in_thread(arm, [0.8, 1.2, -1.0, 0.3, 0.5, 0.5], 3.0)
+    t, out = _move_in_thread(arm, go2.runtime, [0.8, 1.2, -1.0, 0.3, 0.5, 0.5], 3.0)
     go2.wait_sim(0.3)
     t_abort = go2.runtime.sim_time
     abort.request_abort()

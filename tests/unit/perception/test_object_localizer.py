@@ -22,7 +22,8 @@ import numpy as np
 import pytest
 
 from vector_os_nano.core.types import Detection
-from vector_os_nano.perception.depth_projection import camera_to_world, mujoco_intrinsics
+from tests.harness.camera import pinhole
+from vector_os_nano.perception.depth_projection import camera_to_world
 from vector_os_nano.perception.object_localizer import (
     Localized,
     _perception_is_usable,
@@ -35,7 +36,7 @@ from vector_os_nano.interfaces.physics import RGBDFrame
 # ---------------------------------------------------------------------------
 
 _W, _H = 64, 48
-_INTR = mujoco_intrinsics(_W, _H, vfov_deg=42.0)
+_INTR = pinhole(_W, _H, 42.0)
 _K = np.array([[_INTR.fx, 0.0, _INTR.cx], [0.0, _INTR.fy, _INTR.cy], [0.0, 0.0, 1.0]])  # the frame's own K
 _CAM_XPOS = np.array([0.0, 0.0, 0.4])
 _CAM_XMAT = np.array([[0, 0, -1], [-1, 0, 0], [0, 1, 0]], dtype=np.float64).reshape(9)
@@ -75,12 +76,12 @@ def _bbox_for_mask() -> tuple[float, float, float, float]:
 
 
 # ---------------------------------------------------------------------------
-# Stub perception (fake Go2GraspPerception)
+# Stub perception (fake CameraPerception)
 # ---------------------------------------------------------------------------
 
 
 class _StubPerception:
-    """Minimal stub that mimics Go2GraspPerception's required API.
+    """Minimal stub that mimics CameraPerception's required API.
 
     Parameters
     ----------

@@ -39,7 +39,7 @@ class _CamOnly:  # g1-like base: camera, no lidar accessor
         return object()
 
 
-class _Perc:  # Go2GraspPerception / arm perception: RGB-D color frame
+class _Perc:  # CameraPerception / arm perception: RGB-D color frame
     def get_color_frame(self):
         return object()
 

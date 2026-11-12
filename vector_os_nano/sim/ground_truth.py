@@ -128,5 +128,5 @@ class GroundTruth:
     def visible_pixels(self, name: str, camera: str, width: int, height: int) -> int:
         """Pixels of object *name* in a segmentation render of *camera* (occlusion-exact;
         ``seg`` holds canonical body ids)."""
-        seg = self._rt.world.render(camera, width, height, ("seg",)).seg
+        seg = self._rt.render(camera, width, height, ("seg",)).seg
         return int((seg == self.bid[name]).sum())

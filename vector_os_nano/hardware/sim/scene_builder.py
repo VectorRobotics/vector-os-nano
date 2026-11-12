@@ -26,72 +26,15 @@ default tree has no such wrapper, so the repair is a harmless no-op for it.
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from vector_os_nano.sim.scene.compose import normalize_attach_defaults, robot_spec, write_scene
+
 # A weld is (equality_name, body1, body2); created inactive (gripper activates it).
 Weld = tuple[str, str, str]
-
-
-def scene_cache_dir() -> Path:
-    """Where generated scenes live: a user cache dir, never the package tree."""
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "vector_os_nano" / "scenes"
-
-
-def write_scene(stem: str, text: str) -> Path:
-    """Write *text* to ``<cache>/<stem>-<hash>.xml`` atomically and return the path.
-
-    Content-addressed, so processes that build the same scene share one file and
-    one that builds a different scene can never clobber it; ``mkstemp`` +
-    ``os.replace`` means a reader never sees a half-written file.
-    """
-    out = scene_cache_dir() / f"{stem}-{hashlib.sha1(text.encode()).hexdigest()[:12]}.xml"
-    if out.exists():
-        return out
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=f".{stem}-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as fh:
-            fh.write(text)
-        os.replace(tmp, out)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    return out
-
-
-def normalize_attach_defaults(xml: str) -> str:
-    """Hoist anonymous (class-less) nested ``<default>`` wrappers from attach.
-
-    MuJoCo 3.9's ``MjSpec.attach`` emits ``<default><default><default class=...>``
-    when serializing a robot whose defaults nest under a class. The middle
-    class-less ``<default>`` breaks ``from_xml_path`` ("empty class name"). This
-    repair splices any such wrapper's children up into its parent, preserving the
-    default tree's semantics (proven byte-identical via in-memory compile). It is
-    a no-op when there is no class-less nested ``<default>`` (g1's flat tree).
-    """
-    root = ET.fromstring(xml)
-    for top in root.findall("default"):  # the single class-less root <default>
-        changed = True
-        while changed:
-            changed = False
-            for child in list(top):
-                if child.tag == "default" and child.get("class") is None:
-                    idx = list(top).index(child)
-                    top.remove(child)
-                    for offset, grandchild in enumerate(child):
-                        top.insert(idx + offset, grandchild)
-                    changed = True
-                    break
-    return ET.tostring(root, encoding="unicode")
 
 
 def _room_only_spec(
@@ -152,7 +95,7 @@ def build_room_scene(
             after attach (grasp welds; bodies must exist post-attach).
         cache_stem: if given, the compiled scene is serialized (with the attach-
             default repair) for from_xml_path consumers, content-addressed under
-            this file stem in :func:`scene_cache_dir` (see :func:`write_scene`).
+            this file stem in the scene cache (``sim/scene/compose.write_scene``).
         robot_meshes_dir: base directory for relative robot ``mesh.file`` paths.
             Defaults to the model file's directory + its ``meshdir`` (MuJoCo's rule).
         camera: optional ``{mount_body, name, pos, xyaxes}`` head camera added to
@@ -164,25 +107,11 @@ def build_room_scene(
     import mujoco as mj  # noqa: PLC0415
 
     room_spec = _room_only_spec(mj, Path(room_template_path), Path(room_assets_dir))
-    robot_spec = mj.MjSpec.from_file(str(robot_model_path))
-
-    # Resolve every relative mesh path to an absolute one so the attached scene is
-    # loadable from any directory. Default base = MuJoCo's own rule: the model
-    # file's directory joined with its meshdir. Committed MJCF must stay relative
-    # (absolute paths only ever work on the machine that generated them).
-    meshes_dir = (
-        Path(robot_meshes_dir)
-        if robot_meshes_dir is not None
-        else Path(robot_model_path).resolve().parent / (robot_spec.meshdir or "")
-    )
-    for mesh in robot_spec.meshes:
-        if not os.path.isabs(mesh.file):
-            mesh.file = str((meshes_dir / mesh.file).resolve())
-    robot_spec.meshdir = ""
+    robot = robot_spec(robot_model_path, robot_meshes_dir)
 
     if camera is not None:
         mount = camera["mount_body"]
-        body = next((b for b in robot_spec.bodies if b.name == mount), None)
+        body = next((b for b in robot.bodies if b.name == mount), None)
         if body is None:
             raise RuntimeError(
                 f"scene_builder: camera mount_body {mount!r} not found in "
@@ -193,7 +122,7 @@ def build_room_scene(
         )
 
     frame = room_spec.worldbody.add_frame(pos=[float(spawn_xy[0]), float(spawn_xy[1]), 0.0])
-    room_spec.attach(robot_spec, prefix=attach_prefix, frame=frame)
+    room_spec.attach(robot, prefix=attach_prefix, frame=frame)
 
     for name, body1, body2 in welds:
         eq = room_spec.add_equality()

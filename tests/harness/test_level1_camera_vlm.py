@@ -28,6 +28,14 @@ from typing import Any
 import numpy as np
 import pytest
 
+
+def _rgb(go2: Any) -> np.ndarray:
+    """One head-camera RGB frame through the generic Camera (the manifest's size)."""
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.sim.drivers.camera import Camera
+
+    return Camera(registry.load("go2").camera, go2.runtime).capture().rgb
+
 # Billed VLM calls: opt in with VECTOR_LIVE_LLM=1 (a key in the env or
 # config is NOT consent; tests:missed2).
 pytestmark = pytest.mark.live_llm
@@ -118,7 +126,7 @@ class TestLevel1CameraVLM:
 
     def test_camera_frame_shape(self, go2):
         """get_camera_frame() returns a (480, 640, 3) uint8 RGB array."""
-        frame = go2.get_camera_frame()
+        frame = _rgb(go2)
 
         assert frame is not None, "get_camera_frame() returned None"
         assert isinstance(frame, np.ndarray), (
@@ -133,7 +141,7 @@ class TestLevel1CameraVLM:
 
     def test_camera_frame_not_black(self, go2):
         """get_camera_frame() returns a non-black image (MuJoCo rendered something)."""
-        frame = go2.get_camera_frame()
+        frame = _rgb(go2)
 
         mean_brightness = float(frame.mean())
         assert mean_brightness > 0.0, (
@@ -148,7 +156,7 @@ class TestLevel1CameraVLM:
         """VLM can describe a MuJoCo-rendered scene and returns a populated SceneDescription."""
         from vector_os_nano.perception.vlm_go2 import SceneDescription
 
-        frame = go2.get_camera_frame()
+        frame = _rgb(go2)
         scene = vlm.describe_scene(frame)
 
         assert isinstance(scene, SceneDescription), (
@@ -164,7 +172,7 @@ class TestLevel1CameraVLM:
         """VLM identifies a room from a MuJoCo-rendered frame."""
         from vector_os_nano.perception.vlm_go2 import RoomIdentification
 
-        frame = go2.get_camera_frame()
+        frame = _rgb(go2)
         room = vlm.identify_room(frame)
 
         assert isinstance(room, RoomIdentification), (
@@ -180,7 +188,7 @@ class TestLevel1CameraVLM:
         """VLM find_objects() returns a list from a MuJoCo scene."""
         from vector_os_nano.perception.vlm_go2 import DetectedObject
 
-        frame = go2.get_camera_frame()
+        frame = _rgb(go2)
         objects = vlm.find_objects(frame)
 
         assert isinstance(objects, list), (
@@ -197,7 +205,7 @@ class TestLevel1CameraVLM:
 
     def test_cost_stays_low(self, go2, vlm):
         """Single describe_scene call costs less than $0.50."""
-        frame = go2.get_camera_frame()
+        frame = _rgb(go2)
         vlm.describe_scene(frame)
 
         cost = vlm.cumulative_cost_usd

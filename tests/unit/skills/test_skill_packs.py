@@ -53,11 +53,17 @@ def test_so101_offers_no_base_skill() -> None:
     assert _SO101 <= tools and not tools & (_BASE | _PIPER), tools
 
 
+def test_the_fixed_piper_offers_the_piper_set_a_home_and_no_base_skill() -> None:
+    tools = _tools("piper")
+    assert (_PIPER | _GRIPPER | {"home", "stop"}) <= tools, tools
+    assert not tools & (_BASE | (_SO101 - {"home"})), tools
+
+
 def test_g1_offers_no_arm_skill() -> None:
     assert not _tools("g1") & (_SO101 | _PIPER | _GRIPPER)
 
 
-@pytest.mark.parametrize("embodiment", ["so101", "go2_piper"])
+@pytest.mark.parametrize("embodiment", ["so101", "piper", "go2_piper"])
 def test_every_body_with_a_gripper_offers_open_and_close(embodiment: str) -> None:
     """R2V-01: go2_piper lost gripper_open/close (e10's scripted mid-carry drop)."""
     assert _GRIPPER <= _tools(embodiment)

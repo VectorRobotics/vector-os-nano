@@ -14,7 +14,7 @@ a LOT; see docs/pick_top_down_spec.md for the full assumption list. Summary:
 * No collision checking against dog body, furniture, or other objects.
 * Single-object only, no clutter reasoning.
 * The arm must be an ``ArmProtocol`` implementation that exposes an
-  ``ik_top_down(xyz)`` method (currently just ``MuJoCoPiper``).
+  ``ik_top_down(xyz)`` method (the generic ``sim/drivers`` Arm).
 
 Flow:
     1. Resolve target object (by id, label, or explicit xyz)
@@ -192,7 +192,7 @@ class PickTopDownSkill:
                 error_message=(
                     f"Arm {getattr(arm, 'name', type(arm).__name__)!r} does not "
                     "implement ik_top_down; PickTopDownSkill requires a 6-DoF arm "
-                    "with orientation-constrained IK (e.g. MuJoCoPiper)."
+                    "with orientation-constrained IK (e.g. the Piper)."
                 ),
                 result_data={"diagnosis": "arm_unsupported"},
             )

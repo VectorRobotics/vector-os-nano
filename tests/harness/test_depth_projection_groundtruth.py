@@ -26,6 +26,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from vector_os_nano.core.types import CameraIntrinsics
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -77,14 +79,12 @@ def go2_room_fn():
     robot.disconnect()
 
 
-# ---------------------------------------------------------------------------
-# Helper: get camera intrinsics the same way the production code does
-# ---------------------------------------------------------------------------
+def _capture(go2):
+    """ONE head-camera instant (rgb, depth, K, pose) through the generic Camera."""
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.sim.drivers.camera import Camera
 
-
-def _get_sim_intrinsics(width: int = 320, height: int = 240):
-    from vector_os_nano.perception.depth_projection import mujoco_intrinsics
-    return mujoco_intrinsics(width, height, vfov_deg=42.0)
+    return Camera(registry.load("go2").camera, go2.runtime).capture()
 
 
 def _pixel_to_camera(u, v, depth_m, intr):
@@ -108,17 +108,15 @@ class TestDepthProjectionGroundTruth:
     def test_center_pixel_projects_to_camera_forward(self, go2_room):
         """Center pixel should project to a point directly in front of the camera."""
         from vector_os_nano.perception.depth_projection import (
-            mujoco_intrinsics,
             camera_to_world,
         )
 
         # Capture all data atomically (same simulation step)
-        frame = go2_room.get_camera_frame()
-        depth = go2_room.get_depth_frame()
-        cam_xpos, cam_xmat = go2_room.get_camera_pose()
+        f = _capture(go2_room)
+        frame, depth, cam_xpos, cam_xmat = f.rgb, f.depth, f.cam_pos, f.cam_mat
 
         h, w = depth.shape[:2]
-        intrinsics = mujoco_intrinsics(w, h, vfov_deg=42.0)
+        intrinsics = CameraIntrinsics.from_matrix(f.K, w, h)
 
         # Center pixel
         cx, cy = intrinsics.cx, intrinsics.cy
@@ -170,15 +168,14 @@ class TestDepthProjectionGroundTruth:
         the projected world point should match cam_pos + depth * cam_forward exactly.
         """
         from vector_os_nano.perception.depth_projection import (
-            mujoco_intrinsics,
             camera_to_world,
         )
 
-        depth = go2_room.get_depth_frame()
-        cam_xpos, cam_xmat = go2_room.get_camera_pose()
+        f = _capture(go2_room)
+        depth, cam_xpos, cam_xmat = f.depth, f.cam_pos, f.cam_mat
 
         h, w = depth.shape[:2]
-        intrinsics = mujoco_intrinsics(w, h, vfov_deg=42.0)
+        intrinsics = CameraIntrinsics.from_matrix(f.K, w, h)
         cx, cy = intrinsics.cx, intrinsics.cy
 
         d = float(depth[int(cy), int(cx)])
@@ -212,15 +209,14 @@ class TestDepthProjectionGroundTruth:
         displaced to the right (in camera's right direction) relative to center.
         """
         from vector_os_nano.perception.depth_projection import (
-            mujoco_intrinsics,
             camera_to_world,
         )
 
-        depth = go2_room.get_depth_frame()
-        cam_xpos, cam_xmat = go2_room.get_camera_pose()
+        f = _capture(go2_room)
+        depth, cam_xpos, cam_xmat = f.depth, f.cam_pos, f.cam_mat
 
         h, w = depth.shape[:2]
-        intrinsics = mujoco_intrinsics(w, h, vfov_deg=42.0)
+        intrinsics = CameraIntrinsics.from_matrix(f.K, w, h)
         cx, cy = intrinsics.cx, intrinsics.cy
 
         # Use same depth for center and right pixel (eliminates depth ambiguity)
@@ -272,18 +268,16 @@ class TestDepthProjectionGroundTruth:
         )
 
     def test_atomic_capture_is_consistent(self, go2_room):
-        """get_camera_frame + get_depth_frame + get_camera_pose all read from same sim state.
-
-        At rest, calling them in sequence should be consistent (robot isn't moving).
-        If the robot were moving between calls, results would differ.
+        """Two captures at rest agree: each is rgb, depth and pose of ONE sim instant,
+        and the robot is not moving between them.
         This is a sanity check — the robot is standing still here.
         """
         # Capture twice; at rest, results should be nearly identical
-        depth1 = go2_room.get_depth_frame()
-        cam_xpos1, cam_xmat1 = go2_room.get_camera_pose()
+        f = _capture(go2_room)
+        depth1, cam_xpos1, cam_xmat1 = f.depth, f.cam_pos, f.cam_mat
 
-        depth2 = go2_room.get_depth_frame()
-        cam_xpos2, cam_xmat2 = go2_room.get_camera_pose()
+        f = _capture(go2_room)
+        depth2, cam_xpos2, cam_xmat2 = f.depth, f.cam_pos, f.cam_mat
 
         # Camera position should not have changed
         pos_diff = float(np.linalg.norm(np.array(cam_xpos1) - np.array(cam_xpos2)))
@@ -294,15 +288,14 @@ class TestDepthProjectionGroundTruth:
     def test_projection_within_room_bounds(self, go2_room):
         """The projected center pixel should land inside the house (0..20, 0..14)."""
         from vector_os_nano.perception.depth_projection import (
-            mujoco_intrinsics,
             camera_to_world,
         )
 
-        depth = go2_room.get_depth_frame()
-        cam_xpos, cam_xmat = go2_room.get_camera_pose()
+        f = _capture(go2_room)
+        depth, cam_xpos, cam_xmat = f.depth, f.cam_pos, f.cam_mat
 
         h, w = depth.shape[:2]
-        intrinsics = mujoco_intrinsics(w, h, vfov_deg=42.0)
+        intrinsics = CameraIntrinsics.from_matrix(f.K, w, h)
         cx, cy = intrinsics.cx, intrinsics.cy
 
         d = float(depth[int(cy), int(cx)])
@@ -346,20 +339,19 @@ class TestTimingMismatchBug:
         should be wrong by the distance the robot moved.
         """
         from vector_os_nano.perception.depth_projection import (
-            mujoco_intrinsics,
             camera_to_world,
         )
 
         robot = go2_room_fn
 
         # --- Position A: capture depth + correct pose ---
-        depth_a = robot.get_depth_frame()
-        cam_xpos_a, cam_xmat_a = robot.get_camera_pose()
+        f = _capture(robot)
+        depth_a, cam_xpos_a, cam_xmat_a = f.depth, f.cam_pos, f.cam_mat
         pos_a = robot.get_position()
         heading_a = robot.get_heading()
 
         h, w = depth_a.shape[:2]
-        intrinsics = mujoco_intrinsics(w, h, vfov_deg=42.0)
+        intrinsics = CameraIntrinsics.from_matrix(f.K, w, h)
         cx, cy = intrinsics.cx, intrinsics.cy
 
         d = float(depth_a[int(cy), int(cx)])
@@ -379,7 +371,8 @@ class TestTimingMismatchBug:
             pytest.fail(f"walk() raised {exc!r} — cannot test timing mismatch")
 
         # --- Position B: capture pose ONLY (simulating the bug) ---
-        cam_xpos_b, cam_xmat_b = robot.get_camera_pose()
+        f_b = _capture(robot)
+        cam_xpos_b, cam_xmat_b = f_b.cam_pos, f_b.cam_mat
         pos_b = robot.get_position()
         heading_b = robot.get_heading()
 
@@ -414,20 +407,19 @@ class TestTimingMismatchBug:
         pose all at the same simulation step.
         """
         from vector_os_nano.perception.depth_projection import (
-            mujoco_intrinsics,
             camera_to_world,
         )
 
         robot = go2_room_fn
 
         # Capture all atomically — no robot movement between calls
-        depth = robot.get_depth_frame()
-        cam_xpos, cam_xmat = robot.get_camera_pose()
+        f = _capture(robot)
+        depth, cam_xpos, cam_xmat = f.depth, f.cam_pos, f.cam_mat
         pos = robot.get_position()
         heading = robot.get_heading()
 
         h, w = depth.shape[:2]
-        intrinsics = mujoco_intrinsics(w, h, vfov_deg=42.0)
+        intrinsics = CameraIntrinsics.from_matrix(f.K, w, h)
         cx, cy = intrinsics.cx, intrinsics.cy
         d = float(depth[int(cy), int(cx)])
 
@@ -467,24 +459,20 @@ class TestAtomicCapturePattern:
         """Atomic capture at t=0 + 'slow VLM call' (simulated) still gives correct result.
 
         This mirrors the fixed code pattern:
-            frame = base.get_camera_frame()
-            depth = base.get_depth_frame()      # capture NOW
-            cam_xpos, cam_xmat = base.get_camera_pose()  # capture NOW
+            f = camera.capture()  # rgb, depth, K and pose of ONE instant
             # ... slow VLM calls ...
             # use cached depth + cam_pose
         """
         import time
         from vector_os_nano.perception.depth_projection import (
-            mujoco_intrinsics,
             camera_to_world,
         )
 
         robot = go2_room_fn
 
         # --- Atomic capture (the fix) ---
-        _frame = robot.get_camera_frame()
-        depth_cached = robot.get_depth_frame()
-        cam_xpos_cached, cam_xmat_cached = robot.get_camera_pose()
+        f = _capture(robot)
+        _frame, depth_cached, cam_xpos_cached, cam_xmat_cached = f.rgb, f.depth, f.cam_pos, f.cam_mat
         pos_cached = robot.get_position()
         heading_cached = robot.get_heading()
 
@@ -494,7 +482,7 @@ class TestAtomicCapturePattern:
 
         # Use CACHED values (not fresh) — this is the fix
         h, w = depth_cached.shape[:2]
-        intrinsics = mujoco_intrinsics(w, h, vfov_deg=42.0)
+        intrinsics = CameraIntrinsics.from_matrix(f.K, w, h)
         cx, cy = intrinsics.cx, intrinsics.cy
         d = float(depth_cached[int(cy), int(cx)])
 
@@ -521,30 +509,26 @@ class TestAtomicCapturePattern:
         """Verify the corrected field-capture order in look.py.
 
         The fix requires:
-            frame   = base.get_camera_frame()    <- first
-            depth   = base.get_depth_frame()      <- second (before VLM)
-            pose    = base.get_camera_pose()      <- third (before VLM)
-            scene   = vlm.describe_scene(frame)   <- slow, AFTER sensor capture
+            f       = camera.capture()            <- rgb, depth, pose: one instant
+            scene   = vlm.describe_scene(f.rgb)   <- slow, AFTER sensor capture
         This test simulates that ordering and checks correctness.
         """
         from vector_os_nano.perception.depth_projection import (
-            mujoco_intrinsics,
             camera_to_world,
         )
 
         robot = go2_room_fn
 
         # Simulate corrected look.py capture order
-        frame = robot.get_camera_frame()  # step 1
-        depth = robot.get_depth_frame()   # step 2 — NOW, not after VLM
-        cam_xpos, cam_xmat = robot.get_camera_pose()  # step 3 — NOW
+        f = _capture(robot)
+        frame, depth, cam_xpos, cam_xmat = f.rgb, f.depth, f.cam_pos, f.cam_mat
         pos = robot.get_position()
         heading = robot.get_heading()
         # (VLM call would go here in production — slow but uses cached frame)
 
         # Now project using the atomically captured data
         h, w = depth.shape[:2]
-        intrinsics = mujoco_intrinsics(w, h, vfov_deg=42.0)
+        intrinsics = CameraIntrinsics.from_matrix(f.K, w, h)
         cx, cy = intrinsics.cx, intrinsics.cy
         d = float(depth[int(cy), int(cx)])
 

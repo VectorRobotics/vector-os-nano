@@ -177,7 +177,7 @@ def test_the_capability_line_says_which_model_or_why_not(monkeypatch) -> None:
 
     monkeypatch.setattr(rynnbrain.RynnBrainDetector, "available", lambda self: False)
     monkeypatch.setattr(weights, "status", lambda ws: "cached" if "dino" in ws[0].repo_id else "UNAVAILABLE")
-    agent = SimpleNamespace(_perception=SimpleNamespace(has_self_mask=True), _vlm=None)
+    agent = SimpleNamespace(_perception=SimpleNamespace(capture=lambda: None), _vlm=None)  # a body camera
     line = session._perception_note(agent, "no OPENROUTER_API_KEY or VECTOR_VLM_URL")
     assert re.fullmatch(r"perception: detector=grounding-dino@(cuda|cpu) \(cached\), segmenter=edgetam "
                         r"\(UNAVAILABLE\), self_mask=yes, vlm=none \(no OPENROUTER_API_KEY or "

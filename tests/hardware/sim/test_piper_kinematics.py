@@ -1,90 +1,68 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""MuJoCoPiper kinematics against a MOVED base, with no physics running.
+"""Arm kinematics on the canonical model (sim/scene/kinematics.py), on the go2_piper
+scene, against a MOVED base, with no physics running.
 
-The arm rides the dog, so FK/IK must read the base pose from the live state —
-never assume the dog at spawn (the PiperROS2Proxy wrote the base into qpos[0:7],
-a pickable's freejoint, and solved every grasp for a phantom dog at spawn). The
-"live" state here is a stub runtime whose snapshot the test sets, so every
-assertion is about the kinematics alone.
+The arm rides the dog, so FK/IK read the mount from the live state, never the dog at
+spawn (the PiperROS2Proxy wrote the base into a pickable's freejoint and solved every
+grasp for a phantom dog at spawn). The "live" state is a q vector the test writes.
 """
 from __future__ import annotations
 
+import json
 import math
 import threading
-from types import SimpleNamespace
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-mujoco = pytest.importorskip("mujoco")
+pytest.importorskip("mujoco")
 
-from vector_os_nano.embodiments import registry
-from vector_os_nano.embodiments.dof_layout import DofLayout
-from vector_os_nano.hardware.sim import mujoco_piper as mp
-from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
-from vector_os_nano.hardware.sim.mujoco_piper import MuJoCoPiper
+from vector_os_nano.embodiments import registry  # noqa: E402
+from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml  # noqa: E402
+from vector_os_nano.sim.scene import compiled_scene, kinematics  # noqa: E402
 
 _BASE_Z = 0.30  # standing trunk height
 
 
-class _Runtime:
-    def __init__(self, model) -> None:
-        self.world = SimpleNamespace(model=model)
-        self.qpos = model.qpos0.copy()
+class _Rig:
+    def __init__(self) -> None:
+        self.scene = compiled_scene(_build_room_scene_xml(with_arm=True), robot_root="base_link")
+        self.spec = registry.load("go2_piper").arm
+        self.kin = kinematics.ArmKinematics(self.scene, self.spec.joints, self.spec.ee_site)
+        self.q = self.scene.model.qpos0.copy()
 
-    def snapshot(self):
-        return SimpleNamespace(q=self.qpos.copy())
-
-
-class _Go2:
-    """What MuJoCoPiper reads from its parent: model, layout, runtime, scene file."""
-
-    _connected = True
-
-    def __init__(self, scene: str) -> None:
-        model = mujoco.MjModel.from_xml_path(scene)
-        self._mj = SimpleNamespace(model=model, layout=DofLayout(model, "base_link", 12))
-        self.runtime = _Runtime(model)
-        self._scene_xml_path = scene
-
-    def wait_settled(self) -> bool:  # the stub body never moves
-        return True
-
-    def place(self, x: float, y: float, yaw: float, arm=None) -> None:
-        L = self._mj.layout
-        q = self.runtime.qpos
-        q[L.root_qpos_adr:L.root_qpos_adr + 7] = [x, y, _BASE_Z, math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]
+    def place(self, x: float, y: float, yaw: float, arm=None) -> np.ndarray:
+        s = self.scene.free_q(self.scene.robot_root)
+        self.q[s] = [x, y, _BASE_Z, math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]
         if arm is not None:
-            arm_q0 = L.joint_qpos_start + L.num_actuated
-            q[arm_q0:arm_q0 + 6] = arm
+            for name, v in zip(self.spec.joints, arm):
+                self.q[self.scene.joint_q(self.scene.joint(name))] = v
+        return self.q
+
+    def seeds(self, extra=()):
+        return [*extra, self.kin.arm_q(self.q), *self.spec.ik_seeds]
 
 
 @pytest.fixture(scope="module")
-def rig():
-    go2 = _Go2(str(_build_room_scene_xml(with_arm=True)))
-    piper = MuJoCoPiper(go2, registry.load("go2_piper").arm)
-    piper.connect()
-    yield go2, piper
-    piper.disconnect()
+def rig() -> _Rig:
+    return _Rig()
 
 
 def _pose(x: float, y: float, yaw: float) -> np.ndarray:
     T = np.eye(4)
-    T[:3, :3] = mp._rot_z(yaw)
+    T[:3, :3] = kinematics._rot_z(yaw)
     T[:3, 3] = [x, y, _BASE_Z]
     return T
 
 
 def test_fk_follows_a_moved_base(rig) -> None:
     """Base at spawn vs (12.8, 4, yaw pi/2): the EE moves rigidly with the base."""
-    go2, piper = rig
     q = [0.3, 1.2, -1.0, 0.2, 0.6, 0.4]
-    go2.place(10.0, 3.0, 0.0)
-    p_a, r_a = piper.fk(q)
-    go2.place(12.8, 4.0, math.pi / 2)
-    p_b, r_b = piper.fk(q)
+    p_a, r_a = rig.kin.fk(rig.place(10.0, 3.0, 0.0), q)
+    p_b, r_b = rig.kin.fk(rig.place(12.8, 4.0, math.pi / 2), q)
     T = _pose(12.8, 4.0, math.pi / 2) @ np.linalg.inv(_pose(10.0, 3.0, 0.0))
     np.testing.assert_allclose(p_b, T[:3, :3] @ p_a + T[:3, 3], atol=1e-6)
     np.testing.assert_allclose(r_b, T[:3, :3] @ np.array(r_a), atol=1e-6)
@@ -92,12 +70,11 @@ def test_fk_follows_a_moved_base(rig) -> None:
 
 
 def test_ik_solves_against_the_moved_base(rig) -> None:
-    go2, piper = rig
-    go2.place(12.8, 4.0, math.pi / 2)
+    q = rig.place(12.8, 4.0, math.pi / 2)
     target = (12.8, 4.0 + 0.45, 0.25)  # 45 cm ahead of the turned dog
-    q = piper.ik_top_down(target)
-    assert q is not None
-    pos, rot = piper.fk(q)
+    sol = rig.kin.ik_top_down(q, target, rig.seeds())
+    assert sol is not None
+    pos, rot = rig.kin.fk(q, sol)
     assert math.dist(pos, target) < 3e-3
     assert np.array(rot)[2, 2] < -0.999  # tool z = world -Z
 
@@ -106,20 +83,15 @@ def test_ik_solves_against_the_moved_base(rig) -> None:
 def feasible(rig) -> list[tuple[float, float, float]]:
     """250 body-frame (forward, left, z) targets — 0.15-0.65 m ahead, bearing +-0.6 rad,
     z 0-0.5 — that a random multi-start proves reachable top-down (dog at spawn)."""
-    go2, piper = rig
-    go2.place(10.0, 3.0, 0.0, arm=[0.0] * 6)
+    q = rig.place(10.0, 3.0, 0.0, arm=[0.0] * 6)
     rng = np.random.default_rng(7)
+    lo, hi = rig.kin.range[:, 0], rig.kin.range[:, 1]
     out: list[tuple[float, float, float]] = []
-    with piper._ik_lock:
-        piper._sync_ik_base_from_live()
-        lo, hi = piper._ik_range[:, 0], piper._ik_range[:, 1]
-        while len(out) < 250:
-            r, b, z = rng.uniform(0.15, 0.65), rng.uniform(-0.6, 0.6), rng.uniform(0.0, 0.5)
-            f, left = r * math.cos(b), r * math.sin(b)
-            if any(piper._ik_iterate((10.0 + f, 3.0 + left, z), mp._rot_z(y) @ mp._R_TOP_DOWN,
-                                     list(rng.uniform(lo, hi))) is not None
-                   for y in (0.0, math.pi) for _ in range(6)):
-                out.append((f, left, z))
+    while len(out) < 250:
+        r, b, z = rng.uniform(0.15, 0.65), rng.uniform(-0.6, 0.6), rng.uniform(0.0, 0.5)
+        f, left = r * math.cos(b), r * math.sin(b)
+        if rig.kin.ik_top_down(q, (10.0 + f, 3.0 + left, z), [list(rng.uniform(lo, hi)) for _ in range(6)]):
+            out.append((f, left, z))
     return out
 
 
@@ -130,11 +102,10 @@ def test_top_down_reach_is_heading_independent(rig, feasible, yaw) -> None:
     Measured: 250/250 at 0, pi/2 and pi; the old world-X jaw with the shipped
     seeds solved 185/250 at heading 0 (250 at pi/2 and pi).
     """
-    go2, piper = rig
-    go2.place(10.0, 3.0, yaw, arm=[0.0] * 6)
+    q = rig.place(10.0, 3.0, yaw, arm=[0.0] * 6)
     c, s = math.cos(yaw), math.sin(yaw)
     solved = sum(
-        piper.ik_top_down((10.0 + c * f - s * left, 3.0 + s * f + c * left, z)) is not None
+        rig.kin.ik_top_down(q, (10.0 + c * f - s * left, 3.0 + s * f + c * left, z), rig.seeds()) is not None
         for f, left, z in feasible
     )
     assert solved >= 240, f"yaw={yaw:.2f}: {solved}/250"
@@ -142,39 +113,58 @@ def test_top_down_reach_is_heading_independent(rig, feasible, yaw) -> None:
 
 def test_a_180_degree_flip_is_not_convergence(rig) -> None:
     """sin(theta) of a pi rotation is 0: the old metric accepted a gripper pointing UP."""
-    go2, piper = rig
-    go2.place(10.0, 3.0, 0.0)
+    q = rig.place(10.0, 3.0, 0.0)
     q0 = [0.0, 1.57, -1.57, 0.0, 1.22, 0.0]
-    pos, rot = piper.fk(q0)
+    pos, rot = rig.kin.fk(q, q0)
     flipped = np.array(rot) @ np.diag([1.0, -1.0, -1.0])  # rotated pi about the tool x
-    with piper._ik_lock:
-        piper._sync_ik_base_from_live()
-        sol = piper._ik_iterate(tuple(pos), flipped, q0)
+    with rig.kin._lock:
+        rig.kin._sync(q)
+        sol = rig.kin._iterate(tuple(pos), flipped, q0)
     if sol is not None:
-        _p, r = piper.fk(sol)
-        assert mp._rot_angle(flipped @ np.array(r).T) < mp._IK_ROT_TOL
+        _p, r = rig.kin.fk(q, sol)
+        assert kinematics._rot_angle(flipped @ np.array(r).T) < kinematics._IK_ROT_TOL
 
 
-def test_ik_seeds_include_the_live_arm_and_respect_the_limits(rig, monkeypatch) -> None:
-    go2, piper = rig
-    live = [0.1, 0.9, -0.8, 0.05, 0.3, -0.2]
-    go2.place(10.0, 3.0, 0.0, arm=live)
-    seen: list[list[float]] = []
-    monkeypatch.setattr(piper, "_ik_iterate", lambda t, r, s: seen.append(list(s)))
-    assert piper.ik_top_down((10.5, 3.0, 0.3)) is None
-    assert seen[0] == pytest.approx(live)  # the explicit live seed, not IK residue
-    assert len(seen) == 2 * (1 + len(piper._spec.ik_seeds))  # heading 0 = world X: two jaw yaws
-    lo, hi = piper._ik_range[:, 0], piper._ik_range[:, 1]
-    for s in piper._spec.ik_seeds:
-        assert np.all(np.asarray(s) >= lo) and np.all(np.asarray(s) <= hi), s
+def test_the_mount_is_every_robot_joint_outside_the_arm(rig) -> None:
+    """The dog's free joint and legs come from the live state; the gripper and the scene's
+    objects never do (they are not what the arm rides on)."""
+    sc, kin = rig.scene, rig.kin
+    root = sc.free_q(sc.robot_root)
+    legs = [sc.joint_q(sc.joint(f"{leg}_{part}_joint")) for leg in ("FL", "FR", "RL", "RR")
+            for part in ("hip", "thigh", "calf")]
+    assert sorted(kin._mount) == sorted([*range(root.start, root.stop), *legs])
 
 
-def test_fk_waits_for_the_ik_lock(rig) -> None:
+def test_fk_waits_for_the_kinematics_lock(rig) -> None:
     """fk (the verify oracle's thread) and IK (the skill's) share one scratch MjData."""
-    _go2, piper = rig
     done = threading.Event()
-    with piper._ik_lock:
-        t = threading.Thread(target=lambda: (piper.fk([0.0] * 6), done.set()), daemon=True)
+    with rig.kin._lock:
+        t = threading.Thread(target=lambda: (rig.kin.fk(rig.q, [0.0] * 6), done.set()), daemon=True)
         t.start()
         assert not done.wait(0.2)
     assert done.wait(5.0)
+
+
+# -- today's numbers: the kinematics replace MuJoCoPiper's bit for bit ---------------
+# golden/piper_kinematics.json holds MuJoCoPiper's ik_top_down / ik / fk on these 16
+# cases, recorded from that driver on release/1.0 just before S3a deleted it (the live
+# comparison passed on 84fcde0). JSON floats round-trip exactly.
+
+_BASES = [(10.0, 3.0, 0.0), (10.46, 3.0, 0.0), (12.8, 4.0, math.pi / 2), (9.5, 2.0, -2.5)]
+_TARGETS = [(0.45, 0.0, 0.30), (0.40, 0.08, 0.22), (0.38, -0.05, 0.34), (2.0, 0.0, 0.3)]
+_ARM = [0.1, 0.9, -0.8, 0.05, 0.3, -0.2]
+
+
+def test_the_kinematics_keep_the_old_driver_numbers(rig) -> None:
+    golden = json.loads((Path(__file__).with_name("golden") / "piper_kinematics.json").read_text())
+    cases = [((x, y, yaw), (x + math.cos(yaw) * f - math.sin(yaw) * left,
+                            y + math.sin(yaw) * f + math.cos(yaw) * left, z))
+             for x, y, yaw in _BASES for f, left, z in _TARGETS]
+    assert len(golden) == len(cases) == 16
+    for (base, target), old in zip(cases, golden):
+        q = rig.place(*base, arm=_ARM).copy()
+        assert rig.kin.ik_top_down(q, target, rig.seeds()) == old["td"], (base, target)
+        assert rig.kin.ik(q, target, rig.kin.arm_q(q)) == old["ik"], (base, target)
+        pos, rot = rig.kin.fk(q, _ARM)
+        assert [pos, rot] == old["fk"], (base, target)
+    assert sum(o["td"] is not None for o in golden) == 12  # solutions, not only misses

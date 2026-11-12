@@ -20,12 +20,12 @@ import pytest
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.types import Detection
 from vector_os_nano.core.world_model import WorldModel
-from vector_os_nano.perception.depth_projection import mujoco_intrinsics
+from tests.harness.camera import pinhole
 from vector_os_nano.perception.grasp_point import grasp_point_from_rgbd
 from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
 
 _W, _H = 64, 48
-_INTR = mujoco_intrinsics(_W, _H, vfov_deg=42.0)
+_INTR = pinhole(_W, _H, 42.0)
 _K = np.array([[_INTR.fx, 0.0, _INTR.cx], [0.0, _INTR.fy, _INTR.cy], [0.0, 0.0, 1.0]])  # the frame's own K
 # A camera pose that puts a 1 m-forward point at a physically plausible world spot:
 # camera at (9.0, 3.0, 0.8), facing +X (forward). MuJoCo xmat convention:

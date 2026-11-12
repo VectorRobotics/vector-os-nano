@@ -61,33 +61,3 @@ def clearance(scene, q: np.ndarray, body: int) -> float:
              & (lo[:, 0] <= x) & (x <= hi[:, 0]) & (lo[:, 1] <= y) & (y <= hi[:, 1])
              & (hi[:, 2] <= bottom + SUPPORT_EPS))
     return bottom - float(hi[under, 2].max()) if under.any() else math.inf
-
-
-def ik(scene, q: np.ndarray, site: int, joints: list[int], pos: np.ndarray, z: np.ndarray,
-       iters: int = 300) -> np.ndarray:
-    """Damped least squares on canonical site poses: *q* with *joints* moved so *site*
-    reaches *pos* with its z axis along *z* (yaw free). Joint limits are respected."""
-    m = scene.model
-    adr = [scene.joint_q(j) for j in joints]
-    lo = np.array([m.jnt_range[j][0] if m.jnt_limited[j] else -np.pi for j in joints])
-    hi = np.array([m.jnt_range[j][1] if m.jnt_limited[j] else np.pi for j in joints])
-    q = q.copy()
-
-    def err(qq: np.ndarray) -> np.ndarray:
-        p, M = canonical.site_poses(scene, qq)
-        return np.concatenate([pos - p[site], np.cross(M[site][:, 2], z)])
-
-    for _ in range(iters):
-        e = err(q)
-        if np.linalg.norm(e) < 1e-7:
-            break
-        J = np.empty((6, len(joints)))
-        for k, a in enumerate(adr):
-            dq = q.copy()
-            dq[a] += 1e-6
-            J[:, k] = (e - err(dq)) / 1e-6
-        step = J.T @ np.linalg.solve(J @ J.T + 1e-4 * np.eye(6), e)
-        step *= min(1.0, 0.2 / max(float(np.abs(step).max()), 1e-12))  # at most 0.2 rad per iteration
-        q[adr] = np.clip(q[adr] + step, lo, hi)
-    assert np.linalg.norm(err(q)) < 1e-4, f"IK did not converge: residual {np.linalg.norm(err(q)):.2e}"
-    return q

@@ -79,10 +79,8 @@ def _angle_delta(a: float, b: float) -> float:
 
 
 def _camera(cfg: Any) -> tuple[str, int, int] | None:
-    for s in getattr(cfg, "sensors", ()):
-        if s.role == "camera" and s.name and "width" in s.params and "height" in s.params:
-            return s.name, int(s.params["width"]), int(s.params["height"])
-    return None
+    cam = getattr(cfg, "camera", None)
+    return None if cam is None else (cam.name, cam.width, cam.height)
 
 
 def build_namespace(
