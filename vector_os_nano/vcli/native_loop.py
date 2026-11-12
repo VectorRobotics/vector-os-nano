@@ -308,8 +308,13 @@ def _run_turn_native(
         t0 = time.monotonic()
 
         def _tick() -> None:
-            while not done.wait(1.0):
-                _emit(_progress_line(name, params, base, start, time.monotonic() - t0))
+            # On absolute seconds (t0 + k): an emit's own cost never drifts the labels
+            # (a 1 s sleep after each emit drifted '2s' -> '4s'); only a tick that ran
+            # over a whole second skips, to the next whole one.
+            k = 1
+            while not done.wait(max(0.0, t0 + k - time.monotonic())):
+                _emit(_progress_line(name, params, base, start, k))
+                k = max(k + 1, int(time.monotonic() - t0) + 1)
 
         threading.Thread(target=_tick, name="native-progress", daemon=True).start()
         try:

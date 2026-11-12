@@ -201,3 +201,34 @@ def test_multistep_plan_records_one_step_per_subgoal():
     v2 = ("verify", {"expr": "path_contains('done.txt', 'b')"})
     _calls, trace = _run([tool_turn(w1, v1), tool_turn(w2, v2), tool_turn(_FINISH)])
     assert [bool(s.verify_result) for s in trace.steps] == [True, True]  # both subgoals graded
+
+
+def test_the_progress_ticker_labels_every_second_when_drawing_is_slow():
+    """S3aF1V-05: the ticker slept 1 s AFTER each emit, so a slow draw drifted its
+    labels (1s at 1.0, 2s at 2.45, 4s at 3.9) and '3s' was never drawn: E5's key
+    on 'navigate 3s ·' then waited out the session. Ticks are now on t0 + k."""
+    import re
+    import time
+
+    from vector_os_nano.core.types import SkillResult
+    from vector_os_nano.vcli.backends.fake import tool_turn
+
+    class _SlowWrite:
+        name = "write_file"; description = "write text to a file, slowly"
+        parameters = {"file_path": {"type": "string", "required": True},
+                      "content": {"type": "string", "required": True}}
+        preconditions: list = []; effects: dict = {}
+
+        def execute(self, params, context):
+            time.sleep(3.7)
+            return SkillResult(success=True)
+
+    ticks: list[str] = []
+
+    def draw(msg: str) -> None:
+        if re.fullmatch(r"write_file \d+s", msg):
+            ticks.append(msg)
+            time.sleep(0.45)  # a slow terminal
+
+    _run([tool_turn(_WRITE), tool_turn(end=True)], on_progress=draw, skill=_SlowWrite())
+    assert ticks[:3] == ["write_file 1s", "write_file 2s", "write_file 3s"], ticks
