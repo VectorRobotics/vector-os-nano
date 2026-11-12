@@ -119,7 +119,7 @@ class BaseProtocol(Protocol):
 
     def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0) -> bool:
         """Hold the command for *duration* sim seconds, then stop; True iff it ran its full
-        time and the body did not fall."""
+        time and the body was up (its root above the fall height) at the start and the end."""
 
     def set_velocity(self, vx: float, vy: float, vyaw: float) -> None:
         """Set the command now (non-blocking); it holds until replaced."""

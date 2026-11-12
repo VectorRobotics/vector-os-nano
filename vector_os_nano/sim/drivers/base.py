@@ -171,11 +171,12 @@ class LeggedBase:
 
     def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0) -> bool:
         with self._control():
+            start_z = self.get_position()[2]  # a body that starts fallen has fallen
             self.set_velocity(vx, vy, vyaw)
             ran = self.wait_sim(duration, cancel=self._cancel)
             self.set_velocity(0.0, 0.0, 0.0)
             self.wait_sim(_WALK_SETTLE_S, cancel=self._cancel)
-            return bool(ran and self.get_position()[2] > self._spec.fall_z)
+            return bool(ran and min(start_z, self.get_position()[2]) > self._spec.fall_z)
 
     def set_posture(self, name: str, duration: float = 2.0) -> bool:
         if name == "stand":

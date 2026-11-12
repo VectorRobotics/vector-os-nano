@@ -112,15 +112,20 @@ def test_velocity_commands(flat, cmd, moved):
         assert abs(math.remainder(h1 - h0, 2 * math.pi)) > 0.3
 
 
-def test_a_walk_and_a_stop(flat):
+def test_a_walk_moves_it(flat):
     base = flat.base
     p0 = base.get_position()
     assert base.walk(vx=0.3, duration=2.0)
-    assert math.hypot(*np.subtract(base.get_position()[:2], p0[:2])) > 0.1
+    p1 = base.get_position()
+    assert math.hypot(p1[0] - p0[0], p1[1] - p0[1]) > 0.1 and p1[2] > flat.cfg.base.fall_z
+
+
+def test_a_zero_command_brings_it_to_rest(flat):
+    base = flat.base
     base.set_velocity(0.3, 0.0, 0.0)
     assert base.wait_sim(1.0)
     base.set_velocity(0.0, 0.0, 0.0)
-    assert base.wait_sim(0.5)  # SIM seconds: the brake ends well inside them
+    assert base.wait_sim(0.5)  # SIM seconds: the MPC-to-stance switch rings ~0.35 of them
     assert _speed(flat) < 0.1
 
 

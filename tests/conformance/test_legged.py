@@ -207,7 +207,8 @@ def test_a_stop_from_a_walk_at_the_limit_brings_it_to_rest(body):
 
 def test_a_tipped_body_reports_the_fall(body):
     """Started on its back, legs in the air: the trunk lies below the manifest's fall_z, so
-    a walk reports the fall (fall detection is the root height, nothing else)."""
+    a walk reports the fall, whatever the policy's legs do to the trunk meanwhile (fall
+    detection is the root height at the start and the end of the walk)."""
     q = body.rt.snapshot().q.copy()
     sc = body.rt.world.scene
     root = sc.free_q(sc.robot_root)
