@@ -108,6 +108,27 @@ def test_a_bad_base_block_fails_naming_the_key(change: dict, error: str) -> None
         parse_embodiment_config(_legged(**change), ctx="quad/robot.yaml")
 
 
+@pytest.mark.parametrize("edit, error", [
+    (lambda p: p.update(ref="rl_magic"),
+     r"^quad/robot\.yaml\.base\.policy\.ref: no control policy 'rl_magic'; policies: \['convex_mpc', 'sinusoidal'\]$"),
+    (lambda p: p.update(gait_hzz=3),
+     r"^quad/robot\.yaml\.base\.policy: keys \[.*'gait_hzz'.*\]; convex_mpc takes exactly \['brake_ramp_s'"),
+    (lambda p: p.pop("duty"), r"^quad/robot\.yaml\.base\.policy: keys .*; convex_mpc takes exactly .*'duty'"),
+    (lambda p: p.update(gait_hz="fast"), r"^quad/robot\.yaml\.base\.policy: gait_hz: 'fast' is not a number$"),
+    (lambda p: p["by_backend"]["pybullet"].update(ref="nope"),
+     r"^quad/robot\.yaml\.base\.policy\.by_backend\.pybullet\.ref: no control policy 'nope'; policies: \["),
+    (lambda p: p["by_backend"]["pybullet"].update(freq_hzz=2.0),
+     r"^quad/robot\.yaml\.base\.policy\.by_backend\.pybullet: keys .*; sinusoidal takes exactly"),
+])
+def test_a_bad_policy_row_fails_at_load_naming_the_file_and_key(edit, error: str) -> None:
+    """The policy ref (and every by_backend ref) is a row of sim.policies.POLICIES and its
+    keys are exactly the row's, checked at load, not when the sim builds the body."""
+    raw = _legged()
+    edit(raw["base"]["policy"])
+    with pytest.raises(EmbodimentConfigError, match=error):
+        parse_embodiment_config(raw, ctx="quad/robot.yaml")
+
+
 @pytest.mark.parametrize("lidar, error", [
     ({"elevations_deg": [-2, 2]}, r"must include 0"),
     ({"mount_body": "base_link"}, r"unknown key 'mount_body'"),

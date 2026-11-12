@@ -27,11 +27,10 @@ import numpy as np
 
 from vector_os_nano.embodiments.config import BaseSpec
 from vector_os_nano.interfaces.policy import PolicyObs
-from vector_os_nano.sim.policies import owned, pd
+from vector_os_nano.sim.policies import pd
 
 logger = logging.getLogger(__name__)
 
-_KEYS = ("gait_hz", "duty", "z_des", "brake_s", "brake_ramp_s")
 _LEGS = ("FL", "FR", "RL", "RR")  # the Pinocchio model's legs, in base.joints order
 _DT_FACTOR = 16                    # MPC steps per gait cycle
 _MAX_FAILS = 5
@@ -40,8 +39,7 @@ INSTALL_HINT = "convex_mpc needs casadi and pin: uv pip install -e '.[go2]'"
 
 
 class Policy:
-    def __init__(self, base: BaseSpec, params: dict[str, Any], tau_limit: np.ndarray) -> None:
-        p = owned(params, _KEYS, "convex_mpc")
+    def __init__(self, base: BaseSpec, params: dict[str, float], tau_limit: np.ndarray) -> None:
         try:
             # casadi is imported lazily by the QP on its FIRST solve: import it here, so a
             # missing solver fails the start, never every tick (tricky-bugs Case 0)
@@ -57,11 +55,11 @@ class Policy:
         if len(base.joints) != 3 * len(_LEGS):
             raise ValueError(f"convex_mpc drives the Go2's 12 leg joints, got {len(base.joints)}")
         self.tick_hz = base.policy.tick_hz
-        self._p = p
+        self._p = params
         self._stance = np.array([base.stance[j] for j in base.joints], dtype=np.float64)
         self._kp, self._kd, self._limit = base.kp, base.kd, tau_limit
         self._pin = PinGo2Model()
-        self._gait = Gait(p["gait_hz"], p["duty"])
+        self._gait = Gait(params["gait_hz"], params["duty"])
         self._traj = ComTraj(self._pin)
         self._legs = LegController()
         self._mpc: Any = None  # built on the first solve

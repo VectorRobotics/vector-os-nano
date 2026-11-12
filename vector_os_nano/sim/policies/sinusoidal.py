@@ -14,15 +14,13 @@ momentum to shed). Keys of ``base.policy``: ``freq_hz`` (steps per second),
 from __future__ import annotations
 
 import math
-from typing import Any
 
 import numpy as np
 
 from vector_os_nano.embodiments.config import BaseSpec
 from vector_os_nano.interfaces.policy import PolicyObs
-from vector_os_nano.sim.policies import owned, pd
+from vector_os_nano.sim.policies import pd
 
-_KEYS = ("freq_hz", "thigh_amp", "calf_amp", "hip_amp")
 _TROT = (0.0, math.pi, math.pi, 0.0)  # leg phase: FL + RR, FR + RL
 _LEFT = (0, 2)                        # FL, RL
 
@@ -30,10 +28,10 @@ _LEFT = (0, 2)                        # FL, RL
 class Policy:
     braking = False
 
-    def __init__(self, base: BaseSpec, params: dict[str, Any], tau_limit: np.ndarray) -> None:
+    def __init__(self, base: BaseSpec, params: dict[str, float], tau_limit: np.ndarray) -> None:
         if len(base.joints) != 12:
             raise ValueError(f"sinusoidal: a quadruped of 4 x (hip, thigh, calf) joints, got {len(base.joints)}")
-        self._p = owned(params, _KEYS, "sinusoidal")
+        self._p = params
         self._stance = np.array([base.stance[j] for j in base.joints], dtype=np.float64)
         self._vy_max = base.limits[1]
         self._kp, self._kd, self._limit = base.kp, base.kd, tau_limit

@@ -426,11 +426,27 @@ def _parse_base_policy(p: dict[str, Any], ctx: str) -> BasePolicySpec:
             raise EmbodimentConfigError(f"{ctx}.by_backend: unknown backend {name!r}; valid: {sorted(BACKENDS)}")
         if not isinstance(entry, dict) or "ref" not in entry:
             raise EmbodimentConfigError(f"{ctx}.by_backend.{name} must be a mapping with a 'ref'")
-    return BasePolicySpec(
+    spec = BasePolicySpec(
         ref=str(_require(p, "ref", ctx)), timestep=timestep, tick_hz=tick_hz,
         params={k: v for k, v in p.items() if k not in _POLICY_KEYS},
         by_backend={str(k): dict(v) for k, v in by_backend.items()},
     )
+    _check_policy_row(spec.ref, spec.params, ctx)
+    for name in spec.by_backend:
+        _check_policy_row(*spec.on(name), f"{ctx}.by_backend.{name}")
+    return spec
+
+
+def _check_policy_row(ref: str, params: dict[str, Any], ctx: str) -> None:
+    """The row *ref* exists and *params* are exactly its keys (``sim.policies.owned``)."""
+    from vector_os_nano.sim.policies import owned  # a name table: no simulator import
+
+    try:
+        owned(ref, params)
+    except KeyError as exc:
+        raise EmbodimentConfigError(f"{ctx}.ref: {exc.args[0]}") from None
+    except ValueError as exc:
+        raise EmbodimentConfigError(f"{ctx}: {exc}") from None
 
 
 def _parse_base(raw: dict[str, Any], ctx: str) -> BaseSpec | None:
