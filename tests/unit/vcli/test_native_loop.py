@@ -952,15 +952,15 @@ def test_a_verify_probe_with_no_action_since_the_last_verify_is_refused() -> Non
 
 def test_mutation_probe_refusal(monkeypatch) -> None:
     """Graft (g): with the refusal switched off the same script reads GT twice."""
-    from vector_os_nano.vcli import native_loop
+    from vector_os_nano.vcli import native_runner
 
-    real = native_loop.NativeStepRunner.handle_verify
+    real = native_runner.NativeStepRunner.handle_verify
 
     def leaky(self, expr, goal_id=""):  # noqa: ANN001, ANN202
         self._acted_since_verify = True
         return real(self, expr, goal_id)
 
-    monkeypatch.setattr(native_loop.NativeStepRunner, "handle_verify", leaky)
+    monkeypatch.setattr(native_runner.NativeStepRunner, "handle_verify", leaky)
     agent, _base = _make_agent(0.0, 0.0)
     trace = _make_engine(agent, _probe_script()).run_turn_native("go to (3,0)", session=_session())
     assert len(trace.steps) == 2

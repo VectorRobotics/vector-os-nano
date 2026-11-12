@@ -13,7 +13,7 @@ from typing import Any
 from rich.console import Console
 from rich.markup import escape
 
-from vector_os_nano.vcli.native_loop import LIFECYCLE_TOOLS
+from vector_os_nano.vcli.native_runner import LIFECYCLE_TOOLS
 from vector_os_nano.version import __version__
 
 
