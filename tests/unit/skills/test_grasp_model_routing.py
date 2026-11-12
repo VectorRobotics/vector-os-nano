@@ -280,6 +280,9 @@ def test_an_empty_detector_answer_fails_loud_never_the_front_blob():
     ("抓那个苹果", "unknown_object"),           # the front-most blob was grasped
     ("抓前面那个苹果", "unknown_object"),       # R2V-04: a deictic word hid the noun
     ("前面的苹果", "unknown_object"),
+    ("抓红色的苹果", "unknown_object"),         # R2F1V-01: the colour hid the noun -> red can
+    ("grab the red unicorn", "unknown_object"),
+    ("抓前面红色的苹果", "unknown_object"),
 ])
 def test_a_target_it_cannot_read_is_refused_before_any_motion(query, diagnosis):
     perc = RoutingPerception()
@@ -312,6 +315,19 @@ def test_a_pure_deictic_query_still_takes_the_front_object(query):
     res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
     assert res.success, res.error_message
     assert "front" in perc.calls and not any(c.startswith("detect:") for c in perc.calls), perc.calls
+
+
+@pytest.mark.parametrize("query", [
+    "抓红色的", "红色的东西", "grab the red one", "the red object", "red", "抓前面红色的",
+    "grab the red can", "红色的罐子",
+])
+def test_a_colour_with_no_other_noun_still_takes_the_colour_resolver(query):
+    """The other side of R2F1V-01: a colour plus only filler, deictic or generic words
+    (or a known noun) is no unknown object and stays on the HSV colour route."""
+    perc = RoutingPerception()
+    res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
+    assert res.success, res.error_message
+    assert "front:red" in perc.calls, perc.calls
 
 
 def test_a_producer_box_must_be_plausible_on_the_current_frame():

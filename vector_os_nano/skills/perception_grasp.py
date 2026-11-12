@@ -57,8 +57,8 @@ def _fail(diagnosis: str, message: str, **extra: Any) -> SkillResult:
 # Deictic words: "the thing in front", "that one" — a spatial reference, no object name.
 _DEICTIC_ZH = ("前面", "前方", "面前", "眼前", "前边", "前", "那个", "这个")
 _DEICTIC_EN = re.compile(r"\b(?:in front|front|ahead|nearest|this|that|one)\b")
-# Request words around a CJK target ("抓起那个罐子"): never an object on their own.
-_FILLER_ZH = re.compile(r"[抓拿取捡起帮我把给请的一下吧个]|东西|物体|物品")
+# Request words around a CJK target ("抓起那个罐子"), and the 色 of "红色": never an object.
+_FILLER_ZH = re.compile(r"[抓拿取捡起帮我把给请的一下吧个色]|东西|物体|物品")
 
 
 def _target_words(query: str) -> str:
@@ -92,10 +92,12 @@ _UNSEEN_COLOURS = ("white", "black", "grey", "gray", "pink", "brown", "silver", 
 def _unsupported_target(query: str) -> SkillResult | None:
     """Why the grasp cannot honestly resolve *query*, or None.
 
-    A colour it cannot see, or words the world vocabulary cannot read (untranslatable
-    CJK left once the deictic and request words are gone: "抓前面那个苹果"), are
-    refused before any motion: the robot never substitutes the front-most blob or a
-    same-noun object of another colour for what was named.
+    A colour it cannot see, words the world vocabulary cannot read (untranslatable
+    CJK left once the deictic, request and colour words are gone: "抓前面那个苹果",
+    "抓红色的苹果"), or an unknown noun beside a colour ("the red unicorn": the colour
+    route would ignore the noun) are refused before any motion: the robot never
+    substitutes the front-most blob, the only object of that colour, or a same-noun
+    object of another colour for what was named.
     """
     from vector_os_nano.perception.vocab import _has, vocab
 
@@ -106,9 +108,11 @@ def _unsupported_target(query: str) -> SkillResult | None:
                      f"{query!r} names the colour {unseen!r}, which this robot cannot tell apart; "
                      "name the object without it, or by a colour it sees "
                      "(red, orange, yellow, green, blue, purple).", query=query)
-    rest = _target_words(query)
-    if vocab().english(rest) is None and _FILLER_ZH.sub("", rest).strip():
-        nouns = sorted({c for _, c in vocab().nouns})
+    v, rest = vocab(), _target_words(query)
+    bare = v.without_colours(rest)
+    said = v.english(bare)
+    if v.noun(rest) is None and ((said and v.colour(rest)) or (said is None and _FILLER_ZH.sub("", bare).strip())):
+        nouns = sorted({c for _, c in v.nouns})
         return _fail("unknown_object",
                      f"{query!r} names no object the world vocabulary knows; name one of {nouns} "
                      "(or say 'the thing in front').", query=query, known_objects=nouns)
