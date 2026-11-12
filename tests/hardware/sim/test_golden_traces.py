@@ -6,7 +6,7 @@
 Captured in lockstep (VECTOR_SIM_LOCKSTEP=1, headless) on release/1.0 before S1 touched
 anything, and replayed here bit for bit:
 
-1. go2: connect, stand, walk(0.4, 0, 0) for 3 sim-s, zero command, wait until the brake
+1. go2: spawn, stand, walk(0.4, 0, 0) for 3 sim-s, zero command, wait until the brake
    has settled; (sim_time, q, qd) every 0.1 s.
 2. go2_piper: the scripted pick of the green bottle on the pick table (ik_top_down ->
    move_joints -> close -> lift; since S3a through the generic sim/drivers Arm and
@@ -21,10 +21,27 @@ States compare with ``np.array_equal`` and oracle values exactly. Regenerate (on
 a documented, justified change) with ``python -m tests.hardware.sim.test_golden_traces
 <dir>`` under scripts/gate.sh's environment; the ``release_*`` arrays are kept.
 
+S4a moved both bodies onto the generic LeggedBase + convex_mpc policy. That code path
+replays the S1 goldens bit for bit once three deliberate changes are undone (proved by
+re-applying them: /data/vos-analysis/scratch/vos-S4a-flake/proof_patch.py), and the
+goldens were regenerated for them:
+
+* the body spawns (and a reset stands it) at its manifest stand height, base.height
+  0.279 m, instead of being dropped from 0.35 m;
+* the stance is the manifest's angles in float64 (the go2 driver used float32:
+  0.9 -> 0.8999999761581421);
+* the go2_piper seat placement is the world-side reset (``world.reset``, which also
+  zeroes the solver warm start) instead of raw qpos writes.
+
+The dog's trajectory moved by millimetres (base position <= 6.4 mm, the scripted pick 0.02
+sim-s earlier); every weld, contact set and verdict is unchanged
+(:func:`test_the_s4a_move_kept_every_verdict`, against the S1 values kept as
+``release_s1_*``).
+
 Two ground-truth values changed by design when GroundTruth became the one generic class
-(S1 step 4); the release/1.0 values are kept as ``release_gt_clearance`` /
-``release_gt_contacts`` and :func:`test_ground_truth_moved_only_as_documented` bounds the
-change:
+(S1 step 4), on the release/1.0 trajectory; the release/1.0 values are kept as
+``release_gt_clearance`` / ``release_gt_contacts``, the S1 ones as ``release_s1_*``, and
+:func:`test_ground_truth_moved_only_as_documented` bounds that change:
 
 * clearance is today's AABB rule over CANONICAL shape AABBs of the published state;
   the old one read the stepped data's geom poses, one physics step behind it. Every
@@ -243,18 +260,32 @@ def test_golden_trace_replays_bit_for_bit(scenario: str, monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
 def test_ground_truth_moved_only_as_documented(scenario: str) -> None:
-    """The step-4 change of clearance and contacts against release/1.0 (module docstring)."""
+    """The step-4 change of clearance and contacts against release/1.0 (module docstring),
+    both on the release/1.0 trajectory."""
     g = np.load(GOLDEN / f"{scenario}.npz")
-    new, old = g["gt_clearance"], g["release_gt_clearance"]
+    new, old = g["release_s1_gt_clearance"], g["release_gt_clearance"]
     assert np.array_equal(np.isinf(new), np.isinf(old))
     fin = np.isfinite(old)
-    step = 1.5 * g["gt_speed"] * 1e-3  # one 1 ms physics step of the object's own motion
+    step = 1.5 * g["release_s1_gt_speed"] * 1e-3  # one 1 ms physics step of the object's own motion
     assert (np.abs(new - old)[fin] <= step[fin] + 1e-9).all()
     assert ((new >= 0.03) == (old >= 0.03)).all() and ((np.abs(new) < 5e-3) == (np.abs(old) < 5e-3)).all()
-    moved = np.argwhere(g["gt_contacts"] != g["release_gt_contacts"])
-    assert all(g["gt_contacts"][tuple(i)] for i in moved)  # only contacts gained, none lost
-    assert all(g["gt_clearance"][i, k] < 1e-3 for i, k, _b in moved)  # each within the 1 mm sentence
+    contacts = g["release_s1_gt_contacts"]
+    moved = np.argwhere(contacts != g["release_gt_contacts"])
+    assert all(contacts[tuple(i)] for i in moved)  # only contacts gained, none lost
+    assert all(new[i, k] < 1e-3 for i, k, _b in moved)  # each within the 1 mm sentence
     assert len(moved) == {"go2_walk": 0, "go2_piper_pick": 1}[scenario]
+
+
+@pytest.mark.parametrize("scenario", sorted(SCENARIOS))
+def test_the_s4a_move_kept_every_verdict(scenario: str) -> None:
+    """S4a's three changes (module docstring) moved the trajectory by millimetres and
+    nothing any oracle decides: welds, contact sets and verdicts are the S1 ones."""
+    g = np.load(GOLDEN / f"{scenario}.npz")
+    assert np.array_equal(g["gt_welded"], g["release_s1_gt_welded"])
+    assert np.array_equal(g["gt_contacts"], g["release_s1_gt_contacts"])
+    assert np.abs(g["gt_base"][:, :3] - g["release_s1_gt_base"][:, :3]).max() < 0.01
+    if "verdicts" in g.files:
+        assert np.array_equal(g["verdicts"], g["release_s1_verdicts"])
 
 
 def write(out: Path) -> None:
