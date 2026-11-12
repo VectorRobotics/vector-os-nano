@@ -90,6 +90,14 @@ def test_a_failing_command_prints_its_error_and_the_repl_lives(home, out, monkey
     assert slash.dispatch(_rt(), "/nope") is True and "Unknown: /nope" in out.getvalue()
 
 
+@pytest.mark.parametrize("line", ["/", "/   "])
+def test_a_bare_slash_is_unknown_and_the_repl_lives(home, out, line) -> None:
+    """R5V-D1: '/' alone (Enter on the command menu) used to raise ValueError out of
+    the REPL."""
+    assert slash.dispatch(_rt(), line) is True
+    assert "Unknown: /" in out.getvalue()
+
+
 def test_model_without_a_key_names_the_variable_and_changes_nothing(home, out) -> None:
     """cli-entry:model-cmd-crash-no-engine: /model with no backend used to raise
     AttributeError on None and kill the REPL."""
@@ -187,8 +195,17 @@ def test_a_bad_resume_id_is_a_clean_setup_error(home, out, monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "_maybe_reexec_under_mjpython", lambda args: None)
     monkeypatch.setattr(cli, "_setup_logging", lambda verbose: None)
-    for bad in ("no-such-session", "../../etc/passwd"):
+    # The guard's adversarial case: a REAL session file outside ~/.vector/sessions,
+    # reachable by a relative id. It is neither loaded nor rewritten.
+    user = home / "user"
+    monkeypatch.setenv("HOME", str(user))
+    (user / ".vector" / "sessions").mkdir(parents=True)
+    planted = home / "evil.jsonl"
+    body = '{"type": "user", "content": "planted"}\n{"type": "meta", "metadata": {}}\n'
+    planted.write_text(body)
+    for bad in ("no-such-session", "../../etc/passwd", "../../../evil"):
         with pytest.raises(SystemExit) as ei:
             cli.main(["--resume", bad])
         assert ei.value.code == 2
-    assert out.getvalue().count("no saved session") == 2 and "Traceback" not in out.getvalue()
+    assert out.getvalue().count("no saved session") == 3 and "Traceback" not in out.getvalue()
+    assert "Resumed" not in out.getvalue() and planted.read_text() == body

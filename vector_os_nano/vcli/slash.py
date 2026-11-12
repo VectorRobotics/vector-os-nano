@@ -249,7 +249,7 @@ _BY_NAME = {c.name: c for c in COMMANDS}
 def dispatch(rt: Any, line: str) -> bool:
     """Run the slash command *line*; False to leave the REPL. A failing command prints
     its error and the REPL lives."""
-    name, *args = line.strip()[1:].split()
+    name, *args = line.strip()[1:].split() or [""]  # '/' alone is Unknown, not a crash
     command = _BY_NAME.get(name) or (_BY_NAME["quit"] if name in EXIT_COMMANDS else None)
     if command is None:
         console.print(f"[yellow]  Unknown: /{escape(name)}[/]  (type / + Tab)")

@@ -18,7 +18,7 @@ INSTRUCTION = "No DEEPSEEK_API_KEY set"
 @pytest.mark.timeout(180)
 def test_first_run_without_a_key_and_every_slash_command() -> None:
     lines = [f"/{c.name}" for c in COMMANDS if c.name != "quit"]
-    lines += ["/model openrouter", "/resume-me", "hello there", "/quit"]
+    lines += ["/model openrouter", "/resume-me", "/", "hello there", "/quit"]
     res = run_repl_session(lines, extra_env={"VECTOR_FAKE_LLM_TOOLS": ""}, timeout_sec=150)
     text = res.text
     assert not res.timed_out and res.exit_code == 0, text[-2000:]
