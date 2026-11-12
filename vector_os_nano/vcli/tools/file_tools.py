@@ -39,11 +39,14 @@ _SECRET_STORES: dict[str, tuple[str, ...]] = {
     ".docker": ("dockerfile", "dockerfile.*", "*.dockerfile", "*compose*.yml", "*compose*.yaml", ".dockerignore"),
 }
 # A Vector state directory: this user's resolved $VECTOR_HOME wherever it is, and any
-# '.vector' component (another user's store). Its direct children the user authors
-# (VECTOR.md, personality.md, embodiments/, worlds/: schemas/paths.py LAYOUT) are the
-# user's own files; the store itself and everything else in it (config.yaml, history,
-# sessions, exports, memory, cache, runs, any unlisted name) are refused.
+# other '.vector' component (another user's store, a project-local one). The resolved
+# store keeps the direct children the user authors (VECTOR.md, personality.md,
+# embodiments/, worlds/: schemas/paths.py LAYOUT); any other '.vector' keeps only the two
+# files, as direct children. The store itself and everything else in it (config.yaml,
+# history, sessions, exports, memory, cache, runs, any unlisted name) are refused.
 _STORE_KEEPS: frozenset[str] = frozenset(e.split("/")[0].casefold() for e, own in paths.LAYOUT.items() if own)
+_OTHER_STORE_KEEPS: frozenset[tuple[str, ...]] = frozenset(
+    (e.casefold(),) for e, own in paths.LAYOUT.items() if own and "/" not in e)
 # Consecutive components: the credential inside a directory whose name says nothing.
 _SECRET_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset({
     (".config", "gh"), (".config", "gcloud"),
@@ -92,14 +95,15 @@ def is_protected(path: Path) -> bool:
     home = paths.home()
     for store in {_fold(os.path.realpath(home)), _fold(os.path.abspath(home))}:  # resolved, as spelled
         if low.is_relative_to(store):
-            if _store_refuses(parts[len(store.parts):]):
+            rest = parts[len(store.parts):]
+            if not rest or rest[0] not in _STORE_KEEPS:  # a keep counts only as a direct child
                 return True
             below = max(below, len(store.parts))
     for i, part in enumerate(parts):
         keep = _SECRET_STORES.get(part)
         if keep is not None and not (i < len(parts) - 1 and any(fnmatch.fnmatchcase(low.name, g) for g in keep)):
             return True
-        if part == ".vector" and i >= below and _store_refuses(parts[i + 1:]):
+        if part == ".vector" and i >= below and parts[i + 1:] not in _OTHER_STORE_KEEPS:
             return True
     if _SECRET_NAME_RE.match(low.name) and not low.name.endswith(_ENV_TEMPLATE_SUFFIXES):
         return True
@@ -107,12 +111,6 @@ def is_protected(path: Path) -> bool:
     roots = [os.path.join(os.path.realpath(paths.user_home()), ".claude")]
     roots += [os.path.realpath(p) for p in _SYSTEM_SECRETS]
     return any(low.is_relative_to(_fold(r)) for r in roots)
-
-
-def _store_refuses(rest: tuple[str, ...]) -> bool:
-    """*rest*: the folded components below a state directory. Only a user-authored
-    entry as the store's DIRECT child (and what lies under it) is not refused."""
-    return not rest or rest[0] not in _STORE_KEEPS
 
 
 def project_root(context: Any) -> Path:

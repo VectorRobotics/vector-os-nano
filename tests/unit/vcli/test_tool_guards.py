@@ -548,12 +548,13 @@ def test_a_root_holding_any_accounts_home_never_auto_allows(tmp_path: Path, monk
 
 def test_content_free_dir_names_refuse_only_their_credentials(box: dict[str, Path]) -> None:
     """R3CV-2 / R8a-V1: .kube and .azure are refused whole; .docker and .vector refuse
-    everything but their named project files (Dockerfile-style, VECTOR.md, personality.md)."""
+    everything but their named project files (Dockerfile-style; VECTOR.md and personality.md
+    as the store's direct children). A '.vector' that is not the resolved $VECTOR_HOME keeps
+    no folder: its embodiments/ and worlds/ are refused (C1a-V-D1)."""
     project = box["project"]
     readable = (".docker/Dockerfile", ".docker/php/Dockerfile.dev", ".docker/web.dockerfile",
                 ".docker/docker-compose.yml", ".docker/.dockerignore",
-                ".vector/VECTOR.md", ".vector/personality.md",
-                ".vector/embodiments/bot/robot.yaml", ".vector/worlds/w/world.yaml")
+                ".vector/VECTOR.md", ".vector/personality.md")
     refused = (".docker/config.json", ".docker/entrypoint.sh", ".docker/contexts/meta/m.json",
                ".kube/config", ".kube/README.md", ".azure/accessTokens.json", ".azure/pipelines.yml",
                ".azure/msal_token_cache.json", ".azure/service_principal_entries.json",
@@ -561,7 +562,9 @@ def test_content_free_dir_names_refuse_only_their_credentials(box: dict[str, Pat
                ".vector/exports/s1.md", ".vector/sessions/s1.json", ".vector/traces/t1.jsonl",
                ".vector/sessions/VECTOR.md.jsonl", ".vector/sessions/VECTOR.md",
                ".vector/exports/personality.md", ".vector/memory/apartment/VECTOR.md",
-               ".vector/assets/embodiments/robot.yaml")
+               ".vector/assets/embodiments/robot.yaml", ".vector/embodiments/bot/robot.yaml",
+               ".vector/worlds/w/world.yaml", ".vector/Embodiments/b/robot.yaml",
+               ".vector/WORLDS/w/world.yaml", ".vector/vector.md.d/notes.md")
     for rel in readable + refused:
         (project / rel).parent.mkdir(parents=True, exist_ok=True)
         (project / rel).write_text(f"x {SECRET}\n")
@@ -616,9 +619,11 @@ _STATE_OWN = ("VECTOR.md", "personality.md", "embodiments/bot/robot.yaml", "worl
 
 @pytest.fixture()
 def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
-    """VECTOR_HOME in a folder whose name says nothing ('vh', no '.vector' component),
-    reached through a symlink; the project lies elsewhere."""
-    real, project = tmp_path / "data" / "vh", tmp_path / "project"
+    """VECTOR_HOME in a MIXED-CASE folder whose name says nothing ('Data/VH', no '.vector'
+    component), reached through a symlink; the project lies elsewhere. Mixed case so the
+    store's own case folding is exercised (C1a-V-D3): on macOS realpath keeps the typed
+    case, so a lower-case spelling of the store that does not resolve IS the store."""
+    real, project = tmp_path / "Data" / "VH", tmp_path / "project"
     for rel in _STATE_REFUSED + _STATE_OWN:
         (real / rel).parent.mkdir(parents=True, exist_ok=True)
         (real / rel).write_text(f"x {SECRET}\n")
@@ -638,7 +643,7 @@ def test_vector_home_anywhere_refuses_its_state(state: dict[str, Path], rel: str
     p = state["project"]
     (p / "leak").symlink_to(state["real"] / rel)
     for path in (str(state["real"] / rel), str(state["link"] / rel), str(state["real"] / rel).upper(),
-                 str(state["link"]).swapcase() + "/" + rel, "leak"):
+                 str(state["real"] / rel).lower(), str(state["link"]).swapcase() + "/" + rel, "leak"):
         assert _decide(FileReadTool(), {"file_path": path}, p) == "deny", path
         for tool in (FileWriteTool(), FileEditTool()):
             full = {"file_path": path, "content": "x", "old_string": "x", "new_string": "y"}
@@ -671,19 +676,25 @@ def test_only_the_store_itself_is_matched_never_a_name_like_it(state: dict[str, 
     """A sibling that shares the store's name as a prefix, or a project folder called
     'vh' or 'sessions', is an ordinary path."""
     p = state["project"]
-    for rel in ("../data/vh2/config.yaml", "vh/config.yaml", "sessions/config.yaml"):
+    for rel in ("../Data/VH2/config.yaml", "vh/config.yaml", "sessions/config.yaml"):
         (p / rel).parent.mkdir(parents=True, exist_ok=True)
         (p / rel).write_text("plain\n")
-    assert _decide(FileReadTool(), {"file_path": "../data/vh2/config.yaml"}, p) == "ask"
+    assert _decide(FileReadTool(), {"file_path": "../Data/VH2/config.yaml"}, p) == "ask"
     assert _decide(FileReadTool(), {"file_path": "vh/config.yaml"}, p) == "allow"
     assert _decide(FileReadTool(), {"file_path": "sessions/config.yaml"}, p) == "allow"
 
 
 def test_another_users_store_keeps_only_its_direct_user_files(homes: Path) -> None:
-    """The literal '.vector' rule stays for other users' stores, with the same keep set."""
+    """The literal '.vector' rule stays for other users' stores as before: it keeps only
+    VECTOR.md and personality.md as direct children; their embodiments/ and worlds/ are
+    refused (C1a-V-D1: only the resolved $VECTOR_HOME keeps those folders)."""
     bob = homes / "bob" / ".vector"
-    for rel in ("VECTOR.md", "embodiments/x/robot.yaml", "worlds/y/world.yaml"):
+    for rel in ("VECTOR.md", "personality.md", "embodiments/x/robot.yaml", "worlds/y/world.yaml"):
         (bob / rel).parent.mkdir(parents=True, exist_ok=True)
         (bob / rel).write_text("data\n")
+    for rel in ("VECTOR.md", "personality.md"):
         assert _decide(FileReadTool(), {"file_path": f"bob/.vector/{rel}"}, homes) == "allow", rel
-    assert _decide(FileReadTool(), {"file_path": "bob/.vector/memory/a/VECTOR.md"}, homes) == "deny"
+    for rel in ("embodiments/x/robot.yaml", "worlds/y/world.yaml", "memory/a/VECTOR.md"):
+        assert _decide(FileReadTool(), {"file_path": f"bob/.vector/{rel}"}, homes) == "deny", rel
+        top = f"bob/.vector/{rel.split('/')[0]}"
+        assert _decide(GlobTool(), {"pattern": "*", "path": top}, homes) == "deny", top
