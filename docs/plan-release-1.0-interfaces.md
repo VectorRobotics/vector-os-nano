@@ -199,9 +199,8 @@ A verdict states three separate facts and never merges them:
   with a category or a generic head, a category, and a closed list of fillers), and it binds
   when exactly one pickable fits every word. So a category alone names the object when the
   world has exactly one of it ("the cup"), and names nothing when it has two ("the bottle").
-- **`verified`** — with a contract: the goal check is `proven` and every graded step that is not a
-  failed attempt (below) is GROUNDED. Without one: every graded step is GROUNDED and no gate
-  rejects. A consumer that needs "the task the user asked for is done" reads
+- **`verified`** — with a contract: the goal check is `proven` and every graded step is GROUNDED.
+  Without one: every graded step is GROUNDED and no gate rejects. A consumer that needs "the task the user asked for is done" reads
   `goal_check == "proven"`.
 - **Failed attempts and recovery** — a tool call that returns an error is one of two things. When
   the body's commanded-motion evidence (the drivers' motion counters and the grasp attachments,
@@ -210,12 +209,12 @@ A verdict states three separate facts and never merges them:
   its step at once as a FAILED row with its message, so it neither fails nor backs a later
   action's row, and it holds nothing but the failing call (an action that succeeded before it in
   the same step is closed first, as its own unproven row). Without motion evidence (no body)
-  every error is a failed attempt. A failed attempt AT A CONTRACT ITEM (its own verify hint is
-  that item's predicate) does not by itself reject a turn whose contract is `proven`: the end
-  state the sentence names was reached and proven after it, which is what recovery is; the failed
-  rows stay in the report. Every other failed attempt rejects the turn as before, with or
-  without a contract, unless a later attempt of the same predicate supersedes it. An action that
-  succeeded and was never verified is still an unproven step and still rejects the turn.
+  every error is a failed attempt. A failed attempt is superseded by a later attempt of the same
+  predicate (whatever goal id the model gave either one; an object by any name the world
+  resolves), exactly as a FAIL verify is by a retry: that is what recovery is, with or without a
+  contract. The superseded row stays in the report and is not graded. A failed attempt that no
+  later attempt of the same predicate supersedes rejects the turn. An action that succeeded and
+  was never verified is still an unproven step and still rejects the turn.
 
 The gates that only reject stay (coordinate goals; verify probes): they never make a goal proven.
 
