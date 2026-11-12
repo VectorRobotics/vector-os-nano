@@ -292,7 +292,7 @@ class LeggedBase:
             with self._lock:
                 self._owners.remove(me)
                 self._cmd = _ZERO
-            self._rt.release()
+            self._rt.release_clock()
 
     def _tick(self, w: Any) -> None:
         """The runtime controller: one tick, before the world steps."""

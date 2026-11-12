@@ -19,7 +19,7 @@ def _bare() -> LeggedBase:
     base = LeggedBase.__new__(LeggedBase)
     base._spec = SimpleNamespace(limits=(0.8, 0.4, 4.0))
     base._lock, base._owners, base._cmd, base._hold, base._cmd_motion = threading.Lock(), [], (0.0,) * 3, None, 0.0
-    base._rt = SimpleNamespace(wait_sim=lambda *a, **k: True, release=lambda: None)
+    base._rt = SimpleNamespace(wait_sim=lambda *a, **k: True, release_clock=lambda: None)
     return base
 
 

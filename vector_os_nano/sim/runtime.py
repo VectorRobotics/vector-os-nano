@@ -30,7 +30,7 @@ class: ``mj_forward`` or a qpos write on live data while another thread steps).
   a change made around them (a raw engine write) is logged when its job ends.
 * **Sim time.** :meth:`wait_sim` waits for SIM seconds, so a timed motion means
   the same thing at any real-time ratio. A controlling thread waits with ``hold``:
-  the stepper parks at its target until it waits again (or :meth:`release`), so its
+  the stepper parks at its target until it waits again (or :meth:`release_clock`), so its
   commands land on the same ticks as in a caller-stepped run, under any CPU load.
 * **Failure is loud.** :meth:`call` gives up after ``_CALL_TIMEOUT_S`` of wall time
   (a stalled stepper never hangs a caller), and once the stepper thread has died
@@ -404,7 +404,7 @@ class SimRuntime:
         stepper thread has died.
 
         With *hold* the calling thread holds the clock: the stepper parks at the target
-        until this thread waits again or calls :meth:`release`, and the wait returns once
+        until this thread waits again or calls :meth:`release_clock`, and the wait returns once
         it is parked there. What the thread commands next then lands on the very next
         tick at any real-time ratio, so a control loop over sim time runs as it does
         caller-stepped. A hold not renewed within ``_HOLD_WALL_S`` is dropped (logged).
@@ -441,7 +441,7 @@ class SimRuntime:
                 self._published.wait(timeout=0.05)
         return True
 
-    def release(self) -> None:
+    def release_clock(self) -> None:
         """End the calling thread's hold on the clock (a no-op without one)."""
         h = self._hold
         if h is not None and h[1] == threading.get_ident():

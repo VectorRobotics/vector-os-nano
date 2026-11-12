@@ -267,7 +267,7 @@ def test_a_held_clock_lands_every_command_on_the_tick_after_its_wait(scene) -> N
         for i in range(30):
             cmd[0] = i
             assert rt.wait_sim(0.01, hold=True)  # two ticks, then parked again
-        rt.release()
+        rt.release_clock()
     finally:
         stop.set()
         rt.close()
@@ -285,7 +285,7 @@ def test_a_hold_is_only_its_threads_and_a_forgotten_one_is_dropped(scene, monkey
     try:
         assert rt.wait_sim(0.0, hold=True)  # parked now, by this thread
         t0 = rt.sim_time
-        other = threading.Thread(target=rt.release)
+        other = threading.Thread(target=rt.release_clock)
         other.start()
         other.join()
         time.sleep(0.3)
