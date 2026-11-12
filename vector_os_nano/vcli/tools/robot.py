@@ -3,103 +3,14 @@
 
 """Robot tools for the Vector CLI agentic harness.
 
-WorldQueryTool  — read-only view into the agent's world model (objects + robot pose).
 RobotStatusTool — read-only snapshot of connected hardware (arm, gripper, base, perception).
-
-Both tools are safe to call concurrently; they never mutate state.
+It is safe to call concurrently; it never mutates state. (Objects: scene_graph_query.)
 """
 from __future__ import annotations
 
 from typing import Any
 
 from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, live_agent, tool
-
-
-# ---------------------------------------------------------------------------
-# WorldQueryTool
-# ---------------------------------------------------------------------------
-
-
-@tool(
-    name="world_query",
-    category="robot",
-    description="Query the robot's world model for detected objects and robot pose",
-    read_only=True,
-    permission="allow",
-)
-class WorldQueryTool:
-    """Return the current world model: robot state + list of detected objects."""
-
-    input_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Optional label filter (case-insensitive substring match)",
-                "default": "",
-            },
-        },
-        "required": [],
-    }
-
-    def is_concurrency_safe(self, params: dict[str, Any]) -> bool:
-        return True
-
-    def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        agent = live_agent(context)
-        if agent is None:
-            return ToolResult(content="No agent available", is_error=True)
-
-        wm = agent._world_model
-        lines: list[str] = []
-
-        # Robot state — WorldModel exposes get_robot(); mocks may use get_robot_state().
-        robot = None
-        if hasattr(wm, "get_robot"):
-            robot = wm.get_robot()
-        elif hasattr(wm, "get_robot_state"):
-            robot = wm.get_robot_state()
-
-        if robot is not None:
-            pos = getattr(robot, "position_xy", None)
-            heading = getattr(robot, "heading", None)
-            ee = getattr(robot, "ee_position", None)
-            parts: list[str] = []
-            if pos is not None:
-                parts.append(f"pos={[round(v, 3) for v in pos]}")
-            if heading is not None:
-                parts.append(f"heading={round(heading, 3)}")
-            if ee is not None:
-                parts.append(f"ee={[round(v, 3) for v in ee]}")
-            if parts:
-                lines.append("Robot: " + ", ".join(parts))
-
-        # Objects
-        objects: list[Any] = []
-        if hasattr(wm, "get_objects"):
-            objects = wm.get_objects()
-
-        query: str = params.get("query", "").lower()
-        for obj in objects:
-            label: str = getattr(obj, "label", str(obj))
-            if query and query not in label.lower():
-                continue
-            x = getattr(obj, "x", "?")
-            y = getattr(obj, "y", "?")
-            z = getattr(obj, "z", "?")
-            lines.append(
-                f"  {label}: ({round(x, 3) if isinstance(x, float) else x}, "
-                f"{round(y, 3) if isinstance(y, float) else y}, "
-                f"{round(z, 3) if isinstance(z, float) else z})"
-            )
-
-        if not objects:
-            lines.append("No objects detected.")
-
-        if not lines:
-            return ToolResult(content="No objects detected. World model is empty.")
-
-        return ToolResult(content="\n".join(lines))
 
 
 # ---------------------------------------------------------------------------

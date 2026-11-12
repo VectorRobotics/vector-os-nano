@@ -23,6 +23,7 @@ from typing import Any
 from vector_os_nano.vcli.tools.base import (
     ToolContext,
     ToolResult,
+    live_agent,
     tool,
 )
 
@@ -76,16 +77,12 @@ class SceneGraphQueryTool:
         return True
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        # Resolve SceneGraph from app_state
-        if context.app_state is None:
-            return ToolResult(
-                content="No app_state available — SceneGraph not accessible.",
-                is_error=True,
-            )
-        sg = context.app_state.get("scene_graph")
+        # The LIVE agent's spatial memory (a scene graph cached at REPL start is the
+        # dev world's None, or the previous body's after a switch).
+        sg = getattr(live_agent(context), "_spatial_memory", None)
         if sg is None:
             return ToolResult(
-                content="SceneGraph not found in app_state.",
+                content="The connected robot has no spatial memory (start a go2 simulation).",
                 is_error=True,
             )
 

@@ -270,12 +270,13 @@ def test_deictic_nothing_in_front_fails_loud():
     assert res.result_data["diagnosis"] == "no_detections"
 
 
-def test_named_query_empty_vlm_falls_back_to_front():
-    """A named query the VLM misses falls back to the front object (honest)."""
+def test_named_query_empty_vlm_fails_loud():
+    """A named query the VLM misses fails (no_detections): the front object is not
+    a banana (skills-manip:silent-target-substitution)."""
     perc = FrontPerception(detections=[])
     res = PerceptionGraspSkill().execute({"query": "banana"}, _ctx(perc))
-    assert res.success is True
-    assert "front" in perc.calls
+    assert res.success is False and res.result_data["diagnosis"] == "no_detections"
+    assert "front" not in perc.calls
 
 
 def test_color_query_threads_color_and_maps_verify_label():
@@ -581,7 +582,7 @@ def test_low_z_passed_box_fails_loud():
     arm = FakeArm()
 
     with mock.patch(
-        "vector_os_nano.skills.perception_grasp.grasp_point_from_rgbd",
+        "vector_os_nano.perception.grasp_point.grasp_point_from_points",
         return_value=floor_pose,
     ):
         res = PerceptionGraspSkill().execute(

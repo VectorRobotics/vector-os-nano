@@ -92,7 +92,7 @@ class TestToolCategories:
         assert "web_fetch" not in set(categories.get("system", []))
 
     def test_categories_robot(self) -> None:
-        """'robot' category contains scene_graph_query (world_query may also be here)."""
+        """'robot' category contains scene_graph_query, the one object/scene query tool."""
         from vector_os_nano.vcli.runtime import build_registry
 
         categories = build_registry().list_categories()

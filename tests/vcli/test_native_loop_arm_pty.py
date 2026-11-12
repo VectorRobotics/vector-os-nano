@@ -75,7 +75,7 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
     from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
-    from vector_os_nano.skills import get_default_skills
+    from vector_os_nano.skills import get_so101_skills
     from vector_os_nano.skills.pick import SIM_PICK_CONFIG
     from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
     from vector_os_nano.vcli.cognitive.trace_store import (
@@ -104,7 +104,7 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
             perception=perception,
             config={"skills": {"pick": dict(SIM_PICK_CONFIG)}},
         )
-        for s in get_default_skills():
+        for s in get_so101_skills():
             agent._skill_registry.register(s)
 
         # The arm must START not holding anything — that is what makes a successful

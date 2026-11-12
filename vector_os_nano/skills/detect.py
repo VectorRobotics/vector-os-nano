@@ -16,6 +16,7 @@ import time
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.core.world_model import ObjectState
+from vector_os_nano.skills.scan import scan_first
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,6 @@ _GENERIC_QUERIES: frozenset[str] = frozenset({"all objects", "all", "objects", "
 
 @skill(
     aliases=["find", "search", "检测", "识别", "找一下"],
-    direct=False,
-    auto_steps=["scan", "detect"],
 )
 class DetectSkill:
     """Detect objects using VLM + depth for 3D positions.
@@ -47,7 +46,7 @@ class DetectSkill:
 
     name: str = "detect"
     description: str = "Detect objects in the workspace using VLM. The query is a natural-language noun/phrase in ANY language (e.g. 'banana' / '香蕉' / 'red cup' / '红色杯子'), or 'all objects' to detect everything."
-    # Success predicate this skill is verified against (single-source for the planner).
+    # Success predicate this skill is verified against (the native runner binds it).
     # GT: the object is in the robot's camera view (segmentation), never a count of
     # the detector's own boxes.
     verify_hint: str = "in_view('<query>')"
@@ -71,6 +70,19 @@ class DetectSkill:
                 error_message="No perception backend available",
                 result_data={"diagnosis": "no_perception"},
             )
+        if context.calibration is None:
+            return SkillResult(
+                success=False,
+                error_message=(
+                    "No camera->arm calibration is loaded "
+                    f"({context.services.get('calibration_error', 'none was given')}): "
+                    "run the hand-eye calibration first."
+                ),
+                result_data={"diagnosis": "calibration_error"},
+            )
+        scan_failed = scan_first(context, "detect")
+        if scan_failed is not None:
+            return scan_failed
 
         query: str = params.get("query", "all objects")
         logger.info("[DETECT] Running detection for query: %r", query)
@@ -91,8 +103,7 @@ class DetectSkill:
         if not detections:
             # Decide success based on query intent (R2-7 honest-success fix):
             # - Generic "all objects" / "everything" queries: an empty scene is a
-            #   valid answer — the robot looked and found nothing; success=True so a
-            #   downstream foreach can no-op cleanly over the empty list.
+            #   valid answer — the robot looked and found nothing; success=True.
             # - Specific target queries (e.g. "apple", "苹果"): no detections means
             #   the target is absent; the step genuinely failed — success=False so
             #   the verify moat catches the miss instead of false-passing.
@@ -162,29 +173,21 @@ class DetectSkill:
                 pose = tracked_objects[idx].pose
                 cam_pos = [pose.x, pose.y, pose.z]
 
-                # Apply calibration if available
-                if context.calibration is not None:
-                    try:
-                        import numpy as np
-                        base_pos = context.calibration.camera_to_base(
-                            np.array(cam_pos, dtype=float)
-                        )
-                        x, y, z = float(base_pos[0]), float(base_pos[1]), float(base_pos[2])
-                        has_3d = True
-                        logger.info(
-                            "[DETECT] %s: camera(%.3f,%.3f,%.3f) -> base(%.1f,%.1f,%.1f)cm",
-                            det.label, cam_pos[0], cam_pos[1], cam_pos[2],
-                            x * 100, y * 100, z * 100,
-                        )
-                    except Exception as exc:
-                        logger.warning("[DETECT] Calibration failed for %s: %s", det.label, exc)
-                        x, y, z = cam_pos[0], cam_pos[1], cam_pos[2]
-                        has_3d = True
-                else:
-                    # No calibration — store camera frame coords
-                    x, y, z = cam_pos[0], cam_pos[1], cam_pos[2]
+                # Camera -> arm base; a camera-frame point is never stored as a base one.
+                try:
+                    import numpy as np
+                    base_pos = context.calibration.camera_to_base(
+                        np.array(cam_pos, dtype=float)
+                    )
+                    x, y, z = float(base_pos[0]), float(base_pos[1]), float(base_pos[2])
                     has_3d = True
-                    logger.info("[DETECT] %s: camera(%.3f,%.3f,%.3f) (no calibration)", det.label, x, y, z)
+                    logger.info(
+                        "[DETECT] %s: camera(%.3f,%.3f,%.3f) -> base(%.1f,%.1f,%.1f)cm",
+                        det.label, cam_pos[0], cam_pos[1], cam_pos[2],
+                        x * 100, y * 100, z * 100,
+                    )
+                except Exception as exc:  # noqa: BLE001 — that object stays 2D-only
+                    logger.warning("[DETECT] Calibration failed for %s: %s", det.label, exc)
 
             # Only a real 3D pose enters the world model: a 2D-only box stored at
             # (0, 0, 0) was later picked "there" (skills-manip:detect-zero-sentinel-pollution).
@@ -202,11 +205,7 @@ class DetectSkill:
 
             summary = {
                 "object_id": obj_id,
-                # Expose BOTH "name" and "label" (same value): a downstream foreach
-                # binds a per-item field (e.g. "${item.name}") into a skill param, and
-                # the decompose example / the playground detect producer use "name"
-                # while this skill historically used "label". Carrying both keeps the
-                # producer->foreach->skill contract robust to whichever the planner emits.
+                # BOTH "name" and "label" (same value): the model may bind either.
                 "name": det.label,
                 "label": det.label,
                 "confidence": round(det.confidence, 4),

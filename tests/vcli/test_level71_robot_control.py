@@ -13,8 +13,8 @@ Locks down the fixes that make `vector-cli --sim` and the in-REPL
   categories; SimStopTool reverts cleanly.
 - MuJoCoPerception.detect uses word-boundary matching ('all' != 'ball') and
   exposes caption()/visual_query() so 'describe' works.
-- SkillWrapperTool honours __skill_auto_steps__ (pick = scan->detect->pick) and
-  classifies wave/scan as motor skills.
+- SkillWrapperTool runs pick (which moves to its scan pose itself) and returns
+  pick's own data; it classifies wave/scan as motor skills.
 
 Pure-logic tests run with zero robot deps; sim tests skip if mujoco is absent.
 """
@@ -139,37 +139,29 @@ def test_perception_caption_and_describe(arm):
     cap = p.caption()
     assert isinstance(cap, str) and cap
     assert p.visual_query("what is there?") == cap
-    assert Agent(arm=arm, perception=p).execute_skill("describe").success
+    from vector_os_nano.skills import get_so101_skills
+
+    agent = Agent(arm=arm, perception=p, skills=get_so101_skills())
+    assert agent.execute_skill("describe").success
 
 
-def test_skill_wrapper_pick_honors_auto_steps(arm, monkeypatch):
+def test_skill_wrapper_pick_returns_picks_own_data(arm):
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
     from vector_os_nano.core.agent import Agent
+    from vector_os_nano.skills import get_so101_skills
     from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
     from vector_os_nano.vcli.tools.base import ToolContext
 
     agent = Agent(arm=arm, gripper=MuJoCoGripper(arm), perception=MuJoCoPerception(arm),
+                  skills=get_so101_skills(),
                   config={"skills": {"pick": {"hardware_offsets": False}}})
     pick = agent._skill_registry.get("pick")
-    assert getattr(pick, "__skill_auto_steps__", None), "pick should declare auto_steps"
-
-    seen = {}
-    real_execute_skill = agent.execute_skill
-
-    def _spy(name, params=None, **kw):
-        seen["name"] = name
-        return real_execute_skill(name, params, **kw)
-
-    monkeypatch.setattr(agent, "execute_skill", _spy)
     ctx = ToolContext(agent=agent, cwd=Path("."), session=None, permissions=None,
                       abort=threading.Event())
-    result = SkillWrapperTool(pick, agent).execute({"object_label": "mug"}, ctx)
-    # auto_steps path must route through agent.execute_skill (runs scan->detect->pick)
-    assert seen.get("name") == "pick"
-    assert not result.is_error  # mug is in the scene -> grasp succeeds (physics)
-    # grasp data is surfaced from ExecutionResult.trace[-1] (not the top-level result)
-    assert result.metadata
+    result = SkillWrapperTool(pick, agent).execute({"object_label": "mug", "mode": "hold"}, ctx)
+    assert not result.is_error, result.content  # mug is in the scene -> grasp succeeds (physics)
+    assert result.metadata["picked_object"] == "mug"  # pick's own data, nothing appended
 
 
 def test_sim_tool_lifecycle_dev_to_arm_to_dev():

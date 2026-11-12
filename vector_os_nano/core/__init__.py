@@ -4,11 +4,10 @@
 """Core agent engine — pure Python, no ROS2 imports.
 
 Contains:
-- types.py   : Shared data types (Pose3D, Detection, SkillResult, etc.)
-- config.py  : Configuration loading and validation
-- agent.py   : Agent class (main entry point) — Task 7
-- planner.py : LLM task planner — Task 4/7
-- executor.py: Deterministic task executor — Task 3
-- world_model.py: World state management — Task 3
-- skill.py   : Skill protocol, registry, predicates — Task 3
+- types.py      : shared frozen data types (Pose3D, Detection, SkillResult, ...)
+- config.py     : configuration loading
+- agent.py      : Agent, the body the skills act on
+- world_model.py: the session object store
+- skill.py      : @skill, the Skill protocol, SkillContext, SkillRegistry
+- scene_graph.py: spatial memory (rooms, objects, viewpoints)
 """

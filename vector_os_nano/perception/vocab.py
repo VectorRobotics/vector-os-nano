@@ -50,6 +50,13 @@ class Vocab:
         """The canonical (English) object noun *text* names, or None."""
         return self._find(text or "", self.nouns)
 
+    def without_colours(self, text: str | None) -> str:
+        """*text* with its colour words removed ("red unicorn" -> " unicorn")."""
+        q = str(text or "").lower()
+        for w, _ in self.colours:
+            q = re.sub(rf"(?<![a-z]){re.escape(w)}(?![a-z])", " ", q) if w.isascii() else q.replace(w, " ")
+        return q
+
     def _words(self, q: str) -> list[str]:
         """The content words of an ASCII query (stop words dropped)."""
         return [w for w in re.findall(r"[a-z0-9]+", q) if w not in _STOP]

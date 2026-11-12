@@ -31,7 +31,6 @@ _DEFAULT_HOME_JOINTS: list[float] = [-0.014, -1.238, 0.562, 0.858, 0.311]
 
 @skill(
     aliases=["give", "hand over", "给我", "递给我", "给", "拿给我", "交给我"],
-    direct=False,
 )
 class HandoverSkill:
     """Hand a held object to the user by rotating and releasing.
@@ -52,11 +51,6 @@ class HandoverSkill:
             "description": "Which side the user is on: 'right' (default) or 'left'",
         },
     }
-    # Typical REAL-TIME (viewer-synced) duration: rotate 3s + open gripper + home 3s +
-    # overhead ≈ 8–10s real-time; 25s gives margin.  GoalExecutor floors the step
-    # timeout at this value (R2-2) so a tight LLM-emitted timeout_sec is not a false
-    # failure under a live viewer.
-    typical_duration_sec: float = 25.0
     preconditions: list[str] = ["gripper_holding_any"]
     postconditions: list[str] = ["gripper_empty"]
     effects: dict = {"gripper_state": "open", "held_object": None}

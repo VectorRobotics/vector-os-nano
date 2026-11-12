@@ -41,7 +41,6 @@ def normalize_direction(value: object, aliases: dict[str, str]) -> str | None:
 
 @skill(
     aliases=["turn", "rotate", "转", "转弯", "转向", "左转", "右转"],
-    direct=False,
 )
 class TurnSkill:
     """Rotate the Go2 quadruped left or right by a given angle."""
@@ -63,10 +62,6 @@ class TurnSkill:
             "description": "Rotation angle in degrees",
         },
     }
-    # Typical REAL-TIME duration for a 90-degree turn at 0.5 rad/s: ~3s; 10s gives
-    # headroom for larger angles and ROS2 overhead. GoalExecutor floors the step
-    # timeout at this value (R2-2).
-    typical_duration_sec: float = 10.0
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"is_moving": False}

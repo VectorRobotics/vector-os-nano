@@ -86,7 +86,7 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
     base.connect()
     try:
         base.stand()
-        agent = Agent(base=base, llm_api_key="x", config={})
+        agent = Agent(base=base, config={})
         from tests.harness.fake_gt import bind_real_sim
 
         bind_real_sim(agent, "go2")  # the GT oracles of a live session

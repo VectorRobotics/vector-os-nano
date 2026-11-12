@@ -308,7 +308,8 @@ def _robot_session() -> Any:
     from vector_os_nano.core.agent import Agent
 
     base = SimpleNamespace(get_position=lambda: [0.0, 0.0, 0.3], get_heading=lambda: 0.0)
-    return SimpleNamespace(agent=Agent(base=base, config={}), spec=SimSpec("go2"))
+    agent = Agent(base=base, config={}, skills=sess._skill_pack("go2"))
+    return SimpleNamespace(agent=agent, spec=SimSpec("go2"))
 
 
 def _skill_tools(reg: Any) -> list[str]:

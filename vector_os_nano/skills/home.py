@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""HomeSkill — move arm to home position and open gripper.
+"""HomeSkill — move arm to home position; open the gripper unless it holds something.
 
 Ported from skill_node_v2._execute_home(). No ROS2 imports.
 """
@@ -20,31 +20,22 @@ _HOME_DURATION: float = 3.0
 
 @skill(
     aliases=["go home", "reset", "回家", "归位", "复位", "回到初始位置"],
-    direct=True,
 )
 class HomeSkill:
-    """Move arm to home position and open gripper.
+    """Move arm to home position; open the gripper only when it holds nothing.
 
-    Always executable — no preconditions required. After execution the
-    gripper is open and the arm is in the home configuration.
+    Always executable — no preconditions required. A held object stays held
+    (releasing it is the model's own gripper_open / place step).
     """
 
     name: str = "home"
-    description: str = "Move arm to home position and open gripper"
-    # Typical REAL-TIME (viewer-synced) duration: 3s arm move + gripper + overhead.
-    # GoalExecutor floors the step timeout at this value (R2-2) so a fast-emitted plan
-    # (e.g. timeout_sec=5) does not falsely mark home as timed-out under a live viewer.
-    typical_duration_sec: float = 12.0
-    # Success predicate this skill is verified against (single-source for the planner).
+    description: str = "Move the arm to its home position (a held object stays held)"
+    # Success predicate this skill is verified against (the native runner binds it).
     verify_hint: str = "arm_at_home()"
     parameters: dict = {}
     preconditions: list[str] = []
-    postconditions: list[str] = ["gripper_empty"]
-    effects: dict = {
-        "gripper_state": "open",
-        "held_object": None,
-        "is_moving": False,
-    }
+    postconditions: list[str] = []
+    effects: dict = {"is_moving": False}
     failure_modes: list[str] = ["no_arm", "move_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
@@ -77,9 +68,8 @@ class HomeSkill:
 
         # DoF-aware (Rule 11): the default home pose is the 5-DoF SO-101 pose. A
         # different arm (e.g. the 6-DoF Piper) has a different DoF, so a fixed-length
-        # pose is rejected by move_joints ("expected 6 positions, got 5") — the bug
-        # that blocked the bare-`vector-cli` + NL fetch path through the planner/
-        # executor. If the configured pose length doesn't match THIS arm's DoF, fall
+        # pose is rejected by move_joints ("expected 6 positions, got 5"). If the
+        # configured pose length doesn't match THIS arm's DoF, fall
         # back to the URDF-zero neutral home (`[0.0]*dof`, exactly what the arm's own
         # home() uses, e.g. MuJoCoPiper.home()). SO-101 (5==5) is byte-identical —
         # this branch never fires for it.
@@ -108,12 +98,13 @@ class HomeSkill:
                 result_data={"diagnosis": "move_failed"},
             )
 
-        if context.gripper is not None:
+        holding = context.gripper is not None and bool(context.gripper.is_holding())
+        if context.gripper is not None and not holding:
             logger.info("[HOME] Opening gripper")
             context.gripper.open()
 
         logger.info("[HOME] Done")
         return SkillResult(
             success=True,
-            result_data={"joint_values": list(home_joints), "diagnosis": "ok"},
+            result_data={"joint_values": list(home_joints), "kept_holding": holding, "diagnosis": "ok"},
         )

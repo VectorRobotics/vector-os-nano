@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Tests for SkillReloadTool.
-
-TDD RED phase — all tests must fail before implementation is written.
-"""
+"""Tests for SkillReloadTool: it reloads into the LIVE agent's registry and reports
+a failure whenever the skill tools would still run the old skill."""
 from __future__ import annotations
 
 import sys
@@ -22,9 +20,12 @@ from vector_os_nano.vcli.tools.base import ToolContext
 
 
 def _make_mock_registry(skill_name: str = "stand") -> MagicMock:
-    """Create a mock skill registry with a fake skill."""
-    registry = MagicMock()
+    """A real SkillRegistry (spied on) holding a fake skill plus two others."""
+    from types import SimpleNamespace
 
+    from vector_os_nano.core.skill import SkillRegistry
+
+    real = SkillRegistry()
     fake_skill = MagicMock()
     fake_skill.__class__ = type(
         "StandSkill",
@@ -32,25 +33,22 @@ def _make_mock_registry(skill_name: str = "stand") -> MagicMock:
         {"__module__": "vector_os_nano.skills.go2.stance"},
     )
     fake_skill.name = skill_name
-
-    def _get(name: str):
-        return fake_skill if name == skill_name else None
-
-    registry.get.side_effect = _get
-    registry.list_skills.return_value = [skill_name, "walk", "sit"]
-    return registry
+    for skill in (fake_skill, SimpleNamespace(name="walk"), SimpleNamespace(name="sit")):
+        real.register(skill)
+    return MagicMock(wraps=real)
 
 
 def _make_context(registry=None, use_app_state: bool = True) -> MagicMock:
-    """Build a minimal ToolContext mock that exposes the skill registry."""
+    """A ToolContext whose live agent (the REPL's app_state one, or the turn's) holds
+    the registry."""
     ctx = MagicMock(spec=ToolContext)
+    agent = MagicMock()
+    agent._skill_registry = registry
     if use_app_state:
-        ctx.app_state = {"skill_registry": registry}
+        ctx.app_state = {"agent": agent}
         ctx.agent = None
     else:
         ctx.app_state = None
-        agent = MagicMock()
-        agent._skill_registry = registry
         ctx.agent = agent
     return ctx
 
@@ -267,3 +265,39 @@ class TestRegistryDiscovery:
 
         assert result.is_error
         assert "registry" in result.content.lower()
+
+
+def _reload(tool, ctx, cls):
+    fake_module = types.ModuleType("vector_os_nano.skills.go2.stance")
+    fake_module.StandSkill = cls
+    with patch.dict(sys.modules, {"vector_os_nano.skills.go2.stance": fake_module}):
+        with patch("importlib.reload", return_value=fake_module):
+            return tool.execute({"skill_name": "stand"}, ctx)
+
+
+def test_a_reload_lands_in_the_live_agents_registry_not_a_stale_one(tool):
+    """tools-worlds:skill-reload-false-success: the tool reloaded into the registry the
+    REPL cached at start (stale after a sim switch) and reported success while the
+    skill tools kept running the old skill."""
+    stale, live = _make_mock_registry("stand"), _make_mock_registry("stand")
+    ctx = _make_context(live)
+    ctx.app_state["skill_registry"] = stale
+
+    class StandSkill:
+        name = "stand"
+
+    result = _reload(tool, ctx, StandSkill)
+    assert not result.is_error, result.content
+    assert isinstance(live.get("stand"), StandSkill)
+    stale.register.assert_not_called()
+
+
+def test_a_reload_that_does_not_take_effect_is_a_failure(tool):
+    """The reloaded class registers under another name: 'stand' still runs the old one."""
+    registry = _make_mock_registry("stand")
+
+    class StandSkill:
+        name = "stand_v2"
+
+    result = _reload(tool, _make_context(registry), StandSkill)
+    assert result.is_error and "did not take effect" in result.content

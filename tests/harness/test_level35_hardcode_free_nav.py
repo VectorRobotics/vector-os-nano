@@ -12,15 +12,14 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 # Ensure repo root is on sys.path
 _REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO))
 
 import vector_os_nano.skills.navigate as navigate_module
-from vector_os_nano.core.scene_graph import RoomNode, SceneGraph
-from vector_os_nano.core.types import SkillResult
+from vector_os_nano.core.scene_graph import SceneGraph
+from vector_os_nano.sim.nav.follow import NavResult
 from vector_os_nano.skills.navigate import (
     NavigateSkill,
     _ROOM_ALIASES,
@@ -55,12 +54,11 @@ def _make_explored_sg() -> SceneGraph:
 
 
 def _make_mock_base(x: float = 3.0, y: float = 2.5, z: float = 0.3, heading: float = 0.0) -> MagicMock:
-    """Mock base with get_position, get_heading, navigate_to, go_to_waypoint, walk."""
+    """Mock base with get_position, get_heading, navigate_to (a planner that arrives), walk."""
     base = MagicMock()
     base.get_position.return_value = [x, y, z]
     base.get_heading.return_value = heading
-    base.navigate_to.return_value = True
-    base.go_to_waypoint.return_value = True  # _dead_reckoning prefers go_to_waypoint
+    base.navigate_to.return_value = NavResult(reached=True, reason="arrived")
     base.walk.return_value = None
     return base
 
@@ -267,12 +265,10 @@ def test_navigate_unknown_room_in_sg_returns_error() -> None:
     assert "unknown" in result.error_message.lower() or "available" in result.error_message.lower()
 
 
-def test_navigate_after_explore_uses_scenegraph_proxy_mode() -> None:
-    """execute() with populated SG and base.navigate_to -> success via proxy mode."""
+def test_navigate_after_explore_uses_the_scenegraph_room_centre() -> None:
+    """execute() with a populated SG drives the planner to the learned centre."""
     sg = _make_explored_sg()
     base = _make_mock_base(x=3.0, y=2.5, z=0.3)
-    # base has navigate_to -> triggers proxy mode
-    base.navigate_to.return_value = True
     ctx = _make_skill_context(base, sg)
 
     skill = NavigateSkill()
@@ -281,14 +277,13 @@ def test_navigate_after_explore_uses_scenegraph_proxy_mode() -> None:
     assert result.success is True
     assert result.result_data is not None
     assert result.result_data["room"] == "kitchen"
-    assert result.result_data["mode"] == "proxy_nav_stack"
+    assert base.navigate_to.call_args[0][:2] == (17.0, 2.5)
 
 
 def test_navigate_chinese_alias_resolves_via_sg() -> None:
     """Chinese alias '厨房' navigates successfully to 'kitchen'."""
     sg = _make_explored_sg()
     base = _make_mock_base(x=3.0, y=2.5, z=0.3)
-    base.navigate_to.return_value = True
     ctx = _make_skill_context(base, sg)
 
     skill = NavigateSkill()
@@ -309,69 +304,6 @@ def test_navigate_no_base_returns_error() -> None:
     result = skill.execute({"room": "kitchen"}, ctx)
     assert result.success is False
     assert result.diagnosis_code == "no_base"
-
-
-# ---------------------------------------------------------------------------
-# L35-6: _dead_reckoning uses SceneGraph door chain
-# ---------------------------------------------------------------------------
-
-
-def test_dead_reckoning_uses_door_chain() -> None:
-    """_dead_reckoning builds waypoints from SceneGraph doors, not hardcoded dicts.
-
-    _dead_reckoning now prefers base.go_to_waypoint() over base.navigate_to() to
-    avoid a recursive navigate_to -> FAR probe -> door-chain -> navigate_to cascade.
-    The fallback is base.navigate_to() when go_to_waypoint is unavailable.
-    """
-    sg = _make_explored_sg()
-
-    # Place robot at living_room position.
-    # base.go_to_waypoint is available — _dead_reckoning uses it in preference to navigate_to.
-    base = _make_mock_base(x=3.0, y=2.5, z=0.3)
-    base.go_to_waypoint.return_value = True  # nav stack succeeds for each waypoint
-
-    ctx = _make_skill_context(base, sg)
-
-    skill = NavigateSkill()
-    result = skill._dead_reckoning("kitchen", ctx)
-
-    # _dead_reckoning must call base.go_to_waypoint at least once (one door in chain)
-    # and must succeed overall.
-    assert base.go_to_waypoint.call_count >= 1, (
-        f"Expected base.go_to_waypoint() calls, got {base.go_to_waypoint.call_count}"
-    )
-    assert result.success
-
-
-def test_dead_reckoning_no_sg_returns_error() -> None:
-    """_dead_reckoning without SceneGraph returns error about explore."""
-    base = _make_mock_base()
-    ctx = _make_skill_context(base, None)
-
-    skill = NavigateSkill()
-    result = skill._dead_reckoning("kitchen", ctx)
-
-    assert result.success is False
-    assert "explore" in result.error_message.lower()
-
-
-def test_dead_reckoning_no_door_data_returns_error() -> None:
-    """_dead_reckoning with SG but no door chain -> returns error."""
-    sg = SceneGraph()
-    # Add rooms but NO doors (so get_door_chain returns [])
-    for _ in range(5):
-        sg.visit("living_room", 3.0, 2.5)
-    for _ in range(5):
-        sg.visit("kitchen", 17.0, 2.5)
-
-    base = _make_mock_base(x=3.0, y=2.5, z=0.3)
-    ctx = _make_skill_context(base, sg)
-
-    skill = NavigateSkill()
-    result = skill._dead_reckoning("kitchen", ctx)
-
-    assert result.success is False
-    assert "explore" in result.error_message.lower()
 
 
 def test_resolve_room_aliases_and_fuzzy_match() -> None:

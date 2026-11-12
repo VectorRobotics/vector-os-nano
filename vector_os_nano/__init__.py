@@ -6,9 +6,10 @@
 Quick start:
 
     from vector_os_nano import Agent, SO101, Skill, SkillResult
+    from vector_os_nano.skills import get_so101_skills
 
     arm = SO101(port="/dev/ttyACM0")
-    agent = Agent(arm=arm)
+    agent = Agent(arm=arm, skills=get_so101_skills())
     agent.execute_skill("pick", {"object_label": "red cup"})
 
 The Agent, SO101, Skill, and SkillResult names are the four public entry
@@ -20,7 +21,7 @@ from __future__ import annotations
 from vector_os_nano.version import __version__
 from vector_os_nano.core.agent import Agent
 from vector_os_nano.core.skill import Skill
-from vector_os_nano.core.types import ExecutionResult, SkillResult
+from vector_os_nano.core.types import SkillResult
 
 try:
     from vector_os_nano.hardware.so101.arm import SO101Arm as SO101
@@ -37,7 +38,6 @@ except ImportError:
 __all__ = [
     "__version__",
     "Agent",
-    "ExecutionResult",
     "MuJoCoArm",
     "MuJoCoGripper",
     "SO101",

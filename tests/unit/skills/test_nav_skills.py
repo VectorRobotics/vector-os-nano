@@ -79,20 +79,8 @@ def test_arrival_records_the_visit():
     base.get_position.return_value = [kx + 0.1, ky, 0.3]
     base.navigate_to.return_value = _nav(True, "arrived", (kx, ky))
     res = NavigateSkill().execute({"room": "kitchen"}, SkillContext(base=base, services={"spatial_memory": sg}))
-    assert res.success and res.result_data["mode"] == "planner"
+    assert res.success and res.result_data["reason"] == "arrived"
     assert sg.get_room("kitchen").visit_count == n0 + 1
-
-
-def test_bool_planner_failure_still_falls_back_to_the_door_chain():
-    from vector_os_nano.skills.navigate import NavigateSkill
-
-    base = MagicMock()
-    base.get_position.return_value = [10.0, 3.0, 0.3]
-    base.navigate_to.return_value = False
-    skill = NavigateSkill()
-    with patch.object(skill, "_dead_reckoning", return_value=SkillResult(success=False)) as dr:
-        skill.execute({"room": "kitchen"}, SkillContext(base=base, services={"spatial_memory": _sg()}))
-    dr.assert_called_once()
 
 
 def test_coordinate_navigate_cancels_a_running_exploration_and_stops_via_stop():
@@ -111,7 +99,7 @@ def test_coordinate_navigate_cancels_a_running_exploration_and_stops_via_stop():
 
     bare = MagicMock(spec=["get_position", "navigate_to", "set_velocity"])
     bare.get_position.return_value = [1.0, 1.0, 0.3]
-    bare.navigate_to.return_value = True
+    bare.navigate_to.return_value = _nav(True, "arrived", (1.0, 1.0))
     NavigateSkill().execute({"x": 1.0, "y": 1.0}, SkillContext(base=bare))
     bare.set_velocity.assert_called_once_with(0.0, 0.0, 0.0)
 
@@ -247,6 +235,42 @@ def test_lie_down_on_a_base_without_it_fails_loud():
     assert not res.success and res.diagnosis_code == "lie_down_failed"
 
 
+@pytest.mark.parametrize("cls, posture", [("StandSkill", "stand"), ("SitSkill", "sit")])
+def test_stand_and_sit_on_a_base_without_them_fail_loud(cls, posture):
+    """skills-nav:stance-no-posture-check: stand/sit called the method bare (AttributeError)."""
+    from vector_os_nano.skills.go2 import stance
+
+    res = getattr(stance, cls)().execute({}, SkillContext(base=MagicMock(spec=["get_position"])))
+    assert not res.success and res.diagnosis_code == f"{posture}_failed"
+
+
+def test_a_posture_reports_what_it_measured_and_never_claims_the_posture():
+    """skills-nav:stance-false-green: success was the base's bool, with no measurement."""
+    from vector_os_nano.skills.go2.stance import SitSkill
+
+    heights = iter([0.30, 0.18])
+    base = MagicMock()
+    base.get_position.side_effect = lambda: [0.0, 0.0, next(heights)]
+    base.sit.return_value = True
+    res = SitSkill().execute({}, SkillContext(base=base))
+    assert res.success and res.result_data["posture_verified"] is False
+    assert (res.result_data["height_before_m"], res.result_data["height_after_m"]) == (0.30, 0.18)
+
+
+def test_a_blocked_walk_fails_with_the_distance_it_moved():
+    """skills-nav:walk-success-unverified: a blocked robot reported success."""
+    from vector_os_nano.skills.go2.walk import WalkSkill
+
+    wall = KinBase(blocked=lambda x, y, t: x > 0.1)
+    res = WalkSkill().execute({"direction": "forward", "distance": 1.0, "speed": 0.5}, SkillContext(base=wall))
+    assert not res.success and res.diagnosis_code == "walk_blocked"
+    assert res.result_data["moved_m"] == pytest.approx(0.1, abs=0.02)
+
+    free = KinBase()
+    res = WalkSkill().execute({"direction": "forward", "distance": 1.0, "speed": 0.5}, SkillContext(base=free))
+    assert res.success and res.result_data["moved_m"] == pytest.approx(1.0, abs=0.02)
+
+
 # ---------------------------------------------------------------------------
 # Patrol / where_am_i / compass / at_position
 # ---------------------------------------------------------------------------
@@ -334,6 +358,7 @@ def test_nav_stack_detection_ignores_processes_that_are_not_ours(monkeypatch):
 
     from vector_os_nano.skills.go2 import explore
 
+    monkeypatch.setenv("VECTOR_NAV_STACK", "1")  # the external stack's switch
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "localPlanner"])
     try:
         assert explore.is_nav_stack_running()  # our child: ours
@@ -343,3 +368,51 @@ def test_nav_stack_detection_ignores_processes_that_are_not_ours(monkeypatch):
     finally:
         other.kill()
         other.wait()
+
+
+def test_the_external_nav_path_is_off_without_its_switch(monkeypatch):
+    """skills-nav:explore-proc-linux-only: every explore and every prompt build scanned
+    /proc, raising off Linux. Without VECTOR_NAV_STACK nothing is scanned."""
+    import os
+
+    from vector_os_nano.skills.go2 import explore
+
+    scanned, real = [], os.listdir
+    monkeypatch.delenv("VECTOR_NAV_STACK", raising=False)
+    monkeypatch.setattr(os, "listdir", lambda p=".": (scanned.append(p) if p == "/proc" else None) or real(p))
+    assert not explore._tare_running() and not explore.is_nav_stack_running()
+    res = explore.ExploreSkill().execute({}, SkillContext(base=Teleport(10.0, 3.0), services={"spatial_memory": _sg()}))
+    assert res.success and res.result_data["backend"] == "coverage"
+    assert scanned == []
+
+
+def test_no_proc_reads_as_not_running_never_a_crash(monkeypatch):
+    import os
+
+    from vector_os_nano.skills.go2 import explore
+
+    real = os.listdir
+
+    def no_proc(p="."):
+        if p == "/proc":
+            raise FileNotFoundError(p)  # macOS
+        return real(p)
+
+    monkeypatch.setenv("VECTOR_NAV_STACK", "1")
+    monkeypatch.setattr(os, "listdir", no_proc)
+    assert not explore._tare_running()
+
+
+def test_in_process_navigation_writes_no_flag_file(tmp_path):
+    """skills-nav:nav-flag-armed-never-disarmed: the room path armed a run-dir flag
+    (machine-global /tmp by default) that nothing in-process reads, never disarmed."""
+    from vector_os_nano.skills.navigate import NavigateSkill
+
+    base = MagicMock()
+    base.get_position.return_value = [10.0, 3.0, 0.3]
+    base.navigate_to.return_value = _nav(True, "arrived", (17.0, 2.5))
+    ctx = SkillContext(base=base, services={"spatial_memory": _sg()})
+    NavigateSkill().execute({"room": "kitchen"}, ctx)
+    assert list(tmp_path.iterdir()) == []  # the room path armed it and left it armed
+    NavigateSkill().execute({"x": 1.0, "y": 1.0}, ctx)
+    assert list(tmp_path.iterdir()) == []

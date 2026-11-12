@@ -5,8 +5,7 @@
 
 Tests the SysNav-inspired hierarchical scene graph at
 ``vector_os_nano.core.scene_graph``.  Every test is pure Python — no
-MuJoCo, no real API calls.  The TextLLM adapter is replaced by a tiny
-in-process stub; no network I/O or httpx patching required.
+MuJoCo, no real API calls.
 
 Layers under test
 -----------------
@@ -17,15 +16,13 @@ Layers under test
 
 Reference: SysNav (arXiv 2603.06914v1) — hierarchical scene representation
 where rooms contain discrete viewpoints and each viewpoint anchors a set of
-VLM-detected objects.  The rank_rooms_for_goal() method mirrors SysNav's
-VLM-guided room selection strategy.
+VLM-detected objects.
 
 Test classes
 ------------
     TestSceneGraphDataModel    L7-0  node dataclasses and basic graph ops
     TestViewpointLogic         L7-1  viewpoint threshold and coverage maths
     TestObjectMerge            L7-2  object creation and deduplication
-    TestVLMRoomSelection       L7-3  TextLLM-guided room ranking (fake stub)
     TestBackwardCompat         L7-4  SpatialMemory backward-compatible API
     TestPersistence            L7-5  YAML save/load round-trip
     TestObserveWithViewpoint   L7-6  full viewpoint-aware observation flow
@@ -34,34 +31,11 @@ from __future__ import annotations
 
 import math
 import sys
-import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-
-# ---------------------------------------------------------------------------
-# Fake TextLLM stubs — no network, no httpx, no private attribute access
-# ---------------------------------------------------------------------------
-
-
-class _FakeTextLLM:
-    """Stub TextLLM that returns a canned JSON string for any prompt."""
-
-    def __init__(self, response: str) -> None:
-        self._response = response
-
-    def complete_text(self, prompt: str) -> str:  # noqa: ARG002
-        return self._response
-
-
-class _RaisingTextLLM:
-    """Stub TextLLM that always raises to exercise the graceful fallback."""
-
-    def complete_text(self, prompt: str) -> str:  # noqa: ARG002
-        raise RuntimeError("simulated LLM failure")
 
 # ---------------------------------------------------------------------------
 # Ensure repo root is importable
@@ -79,7 +53,6 @@ from vector_os_nano.core.scene_graph import (  # noqa: E402
     ObjectNode,
     RoomNode,
     SceneGraph,
-    TextLLM,
     ViewpointNode,
     _ROOM_AREA_DEFAULT,
     _VIEWPOINT_FOV_DEG,
@@ -436,90 +409,6 @@ class TestObjectMerge:
 
 
 # ===========================================================================
-# L7-3: TextLLM-guided room ranking (fake stub — no network, no httpx)
-# ===========================================================================
-
-
-class TestVLMRoomSelection:
-    """L7-3: TextLLM-guided room ranking via injectable fake stub."""
-
-    def test_rank_rooms_empty_graph(self) -> None:
-        """rank_rooms_for_goal returns empty list when no rooms exist."""
-        sg = _sg()
-        # Even with a real-looking adapter, an empty graph short-circuits before
-        # the LLM is called — so any stub (including one that raises) works.
-        text_llm = _FakeTextLLM('[]')
-        result = sg.rank_rooms_for_goal("find a chair", text_llm)
-        assert result == []
-
-    def test_rank_rooms_with_fake_text_llm(self) -> None:
-        """Fake TextLLM returns a JSON ranking; rank_rooms_for_goal parses it."""
-        sg = _sg()
-        sg.add_room(RoomNode(room_id="living_room", representative_description="cozy room"))
-        sg.add_room(RoomNode(room_id="kitchen", representative_description="cooking area"))
-        sg.merge_object(category="sofa", room_id="living_room", viewpoint_id="vp_1")
-
-        api_response = [
-            {"room": "living_room", "reasoning": "has a sofa"},
-            {"room": "kitchen", "reasoning": "unlikely for seating"},
-        ]
-        text_llm = _FakeTextLLM(json.dumps(api_response))
-
-        result = sg.rank_rooms_for_goal("find a sofa", text_llm)
-
-        assert len(result) == 2
-        assert result[0][0] == "living_room"
-        assert "sofa" in result[0][1]
-        assert result[1][0] == "kitchen"
-
-    def test_rank_rooms_text_llm_raises_returns_empty(self) -> None:
-        """LLM failure in rank_rooms_for_goal returns [] gracefully."""
-        sg = _sg()
-        sg.add_room(_room("bedroom"))
-
-        result = sg.rank_rooms_for_goal("find a bed", _RaisingTextLLM())
-
-        assert result == []
-
-    def test_rank_rooms_malformed_json_returns_empty(self) -> None:
-        """Malformed TextLLM response (unparseable JSON) returns [] gracefully."""
-        sg = _sg()
-        sg.add_room(_room("office"))
-
-        text_llm = _FakeTextLLM("not valid json {")
-
-        result = sg.rank_rooms_for_goal("find a desk", text_llm)
-
-        assert result == []
-
-    def test_rank_rooms_protocol_compatibility(self) -> None:
-        """_FakeTextLLM satisfies the TextLLM Protocol structurally."""
-        # TextLLM is a non-runtime Protocol; we verify duck-typing by calling
-        # the method directly and ensuring the return type is str.
-        stub: TextLLM = _FakeTextLLM('[]')  # type: ignore[assignment]
-        response = stub.complete_text("test prompt")
-        assert isinstance(response, str)
-
-    def test_rank_rooms_no_private_key_access(self) -> None:
-        """rank_rooms_for_goal never reads _api_key from the adapter."""
-        # Build a stub that will raise AttributeError on any dunder/private access.
-        class _StrictTextLLM:
-            def complete_text(self, prompt: str) -> str:
-                return json.dumps([{"room": "kitchen", "reasoning": "only room"}])
-
-            def __getattr__(self, name: str) -> Any:
-                if name.startswith("_"):
-                    raise AttributeError(f"private attribute access: {name!r}")
-                raise AttributeError(name)
-
-        sg = _sg()
-        sg.add_room(_room("kitchen"))
-        result = sg.rank_rooms_for_goal("find something", _StrictTextLLM())
-        assert len(result) == 1
-        assert result[0][0] == "kitchen"
-
-
-# ===========================================================================
 # L7-4: SpatialMemory backward compatibility
 # ===========================================================================
 
@@ -574,16 +463,6 @@ class TestBackwardCompat:
         assert "bedroom" in visited
         assert "garage" not in visited
 
-    def test_get_unvisited_rooms(self) -> None:
-        """get_unvisited_rooms returns rooms from the provided list that have no visits."""
-        sg = _sg()
-        sg.visit("kitchen", 0.0, 0.0)
-        all_rooms = ["kitchen", "bedroom", "garage"]
-        unvisited = sg.get_unvisited_rooms(all_rooms)
-        assert "kitchen" not in unvisited
-        assert "bedroom" in unvisited
-        assert "garage" in unvisited
-
     def test_get_room_summary_format(self) -> None:
         """get_room_summary returns a non-empty string including visited room info."""
         sg = _sg()
@@ -599,41 +478,6 @@ class TestBackwardCompat:
         sg = _sg()
         summary = sg.get_room_summary()
         assert "No rooms" in summary or len(summary) > 0
-
-    def test_get_location_returns_location_record(self) -> None:
-        """get_location returns a LocationRecord-like object with .name, .x, .y."""
-        sg = _sg()
-        sg.visit("office", 3.5, 7.2)
-        loc = sg.get_location("office")
-        assert loc is not None
-        assert loc.name == "office"
-        assert loc.x == pytest.approx(3.5)
-        assert loc.y == pytest.approx(7.2)
-
-    def test_get_location_missing_returns_none(self) -> None:
-        """get_location on an unknown name returns None."""
-        sg = _sg()
-        assert sg.get_location("nonexistent") is None
-
-    def test_get_all_locations(self) -> None:
-        """get_all_locations returns one LocationRecord per room."""
-        sg = _sg()
-        sg.visit("kitchen", 0.0, 0.0)
-        sg.visit("bedroom", 5.0, 0.0)
-        locs = sg.get_all_locations()
-        names = {l.name for l in locs if l is not None}
-        assert "kitchen" in names
-        assert "bedroom" in names
-
-    def test_remember_location(self) -> None:
-        """remember_location creates a visitable named location."""
-        sg = _sg()
-        sg.remember_location("charging_dock", 9.9, 0.1)
-        loc = sg.get_location("charging_dock")
-        assert loc is not None
-        assert loc.x == pytest.approx(9.9)
-        assert loc.y == pytest.approx(0.1)
-
 
 # ===========================================================================
 # L7-5: YAML save/load round-trip

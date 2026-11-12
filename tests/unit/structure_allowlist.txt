@@ -18,4 +18,3 @@ unreachable | vector_os_nano/hardware/ros2/__init__.py
 unreachable | vector_os_nano/hardware/ros2/viz.py
 unreachable | vector_os_nano/hardware/sim/mjcf/go2_piper/build_go2_piper.py
 unreachable | vector_os_nano/hardware/sim/sim_clock.py
-unreachable | vector_os_nano/skills/utils/place_region.py

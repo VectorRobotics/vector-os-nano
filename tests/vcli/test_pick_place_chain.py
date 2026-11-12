@@ -23,7 +23,7 @@ def _agent():
     from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
     from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
     from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
-    from vector_os_nano.skills import get_default_skills
+    from vector_os_nano.skills import get_so101_skills
     from vector_os_nano.skills.pick import SIM_PICK_CONFIG
 
     arm = MuJoCoArm(gui=False)
@@ -35,7 +35,7 @@ def _agent():
         config={"skills": {"pick": dict(SIM_PICK_CONFIG)}},
     )
     reg = SkillRegistry()
-    for s in get_default_skills():
+    for s in get_so101_skills():
         reg.register(s)
     agent._skill_registry = reg
     return agent, arm

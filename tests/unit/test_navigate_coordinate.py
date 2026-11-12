@@ -13,16 +13,21 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.world_model import WorldModel
+from vector_os_nano.sim.nav.follow import NavResult
 from vector_os_nano.skills.navigate import NavigateSkill
 
 
-def _ctx(arrived=True, pos=(10.75, 3.05, 0.35)):
+def _ctx(arrived=True, pos=(10.75, 3.05, 0.35), reason=None):
     base = MagicMock()
     base.get_position.return_value = list(pos)
     base.get_heading.return_value = 0.0
-    base.navigate_to = MagicMock(return_value=arrived)
+    nav = NavResult(reached=arrived, reason=reason or ("arrived" if arrived else "stalled"),
+                    target=[10.5, 3.0], pos=list(pos))
+    base.navigate_to = MagicMock(return_value=nav)
     # No spatial_memory needed for a coordinate goal.
     return SkillContext(bases={"go2": base}, world_model=WorldModel(), services={})
 
@@ -37,7 +42,7 @@ def test_navigate_xy_drives_navigate_to_without_room():
     assert float(args[0]) == 10.5
     assert float(args[1]) == 3.0
     assert res.result_data["target"] == [10.5, 3.0]
-    assert res.result_data["mode"] == "proxy_coord"
+    assert res.result_data["reason"] == "arrived"
 
 
 def test_navigate_target_list_form():
@@ -56,17 +61,25 @@ def test_navigate_xy_no_base_fails_loud():
     assert res.diagnosis_code == "no_base"
 
 
-def test_navigate_xy_far_false_but_in_vicinity_succeeds():
-    """FAR returning False (no arrival confirm) but the dog ended in the goal
-    VICINITY -> step succeeds (the at_position verify oracle, RAN, is the honest
-    arrival grade; step success only gates dependents). Dog at (11.0, 3.0), goal
-    (10.5, 3.0): 0.5 m away, well within the vicinity radius."""
-    ctx = _ctx(arrived=False, pos=(11.0, 3.0, 0.35))
+@pytest.mark.parametrize("reason", ["aborted", "fell", "stalled", "unreachable"])
+def test_a_failed_planner_run_near_the_goal_is_a_failure(reason):
+    """skills-nav:coord-nav-false-success: a run the planner reports as not arrived
+    succeeded whenever it stopped within 1.5 m. Dog 0.5 m from the goal."""
+    ctx = _ctx(arrived=False, pos=(11.0, 3.0, 0.35), reason=reason)
     res = NavigateSkill().execute({"x": 10.5, "y": 3.0}, ctx)
     ctx.base.navigate_to.assert_called_once()
-    assert res.success is True
-    assert res.result_data["far_confirmed"] is False
+    assert res.success is False and res.diagnosis_code == "navigation_failed"
+    assert res.result_data["reason"] == reason and reason in res.error_message
     assert res.result_data["position"] == [11.0, 3.0]
+
+
+def test_a_type_error_inside_the_planner_is_not_a_second_navigation():
+    """skills-nav:coord-nav-typeerror-rerun: a TypeError re-ran the whole navigation."""
+    ctx = _ctx()
+    ctx.base.navigate_to.side_effect = TypeError("inside the planner")
+    with pytest.raises(TypeError):
+        NavigateSkill().execute({"x": 10.5, "y": 3.0}, ctx)
+    ctx.base.navigate_to.assert_called_once()
 
 
 def test_navigate_xy_far_false_and_far_away_fails_loud():

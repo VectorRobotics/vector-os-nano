@@ -134,7 +134,6 @@ def _world_vocabulary(context: SkillContext) -> list[str]:
 
 @skill(
     aliases=["look", "看", "看看", "看一下", "看一看", "what do you see", "describe"],
-    direct=False,
     actuates=False,
 )
 class LookSkill:
@@ -176,7 +175,6 @@ class LookSkill:
 
 @skill(
     aliases=["describe scene", "描述场景", "描述环境"],
-    direct=False,
     actuates=False,
 )
 class DescribeSceneSkill:

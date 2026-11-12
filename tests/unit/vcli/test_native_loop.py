@@ -75,7 +75,7 @@ class _FakeBase:
 
 
 class _FakeWalkSkill:
-    """Minimal Skill-protocol walk: drives base.walk, no auto_steps."""
+    """Minimal Skill-protocol walk: drives base.walk."""
 
     name = "walk"
     description = "Walk the quadruped forward by a given distance (moves the base)."
@@ -401,7 +401,7 @@ def _go2_piper_like_agent():
 
     agent, base = _make_agent(10.0, 3.0)
     reg = SkillRegistry()
-    for name in ("walk", "look", "explore", "navigate", "navigate_to_object", "perception_grasp", "mobile_place"):
+    for name in ("walk", "look", "explore", "navigate", "navigate_to_object", "perception_grasp", "place_top_down"):
         reg.register(SimpleNamespace(name=name, description=name, parameters={}))
     sg = SceneGraph()
     sg.add_object(ObjectNode(object_id="o1", category="bottle", x=10.86, y=2.8, z=0.31,

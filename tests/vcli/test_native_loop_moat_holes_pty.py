@@ -35,19 +35,21 @@ from tests.harness.pty_cli import run_cli_turn  # noqa: E402
 _SIM_TIMEOUT_SEC = 360.0
 
 # (A) real CAUSED walk + a membership short-circuit verify (predicate is dead weight).
+# Backward: forward from the spawn the dog moves 0.48 m of a 2.5 m walk (measured),
+# which walk fails as walk_blocked, so the step graded FAILED before the classifier ran.
 _MEMBERSHIP_FALSE_GREEN = {
     "turns": [
-        {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 2.5, "speed": 0.3}}]},
+        {"tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}]},
         {"tool_calls": [{"name": "verify", "input": {"expr": "True in (at_position(99.0, 99.0), True)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 }
 
-# (B) forward walk (no turn) + a facing predicate already true at spawn. The
+# (B) a straight walk (no turn) + a facing predicate already true at spawn. The
 # heading no-op must NOT grade CAUSED off the walk's planar displacement.
-_FACING_FORWARD_WALK_FALSE_GREEN = {
+_FACING_STRAIGHT_WALK_FALSE_GREEN = {
     "turns": [
-        {"tool_calls": [{"name": "walk", "input": {"direction": "forward", "distance": 2.5, "speed": 0.3}}]},
+        {"tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}]},
         {"tool_calls": [{"name": "verify", "input": {"expr": "facing(0.0, 0.78)"}}]},
         {"tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
@@ -83,19 +85,19 @@ def test_membership_shortcircuit_false_green_flips_to_ran(sim_cleanup) -> None:
 @pytest.mark.sim
 @pytest.mark.cli_main
 @pytest.mark.capability
-def test_facing_forward_walk_false_green_flips_to_ran(sim_cleanup) -> None:
-    """(B) a forward walk + `facing(0.0, 0.78)` (true at the spawn heading) -> RAN
+def test_facing_straight_walk_false_green_flips_to_ran(sim_cleanup) -> None:
+    """(B) a straight walk + `facing(0.0, 0.78)` (true at the spawn heading) -> RAN
     / verified False / exit 2. The walk moved planar, not heading, so a facing
     predicate must grade UNCAUSED — proving the per-channel causation fix holds on the
-    real gait (incl. any forward-walk yaw drift below the ~10deg threshold)."""
+    real gait (incl. any straight-walk yaw drift below the ~10deg threshold)."""
     r = run_cli_turn(
         "保持当前朝向",
         sim_go2=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
         extra_args=["--headless"],
-        tool_script=_FACING_FORWARD_WALK_FALSE_GREEN,
+        tool_script=_FACING_STRAIGHT_WALK_FALSE_GREEN,
     )
-    assert r.verified is False, f"forward-walk facing no-op must NOT verify; got {r.verdict}"
+    assert r.verified is False, f"straight-walk facing no-op must NOT verify; got {r.verdict}"
     assert r.exit_code == 2, f"ran-not-verified must exit 2; got {r.exit_code}"
     assert r.evidence == "RAN", f"got evidence={r.evidence}"
     step = r.verdict["per_step"][0]

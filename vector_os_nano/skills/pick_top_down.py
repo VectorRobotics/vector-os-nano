@@ -125,7 +125,6 @@ def _normalise_color_keyword(label: str) -> str | None:
         "grab", "grasp", "take", "pick",
         "抓", "拿", "抓起", "抓住", "抓取", "拿起", "取",
     ],
-    direct=False,
 )
 class PickTopDownSkill:
     """Top-down grasp with the Piper arm on Go2. See module docstring."""
@@ -204,15 +203,6 @@ class PickTopDownSkill:
         # ONLY when there is no target_xyz to fall back on (refactor direction: the
         # SceneGraph, not a GT world model, is the object source — D89).
         target = self._resolve_target(params, wm)
-
-        # v2.3 hot-fix: perception-driven auto-detect retry on world_model miss.
-        # Symmetric with MobilePickSkill — VGG routes "抓 X" to whichever skill
-        # it thinks fits, and both must self-heal via the same auto-detect path.
-        # Only meaningful when a world model exists to populate/consult.
-        if target is None and wm is not None:
-            from vector_os_nano.skills.utils import run_autodetect_retry
-            if run_autodetect_retry(params, context, log_tag="PICK-TD") > 0:
-                target = self._resolve_target(params, wm)
 
         if target is None:
             if wm is None:
@@ -381,9 +371,8 @@ class PickTopDownSkill:
                             return (obj.object_id, _xyz_of(obj))
 
         # No match. Caller sees object_not_found with the known-objects list;
-        # the decomposer is expected to retry with a detect/look step to
-        # populate the world model via perception (SO-101 pattern), not to
-        # silently substitute a nearby pickable.
+        # the model is expected to look again, never to silently substitute a
+        # nearby pickable.
         return None
 
 

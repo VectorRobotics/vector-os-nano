@@ -34,7 +34,7 @@ import numpy as np
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.calibration import camera_to_base, load_calibration
+from vector_os_nano.skills.scan import scan_first
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,6 @@ SIM_PICK_CONFIG: dict = {"hardware_offsets": False, "z_offset": 0.0}
 
 @skill(
     aliases=["grab", "grasp", "take", "抓", "拿", "抓起", "抓住", "抓取", "拿起", "取"],
-    direct=False,
-    auto_steps=["scan", "detect", "pick"],
 )
 class PickSkill:
     """Pick up an object from the workspace.
@@ -106,16 +104,12 @@ class PickSkill:
     """
 
     name: str = "pick"
-    description: str = "Pick up an object. Use mode='hold' to keep it, mode='drop' to discard it to the side."
-    # Typical REAL-TIME (viewer-synced) duration in seconds, with margin for up to 2
-    # retries (each attempt: pregrasp 3s + descent 1s + gripper seq + lift 1s + home 3s
-    # = ~8–10s; 2 retries + home-between + perception sampling → ~40s real-time).
-    # GoalExecutor floors the step's effective timeout at this value so a completed pick
-    # is never falsely marked timeout under a live MuJoCo viewer (R2-2).
-    typical_duration_sec: float = 45.0
-    # Success predicate this skill is verified against (single-source for the
-    # planner; kernel rules 3 + 5), bound from the call's object_label by the native
-    # runner. References the arm verify namespace.
+    description: str = (
+        "Pick up an object and hold it (the default). mode='drop' discards it to the side "
+        "instead; the holding_object verify then fails by design."
+    )
+    # Success predicate this skill is verified against, bound from the call's
+    # object_label by the native runner. References the arm verify namespace.
     verify_hint: str = "holding_object({object_label})"
     parameters: dict = {
         "object_id": {
@@ -137,14 +131,14 @@ class PickSkill:
         "mode": {
             "type": "string",
             "required": False,
-            "default": "drop",
+            "default": "hold",
             "enum": ["drop", "hold"],
             "description": "'hold' = grasp and hold at home (for subsequent place), 'drop' = grasp and discard to side",
         },
     }
     preconditions: list[str] = ["gripper_empty"]
-    postconditions: list[str] = []  # pick ends with gripper open (object dropped)
-    effects: dict = {"gripper_state": "open"}  # pick ends with drop
+    postconditions: list[str] = []
+    effects: dict = {"gripper_state": "holding"}  # the default mode holds what it picked
     failure_modes: list[str] = [
         "no_arm", "object_not_found", "no_detections", "no_3d_samples",
         "out_of_workspace", "ik_unreachable", "move_failed", "track_failed",
@@ -154,9 +148,8 @@ class PickSkill:
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Execute pick with retry logic.
 
-        On failure between retries the arm returns to home before the next
-        attempt.  The world model is NOT updated on success — the executor
-        calls world_model.apply_skill_effects() after execute() returns.
+        Every attempt starts at the scan pose (pick's own prerequisite: the arm is
+        out of the camera's view before it looks); at least one attempt runs.
 
         Args:
             params: optional object_id or object_label.
@@ -172,20 +165,36 @@ class PickSkill:
                 error_message="No arm connected",
                 result_data={"diagnosis": "no_arm"},
             )
+        # A camera position is meaningless to the arm without the camera->base
+        # transform: never treat camera-frame coordinates as arm-base ones.
+        if context.perception is not None and context.calibration is None:
+            return SkillResult(
+                success=False,
+                error_message=(
+                    "No camera->arm calibration is loaded "
+                    f"({context.services.get('calibration_error', 'none was given')}): "
+                    "run the hand-eye calibration first."
+                ),
+                result_data={"diagnosis": "calibration_error"},
+            )
 
-        max_retries: int = (
+        if not _target_of(params):
+            return SkillResult(
+                success=False,
+                error_message="pick needs a target: name the object (object_label).",
+                result_data={"diagnosis": "no_target"},
+            )
+
+        max_retries = max(1, int(
             context.config.get("skills", {}).get("pick", {}).get("max_retries", _DEFAULT_MAX_RETRIES)
-        )
-        home_joints: list[float] = (
-            context.config.get("skills", {}).get("home", {}).get("joint_values", _DEFAULT_HOME_JOINTS)
-        )
+        ))
 
         last_error: str = "unknown error"
         last_diagnosis: str = "unknown"
         last_result_data: dict = {}
         for attempt in range(1, max_retries + 1):
             logger.info("[PICK] Attempt %d/%d", attempt, max_retries)
-            result = self._single_pick_attempt(params, context)
+            result = scan_first(context, "pick") or self._single_pick_attempt(params, context)
             if result.success:
                 return result
             last_error = result.error_message
@@ -199,11 +208,6 @@ class PickSkill:
             if last_diagnosis in _NO_RETRY_DIAGNOSES:
                 logger.info("[PICK] %s — target not detectable; not retrying", last_diagnosis)
                 break
-
-            if attempt < max_retries:
-                logger.info("[PICK] Returning home for retry ...")
-                context.arm.move_joints(home_joints, duration=_HOME_DURATION)
-                time.sleep(1.0)
 
         # Merge retry metadata into the last attempt's result_data so callers
         # can inspect both the failure diagnosis and retry statistics.
@@ -253,7 +257,7 @@ class PickSkill:
         # Step 1: Get target in base frame
         base_pos_result = self._get_target_base_pos(params, context)
         if base_pos_result is None:
-            label = params.get("object_label") or params.get("object_id") or ""
+            label = _target_of(params)
             return SkillResult(
                 success=False,
                 error_message="Cannot locate target object",
@@ -427,7 +431,7 @@ class PickSkill:
             )
 
         # Step 14: Mode-dependent behavior
-        pick_mode = params.get("mode", cfg.get("default_mode", "drop"))
+        pick_mode = params.get("mode", "hold")
 
         if pick_mode == "hold":
             # Hold mode: keep object in gripper, ready for place command
@@ -470,14 +474,7 @@ class PickSkill:
         # the bound label, or the nearest-object name when unbound). Lets a later
         # verify close the loop against what was grabbed (R2-7) and surfaces it
         # in the observation trace. Language-neutral: a structural label/id.
-        resolved_target = (
-            params.get("object_label")
-            or params.get("object")
-            or params.get("query")
-            or params.get("target")
-            or params.get("object_id")
-            or ""
-        )
+        resolved_target = _target_of(params)
         return SkillResult(
             success=True,
             result_data={
@@ -494,34 +491,6 @@ class PickSkill:
     # Target position resolution
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _nearest_object_name(context: SkillContext) -> Optional[str]:
-        """Return the name of the nearest free-body object in the sim scene.
-
-        Used ONLY when NO target is bound (object_label/object/query/target/
-        object_id are all absent/empty).  Keyed on EMPTY binding — zero language
-        matching — so it is safe for any language or caller.
-
-        Requires context.arm to expose get_object_positions() (sim oracle only;
-        real hardware won't have it — caller guards with hasattr in the caller).
-
-        Returns the object name closest to the base origin by sqrt(x²+y²), or
-        None when no free objects are present.
-        """
-        arm = context.arm  # property: returns first arm or legacy field
-        if arm is None:
-            return None
-        try:
-            positions: dict = arm.get_object_positions()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("[PICK] _nearest_object_name: get_object_positions failed: %s", exc)
-            return None
-        if not positions:
-            return None
-        # Pick nearest by XY distance from base origin (language-neutral: structure only).
-        nearest = min(positions.items(), key=lambda kv: kv[1][0] ** 2 + kv[1][1] ** 2)
-        return nearest[0]
-
     def _get_target_base_pos(
         self,
         params: dict,
@@ -530,7 +499,6 @@ class PickSkill:
         """Resolve target object position in base frame.
 
         Resolution order (matches the code below):
-        0. No target bound + sim oracle available → nearest object (R2-3).
         1. context.perception → live re-detect + density cluster (preferred when
            a perception backend is present; the object may have moved).
         2. world_model by object_id → get_object().
@@ -542,38 +510,11 @@ class PickSkill:
         Returns:
             (3,) numpy array in base frame metres, or None if unresolvable.
         """
-        # R2-3: no target bound → resolve to nearest scene object via sim oracle.
-        # "No target bound" means all standard target params are absent/empty —
-        # keyed entirely on EMPTY binding, zero language matching.
-        _no_target = not any([
-            params.get("object_label"),
-            params.get("object"),
-            params.get("query"),
-            params.get("target"),
-            params.get("object_id"),
-        ])
-        if _no_target and hasattr(context.arm, "get_object_positions"):
-            nearest = self._nearest_object_name(context)
-            if nearest is not None:
-                logger.info("[PICK] no target bound -> nearest object %r", nearest)
-                # Inject the resolved name so the normal perception/world-model
-                # path runs unchanged — behaviour when a target IS bound is untouched.
-                params = dict(params)  # shallow copy; never mutate the caller's dict
-                params["object_label"] = nearest
-
         # ALWAYS re-detect with perception if available (object may have moved).
         # Honour whatever reasonable param name the planner bound the target to
         # (language-neutral param-name fallbacks — no keyword matching).
         if context.perception is not None:
-            label = (
-                params.get("object_label")
-                or params.get("object")
-                or params.get("query")
-                or params.get("target")
-                or params.get("object_id")
-                or "object"
-            )
-            logger.info("[PICK] Live perception for %r (always re-detect)", label)
+            logger.info("[PICK] Live perception for %r (always re-detect)", _target_of(params))
             result = self._sample_from_perception(params, context)
             if result is not None:
                 return result
@@ -583,7 +524,7 @@ class PickSkill:
         obj_id = params.get("object_id")
         if obj_id:
             obj = context.world_model.get_object(obj_id)
-            if obj is not None and (abs(obj.x) > 0.01 or abs(obj.y) > 0.01):
+            if obj is not None:
                 logger.info("[PICK] Fallback: world_model object_id=%s", obj_id)
                 return np.array([obj.x, obj.y, obj.z], dtype=float)
 
@@ -595,9 +536,8 @@ class PickSkill:
         )
         if label:
             objects = context.world_model.get_objects_by_label(label)
-            valid = [o for o in objects if abs(o.x) > 0.01 or abs(o.y) > 0.01]
-            if valid:
-                closest = min(valid, key=lambda o: o.x ** 2 + o.y ** 2)
+            if objects:
+                closest = min(objects, key=lambda o: o.x ** 2 + o.y ** 2)
                 logger.info("[PICK] Fallback: world_model label=%r", label)
                 return np.array([closest.x, closest.y, closest.z], dtype=float)
 
@@ -618,7 +558,7 @@ class PickSkill:
         Step 2: Collect _DEFAULT_SAMPLE_COUNT 3D position readings by calling
                 update() repeatedly at _DEFAULT_SAMPLE_INTERVAL intervals.
         Step 3: Density cluster (1.5cm threshold) to find modal position.
-        Step 4: camera_to_base() using calibration transform.
+        Step 4: context.calibration.camera_to_base() to the arm base frame.
         """
         # Resolve query label from whatever reasonable param name the planner
         # bound the target to (language-neutral — no keyword matching here, just
@@ -718,8 +658,7 @@ class PickSkill:
         )
 
         # Transform camera→base using calibration
-        T = _get_calibration_matrix(context)
-        return camera_to_base(cam_pos, T)
+        return np.asarray(context.calibration.camera_to_base(cam_pos), dtype=float)
 
     @staticmethod
     def _density_cluster_mean(
@@ -757,39 +696,7 @@ class PickSkill:
         return np.mean(cluster, axis=0)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _get_calibration_matrix(context: SkillContext) -> np.ndarray:
-    """Extract calibration matrix from context, loading from file if needed.
-
-    context.calibration can be:
-    - a (4,4) numpy ndarray directly
-    - a dict with key "transform_matrix"
-    - a string path to workspace_calibration.yaml
-    - None → load from default path
-
-    Returns:
-        (4, 4) numpy float64 homogeneous transform.
-    """
-    cal = context.calibration
-    if cal is None:
-        return load_calibration()
-    if isinstance(cal, np.ndarray) and cal.shape == (4, 4):
-        return cal
-    if isinstance(cal, dict) and "transform_matrix" in cal:
-        return np.array(cal["transform_matrix"], dtype=np.float64)
-    if isinstance(cal, str):
-        return load_calibration(cal)
-    # Handle Calibration object (from vector_os_nano.perception.calibration)
-    if hasattr(cal, '_matrix') and cal._matrix is not None:
-        return np.array(cal._matrix, dtype=np.float64)
-    if hasattr(cal, 'camera_to_base'):
-        # Calibration class — extract matrix or use it directly
-        # Store the Calibration object reference for _camera_to_base to use
-        logger.info("[PICK] Using Calibration object directly")
-        return getattr(cal, '_matrix', np.eye(4))
-    # Unknown type — use identity with a warning
-    logger.warning("[PICK] Unknown calibration type %s — using identity", type(cal))
-    return np.eye(4)
+def _target_of(params: dict) -> str:
+    """The object the call names, whichever parameter the model bound it to."""
+    return str(next((params[k] for k in ("object_label", "object", "query", "target", "object_id")
+                     if params.get(k)), ""))

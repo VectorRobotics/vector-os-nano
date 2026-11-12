@@ -31,13 +31,13 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.perception.grasp_point import grasp_point_from_rgbd
 from vector_os_nano.skills.utils.approach_pose import compute_approach_pose
-from vector_os_nano.skills.utils.terminal_dock import dock_converged, terminal_dock
 
 logger = logging.getLogger(__name__)
 
@@ -54,33 +54,69 @@ def _fail(diagnosis: str, message: str, **extra: Any) -> SkillResult:
     return SkillResult(success=False, error_message=message, result_data=data)
 
 
-# Deictic markers: "the thing in front" — a spatial reference, no object name.
-_DEICTIC_TOKENS = (
-    "前面", "前方", "面前", "眼前", "前边", "前",
-    "front", "in front", "ahead", "nearest", "this", "that",
-)
-_GENERIC_TOKENS = ("东西", "物体", "object", "thing", "something", "it", "")
+# Deictic words: "the thing in front", "that one" — a spatial reference, no object name.
+_DEICTIC_ZH = ("前面", "前方", "面前", "眼前", "前边", "前", "那个", "这个")
+_DEICTIC_EN = re.compile(r"\b(?:in front|front|ahead|nearest|this|that|one)\b")
+# Request words around a CJK target ("抓起那个罐子"), and the 色 of "红色": never an object.
+_FILLER_ZH = re.compile(r"[抓拿取捡起帮我把给请的一下吧个色]|东西|物体|物品")
 
 
-def _is_deictic(query: str) -> bool:
-    """True when the query names no object (resolve by space/depth, not a VLM)."""
+def _target_words(query: str) -> str:
+    """*query* without its deictic words ("grab that can" -> "grab can")."""
     q = (query or "").strip().lower()
-    if q in _GENERIC_TOKENS:
-        return True
-    return any(tok in q for tok in _DEICTIC_TOKENS)
+    for tok in _DEICTIC_ZH:
+        q = q.replace(tok, " ")
+    return " ".join(_DEICTIC_EN.sub(" ", q).split())
 
 
 def _names_object(query: str) -> bool:
     """True when *query* names a concrete object (-> the learned detector route).
 
-    Distinguishes a NAMED object ("罐子"/"red can", the shared world vocabulary) from
-    a pure-colour ("抓红色的") or deictic ("前面的东西") query; those resolve on the
-    classical front_object resolver (by colour or by space), never by name.
+    Distinguishes a NAMED object ("罐子"/"red can"/"that can", the shared world
+    vocabulary) from a pure-colour ("抓红色的") or deictic ("前面的东西") query; those
+    resolve on the classical front_object resolver (by colour or by space), never by
+    name. A deictic word never hides a name: "抓前面那个罐子" goes to the detector.
     """
     from vector_os_nano.perception.vocab import vocab
 
-    return not _is_deictic(query) and vocab().names_object(query)
+    return vocab().names_object(_target_words(query))
 
+
+
+# Colour words the colour resolver has no hue band for (the world vocabulary only
+# holds the ones it can see): a query naming one is refused, never grasped as "any".
+_UNSEEN_COLOURS = ("white", "black", "grey", "gray", "pink", "brown", "silver", "gold",
+                   "白色", "黑色", "灰色", "粉色", "棕色", "银色", "金色")
+
+
+def _unsupported_target(query: str) -> SkillResult | None:
+    """Why the grasp cannot honestly resolve *query*, or None.
+
+    A colour it cannot see, words the world vocabulary cannot read (untranslatable
+    CJK left once the deictic, request and colour words are gone: "抓前面那个苹果",
+    "抓红色的苹果"), or an unknown noun beside a colour ("the red unicorn": the colour
+    route would ignore the noun) are refused before any motion: the robot never
+    substitutes the front-most blob, the only object of that colour, or a same-noun
+    object of another colour for what was named.
+    """
+    from vector_os_nano.perception.vocab import _has, vocab
+
+    q = (query or "").lower()
+    unseen = next((c for c in _UNSEEN_COLOURS if _has(q, c)), None)
+    if unseen is not None:
+        return _fail("unsupported_colour",
+                     f"{query!r} names the colour {unseen!r}, which this robot cannot tell apart; "
+                     "name the object without it, or by a colour it sees "
+                     "(red, orange, yellow, green, blue, purple).", query=query)
+    v, rest = vocab(), _target_words(query)
+    bare = v.without_colours(rest)
+    said = v.english(bare)
+    if v.noun(rest) is None and ((said and v.colour(rest)) or (said is None and _FILLER_ZH.sub("", bare).strip())):
+        nouns = sorted({c for _, c in v.nouns})
+        return _fail("unknown_object",
+                     f"{query!r} names no object the world vocabulary knows; name one of {nouns} "
+                     "(or say 'the thing in front').", query=query, known_objects=nouns)
+    return None
 
 
 def _scene_name(context: SkillContext, query: str) -> str | None:
@@ -317,16 +353,6 @@ _REPOSE_TURN_MAX_S = 4.0        # cap a single turn command's duration
 _REPOSE_MOVE_DEADBAND = 0.12    # m
 _REPOSE_MOVE_VX = 0.4           # m/s
 _REPOSE_MOVE_MAX_S = 3.0        # cap a single move command's duration
-# TERMINAL DOCK (R39). After FAR's coarse arrival the dog stands ~0.8 m from the
-# goal at an arbitrary, oblique heading (probe: ~169 deg off) and the d435 frames
-# the floor/wall, so perception mislocalizes the can (R38/D52). The PROVEN colour
-# grasp (D47) GROUNDS when the dog starts HEAD-ON from the room centerline facing
-# the table (the scripted-from-spawn pose). So BEFORE perceiving, dead-reckon to a
-# FIXED proven table-approach pose — NOT can-relative (no chicken-and-egg) — then
-# run the proven colour grasp UNCHANGED. The pose is passed via the ``dock_pose``
-# param (world-agnostic); when absent the dock is a no-op (the scripted-from-spawn
-# path passes nothing, so D34-D51 is preserved byte-for-byte).
-_GRASP_DEFAULT_DOCK_POSE: tuple[float, float, float] | None = None
 # Pre-perceive orientation scan (R38). After a FAR navigate the dog can arrive
 # facing AWAY from the table; a single frame then localizes a far wall, not the
 # can. A PLAUSIBLE grasp target is a near-table object: its planar distance from
@@ -361,7 +387,7 @@ def _grasp_ready_repose(
     Idempotent / benign when the dog is ALREADY head-on (yaw error below the
     deadband, already at the standoff): it issues no large turn and no move, so the
     scripted-from-spawn grasp (D34-D51) is preserved. Reuses the proven
-    ``compute_approach_pose`` (mobile_pick). World-agnostic — uses only the base's
+    ``compute_approach_pose``. World-agnostic — uses only the base's
     ``walk`` / ``get_position`` / ``get_heading`` duck-typed surface.
 
     Returns True if the re-pose ran (or was a benign no-op); False if the base
@@ -504,7 +530,6 @@ def _approach_and_seat(base: Any, grasp_xy: tuple[float, float]) -> bool:
         "抓", "拿", "抓起", "抓住", "抓取", "拿起", "取",
         "grab", "grasp", "pick up", "pick",
     ],
-    direct=False,
 )
 class PerceptionGraspSkill:
     """Perceive a target (VLM->EdgeTAM->depth pointcloud) and grasp it."""
@@ -544,18 +569,6 @@ class PerceptionGraspSkill:
             "description": (
                 "Optional. A single (x1,y1,x2,y2) pixel box from a producer; "
                 "consumed in place of re-perceiving (back-projected to 3D)."
-            ),
-        },
-        "dock_pose": {
-            "type": "array",
-            "required": False,
-            "description": (
-                "Optional [x, y, heading] FIXED proven table-approach pose (world "
-                "frame, heading radians). When present, the dog dead-reckons to it "
-                "BEFORE perceiving (the R39 terminal dock) so the camera frames the "
-                "object from the proven head-on pose. NOT can-relative — bridges a "
-                "coarse FAR arrival to the perceivable, reachable pose. Absent on "
-                "the scripted-from-spawn path (no-op, no regression)."
             ),
         },
     }
@@ -598,48 +611,9 @@ class PerceptionGraspSkill:
                 f"Perception backend {type(perception).__name__} lacks RGB-D grasp surface: {missing}",
             )
 
-        # --- R39 TERMINAL DOCK (before perceiving) ---------------------------
-        # If a FIXED proven table-approach pose is supplied (dock_pose=[x, y, hd]),
-        # dead-reckon the dog to it FIRST — so the d435 frames the object from the
-        # proven head-on pose, not from FAR's oblique coarse arrival. The dock target
-        # is FIXED (NOT can-relative): the dog does not need to perceive the can to
-        # dock, breaking the R38 chicken-and-egg (R38 perceived from the bad pose,
-        # THEN re-posed can-relative off a mislocalized point). Benign no-op on the
-        # scripted-from-spawn path (no dock_pose passed → D34-D51 preserved). Uses
-        # only the base's walk/get_position/get_heading surface (world-agnostic).
-        # R40 POSE-VERIFICATION GATE (D54): the dock is now a CLOSED-LOOP controller
-        # that returns a DockResult. We perceive/grasp ONLY when the dock CONVERGED to
-        # the proven head-on pose (heading within ±12° of +X, |y - centerline| < 8 cm,
-        # x in the perceive band). If it RAN but did NOT converge, ABORT the grasp
-        # cleanly ("dock_not_converged") — NEVER perceive from a bad pose. This converts
-        # the R39 t3 bad-dock (heading 86°, x back from the table) into an HONEST RAN
-        # instead of a spurious/garbage grasp. A dock that did not run (no base surface)
-        # is the scripted-from-spawn path and proceeds unchanged (no regression).
-        dock_pose = self._resolve_dock_pose(params)
-        if dock_pose is not None and context.base is not None:
-            logger.info("[PGRASP] terminal dock to FIXED proven pose %s before perceive",
-                        dock_pose)
-            dock = terminal_dock(
-                context.base, (dock_pose[0], dock_pose[1]), dock_pose[2],
-                on_progress=lambda m: logger.info("[PGRASP] %s", m),
-            )
-            if dock.ran and not dock_converged(dock):
-                logger.warning(
-                    "[PGRASP] dock did NOT converge (hd_err=%.0f° y_err=%.3fm x_err=%.3fm "
-                    "after %d iters) — ABORT grasp (dock_not_converged), do NOT perceive "
-                    "from a bad pose",
-                    math.degrees(dock.heading_err), dock.lateral_err,
-                    dock.x_err, dock.iterations)
-                return _fail(
-                    "dock_not_converged",
-                    "Terminal dock did not converge to the proven head-on grasp pose "
-                    f"(heading_err={dock.heading_err:.3f}rad, lateral_err={dock.lateral_err:.3f}m, "
-                    f"x_err={dock.x_err:.3f}m after {dock.iterations} iterations). "
-                    "Aborting the grasp rather than perceiving/grasping from a bad pose — "
-                    "the camera would not frame the object. Honest RAN, not a false grasp.",
-                    dock_pose=list(dock_pose),
-                    dock_final_pose=list(dock.final_pose) if dock.final_pose else None,
-                )
+        unsupported = _unsupported_target(query)
+        if unsupported is not None:
+            return unsupported
 
         # --- stow the arm OUT of the camera FOV before perceiving (the arm at rest
         # occludes the forward head camera and corrupts the front-object mask) -----
@@ -675,6 +649,7 @@ class PerceptionGraspSkill:
             )
             gp, resolved, fail = self._grasp_point_from_passed_box(
                 perception, query, passed_box, color=color, scene=scene, box_frame=box_frame,
+                base=context.base, confidence=self._passed_box_confidence(params, color),
             )
         else:
             # --- perceive the target's 3D grasp point (real depth + mask, never GT).
@@ -769,7 +744,7 @@ class PerceptionGraspSkill:
         # The Piper's forward-reach envelope at full extension is a THIN z-band: at
         # the far standoff the object sits at (it reaches ~0.49 m forward only when
         # reaching to z~0.32, and cannot also hover 5 cm HIGHER there — measured
-        # /tmp/param_probe.py: pre-grasp at obj_z+0.05 IK-fails while the grasp at
+        # by a probe: pre-grasp at obj_z+0.05 IK-fails while the grasp at
         # obj_z IK-succeeds). So we tell PickTopDownSkill to use a SHALLOW pre-grasp
         # hover (obj_z + _GO2_PRE_GRASP_H) that stays inside that band — the EE
         # extends straight to the object's reachable height and the jaws close from
@@ -831,28 +806,6 @@ class PerceptionGraspSkill:
         )
 
     @staticmethod
-    def _resolve_dock_pose(params: dict) -> tuple[float, float, float] | None:
-        """Extract a FIXED dock pose [x, y, heading] from params, or the default.
-
-        Accepts ``dock_pose=[x, y, heading]`` (heading radians) or
-        ``dock_pose=[x, y]`` (heading defaults to 0.0 = facing +X). Returns
-        ``_GRASP_DEFAULT_DOCK_POSE`` when no dock_pose param is present (None by
-        default → the dock is a no-op, preserving the scripted-from-spawn path).
-        Malformed input → the default (never crashes the grasp).
-        """
-        dp = params.get("dock_pose")
-        if dp is None:
-            return _GRASP_DEFAULT_DOCK_POSE
-        if isinstance(dp, (list, tuple)) and len(dp) >= 2:
-            try:
-                x, y = float(dp[0]), float(dp[1])
-                hd = float(dp[2]) if len(dp) >= 3 else 0.0
-                return (x, y, hd)
-            except (TypeError, ValueError):
-                return _GRASP_DEFAULT_DOCK_POSE
-        return _GRASP_DEFAULT_DOCK_POSE
-
-    @staticmethod
     def _resolve_passed_box(params: dict, color: str | None):
         """Extract a single (x1,y1,x2,y2) box passed in by a producer, or None.
 
@@ -896,6 +849,18 @@ class PerceptionGraspSkill:
                 except (TypeError, ValueError):
                     return None
         return None
+
+    @staticmethod
+    def _passed_box_confidence(params: dict, color: str | None) -> float:
+        """The producer's score for the passed box (1.0 for a bare box: nothing to gate)."""
+        dets = params.get("detections")
+        if params.get("bbox") is None and isinstance(dets, list) and dets:
+            det = PerceptionGraspSkill._select_detection_dict(dets, color)
+            try:
+                return float(det.get("confidence", 1.0))
+            except (TypeError, ValueError, AttributeError):
+                return 0.0
+        return 1.0
 
     @staticmethod
     def _passed_box_frame(params: dict) -> dict | None:
@@ -950,7 +915,8 @@ class PerceptionGraspSkill:
 
     def _grasp_point_from_passed_box(
         self, perception: Any, query: str, box: tuple, *, color: str | None = None,
-        scene: str | None = None, box_frame: dict | None = None,
+        scene: str | None = None, box_frame: dict | None = None, base: Any = None,
+        confidence: float = 1.0,
     ):
         """Back-project a PRODUCER-passed pixel box to a WORLD grasp point.
 
@@ -958,7 +924,9 @@ class PerceptionGraspSkill:
         fresh perceive. We acquire ONLY the RGB-D frame + geometry (no detect /
         front_object call), segment the passed box (same EdgeTAM->box-rect path the
         self-detect route uses), then run the IDENTICAL grasp_point_from_rgbd math.
-        FAIL LOUD if the box yields no depth points — never a GT substitute.
+        FAIL LOUD if the box yields no depth points — never a GT substitute. The box
+        must also be a plausible object on THIS frame (the localizer's gates: size,
+        range, height, standing out, colour) within reach of the base; else refused.
 
         Returns ``(gp | None, resolved_label, fail_result | None)``.
         """
@@ -983,7 +951,11 @@ class PerceptionGraspSkill:
                 from vector_os_nano.perception.object_localizer import detect_on
                 dets = detect_on(perception, rgb, query)
             except Exception as exc:  # noqa: BLE001
-                dets, stale = [], f"{stale}; re-detect raised {exc}"
+                return None, resolved, _fail(
+                    "perception_failed", f"The producer box for {resolved!r} is stale ({stale}) and "
+                    f"the detector failed re-detecting it: {exc}",
+                    detection_label=resolved, query=query, consumed_bbox=True, cause=str(exc),
+                )
             if not dets:
                 return None, resolved, _fail(
                     "stale_box", f"The producer box for {resolved!r} is stale ({stale}) and "
@@ -1010,7 +982,30 @@ class PerceptionGraspSkill:
                 detection_label=resolved, query=query, consumed_bbox=True,
             )
 
-        gp = grasp_point_from_rgbd(depth, rgb, mask, intrinsics, cam_xpos, cam_xmat)
+        from types import SimpleNamespace
+
+        from vector_os_nano.perception.grasp_point import grasp_point_from_points, object_points
+        from vector_os_nano.perception.object_localizer import implausible
+        from vector_os_nano.perception.vocab import vocab
+
+        pts = object_points(depth, rgb, mask, intrinsics, cam_xpos, cam_xmat)
+        gp = None if pts is None else grasp_point_from_points(*pts, cam_xpos, cam_xmat)
+        why = None if pts is None else implausible(
+            SimpleNamespace(bbox=box, confidence=confidence), mask, *pts, depth, rgb,
+            noun=vocab().noun(query), colour=color,
+        )
+        if why is None and gp is not None and base is not None:
+            pos = base.get_position()
+            far = math.hypot(gp.x - pos[0], gp.y - pos[1])
+            if far > _SCAN_MAX_LOCAL_M:
+                why = f"{far:.1f} m from the robot (beyond {_SCAN_MAX_LOCAL_M} m)"
+        if why is not None:
+            return None, resolved, _fail(
+                "implausible_box",
+                f"The producer box {box} is not a plausible {resolved!r} on the current frame: "
+                f"{why}. Look again rather than grasp it.",
+                detection_label=resolved, query=query, consumed_bbox=True, why=why,
+            )
         if gp is None:
             return None, resolved, _fail(
                 "no_depth_points",
@@ -1196,43 +1191,30 @@ class PerceptionGraspSkill:
         detection_found = False
         if use_front_resolver:
             try:
-                # Save frames for diagnosis
-                try:
-                    import cv2 as _cv2
-                    _cv2.imwrite("/tmp/pgrasp_rgb.png", rgb[:, :, ::-1] if rgb is not None else np.zeros((240,320,3),np.uint8))
-                    if depth is not None:
-                        _dvis = np.clip(depth / 3.0 * 255, 0, 255).astype(np.uint8)
-                        _cv2.imwrite("/tmp/pgrasp_depth.png", _dvis)
-                except Exception:
-                    pass
                 mask = perception.front_object_mask(rgb, depth, color=color)
                 _mask_px = int(np.count_nonzero(mask)) if mask is not None else 0
                 _d_valid = int((depth > 0).sum()) if depth is not None else -1
                 _d_near = int(((depth > 0) & (depth <= 2.0)).sum()) if depth is not None else -1
                 _d_min = float(depth[depth > 0].min()) if depth is not None and (depth > 0).any() else -1
                 _d_med = float(np.median(depth[depth > 0])) if depth is not None and (depth > 0).any() else -1
-                # Save mask overlay
-                try:
-                    if mask is not None and rgb is not None:
-                        _overlay = rgb.copy()
-                        _overlay[mask > 0] = [255, 0, 0]  # red highlight
-                        _cv2.imwrite("/tmp/pgrasp_mask.png", _overlay[:, :, ::-1])
-                except Exception:
-                    pass
                 logger.info(
                     "[PGRASP] front_object_mask: mask_px=%d valid_depth=%d "
                     "near_depth(<=2m)=%d d_min=%.3f d_med=%.3f",
                     _mask_px, _d_valid, _d_near, _d_min, _d_med,
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[PGRASP] front_object_mask raised: %s", exc)
+                return None, resolved, _fail(
+                    "perception_failed", f"The front-object resolver failed: {exc}",
+                    query=query, cause=str(exc))
         else:
             try:
                 from vector_os_nano.perception.object_localizer import detect_on
                 detections = detect_on(perception, rgb, query)
             except Exception as exc:  # noqa: BLE001 — a missing model is not "found nothing"
-                return None, resolved, _fail("perception_failed", f"The detector failed for {query!r}: "
-                                             f"{type(exc).__name__}: {exc}", query=query)
+                return None, resolved, _fail(
+                    "perception_failed",
+                    f"The object detector failed on {query!r}: {type(exc).__name__}: {exc}. "
+                    "Nothing was grasped (never a substitute target).", query=query, cause=str(exc))
             if detections:
                 detection_found = True
                 # PERCEPTUAL colour selection (D48 caveat 1): grounding-dino is
@@ -1254,11 +1236,7 @@ class PerceptionGraspSkill:
                 except Exception as exc:  # noqa: BLE001 — the segmenter's own failure, with its cause
                     return None, resolved, _fail("perception_failed", f"The segmenter failed for {resolved!r}: "
                                                  f"{type(exc).__name__}: {exc}",
-                                                 detection_label=resolved, query=query)
-            elif have_front:
-                logger.info("[PGRASP] VLM empty for %r -> front-object fallback", query)
-                mask = perception.front_object_mask(rgb, depth)
-                resolved = query or "front object"
+                                                 detection_label=resolved, query=query, cause=str(exc))
 
         if mask is None or int(np.count_nonzero(mask)) == 0:
             if detection_found:

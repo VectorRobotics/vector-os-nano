@@ -34,7 +34,7 @@ def discover_all_tools() -> list:
     """
     from vector_os_nano.vcli.tools.bash_tool import BashTool
     from vector_os_nano.vcli.tools.file_tools import FileEditTool, FileReadTool, FileWriteTool
-    from vector_os_nano.vcli.tools.robot import RobotStatusTool, WorldQueryTool
+    from vector_os_nano.vcli.tools.robot import RobotStatusTool
     from vector_os_nano.vcli.tools.search_tools import GlobTool, GrepTool
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
     from vector_os_nano.vcli.tools.web_tool import WebFetchTool
@@ -51,7 +51,6 @@ def discover_all_tools() -> list:
         BashTool(),
         GlobTool(),
         GrepTool(),
-        WorldQueryTool(),
         RobotStatusTool(),
         SimStartTool(),
         SimStopTool(),

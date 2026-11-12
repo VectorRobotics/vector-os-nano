@@ -5,16 +5,11 @@
 
 A room name resolves (aliases, SceneGraph) to its learned centre; a coordinate
 goal ({x, y} / target) goes straight to the base's planner. Both drive
-``base.navigate_to``:
-
-- an in-process base returns a ``NavResult`` from the ONE global planner
-  (sim/nav): its ``reason`` is reported and there is no door-chain retry (it would
-  re-run the same plan);
-- a bool-returning base (a ROS2 proxy over FAR) keeps the SceneGraph door-chain
-  fallback when its planner gives up.
+``base.navigate_to``, which returns a ``NavResult`` from the ONE global planner
+(sim/nav): its ``reason`` is reported.
 
 A room visit is recorded only after a verified arrival (never on failure: the
-SceneGraph centres feed the legacy verify). Room positions and door coordinates
+SceneGraph centres feed the legacy verify). Room positions
 come from the SceneGraph; no hardcoded coordinates. No ROS2 imports.
 """
 from __future__ import annotations
@@ -22,12 +17,10 @@ from __future__ import annotations
 import logging
 import math
 import sys
-import time
 from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.core.run_dir import run_path
 from vector_os_nano.sim.nav.follow import NavResult, arrival_radius
 
 logger = logging.getLogger(__name__)
@@ -85,17 +78,11 @@ _ROOM_ALIASES: dict[str, str] = {
     "洗衣房": "hallway",
 }
 
-_DOORCHAIN_ARRIVAL_RADIUS: float = 0.8  # meters -- arrival threshold for nav stack door-chain
-
 _MIN_VISIT_COUNT: int = 1  # trust SceneGraph position after first visit
 
-# Coordinate-goal navigation (R38). A cross-room FAR leg takes ~30-50 s over the
-# lidar terrain map (probe v2: 32 s clean, 41 s through furniture), so the nav
-# budget must exceed that or the dog times out mid-drive. The VICINITY radius is
-# the step-success threshold (generous: FAR arrival radius 0.8 m + margin) — NOT
-# the honest arrival grade, which is the at_position(tol 0.5 m) verify oracle.
+# Coordinate-goal navigation (R38). A cross-room leg takes ~30-50 s, so the nav
+# budget must exceed that or the dog times out mid-drive.
 _COORD_NAV_TIMEOUT_S: float = 90.0
-_COORD_VICINITY_RADIUS_M: float = 1.5
 
 
 # ---------------------------------------------------------------------------
@@ -175,23 +162,9 @@ def _fuzzy_room_match(query: str, room_ids: list[str]) -> str | None:
     return best if best_score > 0 else None
 
 
-def _angle_between(x1: float, y1: float, x2: float, y2: float) -> float:
-    """Bearing angle from (x1,y1) to (x2,y2) in radians."""
-    return math.atan2(y2 - y1, x2 - x1)
-
-
 def _distance(x1: float, y1: float, x2: float, y2: float) -> float:
     """Euclidean distance between two 2-D points."""
     return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
-
-def _normalize_angle(a: float) -> float:
-    """Normalize angle to [-pi, pi]."""
-    while a > math.pi:
-        a -= 2 * math.pi
-    while a < -math.pi:
-        a += 2 * math.pi
-    return a
 
 
 def _cancel_exploration() -> None:
@@ -224,31 +197,13 @@ def _get_room_center_from_memory(
     """Look up explored room center from spatial memory (SceneGraph).
 
     Only trusts positions that have visit_count >= _MIN_VISIT_COUNT
-    (not just a doorway drive-by).
-
-    Uses get_room() if available (SceneGraph API), otherwise falls back
-    to the older get_location() API (legacy SpatialMemory).
-
-    Returns None if room not in memory or position not trustworthy.
+    (not just a doorway drive-by). Returns None if the room is not in memory or
+    its position is not trustworthy.
     """
-    # SceneGraph direct API — preferred, enforces visit_count threshold
-    if hasattr(memory, "get_room"):
-        room_node = memory.get_room(room_key)
-        if room_node is not None:
-            if (room_node.center_x != 0.0 or room_node.center_y != 0.0) and room_node.visit_count >= _MIN_VISIT_COUNT:
-                return (room_node.center_x, room_node.center_y)
-        # get_room is present but room not found or insufficient visits — do not
-        # fall through to get_location(), which would bypass the visit threshold.
-        return None
-
-    # Backward-compatible get_location() API (legacy SpatialMemory only)
-    if hasattr(memory, "get_location"):
-        loc = memory.get_location(room_key)
-        if loc is not None:
-            x, y = getattr(loc, "x", 0.0), getattr(loc, "y", 0.0)
-            if x != 0.0 or y != 0.0:
-                return (x, y)
-
+    room_node = memory.get_room(room_key)
+    if room_node is not None:
+        if (room_node.center_x != 0.0 or room_node.center_y != 0.0) and room_node.visit_count >= _MIN_VISIT_COUNT:
+            return (room_node.center_x, room_node.center_y)
     return None
 
 
@@ -261,14 +216,13 @@ def _get_room_center_from_memory(
         "navigate", "go to", "goto",
         "去", "到", "走到", "去到", "导航",
     ],
-    direct=True,
 )
 class NavigateSkill:
     """Navigate the robot to a named room (or a world coordinate).
 
-    The base's own planner (``navigate_to``) drives; a base without one walks the
-    SceneGraph door chain. Room coordinates come exclusively from the SceneGraph.
-    Works with ANY BaseProtocol implementation (not Go2-specific).
+    The base's own planner (``navigate_to``) drives; a base without one cannot
+    navigate. Room coordinates come exclusively from the SceneGraph. Works with ANY
+    BaseProtocol implementation (not Go2-specific).
     """
 
     name: str = "navigate"
@@ -353,18 +307,13 @@ class NavigateSkill:
 
         _cancel_exploration()
 
-        # Ensure nav flag exists so bridge path follower is armed
-        try:
-            import os
-            if not os.path.exists(run_path("vector_nav_active")):
-                with open(run_path("vector_nav_active"), "w") as fh:
-                    fh.write("1")
-        except Exception:
-            pass
-
-        if hasattr(context.base, "navigate_to"):
-            return self._navigate_with_proxy(room_key, target, context)
-        return self._dead_reckoning(room_key, context)
+        if not callable(getattr(context.base, "navigate_to", None)):
+            return SkillResult(
+                success=False,
+                error_message="Room navigation needs a planner (base.navigate_to absent).",
+                diagnosis_code="navigation_failed",
+            )
+        return self._navigate_to_room(room_key, target, context)
 
     # ------------------------------------------------------------------
     # Navigation modes (private)
@@ -399,12 +348,12 @@ class NavigateSkill:
         coord: tuple[float, float],
         context: SkillContext,
     ) -> SkillResult:
-        """Drive the base to a world coordinate via the FAR planner (navigate_to).
+        """Drive the base to a world coordinate via its planner (navigate_to).
 
-        Used for a coordinate navigate goal (no SceneGraph room). Honest: the
-        step's success is the planner's own arrival verdict and the actual landing
-        position is reported; the at_position verify oracle (RAN) is what grades the
-        step. If the base lacks navigate_to (no nav stack) we fail loud.
+        Used for a coordinate navigate goal (no SceneGraph room). The step succeeds
+        only when the planner's own ``NavResult`` says it arrived; an aborted, fallen,
+        stalled or unreachable run fails with that reason, wherever it stopped. If the
+        base lacks navigate_to (no planner) we fail loud.
         """
         base = context.base
         tx, ty = coord
@@ -416,18 +365,8 @@ class NavigateSkill:
                 diagnosis_code="navigation_failed",
             )
 
-        # A running exploration would otherwise freeze (its nav flag is removed
-        # below) while is_exploring() stays True (skills-nav:missed2).
+        # A running exploration would otherwise keep driving (skills-nav:missed2).
         _cancel_exploration()
-
-        # Ensure the bridge path follower is armed (same as the room path).
-        try:
-            import os
-            if not os.path.exists(run_path("vector_nav_active")):
-                with open(run_path("vector_nav_active"), "w") as fh:
-                    fh.write("1")
-        except Exception:
-            pass
 
         logger.info("[NAV] Coordinate goal -> navigate_to(%.2f, %.2f) via FAR", tx, ty)
 
@@ -435,26 +374,9 @@ class NavigateSkill:
             print(f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed)}s",
                   file=sys.stderr, flush=True)
 
-        try:
-            nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress)
-        except TypeError:
-            # A base whose navigate_to does not accept the extra kwargs.
-            nav = navigate_to(tx, ty)
-        ok = bool(nav)
+        nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress)
 
-        # HOLD at the goal. navigate_to leaves the dog under the planner/TARE,
-        # which keeps publishing /way_point and DRIFTS the dog away from the goal
-        # (observed: dog wandered to (7.7, 4.5) before the next skill perceived).
-        # A downstream manipulation step needs the dog STATIONARY at the table, so
-        # disarm the nav flag and stop the base now. (Symmetric with how a stop
-        # command clears the flag; the proxy's loops treat the missing flag as
-        # "no active nav".)
-        try:
-            import os
-            if os.path.exists(run_path("vector_nav_active")):
-                os.remove(run_path("vector_nav_active"))
-        except Exception:
-            pass
+        # HOLD at the goal: a downstream manipulation step needs the dog stationary.
         try:
             if callable(getattr(base, "stop", None)):
                 base.stop()
@@ -465,44 +387,29 @@ class NavigateSkill:
 
         pos = base.get_position()
         dist = _distance(pos[0], pos[1], tx, ty)
-        # The skill SUCCEEDS when it ran and the dog is in the goal's VICINITY — FAR
-        # may time out / not raise its arrival flag yet still leave the dog close
-        # (it drives over a lidar terrain map at variable speed). Step success only
-        # gates whether DEPENDENTS run; the honest arrival grade is the at_position
-        # verify oracle (RAN, tol 0.5 m). So we use a GENEROUS vicinity radius here
-        # (the FAR arrival radius 0.8 m + margin) — not a strict re-check — to avoid
-        # falsely failing the chain when the dog is geometrically at the table but
-        # FAR's bool timed out. Genuinely-far (FAR couldn't route) -> still fail loud.
-        arrived = ok or dist <= _COORD_VICINITY_RADIUS_M
+        arrived = bool(nav)
         return SkillResult(
             success=arrived,
             error_message="" if arrived else (
-                f"navigate_to({tx}, {ty}) did not reach the goal vicinity "
-                f"(ended {dist:.1f} m away)"),
-            diagnosis_code=None if arrived else "navigation_failed",
+                f"navigate_to({tx}, {ty}) failed: {nav.reason} (ended {dist:.1f} m away)"),
+            diagnosis_code="" if arrived else "navigation_failed",
             result_data={
                 "target": [round(tx, 1), round(ty, 1)],
                 "position": [round(pos[0], 1), round(pos[1], 1)],
                 "distance_to_target": round(dist, 1),
-                "far_confirmed": ok,
-                "mode": "planner_coord" if isinstance(nav, NavResult) else "proxy_coord",
-                **({"reason": nav.reason, "target_planned": nav["target"]}
-                   if isinstance(nav, NavResult) else {}),
+                "reason": nav.reason,
+                "target_planned": nav.get("target"),
             },
         )
 
-    def _navigate_with_proxy(
+    def _navigate_to_room(
         self,
         room_key: str,
         target: tuple[float, float],
         context: SkillContext,
     ) -> SkillResult:
-        """Drive to the room centre through the base's own planner (navigate_to).
-
-        A ``NavResult`` (the in-process global planner) is final: its reason is
-        reported and no door chain is retried. A bool base (the ROS2 proxy over
-        FAR) falls back to the SceneGraph door chain when its planner gives up.
-        """
+        """Drive to the room centre through the base's own planner (navigate_to);
+        its ``NavResult`` is final and its reason is reported."""
         logger.info(
             "[NAV] Planner -> room=%s target=(%.1f, %.1f)",
             room_key, target[0], target[1],
@@ -518,16 +425,13 @@ class NavigateSkill:
         nav_result = context.base.navigate_to(target[0], target[1], on_progress=_progress)
         pos = context.base.get_position()
         dist = _distance(pos[0], pos[1], target[0], target[1])
-        planner = isinstance(nav_result, NavResult)
         data = {
             "room": room_key,
             "target": [round(target[0], 1), round(target[1], 1)],
             "position": [round(pos[0], 1), round(pos[1], 1)],
             "distance_to_target": round(dist, 1),
-            "mode": "planner" if planner else "proxy_nav_stack",
+            "reason": nav_result.reason,
         }
-        if planner:
-            data["reason"] = nav_result.reason
 
         if nav_result:
             # Record the visit only after a verified arrival (skills-nav:
@@ -536,156 +440,12 @@ class NavigateSkill:
             if memory is not None and dist <= arrival_radius():
                 memory.visit(room_key, pos[0], pos[1])
             return SkillResult(success=True, result_data=data)
-
-        if planner:
-            return SkillResult(
-                success=False,
-                error_message=(
-                    f"Navigation to {room_key} failed: {nav_result.reason} "
-                    f"(ended {dist:.1f} m from the target)"
-                ),
-                diagnosis_code="navigation_failed",
-                result_data=data,
-            )
-        logger.warning("[NAV] Proxy navigate_to failed; falling back to the door chain")
-        return self._dead_reckoning(room_key, context)
-
-    def _dead_reckoning(
-        self,
-        room_key: str,
-        context: SkillContext,
-        total_timeout: float = 45.0,
-    ) -> SkillResult:
-        """Navigate via nav stack door chain using SceneGraph waypoints.
-
-        Publishes each waypoint to /way_point via base.navigate_to() so the
-        localPlanner handles obstacle avoidance.  The total_timeout budget is
-        divided dynamically across remaining waypoints (min 5s each); arrival
-        is confirmed when within _DOORCHAIN_ARRIVAL_RADIUS meters of target.
-        """
-        base = context.base
-        sg = context.services.get("spatial_memory")
-
-        pos = base.get_position()
-        cx, cy = pos[0], pos[1]
-        src_room = _detect_current_room(cx, cy, sg=sg)
-
-        # Get door chain from SceneGraph
-        if sg is None or not hasattr(sg, "get_door_chain"):
-            return SkillResult(
-                success=False,
-                error_message="No door data. Explore first.",
-                diagnosis_code="room_not_explored",
-            )
-
-        # Check if already at destination
-        target_room_node = sg.get_room(room_key) if hasattr(sg, "get_room") else None
-        if target_room_node is not None:
-            target_cx = target_room_node.center_x
-            target_cy = target_room_node.center_y
-            if _distance(cx, cy, target_cx, target_cy) < _DOORCHAIN_ARRIVAL_RADIUS:
-                return SkillResult(
-                    success=True,
-                    result_data={
-                        "room": room_key,
-                        "position": [round(cx, 1), round(cy, 1)],
-                        "note": "already here",
-                    },
-                )
-
-        logger.info("[NAV] Door-chain (nav stack): %s -> %s", src_room, room_key)
-
-        # Get waypoint sequence from SceneGraph door chain
-        waypoints = sg.get_door_chain(src_room, room_key)
-
-        if not waypoints:
-            return SkillResult(
-                success=False,
-                error_message=(
-                    f"No door data between '{src_room}' and '{room_key}'. "
-                    "Explore first."
-                ),
-                diagnosis_code="room_not_explored",
-            )
-
-        # Execute each waypoint via nav stack (obstacle avoidance)
-        # Dynamic per-waypoint timeout: divide remaining budget evenly across
-        # remaining waypoints, but never less than 5s per waypoint.
-        start_time = time.monotonic()
-
-        for i, (wx, wy, label) in enumerate(waypoints):
-            # --- Abort check between waypoints ---
-            try:
-                from vector_os_nano.vcli.cognitive.abort import is_abort_requested
-                if is_abort_requested():
-                    return SkillResult(
-                        success=False,
-                        error_message="Navigation aborted",
-                        diagnosis_code="aborted",
-                    )
-            except ImportError:
-                pass
-
-            # Compute remaining budget for this waypoint
-            elapsed = time.monotonic() - start_time
-            remaining = total_timeout - elapsed
-            if remaining <= 0:
-                return SkillResult(
-                    success=False,
-                    error_message="Navigation timeout",
-                    diagnosis_code="navigation_failed",
-                )
-            n_remaining = len(waypoints) - i
-            per_wp = max(remaining / n_remaining, 5.0)
-
-            # Check arrival before sending — skip waypoint if already close enough
-            cur_pos = base.get_position()
-            if _distance(cur_pos[0], cur_pos[1], wx, wy) < _DOORCHAIN_ARRIVAL_RADIUS:
-                logger.info("[NAV] Already within %.1fm of %s — skipping", _DOORCHAIN_ARRIVAL_RADIUS, label)
-                continue
-
-            logger.info(
-                "[NAV] Navigate to waypoint %s (%.1f, %.1f) timeout=%.0fs",
-                label, wx, wy, per_wp,
-            )
-            cur_pos2 = base.get_position()
-            seg_dist = _distance(cur_pos2[0], cur_pos2[1], wx, wy)
-            print(
-                f"  >> 前往 {label} (距离 {seg_dist:.1f}m)",
-                file=sys.stderr,
-                flush=True,
-            )
-
-            def _progress(dist: float, elapsed_s: float) -> None:
-                print(
-                    f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed_s)}s",
-                    file=sys.stderr,
-                    flush=True,
-                )
-
-            # Use go_to_waypoint (simple /way_point) to avoid recursive
-            # navigate_to → FAR probe → door-chain → navigate_to cascade.
-            _go_fn = getattr(base, "go_to_waypoint", None) or base.navigate_to
-            ok = _go_fn(
-                float(wx), float(wy),
-                timeout=per_wp,
-                on_progress=_progress,
-            )
-            if not ok:
-                # navigate_to returned False — timed out or rejected by nav stack
-                return SkillResult(
-                    success=False,
-                    error_message=f"Navigation timed out near {label}",
-                    diagnosis_code="navigation_failed",
-                )
-
-        final_pos = base.get_position()
         return SkillResult(
-            success=True,
-            result_data={
-                "room": room_key,
-                "from_room": src_room,
-                "position": [round(final_pos[0], 1), round(final_pos[1], 1)],
-                "mode": "dead_reckoning",
-            },
+            success=False,
+            error_message=(
+                f"Navigation to {room_key} failed: {nav_result.reason} "
+                f"(ended {dist:.1f} m from the target)"
+            ),
+            diagnosis_code="navigation_failed",
+            result_data=data,
         )

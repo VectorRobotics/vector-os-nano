@@ -6,7 +6,7 @@
 Tests verify:
 - Each skill has correct name, description, parameters, pre/postconditions, effects
 - All skills satisfy the Skill runtime-checkable Protocol
-- get_default_skills() returns all 5 skills
+- get_so101_skills() returns the SO-101 set
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from vector_os_nano.skills import (
     PickSkill,
     PlaceSkill,
     ScanSkill,
-    get_default_skills,
+    get_so101_skills,
 )
 
 
@@ -47,14 +47,11 @@ class TestHomeSkillSchema:
         """HomeSkill is always executable — no preconditions."""
         assert self.skill.preconditions == []
 
-    def test_postconditions(self):
-        assert "gripper_empty" in self.skill.postconditions
-
-    def test_effects_gripper_open(self):
-        assert self.skill.effects.get("gripper_state") == "open"
-
-    def test_effects_held_object_none(self):
-        assert self.skill.effects.get("held_object") is None
+    def test_home_declares_no_release(self):
+        """Home keeps a held object, so it is never read as a place (native loop)."""
+        assert "held_object" not in self.skill.effects
+        assert "gripper_state" not in self.skill.effects
+        assert self.skill.postconditions == []
 
     def test_effects_is_moving_false(self):
         assert self.skill.effects.get("is_moving") is False
@@ -162,12 +159,11 @@ class TestPickSkillSchema:
         assert "gripper_empty" in self.skill.preconditions
 
     def test_postconditions_empty(self):
-        # Pick ends with drop — no postconditions
         assert self.skill.postconditions == []
 
-    def test_effects_gripper_state_open(self):
-        # Pick ends with drop
-        assert self.skill.effects.get("gripper_state") == "open"
+    def test_effects_gripper_state_holding(self):
+        # The default pick holds what it picked (its verify_hint is holding_object)
+        assert self.skill.effects.get("gripper_state") == "holding"
 
     def test_satisfies_skill_protocol(self):
         assert isinstance(self.skill, Skill)
@@ -220,16 +216,19 @@ class TestPlaceSkillSchema:
 
 
 # ---------------------------------------------------------------------------
-# get_default_skills
+# get_so101_skills
 # ---------------------------------------------------------------------------
 
+_SO101_SET = {"stop", "home", "scan", "describe", "detect", "pick", "place", "handover",
+              "gripper_open", "gripper_close", "wave"}
 
-class TestGetDefaultSkills:
+
+class TestGetSo101Skills:
     def setup_method(self):
-        self.skills = get_default_skills()
+        self.skills = get_so101_skills()
 
     def test_returns_all_skills(self):
-        assert len(self.skills) == 9
+        assert len(self.skills) == len(_SO101_SET)
 
     def test_all_satisfy_skill_protocol(self):
         for skill in self.skills:
@@ -239,7 +238,7 @@ class TestGetDefaultSkills:
 
     def test_all_skill_names_present(self):
         names = {s.name for s in self.skills}
-        assert names == {"home", "scan", "describe", "detect", "pick", "place", "gripper_open", "gripper_close", "wave"}
+        assert names == _SO101_SET
 
     def test_all_skills_have_descriptions(self):
         for skill in self.skills:
@@ -293,14 +292,14 @@ class TestPickPerceptionSampling:
         arm.move_joints.return_value = True
         gripper = MagicMock()
         wm = world_model or WorldModel()
-        # identity calibration so camera=base
-        cal_matrix = np.eye(4)
+        from vector_os_nano.perception.calibration import Calibration
+
         return SkillContext(
             arm=arm,
             gripper=gripper,
             perception=perception,
             world_model=wm,
-            calibration={"transform_matrix": cal_matrix.tolist()},
+            calibration=Calibration(),  # identity: camera = base
             config={},
         )
 

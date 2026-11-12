@@ -51,6 +51,9 @@ class _Gripper:
     def open(self) -> None:
         self.opened = True
 
+    def is_holding(self) -> bool:
+        return False
+
 
 def test_home_adapts_to_6dof_piper():
     arm = _ArmWithDof()

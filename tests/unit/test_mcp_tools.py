@@ -37,8 +37,6 @@ SAMPLE_SKILL_SCHEMA = {
         },
     },
     "aliases": ["grab", "grasp"],
-    "direct": False,
-    "auto_steps": ["scan", "detect", "pick"],
 }
 
 DETECT_SKILL_SCHEMA = {
@@ -52,8 +50,6 @@ DETECT_SKILL_SCHEMA = {
         }
     },
     "aliases": ["find"],
-    "direct": False,
-    "auto_steps": ["scan", "detect"],
 }
 
 HOME_SKILL_SCHEMA = {
@@ -61,8 +57,6 @@ HOME_SKILL_SCHEMA = {
     "description": "Move arm to home position",
     "parameters": {},
     "aliases": ["go home"],
-    "direct": True,
-    "auto_steps": [],
 }
 
 ALL_OPTIONAL_SCHEMA = {
@@ -81,8 +75,6 @@ ALL_OPTIONAL_SCHEMA = {
         },
     },
     "aliases": ["put"],
-    "direct": False,
-    "auto_steps": [],
 }
 
 
@@ -174,10 +166,10 @@ class TestSkillSchemaAllOptional:
 class TestSkillsToMcpTools:
     def _make_registry(self) -> "SkillRegistry":
         from vector_os_nano.core.skill import SkillRegistry
-        from vector_os_nano.skills import get_default_skills
+        from vector_os_nano.skills import get_so101_skills
 
         registry = SkillRegistry()
-        for s in get_default_skills():
+        for s in get_so101_skills():
             registry.register(s)
         return registry
 

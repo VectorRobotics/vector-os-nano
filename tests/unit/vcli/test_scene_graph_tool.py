@@ -31,8 +31,9 @@ def _make_test_sg() -> SceneGraph:
 
 
 def _make_context(sg: SceneGraph | None) -> MagicMock:
+    """The live agent (the REPL's app_state one) carries the spatial memory."""
     ctx = MagicMock(spec=ToolContext)
-    ctx.app_state = {"scene_graph": sg}
+    ctx.app_state = {"agent": MagicMock(_spatial_memory=sg)}
     return ctx
 
 
@@ -306,5 +307,15 @@ class TestEmptySceneGraph:
     def test_missing_app_state_returns_error(self, tool):
         ctx = MagicMock(spec=ToolContext)
         ctx.app_state = None
+        ctx.agent = None
         result = tool.execute({"query_type": "rooms"}, ctx)
         assert result.is_error
+
+    def test_the_live_agents_memory_not_a_stale_cached_one(self, tool):
+        """The REPL cached app_state['scene_graph'] at start (None in the dev world), so
+        the tool failed on every body started later by NL."""
+        sg = _make_test_sg()
+        ctx = _make_context(sg)
+        ctx.app_state["scene_graph"] = None
+        result = tool.execute({"query_type": "rooms"}, ctx)
+        assert not result.is_error, result.content
