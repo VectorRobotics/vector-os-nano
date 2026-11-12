@@ -29,6 +29,7 @@ from prompt_toolkit.styles import Style as PTStyle
 from rich.markup import escape
 from rich.prompt import Prompt
 
+from vector_os_nano.schemas import paths
 from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.render import TEAL, console, print_banner, render_turn
 from vector_os_nano.vcli.runtime import flush, run_turn
@@ -330,8 +331,8 @@ def run_repl(rt: Any) -> None:
     console.print(f"[dim]Session: {session.session_id}[/dim]\n")
 
     # REPL setup
-    history_dir = Path.home() / ".vector"
-    history_dir.mkdir(parents=True, exist_ok=True)
+    history = paths.history_file()
+    history.parent.mkdir(parents=True, exist_ok=True)
 
     def _get_toolbar() -> HTML:
         agent_now = app_state.get("agent")
@@ -349,7 +350,7 @@ def run_repl(rt: Any) -> None:
         return HTML(f' {" | ".join(parts)} ')
 
     pt_session: PromptSession = PromptSession(
-        history=FileHistory(str(history_dir / "history")),
+        history=FileHistory(str(history)),
         completer=VectorCompleter(),
         complete_while_typing=True,
         style=PT_STYLE,

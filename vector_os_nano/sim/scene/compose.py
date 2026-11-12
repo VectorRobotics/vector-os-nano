@@ -21,15 +21,15 @@ from typing import Any, Sequence
 import mujoco as mj
 
 from vector_os_nano.interfaces.physics import CompiledScene
+from vector_os_nano.schemas import paths
 from vector_os_nano.sim.scene.compiled import compiled_scene
 
 _REPO = Path(__file__).resolve().parents[3]
 
 
 def scene_cache_dir() -> Path:
-    """Where generated scenes live: a user cache dir, never the package tree."""
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "vector_os_nano" / "scenes"
+    """Where generated scenes live: the state directory's cache, never the package tree."""
+    return paths.scene_cache()
 
 
 def write_scene(stem: str, text: str) -> Path:

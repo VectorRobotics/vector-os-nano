@@ -85,19 +85,19 @@ def test_latest_is_never_an_empty_or_a_print_session(tmp_path: Path) -> None:
     assert get_latest_session(directory=tmp_path).session_id == repl.session_id
 
 
-def test_session_default_directory_follows_home_at_call_time(
+def test_session_default_directory_follows_vector_home_at_call_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The default dir is ~/.vector/sessions resolved per call, not at import.
+    """The default dir is $VECTOR_HOME/sessions resolved per call, not at import.
 
     Regression (tests:dotenv-credential-leak): an import-time constant ignored a
-    test's HOME override, so in-process REPL tests wrote into the real ~/.vector.
+    test's override, so in-process REPL tests wrote into the real ~/.vector.
     """
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / "state"))
     session = create_session()
     session.append_user("hi")
     session.save()
-    assert (tmp_path / ".vector" / "sessions" / f"{session.session_id}.jsonl").exists()
+    assert (tmp_path / "state" / "sessions" / f"{session.session_id}.jsonl").exists()
     assert get_latest_session().session_id == session.session_id
 
 

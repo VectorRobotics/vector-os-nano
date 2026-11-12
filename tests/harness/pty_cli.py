@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from vector_os_nano.schemas import paths
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The fixed sentinel the child prints on stdout (see vcli.verdict.VERDICT_SENTINEL).
@@ -113,17 +115,18 @@ def _child_env(*, live: bool, home_prefix: str) -> tuple[dict[str, str], str]:
         # No external CMU nav stack either: every --sim-go2 child would start it
         # (and rviz2) in its own sessions, outliving the child on a shared box.
         env["VECTOR_NAV_STACK"] = ""
-    # Per-run HOME: a compiled template / session / history from a prior run must
-    # never leak into this one, and the developer's real ~/.vector stays untouched.
+    # Per-run HOME and VECTOR_HOME: a session / history / memory from a prior run must
+    # never leak into this one, and the developer's real state directory stays untouched.
     # Model weights are a read-only shared cache, not run state: keep finding them
     # (perception loads its pinned weights from the HF cache).
     env.setdefault("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
     home = tempfile.mkdtemp(prefix=home_prefix)
     env["HOME"] = home
+    env["VECTOR_HOME"] = str(Path(home) / ".vector")
+    (Path(home) / ".vector").mkdir()
     # So are the robot assets scripts/fetch_assets.py provisioned (linked, never written).
-    provisioned = Path.home() / ".vector" / "assets"
+    provisioned = paths.home() / "assets"
     if provisioned.is_dir():
-        (Path(home) / ".vector").mkdir()
         (Path(home) / ".vector" / "assets").symlink_to(provisioned)
     return env, home
 

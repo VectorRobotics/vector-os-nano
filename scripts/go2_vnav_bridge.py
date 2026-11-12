@@ -70,7 +70,8 @@ from std_msgs.msg import Float32, Header
 from tf2_ros import TransformBroadcaster
 import numpy as np
 
-from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+from vector_os_nano.hardware.sim.mujoco_go2 import _ROOM_XML, MuJoCoGo2
+from vector_os_nano.schemas import paths
 from vector_os_nano.hardware.sim.sim_clock import sim_tick_dt
 from vector_os_nano.core.run_dir import run_path
 
@@ -206,7 +207,7 @@ class TerrainAccumulator:
 class Go2VNavBridge(Node):
     """ROS2 node bridging MuJoCoGo2 to Vector Navigation Stack."""
 
-    def __init__(self, go2: MuJoCoGo2, camera: Any, quiet: bool = False) -> None:
+    def __init__(self, go2: MuJoCoGo2, camera: Any, *, terrain_map: os.PathLike, quiet: bool = False) -> None:
         super().__init__("go2_vnav_bridge")
         self._go2 = go2
         self._camera = camera  # the head camera (sim/drivers/camera.Camera)
@@ -347,7 +348,7 @@ class Go2VNavBridge(Node):
         # Terrain persistence — accumulates pointcloud voxels during explore.
         # Auto-saved every 30s while nav is active.
         self._terrain_acc = TerrainAccumulator(voxel_size=0.1)
-        self._terrain_map_path = os.path.expanduser("~/.vector_os_nano/terrain_map.npz")
+        self._terrain_map_path = str(terrain_map)  # $VECTOR_HOME/memory/<world>/terrain_map.npz
         self.create_timer(30.0, self._auto_save_terrain)
 
         # Reset pose check (1 Hz) — triggered by /tmp/vector_reset_pose file flag
@@ -377,7 +378,7 @@ class Go2VNavBridge(Node):
         self._terrain_replay_count: int = 0
         self._terrain_replay_max: int = 50  # 5Hz × 10s = 50 frames (longer burst)
         self._terrain_replay_start: float = time.time() + _REPLAY_DELAY
-        terrain_path = os.path.expanduser("~/.vector_os_nano/terrain_map.npz")
+        terrain_path = self._terrain_map_path
         if os.path.isfile(terrain_path):
             acc = TerrainAccumulator()
             if acc.load(terrain_path):
@@ -1555,7 +1556,8 @@ def main():
     from vector_os_nano.sim.drivers.camera import Camera
 
     cfg = registry.load("go2_piper" if os.environ.get("VECTOR_SIM_WITH_ARM") == "1" else "go2")
-    node = Go2VNavBridge(go2, Camera(cfg.camera, go2.runtime))
+    node = Go2VNavBridge(go2, Camera(cfg.camera, go2.runtime),
+                         terrain_map=paths.memory(_ROOM_XML.stem) / paths.TERRAIN_MAP)  # the world-less room
 
     try:
         rclpy.spin(node)

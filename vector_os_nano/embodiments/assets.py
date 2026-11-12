@@ -5,7 +5,7 @@
 
 A robot whose manifest has an ``assets:`` block names its model and policy
 relative to an asset folder: the robot's own folder when the files are shipped
-there, else ``STATE_DIR/assets/<assets.name>`` as written by
+there, else ``$VECTOR_HOME/assets/<assets.name>`` as written by
 ``scripts/fetch_assets.py``. Every declared file must be present and match its
 pinned sha256; otherwise the start fails with the exact fetch command.
 """
@@ -15,9 +15,7 @@ import hashlib
 from pathlib import Path
 
 from vector_os_nano.embodiments.config import _EMBODIMENTS_DIR, AssetsSpec, EmbodimentConfig
-
-# ponytail: ~/.vector until C1's schemas/paths.py owns the state dir ($VECTOR_HOME).
-STATE_DIR: Path = Path.home() / ".vector"
+from vector_os_nano.schemas import paths
 
 
 class AssetsMissing(RuntimeError):
@@ -48,7 +46,7 @@ def problems(spec: AssetsSpec, folder: Path) -> dict[str, str]:
 
 
 def fetched_dir(spec: AssetsSpec) -> Path:
-    return STATE_DIR / "assets" / spec.name
+    return paths.assets(spec.name)
 
 
 def asset_dir(cfg: EmbodimentConfig) -> Path:

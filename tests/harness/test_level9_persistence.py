@@ -5,7 +5,7 @@
 
 All tests are pure Python — no MuJoCo, no real API calls, no hardware.
 A temporary directory is used as the persist_path so the real
-~/.vector_os_nano/scene_graph.yaml is never touched.
+$VECTOR_HOME/memory/<world>/scene_graph.yaml is never touched.
 
 Test classes
 ------------

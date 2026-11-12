@@ -180,13 +180,13 @@ def test_go2_piper_scene_compiles_from_a_relocated_checkout(tmp_path) -> None:
     cache = tmp_path / "cache"
     out = subprocess.run(
         [sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True,
-        env={**os.environ, "PYTHONPATH": str(tmp_path), "XDG_CACHE_HOME": str(cache)},
+        env={**os.environ, "PYTHONPATH": str(tmp_path), "VECTOR_HOME": str(cache)},
         timeout=120,
     )
     assert out.returncode == 0, out.stderr[-2000:]
     mod_file, scene, nu = out.stdout.split()
-    # the package is the relocated copy; the generated scene lives in the user
-    # cache (never the package) and points at the relocated meshes
+    # the package is the relocated copy; the generated scene lives in the state
+    # directory's cache (never the package) and points at the relocated meshes
     assert mod_file.startswith(str(pkg)) and scene.startswith(str(cache))
     assert nu == "19"
     text = Path(scene).read_text()
