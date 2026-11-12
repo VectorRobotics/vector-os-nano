@@ -11,7 +11,9 @@
 Both go through :func:`observe_scene`, which explore's discovery uses too. Only
 LOCALIZED objects are ever stored (never a name at a made-up position); the room
 is the floor box the robot stands in, the VLM's room label only a hint resolved
-against the known rooms; looking never counts as visiting a room.
+against the known rooms; looking never counts as visiting a room. A name the
+detector or segmenter could not check is reported with its cause, never as
+"nothing localized"; when none could be checked the look fails (perception_failed).
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class ObserveFailed(Exception):
-    """observe_scene could not look (``code``: camera_failed / vlm_failed)."""
+    """observe_scene could not look (``code``: camera_failed / vlm_failed / perception_failed)."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -48,7 +50,8 @@ def observe_scene(
     to localize against). The detector looks for *names* plus whatever the VLM
     names (``query`` asks the VLM for that only). Localized objects go into
     *memory* via ``observe_with_viewpoint``; un-localized names are reported under
-    ``unlocalized`` and never stored.
+    ``unlocalized`` and never stored; names that could not be checked under
+    ``failed`` (``{name: cause}``). Raises :class:`ObserveFailed` when none could be.
     """
     try:
         frame = perception.capture() if callable(getattr(perception, "capture", None)) else None
@@ -70,13 +73,19 @@ def observe_scene(
             raise ObserveFailed("vlm_failed", f"VLM inference failed: {exc}") from exc
 
     asked = list(dict.fromkeys([*names, *seen]))
-    found = localize_objects_3d(perception, asked, frame) if frame is not None and asked else []
+    found, failed = localize_objects_3d(perception, asked, frame) if frame is not None and asked else ([], {})
+    if asked and len(failed) == len(asked):
+        raise ObserveFailed("perception_failed", f"Perception could not run for any of the {len(asked)} "
+                            "names, so nothing was checked (this is not an empty room): "
+                            f"{'; '.join(dict.fromkeys(failed.values()))}")
     x, y = float(pos[0]), float(pos[1])
     room = _room_of(memory, x, y, getattr(room_id, "room", None))
     summary = scene.summary if scene is not None else (
         f"Seen (detector{', no VLM' if vlm is None else ''}): "
         f"{', '.join(r.label for r in found) or 'nothing localized'}."
     )
+    if failed:
+        summary += f" {len(failed)} of {len(asked)} names could not be checked: {_causes(failed)}."
     if memory is not None and hasattr(memory, "observe_with_viewpoint"):
         try:
             memory.observe_with_viewpoint(
@@ -104,8 +113,17 @@ def observe_scene(
             }
             for r in found
         ],
-        "unlocalized": [n for n in seen if n not in localized],
+        "unlocalized": [n for n in seen if n not in localized and n not in failed],
+        "failed": failed,
     }
+
+
+def _causes(failed: dict[str, str]) -> str:
+    """'green bottle, red can: the detector failed: <cause>; ...' (one clause per cause)."""
+    by_cause: dict[str, list[str]] = {}
+    for name, cause in failed.items():
+        by_cause.setdefault(cause, []).append(name)
+    return "; ".join(f"{', '.join(names)}: {cause}" for cause, names in by_cause.items())
 
 
 def _room_of(memory: Any, x: float, y: float, hint: str | None) -> str:
@@ -149,7 +167,7 @@ class LookSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"scene_observed": True}
-    failure_modes: list[str] = ["no_base", "no_vlm", "camera_failed", "vlm_failed"]
+    failure_modes: list[str] = ["no_base", "no_vlm", "camera_failed", "vlm_failed", "perception_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         if context.base is None:
@@ -192,7 +210,7 @@ class DescribeSceneSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"scene_observed": True}
-    failure_modes: list[str] = ["no_base", "no_vlm", "camera_failed", "vlm_failed"]
+    failure_modes: list[str] = ["no_base", "no_vlm", "camera_failed", "vlm_failed", "perception_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """The VLM's description (or its answer to ``query``); what it names is
@@ -214,6 +232,6 @@ class DescribeSceneSkill:
         if query is not None:
             return SkillResult(success=True, result_data={
                 "query": query, "objects": data["objects"], "unlocalized": data["unlocalized"],
-                "count": len(data["objects"]) + len(data["unlocalized"]),
+                "failed": data["failed"], "count": len(data["objects"]) + len(data["unlocalized"]),
             })
         return SkillResult(success=True, result_data=data)

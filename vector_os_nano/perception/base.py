@@ -7,11 +7,34 @@ No ROS2 imports. Pure Python typing.
 """
 from __future__ import annotations
 
+import re
 from typing import Protocol, runtime_checkable
 
 import numpy as np
 
 from vector_os_nano.core.types import CameraIntrinsics, Detection, TrackedObject
+
+_GPU = re.compile(r"\bGPU (\d+)\b")
+# an absolute or home-relative path (two components or more): a machine detail
+_PATH = re.compile(r"(?<![\w.~/])~?/(?:[\w.@+-]+/)+[\w.@+-]*")
+
+
+def failure_cause(exc: BaseException) -> str:
+    """Why a camera, detector or segmenter could not run, as a tool result may say it.
+
+    Out of GPU memory is named as that, with its device (another process on the GPU
+    is the usual cause); a missing model keeps its sentence (it names the pre-fetch
+    command); anything else is ``Type: message``. No machine path: the caller logs
+    the exception itself.
+    """
+    from vector_os_nano.perception.weights import WeightsUnavailable
+
+    text = str(exc)
+    if type(exc).__name__ == "OutOfMemoryError" or "out of memory" in text.lower():
+        gpu = _GPU.search(text)
+        return f"out of GPU memory on {f'cuda:{gpu[1]}' if gpu else 'the GPU'} (another process may hold it)"
+    text = _PATH.sub("<path>", text)
+    return text if isinstance(exc, WeightsUnavailable) else f"{type(exc).__name__}: {text}"
 
 
 def detect_query(perception: object, query: str) -> list[Detection]:

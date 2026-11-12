@@ -45,6 +45,7 @@ _spatial_memory: Any = None  # SceneGraph — set by ExploreSkill.execute()
 _perception: Any = None  # CameraPerception-like — set by ExploreSkill.execute()
 _vlm: Any = None  # VLM service — set by ExploreSkill.execute()
 _vocab: list[str] = []  # the world's object names (discovery without a VLM)
+_look_failures: list[str] = []  # why looks on the way (this run) could not check every name
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,16 @@ def get_explore_status() -> dict:
         "rooms_found": sorted(_explore_visited),
         "rooms_found_count": len(_explore_visited),
         "total_expected": total,
+        **_perception_note(),
     }
+
+
+def _perception_note() -> dict[str, str]:
+    """``{"perception_failed": ...}`` when a look on the way could not check every name."""
+    if not _look_failures:
+        return {}
+    return {"perception_failed": f"{len(_look_failures)} look(s) on the way could not check every "
+                                 f"name: {'; '.join(dict.fromkeys(_look_failures))}"}
 
 
 def _own_descendants_named(name: str, root: int | None = None) -> list[int]:
@@ -200,17 +210,23 @@ class _Cancelled:
 
 def _discover(base: Any) -> None:
     """One look on the way: localize the world's objects (and the VLM's) and map
-    them (look.observe_scene); never raises into the exploration."""
+    them (look.observe_scene). Never raises into the exploration; a look that could
+    not check every name is kept, with its cause, for the explore result."""
     if _spatial_memory is None or (_vlm is None and not (_vocab and _perception is not None)):
         return
-    from vector_os_nano.skills.go2.look import observe_scene
+    from vector_os_nano.perception.base import failure_cause
+    from vector_os_nano.skills.go2.look import ObserveFailed, _causes, observe_scene
 
     try:
         data = observe_scene(getattr(base, "_base", base), _perception, _spatial_memory, _vlm, _vocab)
-        if data["objects"]:
-            _emit("objects_seen", {"room": data["room"], "objects": [o["name"] for o in data["objects"]]})
-    except Exception as exc:  # noqa: BLE001 — discovery is best-effort during exploration
-        logger.debug("[EXPLORE] discovery failed (non-blocking): %s", exc)
+    except Exception as exc:  # noqa: BLE001 — the exploration goes on; its result says why
+        logger.warning("[EXPLORE] a look on the way failed: %s: %s", type(exc).__name__, exc)
+        _look_failures.append(str(exc) if isinstance(exc, ObserveFailed) else failure_cause(exc))
+        return
+    if data["failed"]:
+        _look_failures.append(_causes(data["failed"]))
+    if data["objects"]:
+        _emit("objects_seen", {"room": data["room"], "objects": [o["name"] for o in data["objects"]]})
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +481,7 @@ class ExploreSkill:
                 )
             _explore_cancel.clear()
             _explore_visited.clear()
+            _look_failures.clear()
             _explore_backend, _explore_running = "tare", True  # before the thread starts
             _explore_thread = threading.Thread(target=_exploration_loop, args=(base,), daemon=True)
             _explore_thread.start()
@@ -501,6 +518,7 @@ class ExploreSkill:
 
         _explore_cancel.clear()
         _explore_visited.clear()
+        _look_failures.clear()
         _explore_backend, _explore_running = "coverage", True
         try:
             out = CoverageExplorer(base, cancel=_Cancelled(), on_event=on_event,
@@ -514,6 +532,7 @@ class ExploreSkill:
             "rooms_failed": out["failed"],
             "coverage": f"{len(visited)}/{total} rooms",
             "elapsed_s": out["elapsed_s"],
+            **_perception_note(),
         }
         if out["cancelled"]:
             return SkillResult(

@@ -177,8 +177,7 @@ def test_guard_full_stub_returns_true():
 
 
 def test_localize_returns_empty_when_perception_is_none():
-    result = localize_objects_3d(None, ["apple"])
-    assert result == []
+    assert localize_objects_3d(None, ["apple"]) == ([], {})
 
 
 def test_localize_returns_empty_when_perception_missing_method():
@@ -187,13 +186,11 @@ def test_localize_returns_empty_when_perception_missing_method():
         def segment(self, img, bbox): ...
         # no 'detect_in'
 
-    result = localize_objects_3d(_NoDect(), ["apple"])
-    assert result == []
+    assert localize_objects_3d(_NoDect(), ["apple"]) == ([], {})
 
 
 def test_localize_empty_queries_returns_empty():
-    result = localize_objects_3d(_StubPerception(), [])
-    assert result == []
+    assert localize_objects_3d(_StubPerception(), []) == ([], {})
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +206,9 @@ def test_localize_one_object_returns_correct_world_point():
     ahead of the camera, at its height.
     """
     perc = _StubPerception(label="apple", depth_val=_DEPTH_VAL)
-    results = localize_objects_3d(perc, ["apple"])
+    results, failed = localize_objects_3d(perc, ["apple"])
 
-    assert len(results) == 1
+    assert len(results) == 1 and failed == {}
     label, x, y, z = results[0][:4]
     assert label == "apple" and results[0].score == pytest.approx(0.9)
 
@@ -244,8 +241,8 @@ def test_localize_multiple_different_queries():
         def segment(self, image, bbox): return self._mask
 
     # Two queries on ONE spot: only one object is there, the better score keeps it.
-    results = localize_objects_3d(_TwoLabelPerc(), ["cup", "bottle"])
-    assert [r.label for r in results] == ["cup"]
+    results, failed = localize_objects_3d(_TwoLabelPerc(), ["cup", "bottle"])
+    assert [r.label for r in results] == ["cup"] and failed == {}
 
 
 def test_localize_keys_result_by_query_not_detector_label():
@@ -255,8 +252,8 @@ def test_localize_keys_result_by_query_not_detector_label():
     position; keying by det.label stored every looked object at (0, 0).
     """
     perc = _StubPerception(label="a green bottle")  # detector label != query
-    results = localize_objects_3d(perc, ["green bottle"])
-    assert len(results) == 1
+    results, failed = localize_objects_3d(perc, ["green bottle"])
+    assert len(results) == 1 and failed == {}
     assert results[0][0] == "green bottle"  # the QUERY, not "a green bottle"
 
 
@@ -269,8 +266,8 @@ def test_two_queries_on_one_spot_keep_the_better_score():
             return [Detection(label=query, bbox=_bbox_for_mask(),
                               confidence={"can": 0.5, "metal can": 0.7}[query])]
 
-    results = localize_objects_3d(_Scored(), ["can", "metal can"])
-    assert [r.label for r in results] == ["metal can"]
+    results, failed = localize_objects_3d(_Scored(), ["can", "metal can"])
+    assert [r.label for r in results] == ["metal can"] and failed == {}
 
 
 # ---------------------------------------------------------------------------
@@ -281,22 +278,22 @@ def test_two_queries_on_one_spot_keep_the_better_score():
 def test_localize_skips_object_when_no_detections():
     """No detections for the query → object absent from result, no crash."""
     perc = _StubPerceptionNoDetections()
-    results = localize_objects_3d(perc, ["apple"])
-    assert results == []
+    results, failed = localize_objects_3d(perc, ["apple"])
+    assert (results, failed) == ([], {})
 
 
 def test_localize_skips_object_when_segment_returns_none():
     """Null mask → grasp_point_from_rgbd gets no pixels → None → skip."""
     perc = _StubPerceptionNullMask()
-    results = localize_objects_3d(perc, ["apple"])
-    assert results == []
+    results, failed = localize_objects_3d(perc, ["apple"])
+    assert (results, failed) == ([], {})
 
 
-def test_localize_skips_object_when_segment_raises():
-    """A failing segment call must not propagate — skip that object."""
-    perc = _StubPerception(fail_segment=True)
-    results = localize_objects_3d(perc, ["apple"])
+def test_a_segmenter_that_raises_fails_the_query_with_its_cause():
+    """A failing segment call never propagates and is never 'nothing found'."""
+    results, failed = localize_objects_3d(_StubPerception(fail_segment=True), ["apple"])
     assert results == []
+    assert failed == {"apple": "the segmenter failed: RuntimeError: segment: simulated failure"}
 
 
 class _StubPerceptionNoDetector(_StubPerception):
@@ -314,7 +311,8 @@ def test_a_failed_localization_is_a_warning_with_its_cause(perc, cause, caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="vector_os_nano.perception.object_localizer"):
-        assert localize_objects_3d(perc, ["apple"]) == []
+        found, failed = localize_objects_3d(perc, ["apple"])
+    assert found == [] and cause in failed["apple"]
     assert any(cause in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
 
 
@@ -322,8 +320,8 @@ def test_localize_skips_object_when_mask_has_no_depth():
     """Mask over all-zero depth → grasp_point_from_rgbd returns None → skip."""
     zero_mask = np.ones((_H, _W), dtype=np.uint8)
     zero_depth_perc = _StubPerception(mask_override=zero_mask, depth_val=0.0)
-    results = localize_objects_3d(zero_depth_perc, ["apple"])
-    assert results == []
+    results, failed = localize_objects_3d(zero_depth_perc, ["apple"])
+    assert (results, failed) == ([], {})
 
 
 def test_localize_partial_failure_returns_successes():
@@ -346,8 +344,8 @@ def test_localize_partial_failure_returns_successes():
             self._calls = getattr(self, "_calls", 0) + 1
             return self._mask if self._calls == 1 else None
 
-    results = localize_objects_3d(_SelectivePerc(), ["good", "bad"])
-    assert len(results) == 1
+    results, failed = localize_objects_3d(_SelectivePerc(), ["good", "bad"])
+    assert len(results) == 1 and failed == {}
     assert results[0][0] == "good"
 
 
@@ -458,7 +456,7 @@ def test_look_skill_passes_detected_objects_when_perception_present():
     fake_loc = [Localized("apple", 1.1, 2.2, 3.3, 0.9, "edgetam")]
     with mock.patch(
         "vector_os_nano.skills.go2.look.localize_objects_3d",
-        return_value=fake_loc,
+        return_value=(fake_loc, {}),
     ) as mock_loc:
         result = skill.execute({}, ctx)
 
@@ -513,7 +511,7 @@ def test_look_skill_includes_world_coords_in_result_data():
     fake_loc = [Localized("apple", 4.0, 5.0, 6.0, 0.9, "edgetam")]
     with mock.patch(
         "vector_os_nano.skills.go2.look.localize_objects_3d",
-        return_value=fake_loc,
+        return_value=(fake_loc, {}),
     ):
         result = skill.execute({}, ctx)
 
@@ -536,7 +534,7 @@ def test_look_skill_no_world_coords_when_localization_returns_empty():
 
     with mock.patch(
         "vector_os_nano.skills.go2.look.localize_objects_3d",
-        return_value=[],
+        return_value=([], {}),
     ):
         result = skill.execute({}, ctx)
 
@@ -569,7 +567,7 @@ def test_look_without_a_vlm_localizes_the_world_vocabulary():
     ctx, mem = _no_vlm_context("apartment")
     with mock.patch(
         "vector_os_nano.skills.go2.look.localize_objects_3d",
-        return_value=[Localized("green bottle", 10.88, 3.0, 0.32, 0.6, "edgetam")],
+        return_value=([Localized("green bottle", 10.88, 3.0, 0.32, 0.6, "edgetam")], {}),
     ) as loc:
         result = LookSkill().execute({}, ctx)
     assert result.success, result.error_message
@@ -620,30 +618,117 @@ class _Scene(_StubPerception):
 
 def test_the_localizer_rejects_a_box_on_a_wall():
     """A confident box whose depth is flush with what surrounds it is a surface."""
-    assert localize_objects_3d(_Scene(obj_depth=None), ["green bottle"]) == []
+    assert localize_objects_3d(_Scene(obj_depth=None), ["green bottle"]) == ([], {})
 
 
 def test_an_object_standing_in_front_of_the_wall_is_localized():
-    (r,) = localize_objects_3d(_Scene(obj_depth=1.2), ["green bottle"])
+    (r,), _ = localize_objects_3d(_Scene(obj_depth=1.2), ["green bottle"])
     assert r.x == pytest.approx(1.2, abs=0.03) and r.z == pytest.approx(0.4, abs=0.03)
 
 
 def test_a_box_of_the_wrong_colour_is_rejected():
     """WP10: 'yellow cup' boxed on a green bottle was stored as a yellow cup."""
-    assert localize_objects_3d(_Scene(obj_depth=1.2), ["yellow cup"]) == []
-    assert localize_objects_3d(_Scene(obj_depth=1.2, rgb_fill=(240, 200, 40)), ["yellow cup"])
+    assert localize_objects_3d(_Scene(obj_depth=1.2), ["yellow cup"]) == ([], {})
+    assert localize_objects_3d(_Scene(obj_depth=1.2, rgb_fill=(240, 200, 40)), ["yellow cup"])[0]
 
 
 def test_low_scores_slivers_furniture_and_far_boxes_are_rejected():
-    assert localize_objects_3d(_Scene(obj_depth=1.2, score=0.26), ["green bottle"]) == []
+    assert localize_objects_3d(_Scene(obj_depth=1.2, score=0.26), ["green bottle"]) == ([], {})
     sliver = (2.0, 2.0, 60.0, 4.0)
-    assert localize_objects_3d(_Scene(obj_depth=1.2, box=sliver), ["green bottle"]) == []
+    assert localize_objects_3d(_Scene(obj_depth=1.2, box=sliver), ["green bottle"]) == ([], {})
     sofa = (4.0, 8.0, 60.0, 44.0)  # ~1.4 m wide at 1.2 m: no graspable object
-    assert localize_objects_3d(_Scene(obj_depth=1.2, box=sofa), ["green bottle"]) == []
-    assert localize_objects_3d(_Scene(obj_depth=5.5), ["green bottle"]) == []
+    assert localize_objects_3d(_Scene(obj_depth=1.2, box=sofa), ["green bottle"]) == ([], {})
+    assert localize_objects_3d(_Scene(obj_depth=5.5), ["green bottle"]) == ([], {})
 
 
 def test_every_query_is_detected_on_the_one_captured_frame():
     scene = _Scene(obj_depth=1.2)
     localize_objects_3d(scene, ["green bottle", "blue bottle", "red can"])
     assert len(scene.frames_seen) == 3 and len(set(scene.frames_seen)) == 1
+
+
+# ---------------------------------------------------------------------------
+# A model that cannot run is a failure with its cause, never "nothing localized"
+# (perception:look-reports-crashed-detector-as-nothing)
+# ---------------------------------------------------------------------------
+
+_OOM_TEXT = ("CUDA out of memory. Tried to allocate 20.00 MiB. GPU 0 has a total capacity of "
+             "23.53 GiB of which 3.06 MiB is free. Process 4242 has 19.80 GiB memory in use.")
+_OOM_CAUSE = "out of GPU memory on cuda:0 (another process may hold it)"
+
+
+def oom() -> BaseException:
+    """torch's own error type (no allocation: constructing it touches no GPU)."""
+    torch = pytest.importorskip("torch")
+    return torch.cuda.OutOfMemoryError(_OOM_TEXT)
+
+
+def no_weights() -> BaseException:
+    from vector_os_nano.perception.weights import WeightsUnavailable
+
+    return WeightsUnavailable("IDEA-Research/grounding-dino-tiny@a2bb814 is not in the Hugging Face "
+                              "cache and HF_HUB_OFFLINE=1 forbids fetching; pre-fetch with: "
+                              "python scripts/fetch_assets.py --weights")
+
+
+class Raising(_StubPerception):
+    """capture / detect_in / segment raise *exc* (for the queries in *only*, if given)."""
+
+    def __init__(self, where: str, exc: BaseException, only: tuple[str, ...] = ()) -> None:
+        super().__init__()
+        self._where, self._exc, self._only = where, exc, only
+
+    def _maybe(self, where: str, query: str = "") -> None:
+        if where == self._where and (not self._only or query in self._only):
+            raise self._exc
+
+    def capture(self):
+        self._maybe("capture")
+        return super().capture()
+
+    def detect_in(self, rgb, query):
+        self._maybe("detect", query)
+        return [Detection(label=query, bbox=_bbox_for_mask(), confidence=0.9)]
+
+    def segment(self, image, bbox):
+        self._maybe("segment")
+        return super().segment(image, bbox)
+
+
+_Q3 = ["green bottle", "blue bottle", "red can"]
+
+
+def test_a_capture_that_raises_fails_every_query():
+    found, failed = localize_objects_3d(Raising("capture", OSError("render context lost")), _Q3)
+    assert found == [] and failed == dict.fromkeys(_Q3, "the camera capture failed: OSError: render context lost")
+
+
+def test_a_detector_out_of_gpu_memory_is_named_with_its_device():
+    found, failed = localize_objects_3d(Raising("detect", oom()), _Q3)
+    assert found == [] and failed == dict.fromkeys(_Q3, f"the detector failed: {_OOM_CAUSE}")
+
+
+def test_a_runtime_error_with_the_oom_text_is_out_of_gpu_memory_too():
+    _found, failed = localize_objects_3d(Raising("segment", RuntimeError(_OOM_TEXT)), ["red can"])
+    assert failed == {"red can": f"the segmenter failed: {_OOM_CAUSE}"}
+
+
+def test_missing_weights_keep_the_prefetch_command():
+    _found, failed = localize_objects_3d(Raising("detect", no_weights()), ["red can"])
+    assert failed["red can"].startswith("the detector failed: IDEA-Research/grounding-dino-tiny@a2bb814 ")
+    assert failed["red can"].endswith("pre-fetch with: python scripts/fetch_assets.py --weights")
+
+
+def test_one_query_of_three_failing_names_only_that_one():
+    found, failed = localize_objects_3d(Raising("detect", RuntimeError("boom"), only=("blue bottle",)), _Q3)
+    assert failed == {"blue bottle": "the detector failed: RuntimeError: boom"}
+    assert [r.label for r in found] == ["green bottle"]  # one spot: "red can" dedupes into it
+
+
+def test_a_cause_never_carries_a_machine_path():
+    from vector_os_nano.perception.base import failure_cause
+
+    exc = OSError("Can't load '/home/someone/.cache/huggingface/hub/models--x/config.json' "
+                  "(see https://huggingface.co/docs)")
+    assert failure_cause(exc) == "OSError: Can't load '<path>' (see https://huggingface.co/docs)"
+    assert failure_cause(no_weights()) == str(no_weights())
