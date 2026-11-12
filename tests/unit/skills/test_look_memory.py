@@ -67,7 +67,7 @@ def test_the_vlm_room_is_a_hint_never_a_phantom_room_or_a_visit():
     sg = _sg()
     rooms, visits = set(r.room_id for r in sg.get_all_rooms()), sg.get_room("hallway").visit_count
     found = [Localized("green bottle", 10.88, 3.0, 0.32, 0.6, "edgetam")]
-    with mock.patch("vector_os_nano.skills.go2.look.localize_objects_3d", return_value=found):
+    with mock.patch("vector_os_nano.skills.go2.look.localize_objects_3d", return_value=(found, {})):
         res = LookSkill().execute({}, _ctx(sg, _vlm("garage", ["bottle"])))
         assert res.result_data["room"] == "hallway"
         res = LookSkill().execute({}, _ctx(sg, _vlm("kitchen", [])))
@@ -84,7 +84,7 @@ def test_describe_scene_stores_only_localized_objects():
     sg = _sg()
     desc = sg.get_room("hallway").representative_description
     found = [Localized("red can", 10.9, 3.22, 0.32, 0.5, "box_rect")]
-    with mock.patch("vector_os_nano.skills.go2.look.localize_objects_3d", return_value=found):
+    with mock.patch("vector_os_nano.skills.go2.look.localize_objects_3d", return_value=(found, {})):
         res = DescribeSceneSkill().execute({"query": "red things"}, _ctx(sg, _vlm("hallway", ["red can", "red stool"])))
     assert res.success and res.result_data["unlocalized"] == ["red stool"]
     assert [o.category for o in sg.find_objects_by_category("")] == ["red can"]
@@ -94,7 +94,7 @@ def test_describe_scene_stores_only_localized_objects():
 
 def test_look_without_anything_localized_stores_no_object():
     sg = _sg()
-    with mock.patch("vector_os_nano.skills.go2.look.localize_objects_3d", return_value=[]):
+    with mock.patch("vector_os_nano.skills.go2.look.localize_objects_3d", return_value=([], {})):
         res = LookSkill().execute({}, _ctx(sg, _vlm("hallway", ["sofa", "lamp"])))
     assert res.success and sg.find_objects_by_category("") == []
     assert sorted(res.result_data["unlocalized"]) == ["lamp", "sofa"]
@@ -111,7 +111,7 @@ def test_explore_discovers_without_a_vlm(monkeypatch):
     monkeypatch.setattr(explore, "_vlm", None)
     monkeypatch.setattr(explore, "_vocab", _APT.vocabulary())
     found = [Localized("blue bottle", 10.9, 2.78, 0.32, 0.7, "edgetam")]
-    with mock.patch("vector_os_nano.skills.go2.look.localize_objects_3d", return_value=found) as loc:
+    with mock.patch("vector_os_nano.skills.go2.look.localize_objects_3d", return_value=(found, {})) as loc:
         explore._discover(_Base())
     assert "red can" in loc.call_args.args[1]
     assert [o.category for o in sg.find_objects_by_category("")] == ["blue bottle"]

@@ -14,9 +14,11 @@ graspable object THERE: a confident box of sane shape, at a sane range and heigh
 the size of an object (not a wall or a sofa), standing in front of what surrounds
 it, and of the colour the query names. Anything else is dropped, never stored.
 
-GUARD contract: an unusable perception (None or missing a method) gives [];
-per-query failures are skipped with a WARNING naming the cause (a missing model, an
-ungroundable name). This function NEVER raises.
+A query that could not be checked is never "found nothing": a capture, detector or
+segmenter that raises (a missing model, out of GPU memory, an ungroundable name)
+puts the query under ``failed`` with its cause (perception.base.failure_cause; the
+exception itself is logged). An unusable perception (None or missing a method)
+checks nothing and fails nothing. This function NEVER raises.
 """
 from __future__ import annotations
 
@@ -122,8 +124,9 @@ def localize_objects_3d(
     perception: Any,
     queries: list[str],
     frame: Any = None,
-) -> list[Localized]:
-    """Localize each query on ONE snapshot (*frame*, else a fresh ``capture()``).
+) -> tuple[list[Localized], dict[str, str]]:
+    """``(found, failed)``: each query localized on ONE snapshot (*frame*, else a fresh
+    ``capture()``), and ``{query: cause}`` for each query that could not be checked.
 
     Per query: the highest-scoring detection whose mask yields a plausible object
     point (see :func:`implausible`). Results are keyed by the QUERY (the caller's
@@ -132,28 +135,30 @@ def localize_objects_3d(
     """
     if not _perception_is_usable(perception):
         logger.debug("[OBJ-LOC] perception not usable (None or missing a method)")
-        return []
+        return [], {}
 
+    from vector_os_nano.perception.base import failure_cause
     from vector_os_nano.perception.grasp_point import grasp_point_from_points, object_points
     from vector_os_nano.perception.vocab import vocab
 
+    queries = list(dict.fromkeys(queries))  # each distinct query once, in order
     try:
         rgb, depth, K, cam_pos, cam_mat = _unpack(frame if frame is not None else perception.capture())
     except Exception as exc:  # noqa: BLE001
         logger.warning("[OBJ-LOC] capture failed: %s: %s", type(exc).__name__, exc)
-        return []
+        return [], dict.fromkeys(queries, f"the camera capture failed: {failure_cause(exc)}")
 
     found: list[Localized] = []
-    for query in dict.fromkeys(queries):  # each distinct query once, in order
+    failed: dict[str, str] = {}
+    for query in queries:
+        stage = "the detector"
         try:
             detections = perception.detect_in(rgb, query)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[OBJ-LOC] detect(%r) failed: %s: %s", query, type(exc).__name__, exc)
-            continue
-        noun, colour = vocab().noun(query), vocab().colour(query)
-        for det in detections or []:
-            try:
+            noun, colour = vocab().noun(query), vocab().colour(query)
+            for det in detections or []:
+                stage = "the segmenter"
                 mask = perception.segment(rgb, det.bbox)
+                stage = "localization"
                 pts = None if mask is None else object_points(depth, rgb, mask, K, cam_pos, cam_mat)
                 if pts is None:
                     continue
@@ -163,12 +168,12 @@ def localize_objects_3d(
                                 [round(float(v)) for v in det.bbox], why)
                     continue
                 gp = grasp_point_from_points(*pts, cam_pos, cam_mat)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[OBJ-LOC] %r: localization failed: %s: %s", query, type(exc).__name__, exc)
-                continue
-            found.append(Localized(query, gp.x, gp.y, gp.z, float(det.confidence),
-                                   getattr(perception, "last_segmenter", None)))
-            break
+                found.append(Localized(query, gp.x, gp.y, gp.z, float(det.confidence),
+                                       getattr(perception, "last_segmenter", None)))
+                break
+        except Exception as exc:  # noqa: BLE001 — the query could not be checked: say why
+            logger.warning("[OBJ-LOC] %r: %s failed: %s: %s", query, stage, type(exc).__name__, exc)
+            failed[query] = f"{stage} failed: {failure_cause(exc)}"
 
     kept: list[Localized] = []
     for r in sorted(found, key=lambda r: -r.score):
@@ -176,4 +181,4 @@ def localize_objects_3d(
             kept.append(r)
         else:
             logger.info("[OBJ-LOC] %r dropped: the same spot as a better-scoring query", r.label)
-    return [r for r in found if r in kept]
+    return [r for r in found if r in kept], failed

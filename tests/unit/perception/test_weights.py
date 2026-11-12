@@ -87,9 +87,10 @@ def test_offline_and_not_cached_fails_with_the_prefetch_command(hub, monkeypatch
     with pytest.raises(weights.WeightsUnavailable) as exc:
         weights.local_dir(W)
     msg = str(exc.value)
-    assert msg.startswith("org/model@0123456 is not in the Hugging Face cache (")
-    assert msg.endswith("HF_HUB_OFFLINE=1 forbids fetching; pre-fetch with: "
-                        "python scripts/fetch_assets.py --weights")
+    assert msg == ("org/model@0123456 is not in the Hugging Face cache and HF_HUB_OFFLINE=1 forbids "
+                   "fetching; pre-fetch with: python scripts/fetch_assets.py --weights")
+    # C0F2V-3: the sentence reaches a tool result; the cache's path (under the home) does not
+    assert str(huggingface_hub.constants.HF_HUB_CACHE) not in msg
     assert [c[0] for c in h.calls] == ["snapshot"]  # never asked the hub
     assert "HF_HUB_OFFLINE=1" in weights.status((W,))
 
@@ -141,9 +142,10 @@ def test_a_failed_fetch_is_one_honest_error(hub, monkeypatch) -> None:
         raise OSError("connection refused")
 
     h.model_info = down
-    with pytest.raises(weights.WeightsUnavailable, match="fetching org/model@0123456 into .* failed "
-                       r"\(OSError: connection refused\); pre-fetch with"):
+    with pytest.raises(weights.WeightsUnavailable, match="fetching org/model@0123456 into the Hugging Face "
+                       r"cache failed \(OSError: connection refused\); pre-fetch with") as exc:
         weights.local_dir(W)
+    assert str(huggingface_hub.constants.HF_HUB_CACHE) not in str(exc.value)
 
 
 def test_a_load_holds_the_hub_offline_only_while_it_runs(hub, monkeypatch) -> None:
@@ -187,13 +189,76 @@ def test_the_capability_line_says_which_model_or_why_not(monkeypatch) -> None:
 
 
 def test_nothing_in_the_package_writes_the_offline_flags() -> None:
-    """Loading a model never sets HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE process-wide."""
+    """Loading a model never sets HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE process-wide.
+
+    C0F2V-2: the one write of huggingface_hub's offline CONSTANT is weights.loading's,
+    and it happens (and is undone) under the load lock."""
     pkg = Path(weights.__file__).resolve().parents[1]
     write = re.compile(r"""(environ\[|setdefault\(|putenv\(|setenv\()\s*["'](HF_HUB_OFFLINE|TRANSFORMERS_OFFLINE)""")
     hits = [str(p) for p in pkg.rglob("*.py") if write.search(p.read_text(encoding="utf-8"))]
     assert hits == []
+    assert _constant_writes(pkg) == [("perception/weights.py", "_LOAD_LOCK")] * 2  # the set, the restore
     for legacy in ("VECTOR_MODEL_DIR", "vector_os/models", '"vector_os" / "models"'):
         assert not [p for p in pkg.rglob("*.py") if legacy in p.read_text(encoding="utf-8")], legacy
+
+
+def _constant_writes(pkg: Path) -> list[tuple[str, str | None]]:
+    """(file, the lock held) of every write of an ``HF_HUB_OFFLINE`` / ``TRANSFORMERS_OFFLINE``
+    attribute or a ``setattr`` of one, anywhere in the package."""
+    import ast
+
+    names = {"HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"}
+    out = []
+    for path in sorted(pkg.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parent = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                targets = [e for t in targets for e in (t.elts if isinstance(t, ast.Tuple) else [t])]
+            hit = any(isinstance(t, ast.Attribute) and t.attr in names for t in targets) or (
+                isinstance(node, ast.Call) and getattr(node.func, "id", "") == "setattr"
+                and len(node.args) > 1 and getattr(node.args[1], "value", None) in names)
+            if not hit:
+                continue
+            lock, n = None, node
+            while n in parent and lock is None:
+                n = parent[n]
+                if isinstance(n, ast.With):
+                    lock = next((i.context_expr.id for i in n.items if isinstance(i.context_expr, ast.Name)), None)
+            out.append((path.relative_to(pkg).as_posix(), lock))
+    return out
+
+
+def test_two_loads_on_two_threads_leave_the_offline_constant_as_they_found_it(hub, monkeypatch) -> None:
+    """C0F2V-2: A sets it (was False), B sets it (was True), A restores False, B
+    restores True: the process stayed offline. Loads are now serialised."""
+    import threading
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", False)
+    hub(cached=True)
+    a_in, b_in = threading.Event(), threading.Event()
+    inside, peak = [0], [0]
+
+    def load(mine: threading.Event, other: threading.Event, hold: float) -> None:
+        with weights.loading((W,)):
+            inside[0] += 1
+            peak[0] = max(peak[0], inside[0])
+            mine.set()
+            other.wait(hold)  # serialised: the other load cannot be inside meanwhile
+            inside[0] -= 1
+
+    a = threading.Thread(target=load, args=(a_in, b_in, 0.5))
+    a.start()
+    assert a_in.wait(5)
+    b = threading.Thread(target=load, args=(b_in, threading.Event(), 0.0))
+    b.start()
+    a.join(5)
+    b.join(5)
+    assert peak[0] == 1, "two loads overlapped"
+    assert huggingface_hub.constants.HF_HUB_OFFLINE is False
 
 
 def test_a_real_cached_load_opens_no_socket_with_the_offline_flag_unset(monkeypatch) -> None:

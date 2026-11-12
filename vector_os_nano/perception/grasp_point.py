@@ -132,9 +132,12 @@ def grasp_point_from_points(
 ) -> Pose3D:
     """The world grasp point of an object's points (see :func:`object_points`)."""
     centroid_cam = robust_centroid(points)  # camera frame (OpenCV: x=right,y=down,z=fwd)
-    # The per-axis trimmed mean is taken in the camera frame and then transformed
-    # (close to, not exactly, reducing the world points). It is the centroid of the
-    # VISIBLE surface: an upright cylinder's axis is fitted below.
+    # The grasp point is the trimmed mean of the VISIBLE surface: a per-axis trimmed
+    # mean of the masked points in the camera frame, then moved to the world (trimming
+    # per axis depends on the frame, so this is not the same as trimming the world
+    # points). It is not the object's centre: it lies on the near side, and its z is
+    # the visible surface's mean height. An upright cylinder's x, y are replaced by its
+    # fitted axis below; z and every other shape keep the surface bias.
     wx, wy, wz = camera_to_world(
         centroid_cam.x, centroid_cam.y, centroid_cam.z,
         cam_xpos=cam_xpos, cam_xmat=cam_xmat,
