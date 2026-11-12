@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import functools
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +109,8 @@ class WorldManifest:
     # (x, y, z, heading): what sim/scene/compose.py builds the world from.
     scene: Path | None = None
     spawn: tuple[float, float, float, float] | None = None
+    # What NL calls a room (``vocab.rooms``: room -> words), besides its own name.
+    room_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @functools.cached_property
     def _lexicon(self) -> tuple[tuple[str, str, frozenset[str]], ...]:
@@ -173,6 +175,21 @@ class WorldManifest:
         best_word, best = max(hits, key=lambda h: len(h[0]))
         return best if all(n == best or w in best_word for w, n in hits) else None
 
+    def room_words(self) -> dict[str, frozenset[str]]:
+        """``{word: the rooms it names}`` for every name ("living_room", "living room") and
+        ``vocab.rooms`` alias of every room, lower-cased."""
+        out: dict[str, set[str]] = {}
+        for r in self.rooms:
+            for w in (r, r.replace("_", " "), *self.room_aliases.get(r, ())):
+                out.setdefault(w.lower(), set()).add(r)
+        return {w: frozenset(rs) for w, rs in out.items()}
+
+    def resolve_room(self, text: Any) -> str | None:
+        """The room the WHOLE *text* names (one word of ``room_words`` naming exactly one
+        room), or None."""
+        rooms = self.room_words().get(_norm(text), frozenset())
+        return next(iter(rooms)) if len(rooms) == 1 else None
+
     def vocabulary(self) -> list[str]:
         """One canonical English name per pickable, for detectors and the model."""
         return [p.english for p in self.pickables.values()]
@@ -227,9 +244,14 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
                                             float(spawn.get("heading", 0.0)))
     except (KeyError, TypeError, ValueError) as exc:
         raise WorldManifestError(f"{ctx}: spawn needs xy, z and an optional heading ({exc})") from exc
+    rooms = {str(k): _xy(v, f"{ctx}: rooms.{k}") for k, v in (raw.get("rooms") or {}).items()}
+    room_aliases = {str(k): tuple(str(w) for w in v) for k, v in (vocab.get("rooms") or {}).items()}
+    if set(room_aliases) - set(rooms):
+        raise WorldManifestError(f"{ctx}: vocab.rooms names {sorted(set(room_aliases) - set(rooms))}; "
+                                 f"rooms: {sorted(rooms)}")
     return WorldManifest(
         id=world_id,
-        rooms={str(k): _xy(v, f"{ctx}: rooms.{k}") for k, v in (raw.get("rooms") or {}).items()},
+        rooms=rooms,
         boxes={str(k): _box(v, f"{ctx}: boxes.{k}") for k, v in (raw.get("boxes") or {}).items()},
         doors={str(k): _xy(v, f"{ctx}: doors.{k}") for k, v in (raw.get("doors") or {}).items()},
         surfaces=surfaces,
@@ -241,6 +263,7 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
         scenery=tuple(str(w) for w in (vocab.get("scenery") or ())),
         scene=path.parent / str(raw["scene"]) if raw.get("scene") else None,
         spawn=spawn,
+        room_aliases=room_aliases,
     )
 
 
