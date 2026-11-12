@@ -1,0 +1,140 @@
+doors:
+- a: hall
+  b: kitchen
+  count: 1
+  x: 3.0
+  y: 2.0
+- a: bedroom
+  b: hall
+  count: 1
+  x: 6.0
+  y: -0.5
+objects:
+  obj_4f7feb0a:
+    attributes: {}
+    category: apple
+    confidence: 0.8
+    description: ''
+    first_seen: 1794493047.507573
+    last_seen: 1794493047.507573
+    n_obs: 1
+    object_id: obj_4f7feb0a
+    room_id: kitchen
+    viewpoint_ids:
+    - vp_ac06e713
+    x: null
+    y: null
+    z: null
+  obj_5142b747:
+    attributes: {}
+    category: green bottle
+    confidence: 0.9
+    description: ''
+    first_seen: 1794493047.5075438
+    last_seen: 1794493047.5075798
+    n_obs: 2
+    object_id: obj_5142b747
+    room_id: kitchen
+    viewpoint_ids:
+    - vp_ac06e713
+    x: 1.6
+    y: 2.45
+    z: 0.8
+  obj_5b70e5b8:
+    attributes: {}
+    category: 枕头
+    confidence: 0.8
+    description: ''
+    first_seen: 1794493047.507519
+    last_seen: 1794493047.507519
+    n_obs: 1
+    object_id: obj_5b70e5b8
+    room_id: bedroom
+    viewpoint_ids:
+    - vp_52d7f30b
+    x: null
+    y: null
+    z: null
+  obj_6948cb3a:
+    attributes:
+      state: placed
+    category: cup
+    confidence: 0.8
+    description: ''
+    first_seen: 1794493047.5075562
+    last_seen: 1794493057.2466004
+    n_obs: 1
+    object_id: obj_6948cb3a
+    room_id: kitchen
+    viewpoint_ids:
+    - vp_ac06e713
+    x: 2.0
+    y: 1.0
+    z: null
+rooms:
+  bedroom:
+    area: 15.0
+    box: null
+    center_x: 8.5
+    center_y: -1.25
+    connected_rooms:
+    - hall
+    fixed: false
+    last_visited: 1794493047.507486
+    representative_description: a quiet bedroom
+    room_id: bedroom
+    visit_count: 2
+  hall:
+    area: 15.0
+    box:
+    - 3.0
+    - 0.0
+    - 6.0
+    - 4.0
+    center_x: 4.5
+    center_y: 2.0
+    connected_rooms:
+    - kitchen
+    - bedroom
+    fixed: true
+    last_visited: 1794493047.5066485
+    representative_description: ''
+    room_id: hall
+    visit_count: 10
+  kitchen:
+    area: 15.0
+    box:
+    - 0.0
+    - 0.0
+    - 3.0
+    - 4.0
+    center_x: 1.0
+    center_y: 2.0
+    connected_rooms:
+    - hall
+    fixed: true
+    last_visited: 1794493047.5066388
+    representative_description: counter and fridge
+    room_id: kitchen
+    visit_count: 10
+viewpoints:
+  vp_52d7f30b:
+    heading: 0.0
+    object_ids: []
+    room_id: bedroom
+    scene_summary: a quiet bedroom
+    timestamp: 1794493047.5075138
+    viewpoint_id: vp_52d7f30b
+    x: 8.5
+    y: -1.25
+  vp_ac06e713:
+    heading: 0.785
+    object_ids:
+    - green bottle
+    - cup
+    room_id: kitchen
+    scene_summary: counter and fridge
+    timestamp: 1794493047.5075371
+    viewpoint_id: vp_ac06e713
+    x: 1.1
+    y: 2.2

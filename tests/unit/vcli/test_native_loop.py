@@ -347,7 +347,8 @@ class _FakeLookSkill:
 
 
 def _localize_turn(first_tool: str, *, sees: bool, on_map: bool):
-    from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph
+    from vector_os_nano.core.scene_graph import SceneGraph
+    from vector_os_nano.core.scene_nodes import ObjectNode
     from vector_os_nano.core.skill import skill
 
     agent, _base = _make_agent(10.0, 3.0, objects={"pickable_bottle_green": [*_BOTTLE_XY, 0.8]})
@@ -396,7 +397,8 @@ class _Gripper:
 
 def _go2_piper_like_agent():
     """A go2+arm-shaped agent in the apartment: base, gripper, scene graph, skills."""
-    from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph
+    from vector_os_nano.core.scene_graph import SceneGraph
+    from vector_os_nano.core.scene_nodes import ObjectNode
     from vector_os_nano.core.skill import SkillRegistry
 
     agent, base = _make_agent(10.0, 3.0)

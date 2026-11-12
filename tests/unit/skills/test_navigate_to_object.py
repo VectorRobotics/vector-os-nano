@@ -13,7 +13,8 @@ from typing import Any
 
 import pytest
 
-from vector_os_nano.core.scene_graph import ObjectNode, SceneGraph
+from vector_os_nano.core.scene_graph import SceneGraph
+from vector_os_nano.core.scene_nodes import ObjectNode
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.sim.nav.follow import NavResult
 from vector_os_nano.skills.navigate_to_object import (
