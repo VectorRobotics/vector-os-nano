@@ -6,7 +6,7 @@ doors:
   y: 2.0
 - a: bedroom
   b: hall
-  count: 1
+  count: 3
   x: 6.0
   y: -0.5
 objects:
