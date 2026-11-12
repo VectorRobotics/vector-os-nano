@@ -617,23 +617,33 @@ _STATE_REFUSED = ("config.yaml", "history", "oauth_credentials.json", "sessions/
 _STATE_OWN = ("VECTOR.md", "personality.md", "embodiments/bot/robot.yaml", "worlds/w/world.yaml")
 
 
-@pytest.fixture()
-def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
-    """VECTOR_HOME in a MIXED-CASE folder whose name says nothing ('Data/VH', no '.vector'
-    component), reached through a symlink; the project lies elsewhere. Mixed case so the
-    store's own case folding is exercised (C1a-V-D3): on macOS realpath keeps the typed
-    case, so a lower-case spelling of the store that does not resolve IS the store."""
-    real, project = tmp_path / "Data" / "VH", tmp_path / "project"
+@pytest.fixture(params=["elsewhere", "default"])
+def state(request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    """The store, reached through a symlink; the project lies elsewhere. 'elsewhere':
+    VECTOR_HOME in a MIXED-CASE folder whose name says nothing ('Data/VH', no '.vector'
+    component). Mixed case so the store's own case folding is exercised (C1a-V-D3): on
+    macOS realpath keeps the typed case, so a lower-case spelling of the store that does
+    not resolve IS the store. 'default': VECTOR_HOME unset, the store is ~/.vector under
+    a mixed-case HOME reached through a symlink (C1af-V-D1: its own '.vector' component
+    must not refuse its embodiments/ and worlds/)."""
+    project = tmp_path / "project"
+    if request.param == "elsewhere":
+        real, link = tmp_path / "Data" / "VH", tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+        (tmp_path / "home").mkdir()
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("VECTOR_HOME", str(link))
+    else:
+        real, link = tmp_path / "Home" / ".vector", tmp_path / "link" / ".vector"
+        (tmp_path / "link").symlink_to(tmp_path / "Home", target_is_directory=True)
+        monkeypatch.setenv("HOME", str(tmp_path / "link"))
+        monkeypatch.delenv("VECTOR_HOME", raising=False)
     for rel in _STATE_REFUSED + _STATE_OWN:
         (real / rel).parent.mkdir(parents=True, exist_ok=True)
         (real / rel).write_text(f"x {SECRET}\n")
     project.mkdir()
-    (tmp_path / "link").symlink_to(real)
-    (tmp_path / "home").mkdir()
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / "link"))
     monkeypatch.chdir(project)
-    return {"real": real, "link": tmp_path / "link", "project": project}
+    return {"real": real, "link": link, "project": project}
 
 
 @pytest.mark.parametrize("rel", _STATE_REFUSED)
@@ -670,6 +680,22 @@ def test_a_user_folder_link_into_the_state_is_refused(state: dict[str, Path]) ->
     sneaky = state["real"] / "embodiments" / "bot" / "transcript.jsonl"
     sneaky.symlink_to(state["real"] / "sessions" / "s1.jsonl")
     assert _decide(FileReadTool(), {"file_path": str(sneaky)}, state["project"]) == "deny"
+
+
+def test_a_store_inside_a_user_folder_is_still_a_store(state: dict[str, Path]) -> None:
+    """A '.vector' below the store (embodiments/.vector/config.yaml) keeps only its
+    direct VECTOR.md and personality.md, like any other user's store."""
+    nested = state["real"] / "embodiments" / ".vector"
+    for rel in ("config.yaml", "embodiments/x/robot.yaml", "VECTOR.md"):
+        (nested / rel).parent.mkdir(parents=True, exist_ok=True)
+        (nested / rel).write_text("data\n")
+    p = state["project"]
+    for rel in ("config.yaml", "embodiments/x/robot.yaml"):
+        for root in (state["real"], state["link"]):
+            path = str(root / "embodiments" / ".vector" / rel)
+            assert _decide(FileReadTool(), {"file_path": path}, p) == "deny", path
+            assert _decide(FileWriteTool(), {"file_path": path, "content": "x"}, p) == "deny", path
+    assert _decide(FileReadTool(), {"file_path": str(nested / "VECTOR.md")}, p) == "ask"
 
 
 def test_only_the_store_itself_is_matched_never_a_name_like_it(state: dict[str, Path]) -> None:
