@@ -239,3 +239,58 @@ def test_a_dead_stepper_fails_every_later_call_loudly(scene) -> None:
                 poke()
     finally:
         r.close()
+
+
+# -- the clock hold (ledger flake:go2-navigate-fall) -----------------------------------
+
+
+def _logging_runtime(scene, cmd: list) -> tuple[SimRuntime, list]:
+    """A runtime whose controller logs (tick, the command it sees)."""
+    log: list = []
+    return SimRuntime(MuJoCoWorld(scene), controller=lambda w: log.append((round(w.time() / 0.005), cmd[0])),
+                      substeps=5, name="test_rt"), log
+
+
+def test_a_held_clock_lands_every_command_on_the_tick_after_its_wait(scene) -> None:
+    """A control loop that waits with hold sees its commands on exactly the ticks it
+    would caller-stepped, while three threads fight it for the GIL."""
+    cmd = [None]
+    rt, log = _logging_runtime(scene, cmd)
+    stop = threading.Event()
+    hogs = [threading.Thread(target=lambda: [sum(range(2000)) for _ in iter(stop.is_set, True)], daemon=True)
+            for _ in range(3)]
+    try:
+        assert rt.wait_sim(0.0, hold=True)  # before the stepper starts: it parks at its first boundary
+        rt.start()
+        for t in hogs:
+            t.start()
+        for i in range(30):
+            cmd[0] = i
+            assert rt.wait_sim(0.01, hold=True)  # two ticks, then parked again
+        rt.release()
+    finally:
+        stop.set()
+        rt.close()
+    assert {t: c for t, c in log if t < 60} == {t: t // 2 for t in range(60)}
+
+
+def test_a_hold_is_only_its_threads_and_a_forgotten_one_is_dropped(scene, monkeypatch) -> None:
+    """Adversarial: another thread's release leaves the hold; a holder that never comes
+    back does not freeze the simulation (dropped after _HOLD_WALL_S)."""
+    from vector_os_nano.sim import runtime as rt_mod
+
+    monkeypatch.setattr(rt_mod, "_HOLD_WALL_S", 0.6)
+    rt, _log = _logging_runtime(scene, [None])
+    rt.start()
+    try:
+        assert rt.wait_sim(0.0, hold=True)  # parked now, by this thread
+        t0 = rt.sim_time
+        other = threading.Thread(target=rt.release)
+        other.start()
+        other.join()
+        time.sleep(0.3)
+        assert rt.sim_time == t0, "another thread's release dropped this thread's hold"
+        time.sleep(1.0)
+        assert rt.sim_time > t0, "a forgotten hold froze the simulation"
+    finally:
+        rt.close()
