@@ -66,9 +66,3 @@ ros2:
   enable_moveit: false
   enable_tf2: true
   enable_dashboard: false
-
-mcp:
-  enabled: true
-  expose_individual_skills: true  # each skill is a separate MCP tool
-  expose_cameras: true            # camera:// resources (sim only)
-  expose_world_state: true        # world://state, world://objects, world://robot

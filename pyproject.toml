@@ -93,8 +93,8 @@ ros2 = [
 ]
 
 mcp = [
-    "mcp>=1.0",
-    "pillow>=10",  # mcp/resources encodes camera frames as PNG
+    "mcp>=2.3,<3",  # mcp/server.py is written against the 2.x MCPServer API
+    "pillow>=10",   # mcp/server.py encodes the camera frame as PNG
 ]
 
 # Go2 quadruped locomotion: Pinocchio kinematics + CasADi for MPC
@@ -120,7 +120,7 @@ dev = [
 ]
 
 [project.scripts]
-vector-os-mcp = "vector_os_nano.mcp.server:main_sync"
+vector-os-mcp = "vector_os_nano.mcp.server:main"
 vector-cli = "vector_os_nano.vcli.cli:main"
 
 [tool.hatch.version]
