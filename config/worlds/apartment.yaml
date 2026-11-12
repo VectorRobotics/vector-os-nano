@@ -108,8 +108,10 @@ vocab:
     can:    [can, 罐]
     cup:    [cup, mug, 杯]
     box:    [box, 盒]
-  # Things in the house that are not pickables: a colour plus one of these names
-  # furniture, never an object ("红色的凳子" / "red stool" is not the red can).
+  # Furniture: a place goal's destination ("put it on the table") that names no surface
+  # above (the slot binds None and the goal check fails, never unchecked). An object
+  # reference needs no list of what is NOT an object: "red stool" resolves to nothing
+  # because "stool" is no word of this world's pickables.
   scenery: [stool, chair, table, desk, sofa, couch, bed, shelf, cabinet, counter, fridge,
             door, wall, floor, lamp, rug, 凳, 椅, 桌, 台子, 沙发, 床, 柜, 架, 冰箱, 门, 墙, 地板, 灯, 毯]
 

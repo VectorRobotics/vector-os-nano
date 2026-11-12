@@ -64,7 +64,7 @@ def test_arm_vacuous_verifies_grade_ran() -> None:
 @pytest.mark.cli_main
 def test_arm_honest_grasp_grades_grounded() -> None:
     r = run_cli_turn(
-        "把香蕉抓起来拿在手里",
+        "把香蕉抓起来",  # a closed form (REF1c: a manipulation verifies only through a proven contract)
         sim=True,
         timeout_sec=_SIM_TIMEOUT_SEC,
         extra_args=["--headless"],
@@ -74,6 +74,6 @@ def test_arm_honest_grasp_grades_grounded() -> None:
         ),
     )
     assert r.verified is True and r.exit_code == 0, r.verdict
-    assert r.evidence == "GROUNDED", r.verdict
+    assert r.evidence == "GROUNDED" and r.verdict["goal_check"] == "proven", r.verdict
     (step,) = r.verdict["per_step"]
     assert step["strategy"] == "pick" and step["evidence"] == "GROUNDED", step
