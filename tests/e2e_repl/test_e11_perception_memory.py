@@ -69,9 +69,10 @@ def _ids(obs: list[str]) -> list[str]:
 def test_e11_look_localizes_remembers_and_resolves_zh_en_to_one_instance(tmp_path) -> None:
     home = tmp_path / "home"
     home.mkdir()
+    state = {"HOME": str(home), "VECTOR_HOME": str(home / ".vector")}
     log1 = tmp_path / "llm1.jsonl"
     r = run_repl_session([LAUNCH, _LOOK, _ZH, _EN], tool_script=_SESSION1, answers=["y", "y"],
-                         extra_env={"HOME": str(home), "VECTOR_FAKE_LLM_LOG": str(log1)},
+                         extra_env={**state, "VECTOR_FAKE_LLM_LOG": str(log1)},
                          timeout_sec=480)
     text = r.text
     assert not r.timed_out, text[-3000:]
@@ -88,7 +89,7 @@ def test_e11_look_localizes_remembers_and_resolves_zh_en_to_one_instance(tmp_pat
     assert len(ids) == 2 and ids[0] == ids[1], f"zh and en names went to different instances: {ids}"
 
     # The world-keyed file a restart reads: every object localized, none at (0, 0).
-    sg_file = home / ".vector_os_nano" / "worlds" / "apartment" / "scene_graph.yaml"
+    sg_file = home / ".vector" / "memory" / "apartment" / "scene_graph.yaml"
     objs = (yaml.safe_load(sg_file.read_text()) or {}).get("objects") or {}
     assert {o["category"] for o in objs.values()} >= set(_GT), objs
     for o in objs.values():
@@ -98,7 +99,7 @@ def test_e11_look_localizes_remembers_and_resolves_zh_en_to_one_instance(tmp_pat
 
     log2 = tmp_path / "llm2.jsonl"
     r = run_repl_session([LAUNCH, _RECALL], tool_script=_SESSION2, answers=["y"],
-                         extra_env={"HOME": str(home), "VECTOR_FAKE_LLM_LOG": str(log2)},
+                         extra_env={**state, "VECTOR_FAKE_LLM_LOG": str(log2)},
                          timeout_sec=300)
     text = r.text
     assert not r.timed_out, text[-3000:]

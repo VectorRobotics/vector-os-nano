@@ -33,14 +33,15 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from vector_os_nano.schemas import paths
+
 # A weld is (equality_name, body1, body2); created inactive (gripper activates it).
 Weld = tuple[str, str, str]
 
 
 def scene_cache_dir() -> Path:
-    """Where generated scenes live: a user cache dir, never the package tree."""
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "vector_os_nano" / "scenes"
+    """Where generated scenes live: the state directory's cache, never the package tree."""
+    return paths.scene_cache()
 
 
 def write_scene(stem: str, text: str) -> Path:

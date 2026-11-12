@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from vector_os_nano.core.run_dir import run_path
+from vector_os_nano.schemas import paths
 
 logger = logging.getLogger(__name__)
 
@@ -355,6 +356,22 @@ def _user_config() -> dict[str, Any]:
     return load_config(str(path)) if path.exists() else {}
 
 
+def _scene_vlm_config(user_cfg: dict[str, Any], vlm_api_key: str | None) -> tuple[str, dict[str, Any], str]:
+    """The scene VLM's key, its config/user.yaml ``vlm:`` block and one notice.
+
+    The key comes from the environment like every provider's: a key left in
+    config/user.yaml (``llm.api_key``, ``vlm.api_key``) is never read nor sent, and the
+    notice names the variable to set instead ('' when the file holds none).
+    """
+    vlm_cfg = dict(user_cfg.get("vlm") or {})
+    stray = [f"{block}.api_key" for block, d in (("llm", user_cfg.get("llm")), ("vlm", vlm_cfg))
+             if isinstance(d, dict) and d.get("api_key")]
+    vlm_cfg.pop("api_key", None)
+    note = (f"config/user.yaml {' and '.join(stray)} ignored (keys come only from the environment): "
+            "set OPENROUTER_API_KEY") if stray else ""
+    return vlm_api_key or os.environ.get("OPENROUTER_API_KEY", ""), vlm_cfg, note
+
+
 def _build_go2_perception(base: Any, *, width: int, height: int) -> Any:
     """Go2GraspPerception over *base* at the manifest size, or None without a camera.
 
@@ -446,9 +463,7 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
         gripper.connect()
 
     user_cfg = _user_config()
-    api_key = vlm_api_key or user_cfg.get("llm", {}).get("api_key") or os.environ.get(
-        "OPENROUTER_API_KEY", ""
-    )
+    api_key, vlm_cfg, key_note = _scene_vlm_config(user_cfg, vlm_api_key)
     agent = Agent(base=base, arm=arm, gripper=gripper, config=user_cfg, skills=_skill_pack(cfg.id))
     agent._perception = _build_go2_perception(base, width=width, height=height)
     agent._calibration = None
@@ -462,16 +477,18 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
 
             agent._vlm = Go2VLMPerception(config={
                 "api_key": api_key, "rooms": sorted(world.rooms) if world else [],
-                **(user_cfg.get("vlm") or {}),
+                **vlm_cfg,
             })
         except Exception as exc:  # noqa: BLE001 — VLM is optional; the capability line says why
             vlm_why = f"failed: {type(exc).__name__}: {exc}"
             agent._vlm = None
 
     # Spatial memory is keyed by WORLD (shared by every body that stands in it,
-    # never mixed across worlds) under $HOME (a benchmark trial's own HOME isolates
-    # it). The world's rooms are seeded from its manifest, fixed at their centres.
-    sg_path = Path.home() / ".vector_os_nano" / "worlds" / (cfg.world or _ROOM_XML.stem) / "scene_graph.yaml"
+    # never mixed across worlds) under $VECTOR_HOME/memory (a benchmark trial's own
+    # VECTOR_HOME isolates it). The world's rooms are seeded from its manifest, fixed at
+    # their centres. Memory an older release kept in ~/.vector_os_nano is moved in once.
+    moved = paths.migrate_old_memory()
+    sg_path = paths.memory(cfg.world or _ROOM_XML.stem) / paths.SCENE_GRAPH
     sg_path.parent.mkdir(parents=True, exist_ok=True)
     agent._spatial_memory = SceneGraph(persist_path=str(sg_path), resolve=world.resolve if world else None)
     agent._spatial_memory.load()
@@ -483,11 +500,16 @@ def _build_mujoco_go2(session: SimSession, vlm_api_key: str | None) -> Any:
             session.notes.append("explore: coverage (VECTOR_NAV_STACK unset)")
         else:
             try:
-                session.own("nav stack stopped", _launch_ros2_stack(base, gui=spec.gui))
+                session.own("nav stack stopped", _launch_ros2_stack(
+                    base, gui=spec.gui, terrain_map=sg_path.with_name(paths.TERRAIN_MAP)))
                 session.notes.append("explore: tare (nav stack launched)")
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
-    session.notes.append(_perception_note(agent, vlm_why))  # last: the explore note stays up front
+    session.notes.append(_perception_note(agent, vlm_why))  # after it: the explore note stays up front
+    if key_note:
+        session.notes.append(key_note)
+    if moved:
+        session.notes.append(moved)
     return agent
 
 
@@ -571,8 +593,8 @@ def _kill_sessions(sids: set[int], grace_s: float = 5.0) -> None:
             time.sleep(0.1)
 
 
-def _launch_ros2_stack(go2: Any, *, gui: bool) -> Callable[[], None]:
-    """Start the ROS2 bridge (thread) + nav stack (its own session).
+def _launch_ros2_stack(go2: Any, *, gui: bool, terrain_map: Path) -> Callable[[], None]:
+    """Start the ROS2 bridge (thread, persisting the world's *terrain_map*) + nav stack (its own session).
 
     Returns the cleanup the session owns: stops the monitor and kills every
     process group in the sessions this call created (nothing else), closes the log.
@@ -594,7 +616,7 @@ def _launch_ros2_stack(go2: Any, *, gui: bool) -> Callable[[], None]:
     mod = importlib.util.module_from_spec(spec)
     sys.modules["_vnav_bridge"] = mod
     spec.loader.exec_module(mod)
-    node = mod.Go2VNavBridge(go2)
+    node = mod.Go2VNavBridge(go2, terrain_map=terrain_map)
 
     def _spin() -> None:
         try:

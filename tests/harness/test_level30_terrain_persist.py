@@ -225,15 +225,17 @@ class TestBridgeTerrainWiring:
 class TestClearMemoryTerrain:
 
     def test_clear_memory_deletes_terrain(self, tmp_path, monkeypatch):
-        """The /clear_memory command deletes terrain_map.npz (no body running too)."""
+        """The /clear_memory command deletes the running world's terrain_map.npz, the
+        file beside its scene graph (no body running: nothing to delete, no crash)."""
         from types import SimpleNamespace
 
         from vector_os_nano.vcli import render, slash
-        from vector_os_nano.vcli.tools import nav_tools
 
         terrain = tmp_path / "terrain_map.npz"
         terrain.write_bytes(b"x")
-        monkeypatch.setattr(nav_tools, "_TERRAIN_PATH", str(terrain))
         monkeypatch.setattr(render.console, "file", open(os.devnull, "w"))
         slash.dispatch(SimpleNamespace(app_state={}), "/clear_memory")
+        assert terrain.exists()
+        sg = SimpleNamespace(_persist_path=str(tmp_path / "scene_graph.yaml"), clear=lambda: None)
+        slash.dispatch(SimpleNamespace(app_state={"scene_graph": sg}), "/clear_memory")
         assert not terrain.exists(), "/clear_memory must delete terrain_map.npz"

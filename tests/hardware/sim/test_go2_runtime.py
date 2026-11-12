@@ -141,17 +141,17 @@ def test_mpc_plan_is_dropped_when_idle_and_failures_fall_back_loudly(monkeypatch
         go2.disconnect()
 
 
-def test_scenes_go_to_the_user_cache_never_the_package(monkeypatch, tmp_path) -> None:
+def test_scenes_go_to_the_state_cache_never_the_package(monkeypatch, tmp_path) -> None:
     from vector_os_nano.hardware.sim import mujoco_go2
 
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path))
     pkg = Path(mujoco_go2.__file__).parent
     before = {p for p in pkg.rglob("scene_*.xml")}
     paths = [mujoco_go2._build_flat_scene_xml(),
              mujoco_go2._build_room_scene_xml(with_arm=False),
              mujoco_go2._build_room_scene_xml(with_arm=True)]
     for p in paths:
-        assert p.is_relative_to(tmp_path), p
+        assert p.is_relative_to(tmp_path / "cache" / "scenes"), p
         import mujoco
 
         mujoco.MjModel.from_xml_path(str(p))  # loads from the cache dir

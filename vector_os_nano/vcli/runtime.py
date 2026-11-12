@@ -189,8 +189,6 @@ def build_runtime(
     from vector_os_nano.vcli.config import resolve_credentials
 
     creds = resolve_credentials(provider, model, base_url)
-    if creds.notice:
-        notice(creds.notice)
     backend = make_backend(creds)
     if backend is None:
         notice(creds.instruction())

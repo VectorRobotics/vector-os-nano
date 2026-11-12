@@ -24,7 +24,7 @@ FETCH = "python scripts/fetch_assets.py g1"
 
 @pytest.fixture
 def state_dir(tmp_path, monkeypatch) -> Path:
-    monkeypatch.setattr(assets, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / "state"))
     return tmp_path / "state"
 
 

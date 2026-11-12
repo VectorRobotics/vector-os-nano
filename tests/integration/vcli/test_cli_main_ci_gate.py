@@ -86,6 +86,7 @@ def test_repl_runs_one_turn_then_exits(tmp_path, monkeypatch: pytest.MonkeyPatch
     home.mkdir()
     monkeypatch.chdir(work)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VECTOR_HOME", str(home / ".vector"))
     marker = "repl_marker.txt"
     script = {"turns": [
         {"tool_calls": [{"name": "file_write", "input": {"file_path": marker, "content": "ok\n"}}]},
@@ -158,7 +159,7 @@ def test_a_print_turn_is_saved_as_a_print_session(tmp_path) -> None:
     script = tmp_path / "script.json"
     script.write_text(json.dumps({"turns": [{"text": "hello back"}]}), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not k.endswith("_API_KEY")}
-    env.update(HOME=str(home), PYTHONPATH=str(_REPO_ROOT), VECTOR_FAKE_LLM_TOOLS=str(script))
+    env.update(HOME=str(home), VECTOR_HOME=str(home / ".vector"), PYTHONPATH=str(_REPO_ROOT), VECTOR_FAKE_LLM_TOOLS=str(script))
     proc = subprocess.run(
         [sys.executable, "-m", "vector_os_nano.vcli.cli", "-p", "hi there", "--json"],
         cwd=tmp_path, env=env, capture_output=True, text=True, timeout=150,
