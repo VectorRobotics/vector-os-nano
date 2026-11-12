@@ -129,13 +129,13 @@ def _asserted_calls(node: ast.AST) -> list[ast.Call]:
     return []
 
 
-def verify_intents(expr: str | None) -> frozenset[str]:
-    """The manipulation *expr* proves was performed: "grasp" when it asserts a
-    possession oracle, "place" when it asserts a release or placement (never under
-    ``not`` / ``or``: "not holding" proves no grasp)."""
+def named_intents(expr: str | None) -> frozenset[str]:
+    """"grasp" / "place" when a possession / a release or placement oracle's NAME appears
+    anywhere in *expr* (REF1e): what it asserts is never read, so no spelling the
+    classifier grounds can hide a manipulation from the gate, which asks this of GROUNDED verifies."""
     node = _parse(expr)
-    called = {c.func.id for c in _asserted_calls(node)} if node is not None else set()
-    return frozenset(i for i, names in (("grasp", _HOLD), ("place", _PLACE)) if called & names)
+    names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} if node is not None else set()
+    return frozenset(i for i, ns in (("grasp", _HOLD), ("place", _PLACE)) if names & ns)
 
 
 def _manifest(world_id: str) -> Any:

@@ -23,7 +23,8 @@ from tests.unit.vcli.test_goal_check import _v
 from tests.unit.vcli.test_native_loop import _CAN, _grasp, _make_arm_agent, _make_engine, _session, _verdict
 from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
-from vector_os_nano.vcli.cognitive.object_goal import checkable_goals, task_contract, unbound_reason, verify_intents
+from vector_os_nano.vcli.cognitive.evidence_classifier import classify_verify_expr
+from vector_os_nano.vcli.cognitive.object_goal import checkable_goals, named_intents, task_contract, unbound_reason
 from vector_os_nano.vcli.cognitive.trace_store import turn_reject_reason
 from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord, SubGoal
 from vector_os_nano.vcli.worlds.world_manifest import WORLDS_DIR, load_world
@@ -187,10 +188,15 @@ def _close_turn(goal: str, verify: str, *, real: bool):
     return trace, _verdict(agent, eng, trace)
 
 
+# REF1d-V-01: the literal-left spellings the classifier grounds and the gate once missed.
+LITERAL_LEFT = ["True == holding_object('red can')", "(True == holding_object('red can')) and (True == lifted('red can'))"]
+LITERAL_LEFT_ALONE = [f"True == lifted('{_CAN}')", "True == kept_holding('red can')"]
+
+
 @pytest.mark.parametrize("real", [False, True])
 @pytest.mark.parametrize("verify", ["holding_object('red can')", f"lifted('{_CAN}')",
                                     "holding_object('red can') and kept_holding('red can')",
-                                    "True == holding_object('red can')"])
+                                    *LITERAL_LEFT, *LITERAL_LEFT_ALONE])
 @pytest.mark.parametrize("goal", CLOSE_GOALS)
 def test_a_hold_made_by_a_skill_without_a_gripper_hint_needs_a_contract(goal, verify, real) -> None:
     trace, rep = _close_turn(goal, verify, real=real)
@@ -200,35 +206,77 @@ def test_a_hold_made_by_a_skill_without_a_gripper_hint_needs_a_contract(goal, ve
     assert OUTSIDE in rep.reject_reason, rep.reject_reason
 
 
+@pytest.mark.parametrize("verify", ["holding_object('red can')", *LITERAL_LEFT])
 @pytest.mark.parametrize("goal", ["拿起红罐子", "pick up the red can"])
-def test_the_same_hold_under_a_closed_form_is_proven(goal) -> None:
-    trace, rep = _close_turn(goal, "holding_object('red can')", real=True)
+def test_the_same_hold_under_a_closed_form_is_proven(goal, verify) -> None:
+    trace, rep = _close_turn(goal, verify, real=True)
     assert trace.contract == (f"holding_object('{_CAN}')",)
     assert rep.verified is True and rep.goal_check == "proven", rep.reject_reason
+
+
+@pytest.mark.parametrize("verify", LITERAL_LEFT_ALONE)
+def test_a_lift_or_a_kept_hold_alone_never_proves_a_grasp_goal(verify) -> None:
+    """The contract is holding_object: a step that proves another oracle backs none of it."""
+    trace, rep = _close_turn("pick up the red can", verify, real=True)
+    assert rep.verified is False and rep.goal_check == "failed", rep.reject_reason
 
 
 @pytest.mark.parametrize("verify", ["not holding_object('red can')", "holding_object('red can') or True",
                                     "near_object('red can')"])
 def test_a_gripper_turn_that_asserts_no_possession_or_placement_stays_as_it_was(verify) -> None:
-    """Only an ASSERTED possession or placement is a manipulation performed: a turn that
-    closes the gripper and proves nothing held keeps the verdict the manipulation gate
-    leaves it (the same as in a world with no manifest: the gate does not fire)."""
+    """A verify that is not GROUNDED proves nothing performed: a turn that closes the
+    gripper and proves nothing held keeps the verdict the manipulation gate leaves it
+    (the same as in a world with no manifest: the gate does not fire)."""
     why = turn_reject_reason(_one_row("合上夹爪", verify, "apartment"), APT)
     assert why == turn_reject_reason(_one_row("合上夹爪", verify, ""), APT) and OUTSIDE not in why, why
 
 
 @pytest.mark.parametrize(("expr", "want"), [
-    ("holding_object('x')", {"grasp"}), ("lifted('x')", {"grasp"}), ("kept_holding('x') == True", {"grasp"}),
-    ("object_on('x', 't')", {"place"}), ("released('x')", {"place"}), ("object_at('x', 1, 2)", {"place"}),
-    ("holding_object('x') and object_on('x', 't')", {"grasp", "place"}),
-    ("not holding_object('x')", set()), ("holding_object('x') or True", set()),
-    ("True == holding_object('x')", {"grasp"}), ("True == object_on('x', 't')", {"place"}),
-    ("True == (holding_object('x') and lifted('x'))", {"grasp"}),
-    ("holding_object('x') == False", set()), ("False == holding_object('x')", set()),
-    ("True != holding_object('x')", set()), ("True == (not holding_object('x'))", set()), ("near_object('x')", set()), ("holding_object(", set()), ("", set()),
+    ("holding_object('x')", {"grasp"}), ("True == lifted('x')", {"grasp"}), ("not kept_holding('x')", {"grasp"}),
+    ("object_on('x', 't') or True", {"place"}), ("1 if released('x') else 0", {"place"}),
+    ("near_object(object_at('x', 1, 2))", {"place"}), ("holding_object('x') != object_on('x', 't')", {"grasp", "place"}),
+    ("near_object('holding_object')", set()), ("at_position(1, 2)", set()), ("holding_object(", set()), ("", set()),
 ])
-def test_verify_intents_reads_only_asserted_manipulation_oracles(expr, want) -> None:
-    assert verify_intents(expr) == frozenset(want)
+def test_named_intents_reads_names_never_what_is_asserted(expr, want) -> None:
+    assert named_intents(expr) == frozenset(want)
+
+
+# REF1e, the point of the package: the gate never re-reads the classifier's grammar. For
+# every verify of a generated family, IF the real classifier grades it GROUNDED THEN a
+# turn that holds it, in a manifest world, with no compiled contract, is not verified.
+_MANIP = ["holding_object('red can')", "lifted('red can')", "kept_holding('red can')", "released('red can')",
+          "object_on('red can', 'dining_table')", "object_at('red can', 1.0, 2.0)"]
+_OTHER = ["near_object('user')", "at_position(1.0, 2.0)"]
+_CONSTS = ["True", "False", "1", "0", "None", "'red can'"]
+_OPS = ["==", "!=", "is", "is not", "<", "<=", ">", ">="]
+
+
+def _shapes(e: str) -> list[str]:
+    """*e* under not, a comparison with a constant on either side, a conditional
+    expression, a call, parentheses."""
+    out = [e, f"({e})", f"not {e}", f"not ({e})", f"{e} if True else False", f"True if {e} else False",
+           f"holding_object({e})", f"bool({e})", f"near_object('user', {e})"]
+    for c in _CONSTS:
+        for op in _OPS:
+            out += [f"{e} {op} {c}", f"{c} {op} {e}", f"({c} {op} ({e}))"]
+    return out
+
+
+def _family() -> list[str]:
+    one = [x for m in _MANIP for x in _shapes(m)]
+    two = [f"{a} {op} {b}" for a in one for b in [*_MANIP, *_OTHER, *_CONSTS] for op in ("and", "or")]
+    two += [f"{b} {op} {a}" for a in one for b in [*_MANIP, *_OTHER] for op in ("and", "or")]
+    nested = [x for a in _MANIP for b in [*_MANIP, *_OTHER] for x in _shapes(f"{a} and {b}") + _shapes(f"{a} or {b}")]
+    return sorted({*one, *two, *nested})
+
+
+def test_a_grounded_verify_naming_a_manipulation_oracle_never_verifies_without_a_contract() -> None:
+    grounded = [e for e in _family() if classify_verify_expr(e, APT) == "GROUNDED"]
+    assert len(grounded) > 200, len(grounded)  # the property is not vacuous
+    for goal in ("合上夹爪", "look around the living room"):
+        for expr in grounded:
+            t = _one_row(goal, expr, "apartment")
+            assert t.contract == () and OUTSIDE in turn_reject_reason(t, APT), (goal, expr)
 
 
 # REF1c-V-02 (charter 3.5, a decision): a closed-form slot that is a category word binds
