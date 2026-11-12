@@ -20,9 +20,9 @@ convention and a conformance test.
 | simulator | `interfaces.PhysicsWorld` + `SimBackend` | — | a module under `sim/backends/` + one row in its table | `tests/conformance` (every backend, the same tests) |
 | robot body | none: data read by generic drivers | `robot.yaml` (schema 1) + model files | a folder: package `embodiments/<id>/` or `$VECTOR_HOME/embodiments/<id>/` | strict load + stands + protocols conform |
 | control policy | `interfaces.ControlPolicy` | `robot.yaml: base.policy` | a module under `sim/policies/` + one table row | policy conformance (obs / action shapes, a stand test) |
-| skill | `@skill` with `requires` (+ optional `verify_hint`) | packs bound by capability | a pack module + one table row | every skill: schema valid, a non-empty hint names tagged oracles only |
+| skill | `@skill` with `requires` (+ optional `verify_hint`) | on the skill: a body is offered the registered skills whose requirements it meets | a module under `skills/` that registers it | every skill: schema valid, a non-empty hint names tagged oracles only |
 | world | none: data | `world.yaml` (schema 1) + scene file | a folder: package `worlds/<id>/` or `$VECTOR_HOME/worlds/<id>/` | strict load; the scene compiles on its own |
-| oracle | `@oracle(scope, channel, transition, max_tol, domain)` | the world layer only | in-tree only (never a plug-in: evidence is not pluggable) | moat corpus + tag == classifier-table pin |
+| oracle | `@oracle(scope, channel, transition, max_tol, domain, window)` | the world layer only | in-tree only (never a plug-in: evidence is not pluggable) | moat corpus + tag == classifier-table pin |
 | perception model | `interfaces.Detector` (`detect(rgb, queries) -> list[Detection]`), `Segmenter` | user config `perception:` | a module under `perception/` + one table row | detector conformance |
 | LLM | `interfaces.LLMBackend` | user config `llm:` | a provider row (preset) or `openai_compat` + `base_url` | scripted-backend contract tests |
 | face | CLI (REPL, `-p`), MCP | — | — | bare-REPL e2e, MCP stdio smoke |
@@ -273,7 +273,7 @@ openai_compat, model, base_url?, api_key_env?}`, `perception {detector, segmente
 Secrets come only from the environment (a repo-root `.env` is loaded first); a config file never
 holds a key; another application's credentials are never borrowed.
 
-**Environment** — `schemas/env.py` catalogues every variable (name, kind: user | test_seam |
+**Environment** — `schemas/env.py` catalogues every variable (name, kind: user | internal | test_seam |
 experimental | third_party, default, meaning). An AST test requires every `VECTOR_*` literal and
 every `os.environ` read in the package to be in the catalogue.
 
@@ -336,7 +336,7 @@ scene/, drivers/, policies/, nav/, backends/{mujoco, pybullet}/}` · `embodiment
 | `so101` (5-DoF arm) | ✔ | ✔ once it runs on the generic `Arm` / `Gripper` with colliding jaws and model perception; until then its grasp oracles are not registered and the docs say so |
 | `go2` (quadruped) | ✔ `convex_mpc` | ✔ `sinusoidal` (measured: 0.37 m/s, turns); `convex_mpc` there is a time-boxed stretch (measured: falls within 2 s) |
 | `go2_piper` (go2 ⊕ piper) | ✔ | ✔ on the sinusoidal gait; carrying needs its own gate |
-| `g1` (humanoid, TorchScript policy) | ✔ | not attempted in 1.0 |
+| `g1` (humanoid, TorchScript policy) | ✔ | measured once (S4b): a supported row if it stands and walks there, else refused by `supports` with the measured reason |
 
 `backend.supports(robot, world)` returns the reason for every ✗, so the matrix the user sees is
 derived, never hand-written. A kinematic (teleported) base is ruled out.
