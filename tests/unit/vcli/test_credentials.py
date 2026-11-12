@@ -24,7 +24,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cfg, "_CONFIG_PATH", tmp_path / ".vector" / "config.yaml")
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / ".vector"))
     for var in _ENV:
         monkeypatch.delenv(var, raising=False)
     return tmp_path
@@ -33,7 +33,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _config(home: Path, text: str) -> Path:
     path = home / ".vector" / "config.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text("schema: 1\n" + text)
     return path
 
 
@@ -57,18 +57,22 @@ def test_flag_over_config_over_default(home, monkeypatch) -> None:
     assert cfg.resolve_credentials("anthropic", "claude-opus-4-1").model == "claude-opus-4-1"
 
 
-def test_a_key_in_the_config_file_is_never_used_nor_printed(home) -> None:
+@pytest.mark.parametrize(("text", "named"), [
+    ("anthropic_api_key: {s}\n", "anthropic_api_key looks like a secret.*set ANTHROPIC_API_KEY"),
+    ("llm:\n  provider: anthropic\n  api_key: {s}\n", "llm.api_key looks like a secret.*set ANTHROPIC_API_KEY"),
+    ("llm:\n  provider: openai_compat\n  api_key_env: MY_KEY\n  token: {s}\n", "llm.token .*set MY_KEY"),
+])
+def test_a_key_in_the_config_file_is_refused_never_used_nor_printed(home, monkeypatch, text, named) -> None:
     """cli-entry:config-keys-world-readable / docs-packaging:credential-handling: the file
-    holds no key the CLI reads; an old file's key is named with the variable to move it
-    to, never echoed, and the file is left untouched."""
+    holds no key; one that does is refused naming the variable to set instead, its value
+    never echoed, and the file is left untouched."""
     secret = "sk-ant-api03-SECRET-in-the-file"
-    path = _config(home, f"provider: anthropic\nanthropic_api_key: {secret}\nllm:\n  provider: anthropic\n"
-                         f"  api_key: {secret}\n")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key")
+    path = _config(home, text.format(s=secret))
     before = path.read_bytes()
-    c = cfg.resolve_credentials()
-    assert c.api_key == ""
-    assert "anthropic_api_key -> ANTHROPIC_API_KEY" in c.notice and "llm.api_key -> ANTHROPIC_API_KEY" in c.notice
-    assert secret not in c.notice and secret not in repr(c) and secret not in c.instruction()
+    with pytest.raises(ValueError, match=named) as err:
+        cfg.resolve_credentials()
+    assert str(path) in str(err.value) and secret not in str(err.value)
     assert path.read_bytes() == before
 
 

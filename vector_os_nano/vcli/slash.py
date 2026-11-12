@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
 from prompt_toolkit.completion import Completer, Completion
@@ -20,6 +19,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
+from vector_os_nano.schemas import paths
 from vector_os_nano.vcli.render import TEAL, V_LABEL, console
 from vector_os_nano.vcli.runtime import switch_llm
 from vector_os_nano.vcli.session import list_sessions
@@ -76,7 +76,8 @@ def _login(rt: Any, args: list[str]) -> None:
 
 
 def _model(rt: Any, args: list[str]) -> None:
-    from vector_os_nano.vcli.config import PROVIDERS, resolve_credentials
+    from vector_os_nano.schemas.user import PROVIDERS
+    from vector_os_nano.vcli.config import resolve_credentials
 
     cur = rt.app_state["credentials"]
     if not args:
@@ -95,10 +96,8 @@ def _model(rt: Any, args: list[str]) -> None:
 
 
 def _config(rt: Any, args: list[str]) -> None:
-    from vector_os_nano.vcli.config import _CONFIG_PATH
-
     c = rt.app_state["credentials"]
-    _table(("Config", f"[dim]{_CONFIG_PATH}[/dim]"), ("Provider", f"[{TEAL}]{c.provider}[/]"),
+    _table(("Config", f"[dim]{paths.config_file()}[/dim]"), ("Provider", f"[{TEAL}]{c.provider}[/]"),
            ("Model", f"[{TEAL}]{c.model}[/]"), ("Base URL", str(c.base_url or "(provider default)")),
            ("Key", f"{c.key_env} " + ("[green]set[/]" if c.api_key else "[yellow]not set[/]")))
 
@@ -162,7 +161,7 @@ def _copy(rt: Any, args: list[str]) -> None:
 
 def _export(rt: Any, args: list[str]) -> None:
     session = rt.session
-    path = Path.home() / ".vector" / "exports" / f"{session.session_id}.md"
+    path = paths.export_file(session.session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"# Vector CLI Session\n\nSession: {session.session_id}\n"]
     for entry in session._entries:
@@ -187,13 +186,13 @@ def _clear(rt: Any, args: list[str]) -> None:
 def _clear_memory(rt: Any, args: list[str]) -> None:
     """Forget the explored rooms and objects: the running body's scene graph is cleared
     IN PLACE (every holder — skills, oracles, the robot-state prompt — keeps the same
-    object), and its file and the terrain map are deleted."""
-    from vector_os_nano.vcli.tools.nav_tools import _TERRAIN_PATH
+    object), and its file and the terrain map beside it are deleted."""
+    from vector_os_nano.vcli.tools.nav_tools import terrain_map
 
     sg = rt.app_state.get("scene_graph")
     if sg is not None:
         sg.clear()
-    for path in (getattr(sg, "_persist_path", None), _TERRAIN_PATH):
+    for path in (getattr(sg, "_persist_path", None), terrain_map(sg)):
         if path:
             try:
                 os.remove(path)
@@ -266,7 +265,7 @@ class VectorCompleter(Completer):
     known models, and a partial exit word its completion."""
 
     def get_completions(self, document: Document, complete_event: Any) -> Any:
-        from vector_os_nano.vcli.config import PROVIDERS
+        from vector_os_nano.schemas.user import PROVIDERS
 
         text = document.text_before_cursor
         if text.startswith("/"):

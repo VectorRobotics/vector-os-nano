@@ -47,13 +47,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Suppress the MuJoCo viewer window (default: window opens when --sim is active)",
     )
-    from vector_os_nano.vcli.config import PROVIDERS
+    from vector_os_nano.schemas.user import PROVIDERS
     parser.add_argument(
         "--provider", default=None, choices=sorted(PROVIDERS),
-        help="LLM provider (overrides llm.provider in ~/.vector/config.yaml; default deepseek). "
+        help="LLM provider (overrides llm.provider in $VECTOR_HOME/config.yaml; default deepseek). "
         "Its key is read from the environment or .env, never from a flag",
     )
-    parser.add_argument("--model", default=None, help="Model to use (overrides llm.model in ~/.vector/config.yaml)")
+    parser.add_argument("--model", default=None, help="Model to use (overrides llm.model in $VECTOR_HOME/config.yaml)")
     parser.add_argument("--resume", nargs="?", const="latest", default=None, help="Resume session")
     parser.add_argument("--base-url", default=None, help="API base URL")
     parser.add_argument("--no-permission", action="store_true", help="Allow all tools without prompts")

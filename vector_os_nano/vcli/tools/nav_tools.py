@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from vector_os_nano.schemas import paths
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, live_agent, tool
 from vector_os_nano.core.run_dir import run_path
 
@@ -95,7 +96,11 @@ class NavStateTool:
 # TerrainStatusTool
 # ---------------------------------------------------------------------------
 
-_TERRAIN_PATH: str = os.path.expanduser("~/.vector_os_nano/terrain_map.npz")
+def terrain_map(scene_graph: Any) -> Path | None:
+    """The terrain map beside the running body's scene memory ($VECTOR_HOME/memory/<world>/),
+    None when no body with a scene memory runs."""
+    persist = getattr(scene_graph, "_persist_path", None)
+    return Path(persist).with_name(paths.TERRAIN_MAP) if persist else None
 
 
 @tool(
@@ -113,14 +118,15 @@ class TerrainStatusTool:
     input_schema: dict[str, Any] = {"type": "object", "properties": {}}
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
-        path = Path(_TERRAIN_PATH)
+        path = terrain_map(getattr(live_agent(context), "_spatial_memory", None))
+        exists = path is not None and path.exists()
         data: dict[str, Any] = {
-            "file_exists": path.exists(),
-            "file_path": str(path),
-            "file_size_kb": round(path.stat().st_size / 1024, 1) if path.exists() else 0,
+            "file_exists": exists,
+            "file_path": str(path or ""),
+            "file_size_kb": round(path.stat().st_size / 1024, 1) if exists else 0,
             "replay_triggered": os.path.exists(run_path("vector_terrain_replay")),
         }
-        if path.exists():
+        if exists:
             try:
                 import numpy as np
                 npz = np.load(str(path))

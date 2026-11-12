@@ -26,6 +26,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)  # no real .env on the way
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / ".vector"))
     script = tmp_path / "script.json"
     script.write_text('{"turns": []}')
     monkeypatch.setenv("VECTOR_FAKE_LLM_TOOLS", str(script))

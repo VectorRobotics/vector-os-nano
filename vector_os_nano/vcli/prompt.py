@@ -12,19 +12,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from vector_os_nano.schemas import paths
+
 
 def user_prompt_files() -> list[str]:
     """The user-authored prompt text, one entry per non-empty file, in this order:
-    ``~/.vector/personality.md``, the project's ``VECTOR.md`` in cwd, ``~/.vector/VECTOR.md``.
+    ``$VECTOR_HOME/personality.md``, the project's ``VECTOR.md`` in cwd,
+    ``$VECTOR_HOME/VECTOR.md``.
 
     Another agent's files (AGENTS.md, CLAUDE.md) are never read: a repo's developer
     constitution is not the robot's system prompt.
     """
-    home = Path.home() / ".vector"
     out = []
-    for label, path in (("Personality", home / "personality.md"),
+    for label, path in (("Personality", paths.personality()),
                         ("Project Context (VECTOR.md)", Path.cwd() / "VECTOR.md"),
-                        ("User Context (~/.vector/VECTOR.md)", home / "VECTOR.md")):
+                        ("User Context ($VECTOR_HOME/VECTOR.md)", paths.user_context())):
         try:
             text = path.read_text(encoding="utf-8").strip()
         except OSError:  # absent, a directory, unreadable: nothing to add

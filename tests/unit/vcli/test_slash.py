@@ -26,14 +26,9 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """No key anywhere: no .env on the way, a throwaway HOME and config path."""
     import dotenv
 
-    from vector_os_nano.vcli import config
-
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(config, "_CONFIG_PATH", tmp_path / ".vector" / "config.yaml")
-    from vector_os_nano.vcli.tools import nav_tools
-
-    monkeypatch.setattr(nav_tools, "_TERRAIN_PATH", str(tmp_path / "terrain_map.npz"))
+    monkeypatch.setenv("VECTOR_HOME", str(tmp_path / ".vector"))
     monkeypatch.delenv("VECTOR_FAKE_LLM_TOOLS", raising=False)
     for var in ("DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(var, raising=False)
@@ -157,13 +152,18 @@ def test_config_shows_the_variable_never_the_key(home, out, monkeypatch) -> None
 
 
 def test_clear_memory_clears_the_one_scene_graph_in_place(home, out, tmp_path) -> None:
-    """core:clear-memory-split-brain: every holder keeps the same, now empty, graph."""
-    persist = tmp_path / "scene_graph.yaml"
-    persist.write_text("rooms: {}")
+    """core:clear-memory-split-brain: every holder keeps the same, now empty, graph; the
+    world's terrain map beside it ($VECTOR_HOME/memory/<world>/) goes too, no other world's."""
+    persist = tmp_path / "memory" / "apartment" / "scene_graph.yaml"
+    other = tmp_path / "memory" / "tabletop" / "terrain_map.npz"
+    for f in (persist, persist.with_name("terrain_map.npz"), other):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x")
     sg = _SceneGraph(persist)
     rt = _rt(scene_graph=sg)
     slash.dispatch(rt, "/clear_memory")
     assert sg.cleared == 1 and rt.app_state["scene_graph"] is sg and not persist.exists()
+    assert not persist.with_name("terrain_map.npz").exists() and other.exists()
 
 
 def test_reset_stands_the_body_up(home, out) -> None:
@@ -195,10 +195,10 @@ def test_a_bad_resume_id_is_a_clean_setup_error(home, out, monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "_maybe_reexec_under_mjpython", lambda args: None)
     monkeypatch.setattr(cli, "_setup_logging", lambda verbose: None)
-    # The guard's adversarial case: a REAL session file outside ~/.vector/sessions,
+    # The guard's adversarial case: a REAL session file outside $VECTOR_HOME/sessions,
     # reachable by a relative id. It is neither loaded nor rewritten.
     user = home / "user"
-    monkeypatch.setenv("HOME", str(user))
+    monkeypatch.setenv("VECTOR_HOME", str(user / ".vector"))
     (user / ".vector" / "sessions").mkdir(parents=True)
     planted = home / "evil.jsonl"
     body = '{"type": "user", "content": "planted"}\n{"type": "meta", "metadata": {}}\n'

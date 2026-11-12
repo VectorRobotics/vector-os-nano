@@ -26,6 +26,17 @@ from vector_os_nano.vcli.tools.base import ToolContext
 def _make_context() -> MagicMock:
     ctx = MagicMock(spec=ToolContext)
     ctx.app_state = {}
+    ctx.agent = None
+    return ctx
+
+
+def _memory_context(terrain: Path) -> MagicMock:
+    """A running body whose scene memory sits beside *terrain* ($VECTOR_HOME/memory/<world>/)."""
+    from types import SimpleNamespace
+
+    ctx = _make_context()
+    memory = SimpleNamespace(_persist_path=str(terrain.with_name("scene_graph.yaml")))
+    ctx.app_state = {"agent": SimpleNamespace(_spatial_memory=memory)}
     return ctx
 
 
@@ -113,9 +124,7 @@ class TestTerrainStatusTool:
         ix = np.array([1, 2, 3])
         np.savez(str(npz_file), ix=ix)
 
-        ctx = _make_context()
-        with patch("vector_os_nano.vcli.tools.nav_tools._TERRAIN_PATH", str(npz_file)):
-            result = terrain_tool.execute({}, ctx)
+        result = terrain_tool.execute({}, _memory_context(npz_file))
 
         assert not result.is_error
         data = json.loads(result.content)
@@ -126,9 +135,7 @@ class TestTerrainStatusTool:
     def test_terrain_status_file_missing(self, terrain_tool, tmp_path):
         """When terrain file is absent, file_exists=False with graceful output."""
         missing = tmp_path / "no_terrain_here.npz"
-        ctx = _make_context()
-        with patch("vector_os_nano.vcli.tools.nav_tools._TERRAIN_PATH", str(missing)):
-            result = terrain_tool.execute({}, ctx)
+        result = terrain_tool.execute({}, _memory_context(missing))
 
         assert not result.is_error
         data = json.loads(result.content)
@@ -136,14 +143,17 @@ class TestTerrainStatusTool:
         assert data["file_size_kb"] == 0
         assert data["voxel_count"] == 0
 
+    def test_terrain_status_without_a_body_names_no_file(self, terrain_tool):
+        """No running body, no world: no terrain map to report (never a guessed path)."""
+        data = json.loads(terrain_tool.execute({}, _make_context()).content)
+        assert (data["file_exists"], data["file_path"], data["voxel_count"]) == (False, "", 0)
+
     def test_terrain_status_fields(self, terrain_tool, tmp_path):
         """All expected fields must be present in the output."""
         npz_file = tmp_path / "terrain_map.npz"
         np.savez(str(npz_file), ix=np.array([10, 20]))
 
-        ctx = _make_context()
-        with patch("vector_os_nano.vcli.tools.nav_tools._TERRAIN_PATH", str(npz_file)):
-            result = terrain_tool.execute({}, ctx)
+        result = terrain_tool.execute({}, _memory_context(npz_file))
 
         data = json.loads(result.content)
         for key in ("file_exists", "file_path", "file_size_kb", "replay_triggered", "voxel_count"):

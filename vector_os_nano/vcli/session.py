@@ -4,7 +4,7 @@
 """Session persistence for vcli — JSONL format.
 
 Each session is stored as a file of newline-delimited JSON objects:
-  <session_id>.jsonl  under ~/.vector/sessions (or caller-supplied directory).
+  <session_id>.jsonl  under $VECTOR_HOME/sessions (or caller-supplied directory).
 
 Entry types
 -----------
@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from vector_os_nano.schemas import paths
 
 # ---------------------------------------------------------------------------
 # Value objects (frozen)
@@ -350,8 +352,7 @@ class Session:
 
 
 def _resolve_dir(directory: Path | None) -> Path:
-    # Resolved per call (not at import) so a HOME override is honoured.
-    return directory if directory is not None else Path.home() / ".vector" / "sessions"
+    return directory if directory is not None else paths.sessions()
 
 
 def create_session(

@@ -6,7 +6,7 @@
   python scripts/fetch_assets.py <robot> [--dest DIR] [--check]
       The robot manifest's ``assets:`` block: the pinned upstream revision is
       fetched with git into a temporary directory, exactly the listed files are
-      copied into ~/.vector/assets/<name> (or --dest), every sha256 is verified and
+      copied into $VECTOR_HOME/assets/<name> (or --dest), every sha256 is verified and
       the upstream licence is written beside them. Verified files are left alone;
       --check only verifies (exit 1 with the command to run). A checksum mismatch
       names the file and deletes nothing.
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -32,11 +33,12 @@ from vector_os_nano.embodiments.config import AssetsSpec, load_embodiment_config
 
 def _git_checkout(spec: AssetsSpec, into: Path) -> Path:
     """Only the files *spec* names, at its pinned revision (a blobless sparse fetch)."""
-    def git(*args: str) -> None:
-        subprocess.run(["git", "-C", str(into), *args], check=True)
+    def git(*args: str) -> None:  # stderr kept for the one-sentence failure (fetch_robot)
+        subprocess.run(["git", "-C", str(into), *args], check=True, capture_output=True, text=True)
 
     paths = sorted({spec.upstream(rel) for rel in spec.sha256} | {spec.license["file"]})
-    subprocess.run(["git", "init", "-q", str(into)], check=True)
+    into.mkdir(parents=True)
+    git("init", "-q")
     git("sparse-checkout", "set", "--no-cone", *paths)
     git("fetch", "-q", "--depth", "1", "--filter=blob:none", spec.git, spec.rev)
     git("-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD")
@@ -48,6 +50,7 @@ def fetch_robot(robot: str, dest: Path | None, check: bool) -> int:
     if spec is None:
         print(f"{robot} ships its model and policy in the package: nothing to fetch")
         return 0
+    command = assets.fetch_command(robot) + (f" --dest {shlex.quote(str(dest))}" if dest else "")
     dest = dest or assets.fetched_dir(spec)
     bad = assets.problems(spec, dest)
     if not bad:
@@ -56,7 +59,7 @@ def fetch_robot(robot: str, dest: Path | None, check: bool) -> int:
     if check:
         print(f"{robot}: {len(bad)} of {len(spec.sha256)} files in {dest} not verified "
               f"(e.g. {next(iter(bad))} {next(iter(bad.values()))}); fetch them with: "
-              f"{assets.fetch_command(robot)}", file=sys.stderr)
+              f"{command}", file=sys.stderr)
         return 1
     altered = [rel for rel, why in bad.items() if why == assets.MISMATCH]
     if altered:
@@ -65,7 +68,13 @@ def fetch_robot(robot: str, dest: Path | None, check: bool) -> int:
         return 1
     with tempfile.TemporaryDirectory(prefix="vos_fetch_") as tmp:
         print(f"{robot}: fetching {spec.git} @ {spec.rev[:12]} ({len(bad)} files) ...")
-        src = _git_checkout(spec, Path(tmp) / "src")
+        try:
+            src = _git_checkout(spec, Path(tmp) / "src")
+        except subprocess.CalledProcessError as exc:
+            why = (exc.stderr or "").strip().splitlines()[-1:] or [f"exit {exc.returncode}"]
+            print(f"{robot}: git could not fetch revision {spec.rev} of {spec.git} ({why[0]}); check "
+                  f"assets.rev in its robot.yaml; nothing was written to {dest}", file=sys.stderr)
+            return 1
         upstream_bad = assets.problems(spec, _staged(spec, src, Path(tmp) / "stage"))
         if upstream_bad:
             rel, why = next(iter(upstream_bad.items()))
@@ -119,7 +128,7 @@ def fetch_weights() -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("robot", nargs="?", help="embodiment id whose manifest has an assets: block")
-    ap.add_argument("--dest", type=Path, help="asset folder (default: ~/.vector/assets/<name>)")
+    ap.add_argument("--dest", type=Path, help="asset folder (default: $VECTOR_HOME/assets/<name>)")
     ap.add_argument("--check", action="store_true", help="only verify; exit 1 if not provisioned")
     ap.add_argument("--weights", action="store_true", help="pre-fetch the perception weights")
     args = ap.parse_args(argv)
