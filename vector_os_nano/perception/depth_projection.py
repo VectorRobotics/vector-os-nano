@@ -3,30 +3,18 @@
 
 """Pixel + depth -> world projection through the EXACT camera pose.
 
-Pinhole intrinsics from the camera's vertical FOV and the frame's actual shape,
-pixel -> camera frame (OpenCV: x right, y down, z forward), and camera -> world
-through MuJoCo's ``cam_xpos``/``cam_xmat`` (columns right, up, -forward). There is
-no robot-pose approximation: a world point needs the camera pose of its pixels.
+Pixel -> camera frame (OpenCV: x right, y down, z forward; the intrinsics are the
+frame's own ``K``), and camera -> world through the frame's ``cam_pos``/``cam_mat``
+(columns right, up, -forward). There is no robot-pose approximation: a world point
+needs the camera pose of its pixels.
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import numpy as np
 
 from vector_os_nano.core.types import CameraIntrinsics
-
-
-def mujoco_intrinsics(width: int = 320, height: int = 240, vfov_deg: float = 42.0) -> CameraIntrinsics:
-    """Pinhole intrinsics of a MuJoCo camera with fovy *vfov_deg* at width x height.
-
-    Square pixels; the horizontal FOV follows from the aspect ratio.
-    """
-    fy = (height / 2.0) / math.tan(math.radians(vfov_deg) / 2.0)
-    return CameraIntrinsics(
-        fx=fy, fy=fy, cx=width / 2.0, cy=height / 2.0, width=int(width), height=int(height),
-    )
 
 
 def pixel_to_camera(

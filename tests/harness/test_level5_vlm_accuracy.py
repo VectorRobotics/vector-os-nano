@@ -28,6 +28,14 @@ from typing import Any
 import numpy as np
 import pytest
 
+
+def _rgb(go2: Any) -> np.ndarray:
+    """One head-camera RGB frame through the generic Camera (the manifest's size)."""
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.sim.drivers.camera import Camera
+
+    return Camera(registry.load("go2").camera, go2.runtime).capture().rgb
+
 # Billed VLM calls: opt in with VECTOR_LIVE_LLM=1 (a key in the env or
 # config is NOT consent; tests:missed2).
 pytestmark = pytest.mark.live_llm
@@ -212,7 +220,7 @@ class TestLevel5VLMAccuracy:
         time.sleep(0.5)  # settle
 
         # Capture and analyze
-        frame = go2.get_camera_frame()
+        frame = _rgb(go2)
         room_id = vlm.identify_room(frame)
         scene = vlm.describe_scene(frame)
 

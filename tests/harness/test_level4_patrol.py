@@ -24,8 +24,18 @@ import os
 import sys
 from pathlib import Path
 
+from typing import Any
+
 import numpy as np
 import pytest
+
+
+def _rgb(go2: Any) -> np.ndarray:
+    """One head-camera RGB frame through the generic Camera (the manifest's size)."""
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.sim.drivers.camera import Camera
+
+    return Camera(registry.load("go2").camera, go2.runtime).capture().rgb
 
 # Billed VLM calls: opt in with VECTOR_LIVE_LLM=1 (a key in the env or
 # config is NOT consent; tests:missed2).
@@ -221,7 +231,7 @@ class TestLevel4Patrol:
         """A single VLM call on a synthetic frame stays under the $1 budget."""
         # Take one frame from the live sim and call describe_scene once.
         # This verifies cost tracking works and a single call is inexpensive.
-        frame = go2.get_camera_frame()
+        frame = _rgb(go2)
         assert frame is not None, "get_camera_frame() returned None"
 
         from vector_os_nano.perception.vlm_go2 import Go2VLMPerception

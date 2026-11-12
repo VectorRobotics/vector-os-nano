@@ -12,12 +12,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.harness.camera import pinhole
 from vector_os_nano.core.types import CameraIntrinsics
-from vector_os_nano.perception.depth_projection import (
-    camera_to_world,
-    mujoco_intrinsics,
-    pixel_to_camera,
-)
+from vector_os_nano.perception import depth_projection
+from vector_os_nano.perception.depth_projection import camera_to_world, pixel_to_camera
 
 
 class TestPixelToCamera:
@@ -25,7 +23,7 @@ class TestPixelToCamera:
 
     def test_center_pixel_straight_ahead(self):
         """Center pixel at 2m depth → (0, 0, 2) in camera frame."""
-        intr = mujoco_intrinsics(320, 240)
+        intr = pinhole(320, 240)
         x, y, z = pixel_to_camera(intr.cx, intr.cy, 2.0, intr)
         assert abs(x) < 0.001
         assert abs(y) < 0.001
@@ -33,27 +31,29 @@ class TestPixelToCamera:
 
     def test_right_pixel_positive_x(self):
         """Pixel to the right of center → positive x_cam."""
-        intr = mujoco_intrinsics(320, 240)
+        intr = pinhole(320, 240)
         x, y, z = pixel_to_camera(intr.cx + 50, intr.cy, 2.0, intr)
         assert x > 0
         assert abs(y) < 0.001
 
     def test_bottom_pixel_positive_y(self):
         """Pixel below center → positive y_cam (OpenCV: Y down)."""
-        intr = mujoco_intrinsics(320, 240)
+        intr = pinhole(320, 240)
         x, y, z = pixel_to_camera(intr.cx, intr.cy + 50, 2.0, intr)
         assert abs(x) < 0.001
         assert y > 0
 
     def test_depth_preserved(self):
-        intr = mujoco_intrinsics()
+        intr = pinhole()
         _, _, z = pixel_to_camera(100, 100, 3.5, intr)
         assert abs(z - 3.5) < 0.001
 
 
 def test_intrinsics_are_the_one_core_type():
-    """perception:duplicate-camera-intrinsics — two CameraIntrinsics classes, duck-typed."""
-    intr = mujoco_intrinsics(640, 480, vfov_deg=42.0)
+    """perception:duplicate-camera-intrinsics — two CameraIntrinsics classes, duck-typed;
+    K comes from the frame (``CameraFrame.K``), never re-derived from a fovy here."""
+    assert not hasattr(depth_projection, "mujoco_intrinsics")
+    intr = CameraIntrinsics.from_matrix([[415.7, 0, 320], [0, 415.7, 240], [0, 0, 1]], 640, 480)
     assert type(intr) is CameraIntrinsics
     assert (intr.width, intr.height, intr.cx, intr.cy) == (640, 480, 320.0, 240.0)
 

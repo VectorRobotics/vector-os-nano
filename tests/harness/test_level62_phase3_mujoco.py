@@ -55,6 +55,14 @@ from vector_os_nano.vcli.cognitive.visual_verifier import (
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 
 
+def _rgb(go2: Any) -> np.ndarray:
+    """One head-camera RGB frame through the generic Camera (the manifest's size)."""
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.sim.drivers.camera import Camera
+
+    return Camera(registry.load("go2").camera, go2.runtime).capture().rgb
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -240,7 +248,7 @@ class TestVisualVerifierMuJoCo:
 
     def test_camera_frame_shape(self, go2_standing):
         """MuJoCo produces a valid RGB frame."""
-        frame = go2_standing.get_camera_frame()
+        frame = _rgb(go2_standing)
         assert isinstance(frame, np.ndarray)
         assert frame.ndim == 3
         assert frame.shape[2] == 3  # RGB
@@ -248,13 +256,13 @@ class TestVisualVerifierMuJoCo:
 
     def test_camera_frame_not_black(self, go2_standing):
         """Frame has actual content (not all zeros)."""
-        frame = go2_standing.get_camera_frame()
+        frame = _rgb(go2_standing)
         assert frame.max() > 0, "Frame is completely black"
 
     def test_visual_verify_with_real_frame_mock_vlm(self, go2_standing):
         """Real camera frame + mock VLM = verifier runs end-to-end."""
         agent = MagicMock()
-        agent._base = go2_standing
+        agent._base = MagicMock(get_camera_frame=lambda: _rgb(go2_standing))
         agent._vlm = MagicMock()
         agent._vlm.find_objects.return_value = [
             MagicMock(**{"name": "floor", "confidence": 0.8}),
@@ -279,7 +287,7 @@ class TestVisualVerifierMuJoCo:
     def test_visual_verify_no_vlm_degrades(self, go2_standing):
         """Without VLM, verifier degrades gracefully."""
         agent = MagicMock()
-        agent._base = go2_standing
+        agent._base = MagicMock(get_camera_frame=lambda: _rgb(go2_standing))
         agent._vlm = None
 
         result = verify_visual(

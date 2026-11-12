@@ -68,7 +68,7 @@ def grasp_point_from_rgbd(
             or raw uint16 mm with depth_scale=1000.0 (RealSense).
         color: (H, W, 3) uint8 RGB (carried for parity; not used for the point).
         mask: (H, W) binary mask; only pixels where mask > 0 are projected.
-        intrinsics: CameraIntrinsics (fx, fy, cx, cy) — e.g. mujoco_intrinsics().
+        intrinsics: CameraIntrinsics (fx, fy, cx, cy) — from the frame's ``K``.
         cam_xpos: (3,) camera world position (MuJoCo data.cam_xpos[id]).
         cam_xmat: (9,) or (3,3) camera world rotation (MuJoCo data.cam_xmat[id]).
         depth_scale: Raw-depth-units -> metres divisor. 1.0 for metric depth.

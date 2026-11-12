@@ -125,13 +125,15 @@ def test_a_generic_driver_that_reaches_the_engine_is_flagged():
     imports MuJoCo or ground truth, or attaches, is a violation; the same code in a
     MuJoCo-internal module is not one of rule 3's."""
     src = ("import mujoco\nfrom vector_os_nano.sim.ground_truth import GroundTruth\n"
+           "from vector_os_nano.vcli.cognitive.abort import is_abort_requested\n"
            "def f(rt):\n    rt.world.data.ctrl[0] = rt.world.model.nu\n    rt.world.attach(1, 2)\n")
     got = {v.split(" | ")[0] + " | " + v.split(" | ")[2] for v in file_violations("sim/drivers/x.py", src)}
     assert {"3 a generic driver reaches no engine model or data | data",
             "3 a generic driver reaches no engine model or data | model",
             "2 a simulator is imported only by its backend | mujoco",
             "3 actor code calls no attach / detach | attach",
-            "3 actor code imports neither the world side nor the kernel | sim.ground_truth"} <= got
+            "3 actor code imports neither the world side nor the kernel | sim.ground_truth",
+            "3 actor code imports neither the world side nor the kernel | vcli.cognitive.abort"} <= got
     assert not [v for v in file_violations("sim/backends/mujoco/x.py", src) if v.startswith("3 ")]
 
 
