@@ -3,12 +3,8 @@
 
 """SimSession — the ONE in-process simulation behind NL ``start_simulation``.
 
-``start_simulation(embodiment=...)`` and the ``--sim`` / ``--sim-go2`` /
-``--embodiment`` flags all call :meth:`SimSession.start`. The body is built from the
-embodiment manifest (``embodiments/<id>/robot.yaml``) — never from an env var: a
-legged body on the generic LeggedBase + Lidar (:func:`legged_body`), its arm on the
-generic Arm / Gripper / Camera. The world side spawns it (:func:`standing_state`) and
-stands it up again on ``/reset`` (:func:`respawn`).
+CLI flags and the natural-language tool call SimSession.start with one selected
+robot, backend and world. Manifests supply devices, controllers and reset poses.
 
 * ``start`` fails loud with :class:`SimStartError` (reason + detail) and tears
   down whatever it built; it returns only after the readiness probe passed
@@ -576,9 +572,30 @@ def respawn(rt: Any, base: Any, cfg: Any, xy: Any = None, heading: float | None 
         w.reset(standing_state(scene, cfg, q, (x, y) if xy is None else xy, yaw if heading is None else heading, floor_z=floor_z))
         if cfg.arm is not None:  # the arm's servos hold it at home
             w.set_targets([scene.joint(j) for j in cfg.arm.joints], cfg.arm.home)
+        _initial_joints(w, cfg)
         base.respawned()
 
     rt.call(job)
+
+
+def _initial_joints(world: Any, cfg: Any) -> None:
+    """Reset declared scalar joints and their position servos, including passive mimics."""
+    from vector_os_nano.sim.scene import reader
+
+    initial = getattr(cfg, 'initial_joints', {})
+    if not initial:
+        return
+    scene = world.scene
+    q, _ = world.state()
+    joints = {j.name: j for j in reader.joints(scene.model)}
+    for name, value in initial.items():
+        j = joints[name]
+        if j.type not in (reader.JNT_HINGE, reader.JNT_SLIDE) or (j.range and not j.range[0] <= value <= j.range[1]):
+            raise ValueError(f'{cfg.path}.initial_joints.{name}: outside scalar joint limits')
+        q[j.qadr] = value
+    world.reset(q)
+    driven = [a.joint for a in reader.actuators(scene.model) if a.kind == 'position' and scene.model.joint(a.joint).name in initial]
+    world.set_targets(driven, [q[scene.joint_q(j)] for j in driven])
 
 
 def _build(session: SimSession, vlm_api_key: str | None) -> Any:
@@ -609,6 +626,7 @@ def _build(session: SimSession, vlm_api_key: str | None) -> Any:
     elif cfg.lidar is not None:
         lidar = Lidar(cfg.lidar, rt)
     session.runtime = rt
+    rt.call(lambda w: _initial_joints(w, cfg))
     rt.start()
     if base is not None:
         base.set_posture("stand")

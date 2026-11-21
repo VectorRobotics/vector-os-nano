@@ -101,6 +101,7 @@ def check_model_names(robot: EmbodimentConfig, model: Any) -> None:
     """Reject misspelled morphology names before any backend can start moving."""
     bodies, joints, sites = ({e.name for e in getattr(model, kind) if e.name} for kind in ('bodies', 'joints', 'sites'))
     checks = [('model.root_body', [robot.model.root_body], bodies)]
+    checks.append(('initial_joints', robot.initial_joints, joints))
     if robot.base:
         checks.append(('base.joints', robot.base.joints, joints))
     if robot.arm:

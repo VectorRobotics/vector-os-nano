@@ -266,6 +266,7 @@ class EmbodimentConfig:
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     path: Path = Path("robot.yaml")
     compose: ComposeSpec | None = None
+    initial_joints: dict[str, float] = field(default_factory=dict)
 
     @property
     def camera(self) -> CameraSpec | None:
@@ -543,7 +544,7 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
 
 
 _TOP_KEYS = {"schema", "compose", "display_name", "world", "model", "sensors", "assets", "arm",
-             "base", "skills"}
+             "base", "skills", "initial_joints"}
 
 def _parse_skills(raw: dict[str, Any], ctx: str) -> dict[str, dict[str, Any]]:
     skills = _optional_mapping(raw, 'skills', ctx) or {}
@@ -617,7 +618,8 @@ def _prefixed(cfg: EmbodimentConfig, prefix: str) -> EmbodimentConfig:
         return cfg
     return replace(cfg, model=replace(cfg.model, root_body=prefix + cfg.model.root_body),
                    base=_prefix_base(cfg.base, prefix), arm=_prefix_arm(cfg.arm, prefix),
-                   sensors=_prefix_sensors(cfg.sensors, prefix))
+                   sensors=_prefix_sensors(cfg.sensors, prefix),
+                   initial_joints={prefix+k: v for k, v in cfg.initial_joints.items()})
 
 
 def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml", *,
@@ -669,13 +671,23 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml", *,
                              camera=any(isinstance(s, CameraSpec) for s in sensors),
                              lidar=any(isinstance(s, LidarSpec) for s in sensors),
                              depth=any(isinstance(s, CameraSpec) and s.depth is not None for s in sensors))
+    initial = dict(_optional_mapping(raw, 'initial_joints', ctx) or {})
+    for name, value in initial.items():
+        if not isinstance(name, str) or not name or isinstance(value, bool):
+            raise EmbodimentConfigError(f'{ctx}.initial_joints: expected joint names and finite positions')
+        initial[name] = _floats([value], 1, f'{ctx}.initial_joints.{name}')[0]
+    if composition:
+        initial = {**inherited.initial_joints,
+                   **{composition.prefix+k: v for k, v in composition.arm.initial_joints.items()}, **initial}
+    if base and set(initial) & set(base.joints):
+        raise EmbodimentConfigError(f'{ctx}.initial_joints: base joints belong in base.stance')
     cfg = EmbodimentConfig(
         id=robot_id, display_name=str(raw.get('display_name', robot_id)), model=model,
         sensors=sensors, capabilities=caps, arm=arm, base=base,
         world=str(raw.get('world', inherited.world if inherited else '') or ''),
         assets=_parse_assets(raw, ctx) if 'assets' in raw or inherited is None else inherited.assets,
         skills=(_parse_skills(raw, ctx) if 'skills' in raw or inherited is None else inherited.skills),
-        path=path, compose=composition)
+        path=path, compose=composition, initial_joints=initial)
     return _prefixed(cfg, model.prefix) if composition is None else cfg
 
 
