@@ -78,8 +78,8 @@ def test_corrupt_manifest_is_error_naming_the_key(tmp_path, monkeypatch) -> None
     bad = tmp_path / "broken"
     bad.mkdir()
     (bad / "robot.yaml").write_text(
-        "schema: 1\nid: broken\ndisplay_name: x\ndriver: legged\n"
-        "model: {path: a.xml, root_body: b}\nstance: {}\n"
+        "schema: 1\ndisplay_name: x\ndriver: legged\n"
+        "model: {file: a.xml, root_body: b}\nstance: {}\n"
         "policy: {ref: none}\ncapabilities: {}\n"  # no 'spawn'
     )
     monkeypatch.setattr(emb_config, "_EMBODIMENTS_DIR", tmp_path)
@@ -92,7 +92,7 @@ def test_unknown_driver_is_error_naming_the_field(tmp_path, monkeypatch) -> None
     src = (emb_config._EMBODIMENTS_DIR / "go2" / "robot.yaml").read_text()
     (tmp_path / "odd").mkdir()
     (tmp_path / "odd" / "robot.yaml").write_text(
-        src.replace("id: go2\n", "id: odd\n") + "\ndriver: warp_drive\n"
+        src + "\ndriver: warp_drive\n"
     )
     monkeypatch.setattr(emb_config, "_EMBODIMENTS_DIR", tmp_path)
     with pytest.raises(SimStartError, match="unknown key 'driver'"):
