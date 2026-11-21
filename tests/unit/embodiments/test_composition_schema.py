@@ -45,6 +45,18 @@ def test_child_arm_names_are_prefixed_once(folders):
     assert cfg.arm.joints[0] == 'piper_tool_joint1'
 
 
+def test_composed_joint_groups_keep_namespaces_and_reject_duplicate_ownership(folders):
+    group = dict(joints=['pan'], postures={'center': [0]}, velocity=[1], acceleration=[1], jerk=[1], track_tol=.01)
+    change(folders, 'piper', lambda r: r.update(joint_groups={'camera': group}))
+    change(folders, 'go2', lambda r: r.update(joint_groups={'torso': {**group, 'joints': ['lift']}}))
+    cfg = robot.load_embodiment_config('go2_piper')
+    assert cfg.joint_groups['camera'].joints == ('piper_pan',)
+    assert cfg.joint_groups['torso'].joints == ('lift',)
+    change(folders, 'go2_piper', lambda r: r.update(joint_groups={'camera': group}))
+    with pytest.raises(robot.EmbodimentConfigError, match='distinct'):
+        robot.load_embodiment_config('go2_piper')
+
+
 def test_composed_sensor_overrides_follow_the_base_namespace(folders):
     change(folders, 'go2', lambda r: r['model'].update(prefix='base_'))
     cfg = robot.load_embodiment_config('go2_piper')

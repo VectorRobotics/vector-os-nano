@@ -15,7 +15,8 @@ from __future__ import annotations
 from vector_os_nano.embodiments import registry
 from vector_os_nano.perception.camera_perception import CameraPerception
 from vector_os_nano.sim.drivers.camera import Camera
-from vector_os_nano.sim.session import _devices, _perception
+from vector_os_nano.sim.session import _perception
+from vector_os_nano.sim.devices import devices as _devices
 
 
 def test_a_manifest_camera_yields_one_camera_perception_at_its_size():

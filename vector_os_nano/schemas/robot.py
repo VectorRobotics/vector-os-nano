@@ -208,6 +208,34 @@ class ArmSpec:
 
 
 @dataclass(frozen=True)
+class JointGroupSpec:
+    """Named scalar position servos, with finite configured poses and motion limits."""
+
+    joints: tuple[str, ...]
+    postures: dict[str, tuple[float, ...]]
+    velocity: tuple[float, ...]
+    acceleration: tuple[float, ...]
+    jerk: tuple[float, ...]
+    track_tol: float
+
+    @property
+    def dof(self) -> int:
+        return len(self.joints)
+
+    def __post_init__(self) -> None:
+        if not self.joints or len(set(self.joints)) != self.dof or any(not n for n in self.joints):
+            raise EmbodimentConfigError('joint group needs distinct, nonempty joint names')
+        if not math.isfinite(self.track_tol) or self.track_tol <= 0:
+            raise EmbodimentConfigError('joint group track_tol must be finite and positive')
+        if not self.postures or any(not isinstance(n, str) or not n or len(q) != self.dof
+                                   or any(not math.isfinite(x) for x in q) for n, q in self.postures.items()):
+            raise EmbodimentConfigError('joint group needs named finite postures matching its joints')
+        for values in (self.velocity, self.acceleration, self.jerk):
+            if len(values) != self.dof or any(not math.isfinite(x) or x <= 0 for x in values):
+                raise EmbodimentConfigError('joint group motion limits must be finite and positive per joint')
+
+
+@dataclass(frozen=True)
 class CapabilityProfile:
     """Uniform capability flags — what this body can do (Rule 11: no method drift)."""
 
@@ -217,6 +245,7 @@ class CapabilityProfile:
     camera: bool = False
     lidar: bool = False
     depth: bool = False
+    joint_groups: bool = False
 
 
 @dataclass(frozen=True)
@@ -267,6 +296,7 @@ class EmbodimentConfig:
     path: Path = Path("robot.yaml")
     compose: ComposeSpec | None = None
     initial_joints: dict[str, float] = field(default_factory=dict)
+    joint_groups: dict[str, JointGroupSpec] = field(default_factory=dict)
 
     @property
     def camera(self) -> CameraSpec | None:
@@ -544,7 +574,30 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
 
 
 _TOP_KEYS = {"schema", "compose", "display_name", "world", "model", "sensors", "assets", "arm",
-             "base", "skills", "initial_joints"}
+             "base", "skills", "initial_joints", "joint_groups"}
+
+
+def _parse_joint_groups(raw: dict[str, Any], ctx: str) -> dict[str, JointGroupSpec]:
+    groups = {}
+    for name, data in (_optional_mapping(raw, 'joint_groups', ctx) or {}).items():
+        if not isinstance(name, str) or not name:
+            raise EmbodimentConfigError(f'{ctx}.joint_groups: expected nonempty names')
+        where = f'{ctx}.joint_groups.{name}'
+        _keys(data, where, {'joints', 'postures', 'velocity', 'acceleration', 'jerk', 'track_tol'})
+        joints = _as_tuple(_require(data, 'joints', where))
+        if any(not isinstance(j, str) for j in joints):
+            raise EmbodimentConfigError(f'{where}.joints: expected joint names')
+        postures = _optional_mapping(data, 'postures', where) or {}
+        groups[name] = JointGroupSpec(joints, {
+            n: _floats(q, len(joints), f'{where}.postures.{n}') for n, q in postures.items()
+        }, **{key: _floats(_require(data, key, where), len(joints), f'{where}.{key}')
+              for key in ('velocity', 'acceleration', 'jerk')},
+           track_tol=_floats([_require(data, 'track_tol', where)], 1, f'{where}.track_tol')[0])
+    return groups
+
+
+def _prefix_groups(groups: dict[str, JointGroupSpec], prefix: str) -> dict[str, JointGroupSpec]:
+    return {name: replace(spec, joints=tuple(prefix+j for j in spec.joints)) for name, spec in groups.items()}
 
 def _parse_skills(raw: dict[str, Any], ctx: str) -> dict[str, dict[str, Any]]:
     skills = _optional_mapping(raw, 'skills', ctx) or {}
@@ -619,7 +672,8 @@ def _prefixed(cfg: EmbodimentConfig, prefix: str) -> EmbodimentConfig:
     return replace(cfg, model=replace(cfg.model, root_body=prefix + cfg.model.root_body),
                    base=_prefix_base(cfg.base, prefix), arm=_prefix_arm(cfg.arm, prefix),
                    sensors=_prefix_sensors(cfg.sensors, prefix),
-                   initial_joints={prefix+k: v for k, v in cfg.initial_joints.items()})
+                   initial_joints={prefix+k: v for k, v in cfg.initial_joints.items()},
+                   joint_groups=_prefix_groups(cfg.joint_groups, prefix))
 
 
 def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml", *,
@@ -666,11 +720,25 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml", *,
             base = _prefix_base(base, model.prefix)
         if 'sensors' in raw:
             sensors = _prefix_sensors(sensors, model.prefix, composition.prefix)
+    groups = _parse_joint_groups(raw, ctx)
+    if composition:
+        inherited_groups = {**inherited.joint_groups, **_prefix_groups(composition.arm.joint_groups, composition.prefix)}
+        if set(inherited.joint_groups) & set(composition.arm.joint_groups) or set(groups) & set(inherited_groups):
+            raise EmbodimentConfigError(f'{ctx}.joint_groups: composed group names must be distinct')
+        groups = {**inherited_groups, **groups}
+    occupied = set(base.joints if base else ()) | set(arm.joints if arm else ())
+    if arm and arm.gripper:
+        occupied.add(arm.gripper.joint)
+    for name, group in groups.items():
+        if occupied & set(group.joints):
+            raise EmbodimentConfigError(f'{ctx}.joint_groups.{name}: joint already controlled by another device')
+        occupied.update(group.joints)
     caps = CapabilityProfile(has_base=base is not None, has_arm=arm is not None,
                              has_gripper=arm is not None and arm.gripper is not None,
                              camera=any(isinstance(s, CameraSpec) for s in sensors),
                              lidar=any(isinstance(s, LidarSpec) for s in sensors),
-                             depth=any(isinstance(s, CameraSpec) and s.depth is not None for s in sensors))
+                             depth=any(isinstance(s, CameraSpec) and s.depth is not None for s in sensors),
+                             joint_groups=bool(groups))
     initial = dict(_optional_mapping(raw, 'initial_joints', ctx) or {})
     for name, value in initial.items():
         if not isinstance(name, str) or not name or isinstance(value, bool):
@@ -687,7 +755,7 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml", *,
         world=str(raw.get('world', inherited.world if inherited else '') or ''),
         assets=_parse_assets(raw, ctx) if 'assets' in raw or inherited is None else inherited.assets,
         skills=(_parse_skills(raw, ctx) if 'skills' in raw or inherited is None else inherited.skills),
-        path=path, compose=composition, initial_joints=initial)
+        path=path, compose=composition, initial_joints=initial, joint_groups=groups)
     return _prefixed(cfg, model.prefix) if composition is None else cfg
 
 

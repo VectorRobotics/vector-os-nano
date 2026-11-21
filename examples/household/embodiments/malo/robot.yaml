@@ -11,6 +11,22 @@ initial_joints:
   right_gripper_left_finger_axis: 0.04
   right_gripper_right_finger_axis: 0.04
 
+joint_groups:
+  torso:
+    joints: [torso_lift_joint, waist_pitch_joint]
+    postures: {upright: [0, 0], shelf: [-0.15, 0.2]}
+    velocity: [0.04, 0.15]
+    acceleration: [0.1, 0.3]
+    jerk: [0.3, 0.8]
+    track_tol: 0.003
+  head:
+    joints: [head_yaw_joint, head_pitch_joint]
+    postures: {forward: [0, 0.28], level: [0, 0], left: [0.5, 0.28], right: [-0.5, 0.28]}
+    velocity: [0.25, 0.2]
+    acceleration: [0.5, 0.4]
+    jerk: [1, 0.8]
+    track_tol: 0.01
+
 # The complete dual-arm CAD is retained. This first control acceptance uses the
 # left arm; named dual-end-effector routing is still a separate integration gate.
 base:

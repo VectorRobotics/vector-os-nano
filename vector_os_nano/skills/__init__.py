@@ -25,6 +25,7 @@ def get_skills(capabilities: CapabilityProfile) -> list:
             ("base", capabilities.has_base), ("arm", capabilities.has_arm),
             ("gripper", capabilities.has_gripper), ("camera", capabilities.camera),
             ("depth", capabilities.depth), ("lidar", capabilities.lidar),
+            ("joint_groups", capabilities.joint_groups),
         ) if present
     }
     return [cls() for cls in SKILL_TYPES.values() if cls.__skill_requires__ <= available]

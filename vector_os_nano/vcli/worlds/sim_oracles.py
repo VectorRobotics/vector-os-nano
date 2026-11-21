@@ -209,6 +209,20 @@ def build_namespace(
 
     ns["localized"] = localized
 
+    groups = getattr(cfg, 'joint_groups', {})
+    if groups:
+        @oracle(scope='robot', channel='joints', transition='rise', domain='bool')
+        @_safe(False)
+        def joint_group_at(group: str, posture: str) -> bool:
+            """Configured joint group within its fixed tracking tolerance of a named pose."""
+            spec = groups.get(group)
+            if spec is None or posture not in spec.postures:
+                return False
+            q, target = gt.joint_positions(spec.joints), spec.postures[posture]
+            return len(q) == len(target) and all(abs(a-b) <= spec.track_tol for a, b in zip(q, target))
+
+        ns['joint_group_at'] = joint_group_at
+
     # ---------------------------------------------------------------- arm
     arm = getattr(cfg, "arm", None)
     if arm is not None:

@@ -70,7 +70,7 @@ def test_a_finger_without_a_colliding_geom_is_refused(piper, tmp_path):
 
 def test_the_session_refuses_a_numb_finger(piper, tmp_path):
     """The session's device wiring runs the guard (deleting its call left every test green)."""
-    from vector_os_nano.sim.session import _devices
+    from vector_os_nano.sim.devices import devices as _devices
 
     numb, scene = _numb_link8(*piper, tmp_path)
     with pytest.raises(ValueError, match="finger body 'link8' has no colliding geom"):

@@ -92,6 +92,13 @@ class RobotStatusTool:
             lines.append("Base: not connected")
 
         # Perception
+        for name, group in getattr(agent, '_services', {}).get('joint_groups', {}).items():
+            poses = getattr(agent, '_config', {}).get('joint_groups', {}).get(name, {}).get('postures', {})
+            try:
+                lines.append(f'Joint group {name}: joints={group.joint_names}, '
+                             f'q={[round(v, 3) for v in group.get_joint_positions()]}, postures={poses}')
+            except Exception:
+                lines.append(f'Joint group {name}: state unavailable, postures={poses}')
         perception = getattr(agent, "_perception", None)
         lines.append(f"Perception: {'active' if perception is not None else 'not available'}")
 

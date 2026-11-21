@@ -143,6 +143,7 @@ class ActorBaseline:
     # The sim session the pose half was read in (its ``uid``): a baseline from another
     # session never causes.
     session: Any = None
+    joint_groups: dict[str, tuple[float | None, tuple[float, ...] | None]] | None = None
 
 
 def _read_float(fn: Any) -> float | None:
@@ -194,6 +195,10 @@ def capture(agent: Any, session: Any = None) -> ActorBaseline:
         arm_joints = None if joints is None else tuple(float(v) for v in joints)
     held = _read_truth("attachments", gt.attachments) if gripper is not None and gt is not None else None
     obs = getattr(getattr(agent, "_spatial_memory", None), "observation_count", None)
+    groups = {}
+    for name, device in getattr(agent, '_services', {}).get('joint_groups', {}).items():
+        q = _read_truth('joint group', lambda: tuple(gt.joint_positions(device.joint_names))) if gt is not None else None
+        groups[name] = (_read_float(getattr(device, 'ctrl_motion', None)), q)
     return ActorBaseline(
         base_cmd_motion=_read_float(getattr(base, "cmd_motion", None)) if _connected(base) else None,
         base_pos=None if base_pose is None else tuple(float(v) for v in base_pose[:3]),
@@ -203,6 +208,7 @@ def capture(agent: Any, session: Any = None) -> ActorBaseline:
         gripper_welds=None if held is None else {str(n): True for n in held},
         belief_obs=obs if isinstance(obs, int) and not isinstance(obs, bool) else None,
         session=getattr(session, "uid", None),
+        joint_groups=groups,
     )
 
 
@@ -213,7 +219,7 @@ def capture(agent: Any, session: Any = None) -> ActorBaseline:
 # The actor channels causation is graded on ("none" oracles name no actor state: a
 # step verified only by them is never graded here). "perception" is the actor's belief
 # judged against GT (``localized``): caused only by a localized observation this step.
-_ROBOT_CHANNELS: frozenset[str] = frozenset({"base", "arm", "gripper", "perception"})
+_ROBOT_CHANNELS: frozenset[str] = frozenset({"base", "arm", "gripper", "perception", "joints"})
 # ``not <pred>`` asks for the opposite transition of ``<pred>``.
 _FLIP = {"rise": "fall", "fall": "rise", "level": "level"}
 
@@ -321,6 +327,9 @@ def commanded_nothing(agent: Any, before: ActorBaseline, after: ActorBaseline) -
         ("_arm", before.arm_ctrl_motion, after.arm_ctrl_motion),
         ("_gripper", before.gripper_welds, after.gripper_welds),
     ) if getattr(agent, dev, None) is not None]
+    for name in getattr(agent, '_services', {}).get('joint_groups', {}):
+        channels.append(((before.joint_groups or {}).get(name, (None, None))[0],
+                         (after.joint_groups or {}).get(name, (None, None))[0]))
     return (bool(channels) and before.session == after.session
             and all(b is not None and b == a for b, a in channels))
 
@@ -352,6 +361,14 @@ def _call_caused(name: str, call: ast.Call, channel: str, want: str,
         # The belief gained a localized observation this step (WP11 observation_count);
         # memory from before the step, or a step that localized nothing, is UNCAUSED.
         return b.belief_obs is not None and p.belief_obs is not None and p.belief_obs > b.belief_obs
+    if channel == 'joints':
+        arg = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == 'group'), None)
+        if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
+            return False
+        bc, bq = (b.joint_groups or {}).get(arg.value, (None, None))
+        pc, pq = (p.joint_groups or {}).get(arg.value, (None, None))
+        return (_commanded(bc, pc) and bq is not None and pq is not None and len(bq) == len(pq)
+                and max((abs(x-y) for x, y in zip(bq, pq)), default=0.) >= DISPLACEMENT_EPS)
     if channel == "arm":
         if not _commanded(b.arm_ctrl_motion, p.arm_ctrl_motion):
             return False

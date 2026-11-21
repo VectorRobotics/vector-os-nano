@@ -37,7 +37,8 @@ class StopSkill:
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         """Halt the base and the arm; report which halted and which failed."""
         base, arm = context.base, context.arm
-        if base is None and arm is None:
+        groups = context.services.get('joint_groups', {})
+        if base is None and arm is None and not groups:
             return SkillResult(
                 success=False,
                 error_message="Nothing to stop: no base and no arm connected",
@@ -72,12 +73,14 @@ class StopSkill:
                 halted.append("base")
             except Exception as exc:  # noqa: BLE001
                 failed["base"] = str(exc)
-        if arm is not None:
+        for name, device in [('arm', arm), *[(f'joint_group:{n}', d) for n, d in groups.items()]]:
+            if device is None:
+                continue
             try:
-                arm.stop()
-                halted.append("arm")
+                device.stop()
+                halted.append(name)
             except Exception as exc:  # noqa: BLE001
-                failed["arm"] = str(exc)
+                failed[name] = str(exc)
         logger.info("[STOP] halted=%s failed=%s", halted, failed)
 
         if failed:

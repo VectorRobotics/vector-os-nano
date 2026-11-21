@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Sentinel for detecting whether legacy kwargs were explicitly supplied.
 _UNSET: object = object()
 SKILL_TYPES: dict[str, type] = {}
-CAPABILITIES = frozenset({"base", "arm", "gripper", "camera", "depth", "lidar"})
+CAPABILITIES = frozenset({"base", "arm", "gripper", "camera", "depth", "lidar", "joint_groups"})
 
 
 # ---------------------------------------------------------------------------

@@ -120,6 +120,8 @@ def _append_gt_dump(path: str, s: "SimSession", phase: str, goal: str) -> None:
         "world": world.id, "sim_time": gt.sim_time, "base": gt.base_pose(),
         "arm": ({"joints": list(s.config.arm.joints), "q": gt.joint_positions(s.config.arm.joints),
                  "home": list(s.config.arm.home)} if s.config.arm else None),
+        "joint_groups": {n: {"joints": g.joints, "q": gt.joint_positions(g.joints)}
+                         for n, g in s.config.joint_groups.items()},
         "objects": {n: {"pos": p, "welded": n in held} for n, p in gt.object_positions().items()},
         "surfaces": {k: {"box": v.box, "height": v.height} for k, v in (world.surfaces if world else {}).items()},
         "user": world.user if world else None,
@@ -266,6 +268,7 @@ class SimSession:
             self.notes.append("ground truth: unavailable (the builder made no SimRuntime)")
             return
         if isinstance(self.agent._config, dict):
+            self.agent._config["joint_groups"] = {n: {"postures": g.postures} for n, g in self.config.joint_groups.items()}
             self.agent._config["skills"] = {**self.agent._config.get("skills", {}), **self.config.skills}
             if self.config.arm is not None:
                 self.agent._config["arm"] = {"postures": self.config.arm.postures}
@@ -452,26 +455,6 @@ def _scene_vlm_config(user_cfg: dict[str, Any], vlm_api_key: str | None) -> tupl
     return vlm_api_key or os.environ.get("OPENROUTER_API_KEY", ""), vlm_cfg, note
 
 
-def _devices(cfg: Any, rt: Any, *, wait_mount: Callable[[], Any] | None = None,
-             abort: Callable[[], bool] = lambda: False) -> tuple[Any, Any, Any]:
-    """``(arm, gripper, camera)`` of *cfg* on *rt*: the generic drivers, None where
-    the manifest has no such block."""
-    from vector_os_nano.sim.drivers.arm import Arm
-    from vector_os_nano.sim.drivers.camera import Camera
-    from vector_os_nano.sim.drivers.gripper import Gripper
-
-    from vector_os_nano.sim.scene.compose import check_fingers
-
-    camera = Camera(cfg.camera, rt) if cfg.camera is not None else None
-    if cfg.arm is None:
-        return None, None, camera
-    arm = Arm(cfg.arm, rt, abort=abort, wait_mount=wait_mount)
-    if cfg.arm.gripper is None:
-        return arm, None, camera
-    check_fingers(rt.world.scene, cfg.arm.gripper.finger_bodies)
-    return arm, Gripper(cfg.arm.gripper, rt), camera
-
-
 def _perception(camera: Any) -> Any:
     """The ONE perception over the manifest's camera: built once per session and shared by
     the grasp and look/localize skills, so they always see the same camera size."""
@@ -627,15 +610,19 @@ def _build(session: SimSession, vlm_api_key: str | None) -> Any:
         lidar = Lidar(cfg.lidar, rt)
     session.runtime = rt
     rt.call(lambda w: _initial_joints(w, cfg))
+    from vector_os_nano.sim.devices import devices, joint_groups
+
+    groups = joint_groups(cfg, rt, abort=session.abort)
     rt.start()
     if base is not None:
         base.set_posture("stand")
-    arm, gripper, camera = _devices(cfg, rt, wait_mount=base.wait_settled if base else None,
+    arm, gripper, camera = devices(cfg, rt, wait_mount=base.wait_settled if base else None,
                                      abort=session.abort)
 
     user_cfg = _user_config()
     api_key, vlm_cfg, key_note = _scene_vlm_config(user_cfg, vlm_api_key)
     agent = Agent(base=base, arm=arm, gripper=gripper, config=user_cfg, skills=get_skills(cfg.capabilities))
+    agent._services["joint_groups"] = groups
     agent._services["lidar"] = lidar
     agent._services["layout"] = {"rooms": world.rooms, "boxes": world.boxes}
     agent._perception = _perception(camera)

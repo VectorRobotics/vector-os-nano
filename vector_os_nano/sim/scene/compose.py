@@ -102,6 +102,8 @@ def check_model_names(robot: EmbodimentConfig, model: Any) -> None:
     bodies, joints, sites = ({e.name for e in getattr(model, kind) if e.name} for kind in ('bodies', 'joints', 'sites'))
     checks = [('model.root_body', [robot.model.root_body], bodies)]
     checks.append(('initial_joints', robot.initial_joints, joints))
+    checks.extend((f'joint_groups.{name}.joints', spec.joints, joints)
+                  for name, spec in robot.joint_groups.items())
     if robot.base:
         checks.append(('base.joints', robot.base.joints, joints))
     if robot.arm:
