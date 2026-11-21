@@ -12,6 +12,7 @@ from __future__ import annotations
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -226,12 +227,10 @@ def test_build_room_scene_g1_byte_identical(g1_assets):
         spawn_xy=[10.0, 3.0],
         welds=(),
         robot_meshes_dir=g1_meshes,
-        camera={
-            "mount_body": "pelvis",
-            "name": "head_rgb",
-            "pos": [0.04, 0.0, 0.42],
-            "xyaxes": [0, -1, 0, 0, 0, 1],
-        },
+        robot=SimpleNamespace(sensors=[SimpleNamespace(
+            body="pelvis", name="head_rgb", role="camera",
+            pos=[0.04, 0.0, 0.42], quat=[0.5, 0.5, -0.5, -0.5], fovy=45,
+        )]),
     )
     _assert_byte_identical(legacy, model)
     assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "g1_pelvis") >= 0

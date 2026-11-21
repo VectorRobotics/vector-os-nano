@@ -81,15 +81,21 @@ def normalize_attach_defaults(xml: str) -> str:
 
 
 def robot_spec(model_path: Path | str, meshes_dir: Path | str | None = None) -> Any:
-    """The ``MjSpec`` of a robot (or world scene) with every relative mesh path made
-    absolute (MuJoCo's rule: the model file's directory joined with its meshdir, unless
-    *meshes_dir* is given), so the composed scene loads from any directory."""
+    """Load a robot or world, resolving mesh and texture files before caching it."""
     spec = mj.MjSpec.from_file(str(model_path))
-    base = Path(meshes_dir) if meshes_dir is not None else Path(model_path).resolve().parent / (spec.meshdir or "")
+    directory = Path(model_path).resolve().parent
+    base = Path(meshes_dir) if meshes_dir is not None else directory / (spec.meshdir or "")
     for mesh in spec.meshes:
         if not os.path.isabs(mesh.file):
             mesh.file = str((base / mesh.file).resolve())
     spec.meshdir = ""
+    textures = directory / (spec.texturedir or "")
+    for texture in spec.textures:
+        if texture.file and not os.path.isabs(texture.file):
+            texture.file = str((textures / texture.file).resolve())
+        texture.cubefiles = [str((textures / f).resolve()) if f and not os.path.isabs(f) else f
+                             for f in texture.cubefiles]
+    spec.texturedir = ""
     return spec
 
 
