@@ -69,6 +69,7 @@ class GraspSpec:
     jaw_joint: int                    # its q minus ``closed`` is the jaw opening
     closed: float
     min_opening: float                # held at least this far open by the object
+    assist: bool = True              # False: contact evidence only; never attach
 
 
 @dataclass(frozen=True)

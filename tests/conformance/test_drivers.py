@@ -177,6 +177,29 @@ def test_closing_on_nothing_attaches_nothing(body):
     assert body.gripper.get_position() < 0.1 and body.gt.attachments() == {}
 
 
+def test_contact_only_grip_has_no_constraint_and_notices_lost_contact(body):
+    name = body.case.picks[0]
+    obj = body.around(name)
+    grip = Gripper(dataclasses.replace(body.cfg.arm.gripper, assist=False), body.rt)
+    assert grip.close() and grip.is_holding(name)
+    assert body.fingers <= body.touching(obj)
+    assert body.rt.attachments() == {} and not body.rt.attach_log
+    body.servo_jaw(body.cfg.arm.gripper.open)
+    assert not grip.is_holding(name) and body.rt.attachments() == {}
+
+
+def test_contact_only_scene_does_not_generate_grasp_welds():
+    from tests.conformance.conftest import SCENES
+    import mujoco as mj
+
+    cfg = registry.load('piper')
+    cfg = dataclasses.replace(cfg, arm=dataclasses.replace(
+        cfg.arm, gripper=dataclasses.replace(cfg.arm.gripper, assist=False)))
+    scene = compose(SCENES / 'battery.xml', cfg, spawn=(0.,0.,.2,0.), pickables=('box','cylinder'))
+    assert scene.grasp_pairs == ()
+    assert not np.any(scene.model.eq_type == int(mj.mjtEq.mjEQ_WELD))
+
+
 def test_fingers_3mm_away_do_not_grip(body):
     box = body.around(body.case.picks[0])
     touching = body.servo_jaw(body.cfg.arm.gripper.closed)  # where the jaws stop on the box

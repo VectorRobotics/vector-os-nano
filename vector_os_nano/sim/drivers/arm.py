@@ -18,6 +18,7 @@ It never steps physics and never reads anything but its own robot.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from typing import Any, Callable
 
@@ -89,10 +90,20 @@ class Arm:
         if len(positions) != self.dof:
             raise ValueError(f"Arm.move_joints: expected {self.dof} positions, got {len(positions)}")
         goal = [float(g) for g in positions]
+        if not all(math.isfinite(g) for g in goal) or not math.isfinite(duration) or duration <= 0:
+            raise ValueError("Arm.move_joints requires finite positions and positive duration")
         rt, joints, stop = self._rt, list(self._joints), self._stop_evt
         stop.clear()
         start = [float(v) for v in rt.call(lambda w: w.targets(joints))]
         commanded = sum(abs(g - s) for s, g in zip(start, goal))
+        spec = self._spec
+        if spec.velocity:
+            # Exact derivative maxima of the quintic rest-to-rest trajectory.
+            duration = max(duration, *(max(1.875 * abs(g-s) / v,
+                                         (10 / math.sqrt(3) * abs(g-s) / a) ** .5,
+                                         (60 * abs(g-s) / j) ** (1/3))
+                                       for s, g, v, a, j in zip(start, goal, spec.velocity,
+                                                               spec.acceleration, spec.jerk)))
         counted = ACTOR_EPOCH.active
 
         def _write(w: Any, v: list[float]) -> None:
@@ -107,6 +118,8 @@ class Arm:
                 if self._preempted():
                     break
                 t = i / steps
+                if spec.velocity:
+                    t = t**3 * (10 + t * (-15 + 6 * t))
                 targets = [s + t * (g - s) for s, g in zip(start, goal)]
                 rt.submit(lambda w, v=targets: _write(w, v))
                 done = t

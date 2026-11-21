@@ -130,7 +130,7 @@ def compose(world_scene: Path | str, robot: Any, *, spawn: Sequence[float],
     frame = world.worldbody.add_frame(pos=[x, y, z], quat=[math.cos(heading / 2), 0.0, 0.0, math.sin(heading / 2)])
     world.attach(model, prefix="", frame=frame)
     gripper = robot.arm.gripper if robot.arm is not None else None
-    pairs = [(gripper.weld_body, p) for p in pickables] if gripper is not None else []
+    pairs = [(gripper.weld_body, p) for p in pickables] if gripper is not None and gripper.assist else []
     for parent, child in pairs:
         eq = world.add_equality()
         eq.type, eq.objtype = mj.mjtEq.mjEQ_WELD, mj.mjtObj.mjOBJ_BODY

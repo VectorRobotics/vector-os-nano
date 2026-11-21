@@ -8,11 +8,14 @@ physical first: :meth:`close` servoes the jaws shut, waits (sim time) for them t
 settle and asks the runtime for the world-side grasp decision (``sim/grasp.py``): an
 object is attached ONLY when every finger body touches it while the jaws are held open
 by it. The attachment keeps the soft position-controlled grip from slipping; it never
-pulls in an object that is merely near. This driver never attaches anything itself.
+pulls in an object that is merely near. With ``assist=False`` no attachment is created:
+holding means current bilateral contact, not proof of a successful lift or transport.
+``speed`` bounds jaw set-point travel in joint units per second.
 """
 from __future__ import annotations
 
 import logging
+import math
 
 from vector_os_nano.embodiments.config import GripperSpec
 from vector_os_nano.interfaces.physics import GraspSpec
@@ -39,19 +42,27 @@ class Gripper:
             weld_body=scene.body(spec.weld_body),
             finger_bodies=tuple(scene.body(b) for b in spec.finger_bodies),
             jaw_joint=self._jaw, closed=float(spec.closed), min_opening=float(spec.min_opening),
+            assist=spec.assist,
         )
-        self._held: int | None = None  # the body the last close() got attached
+        self._held: int | None = None  # the body the last close() gripped
 
     def _servo(self, q: float) -> None:
         jaw = [self._jaw]
-        self._rt.call(lambda w: w.set_targets(jaw, [q]))
+        rt, speed = self._rt, self._spec.speed
+        start = float(rt.snapshot().q[self._jaw_q])
+        steps = 1 if speed is None else max(1, math.ceil(abs(q - start) / (speed * _SETTLE_POLL_S)))
+        for i in range(1, steps + 1):
+            target = start + (q - start) * i / steps
+            rt.call(lambda w, v=target: w.set_targets(jaw, [v]))
+            if speed is not None and not rt.wait_sim(_SETTLE_POLL_S):
+                raise RuntimeError("gripper motion interrupted")
 
     def open(self) -> bool:
         """Open the jaws and release whatever the gripper holds, verified: False (the
         held state kept) when something is still attached or the sim refused."""
         try:
             self._servo(self._spec.open)
-            still = self._rt.release(self._grasp.weld_body)
+            still = self._rt.release(self._grasp.weld_body) if self._spec.assist else []
         except Exception as exc:  # noqa: BLE001 — reported, never a silent success
             logger.error("Gripper: open/release failed: %s", exc)
             return False
@@ -71,17 +82,18 @@ class Gripper:
         except Exception as exc:  # noqa: BLE001 — a failed grasp is a no-hold, never a crash
             logger.warning("Gripper: close failed: %s", exc)
             return False
-        if held is not None:
-            self._held = held
+        self._held = held
         return True
 
     def is_holding(self, name: str | None = None) -> bool:
-        """The body the last close() gripped is still attached to the gripper; with
-        *name* (a scene body name, any case), only that body counts."""
+        """The last gripped body remains attached (assisted) or in bilateral contact.
+        With *name* (a scene body name, any case), only that body counts."""
         held = self._held
         if held is None or (name is not None and str(name).strip().lower() != self._names[held].lower()):
             return False
-        return self._rt.attachments().get(held) == self._grasp.weld_body
+        if self._spec.assist:
+            return self._rt.attachments().get(held) == self._grasp.weld_body
+        return self._rt.grasp(self._grasp) == held
 
     def get_position(self) -> float:
         """Normalized jaw position: 0.0 closed, 1.0 fully open."""

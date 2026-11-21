@@ -23,18 +23,21 @@ logger = logging.getLogger(__name__)
 def grasp(world: PhysicsWorld, spec: GraspSpec) -> int | None:
     """Attach and return the free body every finger touches while the jaws are held
     open by it; None (nothing attached) otherwise. Never pulls in an object that is
-    merely near the jaws."""
+    merely near the jaws. Without assistance, returns only current contact evidence
+    for an external body (including an articulated handle), without changing physics."""
     scene = world.scene
     q, _qd = world.state()
     opening = float(q[scene.joint_q(spec.jaw_joint)]) - spec.closed
     touching = [world.contacts(f) for f in spec.finger_bodies]
-    graspable = {child for parent, child in scene.grasp_pairs if parent == spec.weld_body}
+    graspable = ({child for parent, child in scene.grasp_pairs if parent == spec.weld_body}
+                 if spec.assist else set(scene.body_ids.values()) - scene.subtree(scene.robot_root) - {0})
     gripped = sorted(frozenset.intersection(*touching) & graspable)
     if not gripped or opening < spec.min_opening:
         logger.info("grasp: none — jaw opening %.1f mm, finger contacts %s", opening * 1000,
                     [sorted(scene.body_name(b) for b in t) for t in touching])
         return None
-    world.attach(spec.weld_body, gripped[0])
+    if spec.assist:
+        world.attach(spec.weld_body, gripped[0])
     logger.info("grasp: %r (jaw opening %.1f mm)", scene.body_name(gripped[0]), opening * 1000)
     return gripped[0]
 

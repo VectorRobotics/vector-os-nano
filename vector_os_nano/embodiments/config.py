@@ -163,7 +163,8 @@ class GripperSpec:
     ``finger_bodies``: every one must touch an object before a grasp counts (the
     contact gate; each needs a colliding geom). ``weld_body``: the body a grasped
     object is attached to. ``min_opening``: the jaws must be held at least this far
-    open (joint units past ``closed``) by the object.
+    open (joint units past ``closed``) by the object. ``assist=False`` disables grasp
+    constraints; ``speed`` limits set-point travel in joint units per second.
     """
 
     joint: str
@@ -172,12 +173,22 @@ class GripperSpec:
     finger_bodies: tuple[str, ...]
     weld_body: str
     min_opening: float
+    assist: bool = True
+    speed: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.assist, bool):
+            raise EmbodimentConfigError("gripper.assist must be boolean")
+        if self.speed is not None and (not math.isfinite(self.speed) or self.speed <= 0):
+            raise EmbodimentConfigError("gripper.speed must be finite and positive")
 
 
 @dataclass(frozen=True)
 class ArmSpec:
     """An arm: its joints in order, the end-effector site, home, IK seeds, the move
-    tolerance and its gripper. Every name is the compiled scene's."""
+    tolerance and its gripper. Every name is the compiled scene's. Optional velocity,
+    acceleration and jerk bounds select a quintic command profile; actual dynamic
+    tracking and hardware limits still need independent verification."""
 
     joints: tuple[str, ...]
     ee_site: str
@@ -187,6 +198,15 @@ class ArmSpec:
     track_tol: float = 0.05
     gripper: GripperSpec | None = None
     postures: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    velocity: tuple[float, ...] = ()
+    acceleration: tuple[float, ...] = ()
+    jerk: tuple[float, ...] = ()
+
+    def __post_init__(self) -> None:
+        limits = (self.velocity, self.acceleration, self.jerk)
+        if any(limits) and any(len(v) != self.dof or any(not math.isfinite(x) or x <= 0 for x in v)
+                               for v in limits):
+            raise EmbodimentConfigError("arm velocity, acceleration and jerk must each give a finite positive limit per joint")
 
     @property
     def dof(self) -> int:
@@ -503,8 +523,8 @@ def _parse_capabilities(raw: dict[str, Any], ctx: str) -> CapabilityProfile:
     )
 
 
-_ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper", "postures"}
-_GRIPPER_KEYS = {"joint", "open", "closed", "finger_bodies", "weld_body", "min_opening"}
+_ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper", "postures", "velocity", "acceleration", "jerk"}
+_GRIPPER_KEYS = {"joint", "open", "closed", "finger_bodies", "weld_body", "min_opening", "assist", "speed"}
 
 
 def _parse_gripper(g: dict[str, Any], ctx: str) -> GripperSpec:
@@ -519,6 +539,8 @@ def _parse_gripper(g: dict[str, Any], ctx: str) -> GripperSpec:
         finger_bodies=fingers,
         weld_body=str(_require(g, "weld_body", ctx)),
         min_opening=float(_require(g, "min_opening", ctx)),
+        assist=g.get("assist", True),
+        speed=None if g.get("speed") is None else float(g["speed"]),
     )
 
 
@@ -542,6 +564,8 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
         gripper=None if g is None else _parse_gripper(g, f"{actx}.gripper"),
         postures={str(n): _floats(q, len(joints), f"{actx}.postures.{n}")
                   for n, q in (_optional_mapping(a, "postures", actx) or {}).items()},
+        **{k: _floats(a[k], len(joints), f"{actx}.{k}") if k in a else ()
+           for k in ("velocity", "acceleration", "jerk")},
     )
 
 
