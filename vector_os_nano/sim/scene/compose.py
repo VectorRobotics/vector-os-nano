@@ -20,11 +20,10 @@ from typing import Any, Sequence
 
 import mujoco as mj
 
+from vector_os_nano.embodiments.assets import model_root
 from vector_os_nano.interfaces.physics import CompiledScene
 from vector_os_nano.schemas import paths
 from vector_os_nano.sim.scene.compiled import compiled_scene
-
-_REPO = Path(__file__).resolve().parents[3]
 
 
 def scene_cache_dir() -> Path:
@@ -94,13 +93,16 @@ def robot_spec(model_path: Path | str, meshes_dir: Path | str | None = None) -> 
     return spec
 
 
-def compose(world_scene: Path | str, robot: Any, *, spawn: Sequence[float],
-            pickables: Sequence[str] = (), timestep: float | None = None) -> CompiledScene:
-    """*robot* (an EmbodimentConfig) mounted in *world_scene* at *spawn* (x, y, z,
-    heading), its placed cameras added, one inactive grasp weld per gripper weld body
-    and pickable; compiled with its root body as the scene's robot root."""
-    world = robot_spec(world_scene)
-    model = robot_spec(_REPO / robot.model.path)
+def model_files(robot: Any) -> tuple[Path, Path | None]:
+    """``(model file, meshes folder or None)`` of *robot* (an EmbodimentConfig), resolved
+    by ``embodiments.assets.model_root``."""
+    root = model_root(robot)
+    return root / robot.model.path, root / robot.model.meshes_dir if robot.model.meshes_dir else None
+
+
+def place_cameras(world: Any, model: Any, robot: Any) -> None:
+    """Add *robot*'s placed cameras (a manifest camera with ``pos``) to its *model* spec on
+    their ``body``, or to the *world* spec when they name none."""
     for cam in robot.sensors:
         if getattr(cam, "pos", None) is not None and cam.role == "camera":
             spec = world if cam.body is None else model
@@ -108,6 +110,16 @@ def compose(world_scene: Path | str, robot: Any, *, spawn: Sequence[float],
             if body is None:
                 raise KeyError(f"{robot.id}: camera {cam.name!r} body {cam.body!r} is not in {robot.model.path}")
             body.add_camera(name=cam.name, pos=list(cam.pos), quat=list(cam.quat), fovy=cam.fovy)
+
+
+def compose(world_scene: Path | str, robot: Any, *, spawn: Sequence[float],
+            pickables: Sequence[str] = (), timestep: float | None = None) -> CompiledScene:
+    """*robot* (an EmbodimentConfig) mounted in *world_scene* at *spawn* (x, y, z,
+    heading), its placed cameras added, one inactive grasp weld per gripper weld body
+    and pickable; compiled with its root body as the scene's robot root."""
+    world = robot_spec(world_scene)
+    model = robot_spec(*model_files(robot))
+    place_cameras(world, model, robot)
     x, y, z, heading = (float(v) for v in spawn)
     frame = world.worldbody.add_frame(pos=[x, y, z], quat=[math.cos(heading / 2), 0.0, 0.0, math.sin(heading / 2)])
     world.attach(model, prefix="", frame=frame)

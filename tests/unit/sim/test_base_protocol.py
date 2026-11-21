@@ -15,7 +15,7 @@ from vector_os_nano.sim.drivers.base import LeggedBase
 
 CHARTER = {"connect", "disconnect", "stop", "walk", "set_velocity", "get_position", "get_heading",
            "get_velocity", "get_odometry", "get_lidar_scan", "get_sim_time", "wait_sim", "cmd_motion",
-           "set_posture", "limits", "holonomic"}
+           "set_posture", "limits", "holonomic", "navigate_to"}
 
 
 def _drift(cls: type, name: str) -> str:
@@ -25,8 +25,12 @@ def _drift(cls: type, name: str) -> str:
         return f"{cls.__name__} has no {name}"
     if isinstance(got, property) != isinstance(want, property):
         return f"{name}: property on one side only"
-    if not isinstance(want, property) and inspect.signature(got) != inspect.signature(want):
-        return f"{name}{inspect.signature(got)} != {name}{inspect.signature(want)}"
+    if not isinstance(want, property):
+        actual, expected = inspect.signature(got), inspect.signature(want)
+        if expected.return_annotation == "Any":  # the implementation may narrow Any
+            actual = actual.replace(return_annotation="Any")
+        if actual != expected:
+            return f"{name}{actual} != {name}{expected}"
     return ""
 
 

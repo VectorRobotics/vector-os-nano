@@ -38,7 +38,7 @@ def test_registry_lists_every_manifest_and_each_loads() -> None:
     assert {"go2", "go2_piper", "so101", "g1"} <= set(ids)
     for eid in ids:
         cfg = registry.load(eid)
-        assert cfg.id == eid and cfg.driver in sess._BUILDERS, (eid, cfg.driver)
+        assert cfg.id == eid and cfg.capabilities.has_base == (cfg.base is not None), eid
 
 
 def test_go2_piper_manifest_carries_the_arm_and_the_grasp_camera_size() -> None:

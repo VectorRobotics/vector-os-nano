@@ -8,7 +8,6 @@
 
 id: piper
 display_name: "AgileX Piper (6-DoF arm, tabletop)"
-driver: generic
 world: workbench
 
 model:

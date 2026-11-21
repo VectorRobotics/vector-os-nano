@@ -65,3 +65,10 @@ def asset_dir(cfg: EmbodimentConfig) -> Path:
             f"({rel} {why}{more}); fetch them with: {fetch_command(cfg.id)}"
         )
     return folder
+
+
+def model_root(cfg: EmbodimentConfig) -> Path:
+    """The folder ``model.path``, ``model.meshes_dir`` and the policy's files are relative
+    to: the asset folder of a robot with an ``assets:`` block (raises AssetsMissing), else
+    the repository (the shipped models live under hardware/sim/mjcf until S5a)."""
+    return asset_dir(cfg) if cfg.assets is not None else _EMBODIMENTS_DIR.parents[1]

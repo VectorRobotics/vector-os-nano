@@ -45,8 +45,8 @@ def test_g1_manifest_declares_a_pinned_fetch_recipe() -> None:
     assert a.git == "https://github.com/unitreerobotics/unitree_rl_gym.git"
     assert a.license == {"spdx": "BSD-3-Clause", "file": "LICENSE"}
     # model and policy are relative to the asset folder, and every one is pinned
-    assert cfg.model.path == "g1_12dof.xml" and cfg.policy.ref == "motion.pt"
-    for rel in (cfg.model.path, cfg.policy.ref, "meshes/pelvis.STL"):
+    assert cfg.model.path == "g1_12dof.xml" and cfg.base.policy.params["file"] == "motion.pt"
+    for rel in (cfg.model.path, cfg.base.policy.params["file"], "meshes/pelvis.STL"):
         assert len(a.sha256[rel]) == 64
     assert a.upstream("meshes/pelvis.STL") == "resources/robots/g1_description/meshes/pelvis.STL"
     assert a.upstream("motion.pt") == "deploy/pre_train/g1/motion.pt"
@@ -105,8 +105,7 @@ def test_a_malformed_assets_block_fails_loud(patch, error) -> None:
              "files": {"motion.pt": "a/motion.pt"}, "sha256": {"motion.pt": "0" * 64},
              "license": {"spdx": "MIT", "file": "LICENSE"}, **patch}
     raw = {"id": "x", "display_name": "x", "model": {"path": "m.xml", "root_body": "b"},
-           "spawn": {"xy": [0, 0], "base_height": 1}, "stance": {}, "policy": {"ref": "p"},
-           "capabilities": {}, "assets": block}
+           "capabilities": {"has_base": False}, "assets": block}
     with pytest.raises(EmbodimentConfigError, match=error):
         parse_embodiment_config(raw)
 
@@ -128,7 +127,8 @@ def test_start_simulation_tells_the_model_the_fetch_command(state_dir) -> None:
 
 def test_the_driver_refuses_without_assets(state_dir) -> None:
     pytest.importorskip("mujoco")
-    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
+    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.vcli.worlds.world_manifest import load_world
 
     with pytest.raises(assets.AssetsMissing, match=FETCH):
-        MuJoCoG1.build_scene()
+        room_scene(load_embodiment_config("g1"), load_world("apartment"))

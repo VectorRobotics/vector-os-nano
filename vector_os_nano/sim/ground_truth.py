@@ -72,6 +72,14 @@ class GroundTruth:
         q = self._rt.snapshot().q
         return [float(q[a]) for a in adr]
 
+    def base_standing(self, height: float, height_tol: float, tilt_deg: float) -> bool:
+        """Root in the standing height band and upright, from one snapshot."""
+        if not self.has_base:
+            return False
+        q = self._rt.snapshot().q[self._scene.free_q(self._scene.robot_root)]
+        return bool(abs(q[2] - height) <= height_tol
+                    and 1.0 - 2.0 * (q[4] ** 2 + q[5] ** 2) >= math.cos(math.radians(tilt_deg)))
+
     # -- attachments -------------------------------------------------------
 
     def attachments(self) -> dict[str, str]:

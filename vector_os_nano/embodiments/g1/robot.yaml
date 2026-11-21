@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 #
-# Unitree G1 humanoid (12-DoF) — embodiment manifest (Stage 1 data only).
-# Faithfully captures the constants CURRENTLY hardcoded in
-# vector_os_nano/hardware/sim/mujoco_g1.py. Not yet wired into the driver
-# (that is Stage 2). Values must stay ACCURATE to today's driver.
+# Unitree G1 humanoid, its 12 leg joints walked by the unitree_rl_gym policy (motion.pt).
+# The generic LeggedBase (sim/drivers/base.py) drives it from the `base` block below
+# with the `torchscript` policy row; every name is the exact name in g1_12dof.xml. The
+# policy numbers are those of the script it was trained under (unitree_rl_gym
+# deploy/deploy_mujoco, configs/g1.yaml, at the pinned revision of `assets`).
 
 id: g1
 display_name: "Unitree G1 (humanoid, 12-DoF)"
-driver: mujoco_g1                 # transitional (WP17: one generic driver)
 world: apartment          # config/worlds/apartment.yaml
 
 assets:
   # Not shipped: fetched by `python scripts/fetch_assets.py g1` into
-  # ~/.vector/assets/g1_gait. model.path, model.meshes_dir and policy.ref are
+  # ~/.vector/assets/g1_gait. model.path, model.meshes_dir and base.policy.file are
   # relative to that folder (vector_os_nano/embodiments/assets.py).
   name: g1_gait
   git: https://github.com/unitreerobotics/unitree_rl_gym.git
@@ -57,79 +57,84 @@ assets:
     meshes/torso_link_23dof_rev_1_0.STL: 3cd0d56fde14b73c1623304684805029971c4f84b596f9914e823ca70a107fd2
 
 model:
-  # 12-DoF G1 model + meshes (attached into the go2 room scene with prefix
-  # "g1_" at connect()); relative to the asset folder.
-  path: g1_12dof.xml
+  path: g1_12dof.xml              # relative to the asset folder
   meshes_dir: meshes
-  root_body: g1_pelvis            # _G1Offsets uses model.body("g1_pelvis")
+  root_body: pelvis
 
 spawn:
-  # _G1_SPAWN_X=10.0, _G1_SPAWN_Y=3.0, _G1_PELVIS_Z=0.793 (default stance height).
+  # The entry hall; the body stands there in its stance at base.height.
   xy: [10.0, 3.0]
-  base_height: 0.793
   heading: 0.0
 
-# _DEFAULT_ANGLES (12) applied to the leg-qpos slice, in g1_12dof.xml joint
-# order: left leg (hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll)
-# then right leg. Joint names are pre-"g1_"-prefix (model joints), matching the
-# attached body's joints. Order/values are EXACT to _DEFAULT_ANGLES.
-stance:
-  left_hip_pitch_joint:    -0.1
-  left_hip_roll_joint:     0.0
-  left_hip_yaw_joint:      0.0
-  left_knee_joint:         0.3
-  left_ankle_pitch_joint:  -0.2
-  left_ankle_roll_joint:   0.0
-  right_hip_pitch_joint:   -0.1
-  right_hip_roll_joint:    0.0
-  right_hip_yaw_joint:     0.0
-  right_knee_joint:        0.3
-  right_ankle_pitch_joint: -0.2
-  right_ankle_roll_joint:  0.0
+base:
+  height: 0.78                    # the pelvis height it stands at, stepping in place (measured)
+  holonomic: false                # it turns to walk where it goes (the follower never strafes it)
+  limits: {vx: 0.8, vy: 0.4, vyaw: 1.0}
+  fall_z: 0.4                     # fallen: the pelvis below this,
+  fall_tilt_deg: 45.0             # or its up axis tilted past this
+  # The order the policy sees: per leg (left, right) hip pitch, roll, yaw, knee, ankle pitch, roll.
+  joints: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+           left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+           right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint]
+  stance: {left_hip_pitch_joint: -0.1, left_hip_roll_joint: 0.0, left_hip_yaw_joint: 0.0,
+           left_knee_joint: 0.3, left_ankle_pitch_joint: -0.2, left_ankle_roll_joint: 0.0,
+           right_hip_pitch_joint: -0.1, right_hip_roll_joint: 0.0, right_hip_yaw_joint: 0.0,
+           right_knee_joint: 0.3, right_ankle_pitch_joint: -0.2, right_ankle_roll_joint: 0.0}
+  # No sit / lie postures: the stance is the policy's own (it balances, stepping in place).
+  kp: {left_hip_pitch_joint: 100, left_hip_roll_joint: 100, left_hip_yaw_joint: 100,
+       left_knee_joint: 150, left_ankle_pitch_joint: 40, left_ankle_roll_joint: 40,
+       right_hip_pitch_joint: 100, right_hip_roll_joint: 100, right_hip_yaw_joint: 100,
+       right_knee_joint: 150, right_ankle_pitch_joint: 40, right_ankle_roll_joint: 40}
+  kd: {left_hip_pitch_joint: 2, left_hip_roll_joint: 2, left_hip_yaw_joint: 2,
+       left_knee_joint: 4, left_ankle_pitch_joint: 2, left_ankle_roll_joint: 2,
+       right_hip_pitch_joint: 2, right_hip_roll_joint: 2, right_hip_yaw_joint: 2,
+       right_knee_joint: 4, right_ankle_pitch_joint: 2, right_ankle_roll_joint: 2}
+  policy:
+    ref: torchscript              # needs torch: uv pip install -e '.[perception]'
+    timestep: 0.002
+    tick_hz: 500                  # PD every physics step, as the deploy script runs it
+    file: motion.pt
+    decimation: 10                # the network every 10 ticks: 50 Hz
+    obs:                          # 47 = 3 + 3 + 3 + 12 + 12 + 12 + 2
+      - {term: base_ang_vel, scale: 0.25}
+      - {term: projected_gravity, scale: 1.0}
+      - {term: command, scale: [2.0, 2.0, 0.25]}
+      - {term: joint_pos_rel, scale: 1.0}
+      - {term: joint_vel, scale: 0.05}
+      - {term: last_action, scale: 1.0}
+      - {term: gait_phase, scale: 1.0, period: 0.8}
+    action: {scale: 0.25}
+  nav:
+    # The in-process follower (sim/nav/follow.py).
+    body_radius: 0.30             # planning inflation (~0.27 m wide + its sway)
+    speed: 0.5                    # m/s forward
+    vyaw_max: 0.6                 # rad/s
+    goal_tol: 0.30                # m: its sway
 
 sensors:
-  # Head RGB camera (colour only) — mujoco_g1's scene build adds it to the pelvis
-  # (pos 0.04 0 0.42, forward-facing); in the compiled scene it is 'g1_head_rgb'.
+  # A head camera on the pelvis (0.04 m ahead, 0.42 m up, looking along +x), depth over
+  # the D435's range like the go2's.
   - role: camera
-    name: g1_head_rgb
-    width: 640                    # G1HeadPerception render size
+    name: head_rgb
+    body: pelvis
+    pos: [0.04, 0.0, 0.42]
+    quat: [0.5, 0.5, -0.5, -0.5]  # camera x = -y (right), y = +z (up): it looks along +x
+    width: 640
     height: 480
-  # Lidar mounted from pelvis — _LIDAR_OFFSET_X=0.0, _LIDAR_OFFSET_Z=0.72
-  # (pelvis z ~0.793 + 0.72 = ~1.51 m head height). Delegated to g1_lidar_scan.
-  # g1_lidar_scan's grid: tilt -10, rings {0} + range(-8, 30, 3), 15 m, cast on every read.
+    depth: [0.1, 10.0]
+  # A lidar 0.72 m above the pelvis (~1.5 m: above every leg geom).
   - role: lidar
-    body: g1_pelvis
-    pos: [0.0, 0.0, 0.72]         # _LIDAR_OFFSET_X / _LIDAR_OFFSET_Z
+    body: pelvis
+    pos: [0.0, 0.0, 0.72]
     tilt_deg: -10.0
     elevations_deg: [-8, -5, -2, 0, 1, 4, 7, 10, 13, 16, 19, 22, 25, 28]
     n_azimuth: 360
     range: 15.0
-    period_s: 0.0
-
-policy:
-  # 12-DoF RL policy (motion.pt), 50 Hz single-threaded synchronous loop.
-  ref: motion.pt                  # relative to the asset folder
-  spec:
-    type: rl_jit                  # torch.jit.load(motion.pt)
-    sim_dt: 0.002                 # _SIM_DT
-    decimation: 10                # _DECIMATION -> 50 Hz policy
-    num_obs: 47                   # _NUM_OBS
-    num_actions: 12               # _NUM_ACTIONS
-    gait_period: 0.8              # _GAIT_PERIOD
-    action_scale: 0.25            # _ACTION_SCALE
-    holonomic: false              # biped; not omnidirectional
+    period_s: 0.2                 # 5 Hz of sim time
 
 capabilities:
   has_base: true
-  has_arm: false                  # 12-DoF legs only; no arm in this model
+  has_arm: false
   has_gripper: false
-  camera: true                    # g1_head_rgb
-  lidar: true                     # get_lidar_scan via g1_lidar_scan
-
-nav:
-  # The in-process follower (sim/nav/follow.py).
-  body_radius: 0.30               # planning inflation (~0.27 m wide + COM sway)
-  speed: 0.5                      # m/s forward
-  vyaw_max: 0.6                   # rad/s
-  fall_z: 0.4                     # m, pelvis below this = fallen
-  goal_tol: 0.30                  # m, the gait's COM sway floor
+  camera: true
+  lidar: true

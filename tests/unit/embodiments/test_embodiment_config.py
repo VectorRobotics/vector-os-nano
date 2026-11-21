@@ -37,7 +37,7 @@ def test_go2_loads_and_is_frozen() -> None:
 def test_go2_spawn_and_root_body() -> None:
     cfg = load_embodiment_config("go2")
     # the entry hall; a legged base stands there at its base.height (no drop height)
-    assert cfg.spawn.xy == (10.0, 3.0) and cfg.spawn.base_height is None
+    assert cfg.spawn.xy == (10.0, 3.0)
     assert cfg.model.root_body == "base_link"
 
 
@@ -110,7 +110,7 @@ def test_a_bad_base_block_fails_naming_the_key(change: dict, error: str) -> None
 
 @pytest.mark.parametrize("edit, error", [
     (lambda p: p.update(ref="rl_magic"),
-     r"^quad/robot\.yaml\.base\.policy\.ref: no control policy 'rl_magic'; policies: \['convex_mpc', 'sinusoidal'\]$"),
+     r"^quad/robot\.yaml\.base\.policy\.ref: no control policy 'rl_magic'; policies: \['convex_mpc', 'sinusoidal', 'torchscript'\]$"),
     (lambda p: p.update(gait_hzz=3),
      r"^quad/robot\.yaml\.base\.policy: keys \[.*'gait_hzz'.*\]; convex_mpc takes exactly \['brake_ramp_s'"),
     (lambda p: p.pop("duty"), r"^quad/robot\.yaml\.base\.policy: keys .*; convex_mpc takes exactly .*'duty'"),
@@ -150,15 +150,15 @@ def test_g1_spawn_and_root_body() -> None:
     cfg = load_embodiment_config("g1")
     # _G1_SPAWN_X=10.0, _G1_SPAWN_Y=3.0, _G1_PELVIS_Z=0.793
     assert cfg.spawn.xy == (10.0, 3.0)
-    assert cfg.spawn.base_height == pytest.approx(0.793)
+    assert cfg.base.height == pytest.approx(0.78)
     # _G1Offsets keys on model.body("g1_pelvis").
-    assert cfg.model.root_body == "g1_pelvis"
+    assert cfg.model.root_body == "pelvis"
 
 
 def test_g1_stance_matches_default_angles() -> None:
     cfg = load_embodiment_config("g1")
     # _DEFAULT_ANGLES = [-0.1, 0, 0, 0.3, -0.2, 0] * 2 in g1_12dof joint order.
-    assert len(cfg.stance) == 12
+    assert len(cfg.base.stance) == 12
     expected = {
         "left_hip_pitch_joint": -0.1,
         "left_hip_roll_joint": 0.0,
@@ -174,7 +174,7 @@ def test_g1_stance_matches_default_angles() -> None:
         "right_ankle_roll_joint": 0.0,
     }
     for name, angle in expected.items():
-        assert cfg.stance[name] == pytest.approx(angle), name
+        assert cfg.base.stance[name] == pytest.approx(angle), name
 
 
 def test_g1_sensors() -> None:
@@ -182,23 +182,24 @@ def test_g1_sensors() -> None:
     by_role = {s.role: s for s in cfg.sensors}
     # Head RGB camera 'g1_head_rgb' (mujoco_g1's scene build places it), colour only.
     cam = cfg.camera
-    assert by_role["camera"] is cam and (cam.name, cam.width, cam.height) == ("g1_head_rgb", 640, 480)
-    assert cam.depth is None
+    assert by_role["camera"] is cam and (cam.name, cam.width, cam.height) == ("head_rgb", 640, 480)
+    assert cam.depth == (0.1, 10.0)
     # Lidar offset _LIDAR_OFFSET_X=0.0, _LIDAR_OFFSET_Z=0.72.
     assert by_role["lidar"].pos == (0.0, 0.0, 0.72)
 
 
 def test_g1_policy_and_capabilities() -> None:
     cfg = load_embodiment_config("g1")
-    assert cfg.policy.ref == "motion.pt"  # relative to the asset folder
+    assert cfg.base.policy.params["file"] == "motion.pt"  # relative to the asset folder
     # 47-obs / 12-action / 50 Hz (decimation 10 @ 0.002 s) / gait 0.8 s.
-    assert cfg.policy.spec["num_obs"] == 47
-    assert cfg.policy.spec["num_actions"] == 12
-    assert cfg.policy.spec["decimation"] == 10
-    assert cfg.policy.spec["sim_dt"] == pytest.approx(0.002)
-    assert cfg.policy.spec["gait_period"] == pytest.approx(0.8)
-    assert cfg.nav["body_radius"] == pytest.approx(0.30)
-    assert cfg.policy.spec["holonomic"] is False
+    from vector_os_nano.sim.policies import TERMS
+    assert sum(TERMS[t["term"]](12) for t in cfg.base.policy.params["obs"]) == 47
+    assert len(cfg.base.joints) == 12
+    assert cfg.base.policy.params["decimation"] == 10
+    assert cfg.base.policy.timestep == pytest.approx(0.002)
+    assert cfg.base.policy.params["obs"][-1]["period"] == pytest.approx(0.8)
+    assert cfg.base.nav.body_radius == pytest.approx(0.30)
+    assert cfg.base.holonomic is False
     cap = cfg.capabilities
     assert cap.has_base is True
     assert cap.has_arm is False
@@ -218,12 +219,10 @@ def test_missing_embodiment_raises_clear_error() -> None:
     assert "robot.yaml" in str(exc.value)
 
 
-@pytest.mark.parametrize("missing", ["model", "spawn", "stance", "policy"])
+@pytest.mark.parametrize("missing", ["model", "spawn", "base"])
 def test_missing_required_field_raises_clear_error(missing: str) -> None:
     # A body with a base (capabilities default to one) needs every one of these.
-    raw = {"id": "broken", "display_name": "Broken", "model": {"path": "x.xml", "root_body": "b"},
-           "spawn": {"xy": [0, 0], "base_height": 0.1}, "stance": {"j": 0.0}, "policy": {"ref": "p"},
-           "capabilities": {}}
+    raw = _legged()
     del raw[missing]
     with pytest.raises(EmbodimentConfigError) as exc:
         parse_embodiment_config(raw, ctx="broken/robot.yaml")
@@ -233,7 +232,7 @@ def test_missing_required_field_raises_clear_error(missing: str) -> None:
 def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
     """A body without a base stands at its world's spawn: those blocks are a base's."""
     cfg = load_embodiment_config("piper")
-    assert cfg.spawn is None and cfg.stance == {} and cfg.policy is None
+    assert cfg.spawn is None and cfg.base is None
     assert cfg.arm.dof == 6 and cfg.camera.pos is not None
 
 
@@ -272,8 +271,8 @@ def test_both_embodiments_distinct() -> None:
     assert go2.id != g1.id
     assert go2.model.root_body != g1.model.root_body
     # g1 stands clearly higher than go2 (biped vs quadruped).
-    assert g1.spawn.base_height > go2.base.height
-    assert not math.isnan(g1.spawn.base_height)
+    assert g1.base.height > go2.base.height
+    assert not math.isnan(g1.base.height)
 
 
 # ---------------------------------------------------------------------------

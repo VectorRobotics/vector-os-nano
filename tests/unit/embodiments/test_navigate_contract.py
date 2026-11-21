@@ -18,7 +18,7 @@ import inspect
 
 import pytest
 
-pytest.importorskip("mujoco", reason="the drivers need mujoco")
+
 
 
 def _navigate_params(cls) -> dict:
@@ -27,10 +27,10 @@ def _navigate_params(cls) -> dict:
 
 def test_go2_and_g1_navigate_to_share_the_polymorphic_contract():
     """Both drivers accept the (x, y, timeout=...) call _NativeBaseNavigateTool makes."""
-    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
+    from vector_os_nano.interfaces import BaseProtocol
     from vector_os_nano.sim.drivers.base import LeggedBase
 
-    for cls in (LeggedBase, MuJoCoG1):
+    for cls in (LeggedBase, BaseProtocol):
         params = _navigate_params(cls)
         assert "x" in params and "y" in params, (
             f"{cls.__name__}.navigate_to must accept x, y; got {list(params)}"

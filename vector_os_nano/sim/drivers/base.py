@@ -14,13 +14,17 @@ state through the scene's canonical addresses and writes joint torques through
   ``connect`` and a body reset hold the stance. A velocity command out of another
   posture first ramps the body back to its stance (``_RISE_S``), then hands over; a
   walk or a navigate out of one waits for that rise before it starts (a held posture
-  is not a fall).
+  is not a fall). A policy that ``balances`` (a learned walking policy) owns the
+  stance: ``stand``, ``connect`` and a body reset hand the body to it at zero command.
 * Otherwise the manifest's control policy (``sim/policies``) gets a ``PolicyObs`` and
   returns the torques; braking and the stance at zero command are its own.
+* Fallen: the root below the manifest's ``fall_z`` or its up axis tilted past
+  ``fall_tilt_deg`` (a body on its side can keep its root above ``fall_z``).
 * Velocity commands are clipped to the manifest's limits. A walk or a navigate holds
   skill control: another thread's ``set_velocity`` is ignored until it ends, and the
   command is zeroed on any exit. ``stop`` zeroes it from any thread, always; one that
-  lands during the rise before a walk ends that walk unmoved.
+  lands during the rise before a walk ends that walk unmoved, and one that lands once a
+  navigate holds control (its rise included) ends the navigate.
 * ``cmd_motion`` counts the actor's commanded |vx| + |vy| + |vyaw| (causation grading):
   only writes that pass the gate while a producer-dispatched tool runs (ACTOR_EPOCH).
 
@@ -37,6 +41,7 @@ import contextlib
 import logging
 import math
 import threading
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
@@ -89,11 +94,12 @@ class LeggedBase:
         spec: the manifest ``base`` block (names of the compiled scene).
         runtime: the SimRuntime that owns the world the body stands in; its tick is
             the policy's (``1 / base.policy.tick_hz``).
+        folder: where the files the policy names resolve (the robot's asset folder).
         lidar: the body's ``Lidar``, or None.
         abort: polled during a walk; True ends it like a stop (the run's stop signal).
     """
 
-    def __init__(self, spec: BaseSpec, runtime: SimRuntime, *, lidar: Any = None,
+    def __init__(self, spec: BaseSpec, runtime: SimRuntime, *, folder: Path, lidar: Any = None,
                  abort: Callable[[], bool] = lambda: False) -> None:
         scene = runtime.world.scene
         if abs(runtime.tick_dt * spec.policy.tick_hz - 1.0) > 1e-9:
@@ -112,7 +118,8 @@ class LeggedBase:
         self._limit = spec.torque_scale * reader.motor_limits(scene, self._joints)
         ref, params = spec.policy.on(runtime.world.name)
         self.gait_backend = ref
-        self._policy = policies.make(ref, spec, params, self._limit)
+        self._policy = policies.make(ref, spec, params, self._limit, folder)
+        self._cos_fall = math.cos(math.radians(spec.fall_tilt_deg))
         self._lock = threading.Lock()   # the command, the posture and the control owners
         self._cmd = _ZERO
         self._hold: _Hold | None = None
@@ -153,8 +160,9 @@ class LeggedBase:
         clock at the next tick."""
         with self._lock:
             self._cmd = _ZERO
-            self._hold = _Hold(self._stance, 0.0, self._rt.tick_dt)
+            self._hold = None if self._policy.balances else _Hold(self._stance, 0.0, self._rt.tick_dt)
             self._origin = None
+            self._handover = True
 
     def stop(self) -> None:
         with self._lock:
@@ -184,15 +192,18 @@ class LeggedBase:
 
     def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0) -> bool:
         with self._control() as stops:
-            start_z = self.get_position()[2]  # a body that starts fallen has fallen
+            fell = self._fallen()  # a body that starts fallen has fallen
             if not self._command(vx, vy, vyaw, stops):
                 return False  # stopped during the rise: it never starts
             ran = self.wait_sim(duration, cancel=self._cancel)
             self.set_velocity(0.0, 0.0, 0.0)
             self.wait_sim(_WALK_SETTLE_S, cancel=self._cancel)
-            return bool(ran and min(start_z, self.get_position()[2]) > self._spec.fall_z)
+            return bool(ran and not fell and not self._fallen())
 
     def set_posture(self, name: str, duration: float = 2.0) -> bool:
+        """The stance of a policy that balances is that policy at zero command: out of a
+        held posture the body is ramped there first, then handed over; True iff it is up
+        (not fallen) after *duration* and the hold time."""
         if name == "stand":
             target = self._stance
         else:
@@ -204,11 +215,13 @@ class LeggedBase:
         if not self._connected:
             raise RuntimeError("LeggedBase: not connected")
         dt = self._rt.tick_dt
-        hold = _Hold(target, float(duration), dt)
+        hold = _Hold(target, float(duration), dt, rise=name == "stand" and self._policy.balances)
         with self._lock:
             self._cmd = _ZERO
-            self._hold = hold
+            self._hold = None if hold.rise and self._hold is None else hold
         self._rt.step(hold.ramp + int(_POSTURE_HOLD_S / dt))
+        if hold.rise:
+            return not self._fallen()
         q = self._rt.snapshot().q[self._qa]
         return bool(np.abs(q - target).max() < _POSTURE_TOL)
 
@@ -227,10 +240,12 @@ class LeggedBase:
 
         s = self._rt.snapshot()
         q, v = s.q[self._fq], s.qd[self._fd]
+        w, x, y, z = (float(c) for c in q[3:7])
+        # the WORLD z rate: the body-frame angular velocity through the third row of R
+        vyaw = 2.0 * (x * z - w * y) * v[3] + 2.0 * (y * z + w * x) * v[4] + (1.0 - 2.0 * (x * x + y * y)) * v[5]
         return Odometry(
-            timestamp=s.sim_time, x=float(q[0]), y=float(q[1]), z=float(q[2]),
-            qx=float(q[4]), qy=float(q[5]), qz=float(q[6]), qw=float(q[3]),
-            vx=float(v[0]), vy=float(v[1]), vz=float(v[2]), vyaw=float(v[5]),
+            timestamp=s.sim_time, x=float(q[0]), y=float(q[1]), z=float(q[2]), qx=x, qy=y, qz=z, qw=w,
+            vx=float(v[0]), vy=float(v[1]), vz=float(v[2]), vyaw=float(vyaw),
         )
 
     def get_lidar_scan(self) -> Any:
@@ -250,11 +265,8 @@ class LeggedBase:
     def cmd_motion(self) -> float:
         return float(self._cmd_motion)
 
-    # -- beyond the protocol: the planner, the mount -------------------------------
-
     def navigate_to(self, x: float, y: float, tol: float | None = None, speed: float | None = None,
-                    timeout: float | None = None, cancel: Any = None, on_progress: Any = None,
-                    **_ignored: Any) -> NavResult:
+                    timeout: float | None = None, cancel: Any = None, on_progress: Any = None) -> NavResult:
         """Walk to world (x, y) around the scene's static obstacles (the shared follower).
 
         Plans on the visibility graph of the scene at this instant, snapping a goal inside
@@ -262,18 +274,24 @@ class LeggedBase:
         holding skill control. ``timeout`` is sim seconds (None: a budget from the
         geodesic). ``bool(result)`` is True only on arrival; ``result.reason`` says why
         not. The inflation is the manifest's ``base.nav.body_radius`` plus how far a
-        mounted arm or a held object reaches past the body.
+        mounted arm or a held object reaches past the body. A ``stop()`` once the
+        navigate holds control (the rise out of a posture included) ends it 'aborted',
+        like *cancel* (None: the run's stop signal).
         """
         q = self._rt.snapshot().q
         obstacles = vg.scene_obstacles(self._scene, q)
         reach = vg.scene_overhang(self._scene, q, set(self._joints), self._rt.attachments())
         nav = self._spec.nav
-        with self._control():
-            res = follow(self, (x, y), obstacles, nav=nav, fall_z=self._spec.fall_z,
+        outer = self._cancel if cancel is None else cancel
+        with self._control() as stops:
+            stopped = _Abort(lambda: self._stops != stops or outer.is_set())
+            res = follow(self, (x, y), obstacles, nav=nav, fallen=self._fallen,
                          inflation=nav.body_radius + reach, tol=tol, speed=speed, timeout=timeout,
-                         cancel=cancel, on_progress=on_progress)
+                         cancel=stopped, on_progress=on_progress)
         logger.info("navigate_to(%.2f, %.2f): %s", x, y, res)
         return res
+
+    # -- beyond the protocol: the world side and the mount ----------------------------
 
     def wait_settled(self, timeout: float = 3.0) -> bool:
         """Wait (sim time) until a stop has braked out (an arm mounted on the body plans
@@ -285,6 +303,11 @@ class LeggedBase:
         return True
 
     # -- internals -------------------------------------------------------------------
+
+    def _fallen(self) -> bool:
+        """The root below ``fall_z``, or its up axis tilted past ``fall_tilt_deg``."""
+        q = self._rt.snapshot().q[self._fq]
+        return bool(q[2] < self._spec.fall_z or 1.0 - 2.0 * (q[4] ** 2 + q[5] ** 2) < self._cos_fall)
 
     def _settled(self) -> bool:
         with self._lock:

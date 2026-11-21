@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from vector_os_nano.embodiments import registry
-from vector_os_nano.sim.scene.compose import _REPO, check_fingers, compose
+from vector_os_nano.sim.scene.compose import check_fingers, compose, model_files
 from vector_os_nano.vcli.worlds.world_manifest import load_world
 
 
@@ -35,7 +35,7 @@ def test_the_shipped_fingers_collide(robot, piper):
 
 def _numb_link8(cfg, world, tmp_path):
     """*cfg* with link8's two collision pads made non-colliding, and its scene."""
-    src = _REPO / cfg.model.path
+    src, _ = model_files(cfg)
     root = ET.parse(src).getroot()
     root.find("compiler").set("meshdir", str(src.parent / root.find("compiler").get("meshdir")))
     pads = [g for g in root.iter("body") if g.get("name") == "link8"][0].findall("geom")

@@ -6,7 +6,6 @@
 
 id: go2_piper
 display_name: "Unitree Go2 + AgileX Piper arm (mobile manipulator)"
-driver: legged                    # transitional (S5: one generic builder)
 world: apartment          # config/worlds/apartment.yaml
 
 model:
@@ -23,7 +22,8 @@ base:
   height: 0.279                   # the root height it stands at in its stance (measured)
   holonomic: true                 # it can strafe
   limits: {vx: 0.8, vy: 0.4, vyaw: 4.0}
-  fall_z: 0.15                    # root below this = fallen
+  fall_z: 0.15                    # fallen: the root below this,
+  fall_tilt_deg: 60.0             # or its up axis tilted past this (on its side: ~99 deg at z 0.22)
   # The order the policy sees: per leg (FL, FR, RL, RR) hip, thigh, calf.
   joints: [FL_hip_joint, FL_thigh_joint, FL_calf_joint, FR_hip_joint, FR_thigh_joint, FR_calf_joint,
            RL_hip_joint, RL_thigh_joint, RL_calf_joint, RR_hip_joint, RR_thigh_joint, RR_calf_joint]

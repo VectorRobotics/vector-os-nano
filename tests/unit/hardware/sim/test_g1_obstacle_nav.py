@@ -323,9 +323,9 @@ def test_obstacles_from_model_without_robot_ids_includes_the_robot() -> None:
 def test_navigate_to_signature_intact() -> None:
     """navigate_to signature matches the base contract (no sim instantiation)."""
     import inspect
-    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
+    from vector_os_nano.sim.drivers.base import LeggedBase
 
-    sig = inspect.signature(MuJoCoG1.navigate_to)
+    sig = inspect.signature(LeggedBase.navigate_to)
     params = list(sig.parameters)
     assert "x" in params
     assert "y" in params

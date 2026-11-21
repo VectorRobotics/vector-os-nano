@@ -243,13 +243,22 @@ def no_collide_pairs(m: mj.MjModel) -> frozenset[tuple[int, int]]:
 
 
 def motor_limits(scene: CompiledScene, joints: Sequence[int]) -> np.ndarray:
-    """The torque bound |tau| <= limit of each joint's motor actuator (gear x gain x its
-    control range); a joint without a range-limited motor is a ``KeyError`` naming the
-    joints that have one."""
-    motors = {a.joint: a for a in actuators(scene.model) if a.kind == "motor" and a.ctrlrange is not None}
+    """The torque bound |tau| <= limit of each joint's motor actuator: gear x gain x its
+    control range, else the joint's own actuator force range (``actuatorfrcrange``, which
+    the engine clamps the motor to); a joint whose motor has neither is a ``KeyError``
+    naming the joints that have one."""
+    m = scene.model
+    limits = {}
+    for a in actuators(m):
+        frc = _range(bool(m.jnt_actfrclimited[a.joint]), m.jnt_actfrcrange[a.joint]) if a.joint >= 0 else None
+        if a.kind != "motor":
+            continue
+        if a.ctrlrange is not None:
+            limits[a.joint] = abs(a.gear * a.gain) * min(-a.ctrlrange[0], a.ctrlrange[1])
+        elif frc is not None:
+            limits[a.joint] = min(-frc[0], frc[1])
     try:
-        acts = [motors[int(j)] for j in joints]
+        return np.array([limits[int(j)] for j in joints])
     except KeyError as exc:
-        have = sorted(scene.model.joint(j).name for j in motors)
+        have = sorted(m.joint(j).name for j in limits)
         raise KeyError(f"joint {exc.args[0]} has no range-limited motor; joints with one: {have}") from None
-    return np.array([abs(a.gear * a.gain) * min(-a.ctrlrange[0], a.ctrlrange[1]) for a in acts])
