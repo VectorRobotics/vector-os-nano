@@ -6,19 +6,21 @@ The gate drives the product with a scripted model, which never makes a wrong fir
 move. This drives it with the REAL one: for every cell of ``live_matrix.yaml`` (body
 x backend x task) and every repetition, one bare ``vector-cli`` REPL on a PTY
 (tests/harness/pty_cli.run_repl_session), the launch sentence, then the task
-sentence, with ``VECTOR_GT_DUMP`` set. Each repetition records the verdict the REPL
-printed for the task turn, the tools the model chose (from the session file), the
-wall time and the transcript, and is graded INDEPENDENTLY by scripts/gt_grade.py
-(run as its own process: it shares no code with the product). The verdict is never
-trusted: a turn that verified while the grade says nothing happened is FALSE
-GROUNDED, a turn the grade says happened that did not verify is FALSE REJECT.
+sentence (typed only once the launch printed its ready line), the session's
+``VECTOR_GT_DUMP`` written by the harness. Each repetition records the model that ran
+(the banner), the verdict the REPL printed for the task turn, the tools the model
+chose (from the session file), the wall time and the transcript, and is graded
+INDEPENDENTLY by scripts/gt_grade.py through tests/harness/gt_audit (the outcome rules
+the e2e audit uses too). The verdict is never trusted: a turn the product claimed
+(verified, or its goal proven) while the grade says nothing happened is FALSE
+GROUNDED, a turn the grade says happened that it did not claim is FALSE REJECT.
 
     /data/vos-analysis/bin/with-sim-slot .venv/bin/python -m tests.harness.live_matrix [--n 2] [--cells ID ...] [--out DIR]
 
 Writes ``live_matrix.json`` and ``live_matrix.md`` to DIR (default
 ``$VECTOR_HOME/runs/live-matrix-<stamp>``), each repetition's transcript, GT dump and
 session under ``DIR/<cell>/rep<k>/``. Billed: two model-driven turns per repetition.
-Exit 1 when any FALSE GROUNDED exists, 2 when nothing ran, else 0. A cell that cannot
+Exit 1 when any FALSE GROUNDED exists, 2 when nothing ran or nothing was graded, else 0. A cell that cannot
 start (no key for the model, the launch did not bring up its body) is NOT-RUN with
 its reason, never a product failure and never silently skipped; a ``not_yet`` cell
 is listed with its reason and not run.
@@ -29,7 +31,6 @@ import argparse
 import json
 import re
 import shutil
-import subprocess
 import sys
 import time
 from datetime import datetime
@@ -38,24 +39,13 @@ from typing import Any
 
 import yaml
 
-from tests.harness.pty_cli import PROMPT, run_repl_session
+from tests.harness import gt_audit
+from tests.harness.pty_cli import run_repl_session
 from vector_os_nano.schemas import paths
 
 MATRIX = Path(__file__).with_name("live_matrix.yaml")
-GT_GRADE = Path(__file__).resolve().parents[2] / "scripts" / "gt_grade.py"
 KINDS = ("navigate", "grasp", "fetch", "place", "home")
 _FIELDS = ("id", "body", "backend", "launch", "task", "kind", "expect", "n")
-
-
-def _grade_args(key: str, arg: Any) -> list[str]:
-    """scripts/gt_grade.py flags for one ``expect`` entry (its output field is *key*)."""
-    if key in ("base_in", "base_at"):
-        return ["--box" if key == "base_in" else "--at", *(str(float(v)) for v in arg)]
-    if key in ("held_lifted", "delivered"):
-        return ["--object", str(arg)]
-    if key == "object_on":
-        return ["--object", str(arg[0]), "--surface", str(arg[1])]
-    raise ValueError(f"unknown expect {key!r}; one of base_in, base_at, held_lifted, delivered, object_on")
 
 
 def load_cells(path: Path = MATRIX) -> list[dict[str, Any]]:
@@ -74,10 +64,10 @@ def load_cells(path: Path = MATRIX) -> list[dict[str, Any]]:
             if not str(c["not_yet"]).strip():
                 raise ValueError(f"cell {c['id']!r}: not_yet needs a reason")
             continue
-        if len(c["expect"]) != 1:
-            raise ValueError(f"cell {c['id']!r}: expect holds exactly one grade, got {c['expect']}")
-        ((key, arg),) = c["expect"].items()
-        _grade_args(key, arg)
+        try:
+            gt_audit.grade_args(c["expect"])
+        except ValueError as exc:
+            raise ValueError(f"cell {c['id']!r}: {exc}") from None
     if len({c["id"] for c in cells}) != len(cells):
         raise ValueError("duplicate cell ids")
     return cells
@@ -85,21 +75,20 @@ def load_cells(path: Path = MATRIX) -> list[dict[str, Any]]:
 
 # --- reading one repetition -------------------------------------------------
 
-_VERDICT = re.compile(r"verdict (\w+) verified=(True|False) \((\d+)/(\d+) grounded\).*? goal=(\w+)")
-_READY = re.compile(r"Started (\w+) simulation, ready in")
 _START_FAILED = re.compile(r"(Failed to start .*|Cannot start .*)")
+_MODEL = re.compile(r"Model: (\S+) \| Provider: (\S+)")
 
 
-def _split(text: str, task: str) -> tuple[str, str]:
-    """(launch part, task turn) of a transcript; the task turn is '' if never typed."""
-    i = text.rfind(f"{PROMPT} {task}")
-    return (text, "") if i == -1 else (text[:i], text[i:])
+def _turns(text: str, cell: dict[str, Any]) -> dict[str, str]:
+    """The launch and task turns of a repetition's transcript (a turn never typed is absent)."""
+    return dict(gt_audit.split_turns(text, [cell["launch"], cell["task"]]))
 
 
-def launch_problem(text: str, body: str, task: str) -> str:
-    """'' when the launch sentence brought up *body*, else why the cell did not start."""
-    launch, _ = _split(text, task)
-    ready = _READY.search(launch)
+def launch_problem(text: str, cell: dict[str, Any]) -> str:
+    """'' when the launch sentence brought up the cell's body, else why the cell did not start."""
+    body = cell["body"]
+    launch = _turns(text, cell).get(cell["launch"], text)
+    ready = gt_audit.READY.search(launch)
     if ready and ready.group(1) == body:
         return ""
     if ready:
@@ -111,13 +100,10 @@ def launch_problem(text: str, body: str, task: str) -> str:
     return f"no 'Started {body} simulation, ready' line after the launch sentence; it ended: {tail}"
 
 
-def parse_verdict(text: str, task: str) -> dict[str, Any] | None:
-    """The verdict line the REPL printed for the task turn (the last one in it), or None."""
-    hits = list(_VERDICT.finditer(_split(text, task)[1]))
-    if not hits:
-        return None
-    m = hits[-1]
-    return {"evidence": m[1], "verified": m[2] == "True", "grounded": f"{m[3]}/{m[4]}", "goal_check": m[5]}
+def model_of(text: str) -> str:
+    """The model the session ran, from its banner ('' when the banner is missing)."""
+    m = _MODEL.search(text)
+    return f"{m[1]} ({m[2]})" if m else ""
 
 
 def _ts(entry: dict[str, Any]) -> float:
@@ -144,39 +130,17 @@ def session_facts(path: Path, task: str) -> dict[str, Any]:
     return {"tools": tools, "turn_s": _ts(turn[-1]) - _ts(turn[0]), "model_calls": calls}
 
 
-def gt_grade(dump: Path, expect: dict[str, Any], task: str) -> tuple[bool | None, str]:
-    """(the independent grade of the task turn, '' or why it could not be graded)."""
-    ((key, arg),) = expect.items()
-    if not dump.is_file():
-        return None, "no GT dump (no sim turn was recorded)"
-    r = subprocess.run([sys.executable, str(GT_GRADE), "--dump", str(dump), *_grade_args(key, arg)],
-                       capture_output=True, text=True, timeout=60, check=False)
-    if r.returncode:
-        return None, f"gt_grade failed: {r.stderr.strip()[-300:]}"
-    rows = [row for row in map(json.loads, r.stdout.splitlines()) if row["goal"] == task]
-    if not rows:
-        return None, "no finished task turn in the GT dump"
-    return bool(rows[-1][key]), ""
-
-
 def judge(cell: dict[str, Any], rec: dict[str, Any]) -> dict[str, Any]:
     """Grade one repetition from its files; never from the verdict alone."""
     text = Path(rec["transcript"]).read_text(encoding="utf-8")
-    out = dict(rec)
-    problem = launch_problem(text, cell["body"], cell["task"])
+    out = {**rec, "model": model_of(text)}
+    problem = launch_problem(text, cell)
     if problem:
         return {**out, "status": "not_run", "reason": problem}
-    verdict = parse_verdict(text, cell["task"])
-    grade, why = gt_grade(Path(rec["dump"]), cell["expect"], cell["task"])
-    verified = bool(verdict and verdict["verified"])
-    if grade is None:
-        outcome = "ungraded"
-    elif verified != grade:
-        outcome = "FALSE_GROUNDED" if verified else "FALSE_REJECT"
-    else:
-        outcome = "agree"
-    return {**out, "status": "ran", "verdict": verdict, "grade": grade, "grade_note": why, "outcome": outcome,
-            **session_facts(Path(rec["session"]), cell["task"])}
+    verdict = gt_audit.parse_verdict(_turns(text, cell).get(cell["task"], ""))
+    grade, why = gt_audit.grade(Path(rec["dump"]), cell["expect"], cell["task"])
+    return {**out, "status": "ran", "verdict": verdict, "grade": grade, "grade_note": why,
+            "outcome": gt_audit.outcome(verdict, grade), **session_facts(Path(rec["session"]), cell["task"])}
 
 
 def run_rep(cell: dict[str, Any], rep: int, out: Path, *, tool_script: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -187,19 +151,19 @@ def run_rep(cell: dict[str, Any], rep: int, out: Path, *, tool_script: dict[str,
     home.mkdir(exist_ok=True)
     if (paths.home() / "assets").is_dir():
         (home / "assets").symlink_to(paths.home() / "assets")
-    dump = d / "gt.jsonl"
-    dump.unlink(missing_ok=True)
     t0 = time.monotonic()
     r = run_repl_session(
-        [cell["launch"], cell["task"]], tool_script=tool_script, live=tool_script is None,
+        # the task only once the launch brought the cell's body up: a failed launch bills no task turn
+        [cell["launch"], (re.compile(rf"Started\s+{re.escape(cell['body'])}\s+simulation,\s+ready\s+in"), cell["task"])],
+        tool_script=tool_script, live=tool_script is None, out_dir=d,
         answers=["a"] * 20, timeout_sec=float(cell.get("timeout_s", 600)),
         # never the external nav stack on a shared box, whatever the repo .env says
         # ... and a live run is never a scripted one: a caller's test-seam variable does not reach the child
-        extra_env={"VECTOR_HOME": str(home), "VECTOR_GT_DUMP": str(dump), "VECTOR_NAV_STACK": "",
+        extra_env={"VECTOR_HOME": str(home), "VECTOR_NAV_STACK": "",
                    **({"VECTOR_FAKE_LLM_TOOLS": ""} if tool_script is None else {})},
     )
     rec = {"cell": cell["id"], "rep": rep, "wall_s": round(time.monotonic() - t0, 1), "timed_out": r.timed_out,
-           "exit_code": r.exit_code, "transcript": str(d / "transcript.txt"), "dump": str(dump),
+           "exit_code": r.exit_code, "transcript": str(d / "transcript.txt"), "dump": r.dump,
            "session": str(d / "session.jsonl")}
     Path(rec["transcript"]).write_text(r.text, encoding="utf-8")
     sessions = sorted((home / "sessions").glob("*.jsonl"))
@@ -212,8 +176,9 @@ def run_rep(cell: dict[str, Any], rep: int, out: Path, *, tool_script: dict[str,
 # --- the report ---------------------------------------------------------------
 
 def summarize(cells: list[dict[str, Any]], reps: list[dict[str, Any]], *, skipped: str = "") -> dict[str, Any]:
-    """Per cell: success / verified / goal proven k of N run, the false GROUNDED and
-    false rejects with their transcripts, what did not run and why."""
+    """Per cell: success (by the grade) / verified / goal proven k of N run, the false
+    GROUNDED and false rejects with their transcripts, what did not run and why; the
+    models that ran and how many repetitions were graded at all."""
     rows = []
     for c in cells:
         mine = [r for r in reps if r["cell"] == c["id"]]
@@ -238,6 +203,8 @@ def summarize(cells: list[dict[str, Any]], reps: list[dict[str, Any]], *, skippe
             "false_grounded": sum(len(r.get("false_grounded", [])) for r in rows),
             "false_reject": sum(len(r.get("false_reject", [])) for r in rows),
             "reps_run": sum(r.get("n_run", 0) for r in rows),
+            "graded": sum(r["grade"] is not None for r in reps if r["status"] == "ran"),
+            "models": sorted({r["model"] or "unknown" for r in reps}),
             "model_calls": sum(r.get("model_calls", 0) for r in reps),
             "wall_s": round(sum(r["wall_s"] for r in reps), 1)}
 
@@ -245,7 +212,7 @@ def summarize(cells: list[dict[str, Any]], reps: list[dict[str, Any]], *, skippe
 def exit_code(summary: dict[str, Any]) -> int:
     if summary["false_grounded"]:
         return 1
-    return 0 if summary["reps_run"] else 2
+    return 0 if summary["graded"] else 2  # nothing ran, or nothing that ran could be graded
 
 
 def markdown(summary: dict[str, Any]) -> str:
@@ -259,7 +226,8 @@ def markdown(summary: dict[str, Any]) -> str:
         out.append(f"| {c['id']} | {c['body']} | {c['backend']} | {c['kind']} | {c['success']}/{k} | {c['verified']}/{k} "
                    f"| {c['goal_proven']}/{k} | {len(c['false_grounded'])} | {len(c['false_reject'])} | {len(c['not_run'])} |")
     out += ["", f"FALSE GROUNDED {summary['false_grounded']}, FALSE REJECT {summary['false_reject']}; "
-            f"{summary['reps_run']} repetitions run, {summary['model_calls']} model calls, {summary['wall_s']} s.", "",
+            f"{summary['reps_run']} repetitions run, {summary['graded']} graded, {summary['model_calls']} model calls, "
+            f"{summary['wall_s']} s; model: {', '.join(summary['models']) or 'none ran'}.", "",
             "| cell | rep | verdict | goal | grade | outcome | tools (! = error) | s | transcript |",
             "|---|---|---|---|---|---|---|---|---|"]
     for c in summary["cells"]:

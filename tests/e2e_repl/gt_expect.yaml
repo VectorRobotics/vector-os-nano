@@ -1,0 +1,114 @@
+# What the independent grade (scripts/gt_grade.py) must show for each sentence an e2e
+# flow types, read by tests/harness/gt_audit.py after every session of the flow that
+# starts a simulator (acceptance A3). One row per sentence:
+#   held_lifted: <object>            the object picked up (held and lifted) in that turn
+#   delivered: <object>              the object brought to the world's user point
+#   object_on: [<object>, <surface>] the object left resting on the surface
+#   base_in: [x0, y0, x1, y1]        the base entered this xy box (a room's floor)
+#   base_at: [x, y]                  the base came within 0.5 m of this point;
+#                                    from_spawn: [dx, dy] when the point is the body's spawn + that
+#   none: <reason>                   the dump cannot grade this turn
+# A turn the product claims (verified, or its goal proven) the grade denies is FALSE
+# GROUNDED and turns the flow red; so does a claimed turn with no row. Numbers are copied
+# from the manifests on purpose (the grade shares no code and no data path with the
+# product); tests/unit/test_gt_audit.py checks every one against the world and robot
+# manifests of the flow's bodies. A flow is its file: tests/e2e_repl/test_<flow>.py.
+schema: 1
+flows:
+  e1_launch_go2_piper:
+    bodies: [go2_piper]
+    turns:
+      启动 go2 仿真 带机械臂 无窗口: {none: a launch claims nothing}
+  e3a_grasp_green_bottle:
+    bodies: [go2_piper]
+    turns:
+      启动 go2 仿真 带机械臂 无窗口: {none: a launch claims nothing}
+      拿起绿色的瓶子: {held_lifted: pickable_bottle_green}
+  e3a_grasp_after_refusal:
+    bodies: [go2_piper]
+    turns:
+      启动 go2 仿真 带机械臂 无窗口: {none: a launch claims nothing}
+      把绿色的瓶子拿起来: {held_lifted: pickable_bottle_green}
+  e3a_grasp_campaign:
+    bodies: [go2_piper]
+    turns:
+      拿起绿色的瓶子: {held_lifted: pickable_bottle_green}
+  e5_stop_ctrl_c:
+    bodies: [go2]
+    turns:
+      启动 go2 仿真 无窗口: {none: a launch claims nothing}
+      停下: {none: the P0 stop at the prompt runs no turn}
+      往前走一米: {base_at: [11.0, 3.0], from_spawn: [1.0, 0.0]}
+      后退一米: {base_at: [9.0, 3.0], from_spawn: [-1.0, 0.0]}
+      导航到厨房 (15, 3): {base_at: [15.0, 3.0]}
+      往前走五米: {none: a walk relative to wherever the Ctrl-C above left the base}
+      向左走一米: {none: a walk relative to wherever the stop above left the base}
+      后退半米: {none: a walk relative to wherever the stop above left the base}
+  e6_switch_cycle:
+    bodies: [go2_piper]
+    turns:
+      切换到 go2 带机械臂 仿真 无窗口: {none: a launch claims nothing}
+      切换到 go2 仿真 无窗口: {none: a launch claims nothing}
+      切换到机械臂仿真 无窗口: {none: a launch claims nothing}
+      再切换到 go2 带机械臂 仿真 无窗口: {none: a launch claims nothing}
+  e7_so101_banana:
+    bodies: [so101]
+    turns:
+      启动机械臂仿真 无窗口: {none: a launch claims nothing}
+      回到初始位置: {none: the arm going home (the dump carries no arm joint state)}
+      抓起香蕉: {held_lifted: banana}
+      挥挥手: {none: a gesture (the dump carries no arm joint state)}
+  e8_navigate_rooms:
+    bodies: [go2]
+    turns:
+      启动 go2 仿真 无窗口: {none: a launch claims nothing}
+      去厨房: {base_in: [14.0, 0.0, 20.0, 5.0]}
+      回到起点: {base_at: [10.0, 3.0]}
+      去餐厅: {base_in: [0.0, 5.0, 6.0, 10.0]}
+      去书房: {base_in: [14.0, 5.0, 20.0, 10.0]}
+  e9_explore_coverage:
+    bodies: [go2]
+    turns:
+      启动 go2 仿真 无窗口: {none: a launch claims nothing}
+      探索一下房子: {base_at: [16.0, 12.0]}   # the tour's last room (guest_bedroom), what its verify names
+  e10_world_oracles:
+    bodies: [go2_piper]
+    turns:
+      启动 go2 仿真 带机械臂 无窗口: {none: a launch claims nothing}
+      找到绿色瓶子: {none: a look (the dump carries no perception belief)}
+      把绿色瓶子放到桌子上: {object_on: [pickable_bottle_green, pick_table]}   # where it rests from the start
+      把绿色瓶子拿过来: {delivered: pickable_bottle_green}
+      再把绿色瓶子拿过来一点: {delivered: pickable_bottle_green}
+      继续拿过来: {delivered: pickable_bottle_green}
+  e11_perception_memory:
+    bodies: [go2_piper]
+    turns:
+      启动 go2 仿真 带机械臂 无窗口: {none: a launch claims nothing}
+      看看周围有什么: {none: a look (the dump carries no perception belief)}
+      去绿色的瓶子那里: {none: "to an object: gt_grade has no near-an-object grade (the turn is not claimed: it ends with no verify)"}
+      go to the green bottle: {none: "to an object: gt_grade has no near-an-object grade (the turn is not claimed: it ends with no verify)"}
+      再去绿色的瓶子那里: {none: "to an object from memory: gt_grade has no near-an-object grade (the product leaves it RAN)"}
+      用 RynnBrain 找一下绿色瓶子: {none: a detect (the dump carries no perception belief)}
+  e12_navigate_recover:
+    bodies: [go2]
+    turns:
+      启动 go2 仿真 无窗口: {none: a launch claims nothing}
+      走到坐标 (17.0,1.7): {base_at: [17.0, 1.7]}
+      回到起点: {base_at: [10.0, 3.0]}
+  e13_piper_pick:
+    bodies: [piper]
+    turns:
+      start the piper simulation: {none: a launch claims nothing}
+      pick up the red box: {held_lifted: red_box}
+  e14_live_matrix_instrument:
+    bodies: [so101]
+    turns:
+      启动 so101 机械臂仿真 无窗口: {none: a launch claims nothing}
+      抓起香蕉: {held_lifted: banana}
+  e15_gt_audit:
+    bodies: [so101, go2]
+    turns:
+      启动 so101 机械臂仿真 无窗口: {none: a launch claims nothing}
+      抓起马克杯: {held_lifted: mug}
+      启动 go2 仿真 无窗口: {none: a launch claims nothing}
+      去厨房: {base_in: [14.0, 0.0, 20.0, 5.0]}

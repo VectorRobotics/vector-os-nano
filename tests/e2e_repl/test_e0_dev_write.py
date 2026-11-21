@@ -45,7 +45,7 @@ def test_e0_permission_prompt_answered_then_file_written(e0_session) -> None:
 @pytest.mark.cli_main
 def test_e0_grounded_path_contains(e0_session) -> None:
     text = e0_session.text
-    assert "verify path_contains" in text, text[-3000:]
+    assert "verify path_contains" in " ".join(text.split()), text[-3000:]
     assert "verdict GROUNDED verified=True" in text, text[-3000:]
 
 

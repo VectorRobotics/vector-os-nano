@@ -39,7 +39,7 @@ _SCRIPT = {"steps": [s for say, e in _CYCLE for s in _switch(say, e)]}
 def test_e6_switch_cycle_every_start_succeeds() -> None:
     r = run_repl_session([say for say, _ in _CYCLE], tool_script=_SCRIPT,
                          answers=["y"] * 8, timeout_sec=600)
-    text = r.text
+    text = " ".join(r.text.split())
     assert not r.timed_out, text[-3000:]
     assert "already running" not in text and "Failed to start" not in text, text[-3000:]
     # Every start, in order, reports the SimSession readiness line for its embodiment.

@@ -30,7 +30,7 @@ _SCRIPT = {"steps": LAUNCH_STEPS + [
 @pytest.mark.cli_main
 def test_e3a_a_refused_pick_then_a_grasp_is_grounded() -> None:
     r = run_repl_session([LAUNCH, "把绿色的瓶子拿起来"], tool_script=_SCRIPT, answers=["y"], timeout_sec=420)
-    text = r.text
+    text = " ".join(r.text.split())
     assert not r.timed_out, text[-3000:]
     assert "refused pick_top_down: Cannot locate target object" in text, text[-3000:]
     assert f"verify holding_object('{_TARGET}') ✓ (actor=CAUSED)" in text, text[-3000:]

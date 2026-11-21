@@ -6,7 +6,7 @@
 One session, every line typed into bare ``vector-cli``:
   * '停下' at the prompt -> the P0 stop, < 100 ms, no LLM call; a panicked Ctrl-C
     during its speed report never exits the REPL;
-  * the next '往前走一米' grounds on a literal at_position from the spawn (no sticky
+  * the next '后退一米' grounds on a literal at_position from the spawn (no sticky
     abort from the stop above);
   * a long navigate, then Ctrl-C -> the REPL survives and the base is stopped: the
     body brakes (MPC to zero velocity) instead of being dropped onto the stance
@@ -36,15 +36,12 @@ _SCRIPT = {"steps": [
     {"when": "导航到厨房", "tool_calls": [{"name": "navigate", "input": {"x": 15.0, "y": 3.0}}]},
     {"when": "往前走五米", "tool_calls": [
         {"name": "walk", "input": {"direction": "forward", "distance": 5.0, "speed": 0.3}}]},
-    {"when": "往前走一米", "tool_calls": [
-        {"name": "walk", "input": {"direction": "forward", "distance": 1.0, "speed": 0.3}}]},
-    # One metre forward of the spawn (9.99, 3) facing +x is (11, 3): a graded base
-    # predicate, false before the walk. The wide tol is the open-loop walk's
-    # wall-clock budget: under load it covers 0.4-1.0 m (walks move onto sim time in
-    # WP06; tighten to the default 0.5 then). The planner calls (11, 3) unreachable
-    # (inflated obstacle), so a closed-loop navigate is no substitute.
+    {"when": "后退一米", "tool_calls": [
+        {"name": "walk", "input": {"direction": "backward", "distance": 1.0, "speed": 0.3}}]},
+    # Backward is unobstructed; the forward target is inside the pick table.
+    # Use the independent evaluator's default tolerance, never a widened one.
     {"when": "Skill 'walk' succeeded", "tool_calls": [
-        {"name": "verify", "input": {"expr": "at_position(11.0, 3.0, 0.9)"}}]},
+        {"name": "verify", "input": {"expr": "at_position(9.0, 3.0)"}}]},
     {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     # A slow model: the owner's '停' lands while this reply is still in flight.
     {"when": "向左走一米", "delay": 2.5, "tool_calls": [
@@ -76,6 +73,21 @@ _SPEED = re.compile(
 _AT_02_MPS, _PEAK_MPS, _SETTLED_MPS = 0.35, 0.40, 0.05
 
 
+@pytest.mark.sim
+@pytest.mark.cli_main
+def test_e5_forward_into_the_table_never_proves_a_metre():
+    script = {"steps": _SCRIPT["steps"][:2] + [
+        {"when": "往前走一米", "tool_calls": [
+            {"name": "walk", "input": {"direction": "forward", "distance": 1.0, "speed": 0.3}}]},
+        {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": "at_position(11.0, 3.0)"}}]},
+        {"when": "", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
+    ]}
+    r = run_repl_session(["启动 go2 仿真 无窗口", "往前走一米"], tool_script=script, timeout_sec=120)
+    text = " ".join(r.text.split())
+    assert not r.timed_out and "verify at_position(11.0, 3.0) ·" in text
+    assert "verdict GROUNDED" not in text
+
+
 def _assert_stopped(section: str) -> None:
     v = _SPEED.search(section)
     assert v, section
@@ -89,7 +101,7 @@ def e5():
     r = run_repl_session(
         ["启动 go2 仿真 无窗口",
          "停下", (0.3, "\x03"),
-         "往前走一米",
+         "后退一米",
          # Ctrl-C once the navigate's own progress lines say it has driven >= 3 s,
          # not a clock started when the line was typed (nor one frame it can skip).
          "导航到厨房 (15, 3)", ("navigate 3s", "\x03"),
@@ -134,7 +146,7 @@ def test_e5_typed_stop_mid_walk_and_p0_stop_call_no_llm(e5) -> None:
     # stopped it, and the body.
     assert _STOPPED.search(walk) and "walk → aborted" in walk, walk
     _assert_stopped(walk)
-    p0 = _section(text, "停下", "往前走一米")
+    p0 = _section(text, "停下", "后退一米")
     m = _STOPPED.search(p0)
     assert m and int(m.group(1)) < 100, p0
     # The Ctrl-C landed during the stop's speed report: it stopped again, never exited.
@@ -146,8 +158,8 @@ def test_e5_typed_stop_mid_walk_and_p0_stop_call_no_llm(e5) -> None:
 @pytest.mark.cli_main
 def test_e5_next_walk_after_the_stop_grounds(e5) -> None:
     _r, text, _calls = e5
-    after = _section(text, "往前走一米", "导航到厨房")
-    assert "verify at_position(11.0, 3.0, 0.9) ✓ (actor=CAUSED)" in after, after
+    after = _section(text, "后退一米", "导航到厨房")
+    assert "verify at_position(9.0, 3.0) ✓ (actor=CAUSED)" in after, after
     assert "verdict GROUNDED verified=True" in after, after
 
 

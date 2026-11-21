@@ -82,6 +82,7 @@ class CliTurnResult:
     verdict: dict[str, Any]   # parsed VECTOR_VERDICT payload
     exit_code: int
     raw_output: str           # full child output (for debugging)
+    dump: str = ""            # the session's VECTOR_GT_DUMP file (tests/harness/gt_audit)
 
     @property
     def verified(self) -> bool:
@@ -264,8 +265,12 @@ def run_cli_turn(
         cwd:        working dir for the child (defaults to repo root).
 
     Asserts the machine invariant (exit 0 iff verified or a chat turn) before returning.
-    Raises AssertionError if no VECTOR_VERDICT line was emitted.
+    Raises AssertionError if no VECTOR_VERDICT line was emitted. The turn writes its
+    ground truth to a fresh ``VECTOR_GT_DUMP`` (``dump``); in an e2e flow it is then
+    audited (tests/harness/gt_audit.check).
     """
+    from tests.harness import gt_audit
+
     argv = [
         sys.executable, "-m", "vector_os_nano.vcli.cli",
         "-p", prompt, "--json", "--no-permission",
@@ -284,6 +289,8 @@ def run_cli_turn(
     if script_path is not None:
         # The real written path wins over any placeholder in extra_env.
         env["VECTOR_FAKE_LLM_TOOLS"] = script_path
+    dump = gt_audit.new_dump()
+    env["VECTOR_GT_DUMP"] = str(dump)  # one file per session, never a caller's
 
     # ONE deadline for the whole turn: drain to EOF, then give the child whatever is
     # left to exit; past the deadline the whole process group is killed.
@@ -318,7 +325,10 @@ def run_cli_turn(
         f"verified={verdict.get('verified')} chat={chat} but exit_code={exit_code} "
         f"(must agree). verdict={verdict}"
     )
-    return CliTurnResult(verdict=verdict, exit_code=exit_code, raw_output=output)
+    flow = gt_audit.current_flow()
+    if flow:
+        gt_audit.check(flow, [(prompt, gt_audit.json_verdict(verdict))], strip_ansi(output), dump)
+    return CliTurnResult(verdict=verdict, exit_code=exit_code, raw_output=output, dump=str(dump))
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +360,8 @@ class ReplSessionResult:
     transcript: str           # raw PTY bytes, decoded
     exit_code: int
     timed_out: bool = False   # a step hit its deadline; the group was killed
+    dump: str = ""            # the session's VECTOR_GT_DUMP file (tests/harness/gt_audit)
+    audit: tuple[dict[str, Any], ...] = ()  # an e2e flow's audited turns (gt_audit.check)
 
     @property
     def text(self) -> str:
@@ -427,8 +439,11 @@ class _Pty:
                 return "prompt"
 
 
+_EXITS = ("quit", "exit", "q", "/quit", "/exit")
+
+
 def run_repl_session(
-    lines: list[str | tuple[float | str, str]],
+    lines: list[str | tuple[float | str | re.Pattern[str], str]],
     *,
     tool_script: dict[str, Any] | None = None,
     answers: list[str] | None = None,
@@ -439,6 +454,7 @@ def run_repl_session(
     extra_args: list[str] | None = None,
     timeout_sec: float = 240.0,
     cwd: str | Path | None = None,
+    out_dir: str | Path | None = None,
 ) -> ReplSessionResult:
     """Drive the REAL interactive ``vector-cli`` REPL under a PTY; return the transcript.
 
@@ -455,7 +471,10 @@ def run_repl_session(
                  a ``("<action> <N>s", text)`` tuple is typed once that action has
                  been running for at least N seconds: any of its progress frames
                  ``<action> <n>s`` with n >= N after the previous line (keyed on
-                 observed progress, not a clock; one skipped frame never stalls it).
+                 observed progress, not a clock; one skipped frame never stalls it);
+                 a ``(re.Pattern, text)`` tuple is typed at the prompt like a ``str``
+                 only if the pattern showed since the previous line, else the session
+                 quits there (a task is never typed after a failed launch).
                  ``quit`` is appended unless the last line already exits.
         answers: replies to permission prompts, in order; a prompt with no answer
                  left is refused with ``n`` (the safe default a user would pick).
@@ -463,7 +482,12 @@ def run_repl_session(
                  exit), cut to end inside ``PYTEST_TIMEOUT`` when that is set
                  (:func:`_session_deadline`). On expiry the process group is killed
                  and ``timed_out`` is set.
+        out_dir: where the session's ``VECTOR_GT_DUMP`` file goes (default
+                 ``gt_audit.out_dir()``). Every session gets a fresh one, handed back as
+                 ``dump``; a session of an e2e flow is then audited (gt_audit.check).
     """
+    from tests.harness import gt_audit
+
     argv = [sys.executable, "-m", "vector_os_nano.vcli.cli"]
     if sim:
         argv.append("--sim")
@@ -474,17 +498,19 @@ def run_repl_session(
     argv += list(extra_args or [])
 
     env, home_dir = _child_env(live=live, home_prefix="vector_pty_repl_home_")
-    env.setdefault("TERM", "xterm-256color")
+    env["TERM"] = "xterm-256color"  # this child has a real PTY, even under a TERM=dumb runner
     env["PROMPT_TOOLKIT_NO_CPR"] = "1"  # no cursor-position round-trips on a PTY
     script_path = _write_tool_script(tool_script) if tool_script is not None else None
     if script_path is not None:
         env["VECTOR_FAKE_LLM_TOOLS"] = script_path
     if extra_env:
         env.update(extra_env)
+    dump = gt_audit.new_dump(out_dir)
+    env["VECTOR_GT_DUMP"] = str(dump)  # one file per session, never a caller's
 
-    steps: list[str | tuple[float, str]] = list(lines)
+    steps: list[Any] = list(lines)
     last = steps[-1] if steps else ""
-    if not (isinstance(last, str) and last.strip().lower() in ("quit", "exit", "q", "/quit", "/exit")):
+    if not (isinstance(last, str) and last.strip().lower() in _EXITS):
         steps.append("quit")
     pending = list(answers or [])
     timed_out = False
@@ -494,6 +520,9 @@ def run_repl_session(
     try:
         typed = ""
         for step in steps:
+            gate = None
+            if isinstance(step, tuple) and isinstance(step[0], re.Pattern):
+                gate, step = step
             if isinstance(step, tuple):
                 delay, text = step
                 if isinstance(delay, str):  # keyed on progress: the action ran >= N s
@@ -517,6 +546,9 @@ def run_repl_session(
                 typed = ""
             if state in ("eof", "timeout"):
                 timed_out = state == "timeout"
+                break
+            if gate is not None and not gate.search(tty.text()[tty.mark:]):
+                tty.send("quit")  # what it waits on never showed: type nothing more
                 break
             tty.send(step)
             typed = step
@@ -542,4 +574,12 @@ def run_repl_session(
 
     exit_code = proc.returncode if proc.returncode is not None else 1
     transcript = tty.buf.decode("utf-8", errors="replace")
-    return ReplSessionResult(transcript=transcript, exit_code=exit_code, timed_out=timed_out)
+    flow, audit = gt_audit.current_flow(), []
+    if flow:
+        typed_lines = [s[1] if isinstance(s, tuple) and isinstance(s[0], re.Pattern) else s for s in lines]
+        sentences = [s for s in typed_lines if isinstance(s, str) and s.strip().lower() not in _EXITS]
+        text = strip_ansi(transcript)
+        turns = [(s, gt_audit.parse_verdict(t)) for s, t in gt_audit.split_turns(text, sentences)]
+        audit = gt_audit.check(flow, turns, text, dump)
+    return ReplSessionResult(transcript=transcript, exit_code=exit_code, timed_out=timed_out,
+                             dump=str(dump), audit=tuple(audit))

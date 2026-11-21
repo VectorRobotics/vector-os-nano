@@ -69,7 +69,7 @@ def _turn(text: str, cmd: str) -> str:
     if i == -1:
         i = text.find(cmd)
     assert i != -1, f"{cmd!r} never typed:\n{text[-3000:]}"
-    return text[i:]
+    return " ".join(text[i:].split())
 
 
 @pytest.mark.sim

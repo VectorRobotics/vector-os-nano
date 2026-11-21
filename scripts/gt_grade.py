@@ -14,8 +14,13 @@ GROUNDED verdict against this; A10: the live matrix grades every real-model turn
 
     python scripts/gt_grade.py --dump run.jsonl --object pickable_bottle_green [--surface dining_table]
     python scripts/gt_grade.py --dump run.jsonl --box 14 0 20 5 --at 3 2.5
+    python scripts/gt_grade.py --dump run.jsonl --object banana --goal 抓起香蕉 --nth 2
 
-Prints one JSON line per turn: {"turn", "goal"} plus, with --object, "moved_m",
+A dump holds one REPL session: every sim session it started (a body switch starts a
+new one, counting its turns from 1 again). --goal grades one chosen turn: the --nth
+(default 1) finished turn whose goal is that sentence.
+
+Prints one JSON line per turn graded: {"turn", "goal"} plus, with --object, "moved_m",
 "delivered" and "held_lifted"; with --surface, "object_on"; with --box, "base_in";
 with --at, "base_at".
 """
@@ -39,9 +44,16 @@ def load(path: str) -> list[dict[str, Any]]:
 
 
 def turns(lines: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-    """(start, end) line pairs, matched by turn number; an unfinished turn is dropped."""
-    starts = {ln["turn"]: ln for ln in lines if ln["phase"] == "start"}
-    return [(starts[ln["turn"]], ln) for ln in lines if ln["phase"] == "end" and ln["turn"] in starts]
+    """(start, end) line pairs in file order: an end closes the latest open start of its
+    turn number (a later sim session reuses the numbers); an unfinished turn is dropped."""
+    open_: dict[Any, dict[str, Any]] = {}
+    out = []
+    for ln in lines:
+        if ln["phase"] == "start":
+            open_[ln["turn"]] = ln
+        elif ln["turn"] in open_:
+            out.append((open_.pop(ln["turn"]), ln))
+    return out
 
 
 def _xy_dist(a: list[float], b: list[float]) -> float:
@@ -56,13 +68,19 @@ def delivered(start: dict[str, Any], end: dict[str, Any], obj: str) -> bool:
             and _xy_dist(start["objects"][obj]["pos"], user) > DELIVER_R)
 
 
-def object_on(end: dict[str, Any], obj: str, surface: str) -> bool:
-    s, o = end["surfaces"].get(surface), end["objects"].get(obj)
+def _on(line: dict[str, Any], obj: str, surface: str) -> bool:
+    s, o = line["surfaces"].get(surface), line["objects"].get(obj)
     if s is None or o is None or o["welded"]:
         return False
     x, y, z = o["pos"]
     x0, y0, x1, y1 = s["box"]
     return x0 <= x <= x1 and y0 <= y <= y1 and s["height"] < z <= s["height"] + ON_MAX_ABOVE
+
+
+def object_on(start: dict[str, Any], end: dict[str, Any], obj: str, surface: str) -> bool:
+    """Left on the surface in this turn: resting on it at the end and not at the start
+    (an object that was already there was never placed)."""
+    return _on(end, obj, surface) and not _on(start, obj, surface)
 
 
 def held_lifted(start: dict[str, Any], end: dict[str, Any], obj: str) -> bool:
@@ -93,9 +111,13 @@ def base_at(start: dict[str, Any], end: dict[str, Any], xy: list[float]) -> bool
 
 
 def grade(path: str, obj: str | None = None, surface: str | None = None,
-          box: list[float] | None = None, at: list[float] | None = None) -> list[dict[str, Any]]:
+          box: list[float] | None = None, at: list[float] | None = None,
+          goal: str | None = None, nth: int = 1) -> list[dict[str, Any]]:
+    pairs = turns(load(path))
+    if goal is not None:
+        pairs = [p for p in pairs if p[1].get("goal") == goal][nth - 1:nth]
     out = []
-    for start, end in turns(load(path)):
+    for start, end in pairs:
         row: dict[str, Any] = {"turn": end["turn"], "goal": end.get("goal", "")}
         if obj is not None:
             row["moved_m"] = (round(_xy_dist(start["objects"][obj]["pos"], end["objects"][obj]["pos"]), 3)
@@ -103,7 +125,7 @@ def grade(path: str, obj: str | None = None, surface: str | None = None,
             row["delivered"] = delivered(start, end, obj)
             row["held_lifted"] = held_lifted(start, end, obj)
             if surface is not None:
-                row["object_on"] = object_on(end, obj, surface)
+                row["object_on"] = object_on(start, end, obj, surface)
         if box is not None:
             row["base_in"] = base_in(start, end, box)
         if at is not None:
@@ -120,10 +142,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--box", nargs=4, type=float, metavar=("X0", "Y0", "X1", "Y1"),
                     help="an xy box for the base_in check, e.g. a room's floor")
     ap.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"), help="a point for the base_at check")
+    ap.add_argument("--goal", help="grade only the turn whose goal is this sentence")
+    ap.add_argument("--nth", type=int, default=1, help="with --goal: its nth finished turn (default 1)")
     a = ap.parse_args(argv)
     if a.surface and not a.object:
         ap.error("--surface needs --object")
-    for row in grade(a.dump, a.object, a.surface, a.box, a.at):
+    if a.nth < 1:
+        ap.error("--nth counts from 1")
+    for row in grade(a.dump, a.object, a.surface, a.box, a.at, a.goal, a.nth):
         print(json.dumps(row, ensure_ascii=False))
     return 0
 

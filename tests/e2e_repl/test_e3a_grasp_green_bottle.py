@@ -22,7 +22,7 @@ _SCRIPT = {"steps": LAUNCH_STEPS + [
 @pytest.mark.cli_main
 def test_e3a_grasp_green_bottle_grounded() -> None:
     r = run_repl_session([LAUNCH, "拿起绿色的瓶子"], tool_script=_SCRIPT, answers=["y"], timeout_sec=360)
-    text = r.text
+    text = " ".join(r.text.split())
     assert not r.timed_out, text[-3000:]
     assert f"verify holding_object('{_TARGET}') ✓ (actor=CAUSED)" in text, text[-3000:]
     assert "verdict GROUNDED verified=True" in text, text[-3000:]

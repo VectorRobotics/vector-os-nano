@@ -53,7 +53,8 @@ def _turn(text: str, cmd: str, nxt: str | None = None) -> str:
     i = text.find(cmd)
     assert i != -1, f"{cmd!r} never typed:\n{text[-3000:]}"
     out = text[i:]
-    return out[: out.find(nxt)] if nxt and nxt in out else out
+    out = out[: out.find(nxt)] if nxt and nxt in out else out
+    return " ".join(out.split())
 
 
 def _observations(log: Path) -> list[str]:
