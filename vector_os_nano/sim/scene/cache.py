@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 
 import mujoco as mj
 
@@ -36,7 +37,14 @@ def cache_path(robot: EmbodimentConfig, world: WorldManifest, spec) -> Path:
                 sources.add(Path(asset.file))
             if kind == 'textures':
                 sources.update(Path(f) for f in asset.cubefiles if f)
-    digest = hashlib.sha256(f'{mj.__version__}\0{robot!r}\0{world!r}'.encode())
+    def canonical(cfg):
+        composition = cfg.compose
+        if composition:
+            composition = replace(composition, base=canonical(composition.base), arm=canonical(composition.arm))
+        return replace(cfg, path=cfg.path.resolve(), compose=composition)
+
+    identity = (canonical(robot), replace(world, path=world.path.resolve(), scene=world.scene.resolve()))
+    digest = hashlib.sha256(f'{mj.__version__}\0{identity!r}'.encode())
     seen = set()
 
     def include(path):
@@ -52,7 +60,7 @@ def cache_path(robot: EmbodimentConfig, world: WorldManifest, spec) -> Path:
             for child in ET.parse(path).iter('include'):
                 include(path.parent / child.attrib['file'])
 
-    for path in sorted(sources):
+    for path in sorted({p.resolve() for p in sources}):
         include(path)
     return paths.scene_cache() / f'scene_{digest.hexdigest()}.xml'
 

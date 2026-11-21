@@ -68,6 +68,18 @@ def test_manifest_spawn_invalidates_cache(pair):
     np.testing.assert_array_equal(second.model.body_pos[second.robot_root], [2., 3., 0.])
 
 
+def test_session_symlinks_reuse_the_same_compiled_scene(pair, tmp_path):
+    cfg, world = pair
+    first = compose(cfg, world)
+    aliases = []
+    for name, path in [('robot', cfg.path), ('world', world.path), ('scene', world.scene)]:
+        link = tmp_path/(name+path.suffix)
+        link.symlink_to(path.resolve())
+        aliases.append(link)
+    second = compose(replace(cfg, path=aliases[0]), replace(world, path=aliases[1], scene=aliases[2]))
+    assert second.xml_path == first.xml_path
+
+
 def test_corrupt_binary_is_regenerated(pair):
     first = compose(*pair)
     first.xml_path.with_suffix('.mjb').write_bytes(b'interrupted binary')
