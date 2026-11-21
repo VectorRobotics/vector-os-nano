@@ -112,6 +112,18 @@ def test_the_base_is_the_protocol_member_by_member(body):
     assert not any(hasattr(base, a) for a in ("runtime", "world", "gt", "model", "data"))
 
 
+def test_odometry_angular_z_is_in_the_world_frame(body):
+    sc = body.rt.world.scene
+    q, qd = body.rt.snapshot().q.copy(), body.rt.snapshot().qd.copy()
+    root, velocity = sc.free_q(sc.robot_root), sc.free_qd(sc.robot_root)
+    q[root.start + 2] = 1.
+    q[root.start + 3:root.stop] = [math.sqrt(.5), math.sqrt(.5), 0., 0.]
+    qd[velocity] = [.1, .2, .3, 0., 1., 0.]
+    body.rt.call(lambda w: w.reset(q, qd))
+    odom = body.base.get_odometry()
+    assert [odom.vx, odom.vy, odom.vz, odom.vyaw] == pytest.approx([.1, .2, .3, 1.])
+
+
 def test_it_stands_at_the_manifest_height(body):
     assert body.base.set_posture("stand")
     z = [p[2] for p in body.run(1.0)]
@@ -249,7 +261,8 @@ def test_a_walk_and_a_navigate_out_of_every_posture_succeed(body):
         assert body.upright(), name
 
 
-def test_a_stop_during_the_rise_out_of_a_posture_is_kept(body):
+@pytest.mark.parametrize("motion", ["walk", "navigate"])
+def test_a_stop_during_the_rise_out_of_a_posture_is_kept(body, motion):
     """A walk out of a posture first rises to the stance; a stop() from another thread
     0.3 sim-s into that rise ends the walk unmoved (False), not a walk that starts once
     risen (measured before the fix: 0.59 m on the go2)."""
@@ -266,7 +279,11 @@ def test_a_stop_during_the_rise_out_of_a_posture_is_kept(body):
         return wait(seconds, cancel)
 
     body.base.wait_sim = wait_and_stop
-    assert body.base.walk(0.3, 0.0, 0.0, 2.0) is False
+    if motion == "walk":
+        assert body.base.walk(0.3, 0.0, 0.0, 2.0) is False
+    else:
+        x, y, _ = body.base.get_position()
+        assert body.base.navigate_to(x + 1., y).reason == "aborted"
     assert at_stop and body.base.get_sim_time() < t0 + 1.5  # stopped in the rise, never walked 2 s
     del body.base.wait_sim
     list(body.run(1.0))
@@ -316,10 +333,28 @@ def test_the_lidar_sees_from_its_mount(body):
     assert body.base.set_posture("stand")
     scan = body.base.get_lidar_scan()
     spec = body.cfg.lidar
+    assert not any(hasattr(body.lidar, name) for name in ("world", "runtime", "gt", "model", "data"))
     assert len(scan.ranges) == spec.n_azimuth and scan.range_max == spec.range
     hits = np.array(body.lidar.points())[:, :3]
     assert len(hits) and (np.linalg.norm(hits[:, :2] - body.pose()[:2], axis=1) < spec.range + 1.0).all()
     assert abs(hits[:, 2]).min() < 0.02  # the beams pitched down hit the flat floor
+
+
+def test_tilt_is_detected_above_the_fall_height(body):
+    q = body.rt.snapshot().q.copy()
+    sc = body.rt.world.scene
+    root = sc.free_q(sc.robot_root)
+    q[root.start + 2] = 1.
+    q[root.start + 3:root.stop] = [0., 1., 0., 0.]
+    body.rt.call(lambda w: w.reset(q))
+    x, y, z = body.base.get_position()
+    assert z > body.cfg.base.fall_z
+    assert body.base.navigate_to(x + 1, y).reason == "fell"
+
+
+def test_the_first_mpc_solve_does_not_write_to_the_repl(body, capsys):
+    assert body.base.walk(.2, 0., 0., .2)
+    assert "QP Init" not in capsys.readouterr().out
 
 
 def test_a_base_joint_the_model_lacks_names_the_manifest_and_key():

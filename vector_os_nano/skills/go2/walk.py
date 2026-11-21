@@ -1,14 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""WalkSkill — move the Go2 quadruped in a given direction.
+"""WalkSkill — move the base in a given direction.
 
 Maps direction + distance + speed to a timed velocity command sent via
 context.base.walk(vx, vy, vyaw, duration).
 
-Velocity clamps (conservative for Milestone 1):
-  vx:  [-0.5, 0.5] m/s
-  vy:  [-0.3, 0.3] m/s
+Velocity clamps come from the body's declared limits.
 """
 from __future__ import annotations
 
@@ -20,10 +18,6 @@ from vector_os_nano.core.types import SkillResult
 from vector_os_nano.skills.go2.turn import normalize_direction
 
 logger = logging.getLogger(__name__)
-
-# Velocity limits (m/s) — conservative for Milestone 1
-_VX_MAX: float = 0.5
-_VY_MAX: float = 0.3
 
 # Direction → (vx_sign, vy_sign)
 _DIRECTION_MAP: dict[str, tuple[float, float]] = {
@@ -59,11 +53,11 @@ _DEFAULT_SPEED: float = 0.3      # m/s
     aliases=["walk", "go", "move", "走", "走路", "往前走", "前进", "后退"],
 )
 class WalkSkill:
-    """Move the Go2 quadruped in a given direction for a given distance."""
+    """Move the base in a given direction for a given distance."""
 
     name: str = "walk"
     description: str = (
-        "Walk the quadruped forward, backward, left, or right by a given distance."
+        "Move the base forward, backward, left, or right by a given distance."
     )
     parameters: dict = {
         "direction": {
@@ -83,7 +77,7 @@ class WalkSkill:
             "type": "number",
             "required": False,
             "default": _DEFAULT_SPEED,
-            "description": "Translational speed in m/s (clamped to 0.5 m/s)",
+            "description": "Translational speed in m/s (clamped to this body's limits)",
         },
     }
     preconditions: list[str] = []
@@ -96,7 +90,7 @@ class WalkSkill:
 
         Args:
             params: direction, distance, speed.
-            context: SkillContext with base (Go2) attached.
+            context: SkillContext with a base attached.
 
         Returns:
             SkillResult(success=True) when the walk ran and was not blocked, with the
@@ -139,19 +133,12 @@ class WalkSkill:
 
         vx_sign, vy_sign = _DIRECTION_MAP[direction]
 
-        # Apply speed and clamp
-        if vy_sign != 0.0:
-            # Lateral movement
-            vy: float = max(-_VY_MAX, min(_VY_MAX, vy_sign * abs(speed)))
-            vx: float = 0.0
-            actual_speed = abs(vy)
-        else:
-            # Forward/backward movement
-            vx = max(-_VX_MAX, min(_VX_MAX, vx_sign * abs(speed)))
-            vy = 0.0
-            actual_speed = abs(vx)
-
-        duration: float = distance / actual_speed if actual_speed > 0.0 else 0.0
+        actual_speed = min(speed, context.base.limits[1 if vy_sign else 0])
+        if actual_speed <= 0:
+            return SkillResult(success=False, diagnosis_code="bad_direction",
+                               error_message=f"This base cannot move {direction}")
+        vx, vy = vx_sign * actual_speed, vy_sign * actual_speed
+        duration = distance / actual_speed
 
         logger.info(
             "[WALK] direction=%s vx=%.2f vy=%.2f vyaw=%.2f duration=%.1fs",

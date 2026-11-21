@@ -128,6 +128,14 @@ class BaseProtocol(Protocol):
         """Move the joints to the posture *name* over *duration* sim seconds and hold it;
         True iff it was reached. An unknown name is a ``KeyError`` naming the valid ones."""
 
+    def navigate_to(self, x: float, y: float, tol: float | None = None, speed: float | None = None,
+                    timeout: float | None = None, cancel: Any = None, on_progress: Any = None) -> Any:
+        """Walk to world (*x*, *y*) around the scene's obstacles with the body's own planner.
+        Returns a mapping whose truth is arrival and whose ``reason`` is one of arrived,
+        unreachable, timeout, aborted, stalled, fell; ``timeout`` is sim seconds; *cancel*
+        (``is_set()``) or a ``stop`` ends it 'aborted'; ``on_progress(remaining_m,
+        elapsed_s)`` is called while it walks."""
+
     def get_position(self) -> list[float]:
         """[x, y, z] of the base in the world (m)."""
 

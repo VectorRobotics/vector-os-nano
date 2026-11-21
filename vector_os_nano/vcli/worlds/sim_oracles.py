@@ -111,6 +111,12 @@ def build_namespace(
     # ---------------------------------------------------------------- base
     if gt.has_base:
 
+        @oracle(scope="robot", channel="base", transition="rise", domain="bool")
+        @_safe(False)
+        def base_standing() -> bool:
+            """Root within 5% of the manifest standing height and within 20 degrees of upright."""
+            return gt.base_standing(cfg.base.height, .05 * cfg.base.height, 20.0)
+
         @oracle(scope="robot", channel="base", transition="rise", max_tol=_MAX_ARRIVAL_TOL_M, domain="bool")
         @_safe(False)
         def at_position(x: Any, y: Any, tol: Any = _AT_POSITION_TOL_M) -> bool:
@@ -157,7 +163,7 @@ def build_namespace(
             """Base yaw (rad) — a state read."""
             return gt.base_pose()[3]
 
-        ns.update(at_position=at_position, facing=facing, in_room=in_room,
+        ns.update(base_standing=base_standing, at_position=at_position, facing=facing, in_room=in_room,
                   near_object=near_object, get_position=get_position, get_heading=get_heading)
 
     # ---------------------------------------------------------------- camera

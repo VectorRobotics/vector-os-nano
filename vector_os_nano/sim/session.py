@@ -147,7 +147,7 @@ class SimSession:
 
     @staticmethod
     def validate(spec: SimSpec):
-        """Resolve the manifest + driver without starting anything (fail loud, valid set).
+        """Resolve the manifest + builder without starting anything (fail loud, valid set).
 
         Callers that replace a running session validate FIRST, so a typo never
         tears down the sim that is already up.
@@ -159,12 +159,7 @@ class SimSession:
             cfg = registry.load(spec.embodiment)
         except EmbodimentConfigError as exc:
             raise SimStartError("bad embodiment manifest", str(exc)) from exc
-        builder = _BUILDERS.get(cfg.driver)
-        if builder is None:
-            raise SimStartError(
-                "bad embodiment manifest",
-                f"{cfg.id}/robot.yaml.driver={cfg.driver!r}; valid: {sorted(_BUILDERS)}",
-            )
+        builder = _build_legged if cfg.base is not None else _build_generic
         from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
 
         try:
@@ -288,11 +283,9 @@ def _probe_ready(agent: Any, cfg: Any, runtime: Any, *, deadline: float) -> dict
     report: dict[str, Any] = {}
 
     if runtime is not None and not runtime.threaded:
-        # Caller-stepped (VECTOR_SIM_LOCKSTEP / macOS pump): advance it here, through
-        # the base when it has one (a policy that ticks outside the runtime, G1's).
+        # Caller-stepped (VECTOR_SIM_LOCKSTEP / macOS pump): advance it here.
         t0 = runtime.sim_time
-        advance = getattr(base, "wait_sim", None) or runtime.wait_sim
-        if not advance(_READY_SIM_S) or runtime.sim_time - t0 < _READY_SIM_S - 1e-6:
+        if not runtime.wait_sim(_READY_SIM_S) or runtime.sim_time - t0 < _READY_SIM_S - 1e-6:
             raise SimStartError("not ready", "caller-stepped physics did not advance")
         report["sim_time"] = f"{runtime.sim_time:.1f}s"
     elif runtime is not None:
@@ -335,7 +328,7 @@ def _probe_ready(agent: Any, cfg: Any, runtime: Any, *, deadline: float) -> dict
 
 
 # ---------------------------------------------------------------------------
-# Builders (one per transitional manifest ``driver``; WP17 makes it one)
+# Builders: a body with a ``base:`` block is legged, any other a fixed arm
 # ---------------------------------------------------------------------------
 
 
@@ -390,7 +383,7 @@ def _perception(camera: Any) -> Any:
     return CameraPerception(camera) if camera is not None else None
 
 
-def _perception_note(agent: Any, vlm_why: str = "", *, segmenter: bool = True) -> str:
+def _perception_note(agent: Any, vlm_why: str = "") -> str:
     """The startup capability line: which models perception will use, or why not."""
     from vector_os_nano.perception.rynnbrain import RynnBrainDetector
 
@@ -412,16 +405,16 @@ def _perception_note(agent: Any, vlm_why: str = "", *, segmenter: bool = True) -
     perception, vlm = getattr(agent, "_perception", None), getattr(agent, "_vlm", None)
     vlm_s = f"none ({vlm_why})" if vlm is None else f"{'local' if vlm._local else 'openrouter'}:{vlm._model}"
     return (
-        f"perception: detector={detector}, "
-        + (f"segmenter={seg}, self_mask={'yes' if callable(getattr(perception, 'capture', None)) else 'no'}, "
-           if segmenter else "")
-        + f"vlm={vlm_s}, rynnbrain={'up' if RynnBrainDetector().available() else 'down'}"
+        f"perception: detector={detector}, segmenter={seg}, "
+        f"self_mask={'yes' if callable(getattr(perception, 'capture', None)) else 'no'}, "
+        f"vlm={vlm_s}, rynnbrain={'up' if RynnBrainDetector().available() else 'down'}"
     )
 
 
 def _skill_pack(embodiment: str) -> list:
-    """The skills a body is offered: arm skills only on an arm, base skills only on a
-    base, a stop on every body (the table S5 replaces with capability binding)."""
+    """The skills a body is offered: arm skills only on an arm, the SAME locomotion
+    objects on every legged base, a stop on every body (the table S5 replaces with
+    capability binding)."""
     from vector_os_nano.skills import HomeSkill, get_piper_skills, get_so101_skills
     from vector_os_nano.skills.go2 import get_go2_skills
     from vector_os_nano.skills.go2.stop import StopSkill
@@ -431,7 +424,7 @@ def _skill_pack(embodiment: str) -> list:
         "piper": lambda: [StopSkill(), HomeSkill(), *get_piper_skills()],
         "go2": get_go2_skills,
         "go2_piper": lambda: [*get_go2_skills(), *get_piper_skills()],
-        "g1": lambda: [StopSkill()],  # its locomotion pack is S4's
+        "g1": get_go2_skills,
     }[embodiment]()
 
 
@@ -456,6 +449,7 @@ def legged_body(cfg: Any, scene: Any, *, backend: str = "mujoco", gui: bool = Fa
     rate (not started yet), the generic LeggedBase connected and its manifest's Lidar
     (None without one). A manifest joint the compiled scene lacks fails first, naming
     the manifest file and its key."""
+    from vector_os_nano.embodiments.assets import model_root
     from vector_os_nano.embodiments.config import EmbodimentConfigError
     from vector_os_nano.sim import backends
     from vector_os_nano.sim.drivers.base import LeggedBase
@@ -475,7 +469,7 @@ def legged_body(cfg: Any, scene: Any, *, backend: str = "mujoco", gui: bool = Fa
         spawn = standing_state(scene, cfg, scene.model.qpos0, cfg.spawn.xy, cfg.spawn.heading)
         rt.call(lambda w: w.reset(spawn))
         lidar = Lidar(cfg.lidar, rt) if cfg.lidar is not None else None
-        base = LeggedBase(cfg.base, rt, lidar=lidar, abort=is_abort_requested)
+        base = LeggedBase(cfg.base, rt, folder=model_root(cfg), lidar=lidar, abort=is_abort_requested)
         base.connect()
     except BaseException:
         rt.close()
@@ -503,7 +497,7 @@ def respawn(rt: Any, base: Any, cfg: Any, xy: Any = None, heading: float | None 
 
 
 def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
-    """A legged body (go2, go2_piper): the apartment room with the body attached, ONE
+    """A legged body (go2, go2_piper, g1): the apartment room with the body attached, ONE
     SimRuntime, the generic LeggedBase + Lidar, and the generic Arm / Gripper / Camera
     of its manifest."""
     from vector_os_nano.core.agent import Agent
@@ -572,23 +566,6 @@ def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
     return agent
 
 
-def _build_mujoco_g1(session: SimSession, vlm_api_key: str | None) -> Any:
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
-    from vector_os_nano.perception.g1_head_perception import G1HeadPerception
-
-    cam = session.config.camera
-    g1 = MuJoCoG1(gui=session.spec.gui, room=True)
-    session.own("MuJoCoG1 disconnected", g1.disconnect)
-    g1.connect()
-    session.runtime = g1.runtime
-    agent = Agent(base=g1, skills=_skill_pack(session.config.id))
-    # Read-only head-camera perception for the detector capability (no arm).
-    agent._perception = G1HeadPerception(g1, width=cam.width, height=cam.height)
-    session.notes.append(_perception_note(agent, "g1 has no scene VLM", segmenter=False))
-    return agent
-
-
 # The bodies whose skill pack still reads its objects from simulator truth
 # (hardware/sim/mujoco_perception.py, with the pick parameters exact truth needs)
 # instead of the camera perception every other body uses: until R4 moves the SO-101
@@ -630,13 +607,6 @@ def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
     agent._perception = _perception(camera)
     session.notes.append(_perception_note(agent, "a fixed arm has no scene VLM"))
     return agent
-
-
-_BUILDERS: dict[str, Callable[[SimSession, str | None], Any]] = {
-    "generic": _build_generic,
-    "legged": _build_legged,
-    "mujoco_g1": _build_mujoco_g1,
-}
 
 
 # ---------------------------------------------------------------------------

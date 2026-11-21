@@ -123,4 +123,4 @@ cells:
     kind: navigate
     expect: {base_in: [14.0, 0.0, 20.0, 5.0]}
     n: 2
-    not_yet: no bare-REPL g1 flow is green yet (A2 G1 stand / walk / navigate is open)
+    timeout_s: 420

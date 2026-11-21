@@ -66,7 +66,7 @@ class CentroidalMPC:
         self.dyn_builder = self._create_dynamics_function()
 
         # 4. Initialize Solver
-        self._build_sparse_matrix(traj, verbose=True)
+        self._build_sparse_matrix(traj, verbose=False)
 
     def solve_QP(self, go2:PinGo2Model, traj: ComTraj, verbose: bool = False):
         """

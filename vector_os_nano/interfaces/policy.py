@@ -34,10 +34,14 @@ class ControlPolicy(Protocol):
     """Velocity command -> joint torques, called at ``tick_hz``.
 
     Braking and the hand-over to a stance at zero command are the policy's job.
-    Postures (stand / sit / lie) are not: the base driver holds them itself.
+    Postures (sit / lie and the stance) are not: the base driver holds them itself by
+    PD, except the stance of a policy that ``balances`` (measured: a PD hold of the
+    G1's stance tips it over within 1.5 s).
     """
 
     tick_hz: float              # how often torques() is called; physics substeps = physics_hz / tick_hz
+    balances: bool              # True: it holds the body up itself at zero command (a learned walking
+    #                             policy), so the stance is its own; False: the base holds the stance by PD
 
     @property
     def braking(self) -> bool:

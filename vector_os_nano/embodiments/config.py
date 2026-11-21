@@ -46,11 +46,10 @@ class ModelSpec:
 
 @dataclass(frozen=True)
 class SpawnSpec:
-    """Where a body with a base is placed in the scene: a legged base stands there at
-    its ``base.height``; the G1 (until it runs on the generic base) at ``base_height``."""
+    """Where a body with a base is placed in the scene: it stands there at its
+    ``base.height``, facing ``heading``."""
 
     xy: tuple[float, float]
-    base_height: float | None = None
     heading: float = 0.0
 
 
@@ -94,14 +93,6 @@ class CameraSpec:
 
 
 @dataclass(frozen=True)
-class PolicySpec:
-    """How the body is driven (RL policy / MPC / scripted gait)."""
-
-    ref: str
-    spec: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
 class BasePolicySpec:
     """``base.policy``: the control policy (a row of ``sim.policies.POLICIES``) at
     ``tick_hz`` over physics steps of ``timestep``. ``params`` are the policy's own keys
@@ -141,20 +132,23 @@ class BaseSpec:
 
     ``joints`` in the order the policy sees them; ``stance`` and every posture give an
     angle for each. ``height``: the root height the body stands at in its stance.
-    ``limits``: the largest (vx, vy, vyaw) a command may ask. ``fall_z``: the root below
-    this height means fallen. ``kp`` / ``kd``: the PD gains of postures and stance holds;
-    their torques are clipped to ``torque_scale`` x the model's motor range.
+    ``limits``: the largest (vx, vy, vyaw) a command may ask. Fallen: the root below
+    ``fall_z``, or its up axis tilted more than ``fall_tilt_deg`` from the world's.
+    ``kp`` / ``kd``: the PD gains (one for every joint, or one per joint in ``joints``
+    order) of postures and stance holds; their torques are clipped to ``torque_scale``
+    x the model's motor range.
     """
 
     height: float
     holonomic: bool
     limits: tuple[float, float, float]
     fall_z: float
+    fall_tilt_deg: float
     joints: tuple[str, ...]
     stance: dict[str, float]
     postures: dict[str, dict[str, float]]
-    kp: float
-    kd: float
+    kp: float | tuple[float, ...]
+    kd: float | tuple[float, ...]
     policy: BasePolicySpec
     nav: NavSpec
     torque_scale: float = 1.0
@@ -237,8 +231,7 @@ def _under(rel: str, key: str) -> bool:
 @dataclass(frozen=True)
 class EmbodimentConfig:
     """Full, immutable description of one robot morphology. A body with a base has a
-    ``spawn`` and a ``base`` block (the G1 still carries the older top-level ``stance``,
-    ``policy`` and ``nav`` until it runs on the generic base); a fixed arm stands at its
+    ``spawn`` and a ``base`` block (the generic LeggedBase); a fixed arm stands at its
     world's spawn."""
 
     id: str
@@ -247,21 +240,14 @@ class EmbodimentConfig:
     sensors: tuple[CameraSpec | LidarSpec, ...]
     capabilities: CapabilityProfile
     spawn: SpawnSpec | None = None
-    stance: dict[str, float] = field(default_factory=dict)
-    policy: PolicySpec | None = None
-    # Which in-process builder stands the body up (legged | mujoco_g1 | generic).
-    # Transitional: one generic builder for every body (S4 / S5).
-    driver: str = ""
     # Arm mounted on the body (e.g. the Piper on go2_piper), or None.
     arm: ArmSpec | None = None
-    # The G1's navigation block (body_radius, speed, vyaw_max, fall_z, goal_tol).
-    nav: dict[str, Any] = field(default_factory=dict)
     # The legged base the generic LeggedBase drives, or None.
     base: BaseSpec | None = None
     # The world it stands in: config/worlds/<world>.yaml (rooms, surfaces, pickables).
     world: str = ""
-    # Files not shipped in the package; model.path and policy.ref are then
-    # relative to the asset folder (embodiments/assets.py resolves it).
+    # Files not shipped in the package; model.path, model.meshes_dir and the policy's
+    # files are then relative to the asset folder (embodiments/assets.py resolves it).
     assets: AssetsSpec | None = None
 
     @property
@@ -337,11 +323,8 @@ def _parse_spawn(s: dict[str, Any], ctx: str) -> SpawnSpec:
     xy = _as_tuple(_require(s, "xy", ctx))
     if len(xy) != 2:
         raise EmbodimentConfigError(f"{ctx}.xy must have exactly 2 values, got {xy!r}")
-    return SpawnSpec(
-        xy=(float(xy[0]), float(xy[1])),
-        base_height=None if s.get("base_height") is None else float(s["base_height"]),
-        heading=float(s.get("heading", 0.0)),
-    )
+    _keys(s, ctx, {"xy", "heading"})
+    return SpawnSpec(xy=(float(xy[0]), float(xy[1])), heading=float(s.get("heading", 0.0)))
 
 
 _CAMERA_KEYS = {"role", "name", "width", "height", "depth", "body", "pos", "quat", "fovy"}
@@ -397,8 +380,8 @@ def _parse_sensors(raw: dict[str, Any], ctx: str) -> tuple[CameraSpec | LidarSpe
     return tuple(out)
 
 
-_BASE_KEYS = {"height", "holonomic", "limits", "fall_z", "joints", "stance", "postures", "kp", "kd",
-              "torque_scale", "policy", "nav"}
+_BASE_KEYS = {"height", "holonomic", "limits", "fall_z", "fall_tilt_deg", "joints", "stance", "postures",
+              "kp", "kd", "torque_scale", "policy", "nav"}
 _POLICY_KEYS = {"ref", "timestep", "tick_hz", "by_backend"}  # the rest is the policy's own
 _NAV_KEYS = {"body_radius", "speed", "vyaw_max", "explorer", "goal_tol"}
 
@@ -412,12 +395,25 @@ def _angles(raw: Any, joints: tuple[str, ...], ctx: str) -> dict[str, float]:
     return {j: float(got[j]) for j in joints}
 
 
+def _gain(raw: Any, joints: tuple[str, ...], ctx: str) -> float | tuple[float, ...]:
+    """A PD gain: one number for every joint, or ``{joint: gain}`` naming exactly
+    *joints* (a tuple in their order)."""
+    if isinstance(raw, dict):
+        got = _angles(raw, joints, ctx)
+        return tuple(got[j] for j in joints)
+    return float(raw)
+
+
 def _parse_base_policy(p: dict[str, Any], ctx: str) -> BasePolicySpec:
     from vector_os_nano.sim.backends import BACKENDS  # a name table: no simulator import
 
     timestep, tick_hz = float(_require(p, "timestep", ctx)), float(_require(p, "tick_hz", ctx))
+    import math
+
+    if not all(math.isfinite(v) and v > 0 for v in (timestep, tick_hz)):
+        raise EmbodimentConfigError(f"{ctx}: timestep and tick_hz must be finite and positive")
     substeps = 1.0 / (timestep * tick_hz)
-    if timestep <= 0 or tick_hz <= 0 or round(substeps) < 1 or abs(substeps - round(substeps)) > 1e-9:
+    if not math.isfinite(substeps) or round(substeps) < 1 or abs(substeps - round(substeps)) > 1e-9:
         raise EmbodimentConfigError(
             f"{ctx}: tick_hz={tick_hz} must divide the physics rate 1/timestep={1 / timestep:g} (whole substeps)")
     by_backend = _optional_mapping(p, "by_backend", ctx) or {}
@@ -469,11 +465,12 @@ def _parse_base(raw: dict[str, Any], ctx: str) -> BaseSpec | None:
         holonomic=bool(_require(b, "holonomic", bctx)),
         limits=tuple(float(_require(limits, k, f"{bctx}.limits")) for k in ("vx", "vy", "vyaw")),  # type: ignore[arg-type]
         fall_z=float(_require(b, "fall_z", bctx)),
+        fall_tilt_deg=float(_require(b, "fall_tilt_deg", bctx)),
         joints=joints,
         stance=_angles(_require(b, "stance", bctx), joints, f"{bctx}.stance"),
         postures={str(n): _angles(q, joints, f"{bctx}.postures.{n}") for n, q in postures.items()},
-        kp=float(_require(b, "kp", bctx)),
-        kd=float(_require(b, "kd", bctx)),
+        kp=_gain(_require(b, "kp", bctx), joints, f"{bctx}.kp"),
+        kd=_gain(_require(b, "kd", bctx), joints, f"{bctx}.kd"),
         torque_scale=float(b.get("torque_scale", 1.0)),
         policy=_parse_base_policy(_optional_mapping(b, "policy", bctx) or _require(b, "policy", bctx),
                                   f"{bctx}.policy"),
@@ -538,8 +535,8 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
     )
 
 
-_TOP_KEYS = {"id", "display_name", "driver", "world", "model", "spawn", "stance", "sensors", "assets",
-             "policy", "capabilities", "arm", "nav", "base"}
+_TOP_KEYS = {"id", "display_name", "world", "model", "spawn", "sensors", "assets", "capabilities", "arm",
+             "base"}
 
 
 def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
@@ -574,15 +571,10 @@ def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
 def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> EmbodimentConfig:
     """Parse an already-loaded dict into an EmbodimentConfig (fail-loud, unknown keys too)."""
     _keys(raw, ctx, _TOP_KEYS)
-    stance = raw.get("stance") or {}
-    if not isinstance(stance, dict):
-        raise EmbodimentConfigError(f"{ctx}.stance must be a mapping of joint_name -> angle")
     spawn = _optional_mapping(raw, "spawn", ctx)
-    policy = _optional_mapping(raw, "policy", ctx)
     caps = _parse_capabilities(raw, ctx)
     if caps.has_base:  # a base stands at its own spawn, in its stance, driven by its policy
-        # ponytail: the G1 keeps the top-level stance + policy until it runs on LeggedBase (S4b)
-        for key in ("spawn", *(() if "base" in raw else ("stance", "policy"))):
+        for key in ("spawn", "base"):
             _require(raw, key, ctx)
     return EmbodimentConfig(
         id=str(_require(raw, "id", ctx)),
@@ -591,12 +583,7 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> Emb
         sensors=_parse_sensors(raw, ctx),
         capabilities=caps,
         spawn=None if spawn is None else _parse_spawn(spawn, f"{ctx}.spawn"),
-        stance={str(k): float(v) for k, v in stance.items()},
-        policy=None if policy is None else PolicySpec(
-            ref=str(_require(policy, "ref", f"{ctx}.policy")), spec=dict(policy.get("spec") or {})),
-        driver=str(raw.get("driver", "") or ""),
         arm=_parse_arm(raw, ctx),
-        nav=_optional_mapping(raw, "nav", ctx) or {},
         world=str(raw.get("world", "") or ""),
         assets=_parse_assets(raw, ctx),
         base=_parse_base(raw, ctx),

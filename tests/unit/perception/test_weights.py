@@ -184,8 +184,8 @@ def test_the_capability_line_says_which_model_or_why_not(monkeypatch) -> None:
     assert re.fullmatch(r"perception: detector=grounding-dino@(cuda|cpu) \(cached\), segmenter=edgetam "
                         r"\(UNAVAILABLE\), self_mask=yes, vlm=none \(no OPENROUTER_API_KEY or "
                         r"VECTOR_VLM_URL\), rynnbrain=down", line), line
-    g1 = session._perception_note(agent, "g1 has no scene VLM", segmenter=False)
-    assert "segmenter" not in g1 and "vlm=none (g1 has no scene VLM)" in g1
+    g1 = session._perception_note(agent, "no scene VLM")
+    assert "segmenter=edgetam" in g1 and "vlm=none (no scene VLM)" in g1
 
 
 def test_nothing_in_the_package_writes_the_offline_flags() -> None:

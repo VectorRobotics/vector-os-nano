@@ -48,10 +48,10 @@ def _rec(tmp_path: Path, transcript: str, dump: str | None, session: list[dict] 
 def test_the_shipped_matrix_loads_and_every_cell_is_runnable_or_says_why() -> None:
     cells = lm.load_cells()
     run = [c for c in cells if "not_yet" not in c]
-    assert {c["body"] for c in run} == {"go2", "go2_piper", "piper", "so101"}
+    assert {c["body"] for c in run} == {"go2", "go2_piper", "piper", "so101", "g1"}
     assert {c["kind"] for c in run} >= {"navigate", "grasp", "fetch"}
     assert all(c["backend"] == "mujoco" for c in run)
-    assert {c["body"] for c in cells if "not_yet" in c} >= {"g1"}
+    assert any(c["kind"] == "place" for c in cells if "not_yet" in c)
     assert any(c["backend"] == "pybullet" for c in cells if "not_yet" in c)
 
 

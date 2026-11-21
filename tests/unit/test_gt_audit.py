@@ -41,6 +41,9 @@ def _stale(row: dict, bodies: list[str], sentence: str) -> str:
         ok = any(arg[0] in w.pickables and arg[1] in w.surfaces for w in worlds)
     elif key == "base_in":
         ok = any(tuple(arg) in w.boxes.values() for w in worlds)
+    elif key == "base_turned":
+        turn = re.search(r"(左|右).*?(\d+(?:\.\d+)?)度", sentence)
+        ok = bool(turn) and float(arg) == float(turn[2]) * (1 if turn[1] == "左" else -1)
     else:  # base_at: a room point, the user, the spawn, a pair the sentence names, or spawn + from_spawn
         points = {tuple(p) for w in worlds for p in (*w.rooms.values(), *([w.user] if w.user else []))}
         points |= set(spawns) | {(float(x), float(y)) for x, y in _PAIR.findall(sentence)}

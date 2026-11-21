@@ -14,6 +14,7 @@ from vector_os_nano.core.types import SkillResult
 def _make_go2_context():
     """Create a SkillContext with a mock base (Go2)."""
     base = MagicMock()
+    base.limits = (.5, .3, .5)
     yaw = [0.0]
     pos = [2.5, 2.5]
 
@@ -39,6 +40,24 @@ def _make_go2_context():
 
 
 class TestWalkSkill:
+    def test_a_direction_with_zero_speed_limit_is_refused(self):
+        from vector_os_nano.skills.go2.walk import WalkSkill
+        ctx = _make_go2_context()
+        ctx.base.limits = (.5, 0., .5)
+        assert not WalkSkill().execute({"direction": "left"}, ctx).success
+        ctx.base.walk.assert_not_called()
+
+    @pytest.mark.parametrize("direction,axis", [("forward", 0), ("left", 1)])
+    def test_duration_uses_the_actual_body_limit(self, direction, axis):
+        from vector_os_nano.skills.go2.walk import WalkSkill
+        ctx = _make_go2_context()
+        ctx.base.limits = (.12, .08, .2)
+        result = WalkSkill().execute({"direction": direction, "distance": 1., "speed": 2.}, ctx)
+        args = ctx.base.walk.call_args.args
+        assert result.success
+        assert args[axis] == ctx.base.limits[axis]
+        assert args[3] == pytest.approx(1. / ctx.base.limits[axis])
+
     def test_walk_forward(self):
         from vector_os_nano.skills.go2.walk import WalkSkill
         ctx = _make_go2_context()
@@ -79,6 +98,20 @@ class TestWalkSkill:
 
 
 class TestTurnSkill:
+    def test_a_base_without_yaw_control_is_refused(self):
+        from vector_os_nano.skills.go2.turn import TurnSkill
+        ctx = _make_go2_context()
+        ctx.base.limits = (.5, .3, 0.)
+        assert not TurnSkill().execute({"angle": 90}, ctx).success
+        ctx.base.walk.assert_not_called()
+
+    def test_turn_uses_the_actual_body_limit(self):
+        from vector_os_nano.skills.go2.turn import TurnSkill
+        ctx = _make_go2_context()
+        ctx.base.limits = (.12, .08, .2)
+        assert TurnSkill().execute({"angle": 90}, ctx).success
+        assert ctx.base.walk.call_args.args[2] == .2
+
     def test_turn_left(self):
         from vector_os_nano.skills.go2.turn import TurnSkill
         ctx = _make_go2_context()
@@ -137,7 +170,7 @@ class TestStanceSkills:
         ctx.base.set_posture.return_value = False  # the base read its joints back off the posture
         result = SitSkill().execute({}, ctx)
         assert not result.success and result.diagnosis_code == "sit_failed"
-        assert result.result_data["joints_at_posture"] is False
+        assert result.result_data["controller_reached_posture"] is False
 
     def test_a_body_without_the_posture_fails_naming_the_valid_ones(self):
         from vector_os_nano.skills.go2.stance import LieDownSkill

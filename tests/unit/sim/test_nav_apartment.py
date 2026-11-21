@@ -82,7 +82,7 @@ def test_planned_leg_keeps_the_inflation_radius(obstacles, room):
 @pytest.mark.parametrize("room", sorted(room_layout()["rooms"]))
 def test_executed_leg_keeps_the_body_half_width(obstacles, room):
     base = KinBase(*_SPAWN)
-    res = follow(base, room_layout()["rooms"][room], obstacles, nav=BODY, fall_z=GO2.base.fall_z, cancel=Never())
+    res = follow(base, room_layout()["rooms"][room], obstacles, nav=BODY, fallen=lambda: False, cancel=Never())
     assert res, res
     assert _clearance(base.trace[::5], obstacles) >= _HALF_WIDTH
 
@@ -90,7 +90,7 @@ def test_executed_leg_keeps_the_body_half_width(obstacles, room):
 def test_coverage_tour_enters_every_room_by_ground_truth(obstacles, tmp_path):
     class Body(KinBase):
         def navigate_to(self, x, y, cancel=None, **_):
-            return follow(self, (x, y), obstacles, nav=BODY, fall_z=GO2.base.fall_z, cancel=cancel)
+            return follow(self, (x, y), obstacles, nav=BODY, fallen=lambda: False, cancel=cancel)
 
     base = Body(*_SPAWN)
     events = []

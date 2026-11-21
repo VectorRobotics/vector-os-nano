@@ -7,6 +7,7 @@
 #   base_in: [x0, y0, x1, y1]        the base entered this xy box (a room's floor)
 #   base_at: [x, y]                  the base came within 0.5 m of this point;
 #                                    from_spawn: [dx, dy] when the point is the body's spawn + that
+#   base_turned: degrees             signed relative turn (positive left, magnitude <= 180)
 #   none: <reason>                   the dump cannot grade this turn
 # A turn the product claims (verified, or its goal proven) the grade denies is FALSE
 # GROUNDED and turns the flow red; so does a claimed turn with no row. Numbers are copied
@@ -15,6 +16,19 @@
 # manifests of the flow's bodies. A flow is its file: tests/e2e_repl/test_<flow>.py.
 schema: 1
 flows:
+  e16_g1_locomotion:
+    bodies: [g1]
+    turns:
+      启动 g1 仿真 无窗口: {none: a launch claims nothing}
+      站好: {none: already standing at launch; no caused step claimed}
+      往前走一米: {base_at: [11.0, 3.0], from_spawn: [1.0, 0.0]}
+      向左转90度: {base_turned: 90}
+      去厨房: {base_in: [14.0, 0.0, 20.0, 5.0]}
+      后退五米: {none: interrupted walk claims no completed displacement}
+      往前走五米: {none: interrupted walk claims no completed displacement}
+      停: {none: the P0 stop runs no model turn}
+      检查站立: {none: a state probe claims no caused action}
+      走到坐标 (9.0, 3.0): {base_at: [9.0, 3.0]}
   e1_launch_go2_piper:
     bodies: [go2_piper]
     turns:

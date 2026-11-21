@@ -4,8 +4,7 @@
 """Stance skills for a legged base: stand, sit, lie down.
 
 Each commands the base's posture (``BaseProtocol.set_posture``: held until the next
-velocity command) and reports what it can measure: whether the base read its joints
-back at the posture, and the base height before and after.
+velocity command) and reports the controller result and base height before and after.
 """
 from __future__ import annotations
 
@@ -44,12 +43,12 @@ def _command_posture(context: SkillContext, posture: str) -> SkillResult:
         "stance": posture,
         "height_before_m": before,
         "height_after_m": _height(base),
-        "joints_at_posture": bool(ok),
+        "controller_reached_posture": bool(ok),
         "posture_verified": False,
-        "note": "the base read its own joints back; no ground-truth oracle grades a posture",
+        "note": "controller result only; use the world's posture oracle for independent verification",
     }
     if not ok:
-        return SkillResult(success=False, error_message=f"{posture}: the joints did not reach the posture",
+        return SkillResult(success=False, error_message=f"{posture}: the controller did not reach the posture",
                            diagnosis_code=f"{posture}_failed", result_data=data)
     return SkillResult(success=True, result_data=data)
 
@@ -58,10 +57,10 @@ def _command_posture(context: SkillContext, posture: str) -> SkillResult:
     aliases=["stand", "站", "站起来", "起立"],
 )
 class StandSkill:
-    """Command the Go2 to stand up from any posture."""
+    """Command the base's standing posture."""
 
     name: str = "stand"
-    description: str = "Command the quadruped to stand upright."
+    description: str = "Command the base to stand upright."
     parameters: dict = {}
     preconditions: list[str] = []
     postconditions: list[str] = ["base_standing"]
@@ -76,10 +75,10 @@ class StandSkill:
     aliases=["sit", "坐", "坐下"],
 )
 class SitSkill:
-    """Command the Go2 to sit down."""
+    """Command the sitting posture when the body declares it."""
 
     name: str = "sit"
-    description: str = "Command the quadruped to sit down."
+    description: str = "Command the base to sit down, if its manifest supports it."
     parameters: dict = {}
     preconditions: list[str] = []
     postconditions: list[str] = ["base_sitting"]
@@ -94,10 +93,10 @@ class SitSkill:
     aliases=["lie down", "lie", "趴", "趴下", "躺下"],
 )
 class LieDownSkill:
-    """Command the Go2 to lie down (prone posture)."""
+    """Command the prone posture when the body declares it."""
 
     name: str = "lie_down"
-    description: str = "Command the quadruped to lie down in prone posture."
+    description: str = "Command the base to lie down, if its manifest supports it."
     parameters: dict = {}
     preconditions: list[str] = []
     postconditions: list[str] = ["base_lying"]

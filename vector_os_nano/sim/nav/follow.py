@@ -21,7 +21,7 @@ The result is a :class:`NavResult` (a dict whose truth is "reached") with a
 ``stop``, ``get_sim_time`` and ``wait_sim``); a sim clock that stops advancing ends
 the follow as "timeout", never as an endless loop. Tuning comes from
 ``config/nav.yaml`` (``follower`` + ``navigation.arrival_radius``) and the body's
-manifest ``base.nav`` block (radius, speed, yaw rate) and ``base.fall_z``.
+manifest ``base.nav`` block (radius, speed, yaw rate); the base says when it has fallen.
 """
 from __future__ import annotations
 
@@ -127,7 +127,7 @@ def follow(
     obstacles: "list[list[tuple[float, float]]]",
     *,
     nav: NavSpec,
-    fall_z: float,
+    fallen: Callable[[], bool],
     inflation: float | None = None,
     tol: float | None = None,
     speed: float | None = None,
@@ -137,8 +137,8 @@ def follow(
 ) -> NavResult:
     """Drive *base* to *goal* around *obstacles*; see the module docstring.
 
-    *nav* is the manifest ``base.nav`` block; the body has fallen once its root is
-    below *fall_z*. *inflation* defaults to ``nav.body_radius``;
+    *nav* is the manifest ``base.nav`` block; *fallen* says whether the body is down
+    (the base's own rule). *inflation* defaults to ``nav.body_radius``;
     *tol* to ``nav.goal_tol`` else ``follower.goal_tol``, and never exceeds
     the arrival radius; *timeout* (sim s) to ``budget_factor x geodesic / speed +
     budget_pad_s``. *cancel* is anything
@@ -154,7 +154,7 @@ def follow(
     tick = float(cfg["tick_s"])
     inflated = [vg.inflate_polygon(p, r) for p in obstacles]
 
-    x0, y0, z = _xyz(base)
+    x0, y0, _ = _xyz(base)
     t0 = base.get_sim_time()
     goal = (float(goal[0]), float(goal[1]))
     path, plan_m = vg.plan_path((x0, y0), goal, obstacles, r, snap_goal=True)
@@ -195,11 +195,11 @@ def follow(
         while True:
             if cancel.is_set():
                 return result("aborted")
-            x, y, z = _xyz(base)
+            x, y, _ = _xyz(base)
             now = base.get_sim_time()
             moved[0] += math.dist((x, y), last[0])
             last[0] = (x, y)
-            if z < fall_z:
+            if fallen():
                 return result("fell")
             target = path[-1]
             if math.dist((x, y), target) <= tol:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -19,6 +20,18 @@ sys.path.insert(0, str(_TOOL.parent))
 import gt_grade  # noqa: E402
 
 sys.path.remove(str(_TOOL.parent))
+
+
+@pytest.mark.parametrize("start,end,degrees,ok", [
+    (0, 90, 90, True), (170, -100, 90, True), (0, -90, -90, True),
+    (0, 90, -90, False), (90, 90, 90, False), (0, 83, 90, False),
+    (0, 0, 360, False), (0, 0, 0, False), (0, float("nan"), 90, False),
+])
+def test_turn_grade_is_signed_wrapped_and_rejects_noops(start, end, degrees, ok):
+    a = {"base": [0, 0, .8, math.radians(start)]}
+    b = {"base": [0, 0, .8, math.radians(end)]}
+    assert gt_grade.base_turned(a, b, degrees) is ok
+    assert not gt_grade.base_turned({"base": None}, b, degrees)
 
 
 def test_the_grader_shares_no_code_with_the_oracles() -> None:

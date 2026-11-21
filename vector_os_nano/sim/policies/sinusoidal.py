@@ -14,6 +14,7 @@ momentum to shed). Keys of ``base.policy``: ``freq_hz`` (steps per second),
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 
@@ -27,8 +28,9 @@ _LEFT = (0, 2)                        # FL, RL
 
 class Policy:
     braking = False
+    balances = False  # its stance is a PD hold: the base's own
 
-    def __init__(self, base: BaseSpec, params: dict[str, float], tau_limit: np.ndarray) -> None:
+    def __init__(self, base: BaseSpec, params: dict[str, float], tau_limit: np.ndarray, folder: Path) -> None:
         if len(base.joints) != 12:
             raise ValueError(f"sinusoidal: a quadruped of 4 x (hip, thigh, calf) joints, got {len(base.joints)}")
         self._p = params

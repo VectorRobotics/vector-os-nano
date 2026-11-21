@@ -7,7 +7,6 @@
 
 id: so101
 display_name: "SO-101 (5-DoF tabletop arm)"
-driver: generic
 world: tabletop
 
 model:

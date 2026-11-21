@@ -1,210 +1,53 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-
-"""Unit tests for G1-12dof-in-go2-room scene — R2 WIP floor.
-
-Tests are headless (MUJOCO_GL=egl) and cover:
-  1. Scene compiles and contains both the room's pick_table AND g1_pelvis.
-  2. The compiled model has the g1_head_rgb camera.
-  3. G1 self-geom-id set is non-empty.
-  4. g1 is a startable embodiment (manifest driver + start_simulation enum).
-  5. walk() produces forward displacement (2 s cmd → base x >0.3 m, base z >0.5).
-
-Run (from the repo root):
-    MUJOCO_GL=egl .venv/bin/python -m pytest tests/unit/hardware/sim/test_g1_room.py -q
-"""
+"""G1's pinned policy, room, camera and lidar on the shared driver and runtime."""
 from __future__ import annotations
 
-from pathlib import Path
+import math
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _ensure_scene() -> Path:
-    """Build the scene if not already built (idempotent, fast on cache hit)."""
-    from vector_os_nano.hardware.sim.mujoco_g1 import _build_g1_room_scene_xml
-    return _build_g1_room_scene_xml()
+from vector_os_nano.embodiments import registry
+from vector_os_nano.hardware.sim.scene_builder import room_scene
+from vector_os_nano.vcli.worlds.world_manifest import load_world
 
 
-# ---------------------------------------------------------------------------
-# Test 1: scene builds and compiles — both pick_table and g1_pelvis present
-# ---------------------------------------------------------------------------
+def test_g1_scene_and_sensors_compile(g1_assets):
+    cfg = registry.load("g1")
+    scene = room_scene(cfg, load_world(cfg.world))
+    assert scene.body("pick_table") != scene.robot_root == scene.body("pelvis")
+    assert scene.model.nu == 12 and cfg.camera.name in scene.cameras
+    assert scene.body(cfg.lidar.body) in scene.subtree(scene.robot_root)
 
 
-def test_scene_compiles_with_pick_table_and_g1_pelvis(g1_assets) -> None:
-    """The compiled scene must contain both room geometry and g1 robot."""
-    import mujoco
-
-    scene_path = _ensure_scene()
-    assert scene_path.exists(), f"scene_g1_12dof_room.xml not found at {scene_path}"
-
-    model = mujoco.MjModel.from_xml_path(str(scene_path))
-    assert model.nbody > 0, "Model has no bodies"
-
-    body_names = {
-        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i)
-        for i in range(model.nbody)
-    }
-
-    assert "pick_table" in body_names, (
-        f"pick_table not found in model bodies: {sorted(body_names)}"
-    )
-    assert "g1_pelvis" in body_names, (
-        f"g1_pelvis not found in model bodies: {sorted(body_names)}"
-    )
-
-    # R2 specific: confirm model has 12 actuators (not 29+ from Menagerie)
-    assert model.nu == 12, (
-        f"Expected 12 actuators (12-DOF model), got {model.nu}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 2: g1_head_rgb camera exists in compiled model
-# ---------------------------------------------------------------------------
-
-
-def test_g1_head_camera_in_compiled_model(g1_assets) -> None:
-    """The compiled scene must contain the g1_head_rgb camera."""
-    import mujoco
-
-    scene_path = _ensure_scene()
-    model = mujoco.MjModel.from_xml_path(str(scene_path))
-
-    cam_names = [
-        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, i)
-        for i in range(model.ncam)
-    ]
-    assert "g1_head_rgb" in cam_names, (
-        f"g1_head_rgb camera not found; available cameras: {cam_names}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 3: G1 self-geom-id set is non-empty
-# ---------------------------------------------------------------------------
-
-
-def test_g1_self_geom_set_nonempty(g1_assets) -> None:
-    """_build_robot_geom_set must find at least one g1_* body geom."""
-    import mujoco
-    from vector_os_nano.hardware.sim.mujoco_g1 import (
-        _build_g1_room_scene_xml,
-        _build_robot_geom_set,
-    )
-
-    scene_path = _build_g1_room_scene_xml()
-    model = mujoco.MjModel.from_xml_path(str(scene_path))
-    geom_ids = _build_robot_geom_set(model)
-
-    assert len(geom_ids) > 0, "Robot geom set is empty — lidar self-filter will not work"
-
-    for gid in geom_ids:
-        bid = model.geom_bodyid[gid]
-        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid) or ""
-        assert name.startswith("g1_"), (
-            f"Non-g1 body '{name}' in robot geom set (geom_id={gid})"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Test 4: g1 is a startable embodiment (no sim instantiated)
-# ---------------------------------------------------------------------------
-
-
-def test_g1_is_a_startable_embodiment() -> None:
-    """The g1 manifest names a SimSession driver and start_simulation offers it."""
-    from vector_os_nano.embodiments.registry import load
-    from vector_os_nano.sim.session import _BUILDERS
+def test_g1_is_a_startable_embodiment(g1_assets):
+    from vector_os_nano.sim.session import SimSession, SimSpec
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool
 
-    assert load("g1").driver in _BUILDERS
-    allowed = SimStartTool.input_schema["properties"]["embodiment"]["enum"]
-    assert "g1" in allowed, f"'g1' not in embodiment enum; allowed values: {allowed}"
+    SimSession.validate(SimSpec("g1", gui=False))
+    assert "g1" in SimStartTool.input_schema["properties"]["embodiment"]["enum"]
 
 
-# ---------------------------------------------------------------------------
-# Test 5: walk() produces forward displacement — policy gait is working
-# ---------------------------------------------------------------------------
+@pytest.mark.sim
+def test_walk_forward_displacement_and_sensors(g1_assets, monkeypatch):
+    from tests.hardware.sim.dog import stand_up
+    from vector_os_nano.sim.drivers.camera import Camera
 
-
-def test_walk_forward_displacement(g1_assets) -> None:
-    """walk(vx=0.5, duration=2.0) must move the robot >0.3 m forward without falling.
-
-    This is the key R2 correctness test: verifies the policy gait works in the
-    combined room scene with correct qpos/qvel/ctrl offsets.
-    """
-    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
-
-    g1 = MuJoCoG1(gui=False, room=True)
+    monkeypatch.setenv("VECTOR_SIM_LOCKSTEP", "1")
+    robot = stand_up("g1")
     try:
-        g1.connect()
-
-        # Record start position
-        x0, y0, _z = g1.get_position()
-        z0 = g1.get_base_height()
-
-        assert z0 > 0.5, f"Robot not standing at connect: z={z0:.3f}"
-
-        # Walk forward for 2 seconds
-        g1.walk(vx=0.5, duration=2.0)
-
-        xf, yf, _z = g1.get_position()
-        zf = g1.get_base_height()
-
-        displacement_x = xf - x0
-        total_displacement = ((xf - x0) ** 2 + (yf - y0) ** 2) ** 0.5
-
-        assert total_displacement > 0.3, (
-            f"Robot did not move enough: displacement={total_displacement:.3f} m "
-            f"(x: {x0:.3f} → {xf:.3f}, y: {y0:.3f} → {yf:.3f})"
-        )
-        assert zf > 0.5, (
-            f"Robot fell during walk: final z={zf:.3f} (fell threshold: 0.5)"
-        )
-
-        # Also verify lidar and camera still work while/after walking
-        scan = g1.get_lidar_scan()
-        assert scan.n_returns > 0, "Lidar returns 0 hits after walk"
-
-        frame = g1.get_camera_frame(width=320, height=240)
-        assert frame.shape == (240, 320, 3), f"Camera frame shape wrong: {frame.shape}"
-
+        base = robot.base
+        x0, y0, z0 = base.get_position()
+        assert z0 > 0.5
+        assert base.walk(vx=0.5, duration=2.0)
+        x, y, z = base.get_position()
+        assert math.hypot(x - x0, y - y0) > 0.3 and x - x0 > 0.3
+        assert z > 0.5
+        scan = base.get_lidar_scan()
+        assert any(r < scan.range_max for r in scan.ranges)
+        camera = Camera(robot.cfg.camera, robot.rt)
+        frame = camera.capture()
+        assert frame.rgb.shape == (480, 640, 3)
+        assert frame.depth.shape == (480, 640)
     finally:
-        g1.close()
-
-
-# ---------------------------------------------------------------------------
-# Test 6: NavResult contract — import-only, no sim instantiation
-# ---------------------------------------------------------------------------
-
-
-def test_g1_nav_result_contract() -> None:
-    """NavResult truthiness reflects 'reached'; .get() still works."""
-    import inspect
-
-    from vector_os_nano.hardware.sim.mujoco_g1 import MuJoCoG1
-    from vector_os_nano.sim.nav.follow import NavResult as _G1NavResult
-
-    # (a) bool reflects 'reached'
-    r_false = _G1NavResult({"reached": False, "moved_m": 1.5, "reason": "timeout"})
-    assert not r_false, "_G1NavResult({'reached': False}) must be falsy"
-
-    r_true = _G1NavResult({"reached": True, "moved_m": 2.0, "reason": "arrived"})
-    assert r_true, "_G1NavResult({'reached': True}) must be truthy"
-
-    r_missing = _G1NavResult({"moved_m": 0.0})
-    assert not r_missing, "_G1NavResult without 'reached' key must be falsy"
-
-    # (b) dict accessor still works
-    assert r_true.get("moved_m") == 2.0, ".get('moved_m') must return the stored value"
-    assert r_false.get("reached") is False, ".get('reached') must return False"
-
-    # (c) navigate_to signature contains 'timeout'
-    sig = inspect.signature(MuJoCoG1.navigate_to)
-    assert "timeout" in sig.parameters, (
-        f"'timeout' not in MuJoCoG1.navigate_to parameters; got {list(sig.parameters)}"
-    )
+        robot.close()

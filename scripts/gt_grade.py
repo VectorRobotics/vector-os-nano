@@ -22,7 +22,7 @@ new one, counting its turns from 1 again). --goal grades one chosen turn: the --
 
 Prints one JSON line per turn graded: {"turn", "goal"} plus, with --object, "moved_m",
 "delivered" and "held_lifted"; with --surface, "object_on"; with --box, "base_in";
-with --at, "base_at".
+with --at, "base_at"; with --turn-deg, "base_turned".
 """
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ DELIVER_R = 1.0     # m (xy) from the user location at turn end, and not already
 ON_MAX_ABOVE = 0.15  # m: the object's centre at most this far above the surface top
 LIFT_DZ = 0.03      # m: a picked-up object's centre rose at least this much over the turn
 AT_R = 0.5          # m (xy): the base this close to a point is at it
+TURN_TOL_DEG = 5.0  # a requested turn, measured from its start heading
 
 
 def load(path: str) -> list[dict[str, Any]]:
@@ -110,9 +111,18 @@ def base_at(start: dict[str, Any], end: dict[str, Any], xy: list[float]) -> bool
     return _near(end, xy) and not _near(start, xy)
 
 
+def base_turned(start: dict[str, Any], end: dict[str, Any], degrees: float) -> bool:
+    """A signed turn of at most 180 degrees; endpoint headings cannot prove extra revolutions."""
+    a, b = start.get("base"), end.get("base")
+    if not a or not b or not TURN_TOL_DEG < abs(degrees) <= 180:
+        return False
+    delta = b[3] - a[3] - math.radians(degrees)
+    return abs(math.atan2(math.sin(delta), math.cos(delta))) <= math.radians(TURN_TOL_DEG)
+
+
 def grade(path: str, obj: str | None = None, surface: str | None = None,
           box: list[float] | None = None, at: list[float] | None = None,
-          goal: str | None = None, nth: int = 1) -> list[dict[str, Any]]:
+          goal: str | None = None, nth: int = 1, turn_deg: float | None = None) -> list[dict[str, Any]]:
     pairs = turns(load(path))
     if goal is not None:
         pairs = [p for p in pairs if p[1].get("goal") == goal][nth - 1:nth]
@@ -130,6 +140,8 @@ def grade(path: str, obj: str | None = None, surface: str | None = None,
             row["base_in"] = base_in(start, end, box)
         if at is not None:
             row["base_at"] = base_at(start, end, at)
+        if turn_deg is not None:
+            row["base_turned"] = base_turned(start, end, turn_deg)
         out.append(row)
     return out
 
@@ -142,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--box", nargs=4, type=float, metavar=("X0", "Y0", "X1", "Y1"),
                     help="an xy box for the base_in check, e.g. a room's floor")
     ap.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"), help="a point for the base_at check")
+    ap.add_argument("--turn-deg", type=float, help="signed turn in degrees (positive left, at most 180)")
     ap.add_argument("--goal", help="grade only the turn whose goal is this sentence")
     ap.add_argument("--nth", type=int, default=1, help="with --goal: its nth finished turn (default 1)")
     a = ap.parse_args(argv)
@@ -149,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--surface needs --object")
     if a.nth < 1:
         ap.error("--nth counts from 1")
-    for row in grade(a.dump, a.object, a.surface, a.box, a.at, a.goal, a.nth):
+    for row in grade(a.dump, a.object, a.surface, a.box, a.at, a.goal, a.nth, a.turn_deg):
         print(json.dumps(row, ensure_ascii=False))
     return 0
 

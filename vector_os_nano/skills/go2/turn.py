@@ -18,7 +18,6 @@ from vector_os_nano.sim.nav.follow import turn_by
 
 logger = logging.getLogger(__name__)
 
-_VYAW_SPEED: float = 0.5  # rad/s
 _HEADING_TOL_RAD: float = math.radians(5.0)
 
 _DEFAULT_DIRECTION: str = "left"
@@ -43,10 +42,10 @@ def normalize_direction(value: object, aliases: dict[str, str]) -> str | None:
     aliases=["turn", "rotate", "转", "转弯", "转向", "左转", "右转"],
 )
 class TurnSkill:
-    """Rotate the Go2 quadruped left or right by a given angle."""
+    """Rotate the base left or right by a given angle."""
 
     name: str = "turn"
-    description: str = "Rotate the quadruped left or right by a given angle in degrees."
+    description: str = "Rotate the base left or right by a given angle in degrees."
     parameters: dict = {
         "direction": {
             "type": "string",
@@ -100,7 +99,11 @@ class TurnSkill:
         signed = angle_rad if direction == "left" else -angle_rad
 
         logger.info("[TURN] direction=%s angle=%.1fdeg", direction, angle_deg)
-        ok, residual = turn_by(context.base, signed, vyaw=_VYAW_SPEED, tol=_HEADING_TOL_RAD)
+        speed = context.base.limits[2]
+        if speed <= 0:
+            return SkillResult(success=False, diagnosis_code="turn_failed",
+                               error_message="This base cannot turn")
+        ok, residual = turn_by(context.base, signed, vyaw=speed, tol=_HEADING_TOL_RAD)
         data = {
             "direction": direction,
             "angle_deg": abs(angle_deg),

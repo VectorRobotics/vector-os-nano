@@ -189,6 +189,7 @@ def test_walk_normalises_direction_aliases(alias, sign):
     from vector_os_nano.skills.go2.walk import WalkSkill
 
     base = MagicMock()
+    base.limits = (.5, .3, .5)
     base.walk.return_value = True
     res = WalkSkill().execute({"direction": alias, "distance": 1.0}, SkillContext(base=base))
     assert res.success and math.copysign(1.0, base.walk.call_args[0][0]) == sign

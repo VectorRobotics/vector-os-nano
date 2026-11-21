@@ -6,8 +6,8 @@
 Rule 11 (embodiments are config, not code): a robot is stood up in the go2
 house room by ATTACHING its MuJoCo model into a room-only base spec, never by a
 per-robot scene builder. ``build_room_scene`` is world-agnostic: it takes the
-robot model path + attach prefix + spawn xy + optional welds/camera (all sourced
-from the embodiment config by the caller) and returns the compiled ``MjModel``
+robot model path + attach prefix + spawn xy + optional welds and placed cameras (all
+sourced from the embodiment config by the caller) and returns the compiled ``MjModel``
 plus, optionally, a reloadable scene file on disk.
 
 Why attach (not ``<include>``): the include path is go2-only and cannot prefix
@@ -21,19 +21,25 @@ attached robot whose defaults nest under a class (go2's ``<default class="go2">`
 tree) by wrapping them in an ANONYMOUS (class-less) nested ``<default>``. That
 text reloads with ``XML Error: empty class name``. The in-memory compiled model
 is unaffected — only the serialized text is malformed — so we repair the text by
-hoisting the anonymous wrapper's children up one level before writing. g1's flat
-default tree has no such wrapper, so the repair is a harmless no-op for it.
+hoisting the anonymous wrapper's children up one level before writing. A flat
+default tree (the G1's) has no such wrapper, so the repair is a harmless no-op for it.
 """
 from __future__ import annotations
 
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 from vector_os_nano.interfaces.physics import CompiledScene
 from vector_os_nano.sim.scene.compiled import compiled_scene
-from vector_os_nano.sim.scene.compose import normalize_attach_defaults, robot_spec, write_scene
+from vector_os_nano.sim.scene.compose import (
+    model_files,
+    normalize_attach_defaults,
+    place_cameras,
+    robot_spec,
+    write_scene,
+)
 
 # A weld is (equality_name, body1, body2); created inactive (gripper activates it).
 Weld = tuple[str, str, str]
@@ -79,7 +85,7 @@ def build_room_scene(
     welds: Sequence[Weld] = (),
     cache_stem: str | None = None,
     robot_meshes_dir: Path | str | None = None,
-    camera: Mapping[str, Any] | None = None,
+    robot: Any = None,
 ) -> tuple[Any, Path | None]:
     """Attach a robot model into the go2 house room; return ``(MjModel, scene_path)``.
 
@@ -100,8 +106,7 @@ def build_room_scene(
             this file stem in the scene cache (``sim/scene/compose.write_scene``).
         robot_meshes_dir: base directory for relative robot ``mesh.file`` paths.
             Defaults to the model file's directory + its ``meshdir`` (MuJoCo's rule).
-        camera: optional ``{mount_body, name, pos, xyaxes}`` head camera added to
-            the named robot body before attach.
+        robot: the EmbodimentConfig whose placed cameras are added (or None).
 
     Returns:
         ``(compiled MjModel, scene file or None)``.
@@ -109,22 +114,12 @@ def build_room_scene(
     import mujoco as mj  # noqa: PLC0415
 
     room_spec = _room_only_spec(mj, Path(room_template_path), Path(room_assets_dir))
-    robot = robot_spec(robot_model_path, robot_meshes_dir)
-
-    if camera is not None:
-        mount = camera["mount_body"]
-        body = next((b for b in robot.bodies if b.name == mount), None)
-        if body is None:
-            raise RuntimeError(
-                f"scene_builder: camera mount_body {mount!r} not found in "
-                f"{robot_model_path}"
-            )
-        body.add_camera(
-            name=camera["name"], pos=list(camera["pos"]), xyaxes=list(camera["xyaxes"])
-        )
+    model_spec = robot_spec(robot_model_path, robot_meshes_dir)
+    if robot is not None:
+        place_cameras(room_spec, model_spec, robot)
 
     frame = room_spec.worldbody.add_frame(pos=[float(spawn_xy[0]), float(spawn_xy[1]), 0.0])
-    room_spec.attach(robot, prefix=attach_prefix, frame=frame)
+    room_spec.attach(model_spec, prefix=attach_prefix, frame=frame)
 
     for name, body1, body2 in welds:
         eq = room_spec.add_equality()
@@ -144,21 +139,20 @@ def build_room_scene(
 
 _ROOM_XML = Path(__file__).with_name("go2_room.xml")
 _ROOM_ASSETS = Path(__file__).parent / "mjcf" / "go2" / "assets"
-_REPO = Path(__file__).resolve().parents[3]
 
 
 def room_scene(robot: Any, world: Any) -> CompiledScene:
     """The apartment room (go2_room.xml) with *robot* (an EmbodimentConfig with a base)
-    attached at its spawn and one inactive grasp weld per (gripper weld body x pickable
-    of *world*), compiled at the robot's policy timestep."""
+    attached at its spawn with its placed cameras and one inactive grasp weld per
+    (gripper weld body x pickable of *world*), compiled at the robot's policy timestep."""
     gripper = robot.arm.gripper if robot.arm is not None else None
     pairs = [(gripper.weld_body, p) for p in world.pickables] if gripper is not None else []
-    meshes = robot.model.meshes_dir
+    model, meshes = model_files(robot)
     _model, path = build_room_scene(
-        robot_model_path=_REPO / robot.model.path, room_template_path=_ROOM_XML,
+        robot_model_path=model, room_template_path=_ROOM_XML,
         room_assets_dir=_ROOM_ASSETS, attach_prefix="", spawn_xy=robot.spawn.xy,
         welds=[(f"grasp_{child}", parent, child) for parent, child in pairs],
-        cache_stem=f"scene_{robot.id}_room", robot_meshes_dir=_REPO / meshes if meshes else None,
+        cache_stem=f"scene_{robot.id}_room", robot_meshes_dir=meshes, robot=robot,
     )
     assert path is not None
     return compiled_scene(path, robot_root=robot.model.root_body, grasp_pairs=pairs,
