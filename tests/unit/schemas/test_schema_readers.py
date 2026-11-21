@@ -13,7 +13,13 @@ def test_robot_and_world_fields_have_readers():
     for folder in ('vector_os_nano', 'scripts'):
         for path in (root / folder).rglob('*.py'):
             if 'schemas' not in path.parts:
-                readers.update(n.attr for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.Attribute))
+                for node in ast.walk(ast.parse(path.read_text())):
+                    if isinstance(node, ast.Attribute):
+                        readers.add(node.attr)
+                    elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'getattr'
+                          and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)
+                          and isinstance(node.args[1].value, str)):
+                        readers.add(node.args[1].value)
     for module in (robot, world):
         methods = {node.name: {n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)
                               and isinstance(n.value, ast.Name) and n.value.id == 'self'}
