@@ -128,7 +128,7 @@ def test_start_simulation_tells_the_model_the_fetch_command(state_dir) -> None:
 def test_the_driver_refuses_without_assets(state_dir) -> None:
     pytest.importorskip("mujoco")
     from vector_os_nano.hardware.sim.scene_builder import room_scene
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     with pytest.raises(assets.AssetsMissing, match=FETCH):
         room_scene(load_embodiment_config("g1"), load_world("apartment"))

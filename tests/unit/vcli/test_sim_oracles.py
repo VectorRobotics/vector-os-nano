@@ -27,7 +27,7 @@ from vector_os_nano.sim.ground_truth import GroundTruth  # noqa: E402
 from vector_os_nano.sim.runtime import SimRuntime  # noqa: E402
 from vector_os_nano.sim.scene import compiled_scene  # noqa: E402
 from vector_os_nano.vcli.worlds.sim_oracles import rig_namespace  # noqa: E402
-from vector_os_nano.vcli.worlds.world_manifest import load_world  # noqa: E402
+from vector_os_nano.schemas.world import load_world  # noqa: E402
 
 _GRASP_SEED = [0.0, 1.57, -1.57, 0.0, 1.22, 0.0]  # top-down, fingers in free air
 _STAND = [0.0, 0.9, -1.8] * 4

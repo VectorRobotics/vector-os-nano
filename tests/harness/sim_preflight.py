@@ -55,7 +55,7 @@ def missing() -> list[str]:
         try:
             from vector_os_nano.embodiments import registry
             from vector_os_nano.hardware.sim import scene_builder
-            from vector_os_nano.vcli.worlds.world_manifest import load_world
+            from vector_os_nano.schemas.world import load_world
 
             assert Path(scene_builder.__file__).is_relative_to(tmp), scene_builder.__file__
             for body in ("go2", "go2_piper"):

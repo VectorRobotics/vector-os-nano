@@ -32,7 +32,7 @@ from vector_os_nano.sim.ground_truth import GroundTruth
 from vector_os_nano.sim.runtime import SimRuntime
 from vector_os_nano.sim.scene import canonical
 from vector_os_nano.sim.scene.compose import compose
-from vector_os_nano.vcli.worlds.world_manifest import parse_world
+from vector_os_nano.schemas.world import parse_world
 
 pytestmark = pytest.mark.sim
 

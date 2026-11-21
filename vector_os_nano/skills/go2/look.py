@@ -148,7 +148,7 @@ def _world_vocabulary(context: SkillContext) -> list[str]:
     world_id = (context.config or {}).get("world")
     if not world_id:
         return []
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     return load_world(world_id).vocabulary()
 

@@ -174,7 +174,7 @@ def test_go2_piper_scene_compiles_from_a_relocated_checkout(tmp_path) -> None:
         "import mujoco, vector_os_nano as v\n"
         "from vector_os_nano.embodiments import registry\n"
         "from vector_os_nano.hardware.sim.scene_builder import room_scene\n"
-        "from vector_os_nano.vcli.worlds.world_manifest import load_world\n"
+        "from vector_os_nano.schemas.world import load_world\n"
         "cfg = registry.load('go2_piper')\n"
         "p = room_scene(cfg, load_world(cfg.world)).xml_path\n"
         "m = mujoco.MjModel.from_xml_path(str(p))\n"

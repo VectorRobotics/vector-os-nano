@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from vector_os_nano.vcli.worlds.world_manifest import (
+from vector_os_nano.schemas.world import (
     WorldManifestError,
     load_world,
     parse_world,

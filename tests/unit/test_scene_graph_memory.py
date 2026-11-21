@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from vector_os_nano.core.scene_graph import SceneGraph
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 _APT = load_world("apartment")
 

@@ -319,7 +319,7 @@ def test_scenes_go_to_the_state_cache_never_the_package(monkeypatch, tmp_path):
     import vector_os_nano
     from vector_os_nano.embodiments import registry
     from vector_os_nano.hardware.sim.scene_builder import room_scene
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     monkeypatch.setenv("VECTOR_HOME", str(tmp_path))
     pkg = Path(vector_os_nano.__file__).parent
@@ -339,7 +339,7 @@ def test_a_missing_model_file_fails_loud(tmp_path):
 
     from vector_os_nano.embodiments import registry
     from vector_os_nano.hardware.sim.scene_builder import room_scene
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     cfg = registry.load("go2_piper")
     gone = dataclasses.replace(cfg, model=dataclasses.replace(cfg.model, path=str(tmp_path / "go2_piper.xml")))

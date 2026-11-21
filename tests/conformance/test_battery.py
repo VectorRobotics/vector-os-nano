@@ -18,7 +18,7 @@ from tests.conformance.rig import clearance
 from vector_os_nano.embodiments import registry
 from vector_os_nano.sim.scene.compose import compose
 from vector_os_nano.sim.scene.reader import GEOM_MESH, geoms
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 pytestmark = pytest.mark.sim
 

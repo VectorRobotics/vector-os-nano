@@ -23,7 +23,7 @@ from tests.unit.vcli.test_task_contract_binding import GREEN, RED, _two, _v
 from vector_os_nano.vcli.backends.fake import FakeToolScriptBackend, tool_turn
 from vector_os_nano.vcli.cognitive.object_goal import contract_leads, task_contract
 from vector_os_nano.vcli.cognitive.trace_store import goal_check
-from vector_os_nano.vcli.worlds.world_manifest import WORLDS_DIR, load_world
+from vector_os_nano.schemas.world import WORLDS_DIR, load_world
 
 BASE = frozenset({"at_position", "facing", "in_room", "near_object"})
 ARM = frozenset({"holding_object", "kept_holding", "released", "object_at", "object_on", "lifted"})

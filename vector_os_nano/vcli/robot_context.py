@@ -40,7 +40,7 @@ class RobotContextProvider:
 
     @classmethod
     def for_agent(cls, agent: Any) -> "RobotContextProvider":
-        from vector_os_nano.vcli.worlds.world_manifest import world_of
+        from vector_os_nano.schemas.world import world_of
 
         try:
             world = world_of(agent)

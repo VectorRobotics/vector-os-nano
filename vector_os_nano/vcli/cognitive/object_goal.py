@@ -145,7 +145,7 @@ def _manifest(world_id: str) -> Any:
     contains and what NL calls it, never where it is), or None."""
     if not world_id:
         return None
-    from vector_os_nano.vcli.worlds.world_manifest import WorldManifestError, load_world
+    from vector_os_nano.schemas.world import WorldManifestError, load_world
 
     try:
         return load_world(world_id)

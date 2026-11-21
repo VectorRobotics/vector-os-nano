@@ -160,7 +160,7 @@ def test_a_grasp_counts_only_on_the_manifest_weld_body() -> None:
     """MC1: attached to any other body (the wrist link before the hand) is not held."""
     from vector_os_nano.embodiments import registry
     from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     cfg = registry.load("go2_piper")
     world = load_world(cfg.world)

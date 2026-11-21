@@ -211,7 +211,7 @@ class SimSession:
 
     def _bind_ground_truth(self) -> None:
         from vector_os_nano.sim.ground_truth import GroundTruth
-        from vector_os_nano.vcli.worlds.world_manifest import load_world
+        from vector_os_nano.schemas.world import load_world
 
         agent = self.agent
         if self.runtime is None:  # no world owner: no oracles, every verify grades RAN
@@ -508,7 +508,7 @@ def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.scene_graph import SceneGraph
     from vector_os_nano.hardware.sim.scene_builder import room_scene
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     cfg, spec = session.config, session.spec
     world = load_world(cfg.world)
@@ -579,7 +579,7 @@ def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
     from vector_os_nano.sim import backends
     from vector_os_nano.sim.runtime import SimRuntime
     from vector_os_nano.sim.scene.compose import compose
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     cfg = session.config
     world = load_world(cfg.world)

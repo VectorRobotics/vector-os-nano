@@ -7,7 +7,7 @@ import pytest
 
 from vector_os_nano.perception.front_object import parse_color
 from vector_os_nano.perception.vocab import is_reference, vocab
-from vector_os_nano.vcli.worlds.world_manifest import WORLDS_DIR, load_world
+from vector_os_nano.schemas.world import WORLDS_DIR, load_world
 
 
 @pytest.mark.parametrize("q, phrase", [

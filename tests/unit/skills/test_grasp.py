@@ -17,7 +17,7 @@ from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.skills import grasp, grasp_perception
 from vector_os_nano.skills.grasp import GraspSkill
 from vector_os_nano.skills.grasp_perception import _target as _resolve, perceive
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 def _target(query, world, front):
     return _resolve(query, load_world(world) if world else None, front)

@@ -190,7 +190,7 @@ def run_go2_piper_pick() -> dict[str, np.ndarray]:
     from vector_os_nano.sim.drivers.gripper import Gripper
     from vector_os_nano.sim.session import respawn
     from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     dog = stand_up("go2_piper")
     cfg, rt, base = dog.cfg, dog.rt, dog.base

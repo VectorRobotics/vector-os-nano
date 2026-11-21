@@ -178,7 +178,7 @@ class GoToRoomTool:
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         from vector_os_nano.skills.navigate import _get_room_center_from_memory, _resolve_room
         from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
-        from vector_os_nano.vcli.worlds.world_manifest import world_of
+        from vector_os_nano.schemas.world import world_of
 
         agent = live_agent(context)
         if agent is None:

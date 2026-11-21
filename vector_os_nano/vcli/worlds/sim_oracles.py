@@ -303,7 +303,7 @@ def rig_namespace(runtime: Any, embodiment_id: str, **kwargs: Any) -> dict[str, 
     """:func:`build_namespace` for a runtime built without a SimSession (tests, probe tools)."""
     from vector_os_nano.embodiments import registry
     from vector_os_nano.sim.ground_truth import GroundTruth
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     cfg = registry.load(embodiment_id)
     return build_namespace(GroundTruth(runtime), load_world(cfg.world) if cfg.world else None, cfg, **kwargs)

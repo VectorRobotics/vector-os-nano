@@ -20,7 +20,7 @@ from vector_os_nano.embodiments import registry
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene import compiled_scene
 from vector_os_nano.sim.scene.compose import compose
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 SCENES = Path(__file__).parent / "scenes"
 SIM_DIR = Path(vector_os_nano.__file__).parent / "hardware" / "sim"
@@ -122,7 +122,7 @@ def _robot_scene(name: str):
         return compiled_scene(SIM_DIR / "mjcf" / name / f"{name}.xml", robot_root="base_link")
     if name in ("go2", "go2_piper"):
         from vector_os_nano.hardware.sim.scene_builder import room_scene
-        from vector_os_nano.vcli.worlds.world_manifest import load_world
+        from vector_os_nano.schemas.world import load_world
 
         cfg = registry.load(name)
         return room_scene(cfg, load_world(cfg.world))

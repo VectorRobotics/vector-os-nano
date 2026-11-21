@@ -140,7 +140,7 @@ def fake_namespace(agent: Any = None, embodiment: str = "go2_piper", **kwargs: A
     """The real oracle namespace over a FakeGT of *agent*'s stub devices."""
     from vector_os_nano.embodiments import registry
     from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     cfg = registry.load(embodiment)
     gt = kwargs.pop("gt", None) or FakeGT(agent, embodiment=embodiment)
@@ -154,7 +154,7 @@ def bind_fake_sim(agent: Any, embodiment: str = "so101", **gt_kwargs: Any) -> Si
     """
     from vector_os_nano.embodiments import registry
     from vector_os_nano.sim import session as sim_session
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     gt = FakeGT(agent, embodiment=embodiment, **gt_kwargs)
     turn = [(-math.inf, -math.inf)]

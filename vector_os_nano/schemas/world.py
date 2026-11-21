@@ -21,7 +21,7 @@ from typing import Any
 
 import yaml
 
-WORLDS_DIR = Path(__file__).resolve().parents[3] / "config" / "worlds"
+WORLDS_DIR = Path(__file__).resolve().parents[2] / "config" / "worlds"
 
 
 class WorldManifestError(ValueError):

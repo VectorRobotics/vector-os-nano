@@ -12,7 +12,7 @@ from vector_os_nano.sim.ground_truth import GroundTruth
 from vector_os_nano.sim.runtime import SimRuntime
 from vector_os_nano.sim.scene.compose import compose
 from vector_os_nano.skills.grasp import GraspSkill
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 pytestmark = pytest.mark.sim
 

@@ -42,7 +42,7 @@ def task_policy(agent: Any) -> str:
     perception (the per-turn [Robot State] block).
     """
     from vector_os_nano.embodiments.capability_profile import resolve_capability_profile
-    from vector_os_nano.vcli.worlds.world_manifest import world_of
+    from vector_os_nano.schemas.world import world_of
 
     if agent is None:
         return ""

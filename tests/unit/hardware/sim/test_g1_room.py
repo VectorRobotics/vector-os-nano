@@ -9,7 +9,7 @@ import pytest
 
 from vector_os_nano.embodiments import registry
 from vector_os_nano.hardware.sim.scene_builder import room_scene
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 
 def test_g1_scene_and_sensors_compile(g1_assets):

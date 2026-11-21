@@ -39,7 +39,7 @@ def stand_up(embodiment: str = "go2", *, room: bool = True, start: bool = True) 
     cfg = registry.load(embodiment)
     if room:
         from vector_os_nano.hardware.sim.scene_builder import room_scene
-        from vector_os_nano.vcli.worlds.world_manifest import load_world
+        from vector_os_nano.schemas.world import load_world
 
         scene = room_scene(cfg, load_world(cfg.world))
     else:  # at the world origin, as the flat-ground tests were calibrated (module docstring)

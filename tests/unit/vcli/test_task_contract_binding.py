@@ -109,7 +109,7 @@ _TAGS = {"kept_holding": OracleTag(scope="robot", channel="gripper", transition=
 
 
 def test_kept_holding_is_judged_from_the_turn_start() -> None:
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     held, empty = ActorBaseline(gripper_welds={GREEN: True}), ActorBaseline(gripper_welds={GREEN: False})
     expr, apt = "kept_holding('green bottle')", load_world("apartment")  # the alias resolves via the manifest
@@ -529,7 +529,7 @@ def test_a_resting_object_released_before_any_grasp_is_already_satisfied() -> No
 
 
 def test_an_alias_target_is_caused_only_by_its_own_weld() -> None:
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     tags = {"released": OracleTag(scope="robot", channel="gripper", transition="fall")}
     before = ActorBaseline(gripper_welds={RED: True, GREEN: False})

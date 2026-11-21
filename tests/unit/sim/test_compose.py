@@ -13,7 +13,7 @@ import pytest
 
 from vector_os_nano.embodiments import registry
 from vector_os_nano.sim.scene.compose import check_fingers, compose, model_files
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 
 @pytest.fixture

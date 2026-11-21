@@ -39,7 +39,7 @@ class Never:
 
 def _scene(body: str):
     from vector_os_nano.hardware.sim.scene_builder import room_scene
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     return room_scene(load_embodiment_config(body), load_world("apartment"))
 

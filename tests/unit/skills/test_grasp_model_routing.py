@@ -24,7 +24,7 @@ from vector_os_nano.perception.front_object import parse_color
 from vector_os_nano.skills.grasp import GraspSkill
 from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.vcli.cognitive import abort
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 _W, _H = 64, 48
 _INTR = pinhole(_W, _H, 42.0)

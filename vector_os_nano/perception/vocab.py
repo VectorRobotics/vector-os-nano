@@ -17,7 +17,7 @@ import functools
 import re
 from dataclasses import dataclass
 
-from vector_os_nano.vcli.worlds.world_manifest import WORLDS_DIR, _has, load_world
+from vector_os_nano.schemas.world import WORLDS_DIR, _has, load_world
 
 # Words that never name the object: articles, pronouns and the verbs of a request.
 _STOP = frozenset(

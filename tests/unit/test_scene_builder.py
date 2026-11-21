@@ -243,7 +243,7 @@ def test_build_room_scene_g1_byte_identical(g1_assets):
 def test_go2_builder_file_reloads():
     from vector_os_nano.embodiments import registry
     from vector_os_nano.hardware.sim.scene_builder import room_scene
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     for with_arm in (True, False):
         path = room_scene(registry.load("go2_piper" if with_arm else "go2"), load_world("apartment")).xml_path

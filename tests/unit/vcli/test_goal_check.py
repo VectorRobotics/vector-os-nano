@@ -348,7 +348,7 @@ def test_a_question_is_unchecked_and_the_spine_asks_nothing_of_the_model(goal) -
 
 
 def _manifest_names() -> set[str]:
-    from vector_os_nano.vcli.worlds.world_manifest import load_world
+    from vector_os_nano.schemas.world import load_world
 
     w = load_world("apartment")
     return ({*w.pickables, *(a for p in w.pickables.values() for a in p.aliases), *w.surfaces,

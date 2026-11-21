@@ -29,7 +29,7 @@ from vector_os_nano.vcli.cognitive.object_goal import (
 )
 from vector_os_nano.vcli.cognitive.trace_store import turn_reject_reason
 from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord, SubGoal
-from vector_os_nano.vcli.worlds.world_manifest import WORLDS_DIR, load_world
+from vector_os_nano.schemas.world import WORLDS_DIR, load_world
 
 APT = frozenset({"at_position", "holding_object", "kept_holding", "near_object", "object_on",
                  "released", "object_at", "lifted"})
@@ -136,7 +136,7 @@ def test_every_checkable_goal_the_gate_offers_can_be_met_in_its_world(world) -> 
 
 
 def test_no_fetch_without_a_user_and_no_place_without_a_surface(monkeypatch) -> None:
-    import vector_os_nano.vcli.worlds.world_manifest as wm
+    import vector_os_nano.schemas.world as wm
 
     apt = load_world("apartment")
     assert any("bring me" in g for g in checkable_goals(apt, APT))

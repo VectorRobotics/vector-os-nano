@@ -19,7 +19,7 @@ from vector_os_nano.core.skill import SkillContext
 
 from vector_os_nano.perception.calibration import Calibration
 from vector_os_nano.skills.go2.look import DescribeSceneSkill, LookSkill, observe_scene
-from vector_os_nano.vcli.worlds.world_manifest import load_world
+from vector_os_nano.schemas.world import load_world
 
 _APT = load_world("apartment")
 _OOM_CAUSE = "out of GPU memory on cuda:0 (another process may hold it)"

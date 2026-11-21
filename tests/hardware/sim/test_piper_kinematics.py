@@ -23,7 +23,7 @@ pytest.importorskip("mujoco")
 from vector_os_nano.embodiments import registry  # noqa: E402
 from vector_os_nano.hardware.sim.scene_builder import room_scene  # noqa: E402
 from vector_os_nano.sim.scene import kinematics  # noqa: E402
-from vector_os_nano.vcli.worlds.world_manifest import load_world  # noqa: E402
+from vector_os_nano.schemas.world import load_world  # noqa: E402
 
 _BASE_Z = 0.30  # standing trunk height
 
