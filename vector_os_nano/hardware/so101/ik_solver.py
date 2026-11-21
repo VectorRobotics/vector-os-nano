@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 # The bundled SO-101 URDF (onshape-to-robot export, the calibrated so101_new_calib).
-_URDF = Path(__file__).parent.parent / "urdf" / "so101.urdf"
+_URDF = Path(__file__).with_name("so101.urdf")
 
 
 class IKSolver:

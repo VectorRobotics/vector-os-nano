@@ -4,7 +4,7 @@
 """Unit tests for vector_os_nano.hardware.so101.ik_solver — TDD RED phase.
 
 Tests require pinocchio. If not installed, entire module is skipped.
-All tests use the bundled SO-101 URDF (hardware/urdf/so101.urdf).
+All tests use the bundled SO-101 URDF (hardware/so101/so101.urdf).
 """
 from __future__ import annotations
 

@@ -28,7 +28,7 @@ def test_installed_robot_and_world_resources(tmp_path):
     root, installed = install_wheel(tmp_path)
     files = subprocess.check_output(['git', 'ls-files', 'vector_os_nano/embodiments', 'vector_os_nano/worlds',
                                     'vector_os_nano/core/default.yaml', 'vector_os_nano/sim/nav/nav.yaml',
-                                    'vector_os_nano/sim/nav/ros2'],
+                                    'vector_os_nano/sim/nav/ros2', 'vector_os_nano/hardware/so101/so101.urdf'],
                                     cwd=root, text=True).splitlines()
     expected = {str(Path(f).relative_to('vector_os_nano')): hashlib.sha256((root / f).read_bytes()).hexdigest()
                 for f in files}
@@ -48,6 +48,7 @@ assert Path(vector_os_nano.__file__).is_relative_to(sys.argv[1]), vector_os_nano
 assert arrival_radius() == .5
 assert load_config()['agent']['max_planning_retries'] == 3
 package = files('vector_os_nano')
+assert package.joinpath('hardware/so101/so101.urdf').is_file()
 nav = package.joinpath('sim/nav/ros2')
 for name in ('bridge.py', 'motion.py', 'terrain.py', 'viz.py', 'launch_nav_only.sh',
              'nav_env.sh', 'tare_go2_indoor.yaml', 'vnav.rviz', 'vector-os-dashboard.json'):
