@@ -121,7 +121,7 @@ def _passed(params, target):
     return None, None
 
 
-def perceive(perception, query, target, params=None, *, cancel=lambda: False):
+def perceive(perception, query, target, params=None, *, cancel=lambda: False, expected_bounds=None):
     """(point, metadata, failure), all coordinates from one sensor instant."""
     try:
         if cancel():
@@ -132,6 +132,9 @@ def perceive(perception, query, target, params=None, *, cancel=lambda: False):
     meta = {"perceived": False, "consumed_bbox": False, "reperceived": True,
             "detection_label": target.label or query}
     try:
+        prior = None if expected_bounds is None else np.asarray(expected_bounds, dtype=float)
+        if prior is not None and (prior.shape != (2, 3) or not np.isfinite(prior).all() or np.any(prior[0] >= prior[1])):
+            raise ValueError('invalid prior observed bounds')
         passed, frame = _passed(params or {}, target)
         if passed is not None and _fresh(frame, rgb, pos, rot):
             detections = [SimpleNamespace(**{k: passed[k] for k in ("bbox", "confidence")})]
@@ -166,10 +169,16 @@ def perceive(perception, query, target, params=None, *, cancel=lambda: False):
                 continue
             point = grasp_point_from_points(*points, pos, rot)
             if point is not None:
+                bounds = np.percentile(points[1], [2, 98], axis=0)
+                centre = bounds.mean(axis=0)
+                if prior is not None and np.any((centre < prior[0]-.03) | (centre > prior[1]+.03)):
+                    rejected.append('detection moved outside prior observed bounds; reacquire its identity')
+                    continue
                 if cancel():
                     return None, meta, _fail("cancelled", "Grasp cancelled during perception.")
                 meta.update(perceived=True, segmenter=getattr(perception, "last_segmenter", None),
-                            grasp_world=[point.x, point.y, point.z])
+                            grasp_world=[point.x, point.y, point.z],
+                            visible_bounds=bounds.tolist(), association_bounds=expected_bounds)
                 return point, meta, None
         return None, meta, _fail("implausible_target", f"No plausible grasp point for {query!r}: {rejected}; look again.")
     except Exception as exc:

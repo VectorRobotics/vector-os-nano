@@ -32,6 +32,18 @@ def test_examples_contain_only_validated_household_data_not_retired_demo_scripts
         'household/worlds/artvip_home/world.yaml'}
 
 
+@pytest.mark.parametrize('field,value', [('pitch', float('nan')), ('pitch', 2.),
+    ('ready_posture', 'missing'), ('pre_offset', [1, 2]),
+    ('prepare', {'group': 'unknown', 'posture': 'grasp'}),
+    ('lift', {'group': 'torso', 'posture': 'unknown'})])
+def test_frontal_grasp_configuration_rejects_bad_geometry_or_unbound_postures(field, value):
+    path = Path(__file__).resolve().parents[2]/'examples/household/embodiments/malo/robot.yaml'
+    raw = yaml.safe_load(path.read_text())
+    raw['skills']['grasp']['frontal'][field] = value
+    with pytest.raises(EmbodimentConfigError, match='frontal'):
+        validate(parse_embodiment_config(raw))
+
+
 @pytest.mark.parametrize('initial', [{'head': float('nan')}, {'head': True}, {'': 0}, {'fl_wheel_joint': 1}])
 def test_initial_joints_reject_invalid_positions_and_base_overrides(initial):
     path = Path(__file__).resolve().parents[2]/'examples/household/embodiments/malo/robot.yaml'

@@ -206,6 +206,29 @@ def test_ik_retry_changes_the_base_pose_before_trying_again(monkeypatch, token):
     ctx.base.walk.assert_called_once()
 
 
+@pytest.mark.parametrize('target_present', [True, False])
+def test_reobservation_does_not_switch_to_a_higher_scoring_different_object(monkeypatch, target_present):
+    p = _StubPerception()
+    p.detect_in = Mock(return_value=[SimpleNamespace(bbox=[0, 0, 10, 10], confidence=.9),
+                                     SimpleNamespace(bbox=[10, 0, 20, 10], confidence=.8)])
+    p.segment = Mock(return_value=np.ones((48, 64), dtype=bool))
+    cloud = np.array([(x, y, z) for x in (-.02,.02) for y in (-.07,.07) for z in (.78,.85)])
+    target = cloud + [1.5, -2.65, 0]
+    wrong = target + [0, .35, 0]
+    monkeypatch.setattr(grasp_perception, 'object_points', Mock(side_effect=[(wrong, wrong),
+                         (target, target) if target_present else (wrong, wrong)]))
+    monkeypatch.setattr(grasp_perception, 'implausible', lambda *a, **kw: None)
+    monkeypatch.setattr(grasp_perception, 'grasp_point_from_points', lambda cam, world, *a: Pose3D(*world.mean(axis=0)))
+    prior = [[1.47,-2.73,.77],[1.53,-2.57,.86]]
+    gp, meta, error = perceive(p, 'package', _target('package', None, False), expected_bounds=prior)
+    if target_present:
+        assert error is None and [gp.x,gp.y,gp.z] == pytest.approx([1.5,-2.65,.815])
+        assert meta['association_bounds'] == prior
+    else:
+        assert gp is None and error.diagnosis_code == 'implausible_target'
+        assert 'reacquire its identity' in error.error_message
+
+
 def test_memory_is_used_only_to_navigate_then_reobserve(monkeypatch, token):
     ctx = context("go2_piper")
     ctx.base = Mock(limits=(.5, .3, .6), get_position=Mock(return_value=(0., 0., .3)),

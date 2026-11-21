@@ -28,23 +28,47 @@ def parse(raw: dict[str, Any], cfg: EmbodimentConfig, gctx: str) -> dict[str, An
     arm = cfg.arm
     if arm is None or arm.gripper is None:
         raise EmbodimentConfigError(f"{gctx}: requires an arm with a gripper")
-    g = _keys(raw, gctx, _GRASP_POSITIVE | _GRASP_NONNEGATIVE | {"durations", "base"})
+    g = _keys(raw, gctx, _GRASP_POSITIVE | _GRASP_NONNEGATIVE | {"durations", "base", "frontal"})
     parsed = {k: _positive(_require(g, k, gctx), f"{gctx}.{k}", zero=k in _GRASP_NONNEGATIVE)
               for k in _GRASP_POSITIVE | _GRASP_NONNEGATIVE}
     durations = _floats(_require(g, "durations", gctx), 4, f"{gctx}.durations")
     if any(d <= 0 for d in durations):
         raise EmbodimentConfigError(f"{gctx}.durations: all four motion durations must be positive")
     parsed["durations"] = durations
+    if 'frontal' in g:
+        fctx = f'{gctx}.frontal'
+        f = _keys(g['frontal'], fctx, {'pre_offset', 'contact_offset', 'pitch', 'ready_posture', 'prepare', 'lift'})
+        if cfg.base is None or 'base' not in g:
+            raise EmbodimentConfigError(f'{fctx}: requires a base heading and approach configuration')
+        frontal = {k: _floats(_require(f, k, fctx), 3, f'{fctx}.{k}') for k in ('pre_offset', 'contact_offset')}
+        pitch = _positive(_require(f, 'pitch', fctx), f'{fctx}.pitch', zero=True)
+        if pitch > math.pi/2:
+            raise EmbodimentConfigError(f'{fctx}.pitch: expected 0 to pi/2 radians')
+        ready = _require(f, 'ready_posture', fctx)
+        if not isinstance(ready, str) or ready not in arm.postures:
+            raise EmbodimentConfigError(f'{fctx}.ready_posture: expected a configured arm posture')
+        frontal.update(pitch=pitch, ready_posture=ready)
+        for phase in ('prepare', 'lift'):
+            pctx = f'{fctx}.{phase}'
+            p = _keys(_require(f, phase, fctx), pctx, {'group', 'posture'})
+            group, posture = _require(p, 'group', pctx), _require(p, 'posture', pctx)
+            if (not isinstance(group, str) or group not in cfg.joint_groups or
+                    not isinstance(posture, str) or posture not in cfg.joint_groups[group].postures):
+                raise EmbodimentConfigError(f'{pctx}: expected a configured joint group and posture')
+            frontal[phase] = dict(group=group, posture=posture)
+        parsed['frontal'] = frontal
     if "base" in g:
         bctx = f"{gctx}.base"
         if cfg.base is None:
             raise EmbodimentConfigError(f"{bctx}: requires a base")
-        b = _keys(g["base"], bctx, _GRASP_BASE_COUNTS | _GRASP_BASE_POSITIVE)
+        b = _keys(g["base"], bctx, _GRASP_BASE_COUNTS | _GRASP_BASE_POSITIVE | {'lateral_offset'})
         values = {k: _positive(_require(b, k, bctx), f"{bctx}.{k}", zero=k in _GRASP_BASE_COUNTS)
                   for k in _GRASP_BASE_COUNTS | _GRASP_BASE_POSITIVE}
         for k in _GRASP_BASE_COUNTS:
             if not values[k].is_integer():
                 raise EmbodimentConfigError(f"{bctx}.{k}: expected a nonnegative integer")
             values[k] = int(values[k])
+        if 'lateral_offset' in b:
+            values['lateral_offset'] = _floats([b['lateral_offset']], 1, f'{bctx}.lateral_offset')[0]
         parsed["base"] = values
     return parsed
