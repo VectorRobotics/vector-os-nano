@@ -15,6 +15,7 @@ from vector_os_nano.skills.grasp import _cancelled, _move, _solve, face
 from vector_os_nano.skills.grasp_perception import _fail, _Target, perceive
 from vector_os_nano.skills.utils.approach_pose import compute_approach_pose
 from vector_os_nano.skills import place_support
+from vector_os_nano.sim.nav.follow import turn_by
 
 
 def target(params, context):
@@ -63,13 +64,19 @@ def localize(surface, context, cfg, token):
         return None, observation, _fail('implausible_target', 'Support landmark segmentation is not plausible; choose another view.')
     c, s = math.cos(anchor.yaw), math.sin(anchor.yaw)
     rotation = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    point = bounds.mean(0) + rotation @ (np.array([*surface.place_point, surface.height])-anchor.point)
+    origin = bounds.mean(0) - rotation @ anchor.point
+    point = origin + rotation @ np.array([*surface.place_point, surface.height])
+    approach = getattr(surface, 'approach_pose', None)
+    if approach is not None:
+        xy = origin + rotation @ np.array([*approach[:2], 0.])
+        approach = (*map(float, xy[:2]), math.remainder(approach[2]+anchor.yaw, 2*math.pi))
     # shortcut: orientation is authored for a braked support; use a pose estimator when furniture can rotate.
-    return replace(surface, place_point=tuple(point[:2]), height=float(point[2])), observation, None
+    return replace(surface, place_point=tuple(point[:2]), height=float(point[2]), approach_pose=approach), observation, None
 
 
 def reach(context, surface, cfg, token):
-    joints = poses(context.arm, surface, cfg)
+    approach = getattr(surface, 'approach_pose', None)
+    joints = poses(context.arm, surface, cfg) if approach is None else None
     if joints is not None:
         return joints, None
     base, bc = context.base, cfg.get('base')
@@ -88,14 +95,30 @@ def reach(context, surface, cfg, token):
         pos, yaw = base.get_position(), base.get_heading()
         if pos is None or yaw is None or not all(math.isfinite(v) for v in (*pos[:2], yaw)):
             return None, _fail('approach_failed', 'Base pose is unknown; localize before placing.')
-        x, y, heading = compute_approach_pose((*surface.place_point, surface.height), (*pos[:2], yaw), bc['standoff'])
-        x += math.sin(heading)*bc['lateral_offset']
-        y -= math.cos(heading)*bc['lateral_offset']
+        if approach is None:
+            x, y, heading = compute_approach_pose((*surface.place_point, surface.height), (*pos[:2], yaw), bc['standoff'])
+            x += math.sin(heading)*bc['lateral_offset']
+            y -= math.cos(heading)*bc['lateral_offset']
+        else:
+            x, y, heading = approach
         if not base.navigate_to(x, y, tol=cfg['position_tolerance'], cancel=token):
             return None, _cancelled(token) or _fail('approach_failed', 'Cannot reach the surface standoff; holding the current grasp.')
         if token.is_set():
             return None, _cancelled(token)
-        error = face(base, Pose3D(*surface.place_point, surface.height), bc, token)
+        if not context.gripper.is_holding():
+            return None, _fail('not_holding', 'Object slipped during navigation; keep the base stopped and observe it again.')
+        if approach is None:
+            error = face(base, Pose3D(*surface.place_point, surface.height), bc, token)
+        else:
+            yaw = base.get_heading()
+            if yaw is None or not math.isfinite(yaw):
+                return None, _fail('approach_failed', 'Base heading is unknown; localize before placing.')
+            angle = math.remainder(heading-yaw, 2*math.pi)
+            rate = min(bc['yaw_speed'], base.limits[2])
+            if rate <= 0 and abs(angle) > bc['yaw_deadband']:
+                return None, _fail('approach_failed', 'Base cannot turn to the declared placement heading.')
+            ok, _ = turn_by(base, angle, vyaw=rate, tol=bc['yaw_deadband'], cancel=token)
+            error = _cancelled(token) or (None if ok else _fail('approach_failed', 'Placement heading was not reached; keep holding.'))
         if error:
             return None, error
         if not context.gripper.is_holding():

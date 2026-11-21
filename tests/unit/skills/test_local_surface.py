@@ -2,6 +2,7 @@
 from pathlib import Path
 import math
 from unittest.mock import Mock
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -90,3 +91,45 @@ def test_slip_during_landmark_observation_stops_before_placement(monkeypatch,los
     assert place.PlaceSkill().execute({'surface':'bench'},ctx).diagnosis_code=='not_holding'
     assert reach.call_count==lost_on-1
     ctx.arm.move_joints.assert_not_called();ctx.gripper.open.assert_not_called()
+
+
+@pytest.mark.parametrize('pose', [[.1,.2,0], [.1,.2], [.1,.2,float('nan')], 'north'])
+def test_surface_approach_requires_finite_xy_heading(pose):
+    raw=dict(schema=1,scene='scene.xml',spawn=dict(xy=[0,0],z=0,heading=0),
+             surfaces={'bench':dict(body='world',box=[0,0,1,1],height=.4,
+                                    place_point=[.5,.5],approach_pose=pose)})
+    if pose==[.1,.2,0]:
+        assert parse_world(raw,'local',Path('world.yaml')).surfaces['bench'].approach_pose==(.1,.2,0.)
+    else:
+        with pytest.raises(WorldManifestError):parse_world(raw,'local',Path('world.yaml'))
+
+
+def test_local_approach_moves_with_the_observed_landmark(monkeypatch):
+    ctx=context();ctx.perception_sources['head']=Mock()
+    s=replace(surface(),approach_pose=(-.5,-.2,math.pi/2))
+    monkeypatch.setattr(place,'perceive',lambda *a,**kw:(None,{'visible_bounds':[[1.99,2.99,.59],[2.01,3.01,.61]]},None))
+    located,_,error=place.localize(s,ctx,{},ctx.services['cancel'])
+    assert error is None
+    np.testing.assert_allclose(located.approach_pose,[1.8,3.5,0.])
+    assert s.approach_pose==(-.5,-.2,math.pi/2)
+
+
+@pytest.mark.parametrize('fault',[None,'navigation','turn','slip'])
+def test_authored_approach_is_required_even_when_the_surface_is_reachable(monkeypatch,fault):
+    ctx=context();base=Mock();ctx.base=base
+    ctx.services['object_world'].surfaces['bench'].approach_pose=(.1,.2,math.pi/2)
+    ctx.config['arm']={'postures':{'carry':[0.,0.,.7,0.,0.,0.]}}
+    ctx.config['skills']['place']['base']=dict(standoff=.4,lateral_offset=.2,carry_posture='carry',
+        yaw_speed=.1,yaw_deadband=.01,step_duration=.5,approach_steps=40)
+    base.get_position.return_value=[0.,0.,0.];base.get_heading.return_value=0.;base.limits=[.2,.2,.2]
+    def navigate(*a,**kw):
+        if fault=='slip':ctx.gripper.is_holding.return_value=False
+        return fault!='navigation'
+    base.navigate_to.side_effect=navigate
+    turn=Mock(return_value=(fault!='turn',0.));monkeypatch.setattr(place,'turn_by',turn)
+    result=place.PlaceSkill().execute({'surface':'bench'},ctx)
+    base.navigate_to.assert_called_once_with(.1,.2,tol=.015,cancel=ctx.services['cancel'])
+    assert result.success==(fault is None)
+    if fault:ctx.gripper.open.assert_not_called()
+    if fault in ('navigation','slip'):turn.assert_not_called()
+    else:assert turn.call_args.args[1]==pytest.approx(math.pi/2)
