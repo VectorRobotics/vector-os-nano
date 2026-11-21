@@ -23,7 +23,6 @@ from vector_os_nano.interfaces.physics import CompiledScene
 from vector_os_nano.sim.scene import canonical
 
 _IK_MAX_ITER = 200
-_IK_POS_TOL = 2e-3           # m
 _IK_ROT_TOL = 2e-2           # rad of the TRUE rotation angle (~1.1 deg)
 _IK_STEP_SIZE = 0.4
 _IK_DAMPING = 5e-3
@@ -60,7 +59,11 @@ def jaw_yaws(heading: float) -> list[float]:
 class ArmKinematics:
     """FK / IK of the arm *joints* (ordered) and its end-effector site *ee_site*."""
 
-    def __init__(self, scene: CompiledScene, joints: Sequence[str], ee_site: str) -> None:
+    def __init__(self, scene: CompiledScene, joints: Sequence[str], ee_site: str,
+                 position_tolerance: float = .002) -> None:
+        if not math.isfinite(position_tolerance) or position_tolerance <= 0:
+            raise ValueError('IK position tolerance must be finite and positive')
+        self._position_tolerance = position_tolerance
         m = self._m = scene.model
         ids = [scene.joint(n) for n in joints]
         self._site = mj.mj_name2id(m, mj.mjtObj.mjOBJ_SITE, ee_site)
@@ -146,12 +149,12 @@ class ArmKinematics:
             pos_err = target_pos - d.site_xpos[sid]
             if use_rot:
                 dR = target_rot @ d.site_xmat[sid].reshape(3, 3).T
-                if np.linalg.norm(pos_err) < _IK_POS_TOL and _rot_angle(dR) < _IK_ROT_TOL:
+                if np.linalg.norm(pos_err) < self._position_tolerance and _rot_angle(dR) < _IK_ROT_TOL:
                     return [float(v) for v in q]
                 rot_err = 0.5 * np.array([dR[2, 1] - dR[1, 2], dR[0, 2] - dR[2, 0], dR[1, 0] - dR[0, 1]])
                 err = np.concatenate([pos_err, rot_err])
             else:
-                if np.linalg.norm(pos_err) < _IK_POS_TOL:
+                if np.linalg.norm(pos_err) < self._position_tolerance:
                     return [float(v) for v in q]
                 err = pos_err
             mj.mj_jacSite(m, d, jacp, jacr, sid)

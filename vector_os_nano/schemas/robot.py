@@ -198,8 +198,11 @@ class ArmSpec:
     velocity: tuple[float, ...] = ()
     acceleration: tuple[float, ...] = ()
     jerk: tuple[float, ...] = ()
+    ik_tolerance: float = 0.002  # Cartesian position tolerance (m), separate from joint tracking.
 
     def __post_init__(self) -> None:
+        if isinstance(self.ik_tolerance, bool) or not math.isfinite(self.ik_tolerance) or self.ik_tolerance <= 0:
+            raise EmbodimentConfigError('arm ik_tolerance must be finite and positive')
         limits = (self.velocity, self.acceleration, self.jerk)
         if any(limits) and any(len(v) != self.dof or any(not math.isfinite(x) or x <= 0 for x in v)
                                for v in limits):
@@ -530,7 +533,7 @@ def _parse_base(raw: dict[str, Any], ctx: str) -> BaseSpec | None:
     )
 
 
-_ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper", "postures", "velocity", "acceleration", "jerk"}
+_ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper", "postures", "velocity", "acceleration", "jerk", "ik_tolerance"}
 _GRIPPER_KEYS = {"joint", "open", "closed", "finger_bodies", "weld_body", "min_opening", "assist", "speed", "force_feedback"}
 
 
@@ -561,6 +564,9 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
     joints = tuple(str(v) for v in _as_tuple(_require(a, "joints", actx)))
     ee = _keys(_require(a, "ee", actx), f"{actx}.ee", {"site"})
     g = _optional_mapping(a, "gripper", actx)
+    precision = a.get('ik_tolerance', .002)
+    if isinstance(precision, bool):
+        raise EmbodimentConfigError(f'{actx}.ik_tolerance: expected a positive number')
     return ArmSpec(
         joints=joints,
         ee_site=str(_require(ee, "site", f"{actx}.ee")),
@@ -569,6 +575,7 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
             _floats(s, len(joints), f"{actx}.ik_seeds[{i}]") for i, s in enumerate(a.get("ik_seeds") or ())
         ),
         track_tol=float(a.get("track_tol", 0.05)),
+        ik_tolerance=_floats([precision], 1, f'{actx}.ik_tolerance')[0],
         gripper=None if g is None else _parse_gripper(g, f"{actx}.gripper"),
         postures={str(n): _floats(q, len(joints), f"{actx}.postures.{n}")
                   for n, q in (_optional_mapping(a, "postures", actx) or {}).items()},

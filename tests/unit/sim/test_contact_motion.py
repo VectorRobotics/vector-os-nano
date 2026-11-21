@@ -94,6 +94,14 @@ def test_manifest_parses_contact_and_motion_limits():
         _parse_arm({'arm':raw},'test')
 
 
+def test_arm_manifest_declares_submillimetre_ik_accuracy():
+    raw = dict(joints=['0'], ee={'site':'tcp'}, home=[0.], ik_tolerance=.0001)
+    assert _parse_arm({'arm':raw}, 'test').ik_tolerance == .0001
+    for bad in (0., -.1, float('nan'), float('inf'), True, 'invalid'):
+        with pytest.raises(EmbodimentConfigError):
+            _parse_arm({'arm':dict(raw, ik_tolerance=bad)}, 'test')
+
+
 def test_contact_only_grip_never_attaches_and_detects_slip():
     scene=SimpleNamespace(joint_q=lambda j:0,robot_root=1,subtree=lambda root:{1,2,3},
                           body_ids={'world':0,'palm':1,'left':2,'right':3,'package':4},

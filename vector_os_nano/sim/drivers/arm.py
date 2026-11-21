@@ -30,7 +30,7 @@ class Arm(JointGroup):
                  abort: Callable[[], bool] = lambda: False,
                  wait_mount: Callable[[], Any] | None = None) -> None:
         super().__init__(spec, runtime, abort=abort)
-        self._kin = ArmKinematics(runtime.world.scene, spec.joints, spec.ee_site)
+        self._kin = ArmKinematics(runtime.world.scene, spec.joints, spec.ee_site, spec.ik_tolerance)
         self._wait_mount = wait_mount
 
     def move_cartesian(self, target_xyz: tuple[float, float, float], duration: float = 3.0) -> bool:

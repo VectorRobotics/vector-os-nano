@@ -81,6 +81,17 @@ def test_ik_solves_against_the_moved_base(rig) -> None:
     assert np.array(rot)[2, 2] < -0.999  # tool z = world -Z
 
 
+def test_precise_ik_resolves_motion_smaller_than_the_legacy_tolerance(rig):
+    kin = kinematics.ArmKinematics(rig.scene, rig.spec.joints, rig.spec.ee_site, position_tolerance=.0001)
+    seed = [0.3, 1.2, -1., .2, .6, .4]
+    state = rig.place(10., 3., 0., arm=seed)
+    pos, rotation = kin.fk(state, seed)
+    target = [pos[0], pos[1], pos[2]+.0005]
+    solution = kin.ik(state, target, seed, target_rotation=rotation)
+    assert solution is not None
+    assert math.dist(kin.fk(state, solution)[0], target) < .0001
+
+
 @pytest.fixture(scope="module")
 def feasible(rig) -> list[tuple[float, float, float]]:
     """250 body-frame (forward, left, z) targets — 0.15-0.65 m ahead, bearing +-0.6 rad,
