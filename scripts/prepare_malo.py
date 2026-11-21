@@ -98,7 +98,7 @@ for side in ('left','right'):
     s.body(f'{side}_gripper_link').add_site(name=f'{side}_tcp',pos=[0,0,-.115],quat=[0,2**-.5,2**-.5,0],group=4)
     s.body(f'{side}_gripper_camera_link').add_camera(name=f'{side}_wrist',quat=[0,1,0,0],fovy=85)
 camera_quat=np.zeros(4)
-mj.mju_mat2Quat(camera_quat,np.array([[0,-1,0],[0,0,1],[-1,0,0]],dtype=float).ravel())
+mj.mju_mat2Quat(camera_quat,np.array([[0,-1,0],[0,0,1],[-1,0,0]],dtype=float).T.ravel())
 for name,y in (('head',.03),('head_right',-.03)):
     s.body('stereo_camera_link').add_camera(name=name,pos=[.018,y,0],quat=camera_quat,fovy=87)
 for g in s.geoms:
@@ -134,6 +134,11 @@ json.dump({'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(), 'mas
 d = mj.MjData(m)
 mj.mj_resetDataKeyframe(m,d,0)
 mj.mj_forward(m,d)
+head=m.body('stereo_camera_link').id
+for name in ('head','head_right'):
+    camera=m.camera(name).id
+    np.testing.assert_allclose(-d.cam_xmat[camera].reshape(3,3)[:,2],d.xmat[head].reshape(3,3)[:,0],atol=1e-12)
+    np.testing.assert_allclose(d.cam_xmat[camera].reshape(3,3)[:,1],d.xmat[head].reshape(3,3)[:,2],atol=1e-12)
 assert m.njnt == 31 and m.nq == 37 and m.nu == 28
 assert all(m.actuator_forcelimited)
 print('BUILT',m.nbody,m.njnt,m.ngeom,'mass',m.body_mass.sum(),'contacts',d.ncon,flush=True)
