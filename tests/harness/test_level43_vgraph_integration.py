@@ -69,7 +69,7 @@ def _which_room(x: float, y: float) -> str | None:
 
 def _launch_stack() -> subprocess.Popen:
     """Launch nav stack via launch_nav_only.sh. Caller MUST teardown."""
-    script = _REPO / "scripts" / "launch_nav_only.sh"
+    script = _REPO / "vector_os_nano/sim/nav/ros2/launch_nav_only.sh"
     return subprocess.Popen(
         ["bash", str(script), "--no-rviz"],
         preexec_fn=os.setsid,

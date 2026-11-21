@@ -27,11 +27,11 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
-_BRIDGE = _REPO / "scripts" / "go2_vnav_bridge.py"
 
 
 def _read_bridge() -> str:
-    return _BRIDGE.read_text()
+    from tests.harness.nav_debug_helpers import read_bridge_source
+    return read_bridge_source()
 
 
 def _get_publish_pointcloud_src(src: str) -> str:

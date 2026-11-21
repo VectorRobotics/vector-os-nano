@@ -4,12 +4,9 @@
 """Shared helper for the go2_vnav_bridge source checks (L30, L41)."""
 from __future__ import annotations
 
-import os
-
-_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_BRIDGE = os.path.join(_REPO, "scripts", "go2_vnav_bridge.py")
-
+from importlib.resources import files
 
 def read_bridge_source() -> str:
-    with open(_BRIDGE) as f:
-        return f.read()
+    folder = files('vector_os_nano.sim.nav.ros2')
+    return '\n'.join(folder.joinpath(name+'.py').read_text()
+                     for name in ('parameters', 'terrain', 'motion', 'bridge'))

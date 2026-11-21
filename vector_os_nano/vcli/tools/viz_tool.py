@@ -13,6 +13,7 @@ import os
 import shutil
 import signal
 import subprocess
+from importlib.resources import files
 from typing import Any
 
 from vector_os_nano.vcli.tools.base import ToolContext, ToolResult, tool
@@ -89,7 +90,7 @@ class FoxgloveTool:
                     "Foxglove Bridge already running on ws://localhost:8765\n\n"
                     "Connect: app.foxglove.dev → Open connection → "
                     "Foxglove WebSocket → ws://localhost:8765\n"
-                    "Dashboard: foxglove/vector-os-dashboard.json"
+                    f"Dashboard: {files('vector_os_nano.sim.nav.ros2').joinpath('vector-os-dashboard.json')}"
                 )
             )
 
@@ -139,7 +140,7 @@ class FoxgloveTool:
                 "Connect:\n"
                 "  1. Open app.foxglove.dev in Chrome\n"
                 "  2. Open connection → Foxglove WebSocket → ws://localhost:8765\n"
-                "  3. Import layout: foxglove/vector-os-dashboard.json\n\n"
+                f"  3. Import layout: {files('vector_os_nano.sim.nav.ros2').joinpath('vector-os-dashboard.json')}\n\n"
                 "Use open_foxglove(action='stop') to shut down."
             )
         )

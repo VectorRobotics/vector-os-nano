@@ -34,6 +34,7 @@ CATALOGUE: dict[str, EnvVar] = {
     "VECTOR_VLM_MODEL": EnvVar("user", "gemma4:e4b", "the model that local VLM server serves"),
     "VECTOR_RYNNBRAIN_URL": EnvVar("user", "http://127.0.0.1:8786", "the RynnBrain detector server"),
     "VECTOR_NAV_STACK": EnvVar("user", "", "set: go2 explore launches the external TARE/FAR nav stack"),
+    "VECTOR_BRIDGE_QUIET": EnvVar("experimental", "", "set: external ROS navigation bridge logs warnings and errors only"),
     "VECTOR_RUN_DIR": EnvVar("user", "/tmp", "where the cross-process flag files and nav logs of one sim live"),
     "VECTOR_LLM_FALLBACK": EnvVar("experimental", "", "'openrouter': a failing LLM call is retried there"),
     "VECTOR_LLM_FALLBACK_MODEL": EnvVar("experimental", "anthropic/claude-sonnet-4-6", "the fallback's model"),

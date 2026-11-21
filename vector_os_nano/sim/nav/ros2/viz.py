@@ -4,7 +4,7 @@
 """RViz MarkerArray publisher for the three-layer scene graph.
 
 Publishes to /scene_graph_markers (visualization_msgs/MarkerArray) at 1 Hz.
-Designed to be embedded in the Go2VNavBridge node or run standalone.
+Used by the optional navigation bridge.
 
 Marker namespaces
 -----------------

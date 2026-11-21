@@ -39,7 +39,7 @@ def _get_method_body(source: str, method_name: str) -> str:
 
 def _get_init_body(source: str) -> str:
     """Return source slice for Go2VNavBridge.__init__."""
-    cls_start = source.find("class Go2VNavBridge")
+    cls_start = source.find("class NavigationBridge")
     body = source[cls_start:]
     start = body.find("    def __init__(")
     end = body.find("\n    def ", start + 1)

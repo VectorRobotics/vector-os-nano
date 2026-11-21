@@ -24,17 +24,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nav_debug_helpers import read_bridge_source
 
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_BRIDGE = os.path.join(_REPO, "scripts", "go2_vnav_bridge.py")
 
 
 def _load_accumulator():
-    """Import TerrainAccumulator from bridge without importing ROS2."""
-    src = open(_BRIDGE).read()
-    start = src.find("class TerrainAccumulator")
-    end = src.find("\nclass Go2VNavBridge")
-    ns = {}
-    exec(src[start:end], ns)
-    return ns["TerrainAccumulator"]
+    from vector_os_nano.sim.nav.ros2.terrain import TerrainAccumulator
+    return TerrainAccumulator
 
 
 # ===================================================================

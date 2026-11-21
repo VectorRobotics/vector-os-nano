@@ -413,8 +413,8 @@ class TestDataChainCompatibility:
         publisher is compatible with a BEST_EFFORT subscriber (pub offers more
         than sub requires). This combination is safe.
         """
-        bridge_path = _REPO_ROOT / "scripts" / "go2_vnav_bridge.py"
-        src = bridge_path.read_text()
+        from tests.harness.nav_debug_helpers import read_bridge_source
+        src = read_bridge_source()
 
         # reliable_qos is defined and used for both publishers
         assert "reliable_qos" in src, "reliable_qos profile not found in bridge"

@@ -20,7 +20,7 @@ _SCRIPTS = ["launch_nav_only.sh"]
 
 
 def _content(script: str) -> str:
-    return (_REPO / "scripts" / script).read_text()
+    return (_REPO / "vector_os_nano/sim/nav/ros2" / script).read_text()
 
 
 @pytest.mark.parametrize("script", _SCRIPTS)

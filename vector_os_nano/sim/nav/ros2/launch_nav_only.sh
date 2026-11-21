@@ -3,15 +3,14 @@
 # Used when the bridge is managed by another process (e.g., run.py agent).
 #
 # Usage:
-#   ./scripts/launch_nav_only.sh              # VNav + TARE + RViz
-#   ./scripts/launch_nav_only.sh --no-tare    # VNav only (manual goals)
-#   ./scripts/launch_nav_only.sh --no-rviz    # headless (no RViz)
+#   bash launch_nav_only.sh              # VNav + TARE + RViz
+#   bash launch_nav_only.sh --no-tare    # VNav only (manual goals)
+#   bash launch_nav_only.sh --no-rviz    # headless (no RViz)
 
 set -e
 set -m
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
 source "$(cd "$(dirname "$0")" && pwd)/nav_env.sh"
 
 NO_TARE=""
@@ -37,7 +36,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-RVIZ_CFG="$REPO_DIR/config/vnav.rviz"
+RVIZ_CFG="$SCRIPT_DIR/vnav.rviz"
 
 echo "[1/5] Starting local planner..."
 ros2 launch local_planner local_planner.launch.py \
@@ -79,7 +78,7 @@ sleep 3
 if [ -z "$NO_TARE" ]; then
     echo "[4.5/5] Starting TARE planner..."
     ros2 run tare_planner tare_planner_node --ros-args -r __node:=tare_planner_node \
-        --params-file "$REPO_DIR/config/tare_go2_indoor.yaml" &
+        --params-file "$SCRIPT_DIR/tare_go2_indoor.yaml" &
     PIDS+=($!)
     sleep 2
 fi

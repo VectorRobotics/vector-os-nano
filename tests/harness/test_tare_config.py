@@ -3,15 +3,11 @@
 
 """Validate TARE config values for Go2 indoor exploration."""
 import yaml
-import os
+from importlib.resources import files
 
 
 def load_tare_config():
-    cfg_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "config", "tare_go2_indoor.yaml"
-    )
-    with open(cfg_path) as f:
-        return yaml.safe_load(f)
+    return yaml.safe_load(files('vector_os_nano.sim.nav.ros2').joinpath('tare_go2_indoor.yaml').read_text())
 
 
 def test_viewpoint_collision_margin_sufficient():

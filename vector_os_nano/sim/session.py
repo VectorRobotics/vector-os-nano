@@ -723,9 +723,7 @@ def _launch_ros2_stack(base: Any, camera: Any, lidar: Any, reset: Callable[[], N
     Returns the cleanup the session owns: stops the monitor and kills every
     process group in the sessions this call created (nothing else), closes the log.
     """
-    import importlib.util
     import subprocess
-    import sys
     import threading
 
     try:
@@ -734,13 +732,8 @@ def _launch_ros2_stack(base: Any, camera: Any, lidar: Any, reset: Callable[[], N
         raise RuntimeError("ROS2 (rclpy) not available") from exc
     if not rclpy.ok():
         rclpy.init()
-    spec = importlib.util.spec_from_file_location(
-        "_vnav_bridge", _REPO / "scripts" / "go2_vnav_bridge.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["_vnav_bridge"] = mod
-    spec.loader.exec_module(mod)
-    node = mod.Go2VNavBridge(base, camera, lidar, reset, terrain_map=terrain_map)
+    from vector_os_nano.sim.nav.ros2.bridge import NavigationBridge
+    node = NavigationBridge(base, camera, lidar, reset, terrain_map=terrain_map)
 
     def _spin() -> None:
         try:
@@ -751,7 +744,7 @@ def _launch_ros2_stack(base: Any, camera: Any, lidar: Any, reset: Callable[[], N
     spin_t = threading.Thread(target=_spin, daemon=True, name="vnav_bridge_spin")
     spin_t.start()
 
-    argv = [str(_REPO / "scripts" / "launch_nav_only.sh")] + ([] if gui else ["--no-rviz"])
+    argv = ["bash", str(Path(__file__).parent / "nav/ros2/launch_nav_only.sh")] + ([] if gui else ["--no-rviz"])
     log_path = Path(run_path("vector_nav_only.log"))
     if log_path.exists() and log_path.stat().st_size > 5 * 1024 * 1024:
         log_path.write_text("")  # bound disk use
