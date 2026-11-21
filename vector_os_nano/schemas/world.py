@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from vector_os_nano.schemas.strict import yaml_loader
+from vector_os_nano.schemas.paths import manifest_folders
 
 WORLDS_DIR = Path(__file__).resolve().parents[1] / "worlds"
 
@@ -307,21 +308,32 @@ def world_of(agent: Any) -> WorldManifest | None:
     return load_world(str(world_id)) if world_id else None
 
 
-@functools.lru_cache(maxsize=8)
+def world_folders() -> dict[str, Path]:
+    return manifest_folders(WORLDS_DIR, 'worlds', 'world.yaml', error=WorldManifestError)
+
+
 def load_world(world_id: str) -> WorldManifest:
     """Load ``worlds/<world_id>/world.yaml``; unknown id fails loud with the valid set."""
-    valid = sorted(p.parent.name for p in WORLDS_DIR.glob("*/world.yaml"))
-    path = WORLDS_DIR / world_id / "world.yaml"
-    if world_id not in valid:
-        raise WorldManifestError(f"unknown world {world_id!r}; valid: {valid}")
-    return load_world_file(path)
+    folders = world_folders()
+    if world_id not in folders:
+        raise WorldManifestError(f"unknown world {world_id!r}; valid: {sorted(folders)}")
+    return load_world_file(folders[world_id] / 'world.yaml')
 
 
 def load_world_file(path: str | Path) -> WorldManifest:
     """Read a world file through the same strict schema, including layout-seeding callers."""
     path = Path(path)
     try:
-        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml_loader(path, WorldManifestError))
-    except (OSError, yaml.YAMLError) as exc:
+        text = path.read_text(encoding='utf-8')
+    except OSError as exc:
         raise WorldManifestError(f"{path}: unreadable ({exc})") from exc
+    return _parse_world_text(path, text)
+
+
+@functools.lru_cache(maxsize=16)
+def _parse_world_text(path: Path, text: str) -> WorldManifest:
+    try:
+        raw = yaml.load(text, Loader=yaml_loader(path, WorldManifestError))
+    except yaml.YAMLError as exc:
+        raise WorldManifestError(f'{path}: unreadable ({exc})') from exc
     return parse_world(raw, path.parent.name, path)

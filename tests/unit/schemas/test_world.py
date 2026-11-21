@@ -46,14 +46,10 @@ def test_duplicate_keys_and_path_traversal_rejected(tmp_path, monkeypatch):
     folder.mkdir()
     (folder / 'world.yaml').write_text('schema: 1\nschema: 1\n')
     monkeypatch.setattr(world, 'WORLDS_DIR', tmp_path)
-    world.load_world.cache_clear()
-    try:
-        with pytest.raises(world.WorldManifestError, match='duplicate key schema'):
-            world.load_world('test')
-        with pytest.raises(world.WorldManifestError, match='unknown world.*valid'):
-            world.load_world('../test')
-    finally:
-        world.load_world.cache_clear()
+    with pytest.raises(world.WorldManifestError, match='duplicate key schema'):
+        world.load_world('test')
+    with pytest.raises(world.WorldManifestError, match='unknown world.*valid'):
+        world.load_world('../test')
 
 
 @pytest.mark.parametrize('name', ['apartment', 'tabletop', 'workbench'])

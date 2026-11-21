@@ -16,7 +16,7 @@ from dataclasses import replace
 
 def embodiment_ids() -> list[str]:
     """Ids of every embodiment that ships a manifest, sorted."""
-    return sorted(p.parent.name for p in _config._EMBODIMENTS_DIR.glob("*/robot.yaml"))
+    return sorted(_config.robot_folders())
 
 
 def load(embodiment_id: str) -> EmbodimentConfig:

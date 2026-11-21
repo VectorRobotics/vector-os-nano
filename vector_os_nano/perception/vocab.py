@@ -13,11 +13,10 @@ substrings. Pure data: no MuJoCo, no torch.
 """
 from __future__ import annotations
 
-import functools
 import re
 from dataclasses import dataclass
 
-from vector_os_nano.schemas.world import WORLDS_DIR, _has, load_world
+from vector_os_nano.schemas.world import world_folders, _has, load_world
 
 # Words that never name the object: articles, pronouns and the verbs of a request.
 _STOP = frozenset(
@@ -89,10 +88,9 @@ class Vocab:
 
 
 def _world_ids() -> list[str]:
-    return sorted(p.parent.name for p in WORLDS_DIR.glob("*/world.yaml"))
+    return sorted(world_folders())
 
 
-@functools.lru_cache(maxsize=1)
 def vocab() -> Vocab:
     """The vocabulary of every world manifest in ``worlds/*/world.yaml`` (their colour and
     category words and aliases)."""

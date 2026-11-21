@@ -87,6 +87,18 @@ def assets(name: str) -> Path:
     return home() / "assets" / name
 
 
+def manifest_folders(packaged: Path, kind: str, filename: str, *, error: type[ValueError]) -> dict[str, Path]:
+    """Discover packaged and user folders; user data never silently replaces a shipped id."""
+    out = {}
+    for directory in (packaged, home() / kind):
+        for manifest in sorted(directory.glob(f'*/{filename}')):
+            name = manifest.parent.name
+            if name in out:
+                raise error(f'duplicate {kind} id {name!r}: {out[name] / filename} and {manifest}')
+            out[name] = manifest.parent
+    return out
+
+
 def scene_cache() -> Path:
     """Generated scene files (regenerable)."""
     return home() / "cache" / "scenes"

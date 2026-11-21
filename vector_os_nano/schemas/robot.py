@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from vector_os_nano.schemas.strict import yaml_loader
+from vector_os_nano.schemas.paths import manifest_folders
 
 # Directory holding the per-embodiment subfolders (go2/, g1/, …).
 _EMBODIMENTS_DIR: Path = Path(__file__).resolve().parents[1] / "embodiments"
@@ -678,14 +679,19 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml", *,
     return _prefixed(cfg, model.prefix) if composition is None else cfg
 
 
+def robot_folders() -> dict[str, Path]:
+    return manifest_folders(_EMBODIMENTS_DIR, 'embodiments', 'robot.yaml', error=EmbodimentConfigError)
+
+
 def load_embodiment_config(embodiment_id: str, *, _stack: tuple[str, ...] = ()) -> EmbodimentConfig:
     """Load a robot folder, resolving composed children with cycle and identity checks."""
-    valid = sorted(p.parent.name for p in _EMBODIMENTS_DIR.glob('*/robot.yaml'))
+    folders = robot_folders()
+    valid = sorted(folders)
     if not isinstance(embodiment_id, str) or embodiment_id not in valid:
         raise EmbodimentConfigError(f'robot.yaml: unknown embodiment {embodiment_id!r}; valid: {valid}')
     if embodiment_id in _stack:
         raise EmbodimentConfigError(f'compose cycle: {" -> ".join((*_stack, embodiment_id))}')
-    path = _EMBODIMENTS_DIR / embodiment_id / 'robot.yaml'
+    path = folders[embodiment_id] / 'robot.yaml'
     try:
         raw = yaml.load(path.read_text(), Loader=yaml_loader(path, EmbodimentConfigError))
     except (OSError, yaml.YAMLError) as exc:
