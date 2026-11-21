@@ -17,6 +17,21 @@ def visible_copy(model, xml_path):
     """Omit default-hidden collision meshes from the read-only renderer, never from physics."""
     xml_path = Path(xml_path)
     root = ET.parse(xml_path).getroot()
+    # A visible wrapper can be massless; retain inertia supplied by the hidden physical geoms.
+    compiler = root.find('compiler')
+    if compiler is None:
+        compiler = ET.SubElement(root, 'compiler')
+    compiler.set('inertiafromgeom', 'false')
+    for body in root.iter('body'):
+        name = body.get('name')
+        i = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, name) if name else -1
+        if i < 0 or model.body_mass[i] <= 0:
+            continue
+        for inertial in body.findall('inertial'):
+            body.remove(inertial)
+        ET.SubElement(body, 'inertial', mass=str(model.body_mass[i]),
+            pos=' '.join(map(str, model.body_ipos[i])), quat=' '.join(map(str, model.body_iquat[i])),
+            diaginertia=' '.join(map(str, model.body_inertia[i])))
     hidden = {model.geom(i).name for i in range(model.ngeom) if model.geom_group[i] >= 3}
     for parent in root.iter():
         parent[:] = [el for el in parent if not (el.tag == 'geom' and
@@ -48,7 +63,8 @@ def visible_copy(model, xml_path):
     chosen = np.flatnonzero(model.geom_group < 3)
     if len(chosen) != visible.ngeom or (model.nq, model.nv, model.nu) != (visible.nq, visible.nv, visible.nu):
         raise ValueError('visual copy changed state layout or visible geometry count')
-    for field in ('qpos0', 'body_pos', 'body_quat', 'jnt_pos', 'jnt_axis', 'jnt_qposadr', 'body_parentid',
+    for field in ('qpos0', 'body_pos', 'body_quat', 'body_mass', 'body_inertia', 'body_ipos', 'body_iquat',
+                  'jnt_pos', 'jnt_axis', 'jnt_qposadr', 'body_parentid',
                   'mat_rgba', 'mat_roughness', 'mat_metallic', 'cam_pos', 'cam_quat', 'cam_fovy', 'tex_data'):
         np.testing.assert_allclose(getattr(model, field), getattr(visible, field), atol=1e-12, rtol=0)
     for field in ('geom_pos', 'geom_quat', 'geom_size', 'geom_bodyid', 'geom_type', 'geom_matid', 'geom_rgba'):
@@ -89,7 +105,7 @@ def replay(recording, *, gfx='opengl_software', camera=None, max_frames=None):
     model = mj.MjModel.from_binary_path(path) if path.endswith('.mjb') else mj.MjModel.from_xml_path(path)
     # Filament allocates resources even for hidden meshes; the full CAD collider set exhausts its arena.
     original_geoms = model.ngeom
-    model = visible_copy(model, Path(path).with_suffix('.xml'))
+    model = visible_copy(model, Path(meta.get('source_model_path', path)).with_suffix('.xml'))
     visible_geoms = model.ngeom
     camera_id = model.camera(camera).id if camera else None
     endpoint, _ = launch_thread.make_thread_endpoints()
