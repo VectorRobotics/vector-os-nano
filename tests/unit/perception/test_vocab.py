@@ -38,6 +38,16 @@ def test_every_name_of_every_world_object_has_an_english_phrase() -> None:
                 assert vocab().english(name), (w, name)
 
 
+def test_specific_package_names_do_not_collapse_to_generic_categories(monkeypatch):
+    from pathlib import Path
+    monkeypatch.setenv('VECTOR_HOME', str(Path(__file__).resolve().parents[3]/'examples/household'))
+    for query, expected in [('tissue refill', 'tissue refill'), ('纸巾补充装', 'tissue refill'),
+                            ('zip bag box', 'zip bag box'), ('一盒密封袋', 'zip bag box'),
+                            ('pick up the cardboard box on the table', 'cardboard box'),
+                            ('green sponge pack', 'green sponge pack')]:
+        assert vocab().english(query) == expected
+
+
 @pytest.mark.parametrize("text, ok", [
     ("那个罐子", True), ("香蕉", True), ("红色的", True), ("红色的苹果", False), ("白色的瓶子", False),
     ("抓红色的罐子", False), ("", False),

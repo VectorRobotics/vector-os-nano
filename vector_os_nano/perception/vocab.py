@@ -72,14 +72,16 @@ class Vocab:
         if not q:
             return ""
         colour, noun = self.colour(q), self.noun(q)
-        if noun:
-            return f"{colour} {noun}" if colour else noun
         if q.isascii():
             colour_words = {w for w, _ in self.colours}
-            words = self._words(q)
+            # Keep identifying modifiers; a following location belongs to navigation.
+            phrase = re.split(r"\b(?:on|in|at|near|behind|beside|under|from)\b", q, maxsplit=1)[0]
+            words = self._words(phrase)
             if all(w in _GENERIC or w in colour_words for w in words):
                 return f"{colour} object" if colour else ""
             return " ".join(words)
+        if noun:
+            return f"{colour} {noun}" if colour and not noun.startswith(colour + " ") else noun
         if colour:
             return f"{colour} object"
         if any(g in q for g in _GENERIC_ZH):
@@ -107,11 +109,12 @@ def vocab() -> Vocab:
                 nouns.setdefault(word.lower(), cat)
         for p in w.pickables.values():
             for a in (p.category, *p.aliases):
-                aliases.setdefault(a.lower(), p.category)
-    cat_words = tuple(nouns)
-    for a, cat in aliases.items():  # "香蕉" names a banana; "绿色的瓶子" is a bottle by 瓶
-        if not any(_has(a, w) for w in cat_words):
-            nouns.setdefault(a, cat)
+                aliases.setdefault(a.lower(), p.english)
+    category_forms = {form for word in nouns for form in
+                      ((word, word + 's', word + 'es') if word.isascii() else (word, word + '子'))}
+    for a, phrase in aliases.items():
+        if a not in category_forms:
+            nouns.setdefault(a, phrase)
 
     def longest_first(d: dict[str, str]) -> tuple[tuple[str, str], ...]:
         return tuple(sorted(d.items(), key=lambda kv: -len(kv[0])))
