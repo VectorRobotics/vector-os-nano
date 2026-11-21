@@ -118,7 +118,8 @@ for camera in record['cameras']:
     obj.name = 'Recorded camera '+camera['name']
     obj.data.sensor_fit = 'VERTICAL'
     obj.data.angle_y = math.radians(camera['fovy'])
-    obj.data.clip_start = .01
+    obj.data.clip_start = camera['clip_start']
+    obj.data.clip_end = camera['clip_end']
     obj.rotation_mode = 'QUATERNION'
     cameras.append(obj)
 views = []

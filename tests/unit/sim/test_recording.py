@@ -83,6 +83,9 @@ def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monk
     np.testing.assert_array_equal(states['qpos'][-1], world.state()[0])
     np.testing.assert_array_equal(loads['force_on_b'], contacts[:, 6:9])
     replay = export(directory, tmp_path/'blender', 'object')
+    camera = replay['cameras'][0]
+    assert camera['clip_start'] == pytest.approx(scene.model.vis.map.znear*scene.model.stat.extent)
+    assert camera['clip_end'] == pytest.approx(scene.model.vis.map.zfar*scene.model.stat.extent)
     poses = np.load(tmp_path/'blender/poses.npz')
     np.testing.assert_array_equal(poses['time'], states['sim_time'][replay['source_rows'], 0])
     np.testing.assert_array_equal(poses['bodies'][-1, 0], states['qpos'][-1])

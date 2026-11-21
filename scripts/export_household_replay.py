@@ -81,7 +81,9 @@ def export(recording, output, root_body, fps=30):
     result = dict(schema=1, recording=str(Path(recording).resolve()), model_sha256=meta['model_sha256'],
                   fps=fps, frames=len(indices), source_rows=indices.tolist(),
                   bodies=[m.body(b).name for b in bodies], root_body=root_body,
-                  cameras=[dict(name=m.camera(i).name, fovy=float(m.cam_fovy[i])) for i in range(m.ncam)],
+                  cameras=[dict(name=m.camera(i).name, fovy=float(m.cam_fovy[i]),
+                                clip_start=float(m.vis.map.znear*m.stat.extent),
+                                clip_end=float(m.vis.map.zfar*m.stat.extent)) for i in range(m.ncam)],
                   geometry=geometry, materials=materials, physical_verdict='unverified', motion_verdict='unverified',
                   scope='Offline re-render of measured states; not original agent sensor input; no motion edits')
     result['files'] = {name: hashlib.sha256((output/name).read_bytes()).hexdigest()
