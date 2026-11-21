@@ -43,8 +43,10 @@ def validate(cfg: EmbodimentConfig, *, ctx: str = "robot.yaml") -> EmbodimentCon
         for name in policy.by_backend:
             _check_policy_row(*policy.on(name), f"{pctx}.by_backend.{name}")
     from vector_os_nano.skills.grasp_config import parse
+    from vector_os_nano.skills.place_config import parse as parse_place
+    from vector_os_nano.skills.transport import parse as parse_transport
 
-    owners = {'grasp': parse}
+    owners = {'grasp': parse, 'place': parse_place, 'transport': parse_transport}
     skills = {}
     for name, params in cfg.skills.items():
         if name not in owners:

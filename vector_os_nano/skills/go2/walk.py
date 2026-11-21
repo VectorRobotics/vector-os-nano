@@ -15,6 +15,7 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.skills.transport import prepare
 from vector_os_nano.skills.go2.turn import normalize_direction
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,9 @@ class WalkSkill:
             direction, vx, vy, 0.0, duration,
         )
 
+        error = prepare(context)
+        if error:
+            return error
         start = _position(context.base)
         ok = context.base.walk(vx, vy, 0.0, duration)
         end = _position(context.base)

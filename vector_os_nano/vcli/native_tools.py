@@ -16,8 +16,8 @@ import json
 import logging
 from typing import Any
 
-from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult
-from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
+from vector_os_nano.vcli.tools.base import PermissionResult, ToolContext, ToolResult, live_agent
+from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool, wrap_skills
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +51,6 @@ _ROBOT_TOOL_CATEGORY = "robot"
 _MUTATING_CODE_TOOLS: frozenset[str] = frozenset({"file_write", "file_edit", "bash"})
 
 
-# D9 #1 — the avoidance NAVIGATION route.
-_NAV_TIMEOUT_S = 60.0
-
-
 def _agent_base(context: ToolContext) -> Any:
     """The connected mobile base from the tool context's agent (the WIRED accessor).
 
@@ -66,20 +62,10 @@ def _agent_base(context: ToolContext) -> Any:
 
 
 class _NativeBaseNavigateTool:
-    """Coordinate navigation through the nav-stack AVOIDANCE route (D9 #1).
+    """Coordinate schema and world arrival hint around the registered navigate skill.
 
-    ``execute`` calls the connected base's ``navigate_to(x, y)``: the in-process
-    planner (vgraph + the one sim-time follower) plans around the scene's obstacles and
-    blocks until arrival, a stop, or timeout. This is the obstacle avoidance the
-    open-loop ``walk`` lacks. The follower streams velocity inside the producer's
-    ``ACTOR_EPOCH`` (the dispatch is open), so its commanded motion counts and a
-    ``navigate`` step's ``at_position`` verify grades CAUSED when the base really moved
-    there (closes D14's "nav RAN-only"); an external TARE/FAR follower driving the base
-    between tools is never counted. ``verify_hint`` auto-verifies the target after it
-    returns; it and the sentence about it are read off the world's arrival oracle
-    (``ARRIVAL_ORACLE``): its own parameters bind the call's ``x`` / ``y``, its own
-    signature and docstring are what the model reads. A world without that oracle gets
-    no hint. Duck-typed like a ``Tool`` so ``dispatch_skill`` runs it uniformly.
+    Execution uses the same SkillWrapperTool as room navigation and MCP. The
+    world's independent arrival oracle still determines the physical verdict.
     """
 
     name = "navigate"
@@ -118,56 +104,15 @@ class _NativeBaseNavigateTool:
         return False
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
+        agent = live_agent(context)
+        registry = getattr(agent, "_skill_registry", None)
+        nav = registry.get(self.name) if registry is not None else None
+        if nav is None:
+            return ToolResult(content="This robot has no navigate skill.", is_error=True)
         try:
-            x = float(params["x"])
-            y = float(params["y"])
-        except (KeyError, TypeError, ValueError):
-            return ToolResult(content="navigate requires numeric x and y.", is_error=True)
-
-        base = _agent_base(context)
-        navigate_to = getattr(base, "navigate_to", None)
-        if not callable(navigate_to):
-            return ToolResult(
-                content="navigate: the connected base has no navigate_to (no nav stack).",
-                is_error=True,
-            )
-
-        res = None
-        # Pass a timeout only to a base that takes one: retrying on ANY TypeError
-        # would re-run a navigation that raised one mid-way.
-        try:
-            params_ = inspect.signature(navigate_to).parameters.values()
-            takes_timeout = any(p.name == "timeout" or p.kind is p.VAR_KEYWORD for p in params_)
-        except (TypeError, ValueError):
-            takes_timeout = False
-        try:
-            res = navigate_to(x, y, timeout=_NAV_TIMEOUT_S) if takes_timeout else navigate_to(x, y)
-            ok = bool(res)
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(content=f"navigate({x}, {y}) failed: {exc}", is_error=True)
-
-        pos = None
-        getter = getattr(base, "get_position", None)
-        if callable(getter):
-            try:
-                pos = getter()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("native_loop: navigate get_position failed: %s", exc)
-        where = f"({pos[0]:.2f}, {pos[1]:.2f})" if pos else "unknown"
-        reason = getattr(res, "reason", None)  # the in-process planner's NavResult (Rule 4)
-        if ok:
-            status = "arrived"
-            if reason is not None and res.get("snapped"):
-                status += f" at {tuple(res['target'])}, the nearest free point (the target is inside an obstacle)"
-        elif getattr(getattr(context, "abort", None), "is_set", lambda: False)():
-            status = "was STOPPED before arrival"
-        elif reason is not None:
-            status = f"did NOT arrive ({reason})"
-        else:
-            status = "did NOT confirm arrival (FAR graph unavailable or timeout)"
-        return ToolResult(
-            content=f"navigate: {status}; now at {where} (target ({x}, {y}))."
-        )
+            return SkillWrapperTool(nav, agent).execute(params, context)
+        except Exception as exc:
+            return ToolResult(content=f"navigate failed: {exc}", is_error=True)
 
 
 class _NativeDetectTool:
@@ -446,13 +391,13 @@ def _build_motor_tools(agent: Any, engine: Any) -> dict[str, Any]:
         tools[tool.name] = tool
         cap_names.add(tool.name)
     # Source 1: the world's skills (robot worlds only; dev world has no agent). The
-    # world's own ``navigate`` skill (door-chain walk, NOT lidar avoidance) stays
-    # excluded; our coordinate ``navigate`` above is the planner/avoidance route.
+    # coordinate adapter above supplies its world-bound arrival hint; execution
+    # still goes through the registered navigate skill.
     if agent is not None:
         try:
             for skill_tool in wrap_skills(agent):
                 if skill_tool.name == "navigate":
-                    continue  # world room-navigate is door-chain walk; ours is the avoidance route
+                    continue  # the coordinate adapter retains the world arrival hint
                 if skill_tool.name in cap_names:
                     continue  # a registered capability (Source 4) wins over a same-named skill
                 tools[skill_tool.name] = skill_tool

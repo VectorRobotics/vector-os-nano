@@ -40,12 +40,12 @@ _SCRIPT = {"steps": [
         {"name": "start_simulation", "input": {"embodiment": "go2", "gui": False}}]},
     {"when": "", "text": "go2 仿真已启动", "tool_calls": []},
     _nav("走到坐标", _D),                                   # the wrong room: lands short of the goal
-    _verify(f"(target ({_D[0]}, {_D[1]}))", _K),            # -> FAIL
+    _verify("Skill 'navigate' succeeded.", _K),            # -> FAIL
     _nav("-> FAIL", _K),                                    # recover: navigate again
-    _verify(f"(target ({_K[0]}, {_K[1]}))", _K),            # the SAME predicate -> PASS
+    _verify("Skill 'navigate' succeeded.", _K),            # the SAME predicate -> PASS
     {"when": "-> PASS (result=True", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     _nav("回到起点", _S),                                   # no model verify: the hint verifies
-    {"when": f"(target ({_S[0]}, {_S[1]}))", "tool_calls": [{"name": "finish", "input": {}}],
+    {"when": "Skill 'navigate' succeeded.", "tool_calls": [{"name": "finish", "input": {}}],
      "stop_reason": "end_turn"},
 ]}
 

@@ -108,7 +108,7 @@ def test_re_dispatching_the_same_action_still_recovers() -> None:
     agent = _nav_agent()
     real = agent._base.navigate_to
 
-    def _nav(x, y, timeout=None):  # noqa: ANN001, ANN202 — the first try lands short
+    def _nav(x, y, timeout=None, **kwargs):  # noqa: ANN001, ANN202 — the first try lands short
         _Short.n += 1
         return real(5.0, 3.0) if _Short.n == 1 else real(x, y)
 

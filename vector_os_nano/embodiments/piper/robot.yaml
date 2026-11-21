@@ -60,3 +60,13 @@ skills:
     reach_m: 0.7
     view_duration: 1.2
     hold_duration: 2.0
+
+  place:
+    hover_height: 0.12
+    release_height: 0.04
+    retreat_height: 0.1
+    durations: [4.0, 2.0, 2.0]
+    settle_duration: 0.5
+    reach_m: 0.7
+    position_tolerance: 0.015
+    keep_orientation: false

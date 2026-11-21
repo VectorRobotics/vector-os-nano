@@ -1,6 +1,10 @@
 """Development CLI grasp from an authored observation reset; no held-out or whole-home claim."""
 import json
 import os
+import hashlib
+import shutil
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 import pytest
 import yaml
@@ -9,12 +13,22 @@ from tests.harness import live_matrix as lm
 pytestmark = [pytest.mark.sim, pytest.mark.timeout(900)]
 
 
-def _grasp(tmp_path, monkeypatch, *, live=False):
-    configured = os.environ.get('HOUSEHOLD_ASSETS')
-    if not configured:
-        pytest.skip('HOUSEHOLD_ASSETS must name the locally converted private-CAD asset store')
-    assets = Path(configured)
-    monkeypatch.setenv('VECTOR_HOME', str(assets))
+def snapshot(out, assets, world):
+    """Retain controller, grading and config provenance beside the immutable physics model."""
+    out.mkdir(parents=True, exist_ok=True)
+    repo = Path(__file__).resolve().parents[2]
+    patch = subprocess.check_output(['git', 'diff', 'HEAD', '--', 'vector_os_nano',
+                                    'examples/household', 'scripts', 'tests/household'], cwd=repo)
+    (out/'controller.patch').write_bytes(patch)
+    for source, name in ((assets/'embodiments/malo/robot.yaml', 'robot.yaml'),
+                         (assets/'worlds'/world/'world.yaml', 'world.yaml')):
+        shutil.copyfile(source, out/name)
+    (out/'checkpoint.json').write_text(json.dumps(dict(timestamp=datetime.now(timezone.utc).isoformat(),
+        commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
+        patch_sha256=hashlib.sha256(patch).hexdigest(), reset_seed=0), indent=2))
+
+
+def prepare_world(assets):
     source = assets/'worlds/artvip_home'
     world_name = 'artvip_grasp_validation'
     fixture = assets/'worlds'/world_name
@@ -31,7 +45,18 @@ def _grasp(tmp_path, monkeypatch, *, live=False):
         assert yaml.safe_load(manifest.read_text()) == raw, 'existing validation world differs; do not overwrite it'
     else:
         manifest.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    return world_name
+
+
+def _grasp(tmp_path, monkeypatch, *, live=False):
+    configured = os.environ.get('HOUSEHOLD_ASSETS')
+    if not configured:
+        pytest.skip('HOUSEHOLD_ASSETS must name the locally converted private-CAD asset store')
+    assets = Path(configured)
+    monkeypatch.setenv('VECTOR_HOME', str(assets))
+    world_name = prepare_world(assets)
     out = Path(os.environ.get('GATE_OUT', tmp_path))/('grasp-live' if live else 'grasp')
+    snapshot(out, assets, world_name)
     monkeypatch.setenv('VECTOR_ROLLOUT_DIR', str(out/'rollouts'))
     monkeypatch.setenv('VECTOR_ROLLOUT_CAMERAS', 'head,left_wrist')
     cell = dict(id='malo-contact-grasp', body='malo', backend='mujoco', kind='grasp',

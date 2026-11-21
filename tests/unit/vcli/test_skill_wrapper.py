@@ -568,7 +568,6 @@ class TestSchemaPassthrough:
     def test_enum_default_and_array_types_survive(self) -> None:
         from vector_os_nano.skills.go2.patrol import PatrolSkill
         from vector_os_nano.skills.go2.walk import WalkSkill
-        from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
         from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
 
         walk = SkillWrapperTool(WalkSkill(), None).input_schema["properties"]["direction"]
@@ -576,8 +575,6 @@ class TestSchemaPassthrough:
         assert walk["default"] == "forward"
         rooms = SkillWrapperTool(PatrolSkill(), None).input_schema["properties"]["rooms"]
         assert rooms["type"] == "array" and rooms["items"] == {"type": "string"}
-        xyz = SkillWrapperTool(PlaceTopDownSkill(), None).input_schema["properties"]["target_xyz"]
-        assert xyz["type"] == "array"  # declared "list"
 
     def test_json_string_array_is_coerced(self) -> None:
         from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool

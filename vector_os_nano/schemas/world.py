@@ -53,6 +53,7 @@ class Surface:
     box: tuple[float, float, float, float]
     height: float
     aliases: tuple[str, ...] = ()  # what NL calls it ("餐桌", "dining table")
+    place_point: tuple[float, float] | None = None  # authored world XY, never inferred from missing data
 
 
 # The ONE closed list of words a reference may carry besides this world's own: articles
@@ -265,9 +266,13 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
     surfaces: dict[str, Surface] = {}
     for name, value in _mapping(raw.get('surfaces', {}), f'{ctx}: surfaces').items():
         key = f'{ctx}: surfaces.{name}'
-        row = _mapping(value, key, ('body', 'box', 'height', 'aliases'), ('body', 'box', 'height'))
-        surfaces[name] = Surface(name, _text(row['body'], f'{key}.body'), _box(row['box'], f'{key}.box'),
-                                 _number(row['height'], f'{key}.height'), _words(row.get('aliases', []), f'{key}.aliases'))
+        row = _mapping(value, key, ('body', 'box', 'height', 'aliases', 'place_point'), ('body', 'box', 'height'))
+        point = _xy(row['place_point'], f'{key}.place_point') if 'place_point' in row else None
+        box = _box(row['box'], f'{key}.box')
+        if point is not None and not (box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]):
+            raise WorldManifestError(f'{key}.place_point: must lie within the declared surface box')
+        surfaces[name] = Surface(name, _text(row['body'], f'{key}.body'), box,
+                                 _number(row['height'], f'{key}.height'), _words(row.get('aliases', []), f'{key}.aliases'), point)
     pickables: dict[str, Pickable] = {}
     for name, value in _mapping(raw.get('pickables', {}), f'{ctx}: pickables').items():
         key = f'{ctx}: pickables.{name}'

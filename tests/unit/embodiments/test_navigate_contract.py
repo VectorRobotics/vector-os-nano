@@ -1,17 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""S3c — the navigate capability is CONVERGED at the tool layer (the invariant guard).
-
-`_NativeBaseNavigateTool` (native_loop.py) dispatches coordinate navigation POLYMORPHICALLY:
-it calls ``base.navigate_to(x, y, timeout=...)`` on whatever base is connected — there is
-NO go2-vs-g1 branch in the kernel/tool layer (Rule 11 at the tool layer is already met).
-Both in-process bases implement it (``LeggedBase.navigate_to`` / ``MuJoCoG1.navigate_to``).
-
-This test PINS the polymorphic contract both must honor so the one navigate tool keeps
-dispatching to either without a per-embodiment branch. A future change that diverges one
-driver's call shape fails here.
-"""
+"""Navigation tool delegates to the skill; the skill uses the common base contract."""
 from __future__ import annotations
 
 import inspect
@@ -49,7 +39,8 @@ def test_native_navigate_tool_is_embodiment_agnostic():
     import vector_os_nano.vcli.native_tools as nl
 
     src = inspect.getsource(nl._NativeBaseNavigateTool)
-    assert "navigate_to" in src, "the tool must call the base's navigate_to"
+    assert "SkillWrapperTool(nav, agent).execute" in src
+    assert "base.navigate_to" not in src
     # No coupling to a CONCRETE driver class inside the tool (Rule 11 at the tool layer) —
     # docstring prose may mention 'go2'/'g1' as examples, but the code must not import or
     # isinstance-check a driver class (that would be a per-embodiment fork).

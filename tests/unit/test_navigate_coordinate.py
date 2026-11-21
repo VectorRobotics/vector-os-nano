@@ -103,3 +103,11 @@ def test_named_room_path_unchanged_when_no_coordinates():
     assert res.success is False
     # It did NOT take the coordinate path (no navigate_to call on a bare room name).
     base.navigate_to.assert_not_called()
+
+
+@pytest.mark.parametrize('params', [{'x': float('nan'), 'y': 2}, {'x': float('inf'), 'y': 2}, {'x': 1}, {'target': ['bad', 2]}])
+def test_invalid_coordinate_never_falls_through_to_a_room_or_moves(params):
+    ctx = _ctx()
+    result = NavigateSkill().execute(dict(params, room='kitchen'), ctx)
+    assert not result.success and result.diagnosis_code == 'invalid_target'
+    ctx.base.navigate_to.assert_not_called()

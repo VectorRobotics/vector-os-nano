@@ -95,19 +95,10 @@ class TestPlaceSkillSchema:
         assert isinstance(self.skill.description, str)
         assert len(self.skill.description) > 0
 
-    def test_parameters_has_xyz(self):
-        assert "x" in self.skill.parameters
-        assert "y" in self.skill.parameters
-        assert "z" in self.skill.parameters
-
-    def test_xyz_not_required(self):
-        assert self.skill.parameters["x"]["required"] is False
-        assert self.skill.parameters["y"]["required"] is False
-        assert self.skill.parameters["z"]["required"] is False
-
-    def test_has_location_param(self):
-        assert "location" in self.skill.parameters
-        assert self.skill.parameters["location"]["default"] == "front"
+    def test_named_surface_is_required(self):
+        assert set(self.skill.parameters) == {'surface'}
+        assert self.skill.parameters['surface']['required'] is True
+        assert 'default' not in self.skill.parameters['surface']
 
     def test_preconditions_gripper_holding_any(self):
         assert "gripper_holding_any" in self.skill.preconditions
@@ -129,7 +120,7 @@ class TestPlaceSkillSchema:
 # get_so101_skills
 # ---------------------------------------------------------------------------
 
-_SO101_SET = {"stop", "home", "grasp", "place", "gripper_open", "gripper_close", "place_top_down"}
+_SO101_SET = {"stop", "home", "grasp", "place", "gripper_open", "gripper_close"}
 
 
 class TestGetSo101Skills:

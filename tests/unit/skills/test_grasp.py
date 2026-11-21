@@ -97,12 +97,41 @@ def test_failed_motor_phase_never_reports_grasp_success(failure, token):
         getattr(ctx.gripper, failure).side_effect = None
         getattr(ctx.gripper, failure).return_value = False
     if failure in {"descent", "lift"}:
-        ctx.arm.move_joints.side_effect = [True, False] if failure == "descent" else [True, True, False]
+        ctx.arm.move_joints.side_effect = [True, False] if failure == "descent" else [True, True, True, False]
     if failure == "slip":
         ctx.gripper.is_holding.side_effect = [True, False]
     result = grasp.grip(ctx, Pose3D(.3, 0., .4), ctx.config["skills"]["grasp"], token)
     assert result is not None and not result.success
     assert result.diagnosis_code in {"gripper_failed", "move_failed", "not_holding"}
+
+
+def test_failed_grasp_retains_observation_and_command_for_diagnosis():
+    ctx = context()
+    ctx.gripper.close.side_effect = lambda: True
+    result = GraspSkill().execute({'query': 'red box'}, ctx)
+    assert result.diagnosis_code == 'not_holding'
+    assert result.result_data['perceived']
+    assert len(result.result_data['command_target']) == 3
+    assert len(result.result_data['visible_bounds']) == 2
+
+
+def test_descent_corrects_mount_deflection_before_closing(token):
+    ctx = context(); offset = [0.]
+    ctx.config['skills']['grasp']['grasp_z_above'] = 0.
+    ctx.arm.get_joint_positions.return_value = [0., 0., .7, 0., 0., 0.]
+    ctx.arm.ik_top_down.side_effect = lambda p, **kw: [p[0]-offset[0], *p[1:], 0., 0., 0.]
+    ctx.arm.fk.side_effect = lambda q: ([q[0]+offset[0], *q[1:3]], np.eye(3))
+    def move(q, duration):
+        ctx.arm.get_joint_positions.return_value = list(q)
+        if q[2] == pytest.approx(.4): offset[0] = .03
+        return True
+    ctx.arm.move_joints.side_effect = move
+    def close():
+        tip = ctx.arm.fk(ctx.arm.get_joint_positions())[0]
+        ctx.gripper.is_holding.return_value = math.dist(tip, [.3, 0., .4]) < .005
+        return True
+    ctx.gripper.close.side_effect = close
+    assert grasp.grip(ctx, Pose3D(.3, 0., .4), ctx.config['skills']['grasp'], token) is None
 
 
 def test_home_uses_controller_and_refuses_to_move_a_load():
@@ -178,7 +207,7 @@ def test_wrong_held_identity_is_not_reported_as_success(token):
     ctx.gripper.is_holding.side_effect = lambda name=None: name is None or name == "other"
     result = grasp.grip(ctx, Pose3D(.3, 0., .4), ctx.config["skills"]["grasp"], token, "target")
     assert result.diagnosis_code == "not_holding"
-    assert ctx.arm.move_joints.call_count == 2  # no lift of the wrong object
+    assert ctx.arm.move_joints.call_count == 3  # alignment, but no lift of the wrong object
 
 
 def test_world_without_injected_resolver_refuses_before_motion():
@@ -263,12 +292,12 @@ def test_grasp_without_carry_posture_still_waits_and_checks_the_hold(failure, to
     ctx.config['arm']['postures'] = {}
     cfg = ctx.config['skills']['grasp']
     def move(q, duration):
-        if ctx.arm.move_joints.call_count == 4:
+        if ctx.arm.move_joints.call_count == 5:
             assert duration == cfg['hold_duration'] and q == ctx.arm.get_joint_positions()
             if failure == 'slip': ctx.gripper.is_holding.return_value = False
             if failure == 'blocked': return False
         return True
     ctx.arm.move_joints.side_effect = move
     result = grasp.grip(ctx, Pose3D(.3, 0., .4), cfg, token)
-    assert ctx.arm.move_joints.call_count == 4
+    assert ctx.arm.move_joints.call_count == 5
     assert result is None if failure is None else result.diagnosis_code in {'not_holding', 'move_failed'}

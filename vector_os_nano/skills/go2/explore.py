@@ -28,6 +28,7 @@ from typing import Any
 from vector_os_nano.core.run_dir import run_path
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.skills.transport import prepare
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +461,9 @@ class ExploreSkill:
                 error_message=f"Unknown explore backend {backend!r}; valid: {', '.join(BACKENDS)}",
             )
         base = context.base
+        error = prepare(context)
+        if error:
+            return error
 
         # Wire spatial memory / perception / VLM / vocabulary (discovery and the
         # TARE monitor read them). The world's rooms are seeded at sim start.

@@ -71,10 +71,12 @@ arm:
   postures:
     view: [0, 1.3, 0, 0, 0, 0, 0]
     ready: [1.161645, 0.464856, -0.290585, 1.956293, 0.356246, 0.418494, -1.100954]
+    carry: [1.479768, 0.288223, -0.462846, 1.034174, 0.488806, 0.226523, -1.345749]
   ik_seeds:
     - [0.830821, 0.466810, -0.278776, 1.985945, 0.349220, 0.418516, -0.801439]
     - [1.623591, 0.177835, -0.461413, 0.591654, 0.483206, 0.097755, -1.061508]
   track_tol: 0.04
+  ik_tolerance: 0.0001
   velocity: [0.35, 0.35, 0.35, 0.35, 0.35, 0.35, 0.35]
   acceleration: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
   jerk: [2, 2, 2, 2, 2, 2, 2]
@@ -87,8 +89,10 @@ arm:
     min_opening: 0.002
     assist: false
     speed: 0.02
+    force_feedback: true  # ideal simulated fingertip load sensing; hardware not calibrated
 
 skills:
+  transport: {posture: carry, duration: 6.0, minimum_load: 0.3, max_force: 6.0}
   grasp:
     pre_grasp_height: 0.07
     grasp_z_above: 0.016
@@ -125,3 +129,15 @@ skills:
       scan_step: 0.3
       scan_range: 2.0
       retries: 1
+
+  place:
+    hover_height: 0.18
+    release_height: 0.09  # estimated TCP-to-package-bottom clearance for the frontal grasp
+    retreat_height: 0.10
+    durations: [6.0, 6.0, 6.0]
+    settle_duration: 2.0
+    reach_m: 0.70
+    position_tolerance: 0.01
+    keep_orientation: true
+    support: {max_descent: 0.015, step: 0.0005, duration: 0.4, dwell: 0.6,
+              minimum_load: 0.3, unload_fraction: 0.2, max_force: 6.0}

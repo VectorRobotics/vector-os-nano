@@ -14,6 +14,7 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.skills.transport import prepare
 from vector_os_nano.sim.nav.follow import turn_by
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,9 @@ class TurnSkill:
         if speed <= 0:
             return SkillResult(success=False, diagnosis_code="turn_failed",
                                error_message="This base cannot turn")
+        error = prepare(context)
+        if error:
+            return error
         ok, residual = turn_by(context.base, signed, vyaw=speed, tol=_HEADING_TOL_RAD,
                                cancel=context.services.get("cancel"))
         data = {

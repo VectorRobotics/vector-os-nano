@@ -14,7 +14,7 @@ boxes: {}
 doors: {}
 
 surfaces:
-  bench: {body: bench, box: [-0.10, -0.40, 0.60, 0.40], height: 0.40, aliases: [bench, workbench, 桌子, 工作台]}
+  bench: {body: bench, box: [-0.10, -0.40, 0.60, 0.40], height: 0.40, place_point: [0.35, -0.16], aliases: [bench, workbench, 桌子, 工作台]}
 
 pickables:
   red_box:       {category: box,      colour: red,  surface: bench, aliases: [red box, 红盒子, 红色的盒子, 红方块]}

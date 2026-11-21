@@ -1,15 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Pick -> place handoff regression (headless sim).
-
-Exercises the manipulation handoff a "grab X then put it down" plan relies on:
-pick(mode='hold') leaves the object in the gripper (holding_object() True), then
-place releases it (holding_object() False) and the object ends up moved + resting.
-This guards both the pick->place capability and place's grounded verify_hint
-(`released()`, WP07), which replaced the trivially-true `placed_count() >= 1` and the
-never-grounding negation `not holding_object()`.
-"""
+"""Grasp hands the held object to named place, independently verified on the tray."""
 from __future__ import annotations
 from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 
@@ -30,14 +22,14 @@ def test_pick_hold_then_place_releases_and_moves_object():
 
         pick = agent.execute_skill("grasp", {"query": "banana"})
         assert pick.success
-        assert holding() is True, "pick(mode='hold') must leave the object held"
+        assert holding() is True, "grasp must leave the object held"
         assert released() is False and released("banana") is False
 
-        place = agent.execute_skill("place", {"location": "left"})
+        place = agent.execute_skill("place", {"surface": "tray"})
         assert place.success
-        # place's grounded verify: the gripper released the object.
         assert holding() is False, "place must release the held object"
-        assert released() is True and released("banana") is True  # place's verify_hint
+        assert released() is True and released("banana") is True
+        assert ns['object_on']('banana', 'tray')
 
         x1, y1, _ = s.gt.object_positions()["banana"]
         moved = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5

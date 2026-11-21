@@ -1,241 +1,178 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-
-"""PlaceSkill — place a held object at a target position.
-
-Full port of skill_node_v2._execute_place(). The target position is
-specified via parameters (x, y, z in metres in the base frame).
-
-Algorithm:
-  1. Build target and above-target positions
-  2. IK for above-target
-  3. Move above-target
-  4. IK for target (warm-started from above)
-  5. Descend to target
-  6. Open gripper
-  7. Lift back above target
-
-No ROS2 imports.
-"""
+"""One named-surface place: resolve, reach, hover, descend, check release, retreat."""
 from __future__ import annotations
-
-import logging
-
-import numpy as np
+import math
+import threading
 
 from vector_os_nano.core.skill import SkillContext, skill
-from vector_os_nano.core.types import SkillResult
-
-logger = logging.getLogger(__name__)
-
-# Named location map — from robot's perspective
-# x+ = forward (away from base), y+ = left, y- = right
-_LOCATION_MAP: dict[str, tuple[float, float]] = {
-    "front":        (0.30, 0.00),
-    "front_left":   (0.30, 0.12),
-    "front_right":  (0.30, -0.12),
-    "center":       (0.22, 0.00),
-    "left":         (0.22, 0.12),
-    "right":        (0.22, -0.12),
-    "back":         (0.12, 0.00),
-    "back_left":    (0.12, 0.12),
-    "back_right":   (0.12, -0.12),
-}
-
-_DEFAULT_PLACE_Z: float = 0.04
-_DEFAULT_PRE_GRASP_HEIGHT: float = 0.06
-_APPROACH_DURATION: float = 3.0
-_DESCEND_DURATION: float = 2.0
-_LIFT_DURATION: float = 2.0
+from vector_os_nano.core.types import Pose3D, SkillResult
+from vector_os_nano.perception.base import failure_cause
+from vector_os_nano.skills.grasp import _cancelled, _move, _solve, face
+from vector_os_nano.skills.grasp_perception import _fail
+from vector_os_nano.skills.utils.approach_pose import compute_approach_pose
+from vector_os_nano.skills import place_support
 
 
-@skill(requires=('arm', 'gripper'),
-    aliases=["put", "put down", "放", "放下", "放到", "放置", "放在"],
-)
+def target(params, context):
+    world = context.services.get('object_world')
+    name = params.get('surface')
+    key = world.resolve_surface(name) if world is not None and isinstance(name, str) else None
+    if key is None:
+        return None, _fail('unknown_surface', f'Name a known surface; valid: {sorted(world.surfaces) if world else []}.')
+    surface = world.surfaces[key]
+    names = (surface.name, surface.name.replace('_', ' '), *getattr(surface, 'aliases', ()))
+    if name.strip().casefold() not in {word.casefold() for word in names}:
+        return None, _fail('unknown_surface', f'Name exactly one surface; valid: {sorted(world.surfaces)}.')
+    if surface.place_point is None:
+        return None, _fail('not_configured', f'Surface {key!r} has no declared place point.')
+    return surface, None
+
+
+def poses(arm, surface, cfg):
+    x, y = surface.place_point
+    heights = [surface.height + cfg[k] for k in ('hover_height', 'release_height')]
+    heights.append(heights[1] + cfg['retreat_height'])
+    rotation = arm.fk(arm.get_joint_positions())[1] if cfg['keep_orientation'] else None
+    joints, seed = [], arm.get_joint_positions()
+    for z in heights:
+        seed = _solve(arm, (x, y, z), seed, rotation)
+        if seed is None:
+            return None
+        joints.append(seed)
+    return joints
+
+
+def reach(context, surface, cfg, token):
+    joints = poses(context.arm, surface, cfg)
+    if joints is not None:
+        return joints, None
+    base, bc = context.base, cfg.get('base')
+    if base is None or bc is None:
+        tip, _ = context.arm.fk(context.arm.get_joint_positions())
+        return None, _fail('out_of_reach', 'No reachable place trajectory; choose a reachable surface.',
+                           reach_m=cfg['reach_m'], distance=math.dist(tip, (*surface.place_point, surface.height)))
+    carry = context.config['arm']['postures'][bc['carry_posture']]
+    error = _move(context.arm, carry, cfg['durations'][0], 'carry', token)
+    if error:
+        return None, error
+    if not context.gripper.is_holding():
+        return None, _fail('not_holding', 'Object slipped before navigation; observe it again.')
+    # Recheck once after turning: braking can move the mounted arm out of reach.
+    for _ in range(2):
+        pos, yaw = base.get_position(), base.get_heading()
+        if pos is None or yaw is None or not all(math.isfinite(v) for v in (*pos[:2], yaw)):
+            return None, _fail('approach_failed', 'Base pose is unknown; localize before placing.')
+        x, y, heading = compute_approach_pose((*surface.place_point, surface.height), (*pos[:2], yaw), bc['standoff'])
+        x += math.sin(heading)*bc['lateral_offset']
+        y -= math.cos(heading)*bc['lateral_offset']
+        if not base.navigate_to(x, y, tol=cfg['position_tolerance'], cancel=token):
+            return None, _cancelled(token) or _fail('approach_failed', 'Cannot reach the surface standoff; holding the current grasp.')
+        if token.is_set():
+            return None, _cancelled(token)
+        error = face(base, Pose3D(*surface.place_point, surface.height), bc, token)
+        if error:
+            return None, error
+        if not context.gripper.is_holding():
+            return None, _fail('not_holding', 'Object slipped during navigation; observe it again.')
+        joints = poses(context.arm, surface, cfg)
+        if joints is not None:
+            return joints, None
+    return None, _fail('ik_unreachable', 'Surface remains unreachable from the approached pose; keep holding and reposition.')
+
+
+
+@skill(requires=('arm', 'gripper'), aliases=['put', 'drop', 'put down', '放', '放下', '放到', '放置', '放在'])
 class PlaceSkill:
-    """Place a held object at a named location or coordinates.
-
-    Accepts either a named location (front, left, back_right, etc.)
-    or explicit x, y, z coordinates in metres.
-
-    Parameters:
-        location (str, optional): Named position — front, front_left, front_right,
-            center, left, right, back, back_left, back_right.
-        x, y, z (float, optional): Explicit coordinates (override location).
-    """
-
-    name: str = "place"
-    description: str = "Place held object at a location: front, left, right, center, back, front_left, front_right, back_left, back_right"
-    # Success predicate this skill is verified against (auto-verified by the native
-    # runner). A place RELEASES the held object, so the
-    # gripper ends empty: released() is GT
-    # (no weld active) and grades CAUSED only by a release this step.
-    verify_hint: str = "released()"
-    failure_modes: list[str] = ["no_arm", "ik_unreachable", "move_failed"]
-    parameters: dict = {
-        "location": {
-            "type": "string",
-            "required": False,
-            "default": "front",
-            "enum": list(_LOCATION_MAP.keys()),
-            "description": "Named position: front, front_left, front_right, center, left, right, back, back_left, back_right",
-            "source": "static",
-        },
-        "x": {
-            "type": "float",
-            "required": False,
-            "description": "Target X in metres (overrides location)",
-        },
-        "y": {
-            "type": "float",
-            "required": False,
-            "description": "Target Y in metres (overrides location)",
-        },
-        "z": {
-            "type": "float",
-            "required": False,
-            "description": "Target Z in metres",
-        },
-    }
-    preconditions: list[str] = ["gripper_holding_any"]
-    postconditions: list[str] = ["gripper_empty"]
-    effects: dict = {
-        "gripper_state": "open",
-        "held_object": None,
-    }
+    name = 'place'
+    description = 'Place the held object on a named surface with a declared place point; descend, check release, and retreat.'
+    parameters = {'surface': {'type': 'string', 'required': True, 'description': 'Named support surface from the world manifest.'}}
+    verify_hint = "object_on('<object>', '<surface>')"
+    preconditions = ['gripper_holding_any']
+    postconditions = ['gripper_empty']
+    effects = {'gripper_state': 'open', 'held_object': None}
+    failure_modes = ['no_arm', 'no_gripper', 'unknown_surface', 'not_configured', 'not_holding',
+                     'out_of_reach', 'approach_failed', 'ik_unreachable', 'move_failed', 'release_failed', 'support_unconfirmed', 'cancelled', 'device_failed']
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Execute place sequence.
-
-        Falls back to context.config["skills"]["place"] defaults if params
-        are missing; then falls back to the module-level defaults.
-
-        Args:
-            params: optional x, y, z keys.
-            context: SkillContext providing arm and gripper access.
-
-        Returns:
-            SkillResult(success=True, result_data={"placed_at": [x, y, z]}) on success.
-            SkillResult(success=False, error_message=...) on failure.
-        """
+        token = context.services.get('cancel') or threading.Event()
+        if token.is_set():
+            return _cancelled(token)
         if context.arm is None:
-            return SkillResult(
-                success=False,
-                error_message="No arm connected",
-                result_data={"diagnosis": "no_arm"},
-            )
-
-        cfg_place = context.config.get("skills", {}).get("place", {})
-        pre_grasp_h: float = (
-            context.config.get("skills", {})
-            .get("pick", {})
-            .get("pre_grasp_height", _DEFAULT_PRE_GRASP_HEIGHT)
-        )
-
-        # Resolve target coordinates from location name or explicit params
-        if "x" in params and "y" in params:
-            tx = float(params["x"])
-            ty = float(params["y"])
-        else:
-            location = params.get("location", "front")
-            loc_xy = _LOCATION_MAP.get(location, _LOCATION_MAP["front"])
-            tx, ty = loc_xy
-            logger.info("[PLACE] Location '%s' → (%.3f, %.3f)", location, tx, ty)
-        tz = float(params.get("z", cfg_place.get("z", _DEFAULT_PLACE_Z)))
-
-        logger.info("[PLACE] Target: (%.3f, %.3f, %.3f) m", tx, ty, tz)
-
-        place_pos = np.array([tx, ty, tz], dtype=float)
-        above_pos = place_pos.copy()
-        above_pos[2] += pre_grasp_h
-
-        current_joints = context.arm.get_joint_positions()
-
-        # IK for above-place position
-        q_above_result = context.arm.ik(
-            (above_pos[0], above_pos[1], above_pos[2]),
-            current_joints,
-        )
-        if q_above_result is None:
-            return SkillResult(
-                success=False,
-                error_message="IK failed for above-place position",
-                result_data={
-                    "diagnosis": "ik_unreachable",
-                    "target_cm": [round(tx * 100, 1), round(ty * 100, 1), round(tz * 100, 1)],
-                    "above_target_cm": [
-                        round(above_pos[0] * 100, 1),
-                        round(above_pos[1] * 100, 1),
-                        round(above_pos[2] * 100, 1),
-                    ],
-                    "hint": "IK solver could not reach above-place position.",
-                },
-            )
-        q_above = list(q_above_result)
-
-        # Move above target
-        logger.info("[PLACE] Moving above target ...")
-        if not context.arm.move_joints(q_above, duration=_APPROACH_DURATION):
-            return SkillResult(
-                success=False,
-                error_message="Move to above-place failed",
-                result_data={"diagnosis": "move_failed", "phase": "approach"},
-            )
-
-        # IK for place position (warm-started from above)
-        q_place_result = context.arm.ik(
-            (place_pos[0], place_pos[1], place_pos[2]),
-            q_above,
-        )
-        if q_place_result is None:
-            return SkillResult(
-                success=False,
-                error_message="IK failed for place position",
-                result_data={
-                    "diagnosis": "ik_unreachable",
-                    "target_cm": [round(tx * 100, 1), round(ty * 100, 1), round(tz * 100, 1)],
-                    "hint": "IK solver could not reach place position.",
-                },
-            )
-        q_place = list(q_place_result)
-
-        # Descend to place position
-        logger.info("[PLACE] Descending ...")
-        if not context.arm.move_joints(q_place, duration=_DESCEND_DURATION):
-            return SkillResult(
-                success=False,
-                error_message="Place descent failed",
-                result_data={"diagnosis": "move_failed", "phase": "descend"},
-            )
-
-        # Open gripper to release object
-        logger.info("[PLACE] Opening gripper ...")
-        if context.gripper is not None:
-            context.gripper.open()
-
-        # Lift back to above position
-        logger.info("[PLACE] Lifting ...")
-        if not context.arm.move_joints(q_above, duration=_LIFT_DURATION):
-            return SkillResult(
-                success=False,
-                error_message="Place lift failed",
-                result_data={"diagnosis": "move_failed", "phase": "lift"},
-            )
-
-        # Close gripper and return home
-        if context.gripper is not None:
-            context.gripper.close()
-
-        logger.info("[PLACE] Returning home ...")
-        if not context.arm.home():
-            return SkillResult(False, {"diagnosis": "move_failed", "phase": "home"},
-                               "Object released, but the arm did not reach its configured home")
-
-        logger.info("[PLACE] Place complete!")
-        return SkillResult(
-            success=True,
-            result_data={
-                "placed_at": [round(tx, 4), round(ty, 4), round(tz, 4)],
-                "diagnosis": "ok",
-            },
-        )
+            return _fail('no_arm', 'Connect an arm before placing.')
+        if context.gripper is None:
+            return _fail('no_gripper', 'Connect a gripper before placing.')
+        try:
+            surface, error = target(params, context)
+            if error:
+                return error
+            cfg = context.config.get('skills', {}).get('place')
+            if not cfg:
+                return _fail('not_configured', 'Configure skills.place in this embodiment manifest.')
+            if not context.gripper.is_holding():
+                return _fail('not_holding', 'The gripper holds no object; nothing was placed.')
+            support = cfg.get('support')
+            initial = place_support.read(context.gripper, support) if support else None
+            joints, error = reach(context, surface, cfg, token)
+            if error:
+                return error
+            rotation = context.arm.fk(context.arm.get_joint_positions())[1] if cfg['keep_orientation'] else None
+            for height, duration, phase in zip(('hover_height', 'release_height'), cfg['durations'][:2], ('approach', 'descend')):
+                position = (*surface.place_point, surface.height + cfg[height])
+                q = _solve(context.arm, position, context.arm.get_joint_positions(), rotation)
+                if q is None:
+                    return _fail('ik_unreachable', f'Place trajectory became unreachable during {phase}; keep holding.', phase=phase)
+                error = _move(context.arm, q, duration, phase, token)
+                if error:
+                    return error
+                if not context.gripper.is_holding():
+                    return _fail('not_holding', f'Object slipped during {phase}; observe it again.')
+                if support and phase == 'approach':
+                    # The extended arm can move its mobile mount while reaching the hover.
+                    q = _solve(context.arm, position, context.arm.get_joint_positions(), rotation)
+                    if q is None:
+                        return _fail('ik_unreachable', 'Hover became unreachable after approach; keep holding.', phase=phase)
+                    error = _move(context.arm, q, duration, phase, token)
+                    if error:
+                        return error
+                    error = _move(context.arm, q, support['dwell'], 'load measurement', token)
+                    if error:
+                        return error
+                    baseline = place_support.read(context.gripper, support, initial[1])
+                    if baseline[0] < support['minimum_load']:
+                        return _fail('support_unconfirmed', 'No measurable suspended load; inspect before releasing.')
+                    break  # Measure force throughout descent, including contact above the nominal release height.
+            joints[1] = q
+            tip, _ = context.arm.fk(context.arm.get_joint_positions())
+            if len(tip) != 3 or not all(math.isfinite(v) for v in tip) or math.dist(tip, position) > cfg['position_tolerance']:
+                return _fail('move_failed', f'Place position not reached during {phase}; keep holding.', phase=phase)
+            if support:
+                joints[1], error = place_support.confirm(context, joints[1], position, support,
+                    baseline, cfg['position_tolerance'], token,
+                    floor=surface.height+cfg['release_height']-support['max_descent'])
+                if error:
+                    return error
+                position = tuple(context.arm.fk(context.arm.get_joint_positions())[0])
+            if token.is_set():
+                return _cancelled(token)
+            if not context.gripper.open():
+                return _fail('release_failed', 'Gripper did not complete its open command.')
+            error = _move(context.arm, joints[1], cfg['settle_duration'], 'settle', token)
+            if error:
+                return error
+            if context.gripper.is_holding():
+                return _fail('release_failed', 'Gripper still reports a held object; do not pull it away.')
+            retreat = (*surface.place_point, surface.height + cfg['release_height'] + cfg['retreat_height'])
+            q = _solve(context.arm, retreat, context.arm.get_joint_positions(), rotation)
+            if q is None:
+                return _fail('ik_unreachable', 'Object released, but retreat became unreachable; inspect before moving.', phase='retreat')
+            error = _move(context.arm, q, cfg['durations'][2], 'retreat', token)
+            if error:
+                return error
+            if context.gripper.is_holding():
+                return _fail('release_failed', 'Gripper reports a load after retreat; inspect the placement.')
+            return SkillResult(True, dict(diagnosis='ok', surface=surface.name,
+                placed_at=[*surface.place_point, surface.height], target_source='authored world manifest',
+                release_position=list(position), support_confirmed=bool(support)))
+        except Exception as exc:
+            return _cancelled(token) or _fail('device_failed', f'Place device failed: {failure_cause(exc)}; inspect before retrying.')

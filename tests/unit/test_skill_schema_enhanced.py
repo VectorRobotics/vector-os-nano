@@ -96,27 +96,9 @@ def test_all_default_skills_have_failure_modes():
 
 
 
-def test_place_schema_has_location_enum():
-    """place.parameters['location'] has an enum with all 9 named locations."""
+def test_place_schema_requires_a_named_surface_without_a_silent_default():
     from vector_os_nano.skills.place import PlaceSkill
-    skill = PlaceSkill()
-    assert "enum" in skill.parameters["location"]
-    enum_values = skill.parameters["location"]["enum"]
-    assert "front" in enum_values
-    assert "left" in enum_values
-    assert "back_right" in enum_values
-    assert len(enum_values) == 9  # 9 named locations
-
-
-def test_place_schema_location_enum_matches_location_map():
-    """place.parameters['location']['enum'] is exactly the keys of _LOCATION_MAP."""
-    from vector_os_nano.skills.place import PlaceSkill, _LOCATION_MAP
-    skill = PlaceSkill()
-    assert set(skill.parameters["location"]["enum"]) == set(_LOCATION_MAP.keys())
-
-
-def test_place_schema_has_source_annotation():
-    """place.parameters['location'] has source='static'."""
-    from vector_os_nano.skills.place import PlaceSkill
-    skill = PlaceSkill()
-    assert skill.parameters["location"].get("source") == "static"
+    surface = PlaceSkill.parameters['surface']
+    assert surface['type'] == 'string' and surface['required']
+    assert 'default' not in surface and 'enum' not in surface
+    assert set(PlaceSkill.parameters) == {'surface'}

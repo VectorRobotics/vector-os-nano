@@ -31,7 +31,7 @@ def test_to_schemas_includes_verify_hint_per_skill() -> None:
     by_name = {s["name"]: s for s in _arm_schemas()}
     assert by_name["grasp"]["verify_hint"] == "holding_object({query})"
     assert by_name["home"]["verify_hint"] == "arm_at_home()"
-    assert by_name["place"]["verify_hint"] == "released()"
+    assert by_name["place"]["verify_hint"] == "object_on('<object>', '<surface>')"
 
 
 def test_verify_hints_name_tagged_robot_oracles_only() -> None:

@@ -21,6 +21,7 @@ from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
+from vector_os_nano.skills.transport import prepare
 from vector_os_nano.sim.nav.follow import NavResult, arrival_radius
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,10 @@ class NavigateSkill:
         # at_position verify (graded RAN per D14) is the source of truth for
         # arrival; we surface the actual position regardless of FAR's verdict.
         coord = self._parse_coordinate(params)
+        if (any(key in params for key in ('x', 'y', 'target', 'goal', 'coordinate', 'coord'))
+                and (coord is None or not all(math.isfinite(v) for v in coord))):
+            return SkillResult(False, error_message='Navigate requires finite numeric x and y.',
+                               diagnosis_code='invalid_target')
         if coord is not None:
             return self._navigate_to_coordinate(coord, context)
 
@@ -306,6 +311,10 @@ class NavigateSkill:
                     room_key, target[0], target[1])
 
         _cancel_exploration()
+
+        error = prepare(context)
+        if error:
+            return error
 
         if not callable(getattr(context.base, "navigate_to", None)):
             return SkillResult(
@@ -367,6 +376,9 @@ class NavigateSkill:
 
         # A running exploration would otherwise keep driving (skills-nav:missed2).
         _cancel_exploration()
+        error = prepare(context)
+        if error:
+            return error
 
         logger.info("[NAV] Coordinate goal -> navigate_to(%.2f, %.2f) via FAR", tx, ty)
 
@@ -374,7 +386,8 @@ class NavigateSkill:
             print(f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed)}s",
                   file=sys.stderr, flush=True)
 
-        nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress)
+        nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress,
+                          cancel=context.services.get('cancel'))
 
         # HOLD at the goal: a downstream manipulation step needs the dog stationary.
         try:
@@ -422,7 +435,8 @@ class NavigateSkill:
                 flush=True,
             )
 
-        nav_result = context.base.navigate_to(target[0], target[1], on_progress=_progress)
+        nav_result = context.base.navigate_to(target[0], target[1], on_progress=_progress,
+                                             cancel=context.services.get('cancel'))
         pos = context.base.get_position()
         dist = _distance(pos[0], pos[1], target[0], target[1])
         data = {

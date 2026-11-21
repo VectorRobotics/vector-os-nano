@@ -22,6 +22,7 @@ surfaces:
     body: world
     box: [1.23, -2.9, 1.77, -1.3]
     height: 0.778
+    place_point: [1.50, -2.68]  # authored development return position; not a perceived empty slot
     aliases: [storage shelf, 厨房层架, 层架, 收纳架]
 pickables:
   tissue_refill: {category: pack, colour: beige, surface: storage_shelf, aliases: [tissue refill, 纸巾补充装]}

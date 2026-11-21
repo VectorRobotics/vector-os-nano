@@ -188,11 +188,12 @@ def test_a_stop_step_the_model_takes_does_not_abort_its_own_turn() -> None:
 def test_a_previous_stop_does_not_abort_the_next_native_turn() -> None:
     agent, base = _make_agent()
 
-    def navigate_to(x: float, y: float, timeout: float = 60.0) -> bool:
+    def navigate_to(x: float, y: float, timeout: float = 60.0, **kwargs):
+        from vector_os_nano.sim.nav.follow import NavResult
         if abort.is_abort_requested():  # every real nav loop polls this
-            return False
+            return NavResult(reached=False, reason='aborted')
         base._x, base._y = x, y
-        return True
+        return NavResult(reached=True, reason='arrived', target=[x, y])
 
     base.navigate_to = navigate_to
     abort.request_abort()  # a "停" from an earlier turn
@@ -847,11 +848,13 @@ def test_navigate_is_not_rerun_when_the_base_raises_a_type_error_mid_way() -> No
 
     calls: list[tuple] = []
 
-    def navigate_to(x: float, y: float, timeout: float = 60.0) -> bool:
+    def navigate_to(x: float, y: float, timeout: float = 60.0, **kwargs):
         calls.append((x, y))
         raise TypeError("unsupported operand mid-navigation")
 
-    ctx = SimpleNamespace(agent=SimpleNamespace(_base=SimpleNamespace(navigate_to=navigate_to)))
+    agent, base = _make_agent()
+    base.navigate_to = navigate_to
+    ctx = SimpleNamespace(agent=agent, app_state=None, abort=threading.Event())
     result = _NativeBaseNavigateTool().execute({"x": 1.0, "y": 2.0}, ctx)
     assert result.is_error and calls == [(1.0, 2.0)]
 

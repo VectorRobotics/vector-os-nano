@@ -34,7 +34,7 @@ def _leg(when: str, xy: tuple[float, float], expr: str = "", room: str = "") -> 
     return [
         {"when": when, "tool_calls": [{"name": "go_to_room" if room else "navigate",
                                       "input": {"room": room} if room else {"x": x, "y": y}}]},
-        {"when": f"go_to_room({room}) ->" if room else f"(target ({x}, {y}))", "tool_calls": [
+        {"when": f"go_to_room({room}) ->" if room else "Skill 'navigate' succeeded.", "tool_calls": [
             {"name": "verify", "input": {"expr": expr or f"at_position({x}, {y})"}}]},
         {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]

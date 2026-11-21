@@ -112,6 +112,12 @@ def test_ik_seeds_include_the_live_arm_and_respect_the_limits(sim, monkeypatch):
         assert np.all(np.asarray(s) >= lo) and np.all(np.asarray(s) <= hi), s
 
 
+def test_named_arm_postures_respect_the_model_joint_limits(sim):
+    bounds = sim['piper']._kin.range
+    for name, q in sim['cfg'].arm.postures.items():
+        assert np.all(np.asarray(q) >= bounds[:, 0]) and np.all(np.asarray(q) <= bounds[:, 1]), name
+
+
 # -- motion ---------------------------------------------------------------------------
 
 

@@ -429,7 +429,7 @@ class _FlakyNav(_NavBase):
         super().__init__(x, y)
         self.calls = 0
 
-    def navigate_to(self, x, y, timeout=None):
+    def navigate_to(self, x, y, timeout=None, **kwargs):
         self.calls += 1
         if self.calls == 1:
             self.walk(0.5, 0.0, 0.0, 1.0)

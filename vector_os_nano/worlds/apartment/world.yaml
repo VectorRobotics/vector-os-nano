@@ -52,13 +52,13 @@ doors:
 # NL calls it (a place goal's task contract binds object_on to the surface it names;
 # a bare "table" / "桌子" names none of these four and binds nothing).
 surfaces:
-  pick_table:    {body: pick_table,    box: [10.80, 2.75, 11.10, 3.25], height: 0.28,
+  pick_table:    {body: pick_table,    box: [10.80, 2.75, 11.10, 3.25], height: 0.28, place_point: [10.84, 3.10],
                   aliases: [pick table, 取物台]}
-  coffee_table:  {body: coffee_tbl,    box: [1.20,  1.95, 2.40,  2.65], height: 0.40,
+  coffee_table:  {body: coffee_tbl,    box: [1.20,  1.95, 2.40,  2.65], height: 0.40, place_point: [2.20, 2.50],
                   aliases: [coffee table, 茶几, 咖啡桌]}
-  dining_table:  {body: dining_table,  box: [2.16,  7.05, 3.84,  7.95], height: 0.66,
+  dining_table:  {body: dining_table,  box: [2.16,  7.05, 3.84,  7.95], height: 0.66, place_point: [3.60, 7.70],
                   aliases: [dining table, 餐桌, 饭桌]}
-  console_table: {body: console_table, box: [6.02,  4.80, 6.98,  5.20], height: 0.70,
+  console_table: {body: console_table, box: [6.02,  4.80, 6.98,  5.20], height: 0.70, place_point: [6.70, 5.00],
                   aliases: [console table, 玄关桌]}
 
 # Graspable objects: MJCF body name -> what NL calls it. The scene build adds one

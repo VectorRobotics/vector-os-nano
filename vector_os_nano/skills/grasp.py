@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 import threading
+from dataclasses import replace
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import Pose3D, SkillResult
@@ -14,7 +15,7 @@ from vector_os_nano.skills.utils.approach_pose import compute_approach_pose
 
 
 def _cancelled(token):
-    return _fail("cancelled", "Grasp cancelled; the gripper keeps its current hold.") if token.is_set() else None
+    return _fail("cancelled", "Operation cancelled; the gripper keeps its current state.") if token.is_set() else None
 
 
 def _move(arm, joints, duration, phase, token):
@@ -256,6 +257,13 @@ def grip(context, gp, cfg, token, identity=None):
         error = _move(arm, q, duration, phase, token)
         if error:
             return error
+    # Re-solve after descent: the mobile mount can deflect under the extended arm.
+    q = _solve(arm, grasp, arm.get_joint_positions(), r_grasp)
+    if q is None:
+        return _fail('ik_unreachable', 'Grasp became unreachable after descent; keep the jaws open and observe again.')
+    error = _move(arm, q, t_down, 'final alignment', token)
+    if error:
+        return error
     if token.is_set():
         return _cancelled(token)
     if not gripper.close():
@@ -263,7 +271,8 @@ def grip(context, gp, cfg, token, identity=None):
     if token.is_set():
         return _cancelled(token)
     if not (gripper.is_holding() if identity is None else gripper.is_holding(identity)):
-        return _fail("not_holding", "Gripper closed without a hold; look again and retry grasp.")
+        return _fail("not_holding", "Gripper closed without a hold; look again and retry grasp.",
+                     tcp_position=arm.fk(arm.get_joint_positions())[0])
     if 'frontal' in cfg:
         error = _group_move(context, cfg['frontal']['lift'], t_lift, 'lift', token)
     else:
@@ -369,6 +378,8 @@ class GraspSkill:
                 error = grip(context, gp, cfg, token, target.label if world is not None and target.prompt else None)
                 if error is None:
                     return SkillResult(True, {**meta, "query": query, "object_id": target.label or query, "attempts": attempt + 1, "diagnosis": "ok"})
+                error = replace(error, result_data={**meta, 'command_target': [gp.x, gp.y, gp.z],
+                                                   **error.result_data})
                 if error.diagnosis_code != "ik_unreachable" or context.gripper.is_holding():
                     return error
             return error

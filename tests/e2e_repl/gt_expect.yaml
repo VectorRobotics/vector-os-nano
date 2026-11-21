@@ -16,6 +16,18 @@
 # manifests of the flow's bodies. A flow is its file: tests/e2e_repl/test_<flow>.py.
 schema: 1
 flows:
+  e18_named_place:
+    bodies: [piper, so101, go2_piper]
+    turns:
+      start the piper simulation: {none: startup readiness only}
+      start the so101 simulation: {none: startup readiness only}
+      start the go2_piper simulation: {none: startup readiness only}
+      pick up the red box: {held_lifted: red_box}
+      pick up the banana: {held_lifted: banana}
+      pick up the green bottle: {held_lifted: pickable_bottle_green}
+      put the red box on the bench: {object_on: [red_box, bench]}
+      put the banana on the tray: {object_on: [banana, tray]}
+      put the green bottle on the pick_table: {object_on: [pickable_bottle_green, pick_table]}
   e17_session_choices:
     bodies: [go2, piper, so101, g1, go2_piper]
     turns:

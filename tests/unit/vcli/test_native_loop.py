@@ -106,6 +106,8 @@ def _make_agent(x: float = 0.0, y: float = 0.0, **gt_kwargs):
     base = _FakeBase(x, y)
     reg = SkillRegistry()
     reg.register(_FakeWalkSkill())
+    from vector_os_nano.skills.navigate import NavigateSkill
+    reg.register(NavigateSkill())
     agent = SimpleNamespace(
         _base=base,
         _arm=None,
@@ -115,7 +117,7 @@ def _make_agent(x: float = 0.0, y: float = 0.0, **gt_kwargs):
     )
 
     def _build_context():
-        return SimpleNamespace(base=base, arm=None, gripper=None, services={})
+        return SimpleNamespace(base=agent._base, arm=None, gripper=None, services={})
 
     def _sync_robot_state():
         return None
@@ -403,7 +405,7 @@ def _go2_piper_like_agent():
 
     agent, base = _make_agent(10.0, 3.0)
     reg = SkillRegistry()
-    for name in ("walk", "look", "explore", "navigate", "navigate_to_object", "grasp", "place_top_down"):
+    for name in ("walk", "look", "explore", "navigate", "navigate_to_object", "grasp", "place"):
         reg.register(SimpleNamespace(name=name, description=name, parameters={}))
     sg = SceneGraph()
     sg.add_object(ObjectNode(object_id="o1", category="bottle", x=10.86, y=2.8, z=0.31,
@@ -472,7 +474,7 @@ def test_robot_world_policy_and_belief_state_reach_the_native_turn() -> None:
     assert "look (it localizes" in text and "navigate_to_object first" in text
     assert "grasp it with grasp" in text
     assert "navigate(8.0, 3.0)" in text and "near_object('user') and kept_holding" in text
-    assert "dining_table centre (3.00, 7.50) top 0.66 m" in text and "object_on(" in text
+    assert "dining_table (declared place point)" in text and "object_on(" in text
     assert "go_to_room(room)" in text and "kitchen" in text
     assert "Position: (10.0, 3.0" in text and "Current room: hallway" in text
     assert "Gripper: empty" in text
@@ -786,10 +788,11 @@ def test_native_turn_after_a_foreign_tool_then_text_turn_keeps_role_alternation(
 class _NavBase(_FakeBase):
     """A base with the in-process ``navigate_to`` the native navigate tool drives."""
 
-    def navigate_to(self, x: float, y: float, timeout: float | None = None) -> bool:
+    def navigate_to(self, x: float, y: float, timeout: float | None = None, **kwargs):
+        from vector_os_nano.sim.nav.follow import NavResult
         self.walk(abs(x - self._x) + abs(y - self._y), 0.0, 0.0, 1.0)
         self._x, self._y = float(x), float(y)
-        return True
+        return NavResult(reached=True, reason='arrived', target=[x, y])
 
 
 _CAN = "pickable_can_red"  # the manifest binds "红色的罐子" / "red can" to it
@@ -1060,7 +1063,7 @@ def test_an_aborted_navigate_is_one_failed_row_without_its_auto_verify() -> None
     token = CancelToken()
 
     class _StoppedNav(_NavBase):
-        def navigate_to(self, x, y, timeout=None):  # noqa: ANN001, ANN202
+        def navigate_to(self, x, y, timeout=None, **kwargs):  # noqa: ANN001, ANN202
             token.cancel()  # the owner's stop lands mid-navigate
             return False
 
@@ -1177,7 +1180,7 @@ def test_a_failed_auto_verify_is_kept_when_the_model_verifies_something_else() -
     """Verifier P3: navigate(3,0) lands at (1,0); the model may ADD a verify of its
     landing, never replace the FAILED auto-verify, which stays its own graded row."""
     class _ShortNav(_NavBase):
-        def navigate_to(self, x, y, timeout=None):  # noqa: ANN001, ANN202
+        def navigate_to(self, x, y, timeout=None, **kwargs):  # noqa: ANN001, ANN202
             return super().navigate_to(1.0, 0.0)
 
     backend = FakeToolScriptBackend.from_tool_script([

@@ -192,10 +192,9 @@ def test_every_gripper_skill_alias_is_in_the_vocabulary() -> None:
     a new alias can never fail the gate open."""
     from vector_os_nano.skills.grasp import GraspSkill
     from vector_os_nano.skills.place import PlaceSkill
-    from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
 
-    for cls in (GraspSkill, PlaceSkill, PlaceTopDownSkill):
-        assert any(o in cls.verify_hint for o in ("holding_object", "released", "object_at"))
+    for cls in (GraspSkill, PlaceSkill):
+        assert any(o in cls.verify_hint for o in ("holding_object", "released", "object_at", "object_on"))
         for alias in cls.__skill_aliases__:
             assert goal_intents(alias), f"{cls.__name__} alias {alias!r} is not a manipulation"
 
