@@ -20,12 +20,14 @@ p.add_argument('replay', type=Path)
 p.add_argument('blend', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('--end-frame', type=int)
+p.add_argument('--start-frame', type=int, default=1)
 a = p.parse_args(sys.argv[sys.argv.index('--')+1:])
 record = json.loads((a.replay/'replay.json').read_text())
 assert hashlib.sha256((a.replay/'poses.npz').read_bytes()).hexdigest() == record['files']['poses.npz']
 timestamps = np.load(a.replay/'poses.npz')['time']
 end = record['frames'] if a.end_frame is None else a.end_frame
-assert record['fps'] == 30 and 1 <= end <= record['frames']
+assert record['fps'] == 30 and 1 <= a.start_frame <= end <= record['frames']
+requested = end-a.start_frame+1
 partial = a.output.with_suffix('.partial.mp4')
 assert not a.output.exists() and not partial.exists(), 'choose a new output path'
 bpy.ops.wm.open_mainfile(filepath=str(a.blend))
@@ -34,6 +36,7 @@ assert scene['replay_model_sha256'] == record['model_sha256']
 scene.render.engine = 'BLENDER_EEVEE'
 scene.eevee.use_raytracing = True
 scene.eevee.taa_render_samples = 32
+scene.eevee.shadow_pool_size = '2048'
 scene.render.use_motion_blur = False
 scene.render.resolution_percentage = 100
 scene.render.image_settings.file_format = 'PNG'
@@ -51,7 +54,7 @@ start, completed, frame_seconds = time.monotonic(), 0, []
 try:
     with tempfile.TemporaryDirectory(prefix='replay-panels-', dir=a.replay) as temporary:
         panels = [str(Path(temporary)/f'{i}.png') for i in range(3)]
-        for frame in range(1, end+1):
+        for frame in range(a.start_frame, end+1):
             t0 = time.monotonic()
             scene.frame_set(frame)
             for (name, width, height), file in zip(views, panels):
@@ -74,9 +77,9 @@ try:
             rgb = subprocess.check_output(command)
             assert len(rgb) == 3840*2160*3
             encoder.stdin.write(rgb)
-            completed = frame
+            completed += 1
             frame_seconds.append(time.monotonic()-t0)
-            if frame == 1 or frame % 30 == 0:
+            if frame == a.start_frame or frame % 30 == 0:
                 print('FRAME', frame, 'of', end, 'wall_s', round(time.monotonic()-start, 1), flush=True)
 finally:
     encoder.stdin.close()
@@ -90,15 +93,16 @@ finally:
         recording=record['recording'], model_sha256=record['model_sha256'],
         blend_sha256=hashlib.sha256(a.blend.read_bytes()).hexdigest(),
         frames=completed, full_recording_frames=record['frames'], fps=30,
+        start_frame=a.start_frame, end_frame=end, shadow_pool_mb=2048,
         complete=False, engine='BLENDER_EEVEE',
         wall_s=time.monotonic()-start, frame_wall_s=frame_seconds,
         cameras=[v[0] for v in views], motion_verdict='unverified', scope=__doc__)
     a.output.with_suffix('.render.json').write_text(json.dumps(metadata, indent=2))
-assert rc == 0 and completed == end
+assert rc == 0 and completed == requested
 info = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-count_frames',
     '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames,width,height,r_frame_rate',
     '-of', 'json', str(partial)]))['streams'][0]
-assert (int(info['nb_read_frames']), info['width'], info['height'], info['r_frame_rate']) == (end, 3840, 2160, '30/1')
+assert (int(info['nb_read_frames']), info['width'], info['height'], info['r_frame_rate']) == (requested, 3840, 2160, '30/1')
 partial.rename(a.output)
 metadata.update(complete=completed == record['frames'], video_sha256=hashlib.sha256(a.output.read_bytes()).hexdigest())
 a.output.with_suffix('.render.json').write_text(json.dumps(metadata, indent=2))
