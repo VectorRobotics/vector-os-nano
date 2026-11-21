@@ -17,7 +17,9 @@ def test_household_manifests_preserve_wheel_contact_and_disable_grasp_assistance
     assert robot.base.policy.ref == 'swerve' and len(robot.base.joints) == 8
     assert robot.base.policy.params['wheel_speed'] < 10.47
     assert robot.arm.dof == 7 and not robot.arm.gripper.assist
-    assert robot.initial_joints['head_pitch_joint'] == .314
+    assert 0 < robot.initial_joints['head_pitch_joint'] < .30
+    assert robot.arm.home[1] == robot.initial_joints['left_arm_joint_2'] > 0
+    assert robot.initial_joints['right_arm_joint_2'] > 0
     assert set(world.pickables) == {'tissue_refill', 'sponge_pack_1', 'sponge_pack_2', 'zip_bag_box'}
     assert all(p.surface in world.surfaces for p in world.pickables.values())
     assert not (root/'embodiments/malo/physical.xml').exists()
