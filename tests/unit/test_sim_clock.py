@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from vector_os_nano.hardware.sim.sim_clock import sim_tick_dt
+from vector_os_nano.sim.nav.follow import sim_tick_dt
 
 NOMINAL = 1.0 / 20.0
 

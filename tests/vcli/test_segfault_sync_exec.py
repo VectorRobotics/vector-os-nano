@@ -32,7 +32,7 @@ def _make_engine() -> VectorEngine:
 
 def _turn_thread(monkeypatch, *, mjpython: bool, viewer: object) -> threading.Thread:
     """The thread one REPL turn ran on."""
-    import vector_os_nano.hardware.sim.viewer_mode as vm
+    import vector_os_nano.sim.backends.mujoco.viewer_mode as vm
 
     monkeypatch.setattr(vm, "running_under_mjpython", lambda: mjpython)
     monkeypatch.setattr(repl, "_read_line", lambda timeout: None)  # nobody types

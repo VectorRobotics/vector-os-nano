@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Tests for the mjpython probe (hardware/sim/viewer_mode): pure logic, no GL."""
-from vector_os_nano.hardware.sim import viewer_mode as vm
+"""Tests for the mjpython probe (sim/backends/mujoco/viewer_mode): pure logic, no GL."""
+from vector_os_nano.sim.backends.mujoco import viewer_mode as vm
 
 
 class TestRunningUnderMjpython:

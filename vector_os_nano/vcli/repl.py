@@ -202,7 +202,7 @@ def _run_turn_busy(engine: Any, fn: Callable[[], None], app_state: dict[str, Any
     native's LLM call included — also stops every run the turn would start later.
     Under mjpython with a live viewer (GLFW is main-thread-only) the turn runs inline.
     """
-    from vector_os_nano.hardware.sim.viewer_mode import running_under_mjpython
+    from vector_os_nano.sim.backends.mujoco.viewer_mode import running_under_mjpython
 
     if engine._has_live_viewer() and running_under_mjpython():
         try:

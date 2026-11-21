@@ -22,7 +22,7 @@ def restore_sigint():
 
 
 def test_noop_when_not_under_mjpython(monkeypatch, restore_sigint):
-    from vector_os_nano.hardware.sim import viewer_mode
+    from vector_os_nano.sim.backends.mujoco import viewer_mode
     from vector_os_nano.vcli import cli
 
     monkeypatch.setattr(viewer_mode, "running_under_mjpython", lambda: False)
@@ -37,7 +37,7 @@ def test_noop_when_not_under_mjpython(monkeypatch, restore_sigint):
 
 
 def test_restores_default_handler_under_mjpython(monkeypatch, restore_sigint):
-    from vector_os_nano.hardware.sim import viewer_mode
+    from vector_os_nano.sim.backends.mujoco import viewer_mode
     from vector_os_nano.vcli import cli
 
     monkeypatch.setattr(viewer_mode, "running_under_mjpython", lambda: True)

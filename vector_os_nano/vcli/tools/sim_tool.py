@@ -155,7 +155,7 @@ class SimStartTool:
         """True unless this is macOS outside mjpython (where a viewer window needs it)."""
         import sys as _sys
 
-        from vector_os_nano.hardware.sim.viewer_mode import running_under_mjpython
+        from vector_os_nano.sim.backends.mujoco.viewer_mode import running_under_mjpython
 
         return _sys.platform != "darwin" or running_under_mjpython()
 

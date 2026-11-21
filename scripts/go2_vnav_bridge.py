@@ -39,7 +39,7 @@ from std_msgs.msg import Float32, Header
 from tf2_ros import TransformBroadcaster
 import numpy as np
 
-from vector_os_nano.hardware.sim.sim_clock import sim_tick_dt
+from vector_os_nano.sim.nav.follow import sim_tick_dt
 from vector_os_nano.core.run_dir import run_path
 
 # Path-follower nominal tick. Single source: the _follow_path timer period AND

@@ -121,7 +121,7 @@ def _maybe_reexec_under_mjpython(args: argparse.Namespace) -> None:
     if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
         return
 
-    from vector_os_nano.hardware.sim.viewer_mode import running_under_mjpython
+    from vector_os_nano.sim.backends.mujoco.viewer_mode import running_under_mjpython
 
     if running_under_mjpython():
         return  # already under mjpython — nothing to do
@@ -195,7 +195,7 @@ def _ensure_sigint_under_mjpython() -> None:
     and return to the prompt. No-op off mjpython; harmless if it cannot be set
     (e.g. not the main thread).
     """
-    from vector_os_nano.hardware.sim.viewer_mode import running_under_mjpython
+    from vector_os_nano.sim.backends.mujoco.viewer_mode import running_under_mjpython
     if not running_under_mjpython():
         return
     import signal
