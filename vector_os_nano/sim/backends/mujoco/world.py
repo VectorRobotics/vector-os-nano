@@ -56,6 +56,7 @@ class MuJoCoWorld:
         p.pair_margin += CONTACT_DISTANCE_M
         p.opt.o_margin += CONTACT_DISTANCE_M  # what every contact uses under <flag override="enable"/>
         self._probe_data = mj.MjData(p)
+        self._probe_valid = False
         self._lock = threading.Lock()
         acts = reader.actuators(m)
         self._position = {a.joint: a for a in acts if a.kind == "position"}
@@ -204,10 +205,16 @@ class MuJoCoWorld:
     def contacts(self, body: int) -> frozenset[int]:
         m, d = self._probe, self._probe_data
         with self._lock:
-            d.qpos[:] = self.data.qpos
-            d.mocap_pos[:], d.mocap_quat[:] = self.data.mocap_pos, self.data.mocap_quat
-            mj.mj_kinematics(m, d)
-            mj.mj_collision(m, d)
+            # Both fingers query the same pose; a reset can change it at the same time.
+            if not (self._probe_valid and np.array_equal(d.qpos, self.data.qpos)
+                    and np.array_equal(d.mocap_pos, self.data.mocap_pos)
+                    and np.array_equal(d.mocap_quat, self.data.mocap_quat)):
+                self._probe_valid = False
+                d.qpos[:] = self.data.qpos
+                d.mocap_pos[:], d.mocap_quat[:] = self.data.mocap_pos, self.data.mocap_quat
+                mj.mj_kinematics(m, d)
+                mj.mj_collision(m, d)
+                self._probe_valid = True
             n = int(d.ncon)
             near = d.contact.dist[:n] <= CONTACT_DISTANCE_M
             b1 = m.geom_bodyid[d.contact.geom1[:n][near]]

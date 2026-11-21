@@ -56,6 +56,44 @@ def test_close_is_idempotent(backend, contract_scene):
     w.close()
 
 
+def test_mujoco_contact_probe_reuses_only_identical_poses(load, tmp_path, monkeypatch):
+    import mujoco as mj
+    from vector_os_nano.sim.scene import compiled_scene
+
+    path = tmp_path / 'probe.xml'
+    path.write_text('''<mujoco><worldbody>
+      <body name="moving"><joint type="slide" axis="1 0 0"/>
+        <geom type="box" size=".1 .1 .1"/></body>
+      <body name="mocap" mocap="true" pos=".2 0 0">
+        <geom type="box" size=".1 .03 .03"/></body>
+    </worldbody></mujoco>''')
+    scene = compiled_scene(path)
+    w = load('mujoco', scene)
+    moving, mocap = scene.body('moving'), scene.body('mocap')
+    collision, calls = mj.mj_collision, []
+
+    def probe(model, data):
+        calls.append(1)
+        collision(model, data)
+
+    monkeypatch.setattr(mj, 'mj_collision', probe)
+    assert w.contacts(moving) == {mocap}
+    assert w.contacts(mocap) == {moving}
+    assert len(calls) == 1
+    w.reset(np.array([.5]))  # simulation time is still zero
+    assert not w.contacts(moving)
+    assert len(calls) == 2
+    w.data.mocap_pos[0, 0] = .7
+    assert w.contacts(moving) == {mocap}
+    assert len(calls) == 3
+    w.data.mocap_quat[0] = [2**-.5, 0, 0, 2**-.5]
+    assert not w.contacts(moving)
+    assert len(calls) == 4
+    w.data.qvel[0] = 1.
+    assert not w.contacts(moving)
+    assert len(calls) == 4
+
+
 # -- state layout and reset round trip ----------------------------------------------
 
 
