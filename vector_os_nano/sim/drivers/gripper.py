@@ -19,7 +19,7 @@ import math
 
 from vector_os_nano.schemas.robot import GripperSpec
 from vector_os_nano.interfaces.physics import GraspSpec
-from vector_os_nano.sim.runtime import SimRuntime
+from vector_os_nano.sim.runtime import ACTOR_EPOCH, SimRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ class Gripper:
             assist=spec.assist,
         )
         self._held: int | None = None  # the body the last close() gripped
+        self._ctrl_motion = 0.0
         if not spec.assist:
             runtime.watch_contact_grip(self._grasp)
 
@@ -52,12 +53,21 @@ class Gripper:
         jaw = [self._jaw]
         rt, speed = self._rt, self._spec.speed
         start = float(rt.snapshot().q[self._jaw_q])
+        previous = float(rt.call(lambda w: w.targets(jaw))[0])
+        counted = ACTOR_EPOCH.active
         steps = 1 if speed is None else max(1, math.ceil(abs(q - start) / (speed * _SETTLE_POLL_S)))
         for i in range(1, steps + 1):
             target = q if i == steps else start + (q - start) * i / steps
             rt.call(lambda w, v=target: w.set_targets(jaw, [v]))
+            if counted:
+                self._ctrl_motion += abs(target-previous)
+            previous = target
             if speed is not None and not rt.wait_sim(_SETTLE_POLL_S):
                 raise RuntimeError("gripper motion interrupted")
+
+    def ctrl_motion(self) -> float:
+        """Jaw set-point displacement issued inside producer-dispatched tools."""
+        return self._ctrl_motion
 
     def open(self) -> bool:
         """Open the jaws and release whatever the gripper holds, verified: False (the

@@ -98,3 +98,19 @@ def test_contact_only_grip_never_attaches_and_detects_slip():
     contacts[3]=frozenset({2,4})
     assert grasp.grasp(world,replace(spec,min_opening=.03)) is None
     assert grasp.grasp(world,replace(spec,assist=True)) is None  # old mode still requires an authored pair
+
+
+def test_jaw_command_counter_counts_actor_writes_even_when_interrupted(monkeypatch):
+    from vector_os_nano.sim.runtime import ACTOR_EPOCH
+    grip = Gripper.__new__(Gripper); grip._rt = Runtime([.04]); grip._jaw = grip._jaw_q = 0
+    grip._ctrl_motion = 0.
+    grip._spec = GripperSpec('0', .04, 0., ('left', 'right'), 'palm', .002, assist=False, speed=.05)
+    grip._servo(.02)
+    assert grip.ctrl_motion() == 0.  # Background movement cannot become actor evidence.
+    with ACTOR_EPOCH.tool():
+        grip._servo(.02)
+    assert grip.ctrl_motion() == 0.
+    monkeypatch.setattr(grip._rt, 'wait_sim', lambda *args: False)
+    with ACTOR_EPOCH.tool(), pytest.raises(RuntimeError, match='interrupted'):
+        grip._servo(0.)
+    assert grip.ctrl_motion() == pytest.approx(.001)

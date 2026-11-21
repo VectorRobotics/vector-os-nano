@@ -169,3 +169,19 @@ def test_home_grade_checks_every_joint_and_rejects_noop(tmp_path):
 def test_turn_pairing_cannot_mix_two_sessions_with_the_same_turn_number():
     lines = [{'session': s, 'turn': 1, 'phase': p} for s, p in [(1, 'start'), (2, 'start'), (1, 'end'), (2, 'end')]]
     assert [a['session'] == b['session'] for a, b in gt_grade.turns(lines)] == [True, True]
+
+
+@pytest.mark.parametrize('attack', ['none', 'weld', 'missing', 'missing_start', 'changed_mode', 'already_held', 'no_rise'])
+def test_contact_pick_grade_requires_fresh_unassisted_possession(attack):
+    start = _line('start', 1, (.5, .5, .51)); end = _line('end', 1, (.5, .5, .60))
+    start['grasp_mode'] = end['grasp_mode'] = 'contact'
+    start['objects']['b']['contact_held'] = attack == 'already_held'
+    end['objects']['b']['contact_held'] = True
+    if attack == 'weld': end['objects']['b']['welded'] = True
+    if attack == 'missing': del end['objects']['b']['contact_held']
+    if attack == 'missing_start': del start['objects']['b']['contact_held']
+    if attack == 'changed_mode': del start['grasp_mode']
+    if attack == 'no_rise': end['objects']['b']['pos'][2] = .51
+    assert gt_grade.held_lifted(start, end, 'b') is (attack == 'none')
+    if attack == 'none':
+        assert not gt_grade.object_on(start, end, 'b', 't')  # Still in the fingers, not placed.

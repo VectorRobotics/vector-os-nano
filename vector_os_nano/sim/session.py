@@ -114,6 +114,8 @@ def _append_gt_dump(path: str, s: "SimSession", phase: str, goal: str) -> None:
 
     gt, world = s.gt, s.world
     held = gt.attachments()
+    grip = s.config.arm.gripper if s.config.arm else None
+    pure_contact = grip is not None and not grip.assist
     line = {
         "schema": 1, "backend": s.runtime.world.name, "session": s.uid,
         "phase": phase, "turn": s._turns, "goal": goal, "embodiment": s.config.id,
@@ -122,7 +124,10 @@ def _append_gt_dump(path: str, s: "SimSession", phase: str, goal: str) -> None:
                  "home": list(s.config.arm.home)} if s.config.arm else None),
         "joint_groups": {n: {"joints": g.joints, "q": gt.joint_positions(g.joints)}
                          for n, g in s.config.joint_groups.items()},
-        "objects": {n: {"pos": p, "welded": n in held} for n, p in gt.object_positions().items()},
+        "grasp_mode": 'contact' if pure_contact else 'assisted',
+        "objects": {n: {"pos": p, "welded": n in held,
+                        "contact_held": bool(pure_contact and gt.contact_held(n, grip.weld_body))}
+                    for n, p in gt.object_positions().items()},
         "surfaces": {k: {"box": v.box, "height": v.height} for k, v in (world.surfaces if world else {}).items()},
         "user": world.user if world else None,
     }

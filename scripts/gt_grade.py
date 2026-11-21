@@ -76,7 +76,7 @@ def delivered(start: dict[str, Any], end: dict[str, Any], obj: str) -> bool:
 
 def _on(line: dict[str, Any], obj: str, surface: str) -> bool:
     s, o = line["surfaces"].get(surface), line["objects"].get(obj)
-    if s is None or o is None or o["welded"]:
+    if s is None or o is None or o["welded"] or o.get('contact_held', False):
         return False
     x, y, z = o["pos"]
     x0, y0, x1, y1 = s["box"]
@@ -90,10 +90,16 @@ def object_on(start: dict[str, Any], end: dict[str, Any], obj: str, surface: str
 
 
 def held_lifted(start: dict[str, Any], end: dict[str, Any], obj: str) -> bool:
-    """Picked up in this turn: attached at the end and not at the start, and its
-    centre rose by LIFT_DZ (an object attached while still resting is no pick)."""
+    """New possession and centre rise; full force/geometry acceptance is grade_grasp.py's job."""
     s, e = start["objects"].get(obj), end["objects"].get(obj)
-    return bool(s and e) and e["welded"] and not s["welded"] and e["pos"][2] - s["pos"][2] >= LIFT_DZ
+    if not s or not e:
+        return False
+    if end.get('grasp_mode') == 'contact':
+        fresh = (start.get('grasp_mode') == 'contact' and s.get('contact_held') is False and
+                 e.get('contact_held') is True and not s['welded'] and not e['welded'])
+    else:
+        fresh = e['welded'] and not s['welded']
+    return fresh and e["pos"][2] - s["pos"][2] >= LIFT_DZ
 
 
 def _inside(line: dict[str, Any], box: list[float]) -> bool:

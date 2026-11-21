@@ -144,6 +144,8 @@ class ActorBaseline:
     # session never causes.
     session: Any = None
     joint_groups: dict[str, tuple[float | None, tuple[float, ...] | None]] | None = None
+    gripper_contacts: dict[str, bool] | None = None
+    gripper_ctrl_motion: float | None = None
 
 
 def _read_float(fn: Any) -> float | None:
@@ -194,6 +196,12 @@ def capture(agent: Any, session: Any = None) -> ActorBaseline:
         joints = _read_truth("arm joints", lambda: gt.joint_positions(tuple(arm.joint_names)))
         arm_joints = None if joints is None else tuple(float(v) for v in joints)
     held = _read_truth("attachments", gt.attachments) if gripper is not None and gt is not None else None
+    grip_spec = getattr(getattr(getattr(session, 'config', None), 'arm', None), 'gripper', None)
+    contact_held = None
+    if grip_spec is not None and not grip_spec.assist:
+        held = None  # Missing contact evidence must never fall back to weld evidence.
+        contact_held = _read_truth('contact possession', lambda: {
+            n: bool(gt.contact_held(n, grip_spec.weld_body)) for n in gt.bid})
     obs = getattr(getattr(agent, "_spatial_memory", None), "observation_count", None)
     groups = {}
     for name, device in getattr(agent, '_services', {}).get('joint_groups', {}).items():
@@ -209,6 +217,8 @@ def capture(agent: Any, session: Any = None) -> ActorBaseline:
         belief_obs=obs if isinstance(obs, int) and not isinstance(obs, bool) else None,
         session=getattr(session, "uid", None),
         joint_groups=groups,
+        gripper_contacts=contact_held,
+        gripper_ctrl_motion=_read_float(getattr(gripper, 'ctrl_motion', None)),
     )
 
 
@@ -325,6 +335,8 @@ def commanded_nothing(agent: Any, before: ActorBaseline, after: ActorBaseline) -
     channels = [(b, a) for dev, b, a in (
         ("_base", before.base_cmd_motion, after.base_cmd_motion),
         ("_arm", before.arm_ctrl_motion, after.arm_ctrl_motion),
+        ("_gripper", before.gripper_ctrl_motion, after.gripper_ctrl_motion)
+        if before.gripper_ctrl_motion is not None or after.gripper_ctrl_motion is not None else
         ("_gripper", before.gripper_welds, after.gripper_welds),
     ) if getattr(agent, dev, None) is not None]
     for name in getattr(agent, '_services', {}).get('joint_groups', {}):
@@ -335,21 +347,27 @@ def commanded_nothing(agent: Any, before: ActorBaseline, after: ActorBaseline) -
 
 
 def _gripper_caused(want: str, call: ast.Call, b: ActorBaseline, p: ActorBaseline, world: Any = None) -> bool:
-    """A weld transition of the wanted polarity: 0->1 for ``rise`` (a grasp), 1->0 for
+    """A possession transition: sustained contact also requires an actor jaw command.
+    0->1 for ``rise`` (a grasp), 1->0 for
     ``fall`` (a release), either for ``level``. Target-aware when the call names an
     object: the name resolves through the world manifest *world* (an alias, "green
     bottle") or is a weld key itself, and only that body's weld counts
     (``holding_object('mug')`` is not caused by a fresh banana weld); a name that
     matches no welded body is never caused (I4F1-D2: an alias was caused by ANY weld)."""
-    if b.gripper_welds is None or p.gripper_welds is None:
+    before, after = b.gripper_welds, p.gripper_welds
+    if b.gripper_contacts is not None or p.gripper_contacts is not None:
+        if not _commanded(b.gripper_ctrl_motion, p.gripper_ctrl_motion):
+            return False
+        before, after = b.gripper_contacts, p.gripper_contacts
+    if before is None or after is None:
         return False
     target = call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) else None
-    keys = set(b.gripper_welds) | set(p.gripper_welds)
+    keys = set(before) | set(after)
     if isinstance(target, str):
         name = ((world.resolve(target) if world is not None else None) or target).strip().lower()
         keys = {k for k in keys if k.lower() == name}
-    rose = any(p.gripper_welds.get(k) and not b.gripper_welds.get(k) for k in keys)
-    fell = any(b.gripper_welds.get(k) and not p.gripper_welds.get(k) for k in keys)
+    rose = any(after.get(k) and not before.get(k) for k in keys)
+    fell = any(before.get(k) and not after.get(k) for k in keys)
     return {"rise": rose, "fall": fell}.get(want, rose or fell)
 
 

@@ -564,3 +564,39 @@ def test_a_baseline_from_another_session_never_causes() -> None:
     assert grade(step, post, "kept_holding('mug')", _WP10, turn_baseline=turn) == ActorCaused.UNCAUSED
     assert grade(step, post, "kept_holding('mug')", _WP10,
                  turn_baseline=_cap(_agent(gripper=_FakeGripper({"mug": False})), uid=2)) == ActorCaused.CAUSED
+
+
+@pytest.mark.parametrize('change,expected', [('close', 'CAUSED'), ('release', 'CAUSED'),
+    ('no_command', 'UNCAUSED'), ('already_held', 'UNCAUSED'), ('wrong_object', 'UNCAUSED'),
+    ('missing_before', 'UNCAUSED'), ('missing_after', 'UNCAUSED')])
+def test_contact_possession_requires_target_transition_and_jaw_command(change, expected):
+    from vector_os_nano.vcli.cognitive.actor_causation import ActorBaseline
+    from dataclasses import replace
+    before = ActorBaseline(session=1, gripper_contacts={'mug': change in ('release', 'already_held')}, gripper_ctrl_motion=0.)
+    after = replace(before, gripper_contacts={'mug': change != 'release'}, gripper_ctrl_motion=.02)
+    verify = "not holding_object('mug')" if change == 'release' else "holding_object('mug')"
+    if change == 'no_command': after = replace(after, gripper_ctrl_motion=0.)
+    if change == 'wrong_object': after = replace(after, gripper_contacts={'banana': True})
+    if change == 'missing_before': before = replace(before, gripper_contacts=None)
+    if change == 'missing_after': after = replace(after, gripper_contacts=None)
+    assert grade(before, after, verify, ROBOT_ORACLES).value == expected
+
+
+def test_contact_capture_ignores_assisted_welds_and_device_claims():
+    from vector_os_nano.vcli.cognitive.actor_causation import commanded_nothing
+    state = {'held': False, 'command': 0.}
+    agent = _agent(gripper=SimpleNamespace(ctrl_motion=lambda: state['command'], is_holding=lambda: True))
+    gt = SimpleNamespace(bid={'mug': 1}, attachments=lambda: {'mug': 'palm'},
+                         contact_held=lambda name, parent: state['held'])
+    session = SimpleNamespace(uid=1, gt=gt, config=SimpleNamespace(arm=SimpleNamespace(
+        gripper=SimpleNamespace(assist=False, weld_body='palm'))))
+    before = capture(agent, session)
+    state.update(held=True, command=.02)
+    after = capture(agent, session)
+    assert before.gripper_contacts == {'mug': False} and before.gripper_welds is None
+    assert grade(before, after, "holding_object('mug')", ROBOT_ORACLES) == ActorCaused.CAUSED
+    assert not commanded_nothing(agent, before, after)
+    gt.contact_held = lambda *args: (_ for _ in ()).throw(RuntimeError('unreadable'))
+    broken = capture(agent, session)
+    assert broken.gripper_contacts is None and broken.gripper_welds is None
+    assert grade(before, broken, "holding_object('mug')", ROBOT_ORACLES) == ActorCaused.UNCAUSED
