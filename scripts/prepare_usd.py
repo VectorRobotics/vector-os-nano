@@ -5,6 +5,68 @@ import numpy as np
 from pxr import Gf, UsdGeom, UsdPhysics, UsdShade, Vt
 
 
+def write_mjcf(spec, destination):
+    """Keep independently indexed USD normals/UVs through MJCF serialization.
+
+    MuJoCo 4.0.1 omits userfacetexcoord/userfacenormal from inline mesh XML;
+    OBJ retains those face-corner indices and is supported by both MJ 3 and 4.
+    """
+    import hashlib
+    import os
+    import tempfile
+    from pathlib import Path
+
+    destination = Path(destination)
+    meshes = destination.parent / 'meshes'
+    meshes.mkdir(parents=True, exist_ok=True)
+    for texture in spec.textures:
+        if not texture.file:
+            continue
+        original = Path(texture.file)
+        if original.suffix.lower() == '.png' and original.read_bytes()[:8] != b'\x89PNG\r\n\x1a\n':
+            from PIL import Image
+            encoded = destination.parent / (hashlib.sha256(original.read_bytes()).hexdigest() + '.png')
+            with Image.open(original) as image:
+                image.save(encoded)
+            texture.file = str(encoded.resolve())
+    for mesh in spec.meshes:
+        if not len(mesh.uservert) or not (len(mesh.userfacetexcoord) or len(mesh.userfacenormal)):
+            continue
+        positions = np.asarray(mesh.uservert).reshape(-1, 3)
+        faces = np.asarray(mesh.userface).reshape(-1, 3)
+        normals = np.asarray(mesh.usernormal).reshape(-1, 3)
+        uv = np.asarray(mesh.usertexcoord).reshape(-1, 2)
+        ni = np.asarray(mesh.userfacenormal).reshape(-1, 3) if len(mesh.userfacenormal) else faces
+        ti = np.asarray(mesh.userfacetexcoord).reshape(-1, 3) if len(mesh.userfacetexcoord) else faces
+        assert not len(normals) or (ni.shape == faces.shape and np.all((ni >= 0) & (ni < len(normals))))
+        assert not len(uv) or (ti.shape == faces.shape and np.all((ti >= 0) & (ti < len(uv))))
+        lines = [f'v {x:.9g} {y:.9g} {z:.9g}\n' for x, y, z in positions]
+        # MuJoCo's OBJ reader flips V; its inline/USD coordinates already use image rows.
+        lines += [f'vt {u:.9g} {1-v:.9g}\n' for u, v in uv]
+        lines += [f'vn {x:.9g} {y:.9g} {z:.9g}\n' for x, y, z in normals]
+        for i, face in enumerate(faces):
+            corners = []
+            for j, vertex in enumerate(face):
+                corner = str(vertex + 1)
+                if len(uv) or len(normals):
+                    corner += '/' + (str(ti[i, j] + 1) if len(uv) else '')
+                if len(normals):
+                    corner += '/' + str(ni[i, j] + 1)
+                corners.append(corner)
+            lines.append('f ' + ' '.join(corners) + '\n')
+        data = ''.join(lines).encode()
+        path = meshes / (hashlib.sha256(data).hexdigest() + '.obj')
+        if not path.exists():
+            with tempfile.NamedTemporaryFile(dir=meshes, delete=False) as tmp:
+                tmp.write(data)
+            os.replace(tmp.name, path)
+        mesh.file = str(path.resolve())
+        for attr in ('uservert', 'userface', 'usernormal', 'usertexcoord', 'userfacenormal', 'userfacetexcoord'):
+            setattr(mesh, attr, [])
+    spec.compile()
+    spec.to_file(str(destination))
+
+
 def normalize(stage):
     """Bake scale/shear into meshes, retaining world geometry and joint anchor points.
 

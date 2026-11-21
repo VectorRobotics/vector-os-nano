@@ -86,7 +86,7 @@ def robot_spec(model_path: Path | str, meshes_dir: Path | str | None = None) -> 
     directory = Path(model_path).resolve().parent
     base = Path(meshes_dir) if meshes_dir is not None else directory / (spec.meshdir or "")
     for mesh in spec.meshes:
-        if not os.path.isabs(mesh.file):
+        if mesh.file and not os.path.isabs(mesh.file):
             mesh.file = str((base / mesh.file).resolve())
     spec.meshdir = ""
     textures = directory / (spec.texturedir or "")

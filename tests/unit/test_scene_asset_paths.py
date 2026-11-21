@@ -35,3 +35,18 @@ def test_texture_survives_cached_scene(tmp_path: Path, absolute: bool, cube: boo
     restored = mj.MjModel.from_xml_path(str(scene))
     assert restored.ntex == 1
     assert tuple(restored.tex_data[:3]) == (80, 120, 160)
+
+
+def test_inline_mesh_survives_cached_scene(tmp_path: Path):
+    model = tmp_path / 'inline.xml'
+    model.write_text('''<mujoco><asset>
+      <mesh name="tetrahedron" vertex="0 0 0  1 0 0  0 1 0  0 0 1"
+            face="0 2 1  0 1 3  0 3 2  1 2 3"/>
+      </asset><worldbody><geom type="mesh" mesh="tetrahedron"/></worldbody></mujoco>''')
+    spec = robot_spec(model)
+    assert spec.meshes[0].file == ''
+    spec.compile()
+    cached = tmp_path / 'cached.xml'
+    cached.write_text(spec.to_xml())
+    restored = mj.MjModel.from_xml_path(str(cached))
+    assert restored.nmesh == 1 and restored.mesh_vertnum[0] == 4
