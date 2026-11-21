@@ -79,8 +79,10 @@ def grade(directory, cfg, world, audit, goal, *, grasp_target=None):
     contact_check = 'only_wheel_support_contacts' if grasp_target is None else 'permitted_robot_contacts'
     fingers, target = set(), -1
     if grasp_target is not None:
-        if grasp_target not in world.pickables or cfg.arm is None or cfg.arm.gripper is None:
-            raise ValueError('grasp contact allowance needs a declared pickable and gripper')
+        declared = grasp_target in world.pickables or any(
+            item.body == grasp_target for item in getattr(world, 'articulations', {}).values())
+        if not declared or cfg.arm is None or cfg.arm.gripper is None:
+            raise ValueError('grasp contact allowance needs a declared target and gripper')
         target = model.body(grasp_target).id
         if target in robot:
             raise ValueError('grasp target cannot be part of the robot')

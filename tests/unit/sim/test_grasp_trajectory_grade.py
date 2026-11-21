@@ -70,3 +70,8 @@ def test_full_grasp_grade(tmp_path, monkeypatch, attack, failed):
     if attack == 'none':
         # Manipulation's narrow fingertip allowance must never apply to ordinary navigation.
         assert grade_navigation.grade(tmp_path, cfg, world, {'urdf_limits': {}}, [0, 0])['physical_verdict'] == 'fail'
+        world.pickables = {}
+        with pytest.raises(ValueError, match='declared target'):
+            grade_navigation.grade(tmp_path, cfg, world, {'urdf_limits': {}}, [0, 0], grasp_target='target')
+        world.articulations = {'fixture': NS(body='target')}
+        assert grade_navigation.grade(tmp_path, cfg, world, {'urdf_limits': {}}, [0, 0], grasp_target='target')['physical_verdict'] == 'pass'
