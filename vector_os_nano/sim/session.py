@@ -172,6 +172,7 @@ class SimSession:
     def start(
         cls, spec: SimSpec, *, vlm_api_key: str | None = None, deadline_s: float = 90.0,
     ) -> "SimSession":
+        paths.configure_cuda_cache()
         cfg, builder = cls.validate(spec)
         session = cls(spec, cfg)
         t0 = time.monotonic()

@@ -28,6 +28,19 @@ _NO_KEYS = {k: "" for k in ("DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC
                             "MOONDREAM_API_KEY")}
 
 
+def test_cuda_cache_defaults_to_state_and_honours_override(tmp_path, monkeypatch):
+    monkeypatch.setenv('VECTOR_HOME', str(tmp_path / 'state'))
+    monkeypatch.setenv('CUDA_CACHE_PATH', '')
+    paths.configure_cuda_cache()
+    assert Path(os.environ['CUDA_CACHE_PATH']) == tmp_path / 'state' / 'cache' / 'cuda'
+    assert Path(os.environ['CUDA_CACHE_PATH']).is_dir()
+    custom = tmp_path / 'custom'
+    monkeypatch.setenv('CUDA_CACHE_PATH', str(custom))
+    paths.configure_cuda_cache()
+    assert os.environ['CUDA_CACHE_PATH'] == str(custom)
+    assert not custom.exists()
+
+
 def test_the_layout_is_the_charters_list() -> None:
     assert list(paths.LAYOUT) == [
         "config.yaml", "history", "VECTOR.md", "personality.md",
@@ -198,6 +211,7 @@ def test_a_simulator_start_writes_only_under_vector_home(tmp_path, default) -> N
     script = tmp_path / "script.json"
     script.write_text(json.dumps({"turns": [{"text": "standing by"}]}))
     env = {**os.environ, **_NO_KEYS}
+    env.pop("CUDA_CACHE_PATH", None)
     env.update(HOME=str(real), VECTOR_HOME=str(state), PYTHONPATH=str(_REPO), VECTOR_NAV_STACK="",
                VECTOR_FAKE_LLM_TOOLS=str(script))
     proc = subprocess.run(

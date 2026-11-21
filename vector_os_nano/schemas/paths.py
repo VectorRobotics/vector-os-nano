@@ -92,6 +92,14 @@ def scene_cache() -> Path:
     return home() / "cache" / "scenes"
 
 
+def configure_cuda_cache() -> None:
+    """Choose the driver cache before CUDA initializes, preserving an explicit override."""
+    if not env.read("CUDA_CACHE_PATH"):
+        cache = (home() / "cache" / "cuda").resolve()
+        cache.mkdir(parents=True, exist_ok=True)
+        os.environ["CUDA_CACHE_PATH"] = str(cache)
+
+
 def migrate_old_memory() -> str:
     """Move each ``~/.vector_os_nano/worlds/<world>/`` into ``memory/<world>/``, once.
 

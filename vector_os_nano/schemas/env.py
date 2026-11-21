@@ -44,6 +44,7 @@ CATALOGUE: dict[str, EnvVar] = {
     "VECTOR_REEXEC": EnvVar("internal", "", "'1' on the mjpython re-exec (macOS), so it happens once"),
     "HF_HUB_OFFLINE": EnvVar("third_party", "", "Hugging Face: '1' forbids fetching model weights"),
     "CUDA_VISIBLE_DEVICES": EnvVar("third_party", "", "the GPUs torch sees (the perception note names the device)"),
+    "CUDA_CACHE_PATH": EnvVar("user", "", "CUDA JIT cache; empty uses VECTOR_HOME/cache/cuda before simulator startup"),
     "MUJOCO_GL": EnvVar("third_party", "", "MuJoCo's GL backend ('egl': headless)"),
     "PYTEST_CURRENT_TEST": EnvVar("third_party", "", "set by pytest: the CLI never re-execs under it"),
 }
