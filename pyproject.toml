@@ -117,7 +117,7 @@ pybullet = ["pybullet>=3.2.5"]
 # it ships a Go2 sim whose MPC gait silently fails every tick (no walk). See
 # docs/tricky-bugs.md Case 0 "Go2 won't walk — casadi missing from [all]".
 all = [
-    "vector-os-nano[sim,perception,ik,mcp,go2]",
+    "vector-os-nano[sim,perception,ik,mcp,go2,pybullet]",
 ]
 
 # Development tools
