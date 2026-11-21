@@ -14,7 +14,7 @@ import shutil
 import mujoco as mj
 import numpy as np
 import trimesh
-from collision_parts import collision_parts
+from collision_parts import collision_parts, merge_convex_patch
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('source', type=Path)
@@ -59,6 +59,13 @@ for g in list(s.geoms):
         parts = collision_parts(np.asarray(geometry.vertices)*mesh.scale,geometry.faces,
                                 tolerance=.00025 if 'finger' in g.parent.name else .001,
                                 surface_thickness=.0002,cache=args.cache)
+    patch = None
+    if 'finger' in g.parent.name:
+        # The pinned CAD's flat contact face: remove internal decomposition seams.
+        sign = 1 if '_left_finger_' in g.parent.name else -1
+        mirrored = [(v*np.array([1,sign,1]), f if sign == 1 else f[:, ::-1]) for v,f in parts]
+        mirrored, patch = merge_convex_patch(mirrored, [(2,.045),(1,.002)], max_extra_volume=1e-9)
+        parts = [(v*np.array([1,sign,1]), f if sign == 1 else f[:, ::-1]) for v,f in mirrored]
     for i,(vertices,faces) in enumerate(parts):
         name = f'{g.parent.name}_collision_{i}'
         s.add_mesh(name=name,uservert=vertices.ravel(),userface=faces.ravel(),
@@ -66,7 +73,7 @@ for g in list(s.geoms):
         g.parent.add_geom(name=name,type=mj.mjtGeom.mjGEOM_MESH,meshname=name,
                           pos=g.pos,quat=g.quat,group=3,friction=g.friction,condim=4,density=0)
     g.contype = g.conaffinity = 0
-    rows.append({'body':g.parent.name,'convex_parts':len(parts),'seconds':time.monotonic()-t})
+    rows.append({'body':g.parent.name,'convex_parts':len(parts),'contact_patch':patch,'seconds':time.monotonic()-t})
     print(rows[-1],flush=True)
 
 limits = {}
@@ -86,7 +93,7 @@ for joint in root.findall('joint'):
         a.gainprm = [1]+[0]*9
     else:
         kp,kv = ((80000,3000) if 'torso_lift' in name else
-                 (2000,100) if 'waist_pitch' in name else
+                 (4000,200) if 'waist_pitch' in name else
                  (3000,40) if 'finger_axis' in name else (effort*25,max(2,effort)))
         a.gainprm = [kp]+[0]*9
         a.biastype = mj.mjtBias.mjBIAS_AFFINE
@@ -131,6 +138,9 @@ json.dump({'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(), 'mas
            'estimated':['servo gains','contact friction','0.1 mm base / 0.2 mm wrist open-surface thickness'],
            'sensor_calibration':'CAD frames; rectified pinhole head FOV 87deg, wrist FOV 85deg and head eye offsets are engineering assumptions, not calibrated hardware intrinsics',
            'software_grip_force_cap_N':5.,'contact_solref':[.004,1],'contact_solimp':[.95,.99,.001,.5,2],
+           'actuators':{m.actuator(i).name:{'gain':m.actuator_gainprm[i].tolist(),
+                          'bias':m.actuator_biasprm[i].tolist(),'force_range':m.actuator_forcerange[i].tolist()}
+                        for i in range(m.nu)},
            'cad_redistribution':'not cleared; local references only'},(out/'audit.json').open('w'),indent=2)
 d = mj.MjData(m)
 mj.mj_resetDataKeyframe(m,d,0)

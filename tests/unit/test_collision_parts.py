@@ -35,3 +35,27 @@ def test_invalid_thickness_fails(tmp_path, thickness):
 def test_invalid_indices_fail(tmp_path, faces):
     with pytest.raises(ValueError, match='in-range triangular faces'):
         collision_parts(np.eye(3), faces, cache=tmp_path)
+
+
+def test_merging_contact_patch_removes_internal_seams_without_changing_other_solids():
+    from scripts.collision_parts import merge_convex_patch
+    pieces = []
+    for x in (-.5, .5):
+        box = trimesh.creation.box(extents=[1, 2, 2]); box.apply_translation([x, 0, 0])
+        pieces.append((box.vertices, box.faces))
+    merged, audit = merge_convex_patch(pieces, [(2, .5), (1, .5)], max_extra_volume=0.)
+    hulls = [trimesh.Trimesh(v, f, process=False) for v, f in merged]
+    assert audit['merged_parts'] == 2 and audit['extra_volume_m3'] == pytest.approx(0., abs=1e-14)
+    assert sum(m.volume for m in hulls) == pytest.approx(8.)
+    assert hulls[0].bounds.tolist() == [[-1., -1., -1.], [1., .5, .5]]
+    assert all(m.is_convex and m.is_watertight for m in hulls)
+
+
+def test_contact_patch_hull_cannot_fill_a_gap():
+    from scripts.collision_parts import merge_convex_patch
+    boxes = [trimesh.creation.box() for _ in range(2)]
+    boxes[1].apply_translation([2, 0, 0])
+    with pytest.raises(ValueError, match='changes volume'):
+        merge_convex_patch([(m.vertices, m.faces) for m in boxes], [(2, 1)], max_extra_volume=1e-9)
+    with pytest.raises(ValueError, match='empty'):
+        merge_convex_patch([(boxes[0].vertices, boxes[0].faces)], [(2, -2)], max_extra_volume=0.)

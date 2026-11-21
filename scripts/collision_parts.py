@@ -8,6 +8,46 @@ import trimesh
 coacd.set_log_level('error')
 
 
+def merge_convex_patch(parts, planes, *, max_extra_volume):
+    """Join a nearly convex contact patch, retaining the solids outside its clipping planes.
+
+    Each (axis, limit) keeps coordinates <= limit. The strict volume budget rejects
+    a patch whose hull would fill a cavity; original CAD accuracy needs a separate audit.
+    """
+    if (not planes or any(axis not in (0, 1, 2) or not np.isfinite(limit) for axis, limit in planes)
+            or not np.isfinite(max_extra_volume) or max_extra_volume < 0):
+        raise ValueError('finite clipping planes and a nonnegative volume budget are required')
+    inside = [trimesh.Trimesh(v, f, process=False) for v, f in parts]
+    outside = []
+    for axis, limit in planes:
+        selected = []
+        for mesh in inside:
+            if mesh.bounds[1, axis] <= limit:
+                selected.append(mesh)
+            elif mesh.bounds[0, axis] >= limit:
+                outside.append(mesh)
+            else:
+                a, b = mesh.vertices[mesh.edges_unique].transpose(1, 0, 2)
+                crossing = (a[:, axis]-limit)*(b[:, axis]-limit) < 0
+                a, b = a[crossing], b[crossing]
+                edge = a + ((limit-a[:, axis])/(b[:, axis]-a[:, axis]))[:, None]*(b-a)
+                pieces = [trimesh.convex.convex_hull(np.concatenate([mesh.vertices[mask], edge]))
+                          for mask in (mesh.vertices[:, axis] <= limit, mesh.vertices[:, axis] >= limit)]
+                if not np.isclose(sum(abs(p.volume) for p in pieces), abs(mesh.volume), rtol=1e-7, atol=1e-16):
+                    raise ValueError('clipping changed the source convex volume')
+                selected.append(pieces[0]); outside.append(pieces[1])
+        inside = selected
+    if not inside:
+        raise ValueError('contact patch is empty')
+    hull = trimesh.convex.convex_hull(np.concatenate([m.vertices for m in inside]))
+    before = sum(abs(m.volume) for m in inside)
+    extra = float(hull.volume-before)
+    if abs(extra) > max_extra_volume+1e-15:
+        raise ValueError(f'contact patch hull changes volume by {extra:g} m^3')
+    return [(m.vertices, m.faces) for m in [hull, *outside]], dict(
+        merged_parts=len(inside), volume_before_m3=float(before), extra_volume_m3=extra)
+
+
 def collision_parts(vertices, faces, tolerance=.005, surface_thickness=.002, *, cache):
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces)
