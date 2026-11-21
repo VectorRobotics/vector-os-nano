@@ -11,7 +11,7 @@ Positions are world-frame metres, joints radians in ``joint_names`` order.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -136,9 +136,16 @@ class BaseProtocol(Protocol):
     def stop(self) -> None:
         """Zero the command now, from any thread; idempotent and never raises."""
 
-    def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0) -> bool:
+    def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0,
+             *, velocity_fn: Callable[[], tuple[float, float, float] | None] | None = None) -> bool:
         """Hold the command for *duration* sim seconds, then stop; True iff it ran its full
-        time and the body was up (its root above the fall height) at the start and the end."""
+        time and the body was up (its root above the fall height) at the start and the end.
+
+        With velocity_fn, poll this trusted controller at the body's control rate, under
+        exclusive motion/clock ownership. It returns bounded body velocities or None
+        when its sensor-based goal is reached. Duration is then a deadline: timeout,
+        cancellation or stop returns False. Exceptions stop motion before propagating.
+        """
 
     def set_velocity(self, vx: float, vy: float, vyaw: float) -> None:
         """Set the command now (non-blocking); it holds until replaced."""
