@@ -324,7 +324,12 @@ def main(argv: list[str] | None = None) -> None:
     except Exception as exc:  # noqa: BLE001 — a sim that did not start, a body the engine cannot bind
         console.print(f"[red]Setup error:[/] {exc}")
         sys.exit(2)
-    run_repl(rt)
+    # atexit runs after ThreadPoolExecutor shutdown; close sensor recordings first.
+    from vector_os_nano.sim.session import stop_all
+    try:
+        run_repl(rt)
+    finally:
+        stop_all()
 
 
 if __name__ == "__main__":
