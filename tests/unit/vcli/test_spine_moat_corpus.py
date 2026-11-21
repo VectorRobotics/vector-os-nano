@@ -24,7 +24,7 @@ ROBOT_ORACLES = frozenset({
     "placed_count", "detect_objects", "describe_scene", "get_position", "get_heading",
     # the WP10 GT bool oracles (vcli/worlds/sim_oracles)
     "in_room", "near_object", "in_view", "lifted", "kept_holding", "released",
-    "object_at", "object_on", "localized",
+    "object_at", "object_on", "localized", "base_standing",
 })
 
 # ---------------------------------------------------------------------------
@@ -32,6 +32,9 @@ ROBOT_ORACLES = frozenset({
 # ---------------------------------------------------------------------------
 
 CORPUS_RAN: list[str] = [
+    "base_standing() < 2",
+    "base_standing() == False",
+    "not base_standing()",
     # FG-1 value-absorbing constructs (BinOp / max / min / abs / *0 / bitwise)
     "(at_position(99, 99) | True) == True",
     "at_position(99, 99) * 0 == 0",

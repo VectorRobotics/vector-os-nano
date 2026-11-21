@@ -66,6 +66,7 @@ _NO_EVIDENCE: frozenset[str] = frozenset({"", "True"})
 _PREDICATE_ORACLES: frozenset[str] = frozenset(
     {
         "at_position",
+        "base_standing",
         "facing",
         "in_room",
         "near_object",
