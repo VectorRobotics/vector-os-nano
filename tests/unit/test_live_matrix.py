@@ -52,7 +52,8 @@ def test_the_shipped_matrix_loads_and_every_cell_is_runnable_or_says_why() -> No
     assert {c["kind"] for c in run} >= {"navigate", "grasp", "fetch"}
     assert {c["backend"] for c in run} == {"mujoco", "pybullet"}
     assert any(c["kind"] == "place" for c in cells if "not_yet" in c)
-    assert any(c["backend"] == "pybullet" for c in cells if "not_yet" in c)
+    assert {c['id'] for c in run if c['backend'] == 'pybullet'} == {
+        'go2-pybullet-room', 'so101-pybullet-grasp', 'piper-pybullet-grasp'}
 
 
 @pytest.mark.parametrize("bad, words", [

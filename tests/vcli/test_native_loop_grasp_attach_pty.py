@@ -63,7 +63,7 @@ def _launch_then_grasp(grasp_line: str, timeout_sec: float, *, live: bool = Fals
     assert ready, f"no go2_piper ready line:\n{text[-3000:]}"
     assert float(ready.group(1)) < 90, "E1: the ready line must arrive within 90 s"
     line = text[ready.start():ready.start() + 300]
-    assert "gait=" in line and "explore: coverage (VECTOR_NAV_STACK unset)" in line, line
+    assert "policy=convex_mpc" in line and "backend=mujoco" in line, line
     verdicts = re.findall(r"verdict (\w+) verified=(\w+)", text)
     evidence, verified = verdicts[-1] if verdicts else ("NO_VERDICT", "")
     return evidence, verified, text
