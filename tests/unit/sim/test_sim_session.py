@@ -492,8 +492,11 @@ def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypa
         lines = [json.loads(ln) for ln in dump.read_text(encoding="utf-8").splitlines()]
         assert [ln["phase"] for ln in lines] == ["start", "end"]
         assert set(lines[0]) == {"schema", "backend", "session", "phase", "turn", "goal", "embodiment",
-                                 "world", "sim_time", "base", "arm", "objects", "surfaces", "user"}
+                                 "world", "sim_time", "base", "arm", "objects", "surfaces", "user",
+                                 "joint_groups", "grasp_mode"}
         assert lines[0]["schema"] == 1 and lines[0]["backend"] == "mujoco"
+        assert lines[0]['joint_groups'] == {} and lines[0]['grasp_mode'] == 'assisted'
+        assert all(o['contact_held'] is False for o in lines[0]['objects'].values())
         assert lines[0]["arm"]["joints"] == list(s.config.arm.joints)
         assert "base_link" not in lines[0]["objects"]
         assert lines[0]["user"] == [8.0, 3.0] and "pick_table" in lines[0]["surfaces"]

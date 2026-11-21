@@ -447,7 +447,8 @@
     <general name="piper_joint4" class="piper_piper" joint="piper_joint4" ctrlrange="-1.832 1.832" gainprm="40" biasprm="0 -40 -5"/>
     <general name="piper_joint5" class="piper_piper" joint="piper_joint5" ctrlrange="-1.22 1.22" gainprm="10" biasprm="0 -10 -1.5"/>
     <general name="piper_joint6" class="piper_piper" joint="piper_joint6" ctrlrange="-3.14 3.14" gainprm="10" biasprm="0 -10 -1.5"/>
-    <general name="piper_gripper" class="piper_finger" joint="piper_joint7" ctrlrange="0 0.035" gainprm="40" biasprm="0 -40 -5"/>
+    <!-- Match the verified jaw servo gain; geometry and force cap retain the reference values. -->
+    <general name="piper_gripper" class="piper_finger" joint="piper_joint7" ctrlrange="0 0.035" gainprm="60" biasprm="0 -60 -5"/>
   </actuator>
 
   <sensor>
