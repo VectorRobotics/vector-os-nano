@@ -96,8 +96,13 @@ class MuJoCoWorld:
         if directory := os.environ.get('VECTOR_ROLLOUT_DIR'):
             from vector_os_nano.sim.backends.mujoco.recording import Recording
 
-            self._recording = Recording(directory, scene)
-            self._recording.state(m, d)
+            try:
+                self._recording = Recording(directory, scene)
+                self._recording.state(m, d)
+                self._recording.capture_due(self)
+            except BaseException:
+                self.close()
+                raise
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -119,6 +124,10 @@ class MuJoCoWorld:
         return float(self.data.time)
 
     def step(self, n: int = 1) -> None:
+        if self._recording is not None and self._recording.cameras and int(n) > 1:
+            for _ in range(int(n)):
+                self.step()
+            return
         with self._lock:
             if self._recording is None:
                 mj.mj_step(self.model, self.data, nstep=int(n))
@@ -134,6 +143,8 @@ class MuJoCoWorld:
                     self._viewer.cam.lookat[:] = [*self.data.xpos[self._track][:2], _TRACK_Z]
                 self._viewer.sync()
                 self._synced = _time.monotonic()
+        if self._recording is not None:
+            self._recording.capture_due(self)
 
     def state(self) -> tuple[np.ndarray, np.ndarray]:
         with self._lock:
@@ -143,6 +154,8 @@ class MuJoCoWorld:
         m, d = self.model, self.data
         q = np.asarray(q, dtype=np.float64).reshape(m.nq)
         qd = np.zeros(m.nv) if qd is None else np.asarray(qd, dtype=np.float64).reshape(m.nv)
+        if self._recording is not None:
+            self._recording.finish_videos()
         with self._lock:
             d.qpos[:], d.qvel[:] = q, qd
             for a in self._motor.values():
@@ -155,6 +168,8 @@ class MuJoCoWorld:
             self._loads_cache = None
             if self._recording is not None:
                 self._recording.state(m, d)
+        if self._recording is not None:
+            self._recording.capture_due(self)
 
     # -- actuation -----------------------------------------------------------
 
@@ -293,7 +308,7 @@ class MuJoCoWorld:
             raise RuntimeError("MuJoCoWorld is closed")
         return pool.submit(self._render_job, camera, cam, w, h, kinds).result()
 
-    def _render_job(self, camera: str, cam: int, w: int, h: int, kinds: tuple[str, ...]) -> RGBDFrame:
+    def _render_job(self, camera: str, cam: int, w: int, h: int, kinds: tuple[str, ...], record_frame=True) -> RGBDFrame:
         m = self.model
         d = self._render_data
         if d is None:
@@ -320,7 +335,7 @@ class MuJoCoWorld:
             cam_pos=d.cam_xpos[cam].copy(), cam_mat=d.cam_xmat[cam].reshape(3, 3).copy(),
             sim_time=float(d.time), camera=camera,
         )
-        if self._recording is not None:
+        if self._recording is not None and record_frame:
             self._recording.frame(frame)
         return frame
 

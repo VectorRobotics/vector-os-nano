@@ -77,3 +77,66 @@ def test_replay_sampling_keeps_last_reset_and_final_state():
     for time, fps in (([0, 1, 0], 30), ([0, 1], 0), ([0, 1], float('nan'))):
         with pytest.raises(ValueError):
             sample_indices(np.array(time), fps)
+
+
+def test_continuous_original_sensor_video_is_lossless_and_reset_separated(tmp_path, monkeypatch):
+    import subprocess
+    source = tmp_path/'camera.xml'
+    source.write_text('''<mujoco><option timestep=".002"/><worldbody>
+      <light pos="0 0 3"/><geom type="plane" size="3 3 .1"/>
+      <camera name="head" pos="0 -2 2" xyaxes="1 0 0 0 1 1"/>
+      <body name="object" pos="0 0 .5"><freejoint/><geom type="sphere" size=".1" rgba="1 0 0 1"/></body>
+      </worldbody></mujoco>''')
+    scene = compiled_scene(source)
+    reference = MuJoCoWorld(scene)
+    monkeypatch.setenv('VECTOR_ROLLOUT_DIR', str(tmp_path/'records'))
+    monkeypatch.setenv('VECTOR_ROLLOUT_CAMERAS', 'head')
+    world = MuJoCoWorld(scene)
+    try:
+        world.step(60); reference.step(60)
+        for a, b in zip(world.state(), reference.state()): np.testing.assert_array_equal(a, b)
+        q, v = world.state(); q[0] += .1
+        world.reset(q, v); world.step(25)
+    finally:
+        world.close(); reference.close()
+    directory, = (tmp_path/'records').iterdir()
+    meta, states, _ = read_recording(directory)
+    assert meta['frames'] == 0  # Periodic video does not pretend to be actor-requested RGB-D frames.
+    assert len(meta['sensor_videos']) == 2
+    for segment, count in zip(meta['sensor_videos'], (4, 2)):
+        assert segment['complete'] and segment['frames'] == count
+        stamps = [json.loads(row) for row in (directory/segment['timestamps']).read_text().splitlines()]
+        t = np.array([row['sim_time'] for row in stamps])
+        assert np.all(np.abs(t-(segment['start_sim_time']+np.arange(count)/30)) <= .002+1e-9)
+        raw = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(directory/segment['file']),
+                                       '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'])
+        frames = np.frombuffer(raw, np.uint8).reshape(count, 480, 640, 3)
+        assert [hashlib.sha256(frame.tobytes()).hexdigest() for frame in frames] == [row['rgb_sha256'] for row in stamps]
+        assert all(np.min(abs(states['sim_time'][:, 0]-time)) < 1e-9 for time in t)
+    assert not list(directory.glob('*.partial.mkv'))
+
+
+def test_sensor_render_failure_keeps_video_incomplete(tmp_path, monkeypatch):
+    source = tmp_path/'camera.xml'
+    source.write_text('<mujoco><worldbody><camera name="head"/><geom type="sphere" size=".1"/></worldbody></mujoco>')
+    monkeypatch.setenv('VECTOR_ROLLOUT_DIR', str(tmp_path/'records'))
+    monkeypatch.setenv('VECTOR_ROLLOUT_CAMERAS', 'head')
+    world = MuJoCoWorld(compiled_scene(source))
+    def broken(*args): raise RuntimeError('camera lost')
+    monkeypatch.setattr(world, '_render_job', broken)
+    try:
+        with pytest.raises(RuntimeError, match='camera lost'): world.step(20)
+    finally:
+        world.close()
+    directory, = (tmp_path/'records').iterdir()
+    segment, = json.loads((directory/'recording.json').read_text())['sensor_videos']
+    assert not segment['complete'] and 'camera lost' in segment['error']
+
+
+@pytest.mark.parametrize('names', ['missing', 'head,head', 'head,'])
+def test_invalid_recording_camera_names_fail_at_start(tmp_path, monkeypatch, names):
+    source = tmp_path/'camera.xml'
+    source.write_text('<mujoco><worldbody><camera name="head"/></worldbody></mujoco>')
+    monkeypatch.setenv('VECTOR_ROLLOUT_DIR', str(tmp_path/'records'))
+    monkeypatch.setenv('VECTOR_ROLLOUT_CAMERAS', names)
+    with pytest.raises(ValueError, match='unique names'): MuJoCoWorld(compiled_scene(source))

@@ -40,6 +40,7 @@ CATALOGUE: dict[str, EnvVar] = {
     "VECTOR_SIM_LOCKSTEP": EnvVar("test_seam", "", "'1': physics steps only when the caller steps it"),
     "VECTOR_GT_DUMP": EnvVar("test_seam", "", "a file: one ground-truth line per turn for scripts/gt_grade.py"),
     "VECTOR_ROLLOUT_DIR": EnvVar("experimental", "", "a directory: MuJoCo records every actual step, solver contact loads and requested sensor frames"),
+    "VECTOR_ROLLOUT_CAMERAS": EnvVar("experimental", "", "comma-separated camera names: lossless continuous 640x480 RGB at 30 simulation fps alongside the rollout; requires ffmpeg"),
     "VECTOR_FAKE_LLM_TOOLS": EnvVar("test_seam", "", "a JSON script that replaces the network LLM"),
     "VECTOR_FAKE_LLM_LOG": EnvVar("test_seam", "", "a file the script LLM logs every call to"),
     "VECTOR_REEXEC": EnvVar("internal", "", "'1' on the mjpython re-exec (macOS), so it happens once"),
