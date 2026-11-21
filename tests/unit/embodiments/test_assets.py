@@ -105,7 +105,7 @@ def test_a_malformed_assets_block_fails_loud(patch, error) -> None:
              "files": {"motion.pt": "a/motion.pt"}, "sha256": {"motion.pt": "0" * 64},
              "license": {"spdx": "MIT", "file": "LICENSE"}, **patch}
     raw = {"id": "x", "display_name": "x", "model": {"path": "m.xml", "root_body": "b"},
-           "capabilities": {"has_base": False}, "assets": block}
+           "assets": block}
     with pytest.raises(EmbodimentConfigError, match=error):
         parse_embodiment_config(raw)
 

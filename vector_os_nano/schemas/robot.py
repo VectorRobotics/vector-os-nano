@@ -23,6 +23,8 @@ from typing import Any
 
 import yaml
 
+from vector_os_nano.schemas.strict import yaml_loader
+
 # Directory holding the per-embodiment subfolders (go2/, g1/, …).
 _EMBODIMENTS_DIR: Path = Path(__file__).resolve().parents[1] / "embodiments"
 
@@ -326,8 +328,8 @@ def _optional_mapping(raw: dict[str, Any], key: str, ctx: str) -> dict[str, Any]
 
 
 def _parse_model(raw: dict[str, Any], ctx: str) -> ModelSpec:
-    m = _require(raw, "model", ctx)
     mctx = f"{ctx}.model"
+    m = _keys(_require(raw, "model", ctx), mctx, {"path", "root_body", "meshes_dir"})
     return ModelSpec(
         path=str(_require(m, "path", mctx)),
         root_body=str(_require(m, "root_body", mctx)),
@@ -474,17 +476,6 @@ def _parse_base(raw: dict[str, Any], ctx: str) -> BaseSpec | None:
     )
 
 
-def _parse_capabilities(raw: dict[str, Any], ctx: str) -> CapabilityProfile:
-    c = _require(raw, "capabilities", ctx)
-    return CapabilityProfile(
-        has_base=bool(c.get("has_base", True)),
-        has_arm=bool(c.get("has_arm", False)),
-        has_gripper=bool(c.get("has_gripper", False)),
-        camera=bool(c.get("camera", False)),
-        lidar=bool(c.get("lidar", False)),
-    )
-
-
 _ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper", "postures", "velocity", "acceleration", "jerk"}
 _GRIPPER_KEYS = {"joint", "open", "closed", "finger_bodies", "weld_body", "min_opening", "assist", "speed"}
 
@@ -531,7 +522,7 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
     )
 
 
-_TOP_KEYS = {"id", "display_name", "world", "model", "sensors", "assets", "capabilities", "arm",
+_TOP_KEYS = {"schema", "id", "display_name", "world", "model", "sensors", "assets", "arm",
              "base", "skills"}
 
 _GRASP_POSITIVE = {"pre_grasp_height", "lift_height", "reach_m", "view_duration", "hold_duration"}
@@ -613,20 +604,27 @@ def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
 def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> EmbodimentConfig:
     """Parse an already-loaded dict into an EmbodimentConfig (fail-loud, unknown keys too)."""
     _keys(raw, ctx, _TOP_KEYS)
-    caps = _parse_capabilities(raw, ctx)
+    version = _require(raw, "schema", ctx)
+    if type(version) is not int or version != 1:
+        advice = 'upgrade vector_os_nano' if type(version) is int and version > 1 else 'use schema: 1'
+        raise EmbodimentConfigError(f"{ctx}.schema: {version!r}; valid: [1]; {advice}")
     arm = _parse_arm(raw, ctx)
-    if caps.has_base:
-        _require(raw, "base", ctx)
+    base = _parse_base(raw, ctx)
+    sensors = _parse_sensors(raw, ctx)
+    caps = CapabilityProfile(has_base=base is not None, has_arm=arm is not None,
+                             has_gripper=arm is not None and arm.gripper is not None,
+                             camera=any(isinstance(s, CameraSpec) for s in sensors),
+                             lidar=any(isinstance(s, LidarSpec) for s in sensors))
     return EmbodimentConfig(
         id=str(_require(raw, "id", ctx)),
         display_name=str(_require(raw, "display_name", ctx)),
         model=_parse_model(raw, ctx),
-        sensors=_parse_sensors(raw, ctx),
+        sensors=sensors,
         capabilities=caps,
         arm=arm,
         world=str(raw.get("world", "") or ""),
         assets=_parse_assets(raw, ctx),
-        base=_parse_base(raw, ctx),
+        base=base,
         skills=_parse_skills(raw, ctx, arm),
     )
 
@@ -644,7 +642,7 @@ def load_embodiment_config(embodiment_id: str) -> EmbodimentConfig:
             f"embodiment '{embodiment_id}': robot.yaml not found at {yaml_path}"
         )
     try:
-        raw = yaml.safe_load(yaml_path.read_text())
+        raw = yaml.load(yaml_path.read_text(), Loader=yaml_loader(yaml_path, EmbodimentConfigError))
     except yaml.YAMLError as exc:  # pragma: no cover - malformed-yaml guard
         raise EmbodimentConfigError(
             f"embodiment '{embodiment_id}': failed to parse {yaml_path}: {exc}"

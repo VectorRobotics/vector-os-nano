@@ -78,7 +78,7 @@ def test_corrupt_manifest_is_error_naming_the_key(tmp_path, monkeypatch) -> None
     bad = tmp_path / "broken"
     bad.mkdir()
     (bad / "robot.yaml").write_text(
-        "id: broken\ndisplay_name: x\ndriver: legged\n"
+        "schema: 1\nid: broken\ndisplay_name: x\ndriver: legged\n"
         "model: {path: a.xml, root_body: b}\nstance: {}\n"
         "policy: {ref: none}\ncapabilities: {}\n"  # no 'spawn'
     )

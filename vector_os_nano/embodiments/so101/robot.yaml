@@ -1,3 +1,4 @@
+schema: 1
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 #
@@ -47,13 +48,6 @@ arm:
     finger_bodies: [gripper_link, jaw]  # one box pad each (colliding)
     weld_body: gripper_link
     min_opening: 0.03                   # rad: the jaw is held >= 2 mm open by the object
-
-capabilities:
-  has_base: false
-  has_arm: true
-  has_gripper: true
-  camera: true
-  lidar: false
 
 skills:
   grasp:

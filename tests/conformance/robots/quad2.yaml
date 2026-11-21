@@ -1,3 +1,4 @@
+schema: 1
 # A second quadruped that exists only as data (tests/conformance/test_legged.py): the
 # go2's model and policy with its own spawn, stance, gains and lidar mount. Nothing in
 # the package names it; the generic LeggedBase stands it up and walks it.
@@ -75,10 +76,3 @@ sensors:
     n_azimuth: 360
     range: 12.0
     period_s: 0.2                 # 5 Hz of sim time
-
-capabilities:
-  has_base: true
-  has_arm: false
-  has_gripper: false
-  camera: true
-  lidar: true

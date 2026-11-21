@@ -10,7 +10,7 @@ Three scattered sites used to answer "what can this body do" by ad-hoc duck-type
   - ``engine._has_base``                 (``agent._base is not None`` -> nav vocab)
 
 This module consolidates them into ONE resolver returning the already-declared
-``CapabilityProfile`` (``embodiments/config.py``), so the question is asked in exactly
+``CapabilityProfile`` (``schemas/robot.py``), so the question is asked in exactly
 one place against one schema.
 
 Authority (deliberate, behavior-preserving — S5a):

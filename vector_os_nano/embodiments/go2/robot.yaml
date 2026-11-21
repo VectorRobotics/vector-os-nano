@@ -1,3 +1,4 @@
+schema: 1
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 #
@@ -77,10 +78,3 @@ sensors:
     n_azimuth: 360
     range: 12.0
     period_s: 0.2                 # 5 Hz of sim time
-
-capabilities:
-  has_base: true
-  has_arm: false
-  has_gripper: false
-  camera: true
-  lidar: true

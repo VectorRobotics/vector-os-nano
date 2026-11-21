@@ -1,3 +1,4 @@
+schema: 1
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 #
@@ -107,13 +108,6 @@ arm:
     finger_bodies: [piper_link7, piper_link8]
     weld_body: piper_link6
     min_opening: 0.005              # jaws held >= 10 mm apart by the object
-
-capabilities:
-  has_base: true
-  has_arm: true
-  has_gripper: true
-  camera: true
-  lidar: true
 
 skills:
   grasp:

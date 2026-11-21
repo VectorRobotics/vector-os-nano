@@ -49,6 +49,41 @@ def test_robot_cannot_override_its_world_spawn():
         parse_embodiment_config(raw)
 
 
+@pytest.mark.parametrize('schema', [None, True, 0, 2])
+def test_robot_schema_version_is_required(schema):
+    raw = _legged()
+    if schema is None:
+        del raw['schema']
+    else:
+        raw['schema'] = schema
+    with pytest.raises(EmbodimentConfigError, match='schema') as exc:
+        parse_embodiment_config(raw, ctx='variant/robot.yaml')
+    assert 'variant/robot.yaml' in str(exc.value)
+    if schema == 2:
+        assert 'upgrade vector_os_nano' in str(exc.value)
+
+
+def test_capabilities_follow_components_and_cannot_be_authored():
+    raw = _legged()
+    raw['capabilities'] = {'has_base': False}
+    with pytest.raises(EmbodimentConfigError, match="unknown key 'capabilities'"):
+        parse_embodiment_config(raw)
+    del raw['capabilities'], raw['base'], raw['sensors']
+    cfg = parse_embodiment_config(raw)
+    assert not any(vars(cfg.capabilities).values())
+
+
+def test_duplicate_robot_keys_fail_before_loading(tmp_path, monkeypatch):
+    from vector_os_nano.schemas import robot
+
+    folder = tmp_path / 'duplicate'
+    folder.mkdir()
+    (folder / 'robot.yaml').write_text('schema: 1\nschema: 1\n')
+    monkeypatch.setattr(robot, '_EMBODIMENTS_DIR', tmp_path)
+    with pytest.raises(EmbodimentConfigError, match='duplicate key schema'):
+        robot.load_embodiment_config('duplicate')
+
+
 def test_go2_base_block() -> None:
     b = load_embodiment_config("go2").base
     legs = [f"{leg}_{part}_joint" for leg in ("FL", "FR", "RL", "RR") for part in ("hip", "thigh", "calf")]
@@ -227,7 +262,7 @@ def test_missing_embodiment_raises_clear_error() -> None:
     assert "robot.yaml" in str(exc.value)
 
 
-@pytest.mark.parametrize("missing", ["model", "base"])
+@pytest.mark.parametrize("missing", ["model"])
 def test_missing_required_field_raises_clear_error(missing: str) -> None:
     # A body with a base (capabilities default to one) needs every one of these.
     raw = _legged()
@@ -245,8 +280,8 @@ def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
 
 
 @pytest.mark.parametrize("where, raw", [
-    ("broken/robot.yaml", {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
-                           "capabilities": {}, "grasp": {}}),
+    ("broken/robot.yaml", {"schema": 1, "id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
+                           "grasp": {}}),
     ("broken/robot.yaml.arm", {"arm": {"joints": ["j"], "ee": {"site": "s"}, "home": [0.0], "dof": 1}}),
     ("broken/robot.yaml.arm.ee", {"arm": {"joints": ["j"], "ee": {"site": "s", "body": "b"}, "home": [0.0]}}),
     ("broken/robot.yaml.arm.gripper", {"arm": {"joints": ["j"], "ee": {"site": "s"}, "home": [0.0], "gripper": {
@@ -257,8 +292,8 @@ def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
 ])
 def test_an_unknown_key_fails_naming_the_file_the_key_and_the_valid_set(where: str, raw: dict) -> None:
     """Strict manifests: a misspelt or retired key is an error, never silently ignored."""
-    full = {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
-            "capabilities": {"has_base": False}, **raw}
+    full = {"schema": 1, "id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
+            **raw}
     with pytest.raises(EmbodimentConfigError) as exc:
         parse_embodiment_config(full, ctx="broken/robot.yaml")
     msg = str(exc.value)
@@ -266,8 +301,7 @@ def test_an_unknown_key_fails_naming_the_file_the_key_and_the_valid_set(where: s
 
 
 def test_a_camera_placed_without_a_position_fails_loud() -> None:
-    raw = {"id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
-           "capabilities": {"has_base": False},
+    raw = {"schema": 1, "id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
            "sensors": [{"role": "camera", "name": "c", "width": 2, "height": 2, "body": "b"}]}
     with pytest.raises(EmbodimentConfigError, match=r"sensors\[0\]\.body places a camera"):
         parse_embodiment_config(raw, ctx="a/robot.yaml")
@@ -290,8 +324,8 @@ def test_both_embodiments_distinct() -> None:
 
 def _with_arm(arm: dict) -> dict:
     return {
-        "id": "a", "display_name": "A", "model": {"path": "x.xml", "root_body": "b"},
-        "capabilities": {"has_base": False}, "arm": arm,
+        "schema": 1, "id": "a", "display_name": "A", "model": {"path": "x.xml", "root_body": "b"},
+        "arm": arm,
     }
 
 
