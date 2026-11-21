@@ -1,0 +1,34 @@
+"""Segmentation IDs must not pass through multisample colour averaging."""
+from types import SimpleNamespace
+
+import pytest
+
+from vector_os_nano.sim.backends.mujoco import world as backend
+
+
+@pytest.mark.parametrize("kind, expected", [("seg", 0), ("rgb", 4), ("depth", 4)])
+@pytest.mark.parametrize("fails", [False, True])
+def test_renderer_samples_are_local_and_restored(monkeypatch, kind, expected, fails):
+    quality = SimpleNamespace(offsamples=4)
+    world = SimpleNamespace(model=SimpleNamespace(vis=SimpleNamespace(quality=quality)), _renderers={})
+    calls = []
+    renderer = SimpleNamespace(scene=SimpleNamespace(flags={}),
+                               enable_segmentation_rendering=lambda: None,
+                               enable_depth_rendering=lambda: None)
+
+    def create(model, height, width):
+        calls.append((model.vis.quality.offsamples, height, width))
+        if fails:
+            raise RuntimeError("context unavailable")
+        return renderer
+
+    monkeypatch.setattr(backend.mj, "Renderer", create)
+    if fails:
+        with pytest.raises(RuntimeError, match="context unavailable"):
+            backend.MuJoCoWorld._renderer(world, kind, 320, 240)
+        assert not world._renderers
+    else:
+        assert backend.MuJoCoWorld._renderer(world, kind, 320, 240) is renderer
+        assert backend.MuJoCoWorld._renderer(world, kind, 320, 240) is renderer
+    assert calls == [(expected, 240, 320)]
+    assert quality.offsamples == 4

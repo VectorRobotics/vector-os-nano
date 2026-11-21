@@ -298,13 +298,19 @@ class MuJoCoWorld:
         """The cached offscreen renderer for (kind, w, h); render thread only."""
         r = self._renderers.get((kind, w, h))
         if r is None:
+            samples = self.model.vis.quality.offsamples
             try:
+                # Multisample colour resolves can invent IDs at segmentation edges.
+                if kind == "seg":
+                    self.model.vis.quality.offsamples = 0
                 r = mj.Renderer(self.model, h, w)
             except RuntimeError as exc:
                 raise RuntimeError(
                     f"cannot create a {w}x{h} {kind} renderer ({exc}); with a viewer window open "
                     f"under MUJOCO_GL=egl only the renderers created before it work: {sorted(self._renderers)}"
                 ) from exc
+            finally:
+                self.model.vis.quality.offsamples = samples
             if kind == "seg":
                 r.enable_segmentation_rendering()
             else:

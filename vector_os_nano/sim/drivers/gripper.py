@@ -52,7 +52,7 @@ class Gripper:
         start = float(rt.snapshot().q[self._jaw_q])
         steps = 1 if speed is None else max(1, math.ceil(abs(q - start) / (speed * _SETTLE_POLL_S)))
         for i in range(1, steps + 1):
-            target = start + (q - start) * i / steps
+            target = q if i == steps else start + (q - start) * i / steps
             rt.call(lambda w, v=target: w.set_targets(jaw, [v]))
             if speed is not None and not rt.wait_sim(_SETTLE_POLL_S):
                 raise RuntimeError("gripper motion interrupted")

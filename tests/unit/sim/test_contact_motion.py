@@ -63,6 +63,15 @@ def test_jaw_commands_have_finite_speed():
     assert max(abs(b[1][0]-a[1][0])/(b[0]-a[0]) for a,b in zip(rows,rows[1:]))<=.05+1e-9
 
 
+@pytest.mark.parametrize('speed', [None, .05])
+def test_jaw_finishes_at_exact_requested_target(speed):
+    grip=Gripper.__new__(Gripper);grip._rt=Runtime([.038123]);grip._jaw=grip._jaw_q=0
+    grip._spec=GripperSpec('0',.04,0.,('left','right'),'palm',.002,assist=False,speed=speed)
+    target = .0037
+    grip._servo(target)
+    assert grip._rt.q[0] == target
+
+
 def test_manifest_parses_contact_and_motion_limits():
     raw=dict(joints=['0'],ee={'site':'tcp'},home=[0.],velocity=[.5],acceleration=[1.],jerk=[2.],
              gripper=dict(joint='jaw',open=.04,closed=0.,finger_bodies=['left','right'],

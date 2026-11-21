@@ -175,7 +175,7 @@ def test_capture_masks_the_robot_by_body_id_and_carries_no_segmentation(sim):
     scene = rt.world.scene
     with rt.paused():  # one instant for the frame and the world-side segmentation
         f = cam.capture()
-        seg = rt.render("d435_rgb", 320, 240, ("seg",)).seg
+        seg = rt.render(sim["cfg"].camera.name, 320, 240, ("seg",)).seg
     assert not hasattr(f, "seg") and f.rgb.shape == (240, 320, 3) and f.depth.shape == (240, 320)
     robot = sorted(scene.subtree(scene.robot_root))
     assert np.array_equal(f.self_mask, np.isin(seg, robot))
