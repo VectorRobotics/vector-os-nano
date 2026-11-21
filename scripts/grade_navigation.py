@@ -21,6 +21,43 @@ CRITERIA = dict(goal_error_m=.15, stopped_speed_m_s=.03, tilt_deg=5.,
                 integration_error_m=1e-6, supported_weight_fraction=.9, base_speed_slack=.01)
 
 
+def supported_lowering(model, states, contacts, body, fingers, required):
+    """Lower height is allowed only with measured support on every affected step."""
+    if not contacts or not len(contacts['sim_time']):
+        return False
+    t = states['sim_time'][:, 0]
+    times = contacts['sim_time'][:, 0]
+    indices = np.searchsorted(t, times)
+    if np.any(indices >= len(t)) or not np.allclose(t[indices], times, rtol=0, atol=1e-8):
+        raise ValueError('contact times must match recorded physics steps')
+    a, b = contacts['body_a'][:, 0], contacts['body_b'][:, 0]
+    force = contacts['force_on_b']*np.where((b==body)[:, None], 1, -1)
+    normal = contacts['normal_on_b']*np.where((b==body)[:, None], 1, -1)
+    if not np.isfinite([force, normal]).all():
+        raise ValueError('lowering support evidence must be finite')
+    active = ((a==body)|(b==body)) & (np.linalg.norm(force, axis=1)>CRITERIA['significant_contact_N'])
+    other = np.where(a==body, b, a)
+    floor = active & ~np.isin(other, list(fingers)) & (normal[:, 2]>=CRITERIA['support_normal_z'])
+    load = np.zeros(len(t)); np.add.at(load, indices[floor], force[floor, 2])
+    normals, hand_load = [], np.zeros(len(t))
+    compression = np.maximum(0., np.sum(force*normal, axis=1))
+    for finger in fingers:
+        mask = active & (other==finger) & (compression>CRITERIA['significant_contact_N'])
+        sums = np.zeros((len(t), 3))
+        np.add.at(sums, indices[mask], normal[mask]*compression[mask, None])
+        np.add.at(hand_load, indices[mask], force[mask, 2])
+        normals.append(sums)
+    held = np.zeros(len(t), bool)
+    for i in range(len(normals)):
+        for j in range(i):
+            n, p = normals[i], normals[j]
+            size = np.linalg.norm(n, axis=1)*np.linalg.norm(p, axis=1)
+            held |= (size>CRITERIA['significant_contact_N']**2) & (np.sum(n*p, axis=1)<-.5*size)
+    load += np.where(held, hand_load, 0.)
+    weight = float(model.body_mass[body]*np.linalg.norm(model.opt.gravity))
+    return bool(weight>0 and np.all(load[required]>=weight*CRITERIA['supported_weight_fraction']))
+
+
 def grade(directory, cfg, world, audit, goal, *, grasp_target=None):
     meta, states, contacts = read_recording(directory)
     if cfg.base is None or cfg.base.policy.ref != 'swerve':
@@ -108,13 +145,18 @@ def grade(directory, cfg, world, audit, goal, *, grasp_target=None):
         checks['final_wheel_support'] = bool(force_robot[final_support, 2].sum()>=weight*CRITERIA['supported_weight_fraction'] and
                 len(set(np.where(rb, b, a)[final_support]))>=min(3, len(wheels)))
         bad_contacts = sorted({(model.body(int(x)).name, model.body(int(y)).name) for x,y in zip(a[bad],b[bad])})
-    dropped = []
+    dropped, supported_transfers = [], []
     for j in range(model.njnt):
         if model.jnt_type[j] != mj.mjtJoint.mjJNT_FREE or int(model.jnt_bodyid[j]) in robot:
             continue
         z = q[:, model.jnt_qposadr[j]+2]
-        if float(z[0]-z.min())>CRITERIA['object_drop_m']:
-            dropped.append(model.body(int(model.jnt_bodyid[j])).name)
+        below = z[0]-z>CRITERIA['object_drop_m']
+        if np.any(below):
+            body = int(model.jnt_bodyid[j])
+            if body==target and supported_lowering(model, states, contacts, body, fingers, below):
+                supported_transfers.append(model.body(body).name)
+            else:
+                dropped.append(model.body(body).name)
     checks['no_dropped_objects'] = not dropped
     verdict = 'fail' if False in checks.values() else 'unverified' if None in checks.values() else 'pass'
     return dict(schema=1, assessed_at=datetime.now(timezone.utc).isoformat(),
@@ -123,6 +165,7 @@ def grade(directory, cfg, world, audit, goal, *, grasp_target=None):
                 checks=checks, goal_error_m=error, final_speed_m_s=stopped, max_tilt_deg=float(tilt.max()),
                 max_contact_residual_m=float(residual.max()), joint_peak_velocity=joint_peaks,
                 joint_violations=violations, forbidden_contact_pairs=bad_contacts, dropped_objects=dropped,
+                continuously_supported_lowering=supported_transfers,
                 physical_verdict=verdict, motion_verdict='unverified', deployment_gate='closed')
 
 

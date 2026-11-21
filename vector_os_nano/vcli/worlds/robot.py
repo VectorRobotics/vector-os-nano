@@ -90,9 +90,13 @@ def task_policy(agent: Any) -> str:
                 "then verify near_object('user') and kept_holding('<object>')."
             )
         place = "place" if "place" in skills else ""
+        if world is not None and world.articulations and {'open_drawer', 'close_drawer'} <= set(skills):
+            lines.append(f"- Declared drawers: {', '.join(world.articulations)}. After approaching and facing the handle, "
+                         "use open_drawer or close_drawer with its exact name as query. Each tool observes the handle afresh, "
+                         "releases and withdraws. Verify articulation_open(query) or articulation_closed(query); a force stop alone is not proof of closure.")
         if place and world is not None and world.surfaces:
             tops = "; ".join(
-                f"{n} ({'declared place point' if s.place_point is not None else 'no configured place point'})"
+                f"{n} ({'fresh RGB-D landmark required' if getattr(s, 'local_anchor', None) is not None else 'declared place point' if s.place_point is not None else 'no configured place point'})"
                 for n, s in world.surfaces.items()
             )
             lines.append(

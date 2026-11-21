@@ -338,6 +338,9 @@ def build_namespace(
             """Object resting ON the named support surface: in contact with its body,
             above its top height, inside its footprint (world manifest)."""
             name, s = obj(target), world.surfaces[str(surface)]
+            if getattr(s, 'local_anchor', None) is not None:
+                return (resting(name) and gt.body_id(s.body) in gt.contacts(name)
+                        and gt.supported_inside_surface(name, s))
             ox, oy, oz = gt.object_positions()[name]
             x0, y0, x1, y1 = s.box
             return (resting(name) and gt.body_id(s.body) in gt.contacts(name)

@@ -36,6 +36,11 @@ def body_poses(scene: CompiledScene, q: np.ndarray) -> tuple[np.ndarray, np.ndar
     return d.xpos.copy(), d.xquat.copy()
 
 
+def body_frame(scene: CompiledScene, q: np.ndarray, body: int) -> tuple[np.ndarray, np.ndarray]:
+    d = _kinematics(scene, q)
+    return d.xpos[body].copy(), d.xmat[body].reshape(3, 3).copy()
+
+
 def geom_poses(scene: CompiledScene, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """``(pos (ngeom, 3), mat (ngeom, 9) row-major)`` of every geom in the world."""
     d = _kinematics(scene, q)
@@ -58,3 +63,18 @@ def shape_aabbs(scene: CompiledScene, q: np.ndarray) -> tuple[np.ndarray, np.nda
     h = np.einsum("gij,gj->gi", np.abs(R), m.geom_aabb[:, 3:])
     colliding = (m.geom_contype != 0) | (m.geom_conaffinity != 0)
     return c - h, c + h, m.geom_bodyid.copy(), colliding
+
+
+def relative_bounds(scene: CompiledScene, q: np.ndarray, body: int, frame: int) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose every colliding shape below body in frame coordinates; exact for boxes."""
+    if not np.isfinite(q).all():
+        raise ValueError('nonfinite containment state')
+    m, d = scene.model, _kinematics(scene, q)
+    selected = np.isin(m.geom_bodyid, list(scene.subtree(body))) & ((m.geom_contype != 0) | (m.geom_conaffinity != 0))
+    if not selected.any():
+        raise ValueError('object has no collision envelope')
+    signs = np.array([(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
+    corners = m.geom_aabb[selected, None, :3] + signs * m.geom_aabb[selected, None, 3:]
+    world = np.einsum('gij,gkj->gki', d.geom_xmat[selected].reshape(-1, 3, 3), corners) + d.geom_xpos[selected, None, :]
+    local = (world-d.xpos[frame]) @ d.xmat[frame].reshape(3, 3)
+    return local.min(axis=(0, 1)), local.max(axis=(0, 1))

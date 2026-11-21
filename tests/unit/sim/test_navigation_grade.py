@@ -40,3 +40,26 @@ def test_navigation_requires_continuous_supported_motion(tmp_path, monkeypatch, 
     assert result['checks']['arrived']
     assert result['physical_verdict'] == verdict
     assert result['motion_verdict'] == 'unverified' and result['deployment_gate'] == 'closed'
+
+
+@pytest.mark.parametrize('attack,expected', [('none',True),('floor',True),('gap',False),
+    ('one_finger',False),('same_side',False),('underload',False),('sidewall',False)])
+def test_lowering_requires_continuous_weight_support(attack,expected):
+    m=mj.MjModel.from_xml_string('''<mujoco><worldbody>
+      <body name="box"><freejoint/><geom size=".02" mass=".1"/></body>
+      <body name="left"><geom size=".01"/></body><body name="right"><geom size=".01"/></body>
+    </worldbody></mujoco>''')
+    body,left,right=[m.body(n).id for n in ('box','left','right')]
+    t=np.arange(4)*.01;rows=[]
+    for i,time in enumerate(t):
+        if attack=='gap' and i==2:continue
+        if attack in ('floor','sidewall'):
+            rows.append((time,0,[0,0,.981],[0,0,1] if attack=='floor' else [1,0,0]))
+        else:
+            rows.append((time,left,[1,0,.4905],[1,0,0]))
+            if attack!='one_finger':rows.append((time,right,[-1,0,.4905],[-1,0,0] if attack!='same_side' else [1,0,0]))
+    c=dict(sim_time=np.array([[r[0]] for r in rows]),body_a=np.array([[r[1]] for r in rows]),
+        body_b=np.full((len(rows),1),body),force_on_b=np.array([r[2] for r in rows],float),
+        normal_on_b=np.array([r[3] for r in rows],float))
+    if attack=='underload':c['force_on_b'][:,2]*=.5
+    assert grader.supported_lowering(m,{'sim_time':t[:,None]},c,body,{left,right},np.ones(4,bool))==expected

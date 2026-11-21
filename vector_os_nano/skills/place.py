@@ -4,12 +4,15 @@
 from __future__ import annotations
 import math
 import threading
+from dataclasses import replace
+
+import numpy as np
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import Pose3D, SkillResult
 from vector_os_nano.perception.base import failure_cause
 from vector_os_nano.skills.grasp import _cancelled, _move, _solve, face
-from vector_os_nano.skills.grasp_perception import _fail
+from vector_os_nano.skills.grasp_perception import _fail, _Target, perceive
 from vector_os_nano.skills.utils.approach_pose import compute_approach_pose
 from vector_os_nano.skills import place_support
 
@@ -41,6 +44,28 @@ def poses(arm, surface, cfg):
             return None
         joints.append(seed)
     return joints
+
+
+def localize(surface, context, cfg, token):
+    """Resolve a moving support from current pixels and its declared landmark geometry."""
+    anchor = getattr(surface, 'local_anchor', None)
+    if anchor is None:
+        return surface, {}, None
+    if context.perception is None:
+        return None, {}, _fail('no_perception', 'A moving support requires a fresh RGB-D observation.')
+    _, observation, error = perceive(context.perception, anchor.query,
+        _Target(False, None, anchor.query, surface.name), camera=cfg.get('camera'), cancel=token.is_set)
+    if error:
+        return None, observation, error
+    bounds = np.asarray(observation['visible_bounds'], dtype=float)
+    if (bounds.shape != (2, 3) or not np.isfinite(bounds).all() or
+            np.any(bounds[1] <= bounds[0]) or np.any(bounds[1]-bounds[0] >= anchor.max_extent)):
+        return None, observation, _fail('implausible_target', 'Support landmark segmentation is not plausible; choose another view.')
+    c, s = math.cos(anchor.yaw), math.sin(anchor.yaw)
+    rotation = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    point = bounds.mean(0) + rotation @ (np.array([*surface.place_point, surface.height])-anchor.point)
+    # shortcut: orientation is authored for a braked support; use a pose estimator when furniture can rotate.
+    return replace(surface, place_point=tuple(point[:2]), height=float(point[2])), observation, None
 
 
 def reach(context, surface, cfg, token):
@@ -85,14 +110,15 @@ def reach(context, surface, cfg, token):
 @skill(requires=('arm', 'gripper'), aliases=['put', 'drop', 'put down', '放', '放下', '放到', '放置', '放在'])
 class PlaceSkill:
     name = 'place'
-    description = 'Place the held object on a named surface with a declared place point; descend, check release, and retreat.'
+    description = 'Place the held object on a named surface; observe moving supports afresh, descend, check support, release and retreat.'
     parameters = {'surface': {'type': 'string', 'required': True, 'description': 'Named support surface from the world manifest.'}}
     verify_hint = "object_on('<object>', '<surface>')"
     preconditions = ['gripper_holding_any']
     postconditions = ['gripper_empty']
     effects = {'gripper_state': 'open', 'held_object': None}
     failure_modes = ['no_arm', 'no_gripper', 'unknown_surface', 'not_configured', 'not_holding',
-                     'out_of_reach', 'approach_failed', 'ik_unreachable', 'move_failed', 'release_failed', 'support_unconfirmed', 'cancelled', 'device_failed']
+                     'out_of_reach', 'approach_failed', 'ik_unreachable', 'move_failed', 'release_failed', 'support_unconfirmed',
+                     'no_perception', 'implausible_target', 'cancelled', 'device_failed']
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         token = context.services.get('cancel') or threading.Event()
@@ -111,11 +137,26 @@ class PlaceSkill:
                 return _fail('not_configured', 'Configure skills.place in this embodiment manifest.')
             if not context.gripper.is_holding():
                 return _fail('not_holding', 'The gripper holds no object; nothing was placed.')
+            source = surface
+            surface, observation, error = localize(source, context, cfg, token)
+            if error:
+                return error
+            if getattr(source, 'local_anchor', None) is not None and not context.gripper.is_holding():
+                return _fail('not_holding', 'Object slipped while observing the support; keep the base stopped and observe the object.')
             support = cfg.get('support')
             initial = place_support.read(context.gripper, support) if support else None
             joints, error = reach(context, surface, cfg, token)
             if error:
                 return error
+            if getattr(source, 'local_anchor', None) is not None:
+                surface, observation, error = localize(source, context, cfg, token)
+                if error:
+                    return error
+                if not context.gripper.is_holding():
+                    return _fail('not_holding', 'Object slipped while observing the support; keep the base stopped and observe the object.')
+                joints = poses(context.arm, surface, cfg)
+                if joints is None:
+                    return _fail('ik_unreachable', 'The freshly observed support is unreachable; keep holding and reposition.')
             rotation = context.arm.fk(context.arm.get_joint_positions())[1] if cfg['keep_orientation'] else None
             for height, duration, phase in zip(('hover_height', 'release_height'), cfg['durations'][:2], ('approach', 'descend')):
                 position = (*surface.place_point, surface.height + cfg[height])
@@ -172,7 +213,9 @@ class PlaceSkill:
             if context.gripper.is_holding():
                 return _fail('release_failed', 'Gripper reports a load after retreat; inspect the placement.')
             return SkillResult(True, dict(diagnosis='ok', surface=surface.name,
-                placed_at=[*surface.place_point, surface.height], target_source='authored world manifest',
+                placed_at=[*surface.place_point, surface.height],
+                target_source='fresh RGB-D landmark with authored orientation' if observation else 'authored world manifest',
+                observation=observation,
                 release_position=list(position), support_confirmed=bool(support)))
         except Exception as exc:
             return _cancelled(token) or _fail('device_failed', f'Place device failed: {failure_cause(exc)}; inspect before retrying.')

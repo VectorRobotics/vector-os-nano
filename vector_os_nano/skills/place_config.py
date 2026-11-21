@@ -1,5 +1,5 @@
 """Place-owned manifest parameters; no morphology defaults in the skill."""
-from vector_os_nano.schemas.robot import EmbodimentConfigError, _keys, _require, _floats
+from vector_os_nano.schemas.robot import CameraSpec, EmbodimentConfigError, _keys, _require, _floats
 from vector_os_nano.skills.grasp_config import _positive
 
 
@@ -7,7 +7,7 @@ def parse(raw, cfg, ctx):
     if cfg.arm is None or cfg.arm.gripper is None:
         raise EmbodimentConfigError(f'{ctx}: requires an arm with a gripper')
     numbers = {'hover_height', 'release_height', 'retreat_height', 'settle_duration', 'reach_m', 'position_tolerance'}
-    row = _keys(raw, ctx, numbers | {'durations', 'keep_orientation', 'base', 'support'})
+    row = _keys(raw, ctx, numbers | {'durations', 'keep_orientation', 'base', 'support', 'camera'})
     result = {k: _positive(_require(row, k, ctx), f'{ctx}.{k}', zero=k == 'release_height') for k in numbers}
     if result['hover_height'] <= result['release_height']:
         raise EmbodimentConfigError(f'{ctx}: hover_height must exceed release_height')
@@ -18,6 +18,11 @@ def parse(raw, cfg, ctx):
     if not isinstance(keep, bool):
         raise EmbodimentConfigError(f'{ctx}.keep_orientation: expected a boolean')
     result['keep_orientation'] = keep
+    if 'camera' in row:
+        cameras = {s.name for s in cfg.sensors if isinstance(s, CameraSpec) and s.depth}
+        if not isinstance(row['camera'], str) or row['camera'] not in cameras:
+            raise EmbodimentConfigError(f'{ctx}.camera: expected one of {sorted(cameras)}')
+        result['camera'] = row['camera']
     if 'support' in row:
         keys = {'max_descent', 'step', 'duration', 'dwell', 'minimum_load', 'unload_fraction', 'max_force'}
         support = _keys(row['support'], f'{ctx}.support', keys)

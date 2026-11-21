@@ -47,6 +47,14 @@ class Pickable:
 
 
 @dataclass(frozen=True)
+class SurfaceAnchor:
+    query: str
+    point: tuple[float, float, float]  # visible landmark reference in the support body's frame
+    yaw: float  # authored world orientation; translation must be observed afresh
+    max_extent: float
+
+
+@dataclass(frozen=True)
 class Surface:
     name: str
     body: str
@@ -54,6 +62,8 @@ class Surface:
     height: float
     aliases: tuple[str, ...] = ()  # what NL calls it ("餐桌", "dining table")
     place_point: tuple[float, float] | None = None  # authored world XY, never inferred from missing data
+    local_anchor: SurfaceAnchor | None = None  # when set, box/height/place_point are BODY-local
+    ceiling: float | None = None  # body-local upper containment limit
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,7 @@ class Articulation:
     closed_tolerance: float
     aliases: tuple[str, ...] = ()
     handle_geom: str | None = None
+    handle_query: str = 'drawer handle'
 
 
 # The closed list of articles, demonstratives and generic heads in object references.
@@ -287,24 +298,41 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
     for name, value in _mapping(raw.get('articulations', {}), f'{ctx}: articulations').items():
         key = f'{ctx}: articulations.{name}'
         fields = ('body', 'joint', 'closed', 'opened', 'closed_tolerance')
-        row = _mapping(value, key, (*fields, 'aliases', 'handle_geom'), fields)
+        row = _mapping(value, key, (*fields, 'aliases', 'handle_geom', 'handle_query'), fields)
         closed, opened, tolerance = (_number(row[k], f'{key}.{k}') for k in fields[2:])
         if not 0 < tolerance < abs(opened-closed)/2:
             raise WorldManifestError(f'{key}: closed_tolerance must be positive and smaller than half the travel')
         articulations[name] = Articulation(_text(row['body'], f'{key}.body'),
             _text(row['joint'], f'{key}.joint'), closed, opened, tolerance,
             _words(row.get('aliases', []), f'{key}.aliases'),
-            _text(row['handle_geom'], f'{key}.handle_geom') if 'handle_geom' in row else None)
+            _text(row['handle_geom'], f'{key}.handle_geom') if 'handle_geom' in row else None,
+            _text(row.get('handle_query', 'drawer handle'), f'{key}.handle_query'))
     surfaces: dict[str, Surface] = {}
     for name, value in _mapping(raw.get('surfaces', {}), f'{ctx}: surfaces').items():
         key = f'{ctx}: surfaces.{name}'
-        row = _mapping(value, key, ('body', 'box', 'height', 'aliases', 'place_point'), ('body', 'box', 'height'))
+        row = _mapping(value, key, ('body', 'box', 'height', 'aliases', 'place_point', 'local_anchor', 'ceiling'), ('body', 'box', 'height'))
         point = _xy(row['place_point'], f'{key}.place_point') if 'place_point' in row else None
         box = _box(row['box'], f'{key}.box')
         if point is not None and not (box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]):
             raise WorldManifestError(f'{key}.place_point: must lie within the declared surface box')
+        height = _number(row['height'], f'{key}.height')
+        anchor = ceiling = None
+        if 'local_anchor' in row or 'ceiling' in row:
+            if not {'local_anchor', 'ceiling'} <= row.keys() or row['body'] == 'world' or point is None:
+                raise WorldManifestError(f'{key}: local_anchor requires a body, ceiling and place_point')
+            fields = ('query', 'point', 'yaw', 'max_extent')
+            a = _mapping(row['local_anchor'], f'{key}.local_anchor', fields, fields)
+            xyz = a['point']
+            if not isinstance(xyz, list) or len(xyz) != 3:
+                raise WorldManifestError(f'{key}.local_anchor.point: expected three coordinates')
+            anchor = SurfaceAnchor(_text(a['query'], f'{key}.local_anchor.query'),
+                tuple(_number(v, f'{key}.local_anchor.point') for v in xyz),
+                _number(a['yaw'], f'{key}.local_anchor.yaw'), _number(a['max_extent'], f'{key}.local_anchor.max_extent'))
+            ceiling = _number(row['ceiling'], f'{key}.ceiling')
+            if anchor.max_extent <= 0 or ceiling <= height:
+                raise WorldManifestError(f'{key}: expected positive anchor extent and ceiling above the floor')
         surfaces[name] = Surface(name, _text(row['body'], f'{key}.body'), box,
-                                 _number(row['height'], f'{key}.height'), _words(row.get('aliases', []), f'{key}.aliases'), point)
+                                 height, _words(row.get('aliases', []), f'{key}.aliases'), point, anchor, ceiling)
     pickables: dict[str, Pickable] = {}
     for name, value in _mapping(raw.get('pickables', {}), f'{ctx}: pickables').items():
         key = f'{ctx}: pickables.{name}'

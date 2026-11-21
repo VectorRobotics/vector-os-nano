@@ -6,6 +6,7 @@ import mujoco as mj
 import numpy as np
 from scripts.grade_grasp import package_trajectory, integration_error, contact_support, CRITERIA as GRASP
 from scripts.grade_navigation import grade as grade_safety
+from scripts.grade_drawer import drawer_pose
 from vector_os_nano.sim.backends.mujoco.recording import read_recording
 
 # Fixed before the first household placement evaluation; no centre-only containment.
@@ -13,6 +14,14 @@ CRITERIA = dict(stable_s=2., boundary_slack_m=.0001, support_gap_m=.005,
                 penetration_m=.0025, linear_speed_m_s=.01, angular_speed_rad_s=.05,
                 support_normal_z=.94, minimum_weight_fraction=.9, significant_force_N=.05,
                 pre_release_s=.3, pre_release_weight_fraction=.8)
+
+
+def surface_vertices(model, states, vertices, surface):
+    """Use the recorded furniture pose, never the actor's landmark estimate."""
+    if getattr(surface, 'local_anchor', None) is None:
+        return vertices
+    position, rotation, _ = drawer_pose(model, states['qpos'], model.body(surface.body).id)
+    return np.einsum('tji,tkj->tki', rotation, vertices-position[:, None, :])
 
 
 def terminal_support(model, states, contacts, body, surface, *, duration=None, fraction=None):
@@ -30,9 +39,19 @@ def terminal_support(model, states, contacts, body, surface, *, duration=None, f
         raise ValueError('contact times must lie on recorded physics steps')
     force = contacts['force_on_b']*np.where((b==body)[:, None], 1, -1)
     normal = contacts['normal_on_b']*np.where((b==body)[:, None], 1, -1)
+    pos = contacts['position']
+    if not all(np.isfinite(v).all() for v in (force, normal, pos)):
+        raise ValueError('support evidence must be finite')
+    if getattr(surface, 'local_anchor', None) is not None:
+        position, rotation, _ = drawer_pose(model, states['qpos'], model.body(surface.body).id)
+        indices = np.searchsorted(t, contacts['sim_time'][:, 0])
+        if np.any(indices >= len(t)) or not np.allclose(t[indices], contacts['sim_time'][:, 0], atol=1e-8, rtol=0):
+            raise ValueError('contact times must match recorded physics steps')
+        pos = np.einsum('tji,tj->ti', rotation[indices], pos-position[indices])
+        force = np.einsum('tji,tj->ti', rotation[indices], force)
+        normal = np.einsum('tji,tj->ti', rotation[indices], normal)
     active = ((a==body)|(b==body)) & (np.linalg.norm(force, axis=1)>CRITERIA['significant_force_N']) & (ct>=ticks[0])
     other = np.where(a==body, b, a)
-    pos = contacts['position']
     x0,y0,x1,y1 = surface.box
     support = ((other==model.body(surface.body).id) & (normal[:, 2]>=CRITERIA['support_normal_z']) &
                (abs(pos[:, 2]-surface.height)<=CRITERIA['support_gap_m']) &
@@ -55,13 +74,17 @@ def grade(directory, cfg, world, audit, goal, target, destination):
     body, address, vertices = package_trajectory(model, states, target)
     surface = world.surfaces[destination]
     t = states['sim_time'][:, 0]; window = t>=t[-1]-CRITERIA['stable_s']-1e-8
-    points = vertices[window]; bottom = vertices[:, :, 2].min(axis=1)
+    local = surface_vertices(model, states, vertices, surface)
+    points = local[window]; bottom = vertices[:, :, 2].min(axis=1)
+    resting_bottom = local[window, :, 2].min(axis=1)
     x0,y0,x1,y1 = surface.box; slack = CRITERIA['boundary_slack_m']
     checks, loads = terminal_support(model, states, contacts, body, surface)
     checks['full_box_inside_surface'] = bool(np.all(points[:, :, 0]>=x0-slack) and np.all(points[:, :, 0]<=x1+slack)
         and np.all(points[:, :, 1]>=y0-slack) and np.all(points[:, :, 1]<=y1+slack))
-    checks['resting_height'] = bool(np.all(bottom[window]>=surface.height-CRITERIA['penetration_m']) and
-                                    np.all(bottom[window]<=surface.height+CRITERIA['support_gap_m']))
+    checks['resting_height'] = bool(np.all(resting_bottom>=surface.height-CRITERIA['penetration_m']) and
+                                    np.all(resting_bottom<=surface.height+CRITERIA['support_gap_m']))
+    if getattr(surface, 'local_anchor', None) is not None:
+        checks['below_container_ceiling'] = bool(np.all(points[:, :, 2]<=surface.ceiling+slack))
     vi = int(model.jnt_dofadr[model.body_jntadr[body]])
     velocity = states['qvel'][window, vi:vi+6]
     checks['stable_object'] = bool(np.all(np.linalg.norm(velocity[:, :3], axis=1)<=CRITERIA['linear_speed_m_s']) and

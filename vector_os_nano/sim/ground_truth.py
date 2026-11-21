@@ -122,6 +122,37 @@ class GroundTruth:
     def body_id(self, name: str) -> int:
         return self._scene.body(name)
 
+    def supported_inside_surface(self, name: str, surface: Any) -> bool:
+        """Whole containment plus floor load; a side-wall jam cannot prove placement."""
+        (q, _), contacts = self._rt.call(lambda w: (w.state(), w.contact_loads()))
+        sc, body, frame = self._scene, self.bid[name], self.body_id(surface.body)
+        lo, hi = canonical.relative_bounds(sc, q, body, frame)
+        lower = np.array([surface.box[0], surface.box[1], surface.height])
+        upper = np.array([surface.box[2], surface.box[3], surface.ceiling])
+        if (not np.all(lo >= lower-[.0001, .0001, .0025]) or not np.all(hi <= upper+.0001)
+                or lo[2] > surface.height+.005):
+            return False
+        origin, rotation = canonical.body_frame(sc, q, frame)
+        load = 0.
+        for contact in contacts:
+            if body not in (contact.body_a, contact.body_b):
+                continue
+            sign = 1 if contact.body_b == body else -1
+            force = rotation.T @ np.asarray(contact.force_on_b)*sign
+            if not np.isfinite(force).all():
+                return False
+            if np.linalg.norm(force) <= .05:
+                continue
+            other = contact.body_a if sign == 1 else contact.body_b
+            point = rotation.T @ (np.asarray(contact.position)-origin)
+            normal = rotation.T @ np.asarray(contact.normal_on_b)*sign
+            if (not np.isfinite([point, normal]).all() or other != frame or normal[2] < .94 or abs(point[2]-surface.height) > .005
+                    or not np.all(point[:2] >= lower[:2]-.0001) or not np.all(point[:2] <= upper[:2]+.0001)):
+                return False
+            load += force[2]
+        weight = float(sc.model.body_mass[list(sc.subtree(body))].sum()*np.linalg.norm(sc.model.opt.gravity))
+        return bool(math.isfinite(load) and weight > 0 and load >= .9*weight)
+
     def clearance(self, name: str) -> float:
         """Gap (m) between the object's lowest point and the highest colliding,
         non-robot shape top under it — about 0 when it rests on a support, large
