@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import math
 
+from vector_os_nano.core.types import Odometry
+
 
 class KinBase:
     """A unicycle (or holonomic) body integrated in sim time at 100 Hz.
@@ -34,6 +36,12 @@ class KinBase:
 
     def get_sim_time(self):
         return self.t
+
+    def get_odometry(self):
+        vx, vy, vyaw = self.cmd
+        c, s = math.cos(self.yaw), math.sin(self.yaw)
+        return Odometry(timestamp=self.t, x=self.x, y=self.y,
+                        vx=c*vx-s*vy, vy=s*vx+c*vy, vyaw=vyaw)
 
     def set_velocity(self, vx, vy, vyaw):
         self.cmd = (vx, vy, vyaw)

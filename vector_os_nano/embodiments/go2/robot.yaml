@@ -41,7 +41,7 @@ base:
     ref: convex_mpc               # needs casadi + pin: uv pip install -e '.[go2]'
     file: model/go2_description.urdf
     timestep: 0.001
-    tick_hz: 200
+    tick_hz: 1000                 # 5 ms held PD torques caused steady zero-command drift in Bullet
     gait_hz: 3                    # trot cycles per second
     duty: 0.6                     # stance fraction of a cycle
     z_des: 0.27                   # the trunk height the MPC holds (m)

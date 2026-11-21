@@ -18,7 +18,7 @@ sidestep + replan recovery, ``max_recoveries`` times, then an honest "stalled".
 The result is a :class:`NavResult` (a dict whose truth is "reached") with a
 ``reason`` from :data:`NAV_REASONS` — never a bare bool (Rule 4). The base is an
 ``interfaces.BaseProtocol`` (pose, heading, ``holonomic``, ``set_velocity``,
-``stop``, ``get_sim_time`` and ``wait_sim``); a sim clock that stops advancing ends
+``stop``, ``get_odometry``, ``get_sim_time`` and ``wait_sim``); a sim clock that stops advancing ends
 the follow as "timeout", never as an endless loop. Tuning comes from
 ``config/nav.yaml`` (``follower`` + ``navigation.arrival_radius``) and the body's
 manifest ``base.nav`` block (radius, speed, yaw rate); the base says when it has fallen.
@@ -182,6 +182,8 @@ def follow(
     best, best_t = _remaining((x0, y0), path, i), t0
     next_progress = t0
     holonomic = base.holonomic
+    settled_since = None
+    braking = False
     try:
         while True:
             if cancel.is_set():
@@ -193,10 +195,27 @@ def follow(
             if fallen():
                 return result("fell")
             target = path[-1]
-            if math.dist((x, y), target) <= tol:
-                return result("arrived")
             if now >= deadline:
                 return result("timeout")
+            if braking or math.dist((x, y), target) <= tol:
+                # Zero command is not zero motion: keep control through braking.
+                braking = True
+                base.set_velocity(0.0, 0.0, 0.0)
+                odom = base.get_odometry()
+                if math.hypot(odom.vx, odom.vy) <= .03 and abs(odom.vyaw) <= .05:
+                    settled_since = now if settled_since is None else settled_since
+                    if now - settled_since >= .2:
+                        if math.dist((x, y), target) <= tol:
+                            return result("arrived")
+                        braking, settled_since = False, None
+                        best, best_t = _remaining((x, y), path, i), now
+                        continue
+                else:
+                    settled_since = None
+                if not base.wait_sim(min(tick, deadline-now), cancel):
+                    return result("aborted" if cancel.is_set() else "timeout")
+                continue
+            settled_since = None
             while i < len(path) - 1 and (
                     math.dist((x, y), path[i]) <= capture
                     or vg.segment_clear((x, y), path[i + 1], inflated)):

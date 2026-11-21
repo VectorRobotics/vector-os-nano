@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import threading
+from dataclasses import replace
 
 import pytest
 
@@ -137,8 +138,34 @@ def test_velocity_is_streamed_not_stop_and_go():
     base.set_velocity = record
     res = follow(base, (6, 0), [], nav=GO2, fallen=lambda: False, cancel=Never())
     assert res
-    assert all(v > 0 for v in commands)  # no zero command until the final stop()
+    braking = commands.index(0)
+    assert all(v > 0 for v in commands[:braking])
+    assert all(v == 0 for v in commands[braking:])  # braking only at the goal
     assert res["elapsed_s"] < 6.0 / 0.4 + 2.0  # ~ the commanded speed, no halving
+
+
+@pytest.mark.parametrize('timeout,tol,expected', [(10, .25, 'arrived'), (10, .05, 'arrived'), (.3, .25, 'timeout')])
+def test_arrival_waits_for_measured_braking_within_the_global_budget(timeout, tol, expected):
+    class Coasting(KinBase):
+        def __init__(self):
+            super().__init__()
+            self.speed = .2
+
+        def get_odometry(self):
+            return replace(super().get_odometry(), vx=self.speed)
+
+        def wait_sim(self, seconds, cancel=None):
+            self.x += self.speed * seconds
+            self.speed = max(0, self.speed - .2 * seconds)
+            return super().wait_sim(seconds, cancel)
+
+    base = Coasting()
+    res = follow(base, (0, 0), [], nav=GO2, fallen=lambda: False, timeout=timeout, tol=tol)
+    assert res.reason == expected
+    if res:
+        assert base.speed <= .03 and res['dist'] <= tol
+        assert res['elapsed_s'] >= 1
+    assert base.stops == 1
 
 
 def test_budget_is_one_global_sim_time_deadline():
