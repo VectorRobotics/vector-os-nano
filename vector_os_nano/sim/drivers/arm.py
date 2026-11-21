@@ -184,10 +184,18 @@ class Arm:
         return self._rt.snapshot().q
 
     def ik(self, target_xyz: tuple[float, float, float],
-           current_joints: list[float] | None = None) -> list[float] | None:
-        """Position-only IK, seeded from *current_joints*, else the live arm."""
+           current_joints: list[float] | None = None, *,
+           target_rotation: list[list[float]] | None = None) -> list[float] | None:
+        """IK, optionally constraining the tool's world rotation (e.g. a handle)."""
         q = self._live()
-        return self._kin.ik(q, target_xyz, current_joints or self._kin.arm_q(q))
+        seed = current_joints or self._kin.arm_q(q)
+        if target_rotation is None:
+            return self._kin.ik(q, target_xyz, seed)
+        for initial in (seed, *self._spec.ik_seeds):
+            result = self._kin.ik(q, target_xyz, initial, target_rotation=target_rotation)
+            if result is not None:
+                return result
+        return None
 
     def ik_top_down(self, target_xyz: tuple[float, float, float],
                     current_joints: list[float] | None = None) -> list[float] | None:

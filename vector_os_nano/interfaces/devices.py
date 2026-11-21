@@ -59,8 +59,10 @@ class ArmProtocol(Protocol):
         """End-effector (position, 3x3 rotation) in the world for *joint_positions*."""
 
     def ik(self, target_xyz: tuple[float, float, float],
-           current_joints: list[float] | None = None) -> list[float] | None:
-        """Joints that put the end effector at *target_xyz* (any orientation), or None."""
+           current_joints: list[float] | None = None, *,
+           target_rotation: list[list[float]] | None = None) -> list[float] | None:
+        """Joints reaching a world position and optional 3x3 tool rotation, or None.
+        A driver without oriented IK must reject that request explicitly."""
 
     def ik_top_down(self, target_xyz: tuple[float, float, float],
                     current_joints: list[float] | None = None) -> list[float] | None:

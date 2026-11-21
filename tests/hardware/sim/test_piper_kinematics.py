@@ -127,6 +127,12 @@ def test_a_180_degree_flip_is_not_convergence(rig) -> None:
         assert kinematics._rot_angle(flipped @ np.array(r).T) < kinematics._IK_ROT_TOL
 
 
+@pytest.mark.parametrize('rotation', [np.zeros((3,3)), np.diag([1,1,-1]), np.eye(2), np.full((3,3), np.nan)])
+def test_oriented_ik_rejects_invalid_rotations(rig, rotation):
+    with pytest.raises(ValueError, match='proper rotation'):
+        rig.kin.ik(rig.q, [0,0,0], [0]*6, target_rotation=rotation)
+
+
 def test_the_mount_is_every_robot_joint_outside_the_arm(rig) -> None:
     """The dog's free joint and legs come from the live state; the gripper and the scene's
     objects never do (they are not what the arm rides on)."""

@@ -297,6 +297,7 @@ class SO101Arm:
         self,
         target_xyz: tuple[float, float, float],
         current_joints: list[float] | None = None,
+        *, target_rotation: list[list[float]] | None = None,
     ) -> list[float] | None:
         """Inverse kinematics: Cartesian target -> joint positions.
 
@@ -309,6 +310,8 @@ class SO101Arm:
         Returns:
             Joint positions in radians if reachable, None if no solution.
         """
+        if target_rotation is not None:
+            raise NotImplementedError("SO101 hardware driver does not support oriented IK")
         if self._ik_solver is None:
             logger.warning("SO101Arm.ik: IK solver not set")
             return None

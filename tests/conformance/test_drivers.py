@@ -151,6 +151,11 @@ def test_ik_and_fk_never_touch_the_live_state(body):
     assert len(pos) == 3 and np.array(rot).shape == (3, 3)
     q = body.arm.ik(tuple(pos))
     assert q is not None and np.linalg.norm(np.array(body.arm.fk(q)[0]) - pos) < 3e-3
+    q = body.arm.ik(tuple(pos), current_joints=[v + .1 for v in body.case.far], target_rotation=rot)
+    assert q is not None
+    reached, orientation = body.arm.fk(q)
+    assert np.linalg.norm(np.array(reached) - pos) < 3e-3
+    assert np.linalg.norm(np.array(orientation) - rot) < .03
     assert body.arm.ik((5.0, 5.0, 5.0)) is None and body.arm.ik_top_down((5.0, 5.0, 5.0)) is None
     assert np.array_equal(body.rt.snapshot().q, before)
 

@@ -46,3 +46,12 @@ def test_a_solver_failure_is_cached(monkeypatch) -> None:
     agent._build_context()
     agent._build_context()
     assert calls == [1] and agent._ik_solver is False
+
+
+def test_hardware_driver_refuses_an_unsupported_orientation():
+    import pytest
+    from vector_os_nano.hardware.so101.arm import SO101Arm
+
+    arm = SO101Arm.__new__(SO101Arm)
+    with pytest.raises(NotImplementedError, match='oriented IK'):
+        arm.ik((0.,0.,0.), target_rotation=[[1,0,0],[0,1,0],[0,0,1]])

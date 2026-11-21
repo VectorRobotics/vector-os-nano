@@ -103,11 +103,17 @@ class ArmKinematics:
             rot = [[float(v) for v in row] for row in d.site_xmat[self._site].reshape(3, 3)]
         return pos, rot
 
-    def ik(self, q: np.ndarray, target: Sequence[float], seed: Sequence[float]) -> list[float] | None:
-        """Position-only IK from *seed*."""
+    def ik(self, q: np.ndarray, target: Sequence[float], seed: Sequence[float], *,
+           target_rotation: Sequence[Sequence[float]] | None = None) -> list[float] | None:
+        """Position and optional world tool rotation from *seed*."""
+        rotation = None if target_rotation is None else np.asarray(target_rotation, dtype=float)
+        if rotation is not None and (rotation.shape != (3, 3) or not np.isfinite(rotation).all()
+                or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6, rtol=0)
+                or not math.isclose(float(np.linalg.det(rotation)), 1.0, abs_tol=1e-6)):
+            raise ValueError("target_rotation must be a finite 3x3 proper rotation")
         with self._lock:
             self._sync(q)
-            return self._iterate(target, None, seed)
+            return self._iterate(target, rotation, seed)
 
     def ik_top_down(self, q: np.ndarray, target: Sequence[float],
                     seeds: Sequence[Sequence[float]]) -> list[float] | None:
