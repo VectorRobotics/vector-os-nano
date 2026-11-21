@@ -169,10 +169,13 @@ class GripperSpec:
     min_opening: float
     assist: bool = True
     speed: float | None = None
+    force_feedback: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.assist, bool):
             raise EmbodimentConfigError("gripper.assist must be boolean")
+        if not isinstance(self.force_feedback, bool):
+            raise EmbodimentConfigError("gripper.force_feedback must be boolean")
         if self.speed is not None and (not math.isfinite(self.speed) or self.speed <= 0):
             raise EmbodimentConfigError("gripper.speed must be finite and positive")
 
@@ -528,7 +531,7 @@ def _parse_base(raw: dict[str, Any], ctx: str) -> BaseSpec | None:
 
 
 _ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper", "postures", "velocity", "acceleration", "jerk"}
-_GRIPPER_KEYS = {"joint", "open", "closed", "finger_bodies", "weld_body", "min_opening", "assist", "speed"}
+_GRIPPER_KEYS = {"joint", "open", "closed", "finger_bodies", "weld_body", "min_opening", "assist", "speed", "force_feedback"}
 
 
 def _parse_gripper(g: dict[str, Any], ctx: str) -> GripperSpec:
@@ -545,6 +548,7 @@ def _parse_gripper(g: dict[str, Any], ctx: str) -> GripperSpec:
         min_opening=float(_require(g, "min_opening", ctx)),
         assist=g.get("assist", True),
         speed=None if g.get("speed") is None else float(g["speed"]),
+        force_feedback=g.get("force_feedback", False),
     )
 
 

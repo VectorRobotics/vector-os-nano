@@ -91,6 +91,23 @@ class GripperProtocol(Protocol):
         """0.0 closed, 1.0 fully open."""
 
 
+@dataclass(frozen=True)
+class FingerLoad:
+    """Summed force ON the fingertips in world axes (N), at one sensor instant.
+
+    Contains no external body identity, position or support state. A simulated
+    ideal contact sensor is not a calibrated physical force sensor.
+    """
+    sim_time: float
+    force: tuple[float, float, float]
+
+
+@runtime_checkable
+class FingerLoadProtocol(Protocol):
+    def get_finger_load(self) -> FingerLoad | None:
+        """Current measured fingertip force; None when no sensor is declared."""
+
+
 @runtime_checkable
 class CameraProtocol(Protocol):
     def capture(self, width: int, height: int) -> CameraFrame: ...

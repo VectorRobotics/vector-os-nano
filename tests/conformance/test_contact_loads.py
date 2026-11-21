@@ -1,6 +1,7 @@
 """Force direction and scale are checked from independent momentum/gravity, on both engines."""
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 from vector_os_nano.sim.scene import compiled_scene
 
@@ -30,6 +31,14 @@ def test_solver_load_support_and_friction_direction(backend, load, tmp_path):
     assert world.contact_loads() == ()
     world.step(1000)
     np.testing.assert_allclose(_force(world, body), [0, 0, 2*9.81], atol=.01)
+    from vector_os_nano.sim.drivers.gripper import Gripper
+    sensor = object.__new__(Gripper)
+    sensor._spec = SimpleNamespace(force_feedback=True)
+    sensor._grasp = SimpleNamespace(finger_bodies=(body,))
+    sensor._rt = SimpleNamespace(call=lambda fn: fn(world))
+    reading = sensor.get_finger_load()
+    np.testing.assert_allclose(reading.force, [0, 0, 2*9.81], atol=.01)
+    assert reading.sim_time == world.time()
     before = world.state()
     assert all({c.body_a, c.body_b} == {0, body} for c in world.contact_loads())
     for c in world.contact_loads():

@@ -19,6 +19,7 @@ import math
 
 from vector_os_nano.schemas.robot import GripperSpec
 from vector_os_nano.interfaces.physics import GraspSpec
+from vector_os_nano.interfaces.devices import FingerLoad
 from vector_os_nano.sim.runtime import ACTOR_EPOCH, SimRuntime
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,20 @@ class Gripper:
         s = self._spec
         q = float(self._rt.snapshot().q[self._jaw_q])
         return max(0.0, min(1.0, (q - s.closed) / (s.open - s.closed)))
+
+    def get_finger_load(self) -> FingerLoad | None:
+        """Declared ideal fingertip force sensor; external geometry stays world-side."""
+        if not self._spec.force_feedback:
+            return None
+        fingers = self._grasp.finger_bodies
+        def read(world):
+            force = [0., 0., 0.]
+            for contact in world.contact_loads():
+                sign = int(contact.body_b in fingers) - int(contact.body_a in fingers)
+                for axis in range(3):
+                    force[axis] += sign * contact.force_on_b[axis]
+            return FingerLoad(world.time(), tuple(force))
+        return self._rt.call(read)
 
     def _settle_and_grasp(self) -> int | None:
         """Wait (sim time) for the jaws to stop, then ask for the grasp decision. A stop

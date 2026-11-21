@@ -21,6 +21,8 @@ from vector_os_nano.interfaces.devices import (
     CameraFrame,
     CameraProtocol,
     GripperProtocol,
+    FingerLoad,
+    FingerLoadProtocol,
 )
 from vector_os_nano.interfaces.physics import (
     CONTACT_DISTANCE_M,
@@ -44,6 +46,8 @@ __all__ = [
     "ControlPolicy",
     "GraspSpec",
     "GripperProtocol",
+    "FingerLoad",
+    "FingerLoadProtocol",
     "PhysicsWorld",
     "PolicyObs",
     "RGBDFrame",
