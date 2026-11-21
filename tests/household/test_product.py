@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.harness import live_matrix as lm
+from tests.household.test_grasp import snapshot
 
 pytestmark = [pytest.mark.sim, pytest.mark.timeout(700)]
 
@@ -21,7 +22,9 @@ def _navigate(tmp_path, monkeypatch, *, live=False):
     (assets/'cache/scenes').mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv('VECTOR_HOME', str(assets))
     out = Path(os.environ.get('GATE_OUT', tmp_path))/('household-live' if live else 'household')
+    snapshot(out, assets, 'artvip_home')
     monkeypatch.setenv('VECTOR_ROLLOUT_DIR', str(out/'rollouts'))
+    monkeypatch.setenv('VECTOR_ROLLOUT_CAMERAS', 'head,left_wrist')
     cell = dict(id='malo-artvip-dining', body='malo', backend='mujoco',
                 launch='启动 malo 的 MuJoCo 仿真，使用 artvip_home 世界，无窗口。', task='去餐厅', kind='navigate',
                 expect={'base_at': [5.5, 1.3]}, n=1, timeout_s=600)
@@ -49,6 +52,16 @@ def _navigate(tmp_path, monkeypatch, *, live=False):
     assert len(recordings) == 1
     recording = json.loads(recordings[0].read_text())
     assert recording['closed'] and recording['rows'] > 1000 and recording['frames'] > 0
+    from scripts.grade_navigation import grade
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.schemas.world import load_world
+    physical = grade(recordings[0].parent, registry.load('malo'), load_world('artvip_home'),
+                     json.loads((assets/'embodiments/malo/audit.json').read_text()), [5.5, 1.3])
+    physical.update(reset_seed=0, checkpoint=json.loads((out/'checkpoint.json').read_text()),
+                    videos=[str(recordings[0].parent/v['file']) for v in recording['sensor_videos']],
+                    motion_observations='No continuous video reviewed.')
+    (out/'physical-grade.json').write_text(json.dumps(physical, indent=2))
+    assert physical['physical_verdict'] == 'pass', physical['checks']
 
 
 def test_malo_navigates_in_the_rebuilt_home_through_the_cli(tmp_path, monkeypatch):
