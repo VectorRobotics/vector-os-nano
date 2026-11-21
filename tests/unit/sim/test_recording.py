@@ -2,7 +2,9 @@
 import hashlib
 import gzip
 import json
+from pathlib import Path
 
+import mujoco as mj
 import numpy as np
 import pytest
 
@@ -12,6 +14,30 @@ from vector_os_nano.sim.backends.mujoco.recording import read_recording
 from scripts.export_household_replay import export, sample_indices
 
 pytestmark = pytest.mark.sim
+
+
+@pytest.mark.parametrize('cached', [False, True])
+def test_recording_keeps_actual_model_after_source_cache_disappears(tmp_path, monkeypatch, cached):
+    source = tmp_path/'temporary.xml'
+    source.write_text('<mujoco><worldbody><body name="object"><freejoint/>'
+                      '<geom type="sphere" size=".1" mass="1"/></body></worldbody></mujoco>')
+    scene = compiled_scene(source)
+    if cached:
+        mj.mj_saveModel(scene.model, str(source.with_suffix('.mjb')))
+    scene.model.body_mass[scene.body('object')] = 2.
+    monkeypatch.setenv('VECTOR_ROLLOUT_DIR', str(tmp_path/'records'))
+    world = MuJoCoWorld(scene)
+    world.step(2)
+    world.close()
+    source.unlink()
+    source.with_suffix('.mjb').unlink(missing_ok=True)
+    directory, = (tmp_path/'records').iterdir()
+    directory = directory.rename(tmp_path/'moved-recording')
+    meta, states, _ = read_recording(directory)
+    model = mj.MjModel.from_binary_path(meta['model_path'])
+    assert Path(meta['model_path']).parent == directory
+    assert model.body_mass[scene.body('object')] == 2.
+    np.testing.assert_array_equal(states['qpos'][-1], world.state()[0])
 
 
 def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monkeypatch):
@@ -39,7 +65,7 @@ def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monk
     meta = json.loads((directory/'recording.json').read_text())
     assert meta['closed'] and meta['rows'] == 16 and meta['frames'] == 1
     assert meta['physical_verdict'] == meta['motion_verdict'] == 'unverified'
-    assert meta['model_sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert meta['model_sha256'] == hashlib.sha256((directory/meta['model_path']).read_bytes()).hexdigest()
     width = sum(size for name, size in meta['fields'])
     rows = np.fromfile(directory/'states.bin', dtype=meta['dtype']).reshape(-1, width)
     np.testing.assert_allclose(rows[:, 0], np.arange(16)*scene.timestep, atol=1e-15)
@@ -67,7 +93,8 @@ def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monk
         stream.write(np.array([0.]).tobytes())
     with pytest.raises(ValueError, match='shape/count'):
         read_recording(directory)
-    source.write_text(source.read_text().replace('timestep=".002"', 'timestep=".003"'))
+    recorded_model = directory/meta['model_path']
+    recorded_model.write_bytes(recorded_model.read_bytes()+b'changed')
     with pytest.raises(ValueError, match='SHA256'):
         read_recording(directory)
 

@@ -22,6 +22,8 @@ def read_recording(directory: str | Path):
     meta = json.loads((directory/'recording.json').read_text())
     if meta.get('schema') != 1 or not meta.get('closed') or meta.get('dtype') != '<f8':
         raise ValueError('incomplete or unsupported recording')
+    model = Path(meta['model_path'])
+    meta['model_path'] = str((directory/model if not model.is_absolute() else model).resolve())
     with Path(meta['model_path']).open('rb') as stream:
         if hashlib.file_digest(stream, 'sha256').hexdigest() != meta['model_sha256']:
             raise ValueError('recording model SHA256 mismatch')
@@ -57,14 +59,13 @@ class Recording:
         self.path = Path(directory) / f'mujoco-{time.time_ns()}-{uuid.uuid4().hex[:8]}'
         self.path.mkdir(parents=True, exist_ok=False)
         (self.path / 'frames').mkdir()
-        source = scene.xml_path.with_suffix('.mjb')
-        if not source.is_file():
-            source = scene.xml_path
+        m = scene.model
+        source = self.path/'model.mjb'
+        mj.mj_saveModel(m, str(source))
         with source.open('rb') as stream:
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-        m = scene.model
         self.meta = dict(schema=1, engine='mujoco', version=mj.__version__,
-                         model_path=str(source.resolve()), model_sha256=digest,
+                         model_path=source.name, source_model_path=str(scene.xml_path.resolve()), model_sha256=digest,
                          dtype='<f8', fields=[['sim_time', 1], ['wall_monotonic', 1],
                          ['qpos', m.nq], ['qvel', m.nv], ['ctrl', m.nu],
                          ['actuator_force', m.nu], ['eq_active', m.neq],
