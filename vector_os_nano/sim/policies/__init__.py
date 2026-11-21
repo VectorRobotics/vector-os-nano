@@ -93,7 +93,7 @@ POLICIES: dict[str, tuple[str, dict[str, Callable[[Any], Any]]]] = {
                     {"file": str, "decimation": _count, "obs": _obs, "action": _action}),
     "swerve": ("vector_os_nano.sim.policies.swerve",
                {"wheels": _wheels, "steering_range": _scale,
-                **dict.fromkeys(("steering_kp", "steering_kd", "wheel_kp", "wheel_speed",
+                **dict.fromkeys(("steering_kp", "steering_kd", "steering_speed", "wheel_kp", "wheel_ki", "wheel_speed",
                                  "accel", "yaw_accel"), float)}),
 }
 

@@ -30,17 +30,19 @@ class Policy:
             raise ValueError('swerve steering_range must span at least pi radians')
         if not np.isfinite(self._limit).all() or np.any(self._limit <= 0):
             raise ValueError('swerve needs finite positive joint torque limits')
-        for key in ('steering_kp','steering_kd','wheel_kp','wheel_speed','accel','yaw_accel'):
+        for key in ('steering_kp','steering_kd','steering_speed','wheel_kp','wheel_ki','wheel_speed','accel','yaw_accel'):
             if not np.isfinite(params[key]) or params[key] <= 0:
                 raise ValueError(f'swerve {key} must be finite and positive')
         self._command = np.zeros(3)
         self._steering = np.zeros(n//2)
+        self._integral = np.zeros(n//2)
         self._time = None
         self.braking = False
 
     def reset(self, obs: PolicyObs) -> None:
         self._command[:] = 0
         self._steering = obs.joint_pos[::2].copy()
+        self._integral[:] = 0
         self._time = obs.time
         self.braking = False
 
@@ -70,11 +72,19 @@ class Policy:
                 turns = np.arange(np.ceil((self._range[0]-heading)/np.pi),
                                   np.floor((self._range[1]-heading)/np.pi)+1)
                 choices = heading + np.pi*turns
-                self._steering[i] = choices[np.argmin(np.abs(choices-angle))]
+                target = choices[np.argmin(np.abs(choices-angle))]
+                self._steering[i] += np.clip(target-self._steering[i],
+                                             -self._p['steering_speed']*dt, self._p['steering_speed']*dt)
             tau[steer] = self._p['steering_kp']*(self._steering[i]-angle) - self._p['steering_kd']*obs.joint_vel[steer]
             speed = (velocity@forward + offset*obs.joint_vel[steer])/radius
             speed = np.clip(speed, -self._p['wheel_speed'], self._p['wheel_speed'])
-            tau[roll] = self._p['wheel_kp']*(speed-obs.joint_vel[roll])
+            error = speed-obs.joint_vel[roll]
+            candidate = float(np.clip(self._integral[i] + self._p['wheel_ki']*error*dt,
+                                      -self._limit[roll], self._limit[roll]))
+            effort = self._p['wheel_kp']*error + candidate
+            if abs(effort) <= self._limit[roll] or error*self._integral[i] < 0:
+                self._integral[i] = candidate
+            tau[roll] = self._p['wheel_kp']*error + self._integral[i]
         self.braking = bool(np.linalg.norm(obs.command) < 1e-5 and (
             np.linalg.norm(self._command) > .01 or np.linalg.norm(obs.base_lin_vel[:2]) > .03
             or abs(obs.base_ang_vel[2]) > .05))

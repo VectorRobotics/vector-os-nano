@@ -11,7 +11,7 @@ from vector_os_nano.sim import policies
 
 PARAMS = dict(wheels=[[.155,y,.04105,o] for y,o in ((.155,.026),(-.155,-.026))],
               steering_range=[-2.5,2.5], steering_kp=20.,steering_kd=1.,wheel_kp=.4,
-              wheel_speed=10.47,accel=.4,yaw_accel=1.)
+              steering_speed=1.,wheel_ki=.4,wheel_speed=10.47,accel=.4,yaw_accel=1.)
 
 
 def setup(command):
@@ -53,3 +53,16 @@ def test_zero_command_damps_rolling_wheels_and_invalid_observations_fail():
 def test_bad_wheel_radius_fails_at_manifest_boundary():
     with pytest.raises(ValueError,match='positive radius'):
         policies.owned('swerve',{**PARAMS,'wheels':[[0,0,0,0]]})
+
+
+def test_steering_reference_is_rate_limited_and_saturated_integral_does_not_wind_up():
+    policy,obs = setup([0,.2,0])
+    first = policy.torques(replace(obs,time=.01))
+    assert np.max(np.abs(first[::2])) <= PARAMS['steering_kp']*PARAMS['steering_speed']*.01
+    policy,obs = setup([100,0,0])
+    for i in range(1,1001):
+        policy.torques(replace(obs,time=i*.01))
+    policy.torques(replace(obs,time=10.01,command=np.zeros(3),joint_vel=np.array([0,100,0,100.])))
+    assert np.max(np.abs(policy._integral)) <= 2
+    policy.reset(obs)
+    np.testing.assert_array_equal(policy._integral,0)
