@@ -129,6 +129,15 @@ def unsupported(m: Any, pickables: Iterable[int] = ()) -> str | None:
             why.append(f"actuator {a.name!r} is neither a joint motor nor a joint position servo")
     for i in range(m.neq):
         joint_eq = int(m.eq_type[i]) == EQ_JOINT
+        if joint_eq and m.eq_active0[i]:
+            roots = []
+            for j in (m.eq_obj1id[i], m.eq_obj2id[i]):
+                b = int(m.jnt_bodyid[j]) if j >= 0 else 0
+                while m.body_parentid[b] > 0:
+                    b = int(m.body_parentid[b])
+                roots.append(b)
+            if roots[0] != roots[1]:
+                why.append(f'joint equality {i} connects different multibodies')
         if joint_eq and m.eq_active0[i] and (m.eq_data[i, 0] != 0 or np.any(m.eq_data[i, 2:5] != 0) or m.eq_data[i, 1] == 0):
             why.append(f"joint equality {i} is not linear (q1 = c1 * q2)")
         elif not joint_eq and m.eq_active0[i]:
@@ -389,7 +398,8 @@ class PyBulletWorld:
         for c in reader.couplings(self.scene.model):  # q1 = c1 * q2; Bullet gear: q_A + r * q_B = 0
             (ua, la), (ub, lb) = self._link[self._joints[c.joint2].body], self._link[self._joints[c.joint1].body]
             cid = self._p.createConstraint(ua, la, ub, lb, pb.JOINT_GEAR, [0, 0, 1], [0, 0, 0], [0, 0, 0])
-            self._p.changeConstraint(cid, gearRatio=-1.0 / float(c.polycoef[1]), maxForce=1e4)
+            # Bullet defaults to velocity-only coupling; recover contact-induced position drift too.
+            self._p.changeConstraint(cid, gearRatio=-1.0 / float(c.polycoef[1]), maxForce=1e4, erp=0.2)
 
     def _build_actuation(self) -> None:
         acts = reader.actuators(self.scene.model)

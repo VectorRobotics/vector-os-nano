@@ -120,6 +120,9 @@ def test_canonical_shape_aabbs_are_today_s_ground_truth_boxes(battery_scene):
     ('<body name="r"><geom size=".1"/><body name="a"><joint name="j1"/><geom size=".1"/></body>'
      '<body name="b"><joint name="j2"/><geom size=".1"/></body></body>',
      '<equality><joint joint1="j1" joint2="j2" polycoef="0.1 1 0 0 0"/></equality>', "not linear"),
+    ('<body><body><joint name="j1"/><geom size=".1"/></body></body>'
+     '<body pos="1 0 0"><body><joint name="j2"/><geom size=".1"/></body></body>',
+     '<equality><joint joint1="j1" joint2="j2"/></equality>', 'different multibodies'),
     ('<body name="r"><geom size=".1"/><body name="a"><joint name="j1"/><geom size=".1"/></body></body>',
      '<actuator><velocity joint="j1"/></actuator>', "neither a joint motor"),
 ])

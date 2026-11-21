@@ -71,19 +71,26 @@ class Gripper:
         return self._ctrl_motion
 
     def open(self) -> bool:
-        """Open the jaws and release whatever the gripper holds, verified: False (the
-        held state kept) when something is still attached or the sim refused."""
+        """Release and verify actual opening; False on retained attachment, blocked
+        jaws, invalid sensing or interruption. Possession remains separately measured."""
         try:
             self._servo(self._spec.open)
             still = self._rt.release(self._grasp.weld_body) if self._spec.assist else []
+            if still:
+                logger.error("Gripper: bodies %s still attached after release", still)
+                return False
+            self._held = None
+            deadline = self._rt.sim_time + _SETTLE_S
+            while self._rt.sim_time < deadline:
+                if self.get_position() >= 0.98:
+                    return True
+                if not self._rt.wait_sim(_SETTLE_POLL_S):
+                    return False
         except Exception as exc:  # noqa: BLE001 — reported, never a silent success
             logger.error("Gripper: open/release failed: %s", exc)
             return False
-        if still:
-            logger.error("Gripper: bodies %s still attached after release", still)
-            return False
-        self._held = None
-        return True
+        logger.error('Gripper: jaws did not reach the commanded opening')
+        return False
 
     def close(self) -> bool:
         """Close the jaws; the runtime attaches what they actually grip. True once the
@@ -112,6 +119,8 @@ class Gripper:
         """Normalized jaw position: 0.0 closed, 1.0 fully open."""
         s = self._spec
         q = float(self._rt.snapshot().q[self._jaw_q])
+        if not math.isfinite(q):
+            raise ValueError('gripper position is nonfinite')
         return max(0.0, min(1.0, (q - s.closed) / (s.open - s.closed)))
 
     def get_finger_load(self) -> FingerLoad | None:

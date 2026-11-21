@@ -72,6 +72,16 @@ def test_jaw_finishes_at_exact_requested_target(speed):
     assert grip._rt.q[0] == target
 
 
+@pytest.mark.parametrize('position', [0., float('nan')])
+def test_open_refuses_a_blocked_jaw(monkeypatch, position):
+    grip = Gripper.__new__(Gripper); grip._rt = Runtime([position]); grip._jaw = grip._jaw_q = 0
+    grip._spec = GripperSpec('0', .04, 0., ('left', 'right'), 'palm', .002, assist=False)
+    grip._grasp = SimpleNamespace(weld_body=1)
+    grip._held = None
+    monkeypatch.setattr(grip, '_servo', lambda q: None)
+    assert grip.open() is False
+
+
 def test_manifest_parses_contact_and_motion_limits():
     raw=dict(joints=['0'],ee={'site':'tcp'},home=[0.],velocity=[.5],acceleration=[1.],jerk=[2.],
              gripper=dict(joint='jaw',open=.04,closed=0.,finger_bodies=['left','right'],
