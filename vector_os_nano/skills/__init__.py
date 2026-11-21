@@ -10,6 +10,7 @@ from vector_os_nano.skills.go2.stop import StopSkill
 from vector_os_nano.skills.grasp import GraspSkill
 from vector_os_nano.skills.gripper import GripperCloseSkill, GripperOpenSkill
 from vector_os_nano.skills.home import HomeSkill
+from vector_os_nano.skills.joint_posture import JointPostureSkill
 from vector_os_nano.skills.place import PlaceSkill
 from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
 
