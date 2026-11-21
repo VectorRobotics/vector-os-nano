@@ -62,6 +62,8 @@ base:
 # CAD mount; FOV and pinhole intrinsics are estimates, not hardware calibration.
 sensors:
   - {role: camera, name: head, width: 640, height: 480, depth: [0.1, 10]}
+  - {role: camera, name: left_wrist, width: 640, height: 480, depth: [0.03, 3]}
+  - {role: camera, name: right_wrist, width: 640, height: 480, depth: [0.03, 3]}
 
 arm:
   joints: [left_arm_joint_1, left_arm_joint_2, left_arm_joint_3, left_arm_joint_4,

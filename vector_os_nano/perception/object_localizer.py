@@ -58,9 +58,9 @@ def _perception_is_usable(perception: Any) -> bool:
     )
 
 
-def capture_rgbd(perception: Any) -> tuple[Any, Any, Any, Any, Any]:
+def capture_rgbd(perception: Any, *, camera: str | None = None) -> tuple[Any, Any, Any, Any, Any]:
     """``(rgb, depth, intrinsics, cam_xpos, cam_xmat)`` of ONE camera instant."""
-    return _unpack(perception.capture())
+    return _unpack(perception.capture() if camera is None else perception.capture(camera=camera))
 
 
 def _unpack(f: Any) -> tuple[Any, Any, CameraIntrinsics, Any, Any]:

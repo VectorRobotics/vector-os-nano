@@ -94,9 +94,11 @@ def _target(query: str, world, have_front: bool) -> _Target | SkillResult:
     return _Target(False, colour, phrase, None)
 
 
-def _fresh(frame, rgb, pos, rot):
+def _fresh(frame, rgb, pos, rot, camera=None):
     """Only a box with valid camera provenance can be consumed without re-detection."""
     if not isinstance(frame, dict):
+        return False
+    if camera is not None and str(frame.get('frame_id', '')).rsplit('@', 1)[0] != camera:
         return False
     try:
         a, b = np.asarray(frame["cam_mat"], float).reshape(3, 3), np.asarray(rot).reshape(3, 3)
@@ -121,12 +123,13 @@ def _passed(params, target):
     return None, None
 
 
-def perceive(perception, query, target, params=None, *, cancel=lambda: False, expected_bounds=None):
+def perceive(perception, query, target, params=None, *, cancel=lambda: False, expected_bounds=None, camera=None):
     """(point, metadata, failure), all coordinates from one sensor instant."""
     try:
         if cancel():
             return None, {}, _fail("cancelled", "Grasp cancelled before perception.")
-        rgb, depth, K, pos, rot = capture_rgbd(perception)
+        rgb, depth, K, pos, rot = (capture_rgbd(perception) if camera is None else
+                                  capture_rgbd(perception, camera=camera))
     except Exception as exc:
         return None, {}, _fail("no_camera", f"Cannot read RGB-D: {failure_cause(exc)}; check the camera.")
     meta = {"perceived": False, "consumed_bbox": False, "reperceived": True,
@@ -136,7 +139,7 @@ def perceive(perception, query, target, params=None, *, cancel=lambda: False, ex
         if prior is not None and (prior.shape != (2, 3) or not np.isfinite(prior).all() or np.any(prior[0] >= prior[1])):
             raise ValueError('invalid prior observed bounds')
         passed, frame = _passed(params or {}, target)
-        if passed is not None and _fresh(frame, rgb, pos, rot):
+        if passed is not None and _fresh(frame, rgb, pos, rot, camera):
             detections = [SimpleNamespace(**{k: passed[k] for k in ("bbox", "confidence")})]
             meta.update(consumed_bbox=True, reperceived=False)
         elif target.front:

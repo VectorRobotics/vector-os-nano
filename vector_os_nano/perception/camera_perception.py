@@ -44,8 +44,10 @@ class CameraPerception:
         tracker: Optional pre-built EdgeTAMTracker (else lazily constructed).
     """
 
-    def __init__(self, camera: CameraProtocol, *, vlm: Any = None, tracker: Any = None) -> None:
+    def __init__(self, camera: CameraProtocol, *, vlm: Any = None, tracker: Any = None,
+                 cameras: dict[str, CameraProtocol] | None = None) -> None:
         self._camera = camera
+        self._cameras = dict(cameras or {})
         self._vlm = vlm
         self._tracker = tracker
         # One detector/segmenter call at a time: the EdgeTAM session and the lazy
@@ -53,14 +55,16 @@ class CameraPerception:
         self._lock = threading.Lock()
         self.last_segmenter: str | None = None
 
-    def capture(self) -> CameraFrame:
+    def capture(self, *, camera: str | None = None) -> CameraFrame:
         """ONE camera instant: rgb, self-filtered depth, K, pose, of one sim time.
 
         The robot's own pixels are zeroed in depth (D30 self-occlusion: the arm
         occludes the table and must never be picked as the target; depth 0 is
         invalid downstream).
         """
-        f = self._camera.capture()
+        if camera is not None and camera not in self._cameras:
+            raise ValueError(f'unknown camera {camera!r}; available: {sorted(self._cameras)}')
+        f = (self._camera if camera is None else self._cameras[camera]).capture()
         if f.depth is not None and f.self_mask is not None:
             f.depth[f.self_mask] = 0.0
         return f

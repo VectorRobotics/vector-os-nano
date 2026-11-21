@@ -40,6 +40,30 @@ def test_capture_is_one_frame_with_the_robot_zeroed():
     assert not hasattr(f, "seg")  # no segmentation ever reaches perception
 
 
+def test_named_capture_keeps_the_default_view_and_its_self_mask():
+    from vector_os_nano.perception.object_localizer import capture_rgbd
+    head, wrist = _Camera(), _Camera()
+    perception = cp.CameraPerception(head, cameras={'head': head, 'wrist': wrist})
+    frame = capture_rgbd(perception, camera='wrist')
+    assert (head.calls, wrist.calls) == (0, 1)
+    assert (frame[1][:2] == 0).all() and frame[2].width == 32
+    perception.capture()
+    assert (head.calls, wrist.calls) == (1, 1)
+    with pytest.raises(ValueError, match='unknown camera.*head.*wrist'):
+        perception.capture(camera='missing')
+    assert (head.calls, wrist.calls) == (1, 1)
+
+
+def test_named_view_cannot_reuse_another_cameras_box_even_at_the_same_pose():
+    from vector_os_nano.skills.grasp_perception import _fresh
+    rgb = np.zeros((24, 32, 3))
+    frame = dict(size=[32, 24], cam_pos=[0, 0, 0], cam_mat=np.eye(3).tolist(), frame_id='head@3.0000')
+    assert not _fresh(frame, rgb, [0, 0, 0], np.eye(3), 'wrist')
+    assert _fresh(frame, rgb, [0, 0, 0], np.eye(3), 'head')
+    del frame['frame_id']
+    assert not _fresh(frame, rgb, [0, 0, 0], np.eye(3), 'head')
+
+
 class _EmptyEdgeTAM:
     def init_track(self, image, bboxes):
         return [{"mask": np.zeros(image.shape[:2], np.uint8)}]

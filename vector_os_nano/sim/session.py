@@ -460,12 +460,12 @@ def _scene_vlm_config(user_cfg: dict[str, Any], vlm_api_key: str | None) -> tupl
     return vlm_api_key or os.environ.get("OPENROUTER_API_KEY", ""), vlm_cfg, note
 
 
-def _perception(camera: Any) -> Any:
+def _perception(camera: Any, cameras: dict | None = None) -> Any:
     """The ONE perception over the manifest's camera: built once per session and shared by
     the grasp and look/localize skills, so they always see the same camera size."""
     from vector_os_nano.perception.camera_perception import CameraPerception
 
-    return CameraPerception(camera) if camera is not None else None
+    return CameraPerception(camera, cameras=cameras) if camera is not None else None
 
 
 def _perception_note(agent: Any, vlm_why: str = "") -> str:
@@ -630,7 +630,9 @@ def _build(session: SimSession, vlm_api_key: str | None) -> Any:
     agent._services["joint_groups"] = groups
     agent._services["lidar"] = lidar
     agent._services["layout"] = {"rooms": world.rooms, "boxes": world.boxes}
-    agent._perception = _perception(camera)
+    from vector_os_nano.schemas.robot import CameraSpec
+    from vector_os_nano.sim.drivers.camera import Camera
+    agent._perception = _perception(camera, {s.name: Camera(s, rt) for s in cfg.sensors if isinstance(s, CameraSpec)})
     agent._calibration = None
 
     # The scene VLM is optional naming sugar: an OpenRouter key OR a local server
