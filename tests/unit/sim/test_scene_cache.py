@@ -80,6 +80,47 @@ def test_session_symlinks_reuse_the_same_compiled_scene(pair, tmp_path):
     assert second.xml_path == first.xml_path
 
 
+def test_controller_and_semantic_map_changes_do_not_recompile_physics(pair, monkeypatch):
+    cfg, world = pair
+    first = compose(cfg, world)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('controller and semantic-map metadata do not alter the compiled scene')
+    monkeypatch.setattr(mj.MjSpec, 'compile', forbidden)
+    cfg = replace(cfg, skills={'place': {'settle_duration': 2.}})
+    world = replace(world, rooms={'desk': (1., 2.)}, surfaces={})
+    assert compose(cfg, world).xml_path == first.xml_path
+
+
+def test_placed_camera_changes_invalidate_cache(pair):
+    cfg, world = pair
+    camera = replace(registry.load('piper').camera, name='inspection', body=None, pos=(0., 0., 2.))
+    first = compose(replace(cfg, sensors=(camera,)), world)
+    second = compose(replace(cfg, sensors=(replace(camera, fovy=60.),)), world)
+    assert first.xml_path != second.xml_path
+    assert second.model.cam_fovy[second.cameras['inspection']] == 60.
+
+
+def test_physics_timestep_changes_invalidate_cache(pair):
+    cfg, world = pair
+    base = replace(registry.load('go2').base, joints=(), stance={}, postures={})
+    first = compose(replace(cfg, base=base), world)
+    step = base.policy.timestep / 2
+    second = compose(replace(cfg, base=replace(base, policy=replace(base.policy, timestep=step))), world)
+    assert first.xml_path != second.xml_path
+    assert second.model.opt.timestep == step
+
+
+def test_disabling_assisted_grasp_invalidates_cached_constraints(tmp_path, monkeypatch):
+    monkeypatch.setenv('VECTOR_HOME', str(tmp_path))
+    cfg, world = registry.load('piper'), load_world('workbench')
+    assisted = compose(cfg, world)
+    cfg = replace(cfg, arm=replace(cfg.arm, gripper=replace(cfg.arm.gripper, assist=False)))
+    contact = compose(cfg, world)
+    assert contact.xml_path != assisted.xml_path
+    assert len(assisted.grasp_pairs) == len(world.pickables) and not contact.grasp_pairs
+    assert assisted.model.neq - contact.model.neq == len(world.pickables)
+
+
 def test_corrupt_binary_is_regenerated(pair):
     first = compose(*pair)
     first.xml_path.with_suffix('.mjb').write_bytes(b'interrupted binary')

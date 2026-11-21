@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import tempfile
 import xml.etree.ElementTree as ET
-from dataclasses import replace
 
 import mujoco as mj
 
@@ -25,25 +24,25 @@ def cache_path(robot: EmbodimentConfig, world: WorldManifest, spec) -> Path:
 
     def models(cfg):
         if cfg.compose:
-            models(cfg.compose.base)
-            models(cfg.compose.arm)
-        else:
-            sources.add(model_root(cfg) / cfg.model.file)
+            c = cfg.compose
+            return (cfg.model, models(c.base), models(c.arm), c.body, c.pos, c.quat, c.prefix)
+        sources.add(model_root(cfg) / cfg.model.file)
+        return cfg.model
 
-    models(robot)
+    model = models(robot)
     for kind in ('meshes', 'textures', 'hfields', 'skins'):
         for asset in getattr(spec, kind):
             if asset.file:
                 sources.add(Path(asset.file))
             if kind == 'textures':
                 sources.update(Path(f) for f in asset.cubefiles if f)
-    def canonical(cfg):
-        composition = cfg.compose
-        if composition:
-            composition = replace(composition, base=canonical(composition.base), arm=canonical(composition.arm))
-        return replace(cfg, path=cfg.path.resolve(), compose=composition)
-
-    identity = (canonical(robot), replace(world, path=world.path.resolve(), scene=world.scene.resolve()))
+    # Only values consumed by compose() belong here; controller tuning and map labels do not change physics.
+    cameras = tuple((c.name, c.body, c.pos, c.quat, c.fovy) for c in robot.sensors
+                    if c.role == 'camera' and c.pos is not None)
+    gripper = robot.arm.gripper if robot.arm else None
+    pairs = (gripper.weld_body, tuple(world.pickables)) if gripper and gripper.assist else ()
+    timestep = robot.base.policy.timestep if robot.base else None
+    identity = (model, cameras, world.spawn, pairs, timestep)
     digest = hashlib.sha256(f'{mj.__version__}\0{identity!r}'.encode())
     seen = set()
 
