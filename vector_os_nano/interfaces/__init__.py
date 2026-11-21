@@ -24,6 +24,7 @@ from vector_os_nano.interfaces.devices import (
 )
 from vector_os_nano.interfaces.physics import (
     CONTACT_DISTANCE_M,
+    ContactLoad,
     CompiledScene,
     GraspSpec,
     PhysicsWorld,
@@ -39,6 +40,7 @@ __all__ = [
     "CameraFrame",
     "CameraProtocol",
     "CompiledScene",
+    "ContactLoad",
     "ControlPolicy",
     "GraspSpec",
     "GripperProtocol",

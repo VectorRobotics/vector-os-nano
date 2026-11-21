@@ -1,5 +1,6 @@
 """The recording is a copy of actual stepping and rendering, not a second simulation."""
 import hashlib
+import gzip
 import json
 
 import numpy as np
@@ -7,6 +8,7 @@ import pytest
 
 from vector_os_nano.sim.scene import compiled_scene
 from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld
+from vector_os_nano.sim.backends.mujoco.recording import read_recording
 
 pytestmark = pytest.mark.sim
 
@@ -16,7 +18,7 @@ def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monk
     source.write_text('''<mujoco><option timestep=".002"/>
       <worldbody><light pos="0 0 3"/><geom type="plane" size="3 3 .1"/>
       <camera name="camera" pos="0 -2 2" xyaxes="1 0 0 0 1 1"/>
-      <body pos="0 0 1"><freejoint/><geom type="sphere" size=".1"/></body>
+      <body pos="0 0 .1"><freejoint/><geom type="sphere" size=".1"/></body>
       </worldbody></mujoco>''')
     scene = compiled_scene(source)
     reference = MuJoCoWorld(scene)
@@ -46,3 +48,17 @@ def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monk
     for key in ('rgb', 'depth', 'seg', 'K', 'cam_pos', 'cam_mat'):
         np.testing.assert_array_equal(original[key], getattr(frame, key))
     assert original['sim_time'] == frame.sim_time and original['camera'] == frame.camera
+    with gzip.open(directory/'contacts.bin.gz', 'rb') as stream:
+        contacts = np.frombuffer(stream.read(), dtype='<f8').reshape(-1, 13)
+    assert len(contacts) == meta['contact_rows'] > 0
+    assert np.isfinite(contacts).all() and contacts[:, 8].max() > 0
+    _, states, loads = read_recording(directory)
+    np.testing.assert_array_equal(states['qpos'][-1], world.state()[0])
+    np.testing.assert_array_equal(loads['force_on_b'], contacts[:, 6:9])
+    with (directory/'states.bin').open('ab') as stream:
+        stream.write(np.array([0.]).tobytes())
+    with pytest.raises(ValueError, match='shape/count'):
+        read_recording(directory)
+    source.write_text(source.read_text().replace('timestep=".002"', 'timestep=".003"'))
+    with pytest.raises(ValueError, match='SHA256'):
+        read_recording(directory)

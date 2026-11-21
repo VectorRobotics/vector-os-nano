@@ -25,7 +25,7 @@ from typing import Any, Sequence
 import mujoco as mj
 import numpy as np
 
-from vector_os_nano.interfaces.physics import CONTACT_DISTANCE_M, CompiledScene, RGBDFrame
+from vector_os_nano.interfaces.physics import CONTACT_DISTANCE_M, CompiledScene, ContactLoad, RGBDFrame
 from vector_os_nano.sim.scene import reader
 
 _KINDS = ("rgb", "depth", "seg")
@@ -46,6 +46,8 @@ class MuJoCoWorld:
         self.scene = scene
         self.model = m = copy.deepcopy(scene.model)
         self.data = d = mj.MjData(m)
+        self._loads_valid = False
+        self._loads_cache = None
         # contacts() runs its own collision pass on a copy whose margins reach
         # CONTACT_DISTANCE_M: at margin 0 MuJoCo emits no separated point, and a margin
         # on the stepped model makes force (gap does not cancel it), moving rest poses.
@@ -120,10 +122,13 @@ class MuJoCoWorld:
         with self._lock:
             if self._recording is None:
                 mj.mj_step(self.model, self.data, nstep=int(n))
+                if int(n) > 0:
+                    self._loads_valid, self._loads_cache = True, None
             else:
                 for _ in range(int(n)):
                     mj.mj_step(self.model, self.data)
-                    self._recording.state(self.model, self.data)
+                    self._loads_valid, self._loads_cache = True, None
+                    self._recording.state(self.model, self.data, self._contact_loads())
             if self._viewer is not None and _time.monotonic() - self._synced > _VIEWER_SYNC_S:
                 if self._track >= 0:
                     self._viewer.cam.lookat[:] = [*self.data.xpos[self._track][:2], _TRACK_Z]
@@ -146,6 +151,8 @@ class MuJoCoWorld:
             d.qfrc_applied[:] = 0.0
             d.xfrc_applied[:] = 0.0
             mj.mj_forward(m, d)
+            self._loads_valid = False
+            self._loads_cache = None
             if self._recording is not None:
                 self._recording.state(m, d)
 
@@ -191,6 +198,25 @@ class MuJoCoWorld:
             b1 = m.geom_bodyid[d.contact.geom1[:n][near]]
             b2 = m.geom_bodyid[d.contact.geom2[:n][near]]
         return frozenset(int(b) for b in np.concatenate([b2[b1 == body], b1[b2 == body]]))
+
+    def contact_loads(self) -> tuple[ContactLoad, ...]:
+        with self._lock:
+            return self._contact_loads()
+
+    def _contact_loads(self) -> tuple[ContactLoad, ...]:
+        if not self._loads_valid:
+            return ()
+        if self._loads_cache is None:
+            m, d, out, wrench = self.model, self.data, [], np.empty(6)
+            for i, c in enumerate(d.contact):
+                if c.geom1 < 0 or c.geom2 < 0:
+                    raise NotImplementedError('contact loads require rigid geom contacts')
+                mj.mj_contactForce(m, d, i, wrench)
+                force = c.frame.reshape(3, 3).T @ wrench[:3]
+                out.append(ContactLoad(int(m.geom_bodyid[c.geom1]), int(m.geom_bodyid[c.geom2]),
+                                       tuple(c.pos), tuple(force), float(c.dist), tuple(c.frame[:3])))
+            self._loads_cache = tuple(out)
+        return self._loads_cache
 
     def attach(self, parent: int, child: int) -> None:
         pair = (int(parent), int(child))

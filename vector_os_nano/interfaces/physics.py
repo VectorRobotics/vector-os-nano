@@ -63,6 +63,22 @@ class RGBDFrame:
 
 
 @dataclass(frozen=True)
+class ContactLoad:
+    """One solver contact: canonical bodies, world midpoint and force on body_b (N).
+
+    Force on body_a is its negative. Distance is the solver's signed gap/residual,
+    which is not geometric penetration when speculative contact is enabled.
+    """
+
+    body_a: int
+    body_b: int
+    position: tuple[float, float, float]
+    force_on_b: tuple[float, float, float]
+    distance: float
+    normal_on_b: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
 class GraspSpec:
     """One gripper in canonical ids: the input of the world-side grasp decision
     (``SimRuntime.grasp``), built by the gripper driver from its manifest block."""
@@ -212,6 +228,11 @@ class PhysicsWorld(Protocol):
         <= :data:`CONTACT_DISTANCE_M`, as of the last :meth:`step` or :meth:`reset`.
         A penetration is always a contact, a gap up to the threshold is one, and a gap
         over it never is, whatever the geoms' own margins."""
+
+    def contact_loads(self) -> tuple[ContactLoad, ...]:
+        """Actual solver forces from the last completed physics step, with canonical
+        body IDs. Empty until a step after construction/reset; proximity alone
+        does not produce a force. Reading this never reruns a solver or moves a body."""
 
     def attach(self, parent: int, child: int) -> None:
         """Hold *child* rigidly at its pose relative to *parent* as of the last

@@ -36,7 +36,7 @@ import numpy as np
 import pybullet as pb
 from pybullet_utils import bullet_client
 
-from vector_os_nano.interfaces.physics import CONTACT_DISTANCE_M, CompiledScene, RGBDFrame
+from vector_os_nano.interfaces.physics import CONTACT_DISTANCE_M, CompiledScene, ContactLoad, RGBDFrame
 from vector_os_nano.sim.scene import canonical, reader
 from vector_os_nano.sim.scene.reader import (
     EQ_JOINT, GEOM_BOX, GEOM_CAPSULE, GEOM_CYLINDER, GEOM_MESH, GEOM_PLANE, GEOM_SPHERE,
@@ -456,6 +456,7 @@ class PyBulletWorld:
                 self._apply_forces()
                 p.stepSimulation()
                 self._steps += 1
+                self._loads_valid = True
 
     def _apply_forces(self) -> None:
         """Re-issued before every physics step: Bullet clears torques and forces after one."""
@@ -531,6 +532,7 @@ class PyBulletWorld:
             for a in self._motor.values():
                 self._ctrl[a.id] = 0.0
             p.performCollisionDetection()
+            self._loads_valid = False
 
     # -- actuation -----------------------------------------------------------
 
@@ -576,6 +578,18 @@ class PyBulletWorld:
                             and p.getClosestPoints(ua, ub, CONTACT_DISTANCE_M, la, lb)):
                         out.add(b)
         return frozenset(out)
+
+    def contact_loads(self) -> tuple[ContactLoad, ...]:
+        with self._lock:
+            if not self._loads_valid:
+                return ()
+            out = []
+            for c in self._p.getContactPoints():
+                force_a = np.array(c[7])*c[9] + np.array(c[11])*c[10] + np.array(c[13])*c[12]
+                position = (np.array(c[5]) + np.array(c[6]))/2
+                out.append(ContactLoad(self._body_at[(c[1], c[3])], self._body_at[(c[2], c[4])],
+                                       tuple(position), tuple(-force_a), float(c[8]), tuple(-np.array(c[7]))))
+            return tuple(out)
 
     def _com(self, body: int) -> tuple[list[float], list[float]]:
         uid, link = self._link[body]
