@@ -109,3 +109,6 @@ class ExecutionTrace:
     # The world manifest id the contract bound its object / surface through
     # (``config/worlds/<id>.yaml``); the spine recompiles the contract against it.
     world: str = ""
+    # The objects the gripper held at turn start (the sim's grasp attachments, ground
+    # truth): what a goal naming its object only as 'it' binds (``object_goal._sentence``).
+    held_at_start: tuple[str, ...] = ()

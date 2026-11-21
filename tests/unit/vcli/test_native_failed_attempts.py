@@ -166,11 +166,13 @@ def test_a_failed_attempt_and_nothing_after_it_is_failed() -> None:
 
 def test_a_failed_attempt_then_a_verify_already_true_is_uncaused() -> None:
     """The grasp welded the bottle and then reported an error: a verify after it has no
-    step of its own (no baseline) and grades UNCAUSED, never GROUNDED."""
-    _trace, rep, rows, _ = _run(GOAL, [GRASP, VERIFY], grasp=(("held", "lift failed"),))
-    assert rows == [("perception_grasp", False, True, True), ("", True, False, False)], rows
+    step of its own (no baseline) and grades UNCAUSED, never GROUNDED; nor is it a later
+    attempt, so the failed row stays graded (K1, SP1F2V-03) and the turn is FAILED."""
+    trace, rep, rows, _ = _run(GOAL, [GRASP, VERIFY], grasp=(("held", "lift failed"),))
+    assert rows == [("perception_grasp", False, True, False), ("", True, False, False)], rows
     assert rep.per_step[1].evidence == "RAN" and rep.per_step[1].reject_reason.startswith("UNCAUSED")
     assert rep.verified is False and rep.goal_check == "failed"
+    assert trace.success is False and rep.evidence == "FAILED"
 
 
 @pytest.mark.parametrize("goal", ["go to the kitchen then turn left", "go to (9,3) then turn left"])
@@ -388,6 +390,37 @@ def test_without_a_contract_a_later_attempt_of_the_same_predicate_supersedes_a_f
     assert graded_indices(t) == ([1] if superseded else [0, 1]), graded_indices(t)
 
 
+@pytest.mark.parametrize("retry", ["at_position(9.0, 3.0) == True", "True == at_position(9, 3)",
+                                   "at_position(9.0, 3.0) and at_position(9.0, 3.0) == True"])
+def test_a_retry_spelled_eq_true_supersedes_a_failed_navigate(retry) -> None:
+    """K1 (SP1F2V-02): ``<call> == True`` asserts the call (the classifier grades it, and
+    a possession retry spelled so already superseded); the coordinate branch now agrees."""
+    from vector_os_nano.vcli.cognitive.trace_store import graded_indices
+
+    t = _trace("走到坐标 (9.0,3.0)", [("at_position(9.0, 3.0)", False, True), (retry, True, False)],
+               contract=(), end=())
+    t = replace(t, steps=(t.steps[0], replace(t.steps[1], attempt_of="g")))
+    assert graded_indices(t) == [1]
+    # never a decoy: an or / not / another coordinate does not assert it
+    for decoy in ("at_position(9.0, 3.0) == True or True", "not at_position(9.0, 3.0) == True",
+                  "at_position(3.0, 9.0) == True", "at_position(9.0, 3.0) == False"):
+        d = replace(t, goal_tree=replace(t.goal_tree, sub_goals=(t.goal_tree.sub_goals[0], replace(
+            t.goal_tree.sub_goals[1], verify=decoy))))
+        assert graded_indices(d) == [0, 1], decoy
+
+
+@pytest.mark.parametrize("housekeeping, superseded", [(True, False), (False, True)])
+def test_only_an_action_supersedes_a_failed_attempt(housekeeping, superseded) -> None:
+    """K1 (SP1F2V-03): a verify-only re-check (or a read, or a stop: a housekeeping row) is
+    no later ATTEMPT of the failed predicate, so it never supersedes the failed row and the
+    turn stays FAILED; an actuating retry does."""
+    from vector_os_nano.vcli.cognitive.trace_store import graded_indices
+
+    t = _trace("move the green bottle", [(HINT, False, True), (HOLD, True, False)], contract=(), end=())
+    t = replace(t, steps=(t.steps[0], replace(t.steps[1], housekeeping=housekeeping, strategy="")))
+    assert graded_indices(t) == ([1] if superseded else [0, 1])
+
+
 class _FlakyNav(_NavBase):
     """The first navigate walks part of the way, then the nav stack dies (an error after
     commanded motion: a failed attempt); the next one arrives."""
@@ -404,11 +437,13 @@ class _FlakyNav(_NavBase):
         return super().navigate_to(x, y)
 
 
-@pytest.mark.parametrize("goal", ["go to the kitchen", "走到坐标 (9.0,3.0)"])
-@pytest.mark.parametrize("gid", ["", "reach_kitchen"])
+@pytest.mark.parametrize("goal", ["go to the window", "走到坐标 (9.0,3.0)"])
+@pytest.mark.parametrize("gid", ["", "reach_window"])
 def test_a_failed_navigate_then_a_retry_verifies_whatever_the_goal_id(goal, gid) -> None:
     """SP1F1V-01: the failed attempt is filed under its bound hint; the model's verify of
-    the same coordinate under its own goal_id supersedes it (base behaviour, no contract)."""
+    the same coordinate under its own goal_id supersedes it (base behaviour, no contract:
+    the window is no room, so "go to the window" is outside the forms; K1 made "go to the
+    kitchen" a room contract, which (9, 3) does not meet)."""
     agent, _ = _make_agent(0.0, 0.0)
     agent._base = _FlakyNav(0.0, 0.0)
     nav, at = ("navigate", {"x": 9.0, "y": 3.0}), ("verify", {"expr": "at_position(9.0, 3.0)", "goal_id": gid})
@@ -525,9 +560,12 @@ def test_a_stop_never_launders_a_turn_failed_after_motion(expr) -> None:
 @pytest.mark.parametrize("script", [[("turn_fake", {}), _NAV], [("turn_fake", {}), _NAV, _AT]])
 def test_a_failed_turn_before_a_proving_navigate_is_never_recovered_from(goal, script) -> None:
     """SP1V-01: the turn has no hint, so it is no attempt of the coordinate item; a proof
-    of that item after it excuses nothing, whatever part of the sentence the contract covers."""
+    of that item after it excuses nothing, with a contract or without one (K1, SP1V: a
+    coordinate with a turn after it is no closed form, so it compiles none)."""
     rep, rows, tr = _nav_run(goal, script)
-    assert tr.contract == ("at_position(9.0, 3.0)",), tr.contract
+    whole = goal == "走到坐标 (9.0,3.0)"
+    assert tr.contract == (("at_position(9.0, 3.0)",) if whole else ()), tr.contract
     assert [(r[0], r[1]) for r in rows][:2] == [("turn_fake", False), ("navigate", True)], rows
-    assert rep.goal_check == "proven" and rep.verified is False and rep.evidence == "FAILED", rep.reject_reason
+    assert rep.goal_check == ("proven" if whole else "unchecked"), rep.goal_check
+    assert rep.verified is False and rep.evidence == "FAILED", rep.reject_reason
     assert rep.per_step[0].reject_reason.startswith("the action failed: "), rep.per_step

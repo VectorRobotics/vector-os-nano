@@ -86,6 +86,11 @@ _COMPILED = {
     "pick up the red one": (f"holding_object('{RED}')",), "拿起红色那个": (f"holding_object('{RED}')",),
     "拿起红的": (f"holding_object('{RED}')",), "拿起那个红色的": (f"holding_object('{RED}')",),
     "bring me the green one": _FETCH, "把绿色的放到餐桌上": _on("dining_table"),
+    # K1 (I4D-V3): drop onto a surface, a source beside the destination (checked: the
+    # bottle rests on the pick table), a source that is not the object's surface
+    "drop the green bottle on the dining table": _on("dining_table"), "drop the green bottle on the table": _on(None),
+    "pick up the green bottle from the pick table and put it down": (_REL,),
+    "pick up the green bottle from the dining table and put it down": ("released(None)",),
 }
 
 _UNCHECKED = [
@@ -93,7 +98,7 @@ _UNCHECKED = [
     "is the green bottle on the dining table?", "绿瓶子在餐桌上吗", "what colour is the green bottle",
     "is the red can still there", "看看红色罐子还在不在", "餐桌上有什么", "describe the dining table",
     "how many bottles are on the dining table", "the dining table", "看一下餐桌", "找到绿色瓶子",
-    # navigation
+    # navigation (APT has no in_room: the room form is pinned in test_contract_forms)
     "go to the kitchen", "move to the green bottle", "get to the dining table",
     "walk to the dining table and look at the green bottle", "go to the green bottle, go to the dining table",
     # a verb or a destination outside the closed forms (was: failed open, or a guessed place)
@@ -114,13 +119,11 @@ _UNCHECKED = [
     "bring the green bottle back", "put the green bottle back", "put the green bottle back down",
     "把绿瓶子拿过来放下", "bring me the green bottle and put it on the dining table", "继续拿过来",
     "go to the dining table and put the green bottle down",
-    "pick up the green bottle from the pick table and put it down",
     # a destination that is no surface slot (a room, a place word, a preposition not ON)
     "把红色罐子放到厨房", "put the green bottle in the kitchen", "put the green bottle into the box",
     "put the green bottle at the door", "put the green bottle next to the red can",
     "put the green bottle beside the sofa", "put the green bottle under the dining table",
     "put the green bottle over there", "put the green bottle there", "put the green bottle down over there",
-    "drop the green bottle on the table", "drop the green bottle on the dining table",
     "drop the green bottle in the kitchen", "drop the green bottle there",
     "release the green bottle onto the coffee table", "let go of the green bottle over the sofa",
     "set the green bottle down by the door", "place the green bottle somewhere safe",
@@ -356,8 +359,10 @@ def _manifest_names() -> set[str]:
     ("拿起红色的罐子", {_CAN}),
     ("put the red can on the dining table", {_CAN, "dining_table"}),
     # an unbound object: the bound surface and the object candidates (vocabulary())
-    ("put it on the dining table", {"dining_table", "green bottle", "blue bottle", "red can", "yellow cup",
-                                    "orange box", "purple box"}),
+    ("put the bottle on the dining table", {"dining_table", "green bottle", "blue bottle", "red can",
+                                            "yellow cup", "orange box", "purple box"}),
+    # K1: 'it' with nothing held binds nothing, and the block says so: no other names
+    ("put it on the dining table", {"dining_table"}),
     # an unbound destination: the bound object and the surface candidates
     ("put the red can on the table", {_CAN, "coffee_table", "console_table", "dining_table", "pick_table"}),
 ])

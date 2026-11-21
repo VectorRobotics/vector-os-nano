@@ -24,12 +24,14 @@ _S = tuple(load_embodiment_config("go2").spawn.xy)
 _LAUNCH = "启动 go2 仿真 无窗口"
 
 
-def _leg(when: str, xy: tuple[float, float]) -> list[dict]:
+def _leg(when: str, xy: tuple[float, float], expr: str = "") -> list[dict]:
+    """Navigate to *xy*, then verify *expr* (default: arriving at *xy*). A room goal's
+    contract is in_room(<room>) (K1), so its leg verifies the room."""
     x, y = xy
     return [
         {"when": when, "tool_calls": [{"name": "navigate", "input": {"x": x, "y": y}}]},
         {"when": f"(target ({x}, {y}))", "tool_calls": [
-            {"name": "verify", "input": {"expr": f"at_position({x}, {y})"}}]},
+            {"name": "verify", "input": {"expr": expr or f"at_position({x}, {y})"}}]},
         {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]
 
@@ -38,12 +40,16 @@ _SCRIPT = {"steps": [
     {"when": "启动 go2 仿真", "tool_calls": [
         {"name": "start_simulation", "input": {"embodiment": "go2", "gui": False}}]},
     {"when": "", "text": "go2 仿真已启动", "tool_calls": []},
-    *_leg("去厨房", _K), *_leg("回到起点", _S), *_leg("去餐厅", _D),
+    *_leg("去厨房", _K, "in_room('kitchen')"), *_leg("回到起点", _S), *_leg("去餐厅", _D, "in_room('dining_room')"),
 ]}
 
 
 def _grounded(text: str, xy: tuple[float, float]) -> bool:
     return f"verify at_position({xy[0]}, {xy[1]}) ✓ (actor=CAUSED)" in text
+
+
+def _in_room(text: str, room: str) -> bool:
+    return f"verify in_room('{room}') ✓ (actor=CAUSED)" in text and f"goal proven: in_room('{room}')" in text
 
 
 @pytest.mark.sim
@@ -58,8 +64,8 @@ def test_e8_kitchen_and_dining_room_ground(trial: int) -> None:
     assert not r.timed_out, text[-4000:]
     kitchen = text[text.rfind("vector> 去厨房"):text.rfind("vector> 回到起点")]
     dining = text[text.rfind("vector> 去餐厅"):]
-    assert _grounded(kitchen, _K) and "verdict GROUNDED verified=True" in kitchen, kitchen[-3000:]
-    assert _grounded(dining, _D) and "verdict GROUNDED verified=True" in dining, dining[-3000:]
+    assert _in_room(kitchen, "kitchen") and "verdict GROUNDED verified=True" in kitchen, kitchen[-3000:]
+    assert _in_room(dining, "dining_room") and "verdict GROUNDED verified=True" in dining, dining[-3000:]
 
 
 _CTRL_C_SCRIPT = {"steps": [

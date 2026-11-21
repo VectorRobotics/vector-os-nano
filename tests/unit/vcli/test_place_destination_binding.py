@@ -80,9 +80,13 @@ def test_the_unbound_reason_names_the_slot_quotes_the_goal_and_lists_the_world()
     goal = "put the red can on the shelf"
     assert unbound_reason(f"object_on('{RED}', None)", goal, "apartment") == (
         f"the goal {goal!r} names no destination the world resolves; surfaces: {_SURFACES}")
-    why = unbound_reason("object_on(None, None)", "drop it on the floor", "apartment")
-    assert why.startswith("the goal 'drop it on the floor' names no object the world resolves; objects: ")
+    why = unbound_reason("object_on(None, None)", "put the bottle on the floor", "apartment")
+    assert why.startswith("the goal 'put the bottle on the floor' names no object the world resolves; objects: ")
     assert "red can" in why
+    # K1: 'it' binds only what the robot held at turn start; the reason says what that was
+    why = unbound_reason("object_on(None, None)", "drop it on the floor", "apartment", (RED, GREEN))
+    assert why.startswith("the goal 'drop it on the floor' names its object only as 'it'")
+    assert why.endswith(f"held: {RED}, {GREEN}")
     assert unbound_reason(f"object_on('{RED}', 'dining_table')", goal, "apartment") == ""
     assert unbound_reason(f"released('{RED}')", goal, "apartment") == ""
 

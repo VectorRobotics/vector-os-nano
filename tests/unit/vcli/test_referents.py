@@ -150,10 +150,12 @@ def _gate_object(world: str, sentence: str) -> str | None:
     ("拿起红色罐子的盖子", OUT), ("拿起绿色的红罐子", None), ("拿起大的红罐子", OUT),
     ("拿起粉红色 罐子", OUT), ("把粉红色的罐子放到绿色瓶子旁边", OUT), ("pick up the green red can", None),
     # were {R}/{G}/{Y}: a phrase beside other words of a sentence is no closed form any more
-    ("把桌子上的红色罐子拿给我", OUT), ("帮我拿红罐子吧", R), ("去客厅把黄色杯子拿起来", OUT),
-    ("我要绿色的瓶子", OUT), ("拿起我的红罐子", OUT), ("红色的罐子放到餐桌上", OUT), ("拿起红色的红罐子", R),
+    ("帮我拿红罐子吧", R), ("我要绿色的瓶子", OUT), ("拿起红色的红罐子", R),
     ("用 RynnBrain 找一下绿色瓶子", OUT), ("去绿色的瓶子那里", OUT), ("帮我拿一下红色的罐子", R),
-    ("拿出红罐子", OUT), ("把红罐子提起来", OUT),
+    # K1 (REF1c-V-04): closed forms now; a location binds only when it is the object's
+    # surface in the manifest ("桌子" names none of the four)
+    ("把桌子上的红色罐子拿给我", None), ("把取物台上的红色罐子拿给我", R), ("去客厅把黄色杯子拿起来", Y),
+    ("拿起我的红罐子", R), ("红色的罐子放到餐桌上", R), ("拿出红罐子", R), ("把红罐子提起来", R),
 ])
 def test_a_sentence_names_an_object_only_through_its_closed_form(sentence, bound) -> None:
     assert _gate_object("apartment", sentence) == bound

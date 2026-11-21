@@ -52,7 +52,7 @@ surfaces:
   pick_table:    {body: pick_table,    box: [10.80, 2.75, 11.10, 3.25], height: 0.28,
                   aliases: [pick table, 取物台]}
   coffee_table:  {body: coffee_tbl,    box: [1.20,  1.95, 2.40,  2.65], height: 0.40,
-                  aliases: [coffee table, 茶几]}
+                  aliases: [coffee table, 茶几, 咖啡桌]}
   dining_table:  {body: dining_table,  box: [2.16,  7.05, 3.84,  7.95], height: 0.66,
                   aliases: [dining table, 餐桌, 饭桌]}
   console_table: {body: console_table, box: [6.02,  4.80, 6.98,  5.20], height: 0.70,
@@ -108,6 +108,17 @@ vocab:
     can:    [can, 罐]
     cup:    [cup, mug, 杯]
     box:    [box, 盒]
+  # What NL calls a room besides its own name ("living room"): a room goal ("去厨房")
+  # binds in_room(<room>) through these. A word under two rooms names neither.
+  rooms:
+    living_room:    [lounge, 客厅, 大厅]
+    dining_room:    [餐厅, 饭厅]
+    kitchen:        [厨房]
+    study:          [office, 书房, 办公室]
+    master_bedroom: [bedroom, 主卧, 主卧室, 卧室]
+    guest_bedroom:  [guest room, 客卧, 客房, 次卧]
+    bathroom:       [restroom, toilet, 卫生间, 浴室, 洗手间, 厕所]
+    hallway:        [hall, corridor, 走廊, 过道]
   # Furniture: a place goal's destination ("put it on the table") that names no surface
   # above (the slot binds None and the goal check fails, never unchecked). An object
   # reference needs no list of what is NOT an object: "red stool" resolves to nothing

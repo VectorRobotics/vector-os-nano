@@ -980,17 +980,18 @@ def test_a_failed_skill_is_recorded_with_its_message() -> None:
     eng = _make_engine(agent, backend)
     trace = eng.run_turn_native("拿起红色的罐子", session=_session())
     # Charter 3.5: no arm counter, so no motion evidence: a failed attempt, closed at once
-    # as its own FAILED row; the model's verify after it is a row of its own, and it
-    # asserts the hint's predicate (holding the red can is holding an object), so it
-    # supersedes the failed row (SP1F1V-01) and is graded: it FAILs, nothing acted, UNCAUSED.
+    # as its own FAILED row; the model's verify after it is a row of its own: a re-check
+    # with no action (K1, SP1F2V-03: no later ATTEMPT), so it never supersedes the failed
+    # row, which stays graded and rejects the turn: FAILED, as before SP1F1V-01.
     step, _after = trace.steps
     assert step.failed_attempt is True
     assert step.success is False and "ik_unreachable" in step.error
     assert step.result_data["is_error"] is True and "ik_unreachable" in step.result_data["content"]
     rep = _verdict(agent, eng, trace)
-    assert [(s.evidence, s.superseded) for s in rep.per_step] == [("FAILED", True), ("RAN", False)]
+    assert [(s.evidence, s.superseded) for s in rep.per_step] == [("FAILED", False), ("RAN", False)]
     assert rep.per_step[1].actor_caused == "UNCAUSED" and rep.per_step[1].verify_result is False
-    assert rep.verified is False and rep.reject_reason == "native_step_1: verify FAIL", rep.reject_reason
+    assert trace.success is False and rep.evidence == "FAILED", rep.evidence
+    assert rep.verified is False and rep.reject_reason == "the turn did not succeed", rep.reject_reason
 
 
 def test_navigate_retry_recovers_and_the_contract_is_printed_first() -> None:
@@ -1089,9 +1090,11 @@ def _nav_agent(*skills):
 @pytest.mark.parametrize("goal, script, contract", [
     # go2-only: nothing here can prove the grab, so no navigation contract stands in
     ("go to (3,0) and grab the red can", [("navigate", {"x": 3.0, "y": 0.0}), ("stop_fake", {})], ()),
-    # the turn the coordinate contract does not cover was never proven
-    ("走到坐标 (3,0) 然后左转90度", [("navigate", {"x": 3.0, "y": 0.0}), ("turn_fake", {})],
-     ("at_position(3.0, 0.0)",)),
+    # the turn was never proven (K1, SP1V: a coordinate with a turn after it is no closed
+    # form, so no contract covers half of it)
+    ("走到坐标 (3,0) 然后左转90度", [("navigate", {"x": 3.0, "y": 0.0}), ("turn_fake", {})], ()),
+    # an extra actuating step beside a met coordinate contract
+    ("走到坐标 (3,0)", [("navigate", {"x": 3.0, "y": 0.0}), ("turn_fake", {})], ("at_position(3.0, 0.0)",)),
 ])
 def test_an_unproven_actuating_step_is_not_verified(goal, script, contract) -> None:
     agent = _nav_agent(_Skill("stop_fake", lambda: None), _Skill("turn_fake", lambda: None))
@@ -1146,12 +1149,12 @@ def test_a_stop_never_launders_a_failed_turn(expr) -> None:
     ])
     eng = _make_engine(agent, backend)
     trace = eng.run_turn_native("走到坐标 (9.0,3.0) 然后左转90度", session=_session())
-    assert trace.contract == ("at_position(9.0, 3.0)",)
+    assert trace.contract == ()  # K1 (SP1V): the turn is outside every form
     assert [(s.strategy, s.success, s.housekeeping, s.superseded) for s in trace.steps] == [
         ("navigate", True, False, False), ("stop", True, True, False)]
     report = _verdict(agent, eng, trace)
     assert report.per_step[1].refused == ("turn_fake: Unknown turn direction",)
-    assert report.verified is True and report.goal_check == "proven", report.reject_reason
+    assert report.verified is True and report.goal_check == "unchecked", report.reject_reason
 
 
 def test_navigating_twice_to_the_same_target_still_verifies() -> None:

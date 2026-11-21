@@ -210,12 +210,14 @@ def attempt_groups(trace: ExecutionTrace) -> list[list[int]]:
         key = ("attempt", attempt, attempt_key(verifies[i])) if attempt and verifies[i] else ("own", str(i))
         groups.setdefault(key, []).append(i)
 
-    def retried_by(i: int) -> int | None:  # the next opted-in row asserting failed row i's predicate
+    def retried_by(i: int) -> int | None:  # the next opted-in ACTION row asserting failed row i's predicate
         s, v = trace.steps[i], verifies[i]
         if not (getattr(s, "failed_attempt", False) is True and getattr(s, "attempt_of", "") and v):
             return None
+        # A housekeeping row (a verify-only re-check, a read, a stop) is no attempt (SP1F2V-03).
         return next((j for j in range(i + 1, len(trace.steps))
                      if getattr(trace.steps[j], "attempt_of", "") and verifies[j]
+                     and getattr(trace.steps[j], "housekeeping", False) is not True
                      and (attempt_key(verifies[j]) == attempt_key(v) or backs_contract(v, verifies[j], world))),
                     None)
 
@@ -246,24 +248,37 @@ def _contract_reason(
 ) -> str:
     """Why the turn's task contract is not met ("" when it is): every predicate must
     be GT-provable here, False at turn start, True at turn end, and asserted by a
-    GROUNDED (actor-caused) graded step."""
-    from vector_os_nano.vcli.cognitive.object_goal import _HOLD, backs_contract, task_contract, unbound_reason
+    GROUNDED (actor-caused) graded step; every lead clause (``contract_leads``) needs its
+    own GROUNDED graded step before the last step that proves the contract."""
+    from vector_os_nano.vcli.cognitive.object_goal import (
+        _HOLD,
+        backs_contract,
+        contract_leads,
+        task_contract,
+        unbound_reason,
+    )
 
     contract, world = tuple(trace.contract), str(getattr(trace, "world", "") or "")
+    goal, held = trace.goal_tree.goal, tuple(getattr(trace, "held_at_start", ()) or ())
 
     def proven_at(item: str) -> list[int]:  # graded positions of the GROUNDED steps asserting item
         return [i for i, s in enumerate(graded)
                 if ev[id(s)][0] == "GROUNDED" and backs_contract(item, sg_by_name[s.sub_goal_name].verify, world)]
 
+    def unprovable(item: str, what: str) -> str:
+        if classify_verify_expr(item, oracle_names) == "GROUNDED":
+            return ""
+        why = unbound_reason(item, goal, world, held)
+        return f"{what} {item}: {why}" if why else f"{what} {item} is not provable in this world"
+
     # The spine recompiles the contract: a producer can never swap in a weaker one.
-    if contract != task_contract(trace.goal_tree.goal, oracle_names, world):
+    if contract != task_contract(goal, oracle_names, world, held):
         return "the task contract does not match the goal"
     if len(trace.contract_start) != len(contract) or len(trace.contract_end) != len(contract):
         return "task contract was not evaluated at turn start and end"
     for item, was, now in zip(contract, trace.contract_start, trace.contract_end):
-        if classify_verify_expr(item, oracle_names) != "GROUNDED":
-            why = unbound_reason(item, trace.goal_tree.goal, world)
-            return f"task contract {item}: {why}" if why else f"task contract {item} is not provable in this world"
+        if why := unprovable(item, "task contract"):
+            return why
         proofs = proven_at(item)
         # A pick-and-place starts released: that is no evidence unless a grounded grasp
         # of the same object precedes the release proof (I4F1-D3).
@@ -276,6 +291,15 @@ def _contract_reason(
             return f"task contract not met at turn end: {item}"
         if not proofs:
             return f"no actor-caused step proves {item}"
+    last = max((i for item in contract for i in proven_at(item)), default=-1)
+    for lead in contract_leads(goal, oracle_names, world, held):
+        if why := unprovable(lead, "lead clause"):
+            return why
+        # A lead grasp is proven by any possession oracle of its object (kept_holding in
+        # the step that proves a fetch is one).
+        alts = [f"{n}{lead[lead.index('('):]}" for n in _HOLD] if lead.startswith("holding_object(") else [lead]
+        if not any(i <= last for alt in alts for i in proven_at(alt)):
+            return f"no actor-caused step proves the lead clause {lead} by the step that proves the task contract"
     return ""
 
 
@@ -340,7 +364,8 @@ def _manipulation_reason(
     # object fails closed, and a goal outside the forms binds none at all.
     world_id = str(getattr(trace, "world", "") or "")
     world = _manifest(world_id)
-    form = _sentence(world, trace.goal_tree.goal or "") if world is not None else None
+    form = _sentence(world, trace.goal_tree.goal or "", tuple(getattr(trace, "held_at_start", ()) or ())) \
+        if world is not None else None
     want = form[1] if form is not None else None
 
     def proves(verify: str | None, names: frozenset[str]) -> bool:
@@ -382,7 +407,8 @@ def _checks_contract(trace: ExecutionTrace, oracle_names: frozenset[str]) -> boo
 
     if trace.contract:
         return True
-    expected = task_contract(trace.goal_tree.goal, oracle_names, str(getattr(trace, "world", "") or ""))
+    expected = task_contract(trace.goal_tree.goal, oracle_names, str(getattr(trace, "world", "") or ""),
+                             tuple(getattr(trace, "held_at_start", ()) or ()))
     return bool(expected) and any(getattr(s, "attempt_of", "") for s in trace.steps)
 
 

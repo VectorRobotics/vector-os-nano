@@ -290,7 +290,10 @@ def test_a_lifecycle_tool_recompiles_the_contract_for_the_new_body() -> None:
     eng.bind(None, DevWorld())
     app_state: dict = {"agent": None}
     events: list[str] = []
-    trace = eng.run_turn_native("启动 go2 然后走到坐标 (2.0,0.0)", session=_session(),
+    # K1 (SP1V): "启动 go2 然后走到坐标 (2.0,0.0)" is no closed form any more (the launch
+    # clause proves nothing), so the goal here is the coordinate alone
+    assert task_contract("启动 go2 然后走到坐标 (2.0,0.0)", APT, "apartment") == ()
+    trace = eng.run_turn_native("走到坐标 (2.0,0.0)", session=_session(),
                                 app_state=app_state, on_progress=events.append)
     assert trace.contract == ("at_position(2.0, 0.0)",)
     assert (trace.contract_start, trace.contract_end) == ((False,), (True,))

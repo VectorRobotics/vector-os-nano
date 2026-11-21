@@ -555,6 +555,7 @@ class NativeStepRunner:
         self, goal: str, *, llm_error: str = "", model: str = "", cancelled: bool = False,
         contract: tuple[str, ...] = (), contract_start: tuple[bool, ...] = (),
         contract_end: tuple[bool, ...] = (), scene: str = "", world: str = "",
+        held_at_start: tuple[str, ...] = (),
     ) -> ExecutionTrace:
         """Assemble the ExecutionTrace from the recorded (chain -> verify) steps.
 
@@ -585,6 +586,7 @@ class NativeStepRunner:
             intents=tuple(sorted(self.intents)),
             scene=scene,
             world=world,
+            held_at_start=tuple(held_at_start),
         )
         return replace(trace, success=turn_succeeded(trace))
 
