@@ -133,6 +133,19 @@ def _legged(**base) -> dict:
     return raw
 
 
+@pytest.mark.parametrize('value', [-1, float('nan'), float('inf'), True, '1.6', None])
+def test_nav_rejects_invalid_settle_window(value):
+    raw = _legged()
+    raw['base']['nav']['settle_window_s'] = value
+    with pytest.raises(EmbodimentConfigError, match='settle_window_s'):
+        parse_embodiment_config(raw)
+
+
+def test_nav_settle_window_is_opt_in_for_periodic_balance():
+    assert parse_embodiment_config(_legged()).base.nav.settle_window_s == 0
+    assert load_embodiment_config('g1').base.nav.settle_window_s == 1.6
+
+
 @pytest.mark.parametrize("change, error", [
     ({"stance": {"FL_hip_joint": 0.0}}, r"base\.stance: no angle for \['FL_thigh_joint'"),
     ({"stance_typo": 1}, r"base: unknown key 'stance_typo'"),

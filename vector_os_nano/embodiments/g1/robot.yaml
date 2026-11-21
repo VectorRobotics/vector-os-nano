@@ -104,6 +104,7 @@ base:
     speed: 0.5                    # m/s forward
     vyaw_max: 0.6                 # rad/s
     goal_tol: 0.30                # m: its sway
+    settle_window_s: 1.6          # measure zero-command drift over two 0.8 s balance cycles
 
 sensors:
   # A head camera on the pelvis (0.04 m ahead, 0.42 m up, looking along +x), depth over

@@ -184,6 +184,7 @@ def follow(
     holonomic = base.holonomic
     settled_since = None
     braking = False
+    brake_history: collections.deque = collections.deque()
     try:
         while True:
             if cancel.is_set():
@@ -202,12 +203,28 @@ def follow(
                 braking = True
                 base.set_velocity(0.0, 0.0, 0.0)
                 odom = base.get_odometry()
-                if math.hypot(odom.vx, odom.vy) <= .03 and abs(odom.vyaw) <= .05:
+                linear, angular = math.hypot(odom.vx, odom.vy), abs(odom.vyaw)
+                if nav.settle_window_s:
+                    # Balance cycles have nonzero instantaneous speed even while standing.
+                    heading = base.get_heading()
+                    if brake_history:
+                        heading = brake_history[-1][3] + _wrap(heading - brake_history[-1][3])
+                    brake_history.append((now, x, y, heading))
+                    while len(brake_history) > 1 and now - brake_history[1][0] >= nav.settle_window_s:
+                        brake_history.popleft()
+                    start, bx, by, bh = brake_history[0]
+                    if now - start >= nav.settle_window_s:
+                        linear = math.hypot(x - bx, y - by) / (now - start)
+                        angular = abs(heading - bh) / (now - start)
+                    else:
+                        linear = angular = math.inf
+                if linear <= .03 and angular <= .05:
                     settled_since = now if settled_since is None else settled_since
                     if now - settled_since >= .2:
                         if math.dist((x, y), target) <= tol:
                             return result("arrived")
                         braking, settled_since = False, None
+                        brake_history.clear()
                         best, best_t = _remaining((x, y), path, i), now
                         continue
                 else:

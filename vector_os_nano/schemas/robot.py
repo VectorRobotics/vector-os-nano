@@ -119,6 +119,12 @@ class NavSpec:
     vyaw_max: float
     explorer: str = ""
     goal_tol: float | None = None
+    settle_window_s: float = 0.0
+
+    def __post_init__(self):
+        if (type(self.settle_window_s) not in (int, float) or
+                not math.isfinite(self.settle_window_s) or self.settle_window_s < 0):
+            raise EmbodimentConfigError('base.nav.settle_window_s must be finite and nonnegative')
 
 
 @dataclass(frozen=True)
@@ -450,7 +456,7 @@ def _parse_sensors(raw: dict[str, Any], ctx: str) -> tuple[CameraSpec | LidarSpe
 _BASE_KEYS = {"height", "holonomic", "limits", "fall_z", "fall_tilt_deg", "joints", "stance", "postures",
               "kp", "kd", "torque_scale", "policy", "nav"}
 _POLICY_KEYS = {"ref", "timestep", "tick_hz", "by_backend"}  # the rest is the policy's own
-_NAV_KEYS = {"body_radius", "speed", "vyaw_max", "explorer", "goal_tol"}
+_NAV_KEYS = {"body_radius", "speed", "vyaw_max", "explorer", "goal_tol", "settle_window_s"}
 
 
 def _angles(raw: Any, joints: tuple[str, ...], ctx: str) -> dict[str, float]:
@@ -529,6 +535,7 @@ def _parse_base(raw: dict[str, Any], ctx: str) -> BaseSpec | None:
             vyaw_max=float(_require(nav, "vyaw_max", nctx)),
             explorer=str(nav.get("explorer") or ""),
             goal_tol=None if nav.get("goal_tol") is None else float(nav["goal_tol"]),
+            settle_window_s=nav.get("settle_window_s", 0.0),
         ),
     )
 

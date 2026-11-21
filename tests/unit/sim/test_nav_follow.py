@@ -178,6 +178,29 @@ def test_budget_is_one_global_sim_time_deadline():
     assert res.reason == "timeout" and res["elapsed_s"] <= 6.0 + 0.11
 
 
+@pytest.mark.parametrize('drift,spin,expected', [(0, 0, 'arrived'), (.06, 0, 'timeout'), (0, .12, 'timeout')])
+def test_balancing_arrival_measures_cycles_without_accepting_drift(drift, spin, expected):
+    class Balancing(KinBase):
+        def wait_sim(self, seconds, cancel=None):
+            before = math.sin(2 * math.pi * self.t / .8)
+            super().wait_sim(seconds, cancel)
+            sway = math.sin(2 * math.pi * self.t / .8) - before
+            self.x += .02 * sway + drift * seconds
+            self.yaw += .04 * sway + spin * seconds
+            return True
+
+        def get_odometry(self):
+            rate = 2 * math.pi / .8 * math.cos(2 * math.pi * self.t / .8)
+            return replace(super().get_odometry(), vx=.02 * rate + drift, vyaw=.04 * rate + spin)
+
+    base = Balancing(yaw=math.pi - .01)
+    nav = replace(GO2, settle_window_s=1.6)
+    result = follow(base, (0, 0), [], nav=nav, fallen=lambda: False, timeout=3)
+    assert result.reason == expected
+    assert result['elapsed_s'] >= 1.8
+    assert base.stops == 1
+
+
 def test_turn_by_closes_the_loop_on_heading():
     class Sloppy(KinBase):  # the gait only delivers 70 % of the commanded yaw
         def walk(self, vx, vy, vyaw, duration):
