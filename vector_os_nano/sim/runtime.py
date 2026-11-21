@@ -201,6 +201,7 @@ class SimRuntime:
         # tick made around them (GroundTruth.attach_events reads it).
         self.attach_log: collections.deque[tuple[float, int, int | None]] = collections.deque(maxlen=4096)
         self._attached = world.attached()
+        self.contact_history = _grasp.ContactHistory()
         self._view = _logging_view(self)
         self._snap = self._take_snapshot()
         self._rt_mark = (time.monotonic(), world.time())
@@ -354,6 +355,9 @@ class SimRuntime:
         """``{child: parent}`` as of the last attach / detach call or job end."""
         return dict(self._attached)
 
+    def watch_contact_grip(self, spec: GraspSpec) -> None:
+        self.call(lambda w: self.contact_history.register(spec, w))
+
     @contextlib.contextmanager
     def paused(self):
         """Park the daemon at a step boundary for the duration (reference-counted)."""
@@ -459,6 +463,7 @@ class SimRuntime:
     def _publish(self) -> None:
         self._snap = self._take_snapshot()
         self._note_attachments()
+        self.contact_history.observe(self.world)
         with self._published:
             self._published.notify_all()
 
@@ -500,7 +505,13 @@ class SimRuntime:
         ctrl = controller or self._controller
         if ctrl is not None:
             ctrl(self._view)
-        self.world.step(self.substeps)
+        if self.contact_history.specs:
+            for i in range(self.substeps):
+                self.world.step()
+                if i+1 < self.substeps:
+                    self.contact_history.observe(self.world)
+        else:
+            self.world.step(self.substeps)
         self._steps += self.substeps
         self._publish()
 

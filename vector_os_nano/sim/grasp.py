@@ -14,10 +14,81 @@ detach at call time. No driver, skill or perception module calls
 from __future__ import annotations
 
 import logging
+import math
+
+import numpy as np
 
 from vector_os_nano.interfaces.physics import GraspSpec, PhysicsWorld
 
 logger = logging.getLogger(__name__)
+
+
+class ContactHistory:
+    """World-side, sustained opposing finger loads; remembers every qualified loss.
+
+    This proves contact possession only. Lift, support and task geometry are
+    checked separately by GroundTruth and the offline physical grader.
+    """
+
+    dwell = .2
+
+    def __init__(self):
+        self.specs = {}
+        self.started = {}
+        self.lost = {}
+        self.since = {}
+        self.time = -math.inf
+
+    def register(self, spec, world):
+        if spec.assist:
+            return
+        self.specs[spec.weld_body] = spec
+        self.since[spec.weld_body] = world.time()
+
+    def observe(self, world):
+        if not self.specs:
+            return
+        now = world.time()
+        if now < self.time:
+            self.started.clear()
+            self.lost.clear()
+            self.since = dict.fromkeys(self.specs, now)
+        self.time = now
+        scene = world.scene
+        objects = set(scene.free_bodies().values()) - scene.subtree(scene.robot_root)
+        objects.difference_update(world.attached())
+        q, _ = world.state()
+        loads = world.contact_loads()
+        active = set()
+        for parent, spec in self.specs.items():
+            if len(spec.finger_bodies) < 2 or q[scene.joint_q(spec.jaw_joint)]-spec.closed < spec.min_opening:
+                continue
+            forces = {}
+            for c in loads:
+                normal = np.asarray(c.normal_on_b)
+                compression = float(np.dot(c.force_on_b, normal))
+                if compression <= 0:
+                    continue
+                for finger, body, sign in ((c.body_a, c.body_b, 1), (c.body_b, c.body_a, -1)):
+                    if finger in spec.finger_bodies and body in objects:
+                        key = (body, finger)
+                        forces[key] = forces.get(key, np.zeros(3)) + sign*compression*normal
+            for body in {b for b, _ in forces}:
+                vectors = [forces.get((body, f), np.zeros(3)) for f in spec.finger_bodies]
+                norms = [float(np.linalg.norm(v)) for v in vectors]
+                if min(norms) > .05 and any(np.dot(a, b) < -.5*na*nb
+                        for i, (a, na) in enumerate(zip(vectors, norms))
+                        for b, nb in zip(vectors[i+1:], norms[i+1:])):
+                    active.add((parent, body))
+        for key in self.started.keys() - active:
+            if now-self.started[key] >= self.dwell:
+                self.lost[key] = now
+        self.started = {key: self.started.get(key, now) for key in active}
+
+    def held(self, parent, body, since=None):
+        key = (parent, body)
+        return (key in self.started and self.time-self.started[key] >= self.dwell and
+                (since is None or (since >= self.since[parent] and self.lost.get(key, -math.inf) <= since)))
 
 
 def grasp(world: PhysicsWorld, spec: GraspSpec) -> int | None:

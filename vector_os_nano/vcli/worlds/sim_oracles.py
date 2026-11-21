@@ -236,8 +236,9 @@ def build_namespace(
             return on_gripper(gt.attached_to(name))
 
         def held(name: str) -> bool:
-            # attached to the gripper, touched by every finger, lifted
-            return welded(name) and fingers <= gt.contacts(name) and gt.clearance(name) >= LIFT_M
+            possession = (welded(name) and fingers <= gt.contacts(name) if gripper.assist
+                          else gt.contact_held(name, weld_body))
+            return possession and gt.clearance(name) >= LIFT_M
 
         def resting(name: str) -> bool:
             return (not welded(name) and not (gt.contacts(name) & gt.robot_bodies)
@@ -246,11 +247,11 @@ def build_namespace(
         @oracle(scope="robot", channel="gripper", transition="rise", domain="bool")
         @_safe(False)
         def holding_object(target: Any = None) -> bool:
-            """Object welded to the gripper AND gripped by every finger AND lifted
-            >= 3 cm above its support. ``target=None``: any object."""
+            """Object lifted >= 3 cm with assisted possession or sustained opposing
+            finger loads in contact-only mode. ``target=None``: any object."""
             if target is not None:
                 return held(obj(target))
-            return any(held(n) for n, parent in gt.attachments().items() if on_gripper(parent))
+            return any(held(n) for n in gt.bid)
 
         @oracle(scope="robot", channel="gripper", transition="rise", domain="bool")
         @_safe(False)
@@ -258,16 +259,19 @@ def build_namespace(
             """Object held by the gripper with its lowest point >= *dz* (at least
             3 cm) above the support under it."""
             name = obj(target)
-            return welded(name) and gt.clearance(name) >= max(LIFT_M, float(dz))
+            possession = welded(name) if gripper.assist else gt.contact_held(name, weld_body)
+            return possession and gt.clearance(name) >= max(LIFT_M, float(dz))
 
         @oracle(scope="robot", channel="gripper", transition="rise", domain="bool", window="turn")
         @_safe(False)
         def kept_holding(target: Any) -> bool:
-            """Held now AND its weld never dropped since the turn started. Caused only
+            """Held now AND possession never dropped since the turn started. Caused only
             by a grasp in THIS turn (window="turn"): an object already held when the
             turn began never proves a fetch."""
             name = obj(target)
             t0, _wall = turn_start()
+            if not gripper.assist:
+                return held(name) and gt.contact_held(name, weld_body, since=t0)
             dropped = any(n == name and not on_gripper(p) for _t, n, p in gt.attach_events(since=t0))
             return held(name) and not dropped
 
@@ -277,7 +281,8 @@ def build_namespace(
             """No longer held: the object's weld is off and no robot body touches it.
             ``target=None``: the gripper holds nothing."""
             if target is None:
-                return not any(on_gripper(p) for p in gt.attachments().values())
+                return (not any(on_gripper(p) for p in gt.attachments().values()) and
+                        (gripper.assist or not any(gt.contacts(n) & fingers for n in gt.bid)))
             name = obj(target)
             return not welded(name) and not (gt.contacts(name) & gt.robot_bodies)
 

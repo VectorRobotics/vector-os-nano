@@ -45,6 +45,8 @@ class Gripper:
             assist=spec.assist,
         )
         self._held: int | None = None  # the body the last close() gripped
+        if not spec.assist:
+            runtime.watch_contact_grip(self._grasp)
 
     def _servo(self, q: float) -> None:
         jaw = [self._jaw]

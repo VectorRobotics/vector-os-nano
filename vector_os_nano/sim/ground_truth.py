@@ -111,6 +111,14 @@ class GroundTruth:
         bid = self.bid[name]
         return self._rt.call(lambda w: w.contacts(bid))
 
+    def contact_held(self, name: str, parent: str, since: float | None = None) -> bool:
+        """Opposing finger loads sustained for 0.2 s, with no loss after *since*."""
+        bid, pid = self.bid[name], self.body_id(parent)
+        def read(w):
+            self._rt.contact_history.observe(w)
+            return self._rt.contact_history.held(pid, bid, since)
+        return self._rt.call(read)
+
     def body_id(self, name: str) -> int:
         return self._scene.body(name)
 
