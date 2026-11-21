@@ -319,6 +319,7 @@ def path_length(
 # mjtGeom / mjtJoint values (stable MuJoCo ABI; pinned against mujoco in tests).
 GEOM_CYLINDER = 5
 GEOM_BOX = 6
+GEOM_MESH = 7
 JNT_FREE = 0
 
 # Visual-only or room-spanning names, skipped unconditionally.
@@ -331,34 +332,56 @@ _OBS_MIN_Z_TOP = 0.10       # m: a geom must rise above this (skip flat rugs/mat
 _OBS_MAX_HALF_EXTENT = 9.0  # m: skip room-spanning slabs (both x and y huge)
 
 
+def _bounds(model: Any, pos: Any, mat: Any, gid: int):
+    """World centre and half extents of a geom's conservative bounding box."""
+    c, h = model.geom_aabb[gid][:3], model.geom_aabb[gid][3:]
+    rotation = mat[gid].reshape(3, 3)
+    return pos[gid] + rotation @ c, abs(rotation) @ h
+
+
 def obstacles_from_model(
     model: Any,
     geom_xpos: Any,
     geom_xmat: Any,
     robot_geom_ids: "set[int] | frozenset[int]" = frozenset(),
+    *, max_z: float | None = None,
 ) -> "list[list[tuple[float, float]]]":
     """Planar routing polygons of the static scene of a compiled model, its geoms at
     *geom_xpos* / *geom_xmat* (world, from one state).
 
-    Includes every colliding BOX/CYLINDER geom that rises above the floor, except
+    Includes colliding boxes, cylinders and mesh bounds that rise above the floor, except
     the robot's own geoms (*robot_geom_ids*: the body subtree, which also covers a
     mounted arm), freejoint bodies (pickables), visual-only names and room-spanning
-    slabs.
+    slabs. Mesh bounds are conservative; overhead geometry above *max_z* is clear.
     """
     polys: list[list[tuple[float, float]]] = []
     for gid in range(int(model.ngeom)):
         gtype = int(model.geom_type[gid])
-        if gtype not in (GEOM_BOX, GEOM_CYLINDER) or gid in robot_geom_ids:
+        if gtype not in (GEOM_BOX, GEOM_CYLINDER, GEOM_MESH) or gid in robot_geom_ids:
             continue
         if int(model.geom_contype[gid]) == 0:
             continue
         bid = int(model.geom_bodyid[gid])
-        jadr = int(model.body_jntadr[bid])
-        if jadr >= 0 and int(model.jnt_type[jadr]) == JNT_FREE:
+        ancestor, movable = bid, False
+        while ancestor:
+            jadr = int(model.body_jntadr[ancestor])
+            if jadr >= 0 and int(model.jnt_type[jadr]) == JNT_FREE:
+                movable = True
+                break
+            ancestor = int(model.body_parentid[ancestor])
+        if movable:
             continue
         names = (model.geom(gid).name, model.body(bid).name)
         if any(n.startswith(_SKIP_NAME_PREFIXES) for n in names):
             continue
+        if max_z is not None or gtype == GEOM_MESH:
+            center, half = _bounds(model, geom_xpos, geom_xmat, gid)
+            if center[2] + half[2] < _OBS_MIN_Z_TOP or (max_z is not None and center[2] - half[2] > max_z):
+                continue
+            if gtype == GEOM_MESH:
+                # AABB overestimates oblique furniture but never hides a collision.
+                polys.append(box_polygon(float(center[0]), float(center[1]), float(half[0]), float(half[1])))
+                continue
         size = model.geom_size[gid]
         if float(size[0]) >= _OBS_MAX_HALF_EXTENT and float(size[1]) >= _OBS_MAX_HALF_EXTENT:
             continue
@@ -386,7 +409,10 @@ def scene_obstacles(scene: Any, q: Any) -> "list[list[tuple[float, float]]]":
     from vector_os_nano.sim.scene import canonical
 
     pos, mat = canonical.geom_poses(scene, q)
-    return obstacles_from_model(scene.model, pos, mat, _robot_geoms(scene))
+    robot = _robot_geoms(scene)
+    bounds = [_bounds(scene.model, pos, mat, g) for g in robot]
+    ceiling = max((c[2] + h[2] for c, h in bounds), default=float('inf'))
+    return obstacles_from_model(scene.model, pos, mat, robot, max_z=ceiling)
 
 
 def _planar_reach(model: Any, pos: Any, mat: Any, gids: "list[int]", ox: float, oy: float) -> float:
