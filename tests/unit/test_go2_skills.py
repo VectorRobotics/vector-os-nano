@@ -18,7 +18,7 @@ def _make_go2_context():
     yaw = [0.0]
     pos = [2.5, 2.5]
 
-    def walk(vx, vy, vyaw, duration):  # a perfect gait: pose integrates the command
+    def walk(vx, vy, vyaw, duration, *, cancel=None):  # a perfect gait: pose integrates the command
         c, s = math.cos(yaw[0]), math.sin(yaw[0])
         pos[0] += (vx * c - vy * s) * duration
         pos[1] += (vx * s + vy * c) * duration

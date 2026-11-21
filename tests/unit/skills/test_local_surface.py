@@ -117,6 +117,7 @@ def test_local_approach_moves_with_the_observed_landmark(monkeypatch):
 @pytest.mark.parametrize('fault',[None,'navigation','turn','slip'])
 def test_authored_approach_is_required_even_when_the_surface_is_reachable(monkeypatch,fault):
     ctx=context();base=Mock();ctx.base=base
+    base.get_sim_time.return_value=0.
     ctx.services['object_world'].surfaces['bench'].approach_pose=(.1,.2,math.pi/2)
     ctx.config['arm']={'postures':{'carry':[0.,0.,.7,0.,0.,0.]}}
     ctx.config['skills']['place']['base']=dict(standoff=.4,lateral_offset=.2,carry_posture='carry',
@@ -128,7 +129,9 @@ def test_authored_approach_is_required_even_when_the_surface_is_reachable(monkey
     base.navigate_to.side_effect=navigate
     turn=Mock(return_value=(fault!='turn',0.));monkeypatch.setattr(place,'turn_by',turn)
     result=place.PlaceSkill().execute({'surface':'bench'},ctx)
-    base.navigate_to.assert_called_once_with(.1,.2,tol=.015,cancel=ctx.services['cancel'])
+    guard=base.navigate_to.call_args.kwargs['cancel']
+    base.navigate_to.assert_called_once_with(.1,.2,tol=.015,cancel=guard)
+    assert guard.cancel is ctx.services['cancel']
     assert result.success==(fault is None)
     if fault:ctx.gripper.open.assert_not_called()
     if fault in ('navigation','slip'):turn.assert_not_called()

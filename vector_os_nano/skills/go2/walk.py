@@ -15,7 +15,7 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.transport import prepare
+from vector_os_nano.skills.transport import CarryGuard, prepare
 from vector_os_nano.skills.go2.turn import normalize_direction
 
 logger = logging.getLogger(__name__)
@@ -150,7 +150,10 @@ class WalkSkill:
         if error:
             return error
         start = _position(context.base)
-        ok = context.base.walk(vx, vy, 0.0, duration)
+        guard = CarryGuard(context)
+        ok = context.base.walk(vx, vy, 0.0, duration, cancel=guard)
+        if error := guard.failure():
+            return error
         end = _position(context.base)
         moved = None if start is None or end is None else math.hypot(end[0] - start[0], end[1] - start[1])
         data = {

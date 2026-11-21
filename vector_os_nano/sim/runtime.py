@@ -437,13 +437,15 @@ class SimRuntime:
                 finally:
                     self._stepper = prev
             return True
-        with self._published:
-            while self.sim_time < target - 1e-9 or (hold and self._parked != mine):
-                if (self._stop.is_set() or (cancel is not None and cancel.is_set())
-                        or time.monotonic() > deadline):
-                    return False
+        while True:
+            # A sensor-backed token may submit a read; never hold the publisher lock across it.
+            if (self._stop.is_set() or (cancel is not None and cancel.is_set())
+                    or time.monotonic() > deadline):
+                return False
+            with self._published:
+                if self.sim_time >= target - 1e-9 and (not hold or self._parked == mine):
+                    return True
                 self._published.wait(timeout=0.05)
-        return True
 
     def release_clock(self) -> None:
         """End the calling thread's hold on the clock (a no-op without one)."""

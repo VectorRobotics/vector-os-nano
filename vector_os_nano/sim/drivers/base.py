@@ -191,30 +191,34 @@ class LeggedBase:
         return True
 
     def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0,
-             *, velocity_fn: Callable[[], tuple[float, float, float] | None] | None = None) -> bool:
+             *, velocity_fn: Callable[[], tuple[float, float, float] | None] | None = None,
+             cancel: Any = None) -> bool:
         if velocity_fn is not None and (not math.isfinite(duration) or duration <= 0):
             raise ValueError('feedback motion requires a finite positive deadline')
+        stopped = _Abort(lambda: self._cancel.is_set() or (cancel is not None and cancel.is_set()))
         with self._control() as stops:
+            if stopped.is_set():
+                return False
             fell = self._fallen()  # a body that starts fallen has fallen
             if velocity_fn is None:
                 if not self._command(vx, vy, vyaw, stops):
                     return False  # stopped during the rise: it never starts
-                ran = self.wait_sim(duration, cancel=self._cancel)
+                ran = self.wait_sim(duration, cancel=stopped)
             else:
                 ran, deadline = False, self._rt.sim_time + duration
-                while not fell and not self._cancel.is_set() and self._rt.sim_time < deadline-1e-9:
+                while not fell and not stopped.is_set() and self._rt.sim_time < deadline-1e-9:
                     with self._lock:
                         if stops != self._stops:
                             break
                     command = velocity_fn()
                     if command is None:
-                        ran = not self._cancel.is_set() and self._command(*_ZERO, stops)
+                        ran = not stopped.is_set() and self._command(*_ZERO, stops)
                         break
                     if len(command) != 3 or not all(math.isfinite(value) for value in command):
                         raise ValueError('feedback controller must return three finite velocities or None')
                     if not self._command(*command, stops):
                         break
-                    if not self.wait_sim(min(self._rt.tick_dt, deadline-self._rt.sim_time), cancel=self._cancel):
+                    if not self.wait_sim(min(self._rt.tick_dt, deadline-self._rt.sim_time), cancel=stopped):
                         break
                     fell = self._fallen()
             self.set_velocity(0.0, 0.0, 0.0)

@@ -19,6 +19,7 @@ sys.path.insert(0, str(_REPO))
 
 import vector_os_nano.skills.navigate as navigate_module
 from vector_os_nano.core.scene_graph import SceneGraph
+from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.sim.nav.follow import NavResult
 from vector_os_nano.skills.navigate import (
     NavigateSkill,
@@ -63,16 +64,12 @@ def _make_mock_base(x: float = 3.0, y: float = 2.5, z: float = 0.3, heading: flo
     return base
 
 
-def _make_skill_context(base: MagicMock, sg: SceneGraph | None) -> MagicMock:
+def _make_skill_context(base: MagicMock, sg: SceneGraph | None) -> SkillContext:
     """Build a mock SkillContext with the given base and spatial_memory service."""
-    ctx = MagicMock()
-    ctx.base = base
     services: dict = {}
     if sg is not None:
         services["spatial_memory"] = sg
-    # Assign a real dict so .get() works correctly (MagicMock auto-mocks .get)
-    ctx.services = services
-    return ctx
+    return SkillContext(base=base, services=services)
 
 
 # ---------------------------------------------------------------------------

@@ -137,9 +137,11 @@ class BaseProtocol(Protocol):
         """Zero the command now, from any thread; idempotent and never raises."""
 
     def walk(self, vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0, duration: float = 1.0,
-             *, velocity_fn: Callable[[], tuple[float, float, float] | None] | None = None) -> bool:
+             *, velocity_fn: Callable[[], tuple[float, float, float] | None] | None = None,
+             cancel: Any = None) -> bool:
         """Hold the command for *duration* sim seconds, then stop; True iff it ran its full
         time and the body was up (its root above the fall height) at the start and the end.
+        An optional token's is_set() stops the motion during the wait.
 
         With velocity_fn, poll this trusted controller at the body's control rate, under
         exclusive motion/clock ownership. It returns bounded body velocities or None

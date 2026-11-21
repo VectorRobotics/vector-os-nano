@@ -90,7 +90,7 @@ def _walk(base, cfg, token, *, vx=0., vy=0., vyaw=0., duration=None):
     command = [max(-limit, min(limit, value)) for value, limit in zip((vx, vy, vyaw), limits)]
     if not any(command):
         return _fail("approach_failed", "The base cannot perform this approach; choose another view with look.")
-    ok = base.walk(vx=command[0], vy=command[1], vyaw=command[2], duration=duration or cfg["step_duration"])
+    ok = base.walk(vx=command[0], vy=command[1], vyaw=command[2], duration=duration or cfg["step_duration"], cancel=token)
     return _cancelled(token) or (None if ok else _fail("approach_failed", "Base approach did not complete; inspect the route and look again."))
 
 

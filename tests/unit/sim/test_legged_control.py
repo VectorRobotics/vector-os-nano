@@ -85,3 +85,18 @@ def test_a_stop_is_never_gated():
         base.set_velocity(0.4, 0.0, 0.0)
         _in_thread(base.stop)
         assert base._cmd == (0.0, 0.0, 0.0)
+
+
+def test_walk_polls_the_callers_stop_token_during_the_wait():
+    base = _bare(); token = threading.Event()
+    base._cancel = threading.Event()
+    base._fallen = lambda: False
+    seen = []
+    def wait(seconds, cancel=None, **kw):
+        seen.append(base._cmd)
+        if base._cmd != (0., 0., 0.):
+            token.set()
+        return cancel is None or not cancel.is_set()
+    base._rt.wait_sim = wait
+    assert not base.walk(.2, 0., 0., 10., cancel=token)
+    assert (.2, 0., 0.) in seen and base._cmd == (0., 0., 0.)

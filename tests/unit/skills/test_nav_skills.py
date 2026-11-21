@@ -225,7 +225,7 @@ def test_turn_fails_when_the_heading_never_arrives():
     from vector_os_nano.skills.go2.turn import TurnSkill
 
     class Stuck(KinBase):
-        def walk(self, vx, vy, vyaw, duration):
+        def walk(self, vx, vy, vyaw, duration, *, cancel=None):
             return True  # the body never rotates
 
     res = TurnSkill().execute({"direction": "left", "angle": 90}, SkillContext(base=Stuck()))

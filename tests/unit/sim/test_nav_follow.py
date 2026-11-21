@@ -203,8 +203,8 @@ def test_balancing_arrival_measures_cycles_without_accepting_drift(drift, spin, 
 
 def test_turn_by_closes_the_loop_on_heading():
     class Sloppy(KinBase):  # the gait only delivers 70 % of the commanded yaw
-        def walk(self, vx, vy, vyaw, duration):
-            return super().walk(vx, vy, 0.7 * vyaw, duration)
+        def walk(self, vx, vy, vyaw, duration, *, cancel=None):
+            return super().walk(vx, vy, 0.7 * vyaw, duration, cancel=cancel)
 
     base = Sloppy()
     ok, residual = turn_by(base, math.pi / 2, vyaw=0.5, tol=math.radians(5), cancel=Never())

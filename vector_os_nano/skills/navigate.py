@@ -21,7 +21,7 @@ from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.transport import prepare
+from vector_os_nano.skills.transport import CarryGuard, prepare
 from vector_os_nano.sim.nav.follow import NavResult, arrival_radius
 
 logger = logging.getLogger(__name__)
@@ -386,8 +386,10 @@ class NavigateSkill:
             print(f"  >> 距目标 {dist:.1f}m, 已走 {int(elapsed)}s",
                   file=sys.stderr, flush=True)
 
-        nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress,
-                          cancel=context.services.get('cancel'))
+        guard = CarryGuard(context)
+        nav = navigate_to(tx, ty, timeout=_COORD_NAV_TIMEOUT_S, on_progress=_progress, cancel=guard)
+        if error := guard.failure():
+            return error
 
         # HOLD at the goal: a downstream manipulation step needs the dog stationary.
         try:
@@ -435,8 +437,10 @@ class NavigateSkill:
                 flush=True,
             )
 
-        nav_result = context.base.navigate_to(target[0], target[1], on_progress=_progress,
-                                             cancel=context.services.get('cancel'))
+        guard = CarryGuard(context)
+        nav_result = context.base.navigate_to(target[0], target[1], on_progress=_progress, cancel=guard)
+        if error := guard.failure():
+            return error
         pos = context.base.get_position()
         dist = _distance(pos[0], pos[1], target[0], target[1])
         data = {

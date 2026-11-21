@@ -101,7 +101,7 @@ class _FakeWalkSkill:
 
 def _make_agent(x: float = 0.0, y: float = 0.0, **gt_kwargs):
     """A duck-typed agent: a fake base + a real SkillRegistry with the walk skill."""
-    from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.core.skill import SkillContext, SkillRegistry
 
     base = _FakeBase(x, y)
     reg = SkillRegistry()
@@ -117,7 +117,7 @@ def _make_agent(x: float = 0.0, y: float = 0.0, **gt_kwargs):
     )
 
     def _build_context():
-        return SimpleNamespace(base=agent._base, arm=None, gripper=None, services={})
+        return SkillContext(base=agent._base)
 
     def _sync_robot_state():
         return None

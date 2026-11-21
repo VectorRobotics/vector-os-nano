@@ -323,7 +323,7 @@ def turn_by(base: Any, angle: float, *, vyaw: float, tol: float,
     for _ in range(1 + corrections):
         if abs(remaining) <= tol or cancel.is_set():
             break
-        base.walk(0.0, 0.0, math.copysign(vyaw, remaining), abs(remaining) / vyaw)
+        base.walk(0.0, 0.0, math.copysign(vyaw, remaining), abs(remaining) / vyaw, cancel=cancel)
         remaining = _wrap(target - base.get_heading())
     return abs(remaining) <= tol, remaining
 

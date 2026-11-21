@@ -14,7 +14,7 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.transport import prepare
+from vector_os_nano.skills.transport import CarryGuard, prepare
 from vector_os_nano.sim.nav.follow import turn_by
 
 logger = logging.getLogger(__name__)
@@ -107,8 +107,10 @@ class TurnSkill:
         error = prepare(context)
         if error:
             return error
-        ok, residual = turn_by(context.base, signed, vyaw=speed, tol=_HEADING_TOL_RAD,
-                               cancel=context.services.get("cancel"))
+        guard = CarryGuard(context)
+        ok, residual = turn_by(context.base, signed, vyaw=speed, tol=_HEADING_TOL_RAD, cancel=guard)
+        if error := guard.failure():
+            return error
         data = {
             "direction": direction,
             "angle_deg": abs(angle_deg),

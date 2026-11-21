@@ -1,4 +1,5 @@
 """Prepare a declared carrying posture before public base-motion skills."""
+import math
 import threading
 from vector_os_nano.schemas.robot import EmbodimentConfigError, _keys, _require
 from vector_os_nano.skills.grasp_config import _positive
@@ -52,3 +53,48 @@ def prepare(context):
     except Exception as exc:
         return _cancelled(token) or _fail('device_failed', f'Cannot confirm carrying readiness: {failure_cause(exc)}; base remains stopped.')
     return None
+
+
+class CarryGuard:
+    """A cancellation token that latches loss of a carried load; never releases it."""
+
+    def __init__(self, context, cancel=None):
+        self.context = context
+        self.cancel = cancel if cancel is not None else context.services.get('cancel') or threading.Event()
+        self.cfg = context.config.get('skills', {}).get('transport', {})
+        self.error = None
+        self.last_clock = self.last_sensor = -math.inf
+        try:
+            self.loaded = context.gripper is not None and context.gripper.is_holding()
+        except Exception as exc:
+            self._fail('device_failed', failure_cause(exc))
+
+    def _fail(self, code, message):
+        self.error = _fail(code, message + '; base stopped, gripper state preserved.')
+        self.context.base.stop()
+
+    def is_set(self):
+        if self.error is not None or self.cancel.is_set():
+            return True
+        if not self.loaded:
+            return False
+        try:
+            now = self.context.base.get_sim_time()
+            if not math.isfinite(now) or now < self.last_clock:
+                raise ValueError('carrying monitor clock is nonfinite or moved backwards')
+            if now-self.last_clock < .02:
+                return False
+            self.last_clock = now
+            if not self.context.gripper.is_holding():
+                self._fail('not_holding', 'Grasp lost during base motion')
+            elif 'minimum_load' in self.cfg:
+                load, self.last_sensor = read(self.context.gripper, self.cfg, self.last_sensor)
+                if load < self.cfg['minimum_load']:
+                    self._fail('carry_not_ready', 'Suspended load lost during base motion')
+        except Exception as exc:
+            self._fail('device_failed', failure_cause(exc))
+        return self.error is not None
+
+    def failure(self):
+        self.is_set()
+        return self.error or _cancelled(self.cancel)

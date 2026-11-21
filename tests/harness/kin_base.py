@@ -54,6 +54,8 @@ class KinBase:
         self.waits += 1
         dt = 0.01
         for _ in range(max(1, round(seconds / dt))):
+            if cancel is not None and cancel.is_set():
+                return False
             vx, vy, vyaw = self.cmd
             c, s = math.cos(self.yaw), math.sin(self.yaw)
             nx, ny = self.x + (vx * c - vy * s) * dt, self.y + (vx * s + vy * c) * dt
@@ -64,8 +66,8 @@ class KinBase:
             self.trace.append((self.x, self.y))
         return True
 
-    def walk(self, vx, vy, vyaw, duration):
+    def walk(self, vx, vy, vyaw, duration, *, cancel=None):
         self.set_velocity(vx, vy, vyaw)
-        self.wait_sim(duration)
+        ran = self.wait_sim(duration, cancel)
         self.stop()
-        return True
+        return ran

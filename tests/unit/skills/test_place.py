@@ -223,6 +223,7 @@ def test_force_feedback_must_confirm_support_before_opening(fault):
 @pytest.mark.parametrize('drift', [False, True])
 def test_mobile_approach_uses_placement_position_tolerance(drift):
     ctx = context(); base = Mock()
+    base.get_sim_time.return_value = 0.
     base.get_position.return_value = [0., 0., 0.]
     base.get_heading.return_value = 0.
     ctx.services['object_world'].surfaces['bench'].place_point = (1., 0.)

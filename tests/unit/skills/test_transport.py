@@ -72,3 +72,53 @@ def test_invalid_transport_config_is_rejected(change):
         gripper=SimpleNamespace(force_feedback=False)))
     with pytest.raises(EmbodimentConfigError):
         parse({'posture': 'carry', 'duration': 4., **change}, cfg, 'transport')
+
+
+@pytest.mark.parametrize('fault', ['slip', 'unloaded', 'stale', 'overload', 'cancelled'])
+def test_transport_monitor_stops_mid_motion_without_releasing(fault):
+    from vector_os_nano.skills.transport import CarryGuard
+    ctx = context()
+    ctx.base.get_sim_time.return_value = 1.
+    ctx.gripper.get_finger_load.side_effect = None
+    ctx.gripper.get_finger_load.return_value = FingerLoad(1., (0., 0., -1.8))
+    monitor = CarryGuard(ctx)
+    assert not monitor.is_set()
+    # Repeated cancellation polls at one clock instant must not demand a new sensor frame.
+    assert not monitor.is_set()
+    ctx.base.get_sim_time.return_value = 1.03
+    sample = FingerLoad(1.03, (0., 0., -1.8))
+    if fault == 'slip': ctx.gripper.is_holding.return_value = False
+    if fault == 'unloaded': sample = FingerLoad(1.03, (0., 0., 0.))
+    if fault == 'stale': sample = FingerLoad(1., (0., 0., -1.8))
+    if fault == 'overload': sample = FingerLoad(1.03, (0., 0., -7.))
+    if fault == 'cancelled': ctx.services['cancel'].set()
+    ctx.gripper.get_finger_load.return_value = sample
+    assert monitor.is_set()
+    assert monitor.failure() is not None
+    if fault != 'cancelled':
+        ctx.base.stop.assert_called_once()
+        ctx.gripper.is_holding.return_value = True
+        ctx.gripper.get_finger_load.return_value = FingerLoad(2., (0., 0., -1.8))
+        assert monitor.is_set(), 'a recovered sample must not resume a failed motion'
+    ctx.gripper.open.assert_not_called(); ctx.gripper.close.assert_not_called()
+    ctx.arm.move_joints.assert_not_called(); ctx.arm.home.assert_not_called()
+
+
+@pytest.mark.parametrize('tool,params', [(WalkSkill(), {'distance': 1., 'speed': .1}),
+    (TurnSkill(), {'angle': 90}), (NavigateSkill(), {'x': 2., 'y': 0.})])
+def test_public_motion_aborts_during_a_lost_grasp(tool, params):
+    from tests.harness.kin_base import KinBase
+    from vector_os_nano.sim.nav.follow import follow
+    from vector_os_nano.schemas.robot import NavSpec
+    ctx = context(); base = KinBase()
+    base.navigate_to = lambda x, y, **kw: follow(base, (x, y), [],
+        nav=NavSpec(body_radius=.3, speed=.2, vyaw_max=.5), fallen=lambda: False, **kw)
+    ctx = SkillContext(arm=ctx.arm, gripper=ctx.gripper, base=base,
+                       config=ctx.config, services=ctx.services)
+    ctx.arm.move_joints.side_effect = lambda *a, **kw: setattr(base, 't', base.t+.1) or True
+    ctx.gripper.is_holding.side_effect = lambda: base.t < .25
+    ctx.gripper.get_finger_load.side_effect = lambda: FingerLoad(base.t, (0., 0., -1.8))
+    result = tool.execute(params, ctx)
+    assert not result.success and result.diagnosis_code == 'not_holding', result
+    assert .25 <= base.t < .30 and base.cmd == (0., 0., 0.)
+    ctx.gripper.open.assert_not_called(); ctx.arm.home.assert_not_called()

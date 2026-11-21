@@ -15,6 +15,7 @@ from vector_os_nano.skills.grasp import _cancelled, _move, _solve, face
 from vector_os_nano.skills.grasp_perception import _fail, _Target, perceive
 from vector_os_nano.skills.utils.approach_pose import compute_approach_pose
 from vector_os_nano.skills import place_support
+from vector_os_nano.skills.transport import CarryGuard
 from vector_os_nano.sim.nav.follow import turn_by
 
 
@@ -90,6 +91,7 @@ def reach(context, surface, cfg, token):
         return None, error
     if not context.gripper.is_holding():
         return None, _fail('not_holding', 'Object slipped before navigation; observe it again.')
+    guard = CarryGuard(context, token)
     # Recheck once after turning: braking can move the mounted arm out of reach.
     for _ in range(2):
         pos, yaw = base.get_position(), base.get_heading()
@@ -101,14 +103,17 @@ def reach(context, surface, cfg, token):
             y -= math.cos(heading)*bc['lateral_offset']
         else:
             x, y, heading = approach
-        if not base.navigate_to(x, y, tol=cfg['position_tolerance'], cancel=token):
+        arrived = base.navigate_to(x, y, tol=cfg['position_tolerance'], cancel=guard)
+        if error := guard.failure():
+            return None, error
+        if not arrived:
             return None, _cancelled(token) or _fail('approach_failed', 'Cannot reach the surface standoff; holding the current grasp.')
         if token.is_set():
             return None, _cancelled(token)
         if not context.gripper.is_holding():
             return None, _fail('not_holding', 'Object slipped during navigation; keep the base stopped and observe it again.')
         if approach is None:
-            error = face(base, Pose3D(*surface.place_point, surface.height), bc, token)
+            error = face(base, Pose3D(*surface.place_point, surface.height), bc, guard)
         else:
             yaw = base.get_heading()
             if yaw is None or not math.isfinite(yaw):
@@ -117,8 +122,9 @@ def reach(context, surface, cfg, token):
             rate = min(bc['yaw_speed'], base.limits[2])
             if rate <= 0 and abs(angle) > bc['yaw_deadband']:
                 return None, _fail('approach_failed', 'Base cannot turn to the declared placement heading.')
-            ok, _ = turn_by(base, angle, vyaw=rate, tol=bc['yaw_deadband'], cancel=token)
+            ok, _ = turn_by(base, angle, vyaw=rate, tol=bc['yaw_deadband'], cancel=guard)
             error = _cancelled(token) or (None if ok else _fail('approach_failed', 'Placement heading was not reached; keep holding.'))
+        error = guard.failure() or error
         if error:
             return None, error
         if not context.gripper.is_holding():
