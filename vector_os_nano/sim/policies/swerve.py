@@ -37,6 +37,7 @@ class Policy:
         self._steering = np.zeros(n//2)
         self._integral = np.zeros(n//2)
         self._time = None
+        self._requested_motion = False
         self.braking = False
 
     def reset(self, obs: PolicyObs) -> None:
@@ -44,6 +45,7 @@ class Policy:
         self._steering = obs.joint_pos[::2].copy()
         self._integral[:] = 0
         self._time = obs.time
+        self._requested_motion = False
         self.braking = False
 
     def torques(self, obs: PolicyObs) -> np.ndarray:
@@ -53,6 +55,10 @@ class Policy:
         if not np.isfinite(np.r_[obs.time, obs.joint_pos, obs.joint_vel, obs.command,
                                   obs.base_lin_vel, obs.base_ang_vel]).all():
             raise ValueError('swerve observation must be finite')
+        moving = bool(np.linalg.norm(obs.command) >= 1e-5)
+        if self._requested_motion and not moving:
+            self._integral[:] = 0  # A stop must not preserve the drive bias from pushing an obstruction.
+        self._requested_motion = moving
         dt = 1/self.tick_hz if self._time is None else max(0., min(obs.time-self._time, 1/self.tick_hz))
         self._time = obs.time
         delta = np.asarray(obs.command) - self._command

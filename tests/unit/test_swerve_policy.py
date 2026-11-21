@@ -50,6 +50,16 @@ def test_zero_command_damps_rolling_wheels_and_invalid_observations_fail():
         policy.torques(replace(obs,command=np.array([np.nan,0,0])))
 
 
+def test_stop_discards_drive_bias_accumulated_against_an_obstruction():
+    policy,obs = setup([.002,0,0])
+    for i in range(1,101):
+        policy.torques(replace(obs,time=i*.01))
+    stopped = replace(obs,time=1.01,command=np.zeros(3))
+    np.testing.assert_allclose(policy.torques(stopped)[1::2],0,atol=1e-12)
+    braking = replace(stopped,time=1.02,joint_vel=np.array([0,.1,0,.1]))
+    assert np.all(policy.torques(braking)[1::2]<0)
+
+
 def test_bad_wheel_radius_fails_at_manifest_boundary():
     with pytest.raises(ValueError,match='positive radius'):
         policies.owned('swerve',{**PARAMS,'wheels':[[0,0,0,0]]})
