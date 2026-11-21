@@ -26,7 +26,7 @@ Robot models and meshes:
   - SO-101 arm URDF and STL meshes (so101.urdf = so101_new_calib), from
         TheRobotStudio SO-ARM100 (https://github.com/TheRobotStudio/SO-ARM100).
         Apache-2.0. License: vector_os_nano/embodiments/so101/LICENSE
-        Files: vector_os_nano/hardware/urdf/so101.urdf,
+        Files: vector_os_nano/hardware/so101/so101.urdf,
         vector_os_nano/embodiments/so101/model/meshes/*so101*.stl, *sts3215*.stl
 
 Scene assets:
