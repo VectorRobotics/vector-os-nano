@@ -9,6 +9,7 @@ import pytest
 from vector_os_nano.sim.scene import compiled_scene
 from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld
 from vector_os_nano.sim.backends.mujoco.recording import read_recording
+from scripts.export_household_replay import export, sample_indices
 
 pytestmark = pytest.mark.sim
 
@@ -18,7 +19,7 @@ def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monk
     source.write_text('''<mujoco><option timestep=".002"/>
       <worldbody><light pos="0 0 3"/><geom type="plane" size="3 3 .1"/>
       <camera name="camera" pos="0 -2 2" xyaxes="1 0 0 0 1 1"/>
-      <body pos="0 0 .1"><freejoint/><geom type="sphere" size=".1"/></body>
+      <body name="object" pos="0 0 .1"><freejoint/><geom type="sphere" size=".1"/></body>
       </worldbody></mujoco>''')
     scene = compiled_scene(source)
     reference = MuJoCoWorld(scene)
@@ -55,6 +56,13 @@ def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monk
     _, states, loads = read_recording(directory)
     np.testing.assert_array_equal(states['qpos'][-1], world.state()[0])
     np.testing.assert_array_equal(loads['force_on_b'], contacts[:, 6:9])
+    replay = export(directory, tmp_path/'blender', 'object')
+    poses = np.load(tmp_path/'blender/poses.npz')
+    np.testing.assert_array_equal(poses['time'], states['sim_time'][replay['source_rows'], 0])
+    np.testing.assert_array_equal(poses['bodies'][-1, 0], states['qpos'][-1])
+    np.testing.assert_allclose(poses['cameras'][-1, 0, :3], frame.cam_pos, atol=1e-14)
+    np.testing.assert_allclose(poses['cameras'][-1, 0, 3:], frame.cam_mat.reshape(-1), atol=1e-14)
+    assert replay['source_rows'][-1] == len(states['qpos'])-1
     with (directory/'states.bin').open('ab') as stream:
         stream.write(np.array([0.]).tobytes())
     with pytest.raises(ValueError, match='shape/count'):
@@ -62,3 +70,10 @@ def test_recording_matches_every_physics_step_and_original_pixels(tmp_path, monk
     source.write_text(source.read_text().replace('timestep=".002"', 'timestep=".003"'))
     with pytest.raises(ValueError, match='SHA256'):
         read_recording(directory)
+
+
+def test_replay_sampling_keeps_last_reset_and_final_state():
+    assert sample_indices(np.array([0, 0, .01, .02, .03]), 30).tolist() == [1, 4]
+    for time, fps in (([0, 1, 0], 30), ([0, 1], 0), ([0, 1], float('nan'))):
+        with pytest.raises(ValueError):
+            sample_indices(np.array(time), fps)
