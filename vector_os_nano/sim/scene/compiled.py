@@ -31,6 +31,7 @@ def compiled_scene(
     robot_root: str | None = None,
     grasp_pairs: Sequence[tuple[str, str]] = (),
     timestep: float | None = None,
+    model: mj.MjModel | None = None,
 ) -> CompiledScene:
     """Compile *xml_path* and fill the name tables.
 
@@ -40,7 +41,8 @@ def compiled_scene(
     overrides the file's (the robot policy's timestep wins over the world's).
     """
     xml_path = Path(xml_path)
-    model = mj.MjModel.from_xml_path(str(xml_path))
+    if model is None:
+        model = mj.MjModel.from_xml_path(str(xml_path))
     if timestep is not None:
         model.opt.timestep = float(timestep)
     bodies = _names(model, mj.mjtObj.mjOBJ_BODY, model.nbody)

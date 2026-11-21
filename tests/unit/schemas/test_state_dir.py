@@ -147,7 +147,7 @@ def test_the_default_store_is_recognised_however_it_is_spelled(old, tmp_path, mo
 def test_an_existing_world_memory_is_never_overwritten(old) -> None:
     paths.memory("apartment").mkdir(parents=True)
     (paths.memory("apartment") / "scene_graph.yaml").write_text("rooms: newer\n")
-    (old.parent / "go2_room").mkdir()  # an unrelated leftover keeps the old folder
+    (old.parent / "apartment_scene").mkdir()  # an unrelated leftover keeps the old folder
     note = paths.migrate_old_memory()
     assert "moved the scene memory of tabletop" in note and "left apartment in" in note
     assert (paths.memory("apartment") / "scene_graph.yaml").read_text() == "rooms: newer\n"

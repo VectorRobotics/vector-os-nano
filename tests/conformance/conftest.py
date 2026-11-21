@@ -24,7 +24,7 @@ from vector_os_nano.sim.scene.compose import compose
 from vector_os_nano.schemas.world import load_world, Pickable
 
 SCENES = Path(__file__).parent / "scenes"
-SIM_DIR = Path(vector_os_nano.__file__).parent / "hardware" / "sim"
+ROBOTS = Path(vector_os_nano.__file__).parent / "embodiments"
 
 
 def _engine_missing(name: str) -> str | None:
@@ -126,7 +126,7 @@ def _inactive_welds(xml_path) -> list[tuple[str, str]]:
 
 def _robot_scene(name: str):
     if name in ("so101", "piper"):
-        return compiled_scene(SIM_DIR / "mjcf" / name / f"{name}.xml", robot_root="base_link")
+        return compiled_scene(ROBOTS / name / "model" / f"{name}.xml", robot_root="base_link")
     if name in ("go2", "go2_piper"):
         from vector_os_nano.sim.scene.compose import compose
         from vector_os_nano.schemas.world import load_world, Pickable

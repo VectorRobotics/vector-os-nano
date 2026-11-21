@@ -8,7 +8,7 @@ from scipy.linalg import expm
 class ComTraj:
 
     def __init__(self, go2: PinGo2Model):
-        self.dummy_go2 = PinGo2Model()
+        self.dummy_go2 = PinGo2Model(go2.urdf_path)
         x_vec = go2.compute_com_x_vec().reshape(-1)
         self.pos_des_world = x_vec[0:3]
 

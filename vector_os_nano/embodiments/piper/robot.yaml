@@ -7,12 +7,11 @@ schema: 1
 # backend; sim/scene/compose.py mounts it at the world's spawn. Every name is the
 # exact name in piper.xml (the scene adds no prefix).
 
-id: piper
 display_name: "AgileX Piper (6-DoF arm, tabletop)"
 world: workbench
 
 model:
-  path: vector_os_nano/hardware/sim/mjcf/piper/piper.xml
+  file: model/piper.xml
   root_body: base_link
 
 sensors:

@@ -33,7 +33,7 @@ import uuid
 from dataclasses import replace
 from typing import Any
 
-import yaml
+from vector_os_nano.schemas.world import load_world_file
 
 from vector_os_nano.core.scene_nodes import (
     _ROOM_AREA_DEFAULT,
@@ -647,12 +647,8 @@ class SceneGraph(SceneStore):
             Number of rooms loaded, or 0 on failure.
         """
         try:
-            with open(layout_path) as f:
-                data = yaml.safe_load(f)
-            if not isinstance(data, dict):
-                return 0
-            rooms = data.get("rooms") or {}
-            boxes = data.get("boxes") or {}
+            world = load_world_file(layout_path)
+            rooms, boxes = world.rooms, world.boxes
             with self._lock:
                 for name, coords in rooms.items():
                     x, y = (float(c) for c in coords)
@@ -662,7 +658,7 @@ class SceneGraph(SceneStore):
                         old, center_x=x, center_y=y, visit_count=max(old.visit_count, 10),
                         last_visited=time.time(), fixed=True, box=box,
                     )
-                for key, coords in (data.get("doors") or {}).items():
+                for key, coords in world.doors.items():
                     pair = next(((key[:i], key[i + 1:]) for i, ch in enumerate(key)
                                  if ch == "-" and key[:i] in rooms and key[i + 1:] in rooms), None)
                     if pair is None:

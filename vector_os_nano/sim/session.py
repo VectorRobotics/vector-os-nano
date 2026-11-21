@@ -456,7 +456,7 @@ def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str =
     rate (not started yet), the generic LeggedBase connected and its manifest's Lidar
     (None without one). A manifest joint the compiled scene lacks fails first, naming
     the manifest file and its key."""
-    from vector_os_nano.embodiments.assets import model_root
+    from vector_os_nano.embodiments.assets import policy_root
     from vector_os_nano.schemas.robot import EmbodimentConfigError
     from vector_os_nano.sim import backends
     from vector_os_nano.sim.drivers.base import LeggedBase
@@ -468,7 +468,7 @@ def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str =
         missing = [n for n in names if n not in scene.joint_ids]
         if missing:
             raise EmbodimentConfigError(f"{cfg.id}/robot.yaml: {key} {missing} are not joints of "
-                                        f"{cfg.model.path}; joints: {sorted(scene.joint_ids)}")
+                                        f"{cfg.model.file}; joints: {sorted(scene.joint_ids)}")
     world = backends.get(backend).load(scene, gui=gui)
     rt = SimRuntime(world, substeps=round(1.0 / (cfg.base.policy.tick_hz * scene.timestep)),
                     threaded=not world.caller_thread_only, name=cfg.id)
@@ -477,7 +477,7 @@ def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str =
         spawn = standing_state(scene, cfg, scene.model.qpos0, (x, y), heading, floor_z=z)
         rt.call(lambda w: w.reset(spawn))
         lidar = Lidar(cfg.lidar, rt) if cfg.lidar is not None else None
-        base = LeggedBase(cfg.base, rt, folder=model_root(cfg), lidar=lidar, abort=is_abort_requested)
+        base = LeggedBase(cfg.base, rt, folder=policy_root(cfg), lidar=lidar, abort=is_abort_requested)
         base.connect()
     except BaseException:
         rt.close()

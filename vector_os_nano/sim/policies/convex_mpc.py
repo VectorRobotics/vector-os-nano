@@ -48,7 +48,7 @@ INSTALL_HINT = "convex_mpc needs casadi and pin: uv pip install -e '.[go2]'"
 class Policy:
     balances = False  # its stance is a PD hold: the base's own
 
-    def __init__(self, base: BaseSpec, params: dict[str, float], tau_limit: np.ndarray, folder: Path) -> None:
+    def __init__(self, base: BaseSpec, params: dict[str, Any], tau_limit: np.ndarray, folder: Path) -> None:
         try:
             # casadi is imported lazily by the QP on its FIRST solve: import it here, so a
             # missing solver fails the start, never every tick (tricky-bugs Case 0)
@@ -67,7 +67,7 @@ class Policy:
         self._p = params
         self._stance = np.array([base.stance[j] for j in base.joints], dtype=np.float64)
         self._kp, self._kd, self._limit = base.kp, base.kd, tau_limit
-        self._pin = PinGo2Model()
+        self._pin = PinGo2Model(folder / params["file"])
         self._gait = Gait(params["gait_hz"], params["duty"])
         self._traj = ComTraj(self._pin)
         self._legs = LegController()  # its swing state restarts with the gait clock (all feet down at 0)

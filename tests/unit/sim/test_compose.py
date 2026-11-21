@@ -55,7 +55,7 @@ def _numb_link8(cfg, world, tmp_path):
         geom.set("conaffinity", "0")
     model = tmp_path / "piper_numb_link8.xml"
     model.write_text(ET.tostring(root, encoding="unicode"))
-    numb = dataclasses.replace(cfg, model=dataclasses.replace(cfg.model, path=str(model)))
+    numb = dataclasses.replace(cfg, model=dataclasses.replace(cfg.model, file=str(model)))
     return numb, _compose(numb, world)
 
 
@@ -81,5 +81,5 @@ def test_a_camera_on_a_body_the_model_lacks_is_refused(piper):
     cfg, world = piper
     cam = dataclasses.replace(cfg.camera, body="no_such_link")
     bad = dataclasses.replace(cfg, sensors=tuple(cam if s is cfg.camera else s for s in cfg.sensors))
-    with pytest.raises(KeyError, match="camera 'workspace_cam' body 'no_such_link' is not in"):
+    with pytest.raises(ValueError, match=r"sensors\[0\].body: unknown.*no_such_link.*valid"):
         _compose(bad, world)

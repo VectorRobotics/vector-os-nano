@@ -7,10 +7,6 @@ from numpy import cos, sin
 # Model Setting
 # --------------------------------------------------------------------------------
 
-# vector-os-nano vendoring: kinematics-only URDF shipped next to the package
-# (upstream loaded meshes via RobotWrapper; the visual/collision models were never used).
-URDF_PATH = Path(__file__).resolve().parent / "go2_description.urdf"
-
 class ConfigurationState:
 
     def __init__(self):
@@ -107,10 +103,11 @@ class ConfigurationState:
 
 class PinGo2Model:
 
-    def __init__(self):
+    def __init__(self, urdf_path):
+        self.urdf_path = Path(urdf_path)
 
         # Build robot (free-flyer)
-        self.model = pin.buildModelFromUrdf(str(URDF_PATH), pin.JointModelFreeFlyer())
+        self.model = pin.buildModelFromUrdf(str(self.urdf_path), pin.JointModelFreeFlyer())
         # Initial data containers
         self.data = self.model.createData()
 

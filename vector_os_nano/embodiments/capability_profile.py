@@ -100,4 +100,5 @@ def resolve_capability_profile(agent: Any) -> CapabilityProfile:
         has_arm=_has_member(agent, "_arm") or d_arm,
         has_gripper=_has_member(agent, "_gripper") or d_gripper,
         lidar=_runtime_lidar(agent) or d_lidar,
+        depth=bool(declared and declared.depth),
     )

@@ -40,7 +40,7 @@ ROWS = [("mujoco", "go2", "convex_mpc"), ("mujoco", "go2", "sinusoidal"), ("pybu
 
 def _manifest(body: str):
     if body == "quad2":
-        return parse_embodiment_config(yaml.safe_load(QUAD2.read_text()), ctx="quad2.yaml")
+        return parse_embodiment_config(yaml.safe_load(QUAD2.read_text()), ctx=str(QUAD2))
     return registry.load(body)
 
 
@@ -117,7 +117,7 @@ def body(request, monkeypatch):
     if backend == "pybullet":
         pytest.importorskip("pybullet", reason="the pybullet extra is not installed")
     cfg = _with_policy(_manifest(name), backend, ref)
-    assert backends.get(backend).supports(cfg, None) is None
+    assert backends.get(backend).supports(cfg, load_world("apartment")) is None
     b = Body(backend, cfg)
     assert b.base.gait_backend == ref
     yield b
@@ -390,8 +390,7 @@ def test_a_base_joint_the_model_lacks_names_the_manifest_and_key():
                                stance=typo(cfg.base.stance),
                                postures={n: typo(q) for n, q in cfg.base.postures.items()})
     with pytest.raises(EmbodimentConfigError,
-                       match=r"^go2/robot\.yaml: base\.joints \['FL_hipp_joint'\] are not joints of .*go2\.xml; "
-                             r"joints: \[.*'FL_hip_joint'"):
+                       match=r"go2/robot\.yaml.base\.joints: unknown \['FL_hipp_joint'\]; valid: \[.*'FL_hip_joint'"):
         Body("mujoco", dataclasses.replace(cfg, base=base))
 
 
@@ -401,8 +400,7 @@ def test_an_arm_joint_the_model_lacks_names_the_manifest_and_key():
     cfg = registry.load("go2_piper")
     arm = dataclasses.replace(cfg.arm, joints=("piper_joint1x",) + tuple(cfg.arm.joints[1:]))
     with pytest.raises(EmbodimentConfigError,
-                       match=r"^go2_piper/robot\.yaml: arm\.joints \['piper_joint1x'\] are not joints of .*go2_piper\.xml; "
-                             r"joints: \[.*'piper_joint1'"):
+                       match=r"go2_piper/robot\.yaml.arm\.joints: unknown \['piper_joint1x'\]; valid: \[.*'piper_joint1'"):
         Body("mujoco", dataclasses.replace(cfg, arm=arm))
 
 
@@ -411,9 +409,9 @@ def test_convex_mpc_is_refused_on_pybullet_with_its_reason():
     policy = dataclasses.replace(cfg.base.policy, by_backend={})
     bare = dataclasses.replace(cfg, base=dataclasses.replace(cfg.base, policy=policy))
     pb = backends.get("pybullet")
-    if pb.supports(cfg, None) is not None and "install" in pb.supports(cfg, None):
+    if pb.supports(cfg, load_world("apartment")) is not None and "install" in pb.supports(cfg, load_world("apartment")):
         pytest.skip("the pybullet extra is not installed")
-    assert "falls" in pb.supports(bare, None)
+    assert "falls" in pb.supports(bare, load_world("apartment"))
 
 
 def test_the_second_quadruped_is_data_only():

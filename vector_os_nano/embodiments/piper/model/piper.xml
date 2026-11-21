@@ -1,5 +1,5 @@
 <mujoco model="piper_description">
-  <compiler angle="radian" meshdir="assets"/>
+  <compiler angle="radian" meshdir="meshes"/>
 
   <option integrator="implicitfast" cone="elliptic" impratio="10"/>
 

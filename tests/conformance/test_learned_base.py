@@ -11,6 +11,7 @@ import threading
 import numpy as np
 
 import pytest
+from vector_os_nano.schemas.world import load_world
 
 from tests.conformance import test_legged as shared
 from vector_os_nano.embodiments import registry
@@ -22,7 +23,7 @@ pytestmark = pytest.mark.sim
 def body(request, g1_assets, monkeypatch):
     monkeypatch.setenv("VECTOR_SIM_LOCKSTEP", "1")
     from vector_os_nano.sim import backends
-    assert backends.get(request.param).supports(registry.load("g1"), None) is None
+    assert backends.get(request.param).supports(registry.load("g1"), load_world("apartment")) is None
     robot = shared.Body(request.param, registry.load("g1"))
     try:
         yield robot

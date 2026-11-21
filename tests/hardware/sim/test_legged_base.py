@@ -251,8 +251,11 @@ def test_a_reset_under_load_leaves_the_dog_still(flat):
 def test_the_mpc_model_is_the_go2():
     pytest.importorskip("pinocchio", reason="pin ([go2] extra) not installed")
     from vector_os_nano.third_party.convex_mpc.go2_robot_data import PinGo2Model
+    from vector_os_nano.schemas.robot import load_embodiment_config
+    from vector_os_nano.embodiments.assets import policy_root
 
-    assert PinGo2Model().model.nq == 19
+    cfg = load_embodiment_config("go2")
+    assert PinGo2Model(policy_root(cfg) / cfg.base.policy.params["file"]).model.nq == 19
 
 
 def test_the_mpc_plan_is_dropped_when_idle_and_failures_hold_the_stance(monkeypatch, caplog):
@@ -342,8 +345,9 @@ def test_a_missing_model_file_fails_loud(tmp_path):
     from vector_os_nano.schemas.world import load_world
 
     cfg = registry.load("go2_piper")
-    gone = dataclasses.replace(cfg, model=dataclasses.replace(cfg.model, path=str(tmp_path / "go2_piper.xml")))
-    with pytest.raises(Exception, match="go2_piper.xml"):
+    child = dataclasses.replace(cfg.compose.arm, model=dataclasses.replace(cfg.compose.arm.model, file=str(tmp_path / "missing_arm.xml")))
+    gone = dataclasses.replace(cfg, compose=dataclasses.replace(cfg.compose, arm=child))
+    with pytest.raises(Exception, match="missing_arm.xml"):
         compose(gone, load_world("apartment"))
 
 

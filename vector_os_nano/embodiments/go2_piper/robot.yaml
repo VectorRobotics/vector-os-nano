@@ -2,63 +2,16 @@ schema: 1
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 #
-# Unitree Go2 + AgileX Piper 6-DoF arm on its back (go2_piper.xml): the go2's base and
+# Unitree Go2 + AgileX Piper 6-DoF arm on its back (composed model): the go2's base and
 # sensors, with the generic Arm + Gripper on the arm block below.
 
-id: go2_piper
 display_name: "Unitree Go2 + AgileX Piper arm (mobile manipulator)"
 world: apartment          # worlds/apartment/world.yaml
 
-model:
-  path: vector_os_nano/hardware/sim/mjcf/go2_piper/go2_piper.xml
-  meshes_dir: ""                  # mesh paths are relative to go2_piper.xml
-  root_body: base_link
-
-base:
-  height: 0.279                   # the root height it stands at in its stance (measured)
-  holonomic: true                 # it can strafe
-  limits: {vx: 0.8, vy: 0.4, vyaw: 4.0}
-  fall_z: 0.15                    # fallen: the root below this,
-  fall_tilt_deg: 60.0             # or its up axis tilted past this (on its side: ~99 deg at z 0.22)
-  # The order the policy sees: per leg (FL, FR, RL, RR) hip, thigh, calf.
-  joints: [FL_hip_joint, FL_thigh_joint, FL_calf_joint, FR_hip_joint, FR_thigh_joint, FR_calf_joint,
-           RL_hip_joint, RL_thigh_joint, RL_calf_joint, RR_hip_joint, RR_thigh_joint, RR_calf_joint]
-  stance: {FL_hip_joint: 0.0, FL_thigh_joint: 0.9, FL_calf_joint: -1.8,
-           FR_hip_joint: 0.0, FR_thigh_joint: 0.9, FR_calf_joint: -1.8,
-           RL_hip_joint: 0.0, RL_thigh_joint: 0.9, RL_calf_joint: -1.8,
-           RR_hip_joint: 0.0, RR_thigh_joint: 0.9, RR_calf_joint: -1.8}
-  postures:
-    sit: {FL_hip_joint: 0.0, FL_thigh_joint: 1.5, FL_calf_joint: -2.5,
-          FR_hip_joint: 0.0, FR_thigh_joint: 1.5, FR_calf_joint: -2.5,
-          RL_hip_joint: 0.0, RL_thigh_joint: 1.5, RL_calf_joint: -2.5,
-          RR_hip_joint: 0.0, RR_thigh_joint: 1.5, RR_calf_joint: -2.5}
-    lie_down: {FL_hip_joint: 0.0, FL_thigh_joint: 2.0, FL_calf_joint: -2.7,
-               FR_hip_joint: 0.0, FR_thigh_joint: 2.0, FR_calf_joint: -2.7,
-               RL_hip_joint: 0.0, RL_thigh_joint: 2.0, RL_calf_joint: -2.7,
-               RR_hip_joint: 0.0, RR_thigh_joint: 2.0, RR_calf_joint: -2.7}
-  kp: 120.0
-  kd: 3.5
-  torque_scale: 0.9               # of the motors' range (23.7 / 45.43 N m in go2.xml)
-  policy:
-    ref: convex_mpc               # needs casadi + pin: uv pip install -e '.[go2]'
-    timestep: 0.001
-    tick_hz: 200
-    gait_hz: 3                    # trot cycles per second
-    duty: 0.6                     # stance fraction of a cycle
-    z_des: 0.27                   # the trunk height the MPC holds (m)
-    brake_s: 0.35                 # after a zero command it trots to rest this long,
-    brake_ramp_s: 1.0             # then ramps from its four-feet-down pose to the stance
-    by_backend:
-      # measured on PyBullet: the convex-MPC trot falls within 2 s; this gait walks 0.37 m/s
-      pybullet: {ref: sinusoidal, freq_hz: 2.0, thigh_amp: 0.25, calf_amp: 0.25, hip_amp: 0.10}
-  nav:
-    # The in-process follower (sim/nav/follow.py). Half-width is 0.19 m; the planning
-    # radius adds the gait's sway. A mounted arm or a held object reaching past the
-    # body's own footprint grows the inflation by that overhang at plan time.
-    body_radius: 0.28
-    speed: 0.4                    # m/s forward
-    vyaw_max: 0.8                 # rad/s
-    explorer: tare                # with VECTOR_NAV_STACK; else the in-process coverage tour
+compose:
+  base: go2
+  arm: piper
+  mount: {body: base_link, pos: [-0.02, 0, 0.06], quat: [1, 0, 0, 0]}
 
 sensors:
   # Assumed adjustable head mount: 15 degrees below the original 5-degree mount,
@@ -85,8 +38,8 @@ sensors:
     period_s: 0.2                 # 5 Hz of sim time
 
 arm:
-  joints: [piper_joint1, piper_joint2, piper_joint3, piper_joint4, piper_joint5, piper_joint6]
-  ee: {site: piper_ee_site}
+  joints: [joint1, joint2, joint3, joint4, joint5, joint6]
+  ee: {site: ee_site}
   home: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # URDF zero: the stow pose the body spawns in
   # Top-down IK starts: shoulder up, elbow back, wrist pitched down (joint5 at its
   # 1.22 limit), with both wrist rolls; the live arm joints are always tried too.
@@ -102,11 +55,11 @@ arm:
   # below an arm blocked by the table.
   track_tol: 0.08
   gripper:
-    joint: piper_joint7             # joint8 mirrors it (equality in the MJCF)
+    joint: joint7             # joint8 mirrors it (equality in the MJCF)
     open: 0.035                     # per-finger travel (m): 70 mm jaw opening
     closed: 0.0
-    finger_bodies: [piper_link7, piper_link8]
-    weld_body: piper_link6
+    finger_bodies: [link7, link8]
+    weld_body: link6
     min_opening: 0.005              # jaws held >= 10 mm apart by the object
 
 skills:

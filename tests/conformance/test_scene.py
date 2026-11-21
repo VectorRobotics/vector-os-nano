@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.conformance.conftest import SCENES, SIM_DIR
+from tests.conformance.conftest import SCENES, ROBOTS
 from vector_os_nano.sim.scene import canonical, compiled_scene, reader
 
 pytestmark = pytest.mark.sim
@@ -131,6 +131,24 @@ def test_pybullet_refuses_what_it_cannot_reproduce(tmp_path, body, extra, why):
     assert why in (unsupported(scene.model) or "")
 
 
+def test_pybullet_refuses_global_contact_override_before_connecting(tmp_path):
+    from dataclasses import replace
+    from vector_os_nano.embodiments import registry
+    from vector_os_nano.schemas.world import load_world
+    from vector_os_nano.sim import backends
+    from vector_os_nano.sim.backends.pybullet.world import unsupported
+
+    (tmp_path / 'options.xml').write_text('<mujoco><option><flag override="enable"/></option></mujoco>')
+    path = _xml(tmp_path, '<geom type="plane" size="1 1 .1"/>', '<include file="options.xml"/>')
+    manifest = replace(load_world('workbench'), scene=path)
+    backend = backends.get('pybullet')
+    assert 'global contact override' in backend.supports(registry.load('piper'), manifest)
+    scene = compiled_scene(path)
+    assert 'global contact override' in unsupported(scene.model)
+    with pytest.raises(ValueError, match='global contact override'):
+        backend.load(scene, gui=False)
+
+
 def test_pybullet_refuses_a_pickable_that_collides_as_a_mesh(tmp_path):
     """Bullet reads a mesh hull as touching ~3 mm away (S2cV-01): a grasp decided on
     contact would not be MuJoCo's. The same mesh merely seen, or a primitive, loads."""
@@ -158,4 +176,4 @@ def test_pybullet_accepts_every_shipped_body(robot_scene, battery_scene, tableto
     shipped = [robot_scene(n) for n in ("so101", "piper", "go2", "go2_piper")]
     for sc in shipped + [battery_scene, tabletop_scene, contract_scene, flat_go2_scene]:
         assert unsupported(sc.model, (c for _p, c in sc.grasp_pairs)) is None, sc.xml_path
-    assert SIM_DIR.is_dir()
+    assert ROBOTS.is_dir()

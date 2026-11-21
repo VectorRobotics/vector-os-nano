@@ -5,15 +5,12 @@
 ⊕ the manifest's cameras ⊕ one inactive grasp pair per (gripper weld body × world
 pickable), written to the scene cache and compiled once into a ``CompiledScene``.
 
-The robot is attached with ``MjSpec.attach`` (no prefix: every manifest name is the
-model file's own). Composing a base with an arm at a mount is not done here yet.
+Robot and arm namespaces are applied once; all downstream drivers read compiled names.
 """
 from __future__ import annotations
 
-import hashlib
 import math
 import os
-import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Sequence
@@ -21,41 +18,11 @@ from typing import Any, Sequence
 import mujoco as mj
 
 from vector_os_nano.embodiments.assets import model_root
-from vector_os_nano.schemas.robot import EmbodimentConfig
+from vector_os_nano.schemas.robot import EmbodimentConfig, EmbodimentConfigError
 from vector_os_nano.schemas.world import WorldManifest
 from vector_os_nano.interfaces.physics import CompiledScene
-from vector_os_nano.schemas import paths
 from vector_os_nano.sim.scene.compiled import compiled_scene
-
-
-def scene_cache_dir() -> Path:
-    """Where generated scenes live: the state directory's cache, never the package tree."""
-    return paths.scene_cache()
-
-
-def write_scene(stem: str, text: str) -> Path:
-    """Write *text* to ``<cache>/<stem>-<hash>.xml`` atomically and return the path.
-
-    Content-addressed, so processes that build the same scene share one file and one
-    that builds a different scene can never clobber it; ``mkstemp`` + ``os.replace``
-    means a reader never sees a half-written file.
-    """
-    out = scene_cache_dir() / f"{stem}-{hashlib.sha1(text.encode()).hexdigest()[:12]}.xml"
-    if out.exists():
-        return out
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=f".{stem}-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as fh:
-            fh.write(text)
-        os.replace(tmp, out)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    return out
+from vector_os_nano.sim.scene.cache import cache_path, atomic_write
 
 
 def normalize_attach_defaults(xml: str) -> str:
@@ -98,6 +65,9 @@ def robot_spec(model_path: Path | str, meshes_dir: Path | str | None = None) -> 
         texture.cubefiles = [str((textures / f).resolve()) if f and not os.path.isabs(f) else f
                              for f in texture.cubefiles]
     spec.texturedir = ""
+    for asset in (*spec.hfields, *spec.skins):
+        if asset.file and not os.path.isabs(asset.file):
+            asset.file = str((directory / asset.file).resolve())
     return spec
 
 
@@ -105,7 +75,50 @@ def model_files(robot: Any) -> tuple[Path, Path | None]:
     """``(model file, meshes folder or None)`` of *robot* (an EmbodimentConfig), resolved
     by ``embodiments.assets.model_root``."""
     root = model_root(robot)
-    return root / robot.model.path, root / robot.model.meshes_dir if robot.model.meshes_dir else None
+    return root / robot.model.file, None
+
+
+def robot_model(robot: EmbodimentConfig) -> Any:
+    """Build only the physical robot, retaining each composed child's asset origin."""
+    c = robot.compose
+    if c is None:
+        model = robot_spec(*model_files(robot))
+        if robot.model.prefix:
+            parent = mj.MjSpec()
+            parent.attach(model, prefix=robot.model.prefix, frame=parent.worldbody.add_frame())
+            model = parent
+        return model
+    model = robot_model(c.base)
+    body = model.body(c.base.model.prefix + c.body)
+    if body is None:
+        raise EmbodimentConfigError(f"{robot.path}.compose.mount.body: {c.body!r}; valid: {[b.name for b in model.bodies]}")
+    frame = body.add_frame(pos=c.pos, quat=c.quat)
+    model.attach(robot_model(c.arm), prefix=c.prefix, frame=frame)
+    return model
+
+
+def check_model_names(robot: EmbodimentConfig, model: Any) -> None:
+    """Reject misspelled morphology names before any backend can start moving."""
+    bodies, joints, sites = ({e.name for e in getattr(model, kind) if e.name} for kind in ('bodies', 'joints', 'sites'))
+    checks = [('model.root_body', [robot.model.root_body], bodies)]
+    if robot.base:
+        checks.append(('base.joints', robot.base.joints, joints))
+    if robot.arm:
+        checks.extend([('arm.joints', robot.arm.joints, joints), ('arm.ee.site', [robot.arm.ee_site], sites)])
+        g = robot.arm.gripper
+        if g:
+            checks.extend([('arm.gripper.joint', [g.joint], joints),
+                           ('arm.gripper.finger_bodies', g.finger_bodies, bodies),
+                           ('arm.gripper.weld_body', [g.weld_body], bodies)])
+    for i, sensor in enumerate(robot.sensors):
+        if sensor.body:
+            checks.append((f'sensors[{i}].body', [sensor.body], bodies))
+        if sensor.role == 'camera' and sensor.pos is None:
+            checks.append((f'sensors[{i}].name', [sensor.name], {c.name for c in model.cameras}))
+    for key, names, valid in checks:
+        missing = set(names) - valid
+        if missing:
+            raise EmbodimentConfigError(f'{robot.path}.{key}: unknown {sorted(missing)}; valid: {sorted(valid)}')
 
 
 def place_cameras(world: Any, model: Any, robot: Any) -> None:
@@ -116,7 +129,7 @@ def place_cameras(world: Any, model: Any, robot: Any) -> None:
             spec = world if cam.body is None else model
             body = spec.worldbody if cam.body is None else spec.body(cam.body)
             if body is None:
-                raise KeyError(f"{robot.id}: camera {cam.name!r} body {cam.body!r} is not in {robot.model.path}")
+                raise KeyError(f"{robot.id}: camera {cam.name!r} body {cam.body!r} is not in {robot.model.file}")
             body.add_camera(name=cam.name, pos=list(cam.pos), quat=list(cam.quat), fovy=cam.fovy)
 
 
@@ -125,7 +138,8 @@ def compose(robot: EmbodimentConfig, manifest: WorldManifest) -> CompiledScene:
     if manifest.scene is None or manifest.spawn is None:
         raise ValueError(f"{manifest.path}: scene and spawn are required")
     world = robot_spec(manifest.scene)
-    model = robot_spec(*model_files(robot))
+    model = robot_model(robot)
+    check_model_names(robot, model)
     place_cameras(world, model, robot)
     x, y, z, heading = (float(v) for v in manifest.spawn)
     frame = world.worldbody.add_frame(pos=[x, y, z], quat=[math.cos(heading / 2), 0.0, 0.0, math.sin(heading / 2)])
@@ -137,10 +151,23 @@ def compose(robot: EmbodimentConfig, manifest: WorldManifest) -> CompiledScene:
         eq.name = f"grasp_{child}"
         eq.type, eq.objtype = mj.mjtEq.mjEQ_WELD, mj.mjtObj.mjOBJ_BODY
         eq.name1, eq.name2, eq.active = parent, child, False
-    world.compile()
-    path = write_scene(f"scene_{robot.id}_{manifest.id}", normalize_attach_defaults(world.to_xml()))
+    path = cache_path(robot, manifest, world)
+    binary = path.with_suffix('.mjb')
     timestep = robot.base.policy.timestep if robot.base is not None else None
-    return compiled_scene(path, robot_root=robot.model.root_body, grasp_pairs=pairs, timestep=timestep)
+    args = dict(robot_root=robot.model.root_body, grasp_pairs=pairs, timestep=timestep)
+    if path.is_file() and binary.is_file():
+        try:
+            model = mj.MjModel.from_binary_path(str(binary))
+        except ValueError:  # an interrupted or corrupt cache is regenerable
+            pass
+        else:
+            return compiled_scene(path, model=model, **args)
+    world.compile()
+    xml = normalize_attach_defaults(world.to_xml())
+    atomic_write(path, lambda tmp: Path(tmp).write_text(xml))
+    scene = compiled_scene(path, **args)
+    atomic_write(binary, lambda tmp: mj.mj_saveModel(scene.model, tmp, None))
+    return scene
 
 
 def check_fingers(scene: CompiledScene, fingers: Sequence[str]) -> None:

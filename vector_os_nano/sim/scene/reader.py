@@ -23,6 +23,7 @@ GEOM_PLANE, GEOM_HFIELD, GEOM_SPHERE, GEOM_CAPSULE, GEOM_ELLIPSOID, GEOM_CYLINDE
     int(t) for t in (_G.mjGEOM_PLANE, _G.mjGEOM_HFIELD, _G.mjGEOM_SPHERE, _G.mjGEOM_CAPSULE,
                      _G.mjGEOM_ELLIPSOID, _G.mjGEOM_CYLINDER, _G.mjGEOM_BOX, _G.mjGEOM_MESH))
 EQ_WELD, EQ_JOINT = int(mj.mjtEq.mjEQ_WELD), int(mj.mjtEq.mjEQ_JOINT)
+CONTACT_OVERRIDE = int(mj.mjtEnableBit.mjENBL_OVERRIDE)
 # Geom groups a default MuJoCo render shows (mjvOption.geomgroup).
 VISIBLE_GROUPS = (0, 1, 2)
 _DEFAULT_RGBA = (0.5, 0.5, 0.5, 1.0)

@@ -7,6 +7,7 @@ Hermetic: the state dir is pointed at a temp directory; no network, no MuJoCo.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 import threading
 from pathlib import Path
 
@@ -45,8 +46,8 @@ def test_g1_manifest_declares_a_pinned_fetch_recipe() -> None:
     assert a.git == "https://github.com/unitreerobotics/unitree_rl_gym.git"
     assert a.license == {"spdx": "BSD-3-Clause", "file": "LICENSE"}
     # model and policy are relative to the asset folder, and every one is pinned
-    assert cfg.model.path == "g1_12dof.xml" and cfg.base.policy.params["file"] == "motion.pt"
-    for rel in (cfg.model.path, cfg.base.policy.params["file"], "meshes/pelvis.STL"):
+    assert cfg.model.file == "g1_12dof.xml" and cfg.base.policy.params["file"] == "motion.pt"
+    for rel in (cfg.model.file, cfg.base.policy.params["file"], "meshes/pelvis.STL"):
         assert len(a.sha256[rel]) == 64
     assert a.upstream("meshes/pelvis.STL") == "resources/robots/g1_description/meshes/pelvis.STL"
     assert a.upstream("motion.pt") == "deploy/pre_train/g1/motion.pt"
@@ -86,7 +87,7 @@ def test_files_shipped_in_the_robot_folder_win(tmp_path, state_dir, monkeypatch)
     cfg = load_embodiment_config("g1")
     own = tmp_path / "embodiments" / "g1"
     _fake_assets(own, cfg.assets)
-    monkeypatch.setattr(assets, "_EMBODIMENTS_DIR", own.parent)
+    cfg = replace(cfg, path=own / "robot.yaml")
     assert assets.asset_dir(cfg) == own
 
 
@@ -104,7 +105,7 @@ def test_a_malformed_assets_block_fails_loud(patch, error) -> None:
     block = {"name": "x", "git": "https://example.invalid/x.git", "rev": "a" * 40,
              "files": {"motion.pt": "a/motion.pt"}, "sha256": {"motion.pt": "0" * 64},
              "license": {"spdx": "MIT", "file": "LICENSE"}, **patch}
-    raw = {"schema": 1, "id": "x", "display_name": "x", "model": {"path": "m.xml", "root_body": "b"},
+    raw = {"schema": 1, "display_name": "x", "model": {"file": "m.xml", "root_body": "b"},
            "assets": block}
     with pytest.raises(EmbodimentConfigError, match=error):
         parse_embodiment_config(raw)

@@ -1,6 +1,6 @@
 <!--
   The oracle-parity battery: floor, a table, a box and a cylinder. The conformance
-  conftest attaches the Piper (vector_os_nano/hardware/sim/mjcf/piper/piper.xml) at
+  conftest attaches the Piper (vector_os_nano/embodiments/piper/model/piper.xml) at
   (0, 0, 0.2), above the table top (0.10) so top-down grasps stay inside its wrist range,
   and adds one inactive grasp weld per (link6, object).
   Physics options are the Piper's own (the world scene's options win on attach).

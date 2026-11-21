@@ -32,7 +32,7 @@ import pytest
 
 _MJCF_DIR = (
     Path(__file__).resolve().parents[2]
-    / "vector_os_nano" / "hardware" / "sim" / "mjcf" / "go2"
+    / "vector_os_nano" / "embodiments" / "go2" / "model"
 )
 
 _SCENE_XML = """<mujoco>

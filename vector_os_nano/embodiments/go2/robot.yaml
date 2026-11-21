@@ -5,13 +5,11 @@ schema: 1
 # Unitree Go2 quadruped. The generic LeggedBase (sim/drivers/base.py) drives it from
 # the `base` block below; every name is the exact name in go2.xml.
 
-id: go2
 display_name: "Unitree Go2 (quadruped)"
 world: apartment          # worlds/apartment/world.yaml
 
 model:
-  path: vector_os_nano/hardware/sim/mjcf/go2/go2.xml
-  meshes_dir: vector_os_nano/hardware/sim/mjcf/go2/assets
+  file: model/go2.xml
   root_body: base_link
 
 base:
@@ -41,6 +39,7 @@ base:
   torque_scale: 0.9               # of the motors' range (23.7 / 45.43 N m in go2.xml)
   policy:
     ref: convex_mpc               # needs casadi + pin: uv pip install -e '.[go2]'
+    file: model/go2_description.urdf
     timestep: 0.001
     tick_hz: 200
     gait_hz: 3                    # trot cycles per second

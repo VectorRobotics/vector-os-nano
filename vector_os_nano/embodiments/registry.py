@@ -11,6 +11,7 @@ from __future__ import annotations
 from vector_os_nano.schemas import robot as _config
 from vector_os_nano.schemas.robot import EmbodimentConfig, EmbodimentConfigError, load_embodiment_config
 from typing import Any
+from dataclasses import replace
 
 
 def embodiment_ids() -> list[str]:
@@ -41,7 +42,15 @@ def validate(cfg: EmbodimentConfig, *, ctx: str = "robot.yaml") -> EmbodimentCon
         _check_policy_row(policy.ref, policy.params, pctx)
         for name in policy.by_backend:
             _check_policy_row(*policy.on(name), f"{pctx}.by_backend.{name}")
-    return cfg
+    from vector_os_nano.skills.grasp_config import parse
+
+    owners = {'grasp': parse}
+    skills = {}
+    for name, params in cfg.skills.items():
+        if name not in owners:
+            raise EmbodimentConfigError(f'{ctx}.skills: unknown owner {name!r}; valid: {sorted(owners)}')
+        skills[name] = owners[name](params, cfg, f'{ctx}.skills.{name}')
+    return replace(cfg, skills=skills)
 
 
 def _check_policy_row(ref: str, params: dict[str, Any], ctx: str) -> None:

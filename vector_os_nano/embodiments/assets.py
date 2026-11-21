@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from vector_os_nano.schemas.robot import _EMBODIMENTS_DIR, AssetsSpec, EmbodimentConfig
+from vector_os_nano.schemas.robot import AssetsSpec, EmbodimentConfig
 from vector_os_nano.schemas import paths
 
 
@@ -51,7 +51,7 @@ def fetched_dir(spec: AssetsSpec) -> Path:
 
 def asset_dir(cfg: EmbodimentConfig) -> Path:
     """The folder *cfg*'s model and policy paths are relative to (raises AssetsMissing)."""
-    own = _EMBODIMENTS_DIR / cfg.id
+    own = cfg.path.parent
     if cfg.assets is None or not problems(cfg.assets, own):
         return own
     folder = fetched_dir(cfg.assets)
@@ -68,7 +68,12 @@ def asset_dir(cfg: EmbodimentConfig) -> Path:
 
 
 def model_root(cfg: EmbodimentConfig) -> Path:
-    """The folder ``model.path``, ``model.meshes_dir`` and the policy's files are relative
-    to: the asset folder of a robot with an ``assets:`` block (raises AssetsMissing), else
-    the repository (the shipped models live under hardware/sim/mjcf until S5a)."""
-    return asset_dir(cfg) if cfg.assets is not None else _EMBODIMENTS_DIR.parents[1]
+    """Resolve model and policy files in the robot folder, then verified fetched assets."""
+    return model_root(cfg.compose.base) if cfg.compose else asset_dir(cfg)
+
+
+def policy_root(cfg: EmbodimentConfig) -> Path:
+    """Inherited policies retain their base folder; replacement blocks use this robot's."""
+    if cfg.compose and cfg.base is cfg.compose.base.base:
+        return policy_root(cfg.compose.base)
+    return asset_dir(cfg)

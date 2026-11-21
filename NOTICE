@@ -19,14 +19,15 @@ Robot models and meshes:
         unitree_go2 (https://github.com/google-deepmind/mujoco_menagerie);
         joint/geom defaults tuned locally.
         BSD-3-Clause, Copyright (c) 2016-2022 HangZhou YuShu TECHNOLOGY CO.,LTD.
-        ("Unitree Robotics"). License: vector_os_nano/hardware/sim/mjcf/go2/LICENSE
+        ("Unitree Robotics"). License: vector_os_nano/embodiments/go2/LICENSE
   - AgileX PiPER MJCF and meshes, from MuJoCo Menagerie agilex_piper.
         MIT, Copyright (c) 2024 RosenYin.
-        License: vector_os_nano/hardware/sim/mjcf/piper/LICENSE
+        License: vector_os_nano/embodiments/piper/LICENSE
   - SO-101 arm URDF and STL meshes (so101.urdf = so101_new_calib), from
         TheRobotStudio SO-ARM100 (https://github.com/TheRobotStudio/SO-ARM100).
-        Apache-2.0. Files: vector_os_nano/hardware/urdf/so101.urdf,
-        vector_os_nano/hardware/sim/mjcf/so101/meshes/*so101*.stl, *sts3215*.stl
+        Apache-2.0. License: vector_os_nano/embodiments/so101/LICENSE
+        Files: vector_os_nano/hardware/urdf/so101.urdf,
+        vector_os_nano/embodiments/so101/model/meshes/*so101*.stl, *sts3215*.stl
 
 Scene assets:
   - Furniture meshes (OBJ/MTL, some split per material), from the Kenney
@@ -40,7 +41,7 @@ Vendored source:
   - go2-convex-mpc (https://github.com/elijah-waichong-chan/go2-convex-mpc)
         @ 1c63c6a, MIT, Copyright (c) 2025 Elijah Chan,
         vector_os_nano/third_party/convex_mpc/ (license beside it), with its
-        go2_description.urdf. Local changes: numpy>=2 shape fixes
+        URDF at vector_os_nano/embodiments/go2/model/go2_description.urdf. Local changes: numpy>=2 shape fixes
         (compute_com_x_vec -> (12,), compute_current_mask -> (4,));
         kinematics-only URDF load via pin.buildModelFromUrdf (no meshes).
 

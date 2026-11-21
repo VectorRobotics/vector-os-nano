@@ -26,12 +26,11 @@ from vector_os_nano.sim.scene.compose import normalize_attach_defaults
 from vector_os_nano.embodiments import registry
 from vector_os_nano.schemas.world import load_world  # noqa: E402
 
-_SIM = Path("vector_os_nano/hardware/sim").resolve()
-_MJCF = _SIM / "mjcf" / "go2"
-_ROOM = _SIM.parents[1] / "worlds" / "apartment" / "scene.xml"
+_PACKAGE = Path("vector_os_nano").resolve()
+_ROOM = _PACKAGE / "worlds" / "apartment" / "scene.xml"
 _GO2_ASSETS = _ROOM.parent / "meshes"
-_GO2_PIPER = _SIM / "mjcf" / "go2_piper" / "go2_piper.xml"
-_GO2_BARE = _MJCF / "go2.xml"
+_GO2_PIPER = Path("tests/fixtures/models/go2_piper_reference.xml").resolve()
+_GO2_BARE = _PACKAGE / "embodiments" / "go2" / "model" / "go2.xml"
 
 _WELDS = (
     ("grasp_pickable_bottle_blue", "piper_link6", "pickable_bottle_blue"),

@@ -122,6 +122,7 @@ all = [
 
 # Development tools
 dev = [
+    "hatchling",  # installed-wheel resource test uses the declared build backend offline
     "pytest>=7.0",
     "pytest-cov",
     "pytest-timeout",  # scripts/gate.sh passes --timeout; tests use @pytest.mark.timeout

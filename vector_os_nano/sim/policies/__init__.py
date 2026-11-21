@@ -86,7 +86,7 @@ def _wheels(v: Any) -> tuple[tuple[float, ...], ...]:
 
 POLICIES: dict[str, tuple[str, dict[str, Callable[[Any], Any]]]] = {
     "convex_mpc": ("vector_os_nano.sim.policies.convex_mpc",
-                   dict.fromkeys(("gait_hz", "duty", "z_des", "brake_s", "brake_ramp_s"), float)),
+                   {"file": str, **dict.fromkeys(("gait_hz", "duty", "z_des", "brake_s", "brake_ramp_s"), float)}),
     "sinusoidal": ("vector_os_nano.sim.policies.sinusoidal",
                    dict.fromkeys(("freq_hz", "thigh_amp", "calf_amp", "hip_amp"), float)),
     "torchscript": ("vector_os_nano.sim.policies.torchscript",

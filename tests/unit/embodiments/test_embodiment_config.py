@@ -117,7 +117,7 @@ def test_go2_capabilities() -> None:
 def test_go2_policy() -> None:
     p = load_embodiment_config("go2").base.policy
     assert (p.ref, p.timestep, p.tick_hz) == ("convex_mpc", 0.001, 200.0)
-    assert p.params == {"gait_hz": 3, "duty": 0.6, "z_des": 0.27, "brake_s": 0.35, "brake_ramp_s": 1.0}
+    assert p.params == {"file": "model/go2_description.urdf", "gait_hz": 3, "duty": 0.6, "z_des": 0.27, "brake_s": 0.35, "brake_ramp_s": 1.0}
     assert p.on("mujoco") == ("convex_mpc", p.params)
     assert p.on("pybullet") == ("sinusoidal", {"freq_hz": 2.0, "thigh_amp": 0.25, "calf_amp": 0.25, "hip_amp": 0.10})
 
@@ -280,7 +280,7 @@ def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
 
 
 @pytest.mark.parametrize("where, raw", [
-    ("broken/robot.yaml", {"schema": 1, "id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
+    ("broken/robot.yaml", {"schema": 1, "display_name": "A", "model": {"file": "x", "root_body": "b"},
                            "grasp": {}}),
     ("broken/robot.yaml.arm", {"arm": {"joints": ["j"], "ee": {"site": "s"}, "home": [0.0], "dof": 1}}),
     ("broken/robot.yaml.arm.ee", {"arm": {"joints": ["j"], "ee": {"site": "s", "body": "b"}, "home": [0.0]}}),
@@ -292,7 +292,7 @@ def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
 ])
 def test_an_unknown_key_fails_naming_the_file_the_key_and_the_valid_set(where: str, raw: dict) -> None:
     """Strict manifests: a misspelt or retired key is an error, never silently ignored."""
-    full = {"schema": 1, "id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
+    full = {"schema": 1, "display_name": "A", "model": {"file": "x", "root_body": "b"},
             **raw}
     with pytest.raises(EmbodimentConfigError) as exc:
         parse_embodiment_config(full, ctx="broken/robot.yaml")
@@ -301,7 +301,7 @@ def test_an_unknown_key_fails_naming_the_file_the_key_and_the_valid_set(where: s
 
 
 def test_a_camera_placed_without_a_position_fails_loud() -> None:
-    raw = {"schema": 1, "id": "a", "display_name": "A", "model": {"path": "x", "root_body": "b"},
+    raw = {"schema": 1, "display_name": "A", "model": {"file": "x", "root_body": "b"},
            "sensors": [{"role": "camera", "name": "c", "width": 2, "height": 2, "body": "b"}]}
     with pytest.raises(EmbodimentConfigError, match=r"sensors\[0\]\.body places a camera"):
         parse_embodiment_config(raw, ctx="a/robot.yaml")
@@ -324,7 +324,7 @@ def test_both_embodiments_distinct() -> None:
 
 def _with_arm(arm: dict) -> dict:
     return {
-        "schema": 1, "id": "a", "display_name": "A", "model": {"path": "x.xml", "root_body": "b"},
+        "schema": 1, "display_name": "A", "model": {"file": "x.xml", "root_body": "b"},
         "arm": arm,
     }
 

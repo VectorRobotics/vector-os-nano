@@ -44,7 +44,7 @@ def test_registry_lists_every_manifest_and_each_loads() -> None:
 def test_go2_piper_manifest_carries_the_arm_and_the_grasp_camera_size() -> None:
     cfg = registry.load("go2_piper")
     assert cfg.arm is not None and cfg.arm.dof == 6 and cfg.arm.gripper.finger_bodies
-    assert cfg.model.path.endswith("go2_piper/go2_piper.xml")
+    assert cfg.compose.base.id == "go2" and cfg.compose.arm.id == "piper"
     assert (cfg.camera.width, cfg.camera.height) == (320, 240)
     assert registry.load("go2").arm is None
     assert registry.load("go2").base.nav.explorer == "tare"

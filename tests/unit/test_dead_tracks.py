@@ -41,8 +41,6 @@ _DEAD: dict[str, str] = {
     "scripts/verify_loco_pick_place.py": "periphery:verify-loco-self-report",
     "scripts/verify_pick_top_down.py": "calls the deleted SimStartTool._populate_pickables_from_mjcf",
     "scripts/launch_explore.sh": "periphery B-1/B-2 (hardcoded /home/yusen, cp into the shared nav stack)",
-    "vector_os_nano/hardware/sim/mjcf/g1/g1.xml": "35 absolute /home/yusen mesh paths, unreferenced",
-    "vector_os_nano/hardware/sim/mjcf/piper/scene.xml": "unused menagerie demo",
     # R8a periphery sweep (scripts/gt_grade.py is the one survivor of tools/)
     "tools": "periphery:tools-kill-by-name-and-rosm (pkill -9 -f mujoco, rosm nuke), "
              "periphery:tools-stale-ik-probes, periphery:tools-bypass-product-fixed-tmp",

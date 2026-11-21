@@ -6,12 +6,11 @@ schema: 1
 # Gripper / Camera drive it on any backend; sim/scene/compose.py mounts it at the
 # world's spawn. Every name is the exact name in so101.xml (the scene adds no prefix).
 
-id: so101
 display_name: "SO-101 (5-DoF tabletop arm)"
 world: tabletop
 
 model:
-  path: vector_os_nano/hardware/sim/mjcf/so101/so101.xml
+  file: model/so101.xml
   root_body: base_link
 
 sensors:

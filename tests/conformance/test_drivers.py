@@ -295,16 +295,16 @@ def test_a_variant_arm_is_data_alone(tmp_path, backend, load):
     range (its model file) and a mount 8 cm higher (its world's spawn). The same
     drivers move it; no Python names it."""
     pkg = Path(vector_os_nano.__file__).parent
-    stock = pkg / "hardware" / "sim" / "mjcf" / "so101" / "so101.xml"
+    stock = pkg / "embodiments" / "so101" / "model" / "so101.xml"
     model = tmp_path / "so101_variant.xml"
     model.write_text(stock.read_text()
                      .replace('meshdir="meshes"', f'meshdir="{stock.parent / "meshes"}"')
                      .replace('"shoulder_pan" axis="0 0 1" range="-1.92 1.92"', '"shoulder_pan" axis="0 0 1" range="-1 1"')
                      .replace('"shoulder_pan"  kp="100" ctrlrange="-1.92 1.92"', '"shoulder_pan"  kp="100" ctrlrange="-1 1"'))
     raw = yaml.safe_load((pkg / "embodiments" / "so101" / "robot.yaml").read_text())
-    raw.update(id="so101_variant", model={"path": str(model), "root_body": "base_link"})
+    raw.update(model={"file": str(model), "root_body": "base_link"})
     raw["arm"]["home"] = [0.5, -0.8, 0.4, 0.9, 0.0]
-    cfg = parse_embodiment_config(raw, "so101_variant/robot.yaml")
+    cfg = parse_embodiment_config(raw, str(tmp_path / "so101_variant" / "robot.yaml"))
     world_yaml = pkg / "worlds" / "tabletop" / "world.yaml"
     wraw = yaml.safe_load(world_yaml.read_text())
     wraw["spawn"]["z"] = 0.10  # a riser under the base

@@ -25,22 +25,20 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-import yaml
+from vector_os_nano.schemas.world import WORLDS_DIR, load_world_file
 
 from vector_os_nano.core.run_dir import run_path
 from vector_os_nano.sim.nav.follow import _AbortFlag, nav_config, turn_by
 
-_LAYOUT_YAML = Path(__file__).resolve().parents[2] / "worlds" / "apartment" / "world.yaml"
+_LAYOUT_YAML = WORLDS_DIR / "apartment" / "world.yaml"
 LOG_NAME = "explore_coverage.jsonl"
 
 
 @functools.lru_cache(maxsize=4)
 def room_layout(path: str = str(_LAYOUT_YAML)) -> dict[str, Any]:
     """``{"rooms": {name: (x, y)}, "boxes": {name: (x0, y0, x1, y1)}}`` of a layout file."""
-    raw = yaml.safe_load(Path(path).read_text()) or {}
-    rooms = {str(k): (float(v[0]), float(v[1])) for k, v in (raw.get("rooms") or {}).items()}
-    boxes = {str(k): tuple(float(c) for c in v) for k, v in (raw.get("boxes") or {}).items()}
-    return {"rooms": rooms, "boxes": boxes}
+    world = load_world_file(path)
+    return {"rooms": world.rooms, "boxes": world.boxes}
 
 
 def room_at(x: float, y: float, boxes: dict[str, tuple]) -> str | None:

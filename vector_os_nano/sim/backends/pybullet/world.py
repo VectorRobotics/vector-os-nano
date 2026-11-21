@@ -101,6 +101,8 @@ def unsupported(m: Any, pickables: Iterable[int] = ()) -> str | None:
     bodies *pickables*), or None."""
     pickables = frozenset(pickables)
     why: list[str] = []
+    if m.opt.enableflags & reader.CONTACT_OVERRIDE:
+        why.append('global contact override (o_margin/o_solref/o_solimp)')
     joints = reader.joints(m)
     for b in reader.bodies(m)[1:]:
         if int(m.body_jntnum[b.id]) > 1:

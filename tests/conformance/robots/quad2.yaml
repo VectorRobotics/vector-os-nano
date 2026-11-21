@@ -3,13 +3,11 @@ schema: 1
 # go2's model and policy with its own spawn, stance, gains and lidar mount. Nothing in
 # the package names it; the generic LeggedBase stands it up and walks it.
 
-id: quad2
 world: quad2_flat
 display_name: "A test quadruped (the go2 model, its own manifest)"
 
 model:
-  path: vector_os_nano/hardware/sim/mjcf/go2/go2.xml
-  meshes_dir: vector_os_nano/hardware/sim/mjcf/go2/assets
+  file: ../../../vector_os_nano/embodiments/go2/model/go2.xml
   root_body: base_link
 
 base:
@@ -39,6 +37,7 @@ base:
   torque_scale: 0.9               # of the motors' range (23.7 / 45.43 N m in go2.xml)
   policy:
     ref: convex_mpc               # needs casadi + pin: uv pip install -e '.[go2]'
+    file: ../../../vector_os_nano/embodiments/go2/model/go2_description.urdf
     timestep: 0.001
     tick_hz: 200
     gait_hz: 3                    # trot cycles per second

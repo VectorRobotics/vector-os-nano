@@ -5,6 +5,7 @@ import copy
 
 import pytest
 import yaml
+from vector_os_nano.embodiments.registry import validate
 
 from vector_os_nano.schemas.robot import _EMBODIMENTS_DIR, EmbodimentConfigError, parse_embodiment_config
 
@@ -19,7 +20,7 @@ def raw():
 
 
 def test_grasp_data_and_named_poses_survive_loading():
-    cfg = parse_embodiment_config(raw())
+    cfg = validate(parse_embodiment_config(raw()))
     assert cfg.arm.postures["view"] == (0., 1.2, 0., 0., 0., 0.)
     assert cfg.skills["grasp"]["pre_grasp_height"] == .05
     assert cfg.skills["grasp"]["durations"] == (4., 1.5, 2., 2.)
@@ -39,5 +40,14 @@ def test_invalid_grasp_data_names_its_key(edit, key):
     r = copy.deepcopy(raw())
     edit(r)
     with pytest.raises(EmbodimentConfigError) as exc:
-        parse_embodiment_config(r, ctx="variant/robot.yaml")
+        validate(parse_embodiment_config(r, ctx="variant/robot.yaml"), ctx="variant/robot.yaml")
     assert "variant/robot.yaml" in str(exc.value) and key in str(exc.value)
+
+
+def test_schema_leaves_owner_blocks_open_but_start_checks_installed_owners():
+    r = raw()
+    r['skills'] = {'external': {'its_own_key': 42}}
+    cfg = parse_embodiment_config(r)
+    assert cfg.skills == r['skills']
+    with pytest.raises(EmbodimentConfigError, match='unknown owner.*external.*valid'):
+        validate(cfg)

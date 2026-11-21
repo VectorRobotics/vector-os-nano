@@ -67,8 +67,11 @@ def missing() -> list[str]:
             try:
                 import casadi  # noqa: F401
                 from vector_os_nano.third_party.convex_mpc.go2_robot_data import PinGo2Model
+                from vector_os_nano.schemas.robot import load_embodiment_config
+                from vector_os_nano.embodiments.assets import policy_root
 
-                PinGo2Model()
+                cfg = load_embodiment_config("go2")
+                PinGo2Model(policy_root(cfg) / cfg.base.policy.params["file"])
             except Exception as exc:  # noqa: BLE001
                 problems.append(f"vendored convex_mpc unusable ({type(exc).__name__}: {exc})")
             try:

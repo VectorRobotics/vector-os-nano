@@ -62,7 +62,7 @@ def _ensure_imports() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Room layout (matches go2_room.xml)
+# Room layout (matches worlds/apartment/scene.xml)
 # ---------------------------------------------------------------------------
 
 _ROOM_BOUNDS: dict[str, tuple[float, float, float, float]] = {

@@ -21,6 +21,9 @@ from vector_os_nano.core.scene_nodes import RoomNode
 def layout_file(tmp_path):
     """Create a minimal room layout YAML."""
     content = textwrap.dedent("""\
+        schema: 1
+        scene: scene.xml
+        spawn: {xy: [0, 0], z: 0, heading: 0}
         rooms:
           kitchen:    [17.0, 2.5]
           hallway:    [10.0, 5.0]

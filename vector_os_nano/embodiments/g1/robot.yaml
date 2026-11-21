@@ -8,13 +8,12 @@ schema: 1
 # policy numbers are those of the script it was trained under (unitree_rl_gym
 # deploy/deploy_mujoco, configs/g1.yaml, at the pinned revision of `assets`).
 
-id: g1
 display_name: "Unitree G1 (humanoid, 12-DoF)"
 world: apartment          # worlds/apartment/world.yaml
 
 assets:
   # Not shipped: fetched by `python scripts/fetch_assets.py g1` into
-  # ~/.vector/assets/g1_gait. model.path, model.meshes_dir and base.policy.file are
+  # ~/.vector/assets/g1_gait. model.file and base.policy.file are
   # relative to that folder (vector_os_nano/embodiments/assets.py).
   name: g1_gait
   git: https://github.com/unitreerobotics/unitree_rl_gym.git
@@ -58,8 +57,7 @@ assets:
     meshes/torso_link_23dof_rev_1_0.STL: 3cd0d56fde14b73c1623304684805029971c4f84b596f9914e823ca70a107fd2
 
 model:
-  path: g1_12dof.xml              # relative to the asset folder
-  meshes_dir: meshes
+  file: g1_12dof.xml              # relative to the asset folder
   root_body: pelvis
 
 base:

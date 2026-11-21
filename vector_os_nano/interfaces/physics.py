@@ -30,6 +30,9 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 import numpy as np
 
+from vector_os_nano.schemas.robot import EmbodimentConfig
+from vector_os_nano.schemas.world import WorldManifest
+
 # Two bodies are "in contact" when a contact point is at most this far apart (m).
 CONTACT_DISTANCE_M: float = 1e-3
 
@@ -253,9 +256,9 @@ class SimBackend(Protocol):
 
     name: str
 
-    def supports(self, robot: Any, world: Any) -> str | None:
+    def supports(self, robot: EmbodimentConfig, world: WorldManifest) -> str | None:
         """None when this backend can run *robot* (an EmbodimentConfig) in *world* (a
-        WorldConfig), else the human-readable reason. The body x backend matrix the
+        WorldManifest), else the human-readable reason. The body x backend matrix the
         user sees is derived from this, never hand-written."""
 
     def load(self, scene: CompiledScene, *, gui: bool) -> PhysicsWorld:

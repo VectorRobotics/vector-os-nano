@@ -314,8 +314,14 @@ def load_world(world_id: str) -> WorldManifest:
     path = WORLDS_DIR / world_id / "world.yaml"
     if world_id not in valid:
         raise WorldManifestError(f"unknown world {world_id!r}; valid: {valid}")
+    return load_world_file(path)
+
+
+def load_world_file(path: str | Path) -> WorldManifest:
+    """Read a world file through the same strict schema, including layout-seeding callers."""
+    path = Path(path)
     try:
         raw = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml_loader(path, WorldManifestError))
     except (OSError, yaml.YAMLError) as exc:
         raise WorldManifestError(f"{path}: unreadable ({exc})") from exc
-    return parse_world(raw, world_id, path)
+    return parse_world(raw, path.parent.name, path)

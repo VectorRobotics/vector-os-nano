@@ -17,7 +17,7 @@ ROS2 imports: pure data, importable and testable offline.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -42,9 +42,9 @@ class EmbodimentConfigError(ValueError):
 class ModelSpec:
     """Where the body's MuJoCo model + meshes live, and its root body."""
 
-    path: str
+    file: str
     root_body: str
-    meshes_dir: str = ""
+    prefix: str = ""
 
 
 @dataclass(frozen=True)
@@ -215,6 +215,7 @@ class CapabilityProfile:
     has_gripper: bool = False
     camera: bool = False
     lidar: bool = False
+    depth: bool = False
 
 
 @dataclass(frozen=True)
@@ -258,10 +259,12 @@ class EmbodimentConfig:
     base: BaseSpec | None = None
     # The world it stands in: worlds/<world>/world.yaml (rooms, surfaces, pickables).
     world: str = ""
-    # Files not shipped in the package; model.path, model.meshes_dir and the policy's
+    # Files not shipped in the package; model.file and the policy's
     # files are then relative to the asset folder (embodiments/assets.py resolves it).
     assets: AssetsSpec | None = None
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
+    path: Path = Path("robot.yaml")
+    compose: ComposeSpec | None = None
 
     @property
     def camera(self) -> CameraSpec | None:
@@ -272,6 +275,18 @@ class EmbodimentConfig:
     def lidar(self) -> LidarSpec | None:
         """The body's lidar, or None."""
         return next((s for s in self.sensors if isinstance(s, LidarSpec)), None)
+
+
+@dataclass(frozen=True)
+class ComposeSpec:
+    """An arm model attached to a base model; child manifests retain their file origins."""
+
+    base: EmbodimentConfig
+    arm: EmbodimentConfig
+    body: str
+    pos: tuple[float, float, float]
+    quat: tuple[float, float, float, float]
+    prefix: str
 
 
 # ---------------------------------------------------------------------------
@@ -329,11 +344,15 @@ def _optional_mapping(raw: dict[str, Any], key: str, ctx: str) -> dict[str, Any]
 
 def _parse_model(raw: dict[str, Any], ctx: str) -> ModelSpec:
     mctx = f"{ctx}.model"
-    m = _keys(_require(raw, "model", ctx), mctx, {"path", "root_body", "meshes_dir"})
+    m = _keys(_require(raw, "model", ctx), mctx, {"file", "root_body", "prefix"})
+    for key in ('file', 'root_body', 'prefix'):
+        value = m.get(key, '' if key == 'prefix' else None)
+        if not isinstance(value, str) or (not value and key != 'prefix'):
+            raise EmbodimentConfigError(f'{mctx}.{key}: expected a string' + (' (nonempty)' if key != 'prefix' else ''))
     return ModelSpec(
-        path=str(_require(m, "path", mctx)),
+        file=str(_require(m, "file", mctx)),
         root_body=str(_require(m, "root_body", mctx)),
-        meshes_dir=str(m.get("meshes_dir", "")),
+        prefix=str(m.get("prefix", "")),
     )
 
 
@@ -522,54 +541,15 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
     )
 
 
-_TOP_KEYS = {"schema", "id", "display_name", "world", "model", "sensors", "assets", "arm",
+_TOP_KEYS = {"schema", "compose", "display_name", "world", "model", "sensors", "assets", "arm",
              "base", "skills"}
 
-_GRASP_POSITIVE = {"pre_grasp_height", "lift_height", "reach_m", "view_duration", "hold_duration"}
-_GRASP_NONNEGATIVE = {"grasp_z_above", "approach_back"}
-_GRASP_BASE_COUNTS = {"approach_steps", "seat_steps", "scan_steps", "retries"}
-_GRASP_BASE_POSITIVE = {"standoff", "view_standoff", "step_speed", "step_duration", "stall_distance", "seat_distance",
-                        "lateral_gain", "lateral_speed", "lateral_deadband", "yaw_speed", "yaw_deadband",
-                        "scan_step", "scan_range"}
-
-
-def _positive(raw: Any, ctx: str, *, zero: bool = False) -> float:
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        raise EmbodimentConfigError(f"{ctx}: expected a finite number") from None
-    if isinstance(raw, bool) or not math.isfinite(value) or value < 0 or (value == 0 and not zero):
-        raise EmbodimentConfigError(f"{ctx}: expected a finite {'nonnegative' if zero else 'positive'} number")
-    return value
-
-
-def _parse_skills(raw: dict[str, Any], ctx: str, arm: ArmSpec | None) -> dict[str, dict[str, Any]]:
-    skills = _keys(_optional_mapping(raw, "skills", ctx) or {}, f"{ctx}.skills", {"grasp"})
-    if "grasp" not in skills:
-        return {}
-    gctx = f"{ctx}.skills.grasp"
-    if arm is None or arm.gripper is None:
-        raise EmbodimentConfigError(f"{gctx}: requires an arm with a gripper")
-    g = _keys(skills["grasp"], gctx, _GRASP_POSITIVE | _GRASP_NONNEGATIVE | {"durations", "base"})
-    parsed = {k: _positive(_require(g, k, gctx), f"{gctx}.{k}", zero=k in _GRASP_NONNEGATIVE)
-              for k in _GRASP_POSITIVE | _GRASP_NONNEGATIVE}
-    durations = _floats(_require(g, "durations", gctx), 4, f"{gctx}.durations")
-    if any(d <= 0 for d in durations):
-        raise EmbodimentConfigError(f"{gctx}.durations: all four motion durations must be positive")
-    parsed["durations"] = durations
-    if "base" in g:
-        bctx = f"{gctx}.base"
-        if raw.get("base") is None:
-            raise EmbodimentConfigError(f"{bctx}: requires a base")
-        b = _keys(g["base"], bctx, _GRASP_BASE_COUNTS | _GRASP_BASE_POSITIVE)
-        values = {k: _positive(_require(b, k, bctx), f"{bctx}.{k}", zero=k in _GRASP_BASE_COUNTS)
-                  for k in _GRASP_BASE_COUNTS | _GRASP_BASE_POSITIVE}
-        for k in _GRASP_BASE_COUNTS:
-            if not values[k].is_integer():
-                raise EmbodimentConfigError(f"{bctx}.{k}: expected a nonnegative integer")
-            values[k] = int(values[k])
-        parsed["base"] = values
-    return {"grasp": parsed}
+def _parse_skills(raw: dict[str, Any], ctx: str) -> dict[str, dict[str, Any]]:
+    skills = _optional_mapping(raw, 'skills', ctx) or {}
+    for name, params in skills.items():
+        if not isinstance(name, str) or not isinstance(params, dict):
+            raise EmbodimentConfigError(f'{ctx}.skills.{name}: expected a named mapping')
+    return skills
 
 
 def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
@@ -577,11 +557,13 @@ def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
     if a is None:
         return None
     actx = f"{ctx}.assets"
+    _keys(a, actx, {'name', 'git', 'rev', 'files', 'sha256', 'license'})
     blocks = {k: _optional_mapping(a, k, actx) for k in ("files", "sha256", "license")}
     for key, val in blocks.items():
         if not val:
             raise EmbodimentConfigError(f"{actx}.{key}: required, a non-empty mapping")
     lic = blocks["license"]
+    _keys(lic, f'{actx}.license', {'spdx', 'file'})
     spec = AssetsSpec(
         name=str(_require(a, "name", actx)),
         git=str(_require(a, "git", actx)),
@@ -590,9 +572,12 @@ def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
         sha256={str(k): str(v) for k, v in blocks["sha256"].items()},
         license={k: str(_require(lic, k, f"{actx}.license")) for k in ("spdx", "file")},
     )
-    if len(spec.rev) != 40:
+    if len(spec.rev) != 40 or any(c not in '0123456789abcdefABCDEF' for c in spec.rev):
         raise EmbodimentConfigError(f"{actx}.rev must be a full 40-hex commit, got {spec.rev!r}")
     for rel in spec.sha256:
+        digest = spec.sha256[rel]
+        if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+            raise EmbodimentConfigError(f'{actx}.sha256.{rel}: expected a lowercase 64-hex digest')
         if not any(_under(rel, k) for k in spec.files):
             raise EmbodimentConfigError(f"{actx}.sha256: {rel!r} lies under no files entry {sorted(spec.files)}")
     for key in spec.files:
@@ -601,54 +586,108 @@ def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
     return spec
 
 
-def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> EmbodimentConfig:
-    """Parse an already-loaded dict into an EmbodimentConfig (fail-loud, unknown keys too)."""
+def _prefix_arm(arm: ArmSpec | None, prefix: str) -> ArmSpec | None:
+    if arm is None or not prefix:
+        return arm
+    g = arm.gripper
+    return replace(arm, joints=tuple(prefix + n for n in arm.joints), ee_site=prefix + arm.ee_site,
+                   gripper=None if g is None else replace(g, joint=prefix + g.joint,
+                       finger_bodies=tuple(prefix + n for n in g.finger_bodies), weld_body=prefix + g.weld_body))
+
+
+def _prefix_base(base: BaseSpec | None, prefix: str) -> BaseSpec | None:
+    if base is None or not prefix:
+        return base
+    names = lambda d: {prefix + k: v for k, v in d.items()}
+    return replace(base, joints=tuple(prefix + n for n in base.joints), stance=names(base.stance),
+                   postures={k: names(v) for k, v in base.postures.items()})
+
+
+def _prefix_sensors(sensors, prefix: str, child_prefix: str = ''):
+    if not prefix:
+        return sensors
+    return tuple(replace(s, body=(s.body if child_prefix and s.body.startswith(child_prefix) else prefix + s.body)
+                         if s.body else None,
+                         **({'name': prefix + s.name} if isinstance(s, CameraSpec) else {})) for s in sensors)
+
+
+def _prefixed(cfg: EmbodimentConfig, prefix: str) -> EmbodimentConfig:
+    if not prefix:
+        return cfg
+    return replace(cfg, model=replace(cfg.model, root_body=prefix + cfg.model.root_body),
+                   base=_prefix_base(cfg.base, prefix), arm=_prefix_arm(cfg.arm, prefix),
+                   sensors=_prefix_sensors(cfg.sensors, prefix))
+
+
+def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml", *,
+                           _stack: tuple[str, ...] = ()) -> EmbodimentConfig:
+    """Parse strict schema 1 data; the folder supplies identity and relative-file origins."""
     _keys(raw, ctx, _TOP_KEYS)
     version = _require(raw, "schema", ctx)
     if type(version) is not int or version != 1:
         advice = 'upgrade vector_os_nano' if type(version) is int and version > 1 else 'use schema: 1'
         raise EmbodimentConfigError(f"{ctx}.schema: {version!r}; valid: [1]; {advice}")
+    path = Path(ctx)
+    robot_id = path.parent.name if path.name == 'robot.yaml' and path.parent.name else path.stem
+    composition = None
+    inherited = None
+    if 'compose' in raw:
+        cctx = f'{ctx}.compose'
+        c = _keys(raw['compose'], cctx, {'base', 'arm', 'mount', 'prefix'})
+        children = {}
+        for key in ('base', 'arm'):
+            name = _require(c, key, cctx)
+            try:
+                children[key] = load_embodiment_config(name, _stack=_stack)
+            except EmbodimentConfigError as exc:
+                raise EmbodimentConfigError(f'{cctx}.{key}: {exc}') from None
+        mount = _keys(_require(c, 'mount', cctx), f'{cctx}.mount', {'body', 'pos', 'quat'})
+        quat = _floats(_require(mount, 'quat', cctx), 4, f'{cctx}.mount.quat')
+        if not math.isclose(sum(x*x for x in quat), 1, abs_tol=1e-6):
+            raise EmbodimentConfigError(f'{cctx}.mount.quat: expected a unit quaternion')
+        inherited, child = children['base'], children['arm']
+        if child.arm is None:
+            raise EmbodimentConfigError(f'{cctx}.arm: {child.id!r} has no arm block')
+        composition = ComposeSpec(inherited, child, str(_require(mount, 'body', cctx)),
+            _floats(_require(mount, 'pos', cctx), 3, f'{cctx}.mount.pos'), quat, str(c.get('prefix', child.id + '_')))
+        if 'model' in raw:
+            raise EmbodimentConfigError(f'{ctx}.model: mutually exclusive with compose; model belongs to base and arm')
+    model = inherited.model if inherited else _parse_model(raw, ctx)
+    base = _parse_base(raw, ctx) if 'base' in raw or inherited is None else inherited.base
+    sensors = _parse_sensors(raw, ctx) if 'sensors' in raw or inherited is None else inherited.sensors
     arm = _parse_arm(raw, ctx)
-    base = _parse_base(raw, ctx)
-    sensors = _parse_sensors(raw, ctx)
+    if composition:
+        arm = (_prefix_arm(arm, composition.prefix + composition.arm.model.prefix) if 'arm' in raw
+               else _prefix_arm(composition.arm.arm, composition.prefix))
+        if 'base' in raw:
+            base = _prefix_base(base, model.prefix)
+        if 'sensors' in raw:
+            sensors = _prefix_sensors(sensors, model.prefix, composition.prefix)
     caps = CapabilityProfile(has_base=base is not None, has_arm=arm is not None,
                              has_gripper=arm is not None and arm.gripper is not None,
                              camera=any(isinstance(s, CameraSpec) for s in sensors),
-                             lidar=any(isinstance(s, LidarSpec) for s in sensors))
-    return EmbodimentConfig(
-        id=str(_require(raw, "id", ctx)),
-        display_name=str(_require(raw, "display_name", ctx)),
-        model=_parse_model(raw, ctx),
-        sensors=sensors,
-        capabilities=caps,
-        arm=arm,
-        world=str(raw.get("world", "") or ""),
-        assets=_parse_assets(raw, ctx),
-        base=base,
-        skills=_parse_skills(raw, ctx, arm),
-    )
+                             lidar=any(isinstance(s, LidarSpec) for s in sensors),
+                             depth=any(isinstance(s, CameraSpec) and s.depth is not None for s in sensors))
+    cfg = EmbodimentConfig(
+        id=robot_id, display_name=str(raw.get('display_name', robot_id)), model=model,
+        sensors=sensors, capabilities=caps, arm=arm, base=base,
+        world=str(raw.get('world', inherited.world if inherited else '') or ''),
+        assets=_parse_assets(raw, ctx) if 'assets' in raw or inherited is None else inherited.assets,
+        skills=(_parse_skills(raw, ctx) if 'skills' in raw or inherited is None else inherited.skills),
+        path=path, compose=composition)
+    return _prefixed(cfg, model.prefix) if composition is None else cfg
 
 
-def load_embodiment_config(embodiment_id: str) -> EmbodimentConfig:
-    """Load ``vector_os_nano/embodiments/<embodiment_id>/robot.yaml``.
-
-    Raises:
-        EmbodimentConfigError: if the file is missing, unreadable, not a mapping,
-            missing a required field or carries an unknown key (fail-loud, Rule 8).
-    """
-    yaml_path = _EMBODIMENTS_DIR / embodiment_id / "robot.yaml"
-    if not yaml_path.is_file():
-        raise EmbodimentConfigError(
-            f"embodiment '{embodiment_id}': robot.yaml not found at {yaml_path}"
-        )
+def load_embodiment_config(embodiment_id: str, *, _stack: tuple[str, ...] = ()) -> EmbodimentConfig:
+    """Load a robot folder, resolving composed children with cycle and identity checks."""
+    valid = sorted(p.parent.name for p in _EMBODIMENTS_DIR.glob('*/robot.yaml'))
+    if not isinstance(embodiment_id, str) or embodiment_id not in valid:
+        raise EmbodimentConfigError(f'robot.yaml: unknown embodiment {embodiment_id!r}; valid: {valid}')
+    if embodiment_id in _stack:
+        raise EmbodimentConfigError(f'compose cycle: {" -> ".join((*_stack, embodiment_id))}')
+    path = _EMBODIMENTS_DIR / embodiment_id / 'robot.yaml'
     try:
-        raw = yaml.load(yaml_path.read_text(), Loader=yaml_loader(yaml_path, EmbodimentConfigError))
-    except yaml.YAMLError as exc:  # pragma: no cover - malformed-yaml guard
-        raise EmbodimentConfigError(
-            f"embodiment '{embodiment_id}': failed to parse {yaml_path}: {exc}"
-        ) from exc
-    if raw is None:
-        raise EmbodimentConfigError(
-            f"embodiment '{embodiment_id}': {yaml_path} is empty"
-        )
-    return parse_embodiment_config(raw, ctx=f"{embodiment_id}/robot.yaml")
+        raw = yaml.load(path.read_text(), Loader=yaml_loader(path, EmbodimentConfigError))
+    except (OSError, yaml.YAMLError) as exc:
+        raise EmbodimentConfigError(f'{path}: cannot read robot manifest: {exc}') from exc
+    return parse_embodiment_config(raw, str(path), _stack=(*_stack, embodiment_id))

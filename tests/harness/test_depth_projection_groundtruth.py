@@ -14,7 +14,7 @@ Two classes of tests:
    robot position from the RGB frame causes large world-position errors.
    This proves the bug exists before the fix and fails after the fix.
 
-All tests use go2_room fixture (room=True) for the house environment with
+All tests use apartment_scene fixture (room=True) for the house environment with
 furniture at known positions.
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _go2():
 
 
 @pytest.fixture(scope="module")
-def go2_room():
+def apartment_scene():
     """Single standing go2 in the apartment for the whole module.
 
     scope=module to avoid the overhead of reloading the room XML per test.
@@ -66,7 +66,7 @@ def go2_room():
 
 
 @pytest.fixture
-def go2_room_fn():
+def apartment_scene_fn():
     """Function-scoped standing go2 in the apartment. Closed after each test."""
     dog = _go2()
     yield dog.base
@@ -99,14 +99,14 @@ class TestDepthProjectionGroundTruth:
     All data is captured atomically from MuJoCo at the same simulation step.
     """
 
-    def test_center_pixel_projects_to_camera_forward(self, go2_room):
+    def test_center_pixel_projects_to_camera_forward(self, apartment_scene):
         """Center pixel should project to a point directly in front of the camera."""
         from vector_os_nano.perception.depth_projection import (
             camera_to_world,
         )
 
         # Capture all data atomically (same simulation step)
-        f = _capture(go2_room)
+        f = _capture(apartment_scene)
         frame, depth, cam_xpos, cam_xmat = f.rgb, f.depth, f.cam_pos, f.cam_mat
 
         h, w = depth.shape[:2]
@@ -136,8 +136,8 @@ class TestDepthProjectionGroundTruth:
         assert abs(z_cam - d_center) < 1e-4
 
         # Project to world using exact MuJoCo camera pose
-        pos = go2_room.get_position()
-        heading = go2_room.get_heading()
+        pos = apartment_scene.get_position()
+        heading = apartment_scene.get_heading()
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
             cam_xpos=cam_xpos, cam_xmat=cam_xmat,
@@ -155,7 +155,7 @@ class TestDepthProjectionGroundTruth:
             f"Forward distance {forward_dist:.4f}m should match depth {d_center:.4f}m (within 10cm)"
         )
 
-    def test_center_pixel_world_error_near_zero(self, go2_room):
+    def test_center_pixel_world_error_near_zero(self, apartment_scene):
         """Reproduce the session-verified result: center pixel has near-zero error.
 
         The camera forward axis passes through the center pixel. For center pixel,
@@ -165,7 +165,7 @@ class TestDepthProjectionGroundTruth:
             camera_to_world,
         )
 
-        f = _capture(go2_room)
+        f = _capture(apartment_scene)
         depth, cam_xpos, cam_xmat = f.depth, f.cam_pos, f.cam_mat
 
         h, w = depth.shape[:2]
@@ -183,8 +183,8 @@ class TestDepthProjectionGroundTruth:
         cam_forward = -xmat[:, 2]
         gt_world = np.array(cam_xpos, dtype=np.float64) + d * cam_forward
 
-        pos = go2_room.get_position()
-        heading = go2_room.get_heading()
+        pos = apartment_scene.get_position()
+        heading = apartment_scene.get_heading()
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
             cam_xpos=cam_xpos, cam_xmat=cam_xmat,
@@ -196,7 +196,7 @@ class TestDepthProjectionGroundTruth:
             f"Got ({wx:.4f}, {wy:.4f}), expected ({gt_world[0]:.4f}, {gt_world[1]:.4f})"
         )
 
-    def test_off_center_pixel_projection_consistent(self, go2_room):
+    def test_off_center_pixel_projection_consistent(self, apartment_scene):
         """Off-center pixels project consistently: lateral offset in image → lateral offset in world.
 
         Pick a pixel 40px to the right of center. The world projection should be
@@ -206,7 +206,7 @@ class TestDepthProjectionGroundTruth:
             camera_to_world,
         )
 
-        f = _capture(go2_room)
+        f = _capture(apartment_scene)
         depth, cam_xpos, cam_xmat = f.depth, f.cam_pos, f.cam_mat
 
         h, w = depth.shape[:2]
@@ -220,8 +220,8 @@ class TestDepthProjectionGroundTruth:
 
         # Center
         xc_cam, yc_cam, zc_cam = _pixel_to_camera(cx, cy, d, intrinsics)
-        pos = go2_room.get_position()
-        heading = go2_room.get_heading()
+        pos = apartment_scene.get_position()
+        heading = apartment_scene.get_heading()
 
         wxc, wyc, _ = camera_to_world(
             xc_cam, yc_cam, zc_cam,
@@ -261,16 +261,16 @@ class TestDepthProjectionGroundTruth:
             f"displacement {expected_3d_dist:.4f}m (rigid transform preserves distance)"
         )
 
-    def test_atomic_capture_is_consistent(self, go2_room):
+    def test_atomic_capture_is_consistent(self, apartment_scene):
         """Two captures at rest agree: each is rgb, depth and pose of ONE sim instant,
         and the robot is not moving between them.
         This is a sanity check — the robot is standing still here.
         """
         # Capture twice; at rest, results should be nearly identical
-        f = _capture(go2_room)
+        f = _capture(apartment_scene)
         depth1, cam_xpos1, cam_xmat1 = f.depth, f.cam_pos, f.cam_mat
 
-        f = _capture(go2_room)
+        f = _capture(apartment_scene)
         depth2, cam_xpos2, cam_xmat2 = f.depth, f.cam_pos, f.cam_mat
 
         # Camera position should not have changed
@@ -279,13 +279,13 @@ class TestDepthProjectionGroundTruth:
             f"Camera position changed between sequential reads at rest: {pos_diff:.4f}m"
         )
 
-    def test_projection_within_room_bounds(self, go2_room):
+    def test_projection_within_room_bounds(self, apartment_scene):
         """The projected center pixel should land inside the house (0..20, 0..14)."""
         from vector_os_nano.perception.depth_projection import (
             camera_to_world,
         )
 
-        f = _capture(go2_room)
+        f = _capture(apartment_scene)
         depth, cam_xpos, cam_xmat = f.depth, f.cam_pos, f.cam_mat
 
         h, w = depth.shape[:2]
@@ -297,8 +297,8 @@ class TestDepthProjectionGroundTruth:
             pytest.fail("No valid depth at center")
 
         x_cam, y_cam, z_cam = _pixel_to_camera(cx, cy, d, intrinsics)
-        pos = go2_room.get_position()
-        heading = go2_room.get_heading()
+        pos = apartment_scene.get_position()
+        heading = apartment_scene.get_heading()
         wx, wy, wz = camera_to_world(
             x_cam, y_cam, z_cam,
             cam_xpos=cam_xpos, cam_xmat=cam_xmat,
@@ -322,10 +322,10 @@ class TestTimingMismatchBug:
     depth + pose at position B. The world position computed from mismatched
     data should be far from the correct position.
 
-    These tests use function-scoped go2_room_fn fixture because they move the robot.
+    These tests use function-scoped apartment_scene_fn fixture because they move the robot.
     """
 
-    def test_mismatched_pose_causes_large_error(self, go2_room_fn):
+    def test_mismatched_pose_causes_large_error(self, apartment_scene_fn):
         """Verify that timing mismatch causes > 1.0m position error.
 
         Capture depth at position A. Move the robot. Capture camera pose
@@ -336,7 +336,7 @@ class TestTimingMismatchBug:
             camera_to_world,
         )
 
-        robot = go2_room_fn
+        robot = apartment_scene_fn
 
         # --- Position A: capture depth + correct pose ---
         f = _capture(robot)
@@ -394,7 +394,7 @@ class TestTimingMismatchBug:
             f"Wrong: ({wx_wrong:.2f}, {wy_wrong:.2f})"
         )
 
-    def test_atomic_capture_has_small_error(self, go2_room_fn):
+    def test_atomic_capture_has_small_error(self, apartment_scene_fn):
         """Verify that capturing all data atomically has < 0.1m error.
 
         This is the CORRECT behavior after the fix: capture RGB, depth, and
@@ -404,7 +404,7 @@ class TestTimingMismatchBug:
             camera_to_world,
         )
 
-        robot = go2_room_fn
+        robot = apartment_scene_fn
 
         # Capture all atomically — no robot movement between calls
         f = _capture(robot)
@@ -449,7 +449,7 @@ class TestAtomicCapturePattern:
     capture frame + depth + cam_pose all at once, then use cached values.
     """
 
-    def test_capture_then_delay_preserves_correct_projection(self, go2_room_fn):
+    def test_capture_then_delay_preserves_correct_projection(self, apartment_scene_fn):
         """Atomic capture at t=0 + 'slow VLM call' (simulated) still gives correct result.
 
         This mirrors the fixed code pattern:
@@ -462,7 +462,7 @@ class TestAtomicCapturePattern:
             camera_to_world,
         )
 
-        robot = go2_room_fn
+        robot = apartment_scene_fn
 
         # --- Atomic capture (the fix) ---
         f = _capture(robot)
@@ -499,7 +499,7 @@ class TestAtomicCapturePattern:
             f"Fixed pattern (atomic capture) should have < 10cm error, got {error:.4f}m"
         )
 
-    def test_look_skill_atomic_capture_field_order(self, go2_room_fn):
+    def test_look_skill_atomic_capture_field_order(self, apartment_scene_fn):
         """Verify the corrected field-capture order in look.py.
 
         The fix requires:
@@ -511,7 +511,7 @@ class TestAtomicCapturePattern:
             camera_to_world,
         )
 
-        robot = go2_room_fn
+        robot = apartment_scene_fn
 
         # Simulate corrected look.py capture order
         f = _capture(robot)
