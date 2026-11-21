@@ -72,6 +72,7 @@ class MuJoCoWorld:
         self._viewer: Any = None
         self._synced = 0.0
         self.caller_thread_only = False
+        self._recording = None
         # A mobile robot (a free root) is followed by the viewer camera.
         root = scene.robot_root
         free = root >= 0 and m.body_jntnum[root] and m.jnt_type[m.body_jntadr[root]] == mj.mjtJoint.mjJNT_FREE
@@ -90,6 +91,11 @@ class MuJoCoWorld:
                 v.cam.type = mj.mjtCamera.mjCAMERA_FREE
                 v.cam.lookat[:] = [*d.xpos[self._track][:2], _TRACK_Z]
                 v.cam.distance, v.cam.elevation, v.cam.azimuth = 5.5, -20.0, -90.0
+        if directory := os.environ.get('VECTOR_ROLLOUT_DIR'):
+            from vector_os_nano.sim.backends.mujoco.recording import Recording
+
+            self._recording = Recording(directory, scene)
+            self._recording.state(m, d)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -104,13 +110,20 @@ class MuJoCoWorld:
             except RuntimeError:  # atexit: interpreter shutdown already retired that thread
                 self._close_renderers()
             pool.shutdown(wait=True)
+        if self._recording is not None:
+            self._recording.close()
 
     def time(self) -> float:
         return float(self.data.time)
 
     def step(self, n: int = 1) -> None:
         with self._lock:
-            mj.mj_step(self.model, self.data, nstep=int(n))
+            if self._recording is None:
+                mj.mj_step(self.model, self.data, nstep=int(n))
+            else:
+                for _ in range(int(n)):
+                    mj.mj_step(self.model, self.data)
+                    self._recording.state(self.model, self.data)
             if self._viewer is not None and _time.monotonic() - self._synced > _VIEWER_SYNC_S:
                 if self._track >= 0:
                     self._viewer.cam.lookat[:] = [*self.data.xpos[self._track][:2], _TRACK_Z]
@@ -133,6 +146,8 @@ class MuJoCoWorld:
             d.qfrc_applied[:] = 0.0
             d.xfrc_applied[:] = 0.0
             mj.mj_forward(m, d)
+            if self._recording is not None:
+                self._recording.state(m, d)
 
     # -- actuation -----------------------------------------------------------
 
@@ -274,11 +289,14 @@ class MuJoCoWorld:
             ids, types = seg[:, :, 0], seg[:, :, 1]
             is_geom = (types == mj.mjtObj.mjOBJ_GEOM) & (ids >= 0)
             seg = np.where(is_geom, m.geom_bodyid[np.where(is_geom, ids, 0)], -1).astype(np.int32)
-        return RGBDFrame(
+        frame = RGBDFrame(
             rgb=out.get("rgb"), depth=depth, seg=seg, K=intrinsics(w, h, float(m.cam_fovy[cam])),
             cam_pos=d.cam_xpos[cam].copy(), cam_mat=d.cam_xmat[cam].reshape(3, 3).copy(),
             sim_time=float(d.time), camera=camera,
         )
+        if self._recording is not None:
+            self._recording.frame(frame)
+        return frame
 
     def warm_renderers(self, kinds: Sequence[str], sizes: Sequence[tuple[int, int]]) -> None:
         """Create the renderers for every (kind, (width, height)) now, on the render thread.
@@ -295,8 +313,9 @@ class MuJoCoWorld:
         self._pool.submit(job).result()
 
     def _renderer(self, kind: str, w: int, h: int) -> Any:
-        """The cached offscreen renderer for (kind, w, h); render thread only."""
-        r = self._renderers.get((kind, w, h))
+        """One colour/depth context and one non-MSAA ID context per size; render thread only."""
+        key = ("rgb" if kind == "depth" else kind, w, h)
+        r = self._renderers.get(key)
         if r is None:
             samples = self.model.vis.quality.offsamples
             try:
@@ -315,11 +334,13 @@ class MuJoCoWorld:
                 r.enable_segmentation_rendering()
             else:
                 r.scene.flags[mj.mjtRndFlag.mjRND_SHADOW] = True
-            if kind == "rgb":
+            if kind != "seg":
                 r.scene.flags[mj.mjtRndFlag.mjRND_REFLECTION] = True
-            elif kind == "depth":
-                r.enable_depth_rendering()
-            self._renderers[(kind, w, h)] = r
+            self._renderers[key] = r
+        if kind == "depth":
+            r.enable_depth_rendering()
+        elif kind == "rgb":
+            r.disable_depth_rendering()
         return r
 
     def _close_renderers(self) -> None:
