@@ -50,32 +50,7 @@ _PF_DT = 1.0 / 20.0
 # Nav config loader (lazy, module-level cache)
 # ---------------------------------------------------------------------------
 
-_NAV_CFG: dict | None = None
-
-
-def _load_nav_config() -> dict:
-    """Load nav.yaml with defaults. Searches relative paths then falls back."""
-    global _NAV_CFG
-    if _NAV_CFG is not None:
-        return _NAV_CFG
-
-    import yaml
-
-    _search = [
-        str(_repo / "config" / "nav.yaml"),
-        "config/nav.yaml",
-    ]
-    for path in _search:
-        if os.path.exists(path):
-            try:
-                with open(path) as f:
-                    data = yaml.safe_load(f) or {}
-                _NAV_CFG = data
-                return _NAV_CFG
-            except Exception:
-                pass
-    _NAV_CFG = {}
-    return _NAV_CFG
+from vector_os_nano.sim.nav.follow import nav_config as _load_nav_config
 
 
 def _nav(key: str, default: float) -> float:
@@ -94,7 +69,7 @@ _SENSOR_Z: float = 0.2
 # Ceiling filter: points with height above ground exceeding this threshold are
 # excluded from /registered_scan. Matches FAR's vehicle_height (indoor.yaml: 1.0).
 # Debug harness (test_vgraph_debug.py) confirmed doors are CLEAR at 1.0m.
-# Loaded from config/nav.yaml at startup; fallback 1.8 keeps original behaviour.
+# Loaded from the shared navigation parameters at startup.
 _CEILING_FILTER_HEIGHT: float = _nav("ceiling_filter_height", 1.8)
 
 

@@ -20,7 +20,7 @@ The result is a :class:`NavResult` (a dict whose truth is "reached") with a
 ``interfaces.BaseProtocol`` (pose, heading, ``holonomic``, ``set_velocity``,
 ``stop``, ``get_odometry``, ``get_sim_time`` and ``wait_sim``); a sim clock that stops advancing ends
 the follow as "timeout", never as an endless loop. Tuning comes from
-``config/nav.yaml`` (``follower`` + ``navigation.arrival_radius``) and the body's
+the bundled ``nav.yaml`` (``follower`` + ``navigation.arrival_radius``) and the body's
 manifest ``base.nav`` block (radius, speed, yaw rate); the base says when it has fallen.
 """
 from __future__ import annotations
@@ -39,12 +39,12 @@ from vector_os_nano.sim.nav import vgraph as vg
 
 NAV_REASONS: tuple[str, ...] = ("arrived", "unreachable", "timeout", "aborted", "stalled", "fell")
 
-_NAV_YAML = Path(__file__).resolve().parents[3] / "config" / "nav.yaml"
+_NAV_YAML = Path(__file__).with_name('nav.yaml')
 
 
 @functools.lru_cache(maxsize=1)
 def nav_config() -> dict[str, Any]:
-    """``config/nav.yaml`` (read once). Missing keys fail loud at the reader."""
+    """Bundled navigation parameters (read once). Missing keys fail loud at the reader."""
     return yaml.safe_load(_NAV_YAML.read_text()) or {}
 
 

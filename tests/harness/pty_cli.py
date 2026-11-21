@@ -458,10 +458,12 @@ def run_repl_session(
     timeout_sec: float = 240.0,
     cwd: str | Path | None = None,
     out_dir: str | Path | None = None,
+    executable: str | None = None,
 ) -> ReplSessionResult:
     """Drive the REAL interactive ``vector-cli`` REPL under a PTY; return the transcript.
 
-    The child is bare ``python -m vector_os_nano.vcli.cli`` — no flags unless the
+    The child is bare ``python -m vector_os_nano.vcli.cli`` (or the installed console
+    script selected by ``executable``) — no flags unless the
     caller asks (``sim``/``sim_go2`` add the launch flag + ``--headless``;
     ``extra_args`` is the escape hatch). The LLM is the only thing replaced, via the
     ``VECTOR_FAKE_LLM_TOOLS`` env seam (an open-loop ``{"turns"}`` or a reactive
@@ -491,7 +493,7 @@ def run_repl_session(
     """
     from tests.harness import gt_audit
 
-    argv = [sys.executable, "-m", "vector_os_nano.vcli.cli"]
+    argv = [executable] if executable else [sys.executable, "-m", "vector_os_nano.vcli.cli"]
     if sim:
         argv.append("--sim")
     if sim_go2:

@@ -8,8 +8,7 @@ Public API:
 
 ConfigError is raised on invalid configuration.
 
-The default config is loaded from config/default.yaml relative to the
-package root. User overrides are deep-merged on top.
+The default config is bundled beside this module. User overrides are deep-merged on top.
 """
 from __future__ import annotations
 
@@ -34,10 +33,7 @@ class ConfigError(Exception):
 # Default config path
 # ---------------------------------------------------------------------------
 
-# config/default.yaml lives at:  <repo_root>/config/default.yaml
-# This file lives at:            <repo_root>/vector_os/core/config.py
-_PACKAGE_ROOT = Path(__file__).parent.parent.parent  # repo root
-_DEFAULT_YAML = _PACKAGE_ROOT / "config" / "default.yaml"
+_DEFAULT_YAML = Path(__file__).with_name('default.yaml')
 
 
 # ---------------------------------------------------------------------------
@@ -96,24 +92,7 @@ def load_config(
         FileNotFoundError: if user_config is a path that doesn't exist.
         ConfigError: if user_config is not a valid mapping.
     """
-    try:
-        cfg = _load_yaml(_DEFAULT_YAML)
-    except FileNotFoundError:
-        logger.warning("default.yaml not found, using hardcoded defaults")
-        cfg = {
-            "agent": {"max_planning_retries": 3, "max_execution_retries": 2, "planning_timeout_sec": 10.0},
-            "llm": {"provider": "claude", "model": "anthropic/claude-sonnet-4-6",
-                     "api_base": "https://openrouter.ai/api/v1", "temperature": 0.0, "max_tokens": 2048},
-            "arm": {"type": "so101", "port": "/dev/ttyACM0", "baudrate": 1000000},
-            "camera": {"type": "realsense", "serial": "", "resolution": [640, 480], "fps": 30},
-            "perception": {"vlm_provider": "moondream", "vlm_model": "vikhyatk/moondream2",
-                           "tracker": "edgetam"},
-            "calibration": {"file": "", "method": "affine", "num_points": 25},
-            "skills": {"pick": {"z_offset": 0.12, "pre_grasp_height": 0.06, "max_retries": 2},
-                       "place": {"default_height": 0.05},
-                       "home": {"joint_values": [-0.014, -1.238, 0.562, 0.858, 0.311]}},
-            "ros2": {"enabled": False, "namespace": "", "enable_moveit": False, "enable_tf2": True},
-        }
+    cfg = _load_yaml(_DEFAULT_YAML)
 
     if user_config is None:
         return cfg
