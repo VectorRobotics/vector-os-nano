@@ -108,8 +108,9 @@ for eq in s.equalities:
 m = s.compile()
 assert abs(float(m.body_mass.sum())-42.9194829)<1e-6
 q = m.qpos0.copy()
-pose = {'torso_lift_joint':0,'waist_pitch_joint':0,'head_pitch_joint':.314}
+pose = {'torso_lift_joint':0,'waist_pitch_joint':0,'head_pitch_joint':.28}
 pose.update({f'{side}_arm_joint_{i}':0 for side in ('left','right') for i in range(1,8)})
+pose.update({f'{side}_arm_joint_2':.02 for side in ('left','right')})
 pose.update({j:.04 for j in limits if 'finger_axis' in j})
 for name,value in pose.items():
     q[m.joint(name).qposadr[0]] = value

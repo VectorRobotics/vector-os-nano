@@ -3,7 +3,9 @@ display_name: Zeno Malo EDU — contact-only development configuration
 world: artvip_home
 model: {file: physical.xml, root_body: base_link}
 initial_joints:
-  head_pitch_joint: 0.314
+  head_pitch_joint: 0.28
+  left_arm_joint_2: 0.02
+  right_arm_joint_2: 0.02
   left_gripper_left_finger_axis: 0.04
   left_gripper_right_finger_axis: 0.04
   right_gripper_left_finger_axis: 0.04
@@ -49,7 +51,7 @@ arm:
   joints: [left_arm_joint_1, left_arm_joint_2, left_arm_joint_3, left_arm_joint_4,
            left_arm_joint_5, left_arm_joint_6, left_arm_joint_7]
   ee: {site: left_tcp}
-  home: [0, 0, 0, 0, 0, 0, 0]
+  home: [0, 0.02, 0, 0, 0, 0, 0]
   postures: {view: [0, 1.3, 0, 0, 0, 0, 0]}
   track_tol: 0.04
   velocity: [0.35, 0.35, 0.35, 0.35, 0.35, 0.35, 0.35]
