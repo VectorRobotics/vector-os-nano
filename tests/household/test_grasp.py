@@ -15,7 +15,7 @@ pytestmark = [pytest.mark.sim, pytest.mark.timeout(900)]
 
 def snapshot(out, assets, world):
     """Retain controller, grading and config provenance beside the immutable physics model."""
-    out.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[2]
     patch = subprocess.check_output(['git', 'diff', 'HEAD', '--', 'vector_os_nano',
                                     'examples/household', 'scripts', 'tests/household'], cwd=repo)

@@ -88,6 +88,9 @@ for g in s.geoms: g.solref=[.004,1];g.solimp=[.95,.99,.001,.5,2]
 for texture in s.textures:
  if texture.file: texture.embed=mj.mjtEmbed.mjEMBED_FALSE
 m=s.compile()
+# A house-sized extent must not clip away a wrist camera's nearby grasp.
+s.visual.map.znear=.03 / float(m.stat.extent)
+m.vis.map.znear=s.visual.map.znear
 assert m.nq == 44 and m.nu == 0, 'Only the free cart, passive joints and four free packages may move'
 shutil.copyfile(Path(__file__).resolve().parents[1]/'examples/household/worlds/artvip_home/world.yaml',out/'world.yaml')
 write_mjcf(s, out/'scene.xml')
@@ -98,5 +101,5 @@ json.dump(dict(source=str(source),source_sha256=hashlib.sha256(source.read_bytes
  object_parameters=[dict(name=n,position=p,half_size=z,mass_kg=m,source='engineering estimate, rigid sealed package') for n,p,z,m,c in objects],
  cart_brakes='initially engaged via rolling frictionloss, no pedal actuation yet',source_furniture_transform_changes=False,planar_panels_2mm=repairs,
  collision_status='Source convex hulls on fixed background only; not validated for contact manipulation. Core drawer and objects use separate cavity-preserving colliders.',
- estimated=['extension dimensions','panel thickness','friction'],physical_verdict='unverified'),(out/'asset-audit.json').open('w'),indent=2)
+ render_near_m=.03,estimated=['extension dimensions','panel thickness','friction'],physical_verdict='unverified'),(out/'asset-audit.json').open('w'),indent=2)
 print('BUILT HOME',m.ngeom,m.nmesh,flush=True)

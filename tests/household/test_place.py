@@ -18,7 +18,7 @@ def _place(tmp_path, monkeypatch, live=False, carry=False):
         pytest.skip('HOUSEHOLD_ASSETS must name the locally converted private-CAD asset store')
     monkeypatch.setenv('VECTOR_HOME', configured)
     world = prepare_world(Path(configured))
-    out = Path(os.environ.get('GATE_OUT', tmp_path))/('place-live' if live else 'place')
+    out = Path(os.environ.get('GATE_OUT', tmp_path))/(('place-live' if live else 'place')+('-carry' if carry else ''))
     snapshot(out, Path(configured), world)
     home = out/'home'; home.mkdir(parents=True, exist_ok=True)
     for name in ('assets', 'embodiments', 'worlds', 'cache'):
