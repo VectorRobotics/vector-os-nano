@@ -14,7 +14,7 @@
 #   e2e       tests/e2e_repl: bare vector-cli on a PTY, one REPL per scenario; every
 #             turn of a sim session graded by scripts/gt_grade.py against
 #             tests/e2e_repl/gt_expect.yaml (the gt_audit line, $GATE_OUT/gt_audit/report.json)
-#   all       hermetic, then sim, then e2e
+#   all       hermetic, then sim, then three e2e runs, preserving every attempt
 #
 # Env: GATE_PER_FILE=1  (default) one capped pytest process per test file, so a
 #                       crash/abort/OOM in one file cannot take down the run
@@ -44,8 +44,19 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$REPO" || exit 2
 
 if [ "$TIER" = all ]; then
+  out=${GATE_OUT:-$(mktemp -d /tmp/vector-gate-all.XXXXXX)}
+  mkdir -p "$out" || exit 2
+  attempts=(hermetic sim e2e-1 e2e-2 e2e-3)
+  for attempt in "${attempts[@]}"; do
+    if [ -e "$out/$attempt" ]; then
+      echo "[gate] refusing to overwrite $out/$attempt" >&2
+      exit 2
+    fi
+  done
   rc=0
-  for t in hermetic sim e2e; do "$0" "$t" "$@" || rc=1; done
+  for attempt in "${attempts[@]}"; do
+    GATE_OUT="$out/$attempt" "$0" "${attempt%%-*}" "$@" || rc=1
+  done
   exit $rc
 fi
 # The per-test timeout; exported because tests/harness/pty_cli.py ends a REPL
