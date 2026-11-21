@@ -101,7 +101,7 @@ def _extract_description(look_result: SkillResult) -> str:
 # PatrolSkill
 # ---------------------------------------------------------------------------
 
-@skill(
+@skill(requires=('base',),
     aliases=[
         "patrol",
         "巡逻",

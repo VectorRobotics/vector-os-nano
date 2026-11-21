@@ -27,9 +27,9 @@ class Agent:
     Usage::
 
         from vector_os_nano import Agent, SO101
-        from vector_os_nano.skills import get_so101_skills
+        from vector_os_nano.skills import HomeSkill
         arm = SO101(port="/dev/ttyACM0")
-        agent = Agent(arm=arm, skills=get_so101_skills())
+        agent = Agent(arm=arm, skills=[HomeSkill()])
         agent.execute_skill("pick", {"object_label": "red cup"})
 
     All hardware arguments are optional — Agent degrades gracefully when

@@ -51,6 +51,7 @@ def task_policy(agent: Any) -> str:
     skills = set(registry.list_skills()) if registry is not None else set()
     world = world_of(agent)
     lines = ["Task policy for this body (each goal: the action, then its verify):"]
+    lines.append("Available skills: " + ", ".join(sorted(skills)))
     if caps.has_base:
         lines.append(
             "- Reach a coordinate with navigate(x, y): it plans around obstacles. Use walk only for a "
@@ -102,7 +103,7 @@ def task_policy(agent: Any) -> str:
             "- Name an object in a verify the way the user did, e.g. holding_object('绿色瓶子') or "
             "holding_object('green bottle'); 'it' / '它' is the object of the earlier turn."
         )
-    if len(lines) == 1:
+    if not skills:
         return ""
     lines.append(
         "- A skill that fails twice for the same reason will not succeed a third time: stop and "
@@ -134,7 +135,9 @@ class RobotWorld:
         session = self.session(agent)
         if session is None or session.gt is None:
             return {}
-        return session.oracles()
+        from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
+
+        return session_namespace(session)
 
     def session(self, agent: Any) -> Any:
         from vector_os_nano.sim.session import session_for

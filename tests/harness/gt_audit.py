@@ -42,7 +42,7 @@ GT_GRADE = Path(__file__).resolve().parents[2] / "scripts" / "gt_grade.py"
 _PY = sys.executable  # isolated (-I): the grade imports nothing but the stdlib
 TABLE = Path(__file__).resolve().parents[1] / "e2e_repl" / "gt_expect.yaml"
 AUDIT_DIR_ENV = "VECTOR_GT_AUDIT_DIR"  # scripts/gate.sh e2e: one folder for the run
-GRADES = ("base_in", "base_at", "base_turned", "held_lifted", "delivered", "object_on")
+GRADES = ("base_in", "base_at", "base_turned", "held_lifted", "delivered", "object_on", "arm_at_home")
 RED = ("FALSE_GROUNDED", "UNAUDITED", "NO_GT")
 READY = re.compile(r"Started\s+(\w+)\s+simulation,\s+ready\s+in")
 _VERDICT = re.compile(r"verdict (\w+) verified=(True|False) \((\d+)/(\d+) grounded\).*? goal=(\w+)")
@@ -65,6 +65,10 @@ def expectation(row: dict[str, Any]) -> tuple[str, Any]:
 def grade_args(row: dict[str, Any]) -> list[str]:
     """scripts/gt_grade.py flags for one expectation (fail loud on anything else)."""
     key, arg = expectation(row)
+    if key == "arm_at_home":
+        if arg is not True:
+            raise ValueError("arm_at_home expects true")
+        return ["--home"]
     if key in ("base_in", "base_at"):
         return ["--box" if key == "base_in" else "--at", *(str(float(v)) for v in arg)]
     if key == "base_turned":
@@ -123,6 +127,8 @@ def parse_verdict(turn: str) -> dict[str, Any] | None:
 
 def json_verdict(report: dict[str, Any]) -> dict[str, Any]:
     """The same fields from a ``VECTOR_VERDICT {json}`` report (``vector-cli -p --json``)."""
+    if type(report.get("schema")) is not int or report["schema"] != 1:
+        raise ValueError(f"unsupported verdict schema {report.get('schema')!r}; this audit reads 1")
     v = {"evidence": report.get("evidence", ""), "verified": bool(report.get("verified")),
          "grounded": f"{report.get('n_grounded', 0)}/{report.get('n_steps', 0)}",
          "goal_check": report.get("goal_check", "unchecked")}

@@ -1,79 +1,69 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-
-"""Registration by body: the tool list a body offers holds only what it can do.
-
-core:default-so101-skills-on-every-body / skills-manip:so101-skills-registered-on-all-
-embodiments: the Agent registered the SO-101 set on every body (go2, g1, go2_piper).
-Now the Agent registers nothing and the session's table chooses per body.
-"""
-from __future__ import annotations
+"""Capability binding has no robot-name dispatch; imported extensions join it."""
+from dataclasses import replace
 
 import pytest
 
 from vector_os_nano.core.agent import Agent
+from vector_os_nano.core.skill import SKILL_TYPES, skill
 from vector_os_nano.embodiments import registry
-from vector_os_nano.sim.session import _skill_pack
-from vector_os_nano.skills import get_piper_skills, get_so101_skills
-from vector_os_nano.skills.go2 import get_go2_skills
+from vector_os_nano.skills import get_skills
 from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
 
-_GRIPPER = {"gripper_open", "gripper_close"}  # body-agnostic: any body with a gripper
-_SO101 = {s.name for s in get_so101_skills()} - {"stop"} - _GRIPPER  # the 5-DoF pose skills
-_PIPER = {s.name for s in get_piper_skills()} - _GRIPPER
-_BASE = {s.name for s in get_go2_skills()} - {"stop"}
 
-
-def _tools(embodiment: str) -> set[str]:
-    """The skill tools the model is offered on this body."""
-    return {t.name for t in wrap_skills(Agent(config={}, skills=_skill_pack(embodiment)))}
-
-
-def test_an_agent_registers_nothing_by_itself() -> None:
+def test_an_agent_registers_nothing_by_itself():
     assert Agent(config={}).skills == []
 
 
-@pytest.mark.parametrize("embodiment", registry.embodiment_ids())
-def test_every_body_has_a_pack(embodiment: str) -> None:
-    _skill_pack(embodiment)
-
-
-def test_go2_offers_no_arm_skill() -> None:
-    tools = _tools("go2")
-    assert _BASE <= tools and not tools & (_SO101 | _PIPER | _GRIPPER), tools
-
-
-def test_go2_piper_offers_the_piper_set_and_no_so101_skill() -> None:
-    tools = _tools("go2_piper")
-    assert (_BASE | _PIPER) <= tools and not tools & (_SO101 - _PIPER - {"home"}), tools
-
-
-def test_so101_offers_no_base_skill() -> None:
-    tools = _tools("so101")
-    assert _SO101 <= tools and not tools & (_BASE | (_PIPER - _SO101)), tools
-
-
-def test_the_fixed_piper_offers_the_piper_set_a_home_and_no_base_skill() -> None:
-    tools = _tools("piper")
-    assert (_PIPER | _GRIPPER | {"home", "stop"}) <= tools, tools
-    assert not tools & (_BASE | (_SO101 - _PIPER - {"home"})), tools
-
-
-def test_g1_offers_no_arm_skill() -> None:
-    assert not _tools("g1") & (_SO101 | _PIPER | _GRIPPER)
-
-
-@pytest.mark.parametrize("embodiment", ["so101", "piper", "go2_piper"])
-def test_every_body_with_a_gripper_offers_open_and_close(embodiment: str) -> None:
-    """R2V-01: go2_piper lost gripper_open/close (e10's scripted mid-carry drop)."""
-    assert _GRIPPER <= _tools(embodiment)
-
-
-@pytest.mark.parametrize("embodiment", registry.embodiment_ids())
-def test_every_body_offers_the_stop_its_p0_phrase_needs(embodiment: str) -> None:
-    """producers:stop-skill-go2-only: 'stop' on so101 went to the model."""
+@pytest.mark.parametrize('embodiment', registry.embodiment_ids())
+def test_tools_match_the_body_capabilities_and_always_offer_stop(embodiment):
+    cfg = registry.load(embodiment)
+    offered = get_skills(cfg.capabilities)
+    names = {t.name for t in wrap_skills(Agent(config={}, skills=offered))}
+    assert len(names) == len(offered)
+    assert 'stop' in names
+    assert ('home' in names) == cfg.capabilities.has_arm
+    assert ('grasp' in names) == (cfg.capabilities.has_arm and cfg.capabilities.has_gripper
+                                and cfg.capabilities.camera and cfg.capabilities.depth)
+    assert ('navigate' in names) == cfg.capabilities.has_base
+    assert ('look' in names) == (cfg.capabilities.has_base and cfg.capabilities.camera)
+    assert ('explore' in names) == (cfg.capabilities.has_base and cfg.capabilities.lidar
+                                  and cfg.capabilities.camera)
     from vector_os_nano.vcli.engine import VectorEngine
-
     eng = VectorEngine(backend=None)
-    eng._agent = Agent(config={}, skills=_skill_pack(embodiment))
-    assert "stop" in _tools(embodiment) and eng.is_stop("停") and eng.is_stop("stop")
+    eng._agent = Agent(config={}, skills=offered)
+    assert eng.is_stop('停') and eng.is_stop('stop')
+
+
+def test_new_registered_skill_needs_no_pack_edit():
+    try:
+        @skill(requires=('arm', 'depth'), actuates=False)
+        class DepthProbe:
+            name = 'test_depth_probe'
+        caps = registry.load('piper').capabilities
+        assert 'test_depth_probe' in {s.name for s in get_skills(caps)}
+        assert 'test_depth_probe' not in {s.name for s in get_skills(replace(caps, depth=False))}
+        assert 'test_depth_probe' not in {s.name for s in get_skills(registry.load('go2').capabilities)}
+    finally:
+        SKILL_TYPES.pop('test_depth_probe', None)
+
+
+def test_requirement_typo_and_duplicate_name_fail_before_binding():
+    with pytest.raises(ValueError, match='unknown capabilities'):
+        @skill(requires=('amr',))
+        class Typo:
+            name = 'test_typo'
+    get_skills(registry.load('go2').capabilities)
+    with pytest.raises(ValueError, match='duplicate skill name'):
+        @skill(requires=())
+        class Duplicate:
+            name = 'stop'
+
+
+@pytest.mark.parametrize('embodiment', registry.embodiment_ids())
+def test_persona_skill_list_matches_the_offered_tools(embodiment):
+    from vector_os_nano.vcli.worlds.robot import task_policy
+    agent = Agent(config={}, skills=get_skills(registry.load(embodiment).capabilities))
+    line = next(line for line in task_policy(agent).splitlines() if line.startswith('Available skills: '))
+    assert set(line.removeprefix('Available skills: ').split(', ')) == {t.name for t in wrap_skills(agent)}

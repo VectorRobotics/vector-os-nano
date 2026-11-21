@@ -16,7 +16,7 @@ from vector_os_nano.core.types import SkillResult
 logger = logging.getLogger(__name__)
 
 
-@skill(
+@skill(requires=(),
     aliases=["stop", "停", "停下", "halt", "freeze", "别动", "停止"],
 )
 class StopSkill:

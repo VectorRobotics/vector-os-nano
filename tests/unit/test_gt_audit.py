@@ -35,6 +35,8 @@ def _stale(row: dict, bodies: list[str], sentence: str) -> str:
     key, arg = gt_audit.expectation(row)
     if key == "held_lifted":
         ok = any(arg in w.pickables for w in worlds)
+    elif key == "arm_at_home":
+        ok = arg is True and any(c.arm is not None for c in cfgs)
     elif key == "delivered":
         ok = any(arg in w.pickables and w.user is not None for w in worlds)
     elif key == "object_on":
@@ -120,7 +122,7 @@ def _dump(path: Path, *turns: tuple[str, float, bool, tuple | None]) -> Path:
     lines = []
     for n, (goal, z, welded, xy) in enumerate(turns, 1):
         for phase, (zz, w, b) in (("start", (0.02, False, (10.0, 3.0))), ("end", (z, welded, xy or (10.0, 3.0)))):
-            lines.append({"phase": phase, "turn": n, "goal": goal, "surfaces": {}, "user": None, "base": [*b, 0.3, 0.0],
+            lines.append({"schema": 1, "backend": "mujoco", "session": 1, "phase": phase, "turn": n, "goal": goal, "surfaces": {}, "user": None, "base": [*b, 0.3, 0.0],
                           "objects": {"banana": {"pos": [0.3, 0.0, zz], "welded": w}}})
     path.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines), encoding="utf-8")
     return path
@@ -228,7 +230,7 @@ _STANDIN = textwrap.dedent('''
     turn = 0
     def mark(phase, goal, z):
         with open(dump, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"phase": phase, "turn": turn, "goal": goal, "base": None, "surfaces": {}, "user": None,
+            fh.write(json.dumps({"schema": 1, "backend": "mujoco", "session": 1, "phase": phase, "turn": turn, "goal": goal, "base": None, "surfaces": {}, "user": None,
                                  "objects": {"banana": {"pos": [0.3, 0.0, z], "welded": z > 0.02}}}) + "\\n")
     print("  Model: standin-model | Provider: standin")
     while True:

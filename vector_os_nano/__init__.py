@@ -6,10 +6,10 @@
 Quick start:
 
     from vector_os_nano import Agent, SO101, Skill, SkillResult
-    from vector_os_nano.skills import get_so101_skills
+    from vector_os_nano.skills import HomeSkill
 
     arm = SO101(port="/dev/ttyACM0")
-    agent = Agent(arm=arm, skills=get_so101_skills())
+    agent = Agent(arm=arm, skills=[HomeSkill()])
     agent.execute_skill("pick", {"object_label": "red cup"})
 
 The Agent, SO101, Skill, and SkillResult names are the four public entry

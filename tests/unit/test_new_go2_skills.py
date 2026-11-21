@@ -33,7 +33,9 @@ def _make_base(x: float = 3.0, y: float = 2.5, z: float = 0.28, heading: float =
 
 
 def _make_context(base=None) -> SkillContext:
-    return SkillContext(base=base)
+    from vector_os_nano.schemas.world import load_world
+    world = load_world("apartment")
+    return SkillContext(base=base, services={"layout": {"rooms": world.rooms, "boxes": world.boxes}})
 
 
 # ===========================================================================

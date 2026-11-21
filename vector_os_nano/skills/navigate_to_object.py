@@ -63,7 +63,7 @@ def _accept_object_name(params: dict) -> str:
     return ""
 
 
-@skill(
+@skill(requires=('base', 'camera', 'depth'),
     aliases=[
         "navigate to object",
         "go to object",

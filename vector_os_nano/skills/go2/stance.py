@@ -53,7 +53,7 @@ def _command_posture(context: SkillContext, posture: str) -> SkillResult:
     return SkillResult(success=True, result_data=data)
 
 
-@skill(
+@skill(requires=('base',),
     aliases=["stand", "站", "站起来", "起立"],
 )
 class StandSkill:
@@ -71,7 +71,7 @@ class StandSkill:
         return _command_posture(context, "stand")
 
 
-@skill(
+@skill(requires=('base',),
     aliases=["sit", "坐", "坐下"],
 )
 class SitSkill:
@@ -89,7 +89,7 @@ class SitSkill:
         return _command_posture(context, "sit")
 
 
-@skill(
+@skill(requires=('base',),
     aliases=["lie down", "lie", "趴", "趴下", "躺下"],
 )
 class LieDownSkill:

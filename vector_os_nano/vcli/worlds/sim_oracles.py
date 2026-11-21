@@ -83,6 +83,13 @@ def _camera(cfg: Any) -> tuple[str, int, int] | None:
     return None if cam is None else (cam.name, cam.width, cam.height)
 
 
+def session_namespace(session: Any) -> dict[str, Callable[..., Any]]:
+    """Bind the world's predicates outside the simulator layer."""
+    return build_namespace(session.gt, session.world, session.config,
+                           belief=lambda: getattr(session.agent, "_spatial_memory", None),
+                           turn_start=lambda: session._turn)
+
+
 def build_namespace(
     gt: Any,
     world: Any,

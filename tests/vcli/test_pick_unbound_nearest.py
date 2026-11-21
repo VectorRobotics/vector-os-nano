@@ -13,6 +13,7 @@ Two scenarios:
 The test is headless and deterministic — no LLM, no network.
 """
 from __future__ import annotations
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 
 import pytest
 
@@ -36,7 +37,7 @@ def unbound():
 def bound():
     """A fresh so101 session: (session, empty before?, the bound pick's result)."""
     with started("so101") as s:
-        empty = s.oracles()["holding_object"]() is False
+        empty = session_namespace(s)["holding_object"]() is False
         yield s, empty, s.agent.execute_skill("grasp", {"query": _BOUND_TARGET})
 
 
@@ -51,7 +52,7 @@ class TestPickUnboundRefused:
 
     def test_nothing_is_held_or_lifted(self, unbound) -> None:
         s, _result = unbound
-        assert s.oracles()["holding_object"]() is False
+        assert session_namespace(s)["holding_object"]() is False
         z = s.gt.object_positions()[_NEAREST_OBJECT][2]
         assert z < 0.15, f"{_NEAREST_OBJECT!r} must stay on the table, got z={z:.3f}m"
 
@@ -68,7 +69,7 @@ class TestPickBoundTargetUnchanged:
         assert result.success, f"Bound pick({_BOUND_TARGET!r}) failed: {result.error_message}"
 
     def test_holding_after_bound_pick(self, bound) -> None:
-        assert bound[0].oracles()["holding_object"](_BOUND_TARGET) is True
+        assert session_namespace(bound[0])["holding_object"](_BOUND_TARGET) is True
 
     def test_mug_is_lifted_not_banana(self, bound) -> None:
         """The bound object (mug) is lifted; banana stays on the table."""

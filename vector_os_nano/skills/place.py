@@ -47,11 +47,9 @@ _DEFAULT_PRE_GRASP_HEIGHT: float = 0.06
 _APPROACH_DURATION: float = 3.0
 _DESCEND_DURATION: float = 2.0
 _LIFT_DURATION: float = 2.0
-_HOME_DURATION: float = 3.0
-_DEFAULT_HOME_JOINTS: list[float] = [-0.014, -1.238, 0.562, 0.858, 0.311]
 
 
-@skill(
+@skill(requires=('arm', 'gripper'),
     aliases=["put", "put down", "放", "放下", "放到", "放置", "放在"],
 )
 class PlaceSkill:
@@ -132,11 +130,6 @@ class PlaceSkill:
             context.config.get("skills", {})
             .get("pick", {})
             .get("pre_grasp_height", _DEFAULT_PRE_GRASP_HEIGHT)
-        )
-        home_joints: list[float] = (
-            context.config.get("skills", {}).get("home", {}).get(
-                "joint_values", _DEFAULT_HOME_JOINTS
-            )
         )
 
         # Resolve target coordinates from location name or explicit params
@@ -234,7 +227,9 @@ class PlaceSkill:
             context.gripper.close()
 
         logger.info("[PLACE] Returning home ...")
-        context.arm.move_joints(home_joints, duration=_HOME_DURATION)
+        if not context.arm.home():
+            return SkillResult(False, {"diagnosis": "move_failed", "phase": "home"},
+                               "Object released, but the arm did not reach its configured home")
 
         logger.info("[PLACE] Place complete!")
         return SkillResult(

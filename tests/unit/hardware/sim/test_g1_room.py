@@ -25,7 +25,7 @@ def test_g1_is_a_startable_embodiment(g1_assets):
     from vector_os_nano.vcli.tools.sim_tool import SimStartTool
 
     SimSession.validate(SimSpec("g1", gui=False))
-    assert "g1" in SimStartTool.input_schema["properties"]["embodiment"]["enum"]
+    assert "g1" in SimStartTool().input_schema["properties"]["embodiment"]["enum"]
 
 
 @pytest.mark.sim

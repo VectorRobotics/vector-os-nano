@@ -5,9 +5,10 @@
 Caller-stepped (``VECTOR_SIM_LOCKSTEP=1``): physics advances only inside the drivers'
 timed waits, so a pick runs as fast as the machine allows and every test is
 deterministic. The session owns the agent, its GroundTruth (``s.gt``) and its oracles
-(``s.oracles()``).
+(``session_namespace(s)``).
 """
 from __future__ import annotations
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 
 import contextlib
 from typing import Any, Iterator

@@ -189,8 +189,9 @@ class TestStanceSkills:
 
 class TestSkillRegistration:
     def test_get_go2_skills(self):
-        from vector_os_nano.skills.go2 import get_go2_skills
-        skills = get_go2_skills()
+        from vector_os_nano.skills import get_skills
+        from vector_os_nano.embodiments.registry import load as load_robot
+        skills = get_skills(load_robot("go2").capabilities)
         names = [s.name for s in skills]
         assert sorted(names) == sorted({
             "walk", "turn", "stand", "sit", "lie_down",

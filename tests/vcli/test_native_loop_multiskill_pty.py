@@ -66,7 +66,8 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
     from pathlib import Path as _Path
 
     from vector_os_nano.core.agent import Agent
-    from vector_os_nano.skills.go2 import get_go2_skills
+    from vector_os_nano.skills import get_skills
+    from vector_os_nano.embodiments.registry import load as load_robot
     from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
     from vector_os_nano.vcli.cognitive.trace_store import (
         classify_step_evidence,
@@ -90,7 +91,7 @@ def test_native_multiskill_walk_then_turn_routes_and_grounds(sim_cleanup) -> Non
         from tests.harness.fake_gt import bind_real_sim
 
         bind_real_sim(agent, "go2", dog.rt)  # the GT oracles of a live session
-        for s in get_go2_skills():
+        for s in get_skills(load_robot("go2").capabilities):
             agent._skill_registry.register(s)
 
         # The facing target is computed from the ACTUAL pre-run heading + 90deg, so

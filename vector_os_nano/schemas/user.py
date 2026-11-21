@@ -12,8 +12,7 @@
 
 Precedence: CLI flag > this file > the built-in default (vcli/config.py). The file never
 holds a key: a key that looks like a secret is refused, naming the variable to set.
-Only what something reads is typed: the charter's ``perception`` and ``defaults``
-blocks have no reader yet, so they are unknown keys until one exists.
+The ``defaults`` block selects simulation startup; perception is not yet configured here.
 """
 from __future__ import annotations
 
@@ -52,8 +51,17 @@ class Llm:
 
 
 @dataclass(frozen=True)
+class Defaults:
+    embodiment: str = "so101"
+    backend: str = "mujoco"
+    world: str | None = None
+    gui: bool = True
+
+
+@dataclass(frozen=True)
 class UserConfig:
     llm: Llm = Llm()
+    defaults: Defaults = Defaults()
 
 
 class UserConfigError(ValueError):
@@ -107,7 +115,7 @@ def load(path: Path) -> UserConfig:
                               "upgrade vector_os_nano")
     if schema < SCHEMA:
         raise UserConfigError(f"{path}: schema {schema} is not a valid schema number; use schema: {SCHEMA}")
-    _unknown(path, "", raw, ["schema", "llm"])
+    _unknown(path, "", raw, ["schema", "llm", "defaults"])
     llm = raw.get("llm") or {}
     if not isinstance(llm, dict):
         raise UserConfigError(f"{path}: llm must be a mapping (got {type(llm).__name__})")
@@ -118,4 +126,14 @@ def load(path: Path) -> UserConfig:
             raise UserConfigError(f"{path}: llm.{key} must be a string (got {type(value).__name__})")
     if llm.get("provider") is not None and llm["provider"] not in PROVIDERS:
         raise UserConfigError(f"{path}: llm.provider {llm['provider']!r} is not one of {', '.join(PROVIDERS)}")
-    return UserConfig(llm=Llm(**llm))
+    defaults = raw.get("defaults", {})
+    if not isinstance(defaults, dict):
+        raise UserConfigError(f"{path}: defaults must be a mapping")
+    _unknown(path, "defaults.", defaults, [f.name for f in fields(Defaults)])
+    for key, value in defaults.items():
+        if key == "gui":
+            if type(value) is not bool:
+                raise UserConfigError(f"{path}: defaults.gui must be true or false")
+        elif not isinstance(value, str) or not value.strip():
+            raise UserConfigError(f"{path}: defaults.{key} must be a non-empty string")
+    return UserConfig(llm=Llm(**llm), defaults=Defaults(**defaults))

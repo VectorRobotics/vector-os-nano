@@ -76,9 +76,8 @@ cells:
     launch: 启动 so101 机械臂仿真 无窗口
     task: 回到初始位置
     kind: home
-    expect: {}
+    expect: {arm_at_home: true}
     n: 2
-    not_yet: the VECTOR_GT_DUMP lines carry no arm joint state, so no independent home grade exists
   - id: so101-mujoco-place
     body: so101
     backend: mujoco
@@ -114,7 +113,15 @@ cells:
     kind: grasp
     expect: {held_lifted: banana}
     n: 2
-    not_yet: start_simulation takes no backend, so PyBullet is not reachable from the bare REPL
+  - id: piper-pybullet-grasp
+    body: piper
+    backend: pybullet
+    launch: 启动 piper 机械臂仿真 用 pybullet 无窗口
+    task: pick up the red box
+    kind: grasp
+    expect: {held_lifted: red_box}
+    n: 2
+    timeout_s: 360
   - id: g1-mujoco-room
     body: g1
     backend: mujoco

@@ -9,6 +9,7 @@ attempt has no success claim; the next command must still run and be caused.
 from __future__ import annotations
 
 import re
+import copy
 
 import pytest
 
@@ -33,10 +34,13 @@ _STOPPED = re.compile(r"■ stopped \((\d+) ms, no LLM call\)")
 _HOME_CAUSED = "home → verify arm_at_home() ✓ (actor=CAUSED)"
 
 
-@pytest.fixture(scope="module")
-def e7():
+@pytest.fixture(scope="module", params=["mujoco", "pybullet"])
+def e7(request):
+    script = copy.deepcopy(_SCRIPT)
+    script["steps"][0]["tool_calls"][0]["input"]["backend"] = request.param
     r = run_repl_session(["启动机械臂仿真 无窗口", "回到初始位置", "尝试抓起香蕉", (1.8, "停"), "回到初始位置", "抓起香蕉"],
-                         tool_script=_SCRIPT, answers=["y"], timeout_sec=240)
+                         tool_script=script, answers=["y"], timeout_sec=240)
+    assert f"backend={request.param}" in r.text
     return r, r.text
 
 

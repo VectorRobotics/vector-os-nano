@@ -106,6 +106,10 @@ def file_violations(rel: str, source: str) -> set[str]:
     if rel.startswith("core/"):
         for m in ours - {m for m in ours if _under(m, "core", "interfaces", "schemas")}:
             bad("5 core imports only interfaces and schemas", m)
+    if rel.startswith("sim/"):
+        for m in ours:
+            if _under(m, "vcli"):
+                bad("7 sim imports no CLI", m)
     return out
 
 

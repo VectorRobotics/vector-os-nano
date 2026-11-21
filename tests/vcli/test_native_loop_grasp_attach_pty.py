@@ -34,7 +34,7 @@ from tests.harness.pty_cli import run_repl_session
 pytest.importorskip("mujoco")
 
 _LAUNCH = "启动 go2 仿真 带机械臂 无窗口"
-_READY = re.compile(r"Started go2_piper simulation, ready in ([0-9.]+)s: LeggedBase \+ Arm")
+_READY = re.compile(r"Started go2_piper simulation, ready in ([0-9.]+)s: .*; LeggedBase \+ Arm")
 
 _SCRIPT = {"turns": [
     # turn 1 (native since WP14: every REPL turn; start_simulation is a lifecycle tool)

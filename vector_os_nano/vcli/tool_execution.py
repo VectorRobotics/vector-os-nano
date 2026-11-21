@@ -12,7 +12,7 @@ object or resolver never allows a tool.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from vector_os_nano.vcli.tools.base import PermissionResult, ToolResult
@@ -99,8 +99,17 @@ def execute_resolved_tool(
     (never raises): ``is_error`` is the caller's one success signal.
     """
     try:
-        return tool.execute(params, ctx)
+        result = tool.execute(params, ctx)
     except Exception as exc:  # noqa: BLE001
         if on_error is not None:
             on_error(getattr(tool, "name", "") or "", exc)
-        return ToolResult(content=f"{error_prefix}: {exc}", is_error=True)
+        result = ToolResult(content=f"{error_prefix}: {exc}", is_error=True)
+    session = (getattr(ctx, "app_state", None) or {}).get("sim_session")
+    if callable(getattr(session, "metadata", None)):
+        try:
+            info = session.metadata()
+        except Exception as exc:  # provenance failure must not erase the tool's actual outcome
+            logger.warning("Could not read session provenance: %s", exc)
+            info = {}
+        result = replace(result, metadata={**result.metadata, "session_info": info})
+    return result

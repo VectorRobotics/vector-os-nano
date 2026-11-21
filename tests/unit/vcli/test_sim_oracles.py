@@ -8,6 +8,7 @@ tick so only the objects run physics, and grasps are posed (bottle between the
 Piper fingers, weld on) rather than driven, so each case isolates one oracle input.
 """
 from __future__ import annotations
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 
 import dataclasses
 import math
@@ -309,7 +310,7 @@ def test_so101_tabletop_oracles() -> None:
     from tests.harness.sim_session import started
 
     with started("so101") as s:
-        ns, sc = s.oracles(), s.runtime.world.scene
+        ns, sc = session_namespace(s), s.runtime.world.scene
         assert "at_position" not in ns  # fixed base: no base oracles
         assert ns["in_view"]("banana")  # the manifest's overhead camera sees the table
         assert not ns["arm_at_home"]()  # qpos0: stretched out

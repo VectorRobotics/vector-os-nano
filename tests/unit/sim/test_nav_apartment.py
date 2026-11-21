@@ -12,6 +12,8 @@ every executed leg (>= the go2 half-width; sim-locomotion:capture-radius-cuts-
 corners), and an 8/8 coverage tour graded by room boxes.
 """
 from __future__ import annotations
+from vector_os_nano.schemas.world import WORLDS_DIR
+_LAYOUT_YAML = WORLDS_DIR / "apartment" / "world.yaml"
 
 import json
 import math
@@ -65,7 +67,7 @@ def _sample(path, step=0.05):
 
 
 def test_every_layout_room_point_is_free_floor_in_its_own_room(obstacles):
-    layout = room_layout()
+    layout = room_layout(str(_LAYOUT_YAML))
     inflated = [vg.inflate_polygon(p, R) for p in obstacles]
     assert len(layout["rooms"]) == 8 and set(layout["rooms"]) == set(layout["boxes"])
     for name, pt in layout["rooms"].items():
@@ -73,17 +75,17 @@ def test_every_layout_room_point_is_free_floor_in_its_own_room(obstacles):
         assert room_at(*pt, layout["boxes"]) == name
 
 
-@pytest.mark.parametrize("room", sorted(room_layout()["rooms"]))
+@pytest.mark.parametrize("room", sorted(room_layout(str(_LAYOUT_YAML))["rooms"]))
 def test_planned_leg_keeps_the_inflation_radius(obstacles, room):
-    path, length = vg.plan_path(_SPAWN, room_layout()["rooms"][room], obstacles, R, snap_goal=True)
+    path, length = vg.plan_path(_SPAWN, room_layout(str(_LAYOUT_YAML))["rooms"][room], obstacles, R, snap_goal=True)
     assert path is not None and math.isfinite(length)
     assert _clearance(_sample(path), obstacles) >= R - 1e-3
 
 
-@pytest.mark.parametrize("room", sorted(room_layout()["rooms"]))
+@pytest.mark.parametrize("room", sorted(room_layout(str(_LAYOUT_YAML))["rooms"]))
 def test_executed_leg_keeps_the_body_half_width(obstacles, room):
     base = KinBase(*_SPAWN)
-    res = follow(base, room_layout()["rooms"][room], obstacles, nav=BODY, fallen=lambda: False, cancel=Never())
+    res = follow(base, room_layout(str(_LAYOUT_YAML))["rooms"][room], obstacles, nav=BODY, fallen=lambda: False, cancel=Never())
     assert res, res
     assert _clearance(base.trace[::5], obstacles) >= _HALF_WIDTH
 
@@ -97,12 +99,12 @@ def test_coverage_tour_enters_every_room_by_ground_truth(obstacles, tmp_path):
     events = []
     looks = []  # explore's discovery runs after every look turn (skills-nav:explore-auto-observe)
     log = tmp_path / "cov.jsonl"
-    out = CoverageExplorer(base, cancel=Never(), on_event=lambda e, d: events.append(e),
+    out = CoverageExplorer(base, room_layout(str(_LAYOUT_YAML)), cancel=Never(), on_event=lambda e, d: events.append(e),
                            log_path=str(log), observe=lambda: looks.append(base.get_heading())).run()
-    assert sorted(out["visited"]) == sorted(room_layout()["rooms"]) and not out["failed"]
+    assert sorted(out["visited"]) == sorted(room_layout(str(_LAYOUT_YAML))["rooms"]) and not out["failed"]
     assert len(looks) >= len(out["visited"]) and len(set(round(h, 1) for h in looks)) > 1
     rows = [json.loads(line) for line in log.read_text().splitlines()]
-    boxes = room_layout()["boxes"]
+    boxes = room_layout(str(_LAYOUT_YAML))["boxes"]
     assert all(room_at(*r["gt_pos"], boxes) == r["room"] and r["looked"] for r in rows)
     assert events[0] == "started" and events[-1] == "completed"
     assert _clearance(base.trace[::10], obstacles) >= _HALF_WIDTH

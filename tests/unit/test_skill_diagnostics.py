@@ -376,3 +376,12 @@ class TestGripperCloseSkillDiagnosticsSuccess:
 # PickSkill diagnostics
 # ---------------------------------------------------------------------------
 
+
+
+def test_place_uses_configured_home_and_reports_home_failure():
+    arm = _default_arm()
+    arm.home.return_value = False
+    result = PlaceSkill().execute({'x': .3, 'y': 0., 'z': .04}, _make_context(arm, _default_gripper()))
+    assert not result.success and result.result_data == {'diagnosis': 'move_failed', 'phase': 'home'}
+    arm.home.assert_called_once_with()
+    assert arm.move_joints.call_count == 3

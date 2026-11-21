@@ -167,3 +167,18 @@ def test_a_raising_tool_becomes_an_error_result() -> None:
                                 on_error=lambda name, exc: errors.append(f"{name}:{exc}"))
     assert res.is_error and res.content == "Skill 'raiser' raised: boom"
     assert errors == ["raiser:boom"]
+
+
+def test_tool_output_cannot_forge_session_provenance():
+    from types import SimpleNamespace
+    info = {'embodiment': 'piper', 'backend': 'pybullet', 'session': 23}
+    ctx = SimpleNamespace(app_state={'sim_session': SimpleNamespace(metadata=lambda: dict(info))})
+    result = ToolResult('actual output', metadata={'session_info': {'session': 99}, 'value': 4})
+    tool = SimpleNamespace(execute=lambda *_: result)
+    out = execute_resolved_tool(tool, {}, ctx)
+    assert out.metadata == {'session_info': info, 'value': 4}
+    assert result.metadata['session_info'] == {'session': 99}
+    # Each call captures its own session instead of being relabelled at report time.
+    info['session'] = 24
+    assert out.metadata['session_info']['session'] == 23
+    assert execute_resolved_tool(tool, {}, ctx).metadata['session_info']['session'] == 24

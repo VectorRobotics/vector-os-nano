@@ -41,7 +41,11 @@ TURN_TOL_DEG = 5.0  # a requested turn, measured from its start heading
 
 def load(path: str) -> list[dict[str, Any]]:
     with open(path, encoding="utf-8") as fh:
-        return [json.loads(line) for line in fh if line.strip()]
+        rows = [json.loads(line) for line in fh if line.strip()]
+    for row in rows:
+        if type(row.get("schema")) is not int or row["schema"] != 1:
+            raise ValueError(f"unsupported GT schema {row.get('schema')!r}; this grader reads 1")
+    return rows
 
 
 def turns(lines: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
@@ -50,10 +54,11 @@ def turns(lines: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, A
     open_: dict[Any, dict[str, Any]] = {}
     out = []
     for ln in lines:
+        key = (ln.get("session"), ln["turn"])
         if ln["phase"] == "start":
-            open_[ln["turn"]] = ln
-        elif ln["turn"] in open_:
-            out.append((open_.pop(ln["turn"]), ln))
+            open_[key] = ln
+        elif ln["phase"] == "end" and key in open_:
+            out.append((open_.pop(key), ln))
     return out
 
 
@@ -120,9 +125,22 @@ def base_turned(start: dict[str, Any], end: dict[str, Any], degrees: float) -> b
     return abs(math.atan2(math.sin(delta), math.cos(delta))) <= math.radians(TURN_TOL_DEG)
 
 
+def arm_at_home(start: dict[str, Any], end: dict[str, Any]) -> bool:
+    """This turn brought every arm joint within 0.08 rad of the authored home."""
+    def at(line):
+        arm = line.get("arm")
+        if not isinstance(arm, dict):
+            return False
+        q, home = arm.get("q", []), arm.get("home", [])
+        return bool(q) and len(q) == len(home) == len(arm.get("joints", [])) and all(
+            math.isfinite(a) and math.isfinite(b) and abs(a - b) <= .08 for a, b in zip(q, home))
+    return at(end) and not at(start)
+
+
 def grade(path: str, obj: str | None = None, surface: str | None = None,
           box: list[float] | None = None, at: list[float] | None = None,
-          goal: str | None = None, nth: int = 1, turn_deg: float | None = None) -> list[dict[str, Any]]:
+          goal: str | None = None, nth: int = 1, turn_deg: float | None = None,
+          home: bool = False) -> list[dict[str, Any]]:
     pairs = turns(load(path))
     if goal is not None:
         pairs = [p for p in pairs if p[1].get("goal") == goal][nth - 1:nth]
@@ -142,6 +160,8 @@ def grade(path: str, obj: str | None = None, surface: str | None = None,
             row["base_at"] = base_at(start, end, at)
         if turn_deg is not None:
             row["base_turned"] = base_turned(start, end, turn_deg)
+        if home:
+            row["arm_at_home"] = arm_at_home(start, end)
         out.append(row)
     return out
 
@@ -155,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="an xy box for the base_in check, e.g. a room's floor")
     ap.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"), help="a point for the base_at check")
     ap.add_argument("--turn-deg", type=float, help="signed turn in degrees (positive left, at most 180)")
+    ap.add_argument("--home", action="store_true", help="arm arrived at its declared home during this turn")
     ap.add_argument("--goal", help="grade only the turn whose goal is this sentence")
     ap.add_argument("--nth", type=int, default=1, help="with --goal: its nth finished turn (default 1)")
     a = ap.parse_args(argv)
@@ -162,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--surface needs --object")
     if a.nth < 1:
         ap.error("--nth counts from 1")
-    for row in grade(a.dump, a.object, a.surface, a.box, a.at, a.goal, a.nth, a.turn_deg):
+    for row in grade(a.dump, a.object, a.surface, a.box, a.at, a.goal, a.nth, a.turn_deg, a.home):
         print(json.dumps(row, ensure_ascii=False))
     return 0
 

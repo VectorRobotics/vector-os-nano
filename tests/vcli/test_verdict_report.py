@@ -19,6 +19,7 @@ Pure kernel logic on deterministic StepRecord/SubGoal — no cli.main, no LLM.
 from __future__ import annotations
 
 import json
+import pytest
 
 from vector_os_nano.vcli.cognitive.trace_store import (
     classify_step_evidence,
@@ -165,3 +166,31 @@ def test_sentinel_line_roundtrips() -> None:
     assert isinstance(payload["oracle_names"], list)
     assert isinstance(payload["per_step"], list)
     assert payload["per_step"][0]["evidence"] == "GROUNDED"
+
+
+def test_output_schema_and_step_provenance_are_pinned():
+    from dataclasses import replace
+    trace = _trace('at_position(2.0, 0.0)', success=True, verify_result=True)
+    one = {'embodiment': 'go2', 'backend': 'pybullet', 'session': 7}
+    step = replace(trace.steps[0], result_data={'output': {'session_info': one}})
+    report = VerdictReport.from_trace(replace(trace, steps=(step,)), ORACLES,
+                                      session_info={'world': 'room_b', 'backend_version': '1.2', 'perception_kind': 'rgbd'})
+    data = report.to_dict()
+    assert set(data) == {'verified', 'success', 'evidence', 'goal', 'n_steps', 'n_grounded', 'oracle_names',
+                         'per_step', 'error', 'gait_backend', 'llm_unavailable', 'model', 'reject_reason',
+                         'acted', 'scene', 'contract', 'goal_check', 'schema', 'world', 'backend_version', 'perception_kind'}
+    assert set(data['per_step'][0]) == {'name', 'strategy', 'success', 'verify', 'verify_result', 'evidence',
+                                      'actor_caused', 'reject_reason', 'superseded', 'failed_attempt', 'refused',
+                                      'embodiment', 'backend', 'session'}
+    assert all(data['per_step'][0][k] == v for k, v in one.items())
+    assert data['schema'] == 1 and data['backend_version'] == '1.2' and data['perception_kind'] == 'rgbd'
+
+
+def test_harness_refuses_unknown_verdict_schema():
+    from tests.harness.pty_cli import _find_verdict_line
+    from tests.harness.gt_audit import json_verdict
+    for schema in (None, True, '1', 2):
+        with pytest.raises(ValueError, match='unsupported verdict schema'):
+            _find_verdict_line('VECTOR_VERDICT ' + json.dumps({'schema': schema}))
+        with pytest.raises(ValueError, match='unsupported verdict schema'):
+            json_verdict({'schema': schema})

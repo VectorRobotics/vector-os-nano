@@ -211,7 +211,7 @@ def _get_room_center_from_memory(
 # NavigateSkill
 # ---------------------------------------------------------------------------
 
-@skill(
+@skill(requires=('base',),
     aliases=[
         "navigate", "go to", "goto",
         "去", "到", "走到", "去到", "导航",

@@ -185,10 +185,10 @@ def test_the_dead_core_api_stays_deleted() -> None:
     back += [f"Agent({k}=)" for k in ("llm", "llm_api_key") if k in params]
     back += ["perception_grasp dock_pose"] * ("dock_pose" in grasp.GraspSkill.parameters)
     # the deleted producer's skill metadata (no reader since R1)
-    from vector_os_nano.skills import get_piper_skills, get_so101_skills
-    from vector_os_nano.skills.go2 import get_go2_skills
+    from vector_os_nano.skills import get_skills
+    from vector_os_nano.embodiments.registry import load as load_robot
 
-    back += [f"{type(s).__name__}.{a}" for s in (*get_so101_skills(), *get_go2_skills(), *get_piper_skills())
+    back += [f"{type(s).__name__}.{a}" for s in (*get_skills(load_robot("so101").capabilities), *get_skills(load_robot("go2").capabilities), *get_skills(load_robot("piper").capabilities))
              for a in ("typical_duration_sec", "__skill_direct__", "__skill_auto_steps__") if hasattr(s, a)]
     assert not back, back
 

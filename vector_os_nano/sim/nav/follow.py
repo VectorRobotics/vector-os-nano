@@ -28,6 +28,7 @@ from __future__ import annotations
 import collections
 import functools
 import math
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -68,16 +69,6 @@ class NavResult(dict):
     @property
     def reason(self) -> str:
         return str(self["reason"])
-
-
-class _AbortFlag:
-    """The run's stop signal (WP05 CancelToken facade) in Event shape."""
-
-    @staticmethod
-    def is_set() -> bool:
-        from vector_os_nano.vcli.cognitive.abort import is_abort_requested
-
-        return is_abort_requested()
 
 
 def _wrap(a: float) -> float:
@@ -142,7 +133,7 @@ def follow(
     *tol* to ``nav.goal_tol`` else ``follower.goal_tol``, and never exceeds
     the arrival radius; *timeout* (sim s) to ``budget_factor x geodesic / speed +
     budget_pad_s``. *cancel* is anything
-    with ``is_set()``; None means the run's abort signal.
+    with ``is_set()``; the caller supplies its run's cancellation token.
     """
     cfg = nav_config()["follower"]
     r = float(nav.body_radius if inflation is None else inflation)
@@ -150,7 +141,7 @@ def follow(
     vyaw_max = nav.vyaw_max
     tol = min(float(tol if tol is not None else nav.goal_tol if nav.goal_tol is not None else cfg["goal_tol"]),
               arrival_radius())
-    cancel = cancel if cancel is not None else _AbortFlag()
+    cancel = cancel if cancel is not None else threading.Event()
     tick = float(cfg["tick_s"])
     inflated = [vg.inflate_polygon(p, r) for p in obstacles]
 
@@ -290,7 +281,7 @@ def turn_by(base: Any, angle: float, *, vyaw: float, tol: float,
     walks on the residual. Returns (within tol, residual rad). Works on any base
     with ``walk(vx, vy, vyaw, duration)`` + ``get_heading()``.
     """
-    cancel = cancel if cancel is not None else _AbortFlag()
+    cancel = cancel if cancel is not None else threading.Event()
     target = _wrap(base.get_heading() + angle)
     remaining = float(angle)
     for _ in range(1 + corrections):

@@ -425,10 +425,11 @@ class TestDeclaredActuation:
     scan (tools-worlds:motor-keyword-misclassify, skills-nav:motor-misclassified)."""
 
     def test_go2_locomotion_skills_actuate(self) -> None:
-        from vector_os_nano.skills.go2 import get_go2_skills
+        from vector_os_nano.skills import get_skills
+        from vector_os_nano.embodiments.registry import load as load_robot
         from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
 
-        skills = {s.name: s for s in get_go2_skills()}
+        skills = {s.name: s for s in get_skills(load_robot("go2").capabilities)}
         # The keyword scan called these four non-motor: concurrent, auto-allowed on
         # real hardware, no post-state.
         for name in ("walk", "turn", "explore", "patrol", "navigate"):

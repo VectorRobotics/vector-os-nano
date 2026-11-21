@@ -49,7 +49,7 @@ _DEFAULT_DISTANCE: float = 1.0   # metres
 _DEFAULT_SPEED: float = 0.3      # m/s
 
 
-@skill(
+@skill(requires=('base',),
     aliases=["walk", "go", "move", "走", "走路", "往前走", "前进", "后退"],
 )
 class WalkSkill:

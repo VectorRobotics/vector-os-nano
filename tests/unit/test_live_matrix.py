@@ -15,7 +15,7 @@ from tests.harness import live_matrix as lm
 
 _CELL = {"id": "so101-grasp", "body": "so101", "backend": "mujoco", "launch": "启动 so101 机械臂仿真 无窗口",
          "task": "抓起香蕉", "kind": "grasp", "expect": {"held_lifted": "banana"}, "n": 1}
-_READY = "  ▸ Started so101 simulation, ready in 2.1s: MuJoCoArm, sim_time=3.0s\n"
+_READY = "  ▸ Started so101 simulation, ready in 2.1s: embodiment=so101, backend=mujoco, world=tabletop; Arm, sim_time=3.0s\n"
 
 
 def _transcript(verified: bool, goal: str = "proven", ready: str = _READY) -> str:
@@ -28,7 +28,7 @@ def _transcript(verified: bool, goal: str = "proven", ready: str = _READY) -> st
 
 def _dump(z_end: float, welded_end: bool) -> str:
     def line(phase: str, z: float, welded: bool) -> dict:
-        return {"phase": phase, "turn": 1, "goal": "抓起香蕉", "base": None, "surfaces": {}, "user": None,
+        return {"schema": 1, "backend": "mujoco", "session": 1, "phase": phase, "turn": 1, "goal": "抓起香蕉", "base": None, "surfaces": {}, "user": None,
                 "objects": {"banana": {"pos": [0.3, 0.0, z], "welded": welded}}}
     return "\n".join(json.dumps(x, ensure_ascii=False)
                      for x in (line("start", 0.02, False), line("end", z_end, welded_end))) + "\n"
@@ -50,7 +50,7 @@ def test_the_shipped_matrix_loads_and_every_cell_is_runnable_or_says_why() -> No
     run = [c for c in cells if "not_yet" not in c]
     assert {c["body"] for c in run} == {"go2", "go2_piper", "piper", "so101", "g1"}
     assert {c["kind"] for c in run} >= {"navigate", "grasp", "fetch"}
-    assert all(c["backend"] == "mujoco" for c in run)
+    assert {c["backend"] for c in run} == {"mujoco", "pybullet"}
     assert any(c["kind"] == "place" for c in cells if "not_yet" in c)
     assert any(c["backend"] == "pybullet" for c in cells if "not_yet" in c)
 
@@ -85,6 +85,13 @@ def test_a_verified_turn_with_the_banana_still_on_the_table_is_false_grounded(tm
 def test_a_weld_with_no_lift_is_no_pick_either(tmp_path) -> None:
     r = lm.judge(_CELL, _rec(tmp_path, _transcript(True), _dump(0.025, True)))
     assert r["outcome"] == "FALSE_GROUNDED"
+
+
+def test_gt_backend_must_match_the_requested_engine(tmp_path) -> None:
+    dump = _dump(0.12, True).replace('"backend": "mujoco"', '"backend": "pybullet"')
+    r = lm.judge(_CELL, _rec(tmp_path, _transcript(True), dump))
+    assert r["grade"] is None and r["outcome"] == "ungraded"
+    assert "GT backend" in r["grade_note"]
 
 
 def test_a_pick_that_happened_while_the_turn_failed_is_false_reject(tmp_path) -> None:
@@ -180,3 +187,8 @@ def test_markdown_rows_have_the_header_s_columns(tmp_path) -> None:
     tables = [[ln for ln in block.splitlines() if ln.startswith("|")] for block in md.split("\n\n")]
     for rows in filter(None, tables):
         assert {ln.count("|") for ln in rows} == {rows[0].count("|")}, rows
+
+
+def test_wrong_or_unreported_backend_cannot_count_as_the_requested_cell():
+    assert lm.launch_problem(_READY, {**_CELL, 'backend': 'pybullet'}) == 'the launch used mujoco, the cell asks for pybullet'
+    assert lm.launch_problem(_READY.replace('backend=mujoco, ', ''), _CELL) == 'the readiness line names no backend'

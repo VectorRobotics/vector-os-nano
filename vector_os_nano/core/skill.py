@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 # Sentinel for detecting whether legacy kwargs were explicitly supplied.
 _UNSET: object = object()
+SKILL_TYPES: dict[str, type] = {}
+CAPABILITIES = frozenset({"base", "arm", "gripper", "camera", "depth", "lidar"})
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +35,7 @@ def skill(
     *,
     aliases: list[str] | None = None,
     actuates: bool = True,
+    requires: tuple[str, ...] | None = None,
 ):
     """Decorator that marks a class as a skill with routing metadata.
 
@@ -54,13 +57,20 @@ def skill(
     def wrapper(cls):
         cls.__skill_aliases__ = aliases or []
         cls.__skill_actuates__ = bool(actuates)
+        if requires is not None:
+            needed = frozenset(requires)
+            if needed - CAPABILITIES:
+                raise ValueError(f"{cls.__name__}.requires: unknown capabilities {sorted(needed - CAPABILITIES)}")
+            if not isinstance(getattr(cls, "name", None), str) or not cls.name:
+                raise ValueError("a registered skill needs a non-empty name")
+            if cls.name in SKILL_TYPES and SKILL_TYPES[cls.name] is not cls:
+                raise ValueError(f"duplicate skill name {cls.name!r}")
+            cls.__skill_requires__ = needed
+            SKILL_TYPES[cls.name] = cls
         return cls
 
     if cls is not None:
-        # Called without arguments: @skill
-        cls.__skill_aliases__ = []
-        cls.__skill_actuates__ = True
-        return cls
+        return wrapper(cls)
 
     return wrapper
 

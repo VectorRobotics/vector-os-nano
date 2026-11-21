@@ -28,7 +28,7 @@ import math
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Callable
 from vector_os_nano.core.run_dir import run_path
@@ -51,8 +51,33 @@ _TICK_S = 0.005
 class SimSpec:
     """What to run: an embodiment id from the registry, with or without a window."""
 
-    embodiment: str
-    gui: bool = True
+    embodiment: str = ""
+    gui: bool | None = None
+    backend: str | None = None
+    world: str | None = None
+
+    def resolved(self) -> "SimSpec":
+        """Explicit choices, then user defaults, then the robot's default world."""
+        from vector_os_nano.embodiments import registry
+        from vector_os_nano.schemas.user import load
+
+        try:
+            defaults = load(paths.config_file()).defaults
+            if not isinstance(self.embodiment, str):
+                raise ValueError("embodiment must be a string")
+            embodiment = self.embodiment or defaults.embodiment
+            gui = defaults.gui if self.gui is None else self.gui
+            backend = defaults.backend if self.backend is None else self.backend
+            world = self.world if self.world is not None else defaults.world
+            if type(gui) is not bool:
+                raise ValueError("gui must be true or false")
+            for key, value in (("embodiment", embodiment), ("backend", backend), ("world", world)):
+                if value is not None and (not isinstance(value, str) or not value.strip()):
+                    raise ValueError(f"{key} must be a non-empty string")
+            cfg = registry.load(embodiment)
+            return SimSpec(embodiment, gui, backend, world or cfg.world)
+        except ValueError as exc:
+            raise SimStartError("bad simulation selection", str(exc)) from exc
 
 
 class SimStartError(RuntimeError):
@@ -94,8 +119,11 @@ def _append_gt_dump(path: str, s: "SimSession", phase: str, goal: str) -> None:
     gt, world = s.gt, s.world
     held = gt.attachments()
     line = {
+        "schema": 1, "backend": s.runtime.world.name, "session": s.uid,
         "phase": phase, "turn": s._turns, "goal": goal, "embodiment": s.config.id,
-        "world": s.config.world, "sim_time": gt.sim_time, "base": gt.base_pose(),
+        "world": world.id, "sim_time": gt.sim_time, "base": gt.base_pose(),
+        "arm": ({"joints": list(s.config.arm.joints), "q": gt.joint_positions(s.config.arm.joints),
+                 "home": list(s.config.arm.home)} if s.config.arm else None),
         "objects": {n: {"pos": p, "welded": n in held} for n, p in gt.object_positions().items()},
         "surfaces": {k: {"box": v.box, "height": v.height} for k, v in (world.surfaces if world else {}).items()},
         "user": world.user if world else None,
@@ -156,30 +184,52 @@ class SimSession:
         from vector_os_nano.embodiments import registry
         from vector_os_nano.schemas.robot import EmbodimentConfigError
 
+        spec = spec.resolved()
+        if not spec.gui:
+            import sys
+
+            os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
+
         try:
             cfg = registry.load(spec.embodiment)
         except EmbodimentConfigError as exc:
             raise SimStartError("bad embodiment manifest", str(exc)) from exc
-        builder = _build_legged if cfg.base is not None else _build_generic
         from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
+        from vector_os_nano.schemas.world import load_world
+        from vector_os_nano.sim import backends
 
         try:
             asset_dir(cfg)
         except AssetsMissing as exc:
             raise SimStartError("assets not provisioned", str(exc)) from exc
-        return cfg, builder
+        try:
+            world = load_world(spec.world)
+            reason = backends.get(spec.backend).supports(cfg, world)
+        except (KeyError, ValueError) as exc:
+            raise SimStartError("bad simulation selection", str(exc)) from exc
+        if reason:
+            raise SimStartError("unsupported simulation", reason)
+        return cfg, _build
 
     @classmethod
     def start(
         cls, spec: SimSpec, *, vlm_api_key: str | None = None, deadline_s: float = 90.0,
+        abort: Callable[[], bool] = lambda: False,
+        cancel: Callable[[], bool] | None = None,
     ) -> "SimSession":
+        t0 = time.monotonic()
+        cancelled = cancel or abort
+        _check_start(t0 + deadline_s, cancelled)
         paths.configure_cuda_cache()
+        spec = spec.resolved()
         cfg, builder = cls.validate(spec)
         session = cls(spec, cfg)
-        t0 = time.monotonic()
+        session.abort = abort
         try:
+            _check_start(t0 + deadline_s, cancelled)
             session.agent = builder(session, vlm_api_key)
-            session.ready = _probe_ready(session.agent, cfg, session.runtime, deadline=t0 + deadline_s)
+            session.ready = _probe_ready(session.agent, cfg, session.runtime,
+                                         deadline=t0 + deadline_s, abort=cancelled)
             session._bind_ground_truth()
         except BaseException as exc:
             session.stop()
@@ -224,22 +274,12 @@ class SimSession:
             if self.config.arm is not None:
                 self.agent._config["arm"] = {"postures": self.config.arm.postures}
         self.gt = GroundTruth(self.runtime)
-        self.world = load_world(self.config.world) if self.config.world else None
+        self.world = load_world(self.spec.world or self.config.world)
         agent._services["object_world"] = self.world
         # Skills resolve object names through the world manifest by id (never GT).
         cfg = getattr(agent, "_config", None)
         if isinstance(cfg, dict) and self.config.world:
-            cfg["world"] = self.config.world
-
-    def oracles(self) -> dict[str, Any]:
-        """The GT verify namespace of this session (vcli/worlds/sim_oracles)."""
-        from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
-
-        return build_namespace(
-            self.gt, self.world, self.config,
-            belief=lambda: getattr(self.agent, "_spatial_memory", None),
-            turn_start=lambda: self._turn,
-        )
+            cfg["world"] = self.world.id
 
     def mark_turn(self, phase: str, goal: str = "") -> None:
         """A REPL turn starts / ends: record its start (kept_holding, localized) and,
@@ -264,6 +304,16 @@ class SimSession:
         """Register a teardown step (run LIFO by stop)."""
         self._cleanups.append((what, cleanup))
 
+    def metadata(self) -> dict[str, Any]:
+        """Session provenance only; no evaluator state is exposed to tools."""
+        from importlib.metadata import version
+
+        backend = self.runtime.world.name if self.runtime is not None else self.spec.backend
+        return {"embodiment": self.config.id, "backend": backend, "session": self.uid,
+                "world": self.world.id if self.world else self.spec.world,
+                "backend_version": version(backend) if backend else "",
+                "perception_kind": type(self.agent._perception).__name__ if getattr(self.agent, "_perception", None) else "none"}
+
     def summary(self) -> str:
         """One line: 'ready in Xs: <hardware>, <probe>, N skills; <notes>'."""
         agent = self.agent
@@ -272,7 +322,11 @@ class SimSession:
         )
         n = len(agent._skill_registry.list_skills()) if agent is not None else 0
         probe = ", ".join(f"{k}={v}" for k, v in self.ready.items())
-        line = f"ready in {self.startup_s:.1f}s: {hw}, {probe}, {n} skills"
+        caps = ",".join(f.name for f in fields(self.config.capabilities) if getattr(self.config.capabilities, f.name))
+        policy = self.config.base.policy.on(self.spec.backend)[0] if self.config.base else "position_actuators"
+        line = (f"ready in {self.startup_s:.1f}s: embodiment={self.spec.embodiment}, "
+                f"backend={self.spec.backend}, world={self.spec.world}, policy={policy}, "
+                f"capabilities=[{caps}]; {hw}, {probe}, {n} skills")
         return "; ".join([line, *self.notes])
 
 
@@ -281,24 +335,42 @@ class SimSession:
 # ---------------------------------------------------------------------------
 
 
-def _probe_ready(agent: Any, cfg: Any, runtime: Any, *, deadline: float) -> dict[str, Any]:
+def _check_start(deadline: float, abort: Callable[[], bool]) -> None:
+    if abort():
+        raise SimStartError("start cancelled", "stop requested")
+    if time.monotonic() > deadline:
+        raise SimStartError("not ready", "startup deadline exceeded")
+
+
+def _probe_ready(agent: Any, cfg: Any, runtime: Any, *, deadline: float,
+                 abort: Callable[[], bool] = lambda: False) -> dict[str, Any]:
     """Prove the sim is live, or raise SimStartError naming what is not."""
     import numpy as np
 
     base = getattr(agent, "_base", None)
     arm = getattr(agent, "_arm", None)
     report: dict[str, Any] = {}
+    _check_start(deadline, abort)
+    if runtime is None:
+        raise SimStartError("not ready", "no physics runtime")
 
     if runtime is not None and not runtime.threaded:
         # Caller-stepped (VECTOR_SIM_LOCKSTEP / macOS pump): advance it here.
         t0 = runtime.sim_time
-        if not runtime.wait_sim(_READY_SIM_S) or runtime.sim_time - t0 < _READY_SIM_S - 1e-6:
+        from types import SimpleNamespace
+
+        if (not runtime.wait_sim(_READY_SIM_S, SimpleNamespace(is_set=abort),
+                                 wall_timeout=max(0.0, deadline - time.monotonic()))
+                or runtime.sim_time - t0 < _READY_SIM_S - 1e-6):
+            _check_start(deadline, abort)
             raise SimStartError("not ready", "caller-stepped physics did not advance")
         report["sim_time"] = f"{runtime.sim_time:.1f}s"
     elif runtime is not None:
         t0 = last = runtime.sim_time
         moved_at = time.monotonic()
         while (now := runtime.sim_time) - t0 < _READY_SIM_S:
+            if abort():
+                raise SimStartError("start cancelled", "stop requested")
             if now != last:
                 last, moved_at = now, time.monotonic()
             if time.monotonic() - moved_at > _STALL_S or time.monotonic() > deadline:
@@ -320,17 +392,39 @@ def _probe_ready(agent: Any, cfg: Any, runtime: Any, *, deadline: float) -> dict
             # On a thread that then exits: a GL context stays bound to the live
             # thread that last rendered with it, and this is the REPL thread.
             with ThreadPoolExecutor(1) as ex:
-                frame = ex.submit(grab).result()
+                if callable(capture):
+                    sample = ex.submit(capture).result()
+                    frame = sample.rgb
+                    if cfg.capabilities.depth:
+                        depth = sample.depth
+                        if (depth is None or np.shape(depth) != np.shape(frame)[:2]
+                                or not np.isfinite(depth).all() or not (np.asarray(depth) > 0).any()):
+                            raise SimStartError("not ready", "depth frame is missing or invalid")
+                        report["depth"] = f"{np.shape(depth)[1]}x{np.shape(depth)[0]}"
+                elif cfg.capabilities.depth:
+                    raise SimStartError("not ready", "declared depth sensor has no capture method")
+                else:
+                    frame = ex.submit(grab).result()
         if frame is None or not np.asarray(frame).any():
             raise SimStartError("not ready", "camera frame is empty/black")
         h, w = np.asarray(frame).shape[:2]
         report["camera"] = f"{w}x{h}"
 
-    if arm is not None:
+    if cfg.capabilities.has_arm:
+        if arm is None:
+            raise SimStartError("not ready", "declared arm is missing")
         q = list(arm.get_joint_positions())
         if not q or not all(math.isfinite(v) for v in q):
             raise SimStartError("not ready", f"arm joints not finite: {q}")
         report["arm"] = f"{len(q)}-DoF"
+    if cfg.capabilities.lidar:
+        lidar = agent._services.get("lidar")
+        scan = lidar.scan() if lidar is not None else None
+        ranges = np.asarray(scan.ranges) if scan is not None else np.array([])
+        if not ranges.size or np.isnan(ranges).any() or (ranges < 0).any():
+            raise SimStartError("not ready", "lidar scan is missing or invalid")
+        report["lidar"] = f"{ranges.size} beams"
+    _check_start(deadline, abort)
     return report
 
 
@@ -362,20 +456,20 @@ def _scene_vlm_config(user_cfg: dict[str, Any], vlm_api_key: str | None) -> tupl
     return vlm_api_key or os.environ.get("OPENROUTER_API_KEY", ""), vlm_cfg, note
 
 
-def _devices(cfg: Any, rt: Any, *, wait_mount: Callable[[], Any] | None = None) -> tuple[Any, Any, Any]:
+def _devices(cfg: Any, rt: Any, *, wait_mount: Callable[[], Any] | None = None,
+             abort: Callable[[], bool] = lambda: False) -> tuple[Any, Any, Any]:
     """``(arm, gripper, camera)`` of *cfg* on *rt*: the generic drivers, None where
     the manifest has no such block."""
     from vector_os_nano.sim.drivers.arm import Arm
     from vector_os_nano.sim.drivers.camera import Camera
     from vector_os_nano.sim.drivers.gripper import Gripper
-    from vector_os_nano.vcli.cognitive.abort import is_abort_requested
 
     from vector_os_nano.sim.scene.compose import check_fingers
 
     camera = Camera(cfg.camera, rt) if cfg.camera is not None else None
     if cfg.arm is None:
         return None, None, camera
-    arm = Arm(cfg.arm, rt, abort=is_abort_requested, wait_mount=wait_mount)
+    arm = Arm(cfg.arm, rt, abort=abort, wait_mount=wait_mount)
     if cfg.arm.gripper is None:
         return arm, None, camera
     check_fingers(rt.world.scene, cfg.arm.gripper.finger_bodies)
@@ -418,23 +512,6 @@ def _perception_note(agent: Any, vlm_why: str = "") -> str:
     )
 
 
-def _skill_pack(embodiment: str) -> list:
-    """The skills a body is offered: arm skills only on an arm, the SAME locomotion
-    objects on every legged base, a stop on every body (the table S5 replaces with
-    capability binding)."""
-    from vector_os_nano.skills import HomeSkill, get_piper_skills, get_so101_skills
-    from vector_os_nano.skills.go2 import get_go2_skills
-    from vector_os_nano.skills.go2.stop import StopSkill
-
-    return {
-        "so101": get_so101_skills,
-        "piper": lambda: [StopSkill(), HomeSkill(), *get_piper_skills()],
-        "go2": get_go2_skills,
-        "go2_piper": lambda: [*get_go2_skills(), HomeSkill(), *get_piper_skills()],
-        "g1": get_go2_skills,
-    }[embodiment]()
-
-
 def standing_state(scene: Any, cfg: Any, q: Any, xy: Any, heading: float, *, floor_z: float = 0.0) -> Any:
     """*q* with the body standing: its root at (*xy*, ``base.height``) facing *heading*,
     its base joints in the stance, its arm (if any) at home."""
@@ -450,7 +527,8 @@ def standing_state(scene: Any, cfg: Any, q: Any, xy: Any, heading: float, *, flo
     return q
 
 
-def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str = "mujoco", gui: bool = False) -> tuple[Any, Any, Any]:
+def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str = "mujoco", gui: bool = False,
+                abort: Callable[[], bool] = lambda: False) -> tuple[Any, Any, Any]:
     """``(runtime, base, lidar)``: the legged body of *cfg* loaded on *backend* in
     *scene*, spawned standing at its spawn, with ONE SimRuntime ticking at its policy's
     rate (not started yet), the generic LeggedBase connected and its manifest's Lidar
@@ -462,7 +540,6 @@ def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str =
     from vector_os_nano.sim.drivers.base import LeggedBase
     from vector_os_nano.sim.drivers.lidar import Lidar
     from vector_os_nano.sim.runtime import SimRuntime
-    from vector_os_nano.vcli.cognitive.abort import is_abort_requested
 
     for key, names in (("base.joints", cfg.base.joints), ("arm.joints", cfg.arm.joints if cfg.arm else ())):
         missing = [n for n in names if n not in scene.joint_ids]
@@ -477,7 +554,7 @@ def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str =
         spawn = standing_state(scene, cfg, scene.model.qpos0, (x, y), heading, floor_z=z)
         rt.call(lambda w: w.reset(spawn))
         lidar = Lidar(cfg.lidar, rt) if cfg.lidar is not None else None
-        base = LeggedBase(cfg.base, rt, folder=policy_root(cfg), lidar=lidar, abort=is_abort_requested)
+        base = LeggedBase(cfg.base, rt, folder=policy_root(cfg), lidar=lidar, abort=abort)
         base.connect()
     except BaseException:
         rt.close()
@@ -504,28 +581,45 @@ def respawn(rt: Any, base: Any, cfg: Any, xy: Any = None, heading: float | None 
     rt.call(job)
 
 
-def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
-    """A legged body (go2, go2_piper, g1): the apartment room with the body attached, ONE
-    SimRuntime, the generic LeggedBase + Lidar, and the generic Arm / Gripper / Camera
-    of its manifest."""
+def _build(session: SimSession, vlm_api_key: str | None) -> Any:
+    """Compose the selected world, start its runtime, and bind manifest components."""
     from vector_os_nano.core.agent import Agent
+    from vector_os_nano.skills import get_skills
     from vector_os_nano.core.scene_graph import SceneGraph
+    from vector_os_nano.sim import backends
+    from vector_os_nano.sim.drivers.lidar import Lidar
+    from vector_os_nano.sim.runtime import SimRuntime
     from vector_os_nano.sim.scene.compose import compose
     from vector_os_nano.schemas.world import load_world
 
     cfg, spec = session.config, session.spec
-    world = load_world(cfg.world)
-    rt, base, lidar = legged_body(cfg, compose(cfg, world), manifest=world, gui=spec.gui)
+    world = session.world = load_world(spec.world)
+    scene = compose(cfg, world)
+    base = lidar = None
+    if cfg.base is not None:
+        rt, base, lidar = legged_body(cfg, scene, manifest=world, backend=spec.backend, gui=spec.gui,
+                                     abort=session.abort)
+    else:
+        sim = backends.get(spec.backend).load(scene, gui=spec.gui)
+        rt = SimRuntime(sim, substeps=max(1, round(_TICK_S / scene.timestep)),
+                        threaded=not sim.caller_thread_only, name=cfg.id)
     session.own(f"{cfg.id} runtime closed", rt.close)
-    session.own("base disconnected", base.disconnect)
-    rt.start()
-    base.set_posture("stand")
+    if base is not None:
+        session.own("base disconnected", base.disconnect)
+    elif cfg.lidar is not None:
+        lidar = Lidar(cfg.lidar, rt)
     session.runtime = rt
-    arm, gripper, camera = _devices(cfg, rt, wait_mount=base.wait_settled)
+    rt.start()
+    if base is not None:
+        base.set_posture("stand")
+    arm, gripper, camera = _devices(cfg, rt, wait_mount=base.wait_settled if base else None,
+                                     abort=session.abort)
 
     user_cfg = _user_config()
     api_key, vlm_cfg, key_note = _scene_vlm_config(user_cfg, vlm_api_key)
-    agent = Agent(base=base, arm=arm, gripper=gripper, config=user_cfg, skills=_skill_pack(cfg.id))
+    agent = Agent(base=base, arm=arm, gripper=gripper, config=user_cfg, skills=get_skills(cfg.capabilities))
+    agent._services["lidar"] = lidar
+    agent._services["layout"] = {"rooms": world.rooms, "boxes": world.boxes}
     agent._perception = _perception(camera)
     agent._calibration = None
 
@@ -549,13 +643,13 @@ def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
     # VECTOR_HOME isolates it). The world's rooms are seeded from its manifest, fixed at
     # their centres. Memory an older release kept in ~/.vector_os_nano is moved in once.
     moved = paths.migrate_old_memory()
-    sg_path = paths.memory(cfg.world) / paths.SCENE_GRAPH
+    sg_path = paths.memory(world.id) / paths.SCENE_GRAPH
     sg_path.parent.mkdir(parents=True, exist_ok=True)
     agent._spatial_memory = SceneGraph(persist_path=str(sg_path), resolve=world.resolve)
     agent._spatial_memory.load()
     agent._spatial_memory.load_layout(str(world.path))
 
-    if cfg.base.nav.explorer == "tare":
+    if cfg.base is not None and cfg.base.nav.explorer == "tare":
         if not os.environ.get("VECTOR_NAV_STACK"):
             session.notes.append("explore: coverage (VECTOR_NAV_STACK unset)")
         else:
@@ -571,34 +665,6 @@ def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
         session.notes.append(key_note)
     if moved:
         session.notes.append(moved)
-    return agent
-
-
-def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
-    """A body the generic drivers run whole (a fixed arm): its world's scene composed with
-    the manifest (sim/scene/compose.py), loaded on MuJoCo, ONE SimRuntime with no
-    controller (the servos hold the arm)."""
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.sim import backends
-    from vector_os_nano.sim.runtime import SimRuntime
-    from vector_os_nano.sim.scene.compose import compose
-    from vector_os_nano.schemas.world import load_world
-
-    cfg = session.config
-    world = load_world(cfg.world)
-    if world.scene is None or world.spawn is None:
-        raise SimStartError("bad world manifest", f"{world.path}: a fixed body needs the world's scene and spawn")
-    scene = compose(cfg, world)
-    sim = backends.get("mujoco").load(scene, gui=session.spec.gui)
-    rt = SimRuntime(sim, substeps=max(1, round(_TICK_S / scene.timestep)), threaded=not sim.caller_thread_only,
-                    name=cfg.id)
-    session.own(f"{cfg.id} runtime closed", rt.close)
-    rt.start()
-    session.runtime = rt
-    arm, gripper, camera = _devices(cfg, rt)
-    agent = Agent(arm=arm, gripper=gripper, config=_user_config(), skills=_skill_pack(cfg.id))
-    agent._perception = _perception(camera)
-    session.notes.append(_perception_note(agent, "a fixed arm has no scene VLM"))
     return agent
 
 

@@ -34,12 +34,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Vector CLI — Agentic CLI for Vector OS Nano",
     )
     parser.add_argument("--version", action="version", version=f"vector-cli {__version__}")
-    parser.add_argument("--sim", action="store_true", help="Start with MuJoCo arm simulation")
+    parser.add_argument("--sim", action="store_true", help="Start simulation using config.yaml defaults")
     parser.add_argument("--sim-go2", action="store_true", help="Start with Go2 quadruped simulation")
     from vector_os_nano.embodiments.registry import embodiment_ids
     parser.add_argument(
         "--embodiment", default=None, choices=embodiment_ids(), metavar="ID",
-        help="Start with this embodiment's simulation (--sim = so101, --sim-go2 = go2). "
+        help="Start with this embodiment's simulation (--sim uses config.yaml, --sim-go2 = go2). "
         f"One of: {', '.join(embodiment_ids())}",
     )
     parser.add_argument(
@@ -81,11 +81,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _requested_embodiment(args: argparse.Namespace) -> str | None:
-    """--embodiment wins; --sim-go2 / --sim are aliases for go2 / so101."""
+    """Explicit embodiment wins; bare --sim selects the configured default."""
+    from vector_os_nano.schemas import paths, user
+
     return (
         getattr(args, "embodiment", None)
         or ("go2" if getattr(args, "sim_go2", False) else None)
-        or ("so101" if getattr(args, "sim", False) else None)
+        or (user.load(paths.config_file()).defaults.embodiment if getattr(args, "sim", False) else None)
     )
 
 
@@ -95,7 +97,11 @@ def _wants_window(args: argparse.Namespace) -> bool:
     A window is wanted when --sim or --sim-go2 is active (NL-triggered sims are
     handled separately in sim_tool.py) and --headless is NOT set.
     """
-    return bool(_requested_embodiment(args)) and not getattr(args, "headless", False)
+    from vector_os_nano.schemas import paths, user
+
+    defaults = user.load(paths.config_file()).defaults
+    return (bool(_requested_embodiment(args)) and not getattr(args, "headless", False)
+            and defaults.gui and defaults.backend == "mujoco")
 
 
 def _maybe_reexec_under_mjpython(args: argparse.Namespace) -> None:
@@ -209,7 +215,7 @@ def _build(args: Any, face: str) -> Any:
     """The face's runtime (``build_runtime``) from the parsed flags; notices on the console."""
     rt = build_runtime(
         provider=args.provider, model=args.model, base_url=args.base_url,
-        embodiment=_requested_embodiment(args), gui=not args.headless,
+        embodiment=_requested_embodiment(args), gui=False if args.headless else None,
         no_permission=args.no_permission, resume=args.resume, face=face,
         notice=lambda msg: console.print(f"[dim]{escape(msg)}[/dim]"),
     )

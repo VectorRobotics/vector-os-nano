@@ -12,6 +12,8 @@ navigate's own verify_hint auto-verifies the target and the in-process navigate 
 is actor-CAUSED (D14's "navigate is RAN-only" no longer holds in-process).
 """
 from __future__ import annotations
+from vector_os_nano.schemas.world import WORLDS_DIR
+_LAYOUT_YAML = WORLDS_DIR / "apartment" / "world.yaml"
 
 import pytest
 
@@ -19,7 +21,7 @@ from tests.harness.pty_cli import run_repl_session
 from vector_os_nano.schemas.world import load_world
 from vector_os_nano.sim.nav.coverage import room_layout
 
-_ROOMS = room_layout()["rooms"]
+_ROOMS = room_layout(str(_LAYOUT_YAML))["rooms"]
 _K, _D = _ROOMS["kitchen"], _ROOMS["dining_room"]
 _S = tuple(load_world("apartment").spawn[:2])
 _GOAL = f"走到坐标 ({_K[0]},{_K[1]})"

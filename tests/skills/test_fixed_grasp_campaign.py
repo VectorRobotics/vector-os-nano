@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 """Paired reset seeds; old SO-101 truth perception is labelled, never a physical demo."""
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 import json
 import os
 import random
@@ -39,7 +40,7 @@ def test_fixed_grasp_campaign(body, targets):
             skill = os.environ.get("VECTOR_GRASP_TOOL") or ("pick" if body == "so101" else "perception_grasp")
             params = {"object_label": target} if skill == "pick" else {"query": target}
             result = s.agent.execute_skill(skill, params)
-            physical = bool(s.oracles()["holding_object"](target))
+            physical = bool(session_namespace(s)["holding_object"](target))
             rows.append({"seed": seed, "target": target, "offset": [dx, dy], "skill": skill,
                          "perception": "sim_truth" if skill == "pick" else "camera",
                          "grasp_mode": "contact_gated_constraint_assist", "physical": physical,

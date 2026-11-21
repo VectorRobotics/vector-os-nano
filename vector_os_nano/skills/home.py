@@ -7,7 +7,7 @@ from vector_os_nano.perception.base import failure_cause
 import threading
 
 
-@skill(aliases=["go home", "reset", "回家", "归位", "复位", "回到初始位置"])
+@skill(requires=('arm',), aliases=["go home", "reset", "回家", "归位", "复位", "回到初始位置"])
 class HomeSkill:
     name = "home"
     description = "Move the empty arm to its configured home pose. Place a held object first."

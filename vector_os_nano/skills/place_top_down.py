@@ -81,7 +81,7 @@ _LIFT_DURATION: float = 2.0
 # ---------------------------------------------------------------------------
 
 
-@skill(
+@skill(requires=('arm', 'gripper'),
     aliases=["put", "drop", "放", "放下", "放到", "放置", "put down"],
 )
 class PlaceTopDownSkill:

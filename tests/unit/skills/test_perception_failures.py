@@ -148,7 +148,7 @@ def test_explore_reports_the_looks_on_the_way_that_could_not_run(tmp_path, monke
     from vector_os_nano.skills.go2 import explore
 
     ctx = SkillContext(base=_Tour(10.0, 3.0), perception=Raising("detect", oom()),
-                       config={"world": "apartment"}, services={"spatial_memory": _sg()})
+                       config={"world": "apartment"}, services={"spatial_memory": _sg(), "layout": {"rooms": _APT.rooms, "boxes": _APT.boxes}})
     res = explore.ExploreSkill().execute({}, ctx)
     assert res.success, res.error_message  # the rooms were explored: that is explore's job
     note = res.result_data["perception_failed"]
@@ -164,7 +164,7 @@ def test_explore_note_for_a_look_whose_capture_ran_out_of_gpu_memory_has_no_path
     from vector_os_nano.skills.go2 import explore
 
     ctx = SkillContext(base=_Tour(10.0, 3.0), perception=Raising("capture", _oom_on_gpu1_with_a_path()),
-                       config={"world": "apartment"}, services={"spatial_memory": _sg()})
+                       config={"world": "apartment"}, services={"spatial_memory": _sg(), "layout": {"rooms": _APT.rooms, "boxes": _APT.boxes}})
     note = explore.ExploreSkill().execute({}, ctx).result_data["perception_failed"]
     assert "Camera capture failed: out of GPU memory on cuda:1" in note and "/srv" not in note, note
 

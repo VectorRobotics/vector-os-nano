@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 """Opt-in raw sensor evidence for a failed grasp, without actor truth access."""
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 import json
 import os
 import random
@@ -55,6 +56,6 @@ def test_grasp_camera_probe():
                     "attachments": s.gt.attachments(), "moves": moves}
         (out / "result.json").write_text(json.dumps(evidence, indent=2))
         assert result.success, result.error_message
-        assert s.oracles()["holding_object"]("pickable_bottle_green")
+        assert session_namespace(s)["holding_object"]("pickable_bottle_green")
     finally:
         s.stop()

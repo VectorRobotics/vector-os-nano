@@ -400,7 +400,7 @@ def _exploration_loop(base: Any) -> None:
 # ExploreSkill
 # ---------------------------------------------------------------------------
 
-@skill(
+@skill(requires=('base', 'lidar', 'camera'),
     aliases=[
         "explore", "探索", "自主探索",
         "explore the house", "look around", "四处看看",
@@ -501,10 +501,14 @@ class ExploreSkill:
                     "and TARE is not running."
                 ),
             )
-        return self._coverage(base)
+        layout = context.services.get("layout")
+        if not layout or not layout.get("rooms"):
+            return SkillResult(False, {"diagnosis": "no_layout"},
+                               "The session world declares no rooms for coverage exploration")
+        return self._coverage(base, layout)
 
     @staticmethod
-    def _coverage(base: Any) -> SkillResult:
+    def _coverage(base: Any, layout: dict) -> SkillResult:
         global _explore_running, _explore_backend
         from vector_os_nano.sim.nav.coverage import CoverageExplorer
 
@@ -521,7 +525,7 @@ class ExploreSkill:
         _look_failures.clear()
         _explore_backend, _explore_running = "coverage", True
         try:
-            out = CoverageExplorer(base, cancel=_Cancelled(), on_event=on_event,
+            out = CoverageExplorer(base, layout, cancel=_Cancelled(), on_event=on_event,
                                    observe=lambda: _discover(base)).run()
         finally:
             _explore_running = False

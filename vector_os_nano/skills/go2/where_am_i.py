@@ -15,7 +15,7 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.sim.nav.coverage import room_at, room_layout
+from vector_os_nano.sim.nav.coverage import room_at
 from vector_os_nano.skills.navigate import _detect_current_room
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def _heading_label(radians: float) -> str:
     return "unknown"
 
 
-@skill(
+@skill(requires=('base',),
     aliases=["where am i", "where", "我在哪", "在哪", "我在哪里", "位置", "location"],
     actuates=False,
 )
@@ -101,7 +101,7 @@ class WhereAmISkill:
         z = float(pos[2]) if len(pos) > 2 else 0.0
 
         sg = context.services.get("spatial_memory") if context.services else None
-        layout = room_layout()
+        layout = context.services.get("layout", {"rooms": {}, "boxes": {}})
         room = room_at(x, y, layout["boxes"]) or _detect_current_room(x, y, sg=sg)
         room_node = sg.get_room(room) if (sg is not None and room != "unknown") else None
         room_center = (

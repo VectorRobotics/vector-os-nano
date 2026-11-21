@@ -103,17 +103,18 @@ def build_registry() -> Any:
     return registry
 
 
-def start_sim(embodiment: str, *, gui: bool, notice: Callable[[str], None] = _stderr) -> Any:
+def start_sim(embodiment: str, *, gui: bool | None = None, notice: Callable[[str], None] = _stderr) -> Any:
     """Start the SimSession for *embodiment* (the one NL ``start_simulation`` uses).
 
     Raises ``SimStartError``: a requested sim that does not come up never degrades
     silently to the dev world.
     """
     from vector_os_nano.sim.session import SimSession, SimSpec
+    from vector_os_nano.vcli.cognitive.abort import is_abort_requested
 
     notice(f"  Starting {embodiment} simulation...")
     # No vlm_api_key: the chat LLM's credential is never sent to the VLM provider.
-    session = SimSession.start(SimSpec(embodiment=embodiment, gui=gui))
+    session = SimSession.start(SimSpec(embodiment=embodiment, gui=gui), abort=is_abort_requested)
     notice(f"  {embodiment} {session.summary()}")
     return session
 
@@ -171,7 +172,7 @@ def build_runtime(
     model: str | None = None,
     base_url: str | None = None,
     embodiment: str | None = None,
-    gui: bool = True,
+    gui: bool | None = None,
     agent: Any = None,
     no_permission: bool = False,
     resume: str | None = None,
@@ -282,8 +283,10 @@ def graded_turn(
         return answer, None, trace
     try:
         agent = getattr(engine, "_agent", None)
+        sim = rt.app_state.get("sim_session")
         report = VerdictReport.from_trace(trace, verify_oracle_names(agent, engine),
-                                          gait_backend=_gait_backend(agent))
+                                          gait_backend=_gait_backend(agent),
+                                          session_info=sim.metadata() if callable(getattr(sim, "metadata", None)) else None)
     except Exception as exc:  # noqa: BLE001 — fail CLOSED on any error reading the gate
         report = replace(VerdictReport.no_trace(goal=text, error=f"verdict failed: {exc}"),
                          acted=_trace_acted(trace))

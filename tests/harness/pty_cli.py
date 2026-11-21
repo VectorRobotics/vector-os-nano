@@ -228,9 +228,12 @@ def _find_verdict_line(output: str) -> dict[str, Any] | None:
             continue
         payload = line[idx + len(_SENTINEL) + 1 :].strip()
         try:
-            return json.loads(payload)
+            report = json.loads(payload)
         except json.JSONDecodeError:
             continue
+        if type(report.get("schema")) is not int or report["schema"] != 1:
+            raise ValueError(f"unsupported verdict schema {report.get('schema')!r}; this harness reads 1")
+        return report
     return None
 
 

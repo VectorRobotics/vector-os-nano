@@ -11,7 +11,7 @@ from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
 
 
-@skill(
+@skill(requires=('gripper',),
     aliases=[
         "open", "open grip", "open gripper", "open claw",
         "release", "let go",
@@ -41,7 +41,7 @@ class GripperOpenSkill:
                            error_message="" if ok else "Gripper did not open")
 
 
-@skill(
+@skill(requires=('gripper',),
     aliases=[
         "close", "close grip", "close gripper", "close claw",
         "grip", "clench",

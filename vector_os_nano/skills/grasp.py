@@ -220,7 +220,7 @@ def grip(context, gp, cfg, token, identity=None):
     return _cancelled(token) or (None if (gripper.is_holding() if identity is None else gripper.is_holding(identity)) else _fail("not_holding", "Object slipped during lift; look again before grasping."))
 
 
-@skill(aliases=ALIASES)
+@skill(requires=('arm', 'gripper', 'camera', 'depth'), aliases=ALIASES)
 class GraspSkill:
     name = "grasp"
     description = "Find one named object with RGB-D perception, approach if needed, grasp and lift it. Refuses ambiguous names; uses fresh observations after moving."

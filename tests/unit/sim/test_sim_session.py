@@ -6,6 +6,7 @@ The real-physics half (switch cycle, dead physics thread, renderer sizes, the
 relocated checkout) lives in tests/hardware/sim/test_sim_session_mujoco.py.
 """
 from __future__ import annotations
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 
 import threading
 from pathlib import Path
@@ -13,6 +14,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from vector_os_nano.skills import get_skills
+from vector_os_nano.embodiments.registry import load as load_robot
 
 from vector_os_nano.schemas import robot as emb_config
 from vector_os_nano.embodiments import registry
@@ -51,11 +54,11 @@ def test_go2_piper_manifest_carries_the_arm_and_the_grasp_camera_size() -> None:
 
 
 def test_start_simulation_enum_is_generated_from_the_registry() -> None:
-    prop = SimStartTool.input_schema["properties"]["embodiment"]
+    prop = SimStartTool().input_schema["properties"]["embodiment"]
     assert prop["enum"] == registry.embodiment_ids()
-    assert "embodiment" in SimStartTool.input_schema["required"]
+    assert "embodiment" in SimStartTool().input_schema["required"]
     # The deleted fork is gone from the schema the model sees.
-    assert set(SimStartTool.input_schema["properties"]) == {"embodiment", "gui"}
+    assert set(SimStartTool().input_schema["properties"]) == {"embodiment", "gui", "backend", "world"}
 
 
 def test_unknown_embodiment_fails_loud_with_the_valid_set() -> None:
@@ -121,8 +124,10 @@ class _Clock:
 def _agent(arm: Any = None, frame: Any = 1) -> Any:
     import numpy as np
 
-    perception = SimpleNamespace(get_color_frame=lambda: np.full((24, 32, 3), frame, np.uint8))
-    return SimpleNamespace(_base=None, _arm=arm, _perception=perception)
+    rgb = np.full((24, 32, 3), frame, np.uint8)
+    perception = SimpleNamespace(capture=lambda: SimpleNamespace(rgb=rgb, depth=np.ones((24, 32))))
+    return SimpleNamespace(_base=None, _arm=arm, _perception=perception,
+                           _services={"lidar": SimpleNamespace(scan=lambda: SimpleNamespace(ranges=[1.0]))})
 
 
 def test_ready_probe_fails_fast_when_the_clock_is_dead(monkeypatch) -> None:
@@ -156,11 +161,11 @@ def test_ready_probe_never_renders_on_the_calling_thread() -> None:
 
     def frame() -> Any:
         seen.append(threading.current_thread())
-        return np.ones((24, 32, 3), np.uint8)
+        return SimpleNamespace(rgb=np.ones((24, 32, 3), np.uint8), depth=np.ones((24, 32)))
 
-    agent = SimpleNamespace(_base=None, _arm=None,
-                            _perception=SimpleNamespace(get_color_frame=frame))
-    assert sess._probe_ready(agent, registry.load("go2"), None, deadline=1e18)["camera"] == "32x24"
+    agent = _agent()
+    agent._perception = SimpleNamespace(capture=frame)
+    assert sess._probe_ready(agent, registry.load("go2"), _Clock(0.1), deadline=1e18)["camera"] == "32x24"
     assert seen and seen[0] is not threading.current_thread() and not seen[0].is_alive()
 
 
@@ -184,6 +189,7 @@ def _fake_builder(cleanups: list[str], *, fail: bool = False):
         session.own("device closed", lambda: cleanups.append("closed"))
         if fail:
             raise RuntimeError("boom")
+        session.runtime = _Clock(0.1)
         return _agent(arm=SimpleNamespace(get_joint_positions=lambda: [0.0]))
     return build
 
@@ -205,7 +211,7 @@ def test_failed_start_tears_down_what_it_built(monkeypatch) -> None:
     closed: list[str] = []
     hooks = _Atexit()
     monkeypatch.setattr(sess, "atexit", hooks)
-    monkeypatch.setattr(sess, "_build_legged", _fake_builder(closed, fail=True))
+    monkeypatch.setattr(sess, "_build", _fake_builder(closed, fail=True))
     with pytest.raises(SimStartError, match="boom"):
         SimSession.start(SimSpec("go2", gui=False))
     assert closed == ["closed"] and not sess._LIVE and not hooks.hooks
@@ -215,7 +221,8 @@ def test_stop_is_idempotent_and_unregisters_atexit(monkeypatch) -> None:
     closed: list[str] = []
     hooks = _Atexit()
     monkeypatch.setattr(sess, "atexit", hooks)
-    monkeypatch.setattr(sess, "_build_legged", _fake_builder(closed))
+    monkeypatch.setattr(sess, "_build", _fake_builder(closed))
+    monkeypatch.setattr(SimSession, "_bind_ground_truth", lambda self: None)
     s = SimSession.start(SimSpec("go2", gui=False))
     assert s in sess._LIVE and hooks.hooks == [s.stop]
     assert "device closed" in s.stop()
@@ -313,7 +320,7 @@ def _robot_session() -> Any:
     from vector_os_nano.core.agent import Agent
 
     base = SimpleNamespace(get_position=lambda: [0.0, 0.0, 0.3], get_heading=lambda: 0.0)
-    agent = Agent(base=base, config={}, skills=sess._skill_pack("go2"))
+    agent = Agent(base=base, config={}, skills=get_skills(load_robot("go2").capabilities))
     return SimpleNamespace(agent=agent, spec=SimSpec("go2"))
 
 
@@ -484,11 +491,15 @@ def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypa
 
         lines = [json.loads(ln) for ln in dump.read_text(encoding="utf-8").splitlines()]
         assert [ln["phase"] for ln in lines] == ["start", "end"]
+        assert set(lines[0]) == {"schema", "backend", "session", "phase", "turn", "goal", "embodiment",
+                                 "world", "sim_time", "base", "arm", "objects", "surfaces", "user"}
+        assert lines[0]["schema"] == 1 and lines[0]["backend"] == "mujoco"
+        assert lines[0]["arm"]["joints"] == list(s.config.arm.joints)
         assert "base_link" not in lines[0]["objects"]
         assert lines[0]["user"] == [8.0, 3.0] and "pick_table" in lines[0]["surfaces"]
         assert gt_audit.grade(dump, {"delivered": "pickable_bottle_green"}, "把绿色瓶子拿过来") == (True, "")
         # the oracles see the same turn start (kept_holding / localized freshness)
         assert s._turn[0] == lines[0]["sim_time"]
-        assert "kept_holding" in s.oracles() and "localized" in s.oracles()
+        assert "kept_holding" in session_namespace(s) and "localized" in session_namespace(s)
     finally:
         rt.close()

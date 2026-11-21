@@ -46,7 +46,7 @@ def test_the_grader_shares_no_code_with_the_oracles() -> None:
 
 def _line(phase: str, turn: int, pos, welded=False, user=(8.0, 3.0), goal="把绿色瓶子拿过来") -> dict:
     return {
-        "phase": phase, "turn": turn, "goal": goal,
+        "schema": 1, "backend": "mujoco", "session": 1, "phase": phase, "turn": turn, "goal": goal,
         "objects": {"b": {"pos": list(pos), "welded": welded}},
         "surfaces": {"t": {"box": [0.0, 0.0, 1.0, 1.0], "height": 0.5}},
         "user": list(user),
@@ -97,7 +97,7 @@ def test_held_lifted_needs_a_new_weld_and_a_rise() -> None:
 
 
 def _base(phase: str, xy, turn: int = 1, goal: str = "去厨房") -> dict:
-    return {"phase": phase, "turn": turn, "goal": goal, "objects": {}, "surfaces": {}, "user": None,
+    return {"schema": 1, "backend": "mujoco", "session": 1, "phase": phase, "turn": turn, "goal": goal, "objects": {}, "surfaces": {}, "user": None,
             "base": None if xy is None else [*xy, 0.3, 0.0]}
 
 
@@ -147,3 +147,25 @@ def test_the_cli_grades_one_chosen_turn(tmp_path, capsys) -> None:
         {"turn": 2, "goal": "去厨房", "base_in": False}]
     with pytest.raises(SystemExit):
         gt_grade.main(["--dump", dump, "--box", "14", "0", "20", "5", "--goal", "去厨房", "--nth", "0"])
+
+
+@pytest.mark.parametrize('schema', [None, True, 0, 2, '1'])
+def test_unknown_dump_schema_is_refused(tmp_path, schema):
+    with pytest.raises(ValueError, match='unsupported GT schema'):
+        gt_grade.load(_write(tmp_path / 'dump.jsonl', [{'schema': schema}]))
+
+
+def test_home_grade_checks_every_joint_and_rejects_noop(tmp_path):
+    start = {'schema': 1, 'session': 2, 'turn': 1, 'phase': 'start',
+             'arm': {'joints': ['j1', 'j2'], 'q': [1., 0.], 'home': [0., 0.]}}
+    end = {**start, 'phase': 'end', 'arm': {**start['arm'], 'q': [.04, .02]}}
+    assert gt_grade.grade(_write(tmp_path / 'home.jsonl', [start, end]), home=True)[0]['arm_at_home']
+    assert not gt_grade.arm_at_home(end, end)
+    for q in ([0., .2], [0.], [0., float('nan')]):
+        assert not gt_grade.arm_at_home(start, {**end, 'arm': {**end['arm'], 'q': q}})
+    assert not gt_grade.arm_at_home(start, {'arm': None})
+
+
+def test_turn_pairing_cannot_mix_two_sessions_with_the_same_turn_number():
+    lines = [{'session': s, 'turn': 1, 'phase': p} for s, p in [(1, 'start'), (2, 'start'), (1, 'end'), (2, 'end')]]
+    assert [a['session'] == b['session'] for a, b in gt_grade.turns(lines)] == [True, True]

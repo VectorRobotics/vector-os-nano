@@ -152,9 +152,10 @@ class TestAgentSkills:
     def test_agent_skills_property_lists_the_given_set(self):
         """agent.skills lists the set the body was built with (here the SO-101 one)."""
         from vector_os_nano.core.agent import Agent
-        from vector_os_nano.skills import get_so101_skills
+        from vector_os_nano.skills import get_skills
+        from vector_os_nano.embodiments.registry import load as load_robot
 
-        agent = Agent(arm=MockArm(), skills=get_so101_skills())
+        agent = Agent(arm=MockArm(), skills=get_skills(load_robot("so101").capabilities))
         skill_names = agent.skills
         assert "home" in skill_names
         assert "grasp" in skill_names

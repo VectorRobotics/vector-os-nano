@@ -38,7 +38,7 @@ def normalize_direction(value: object, aliases: dict[str, str]) -> str | None:
     return aliases.get(str(value).strip().lower())
 
 
-@skill(
+@skill(requires=('base',),
     aliases=["turn", "rotate", "转", "转弯", "转向", "左转", "右转"],
 )
 class TurnSkill:
@@ -103,7 +103,8 @@ class TurnSkill:
         if speed <= 0:
             return SkillResult(success=False, diagnosis_code="turn_failed",
                                error_message="This base cannot turn")
-        ok, residual = turn_by(context.base, signed, vyaw=speed, tol=_HEADING_TOL_RAD)
+        ok, residual = turn_by(context.base, signed, vyaw=speed, tol=_HEADING_TOL_RAD,
+                               cancel=context.services.get("cancel"))
         data = {
             "direction": direction,
             "angle_deg": abs(angle_deg),

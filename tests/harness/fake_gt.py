@@ -159,10 +159,9 @@ def bind_fake_sim(agent: Any, embodiment: str = "so101", **gt_kwargs: Any) -> Si
     gt = FakeGT(agent, embodiment=embodiment, **gt_kwargs)
     turn = [(-math.inf, -math.inf)]
     world_id = registry.load(embodiment).world
-    s = SimpleNamespace(agent=agent, gt=gt, world=load_world(world_id) if world_id else None)
-    s.oracles = lambda: fake_namespace(agent, embodiment, gt=gt, turn_start=lambda: turn[0],
-                                       belief=lambda: getattr(agent, "_spatial_memory", None))
-    s.mark_turn = lambda phase, goal="": turn.__setitem__(0, (gt.sim_time, time.time())) if phase == "start" else None
+    s = sim_session.SimSession(sim_session.SimSpec(embodiment, False, "mujoco", world_id), registry.load(embodiment))
+    s.agent, s.gt, s.world = agent, gt, load_world(world_id) if world_id else None
+    s.mark_turn = lambda phase, goal="": setattr(s, "_turn", (gt.sim_time, time.time())) if phase == "start" else None
     s.close = s.stop = lambda: unbind_fake_sim(s)
     sim_session._LIVE.append(s)
     return s

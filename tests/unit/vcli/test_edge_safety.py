@@ -83,7 +83,7 @@ def test_a_window_without_mjpython_runs_headless_and_never_replaces_the_repl(mon
     started: list[Any] = []
     fake = SimpleNamespace(summary=lambda: "ready", stop=lambda: "stopped", agent=None)
     monkeypatch.setattr(sim_session.SimSession, "validate", staticmethod(lambda spec: None))
-    monkeypatch.setattr(sim_session.SimSession, "start", staticmethod(lambda spec: started.append(spec) or fake))
+    monkeypatch.setattr(sim_session.SimSession, "start", staticmethod(lambda spec, **_: started.append(spec) or fake))
     monkeypatch.setattr(runtime, "bind_body", lambda app, session: None)
     monkeypatch.setattr(SimStartTool, "_viewer_available", staticmethod(lambda: False))
     monkeypatch.setattr(os, "execve", lambda *a: pytest.fail("the REPL was replaced"))

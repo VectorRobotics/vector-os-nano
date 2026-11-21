@@ -16,6 +16,16 @@
 # manifests of the flow's bodies. A flow is its file: tests/e2e_repl/test_<flow>.py.
 schema: 1
 flows:
+  e17_session_choices:
+    bodies: [go2, piper, so101, g1, go2_piper]
+    turns:
+      第 1 次切换：用 mujoco 在 apartment 启动 go2，无窗口: {none: startup readiness only; no task verdict claimed}
+      第 2 次切换：用 mujoco 在 workbench 启动 piper，无窗口: {none: startup readiness only; no task verdict claimed}
+      第 3 次切换：用 mujoco 在 tabletop 启动 so101，无窗口: {none: startup readiness only; no task verdict claimed}
+      第 4 次切换：用 pybullet 在 apartment 启动 g1，无窗口: {none: startup readiness only; no task verdict claimed}
+      第 5 次切换：用 pybullet 在 apartment 启动 go2_piper，无窗口: {none: startup readiness only; no task verdict claimed}
+      第 6 次切换：用 pybullet 在 workbench 启动 piper，无窗口: {none: startup readiness only; no task verdict claimed}
+      第 7 次切换：用 pybullet 在 tabletop 启动 piper，无窗口: {none: startup readiness only; no task verdict claimed}
   e16_g1_locomotion:
     bodies: [g1]
     turns:
@@ -69,7 +79,7 @@ flows:
     bodies: [so101]
     turns:
       启动机械臂仿真 无窗口: {none: a launch claims nothing}
-      回到初始位置: {none: the arm going home (the dump carries no arm joint state)}
+      回到初始位置: {arm_at_home: true}
       抓起香蕉: {held_lifted: banana}
       尝试抓起香蕉: {none: interrupted grasp claims no successful hold}
       停: {none: P0 stop runs no model turn}

@@ -104,7 +104,7 @@ def test_the_base_is_stopped_on_every_exit_even_ctrl_c():
     assert base.stops == 1 and base.cmd == (0.0, 0.0, 0.0)
 
 
-def test_default_cancel_is_the_run_abort_signal():
+def test_injected_cancel_is_the_run_abort_signal():
     from vector_os_nano.vcli.cognitive import abort
 
     base = KinBase()
@@ -117,7 +117,7 @@ def test_default_cancel_is_the_run_abort_signal():
 
     base.wait_sim = wait_then_stop
     try:
-        res = follow(base, (4, 0), [], nav=GO2, fallen=lambda: False)
+        res = follow(base, (4, 0), [], nav=GO2, fallen=lambda: False, cancel=abort.current_token())
     finally:
         abort.clear_abort()
     assert res.reason == "aborted" and base.cmd == (0.0, 0.0, 0.0)

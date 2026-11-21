@@ -11,6 +11,8 @@ GT at_position on the tour's last room, which only fires once explore succeeded.
 Lockstep (WP06): physics advances only inside the tour's sim-time waits (~90 s wall).
 """
 from __future__ import annotations
+from vector_os_nano.schemas.world import WORLDS_DIR
+_LAYOUT_YAML = WORLDS_DIR / "apartment" / "world.yaml"
 
 import json
 import re
@@ -46,8 +48,8 @@ def _scene_boxes() -> dict[str, tuple[float, float, float, float]]:
 
 def _last_room() -> tuple[float, float]:
     """The tour's final room point: the same nearest-first order from the spawn."""
-    explorer = CoverageExplorer(KinBase(*load_world("apartment").spawn[:2]), log_path="/dev/null")
-    return room_layout()["rooms"][explorer._order()[-1]]
+    explorer = CoverageExplorer(KinBase(*load_world("apartment").spawn[:2]), room_layout(str(_LAYOUT_YAML)), log_path="/dev/null")
+    return room_layout(str(_LAYOUT_YAML))["rooms"][explorer._order()[-1]]
 
 
 _LX, _LY = _last_room()

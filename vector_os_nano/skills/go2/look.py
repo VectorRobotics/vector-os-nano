@@ -153,7 +153,7 @@ def _world_vocabulary(context: SkillContext) -> list[str]:
     return load_world(world_id).vocabulary()
 
 
-@skill(
+@skill(requires=('base', 'camera'),
     aliases=["look", "看", "看看", "看一下", "看一看", "what do you see", "describe"],
     actuates=False,
 )
@@ -194,7 +194,7 @@ class LookSkill:
         return SkillResult(success=True, result_data=data)
 
 
-@skill(
+@skill(requires=('base', 'camera'),
     aliases=["describe scene", "描述场景", "描述环境"],
     actuates=False,
 )

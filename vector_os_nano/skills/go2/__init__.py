@@ -3,7 +3,7 @@
 
 """Go2 quadruped skill package.
 
-Exports all Go2 skills and the get_go2_skills() factory.
+Locomotion and observation skills declare their own capability requirements.
 """
 from vector_os_nano.skills.go2.walk import WalkSkill
 from vector_os_nano.skills.go2.turn import TurnSkill
@@ -15,22 +15,6 @@ from vector_os_nano.skills.go2.look import LookSkill, DescribeSceneSkill
 from vector_os_nano.skills.go2.patrol import PatrolSkill
 from vector_os_nano.skills.navigate import NavigateSkill
 from vector_os_nano.skills.navigate_to_object import NavigateToObjectSkill
-
-
-def get_go2_skills() -> list:
-    """Return one instance of each Go2 skill."""
-    return [
-        WalkSkill(), TurnSkill(),
-        StandSkill(), SitSkill(), LieDownSkill(),
-        NavigateSkill(),
-        NavigateToObjectSkill(),
-        ExploreSkill(),
-        WhereAmISkill(),
-        StopSkill(),
-        LookSkill(),
-        DescribeSceneSkill(),
-        PatrolSkill(),
-    ]
 
 
 __all__ = [
@@ -47,5 +31,4 @@ __all__ = [
     "LookSkill",
     "DescribeSceneSkill",
     "PatrolSkill",
-    "get_go2_skills",
 ]

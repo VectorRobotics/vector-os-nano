@@ -80,6 +80,9 @@ class StepVerdict:
     # the calls refused in its step ("<tool>: <message>": tried, not an action).
     failed_attempt: bool = False
     refused: tuple[str, ...] = ()
+    embodiment: str = ""
+    backend: str = ""
+    session: int | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,10 @@ class VerdictReport:
     # "proven" | "failed" | "unchecked" (trace_store.goal_check), never merged into
     # ``verified``. A consumer that needs "the task is done" reads goal_check == "proven".
     goal_check: str = "unchecked"
+    schema: int = 1
+    world: str = ""
+    backend_version: str = ""
+    perception_kind: str = ""
 
     # ------------------------------------------------------------------
     # Construction — the ONLY supported way to build a verdict from a run.
@@ -125,7 +132,8 @@ class VerdictReport:
 
     @classmethod
     def from_trace(
-        cls, trace: Any, oracle_names: frozenset[str], *, gait_backend: str = ""
+        cls, trace: Any, oracle_names: frozenset[str], *, gait_backend: str = "",
+        session_info: dict[str, Any] | None = None,
     ) -> "VerdictReport":
         """Build a verdict from an ExecutionTrace using the EXISTING gate.
 
@@ -145,6 +153,7 @@ class VerdictReport:
         per_step: list[StepVerdict] = []
         n_grounded = 0
         for i, s in enumerate(trace.steps):
+            info = (getattr(s, "result_data", None) or {}).get("output", {}).get("session_info", {})
             sg = sg_by_name.get(s.sub_goal_name)
             if sg is None:
                 # A step with no matching sub-goal cannot be classified by the
@@ -172,6 +181,8 @@ class VerdictReport:
                     superseded=i not in graded,
                     failed_attempt=getattr(s, "failed_attempt", False) is True,
                     refused=tuple((getattr(s, "result_data", None) or {}).get("refused", ())),
+                    embodiment=info.get("embodiment", ""), backend=info.get("backend", ""),
+                    session=info.get("session"),
                 )
             )
 
@@ -203,6 +214,9 @@ class VerdictReport:
             scene=str(getattr(trace, "scene", "") or ""),
             contract=tuple(getattr(trace, "contract", ()) or ()),
             goal_check=goal_check(trace, oracle_names)[0],
+            world=str(getattr(trace, "world", "") or (session_info or {}).get("world", "")),
+            backend_version=(session_info or {}).get("backend_version", ""),
+            perception_kind=(session_info or {}).get("perception_kind", ""),
         )
 
     @classmethod

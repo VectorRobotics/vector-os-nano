@@ -11,6 +11,7 @@ compiles either () -- unchecked -- or exactly the end state the sentence names; 
 goal is ``proven`` only when that end state came about, through the runner.
 """
 from __future__ import annotations
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 
 import pytest
 
@@ -473,6 +474,6 @@ def test_holding_the_red_can_verifies_a_sentence_naming_it() -> None:
                                     "red unicorn", "红色的苹果", "red stool", "红色的凳子", "white cup"])
 def test_holding_object_of_an_unresolved_phrase_is_false_while_an_object_is_held(phrase) -> None:
     _trace, _rep, session = _cup_turn("pick up the yellow cup", "holding_object('yellow cup')")
-    holding_object = session.oracles()["holding_object"]
+    holding_object = session_namespace(session)["holding_object"]
     assert holding_object("yellow cup") is True  # the cup IS held
     assert holding_object(phrase) is False

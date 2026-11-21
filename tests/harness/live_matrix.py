@@ -90,6 +90,11 @@ def launch_problem(text: str, cell: dict[str, Any]) -> str:
     launch = _turns(text, cell).get(cell["launch"], text)
     ready = gt_audit.READY.search(launch)
     if ready and ready.group(1) == body:
+        backend = re.search(r"backend=(\w+)", launch[ready.end():].splitlines()[0])
+        if backend is None:
+            return "the readiness line names no backend"
+        if backend[1] != cell["backend"]:
+            return f"the launch used {backend[1]}, the cell asks for {cell['backend']}"
         return ""
     if ready:
         return f"the launch started {ready.group(1)}, the cell asks for {body}"
@@ -139,6 +144,10 @@ def judge(cell: dict[str, Any], rec: dict[str, Any]) -> dict[str, Any]:
         return {**out, "status": "not_run", "reason": problem}
     verdict = gt_audit.parse_verdict(_turns(text, cell).get(cell["task"], ""))
     grade, why = gt_audit.grade(Path(rec["dump"]), cell["expect"], cell["task"])
+    if grade is not None:
+        snapshots = [json.loads(line) for line in Path(rec["dump"]).read_text().splitlines() if line.strip()]
+        if {s.get("backend") for s in snapshots if s.get("goal") == cell["task"]} != {cell["backend"]}:
+            grade, why = None, "GT backend does not match the requested backend"
     return {**out, "status": "ran", "verdict": verdict, "grade": grade, "grade_note": why,
             "outcome": gt_audit.outcome(verdict, grade), **session_facts(Path(rec["session"]), cell["task"])}
 

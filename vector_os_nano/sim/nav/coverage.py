@@ -18,24 +18,22 @@ explore's object discovery.
 """
 from __future__ import annotations
 
-import functools
 import json
 import math
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
 
-from vector_os_nano.schemas.world import WORLDS_DIR, load_world_file
+from vector_os_nano.schemas.world import load_world_file
 
 from vector_os_nano.core.run_dir import run_path
-from vector_os_nano.sim.nav.follow import _AbortFlag, nav_config, turn_by
+from vector_os_nano.sim.nav.follow import nav_config, turn_by
 
-_LAYOUT_YAML = WORLDS_DIR / "apartment" / "world.yaml"
 LOG_NAME = "explore_coverage.jsonl"
 
 
-@functools.lru_cache(maxsize=4)
-def room_layout(path: str = str(_LAYOUT_YAML)) -> dict[str, Any]:
+def room_layout(path: str) -> dict[str, Any]:
     """``{"rooms": {name: (x, y)}, "boxes": {name: (x0, y0, x1, y1)}}`` of a layout file."""
     world = load_world_file(path)
     return {"rooms": world.rooms, "boxes": world.boxes}
@@ -55,7 +53,7 @@ class CoverageExplorer:
     def __init__(
         self,
         base: Any,
-        layout: dict[str, Any] | None = None,
+        layout: dict[str, Any],
         *,
         cancel: Any = None,
         on_event: Callable[[str, dict], None] | None = None,
@@ -63,8 +61,8 @@ class CoverageExplorer:
         observe: Callable[[], None] | None = None,
     ) -> None:
         self.base = base
-        self.layout = layout or room_layout()
-        self.cancel = cancel if cancel is not None else _AbortFlag()
+        self.layout = layout
+        self.cancel = cancel if cancel is not None else threading.Event()
         self.on_event = on_event or (lambda _e, _d: None)
         self.log_path = log_path or run_path(LOG_NAME)
         self.observe = observe

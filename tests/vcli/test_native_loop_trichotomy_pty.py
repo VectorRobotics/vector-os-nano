@@ -123,7 +123,8 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
     """
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.types import SkillResult
-    from vector_os_nano.skills.go2 import get_go2_skills
+    from vector_os_nano.skills import get_skills
+    from vector_os_nano.embodiments.registry import load as load_robot
     from vector_os_nano.vcli.cognitive.actor_causation import ActorCaused
     from vector_os_nano.vcli.cognitive.trace_store import verify_oracle_names
     from vector_os_nano.vcli.engine import VectorEngine
@@ -164,7 +165,7 @@ def test_native_teleport_is_uncaused_and_not_verified(sim_cleanup) -> None:
         from tests.harness.fake_gt import bind_real_sim
 
         bind_real_sim(agent, "go2", dog.rt)  # the GT oracles of a live session
-        for s in get_go2_skills():
+        for s in get_skills(load_robot("go2").capabilities):
             agent._skill_registry.register(s)
         agent._skill_registry.register(_TeleportSkill())
 

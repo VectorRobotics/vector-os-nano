@@ -10,6 +10,7 @@ side: held by every finger, attached, lifted."""
 from __future__ import annotations
 
 import re
+import copy
 
 import pytest
 
@@ -29,12 +30,16 @@ _SCRIPT = {"steps": [
 
 @pytest.mark.sim
 @pytest.mark.cli_main
-def test_e13_nl_launch_piper_then_pick_the_red_box_goal_proven() -> None:
-    r = run_repl_session(["start the piper simulation", "pick up the red box"], tool_script=_SCRIPT,
+@pytest.mark.parametrize("backend", ["mujoco", "pybullet"])
+def test_e13_nl_launch_piper_then_pick_the_red_box_goal_proven(backend) -> None:
+    script = copy.deepcopy(_SCRIPT)
+    script["steps"][0]["tool_calls"][0]["input"]["backend"] = backend
+    r = run_repl_session(["start the piper simulation", "pick up the red box"], tool_script=script,
                          answers=["y"], timeout_sec=240)
     text = r.text
     assert not r.timed_out, text[-3000:]
-    assert re.search(r"Started piper simulation, ready in [0-9.]+s: Arm", text), text[-3000:]
+    assert re.search(r"Started piper simulation, ready in [0-9.]+s: .*; Arm", text), text[-3000:]
+    assert f"backend={backend}" in text
     assert f"verify holding_object('{_TARGET}') ✓ (actor=CAUSED)" in text, text[-3000:]
     assert "verdict GROUNDED verified=True" in text, text[-3000:]
     assert f"goal proven: holding_object('{_TARGET}')" in text, text[-3000:]  # a closed grasp form

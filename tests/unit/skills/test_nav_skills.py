@@ -4,6 +4,8 @@
 """Navigation skills on fakes (no MuJoCo): navigate / explore / walk / turn / stop /
 patrol / where_am_i / lie_down, each pinned against its WP08 ledger defect."""
 from __future__ import annotations
+from vector_os_nano.schemas.world import WORLDS_DIR
+_LAYOUT_YAML = WORLDS_DIR / "apartment" / "world.yaml"
 
 import math
 import threading
@@ -15,7 +17,7 @@ from tests.harness.kin_base import KinBase
 from vector_os_nano.core.scene_graph import SceneGraph
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.sim.nav.coverage import _LAYOUT_YAML, room_layout
+from vector_os_nano.sim.nav.coverage import room_layout
 from vector_os_nano.sim.nav.follow import NavResult, arrival_radius
 
 
@@ -62,7 +64,7 @@ def test_failed_planner_navigation_never_moves_a_room_centre_and_reports_the_rea
     base = MagicMock()
     base.get_position.return_value = [12.0, 3.0, 0.3]
     base.navigate_to.return_value = _nav(False, "stalled", (12.0, 3.0))
-    res = NavigateSkill().execute({"room": "厨房"}, SkillContext(base=base, services={"spatial_memory": sg}))
+    res = NavigateSkill().execute({"room": "厨房"}, SkillContext(base=base, services={"layout": room_layout(str(_LAYOUT_YAML)), "spatial_memory": sg}))
     assert not res.success and res.result_data["reason"] == "stalled"
     assert "stalled" in res.error_message
     base.navigate_to.assert_called_once()  # one global planner: no door-chain retry
@@ -73,12 +75,12 @@ def test_arrival_records_the_visit():
     from vector_os_nano.skills.navigate import NavigateSkill
 
     sg = _sg()
-    kx, ky = room_layout()["rooms"]["kitchen"]
+    kx, ky = room_layout(str(_LAYOUT_YAML))["rooms"]["kitchen"]
     n0 = sg.get_room("kitchen").visit_count
     base = MagicMock()
     base.get_position.return_value = [kx + 0.1, ky, 0.3]
     base.navigate_to.return_value = _nav(True, "arrived", (kx, ky))
-    res = NavigateSkill().execute({"room": "kitchen"}, SkillContext(base=base, services={"spatial_memory": sg}))
+    res = NavigateSkill().execute({"room": "kitchen"}, SkillContext(base=base, services={"layout": room_layout(str(_LAYOUT_YAML)), "spatial_memory": sg}))
     assert res.success and res.result_data["reason"] == "arrived"
     assert sg.get_room("kitchen").visit_count == n0 + 1
 
@@ -113,11 +115,11 @@ def test_coverage_explore_blocks_and_reports_the_rooms_entered():
 
     base = Teleport(10.0, 3.0)
     sg = _sg()
-    res = explore.ExploreSkill().execute({}, SkillContext(base=base, services={"spatial_memory": sg}))
+    res = explore.ExploreSkill().execute({}, SkillContext(base=base, services={"layout": room_layout(str(_LAYOUT_YAML)), "spatial_memory": sg}))
     assert res.success and res.result_data["backend"] == "coverage"
-    assert sorted(res.result_data["rooms_visited"]) == sorted(room_layout()["rooms"])
+    assert sorted(res.result_data["rooms_visited"]) == sorted(room_layout(str(_LAYOUT_YAML))["rooms"])
     assert res.result_data["coverage"] == "8/8 rooms"
-    assert not explore.is_exploring() and explore.get_explored_rooms() == sorted(room_layout()["rooms"])
+    assert not explore.is_exploring() and explore.get_explored_rooms() == sorted(room_layout(str(_LAYOUT_YAML))["rooms"])
 
 
 def test_coverage_explore_reached_no_room_is_a_failure():
@@ -127,7 +129,8 @@ def test_coverage_explore_reached_no_room_is_a_failure():
         def navigate_to(self, x, y, cancel=None, **_):
             return _nav(False, "unreachable", (self.x, self.y))
 
-    res = explore.ExploreSkill().execute({}, SkillContext(base=Stuck(-5.0, -5.0)))
+    res = explore.ExploreSkill().execute({}, SkillContext(base=Stuck(-5.0, -5.0),
+                                        services={"layout": room_layout(str(_LAYOUT_YAML))}))
     assert not res.success and res.diagnosis_code == "exploration_failed"
 
 
@@ -143,7 +146,8 @@ def test_a_stop_cancels_the_coverage_tour():
 
     base = StopAfterTwo(10.0, 3.0)
     try:
-        res = explore.ExploreSkill().execute({}, SkillContext(base=base))
+        res = explore.ExploreSkill().execute({}, SkillContext(base=base,
+                                            services={"layout": room_layout(str(_LAYOUT_YAML))}))
     finally:
         abort.clear_abort()
     assert not res.success and res.diagnosis_code == "aborted"
@@ -289,7 +293,7 @@ def _patrol_ctx(nav_results, look_ok=False):
     registry.get.side_effect = lambda name: {"navigate": navigate, "look": look}.get(name)
     base = MagicMock()
     base.get_position.return_value = [10.0, 3.0, 0.3]
-    ctx = SkillContext(base=base, services={"spatial_memory": sg, "skill_registry": registry})
+    ctx = SkillContext(base=base, services={"layout": room_layout(str(_LAYOUT_YAML)), "spatial_memory": sg, "skill_registry": registry})
     return ctx, navigate, sg
 
 
@@ -332,7 +336,8 @@ def test_where_am_i_assigns_the_room_by_geometry(xy, room):
     base = MagicMock()
     base.get_position.return_value = [*xy, 0.3]
     base.get_heading.return_value = 0.0
-    res = WhereAmISkill().execute({}, SkillContext(base=base))
+    res = WhereAmISkill().execute({}, SkillContext(base=base,
+                                  services={"layout": room_layout(str(_LAYOUT_YAML))}))
     assert res.result_data["room"] == room
     assert res.result_data["heading"] == "east"
 
@@ -383,7 +388,7 @@ def test_the_external_nav_path_is_off_without_its_switch(monkeypatch):
     monkeypatch.delenv("VECTOR_NAV_STACK", raising=False)
     monkeypatch.setattr(os, "listdir", lambda p=".": (scanned.append(p) if p == "/proc" else None) or real(p))
     assert not explore._tare_running() and not explore.is_nav_stack_running()
-    res = explore.ExploreSkill().execute({}, SkillContext(base=Teleport(10.0, 3.0), services={"spatial_memory": _sg()}))
+    res = explore.ExploreSkill().execute({}, SkillContext(base=Teleport(10.0, 3.0), services={"layout": room_layout(str(_LAYOUT_YAML)), "spatial_memory": _sg()}))
     assert res.success and res.result_data["backend"] == "coverage"
     assert scanned == []
 
@@ -413,8 +418,22 @@ def test_in_process_navigation_writes_no_flag_file(tmp_path):
     base = MagicMock()
     base.get_position.return_value = [10.0, 3.0, 0.3]
     base.navigate_to.return_value = _nav(True, "arrived", (17.0, 2.5))
-    ctx = SkillContext(base=base, services={"spatial_memory": _sg()})
+    ctx = SkillContext(base=base, services={"layout": room_layout(str(_LAYOUT_YAML)), "spatial_memory": _sg()})
     NavigateSkill().execute({"room": "kitchen"}, ctx)
     assert list(tmp_path.iterdir()) == []  # the room path armed it and left it armed
     NavigateSkill().execute({"x": 1.0, "y": 1.0}, ctx)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_where_am_i_reads_the_injected_world_not_the_apartment():
+    from vector_os_nano.skills.go2.where_am_i import WhereAmISkill
+    layout = {'rooms': {'new_storage': (17., 2.)}, 'boxes': {'new_storage': (16., 1., 18., 3.)}}
+    result = WhereAmISkill().execute({}, SkillContext(base=Teleport(17., 2.), services={'layout': layout}))
+    assert result.result_data['room'] == 'new_storage'
+    assert result.result_data['room_center'] == [17., 2.]
+
+
+def test_coverage_does_not_fall_back_to_another_world():
+    from vector_os_nano.skills.go2.explore import ExploreSkill
+    result = ExploreSkill().execute({}, SkillContext(base=Teleport(17., 2.)))
+    assert not result.success and result.result_data['diagnosis'] == 'no_layout'

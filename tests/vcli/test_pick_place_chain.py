@@ -11,6 +11,7 @@ This guards both the pick->place capability and place's grounded verify_hint
 never-grounding negation `not holding_object()`.
 """
 from __future__ import annotations
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 
 import pytest
 
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.sim
 
 def test_pick_hold_then_place_releases_and_moves_object():
     with started("so101") as s:
-        agent, ns = s.agent, s.oracles()
+        agent, ns = s.agent, session_namespace(s)
         holding, released = ns["holding_object"], ns["released"]  # one GT namespace (WP10)
         x0, y0, _ = s.gt.object_positions()["banana"]
 

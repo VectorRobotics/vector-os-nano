@@ -12,6 +12,7 @@ first, and a start that does not become ready is an error, never "Started".
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 from vector_os_nano.embodiments.registry import embodiment_ids
@@ -76,65 +77,73 @@ def _embodiment_menu() -> str:
 class SimStartTool:
     """Start a SimSession for the requested embodiment and rebind the REPL to it."""
 
-    input_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "embodiment": {
-                "type": "string",
-                "enum": embodiment_ids(),
-                "description": (
-                    "Which body to simulate: " + _embodiment_menu() + ". Use the arm "
-                    "variant (go2_piper) when the user asks for an arm / 机械臂 / "
-                    "manipulation on the dog."
-                ),
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        from vector_os_nano.schemas.world import world_folders
+        from vector_os_nano.schemas import paths, user
+        from vector_os_nano.sim.backends import BACKENDS
+
+        return {
+            "type": "object",
+            "properties": {
+                "embodiment": {
+                    "type": "string",
+                    "enum": embodiment_ids(),
+                    "description": (
+                        "Which body to simulate: " + _embodiment_menu() + ". Use the arm "
+                        "variant (go2_piper) when the user asks for an arm / 机械臂 / "
+                        "manipulation on the dog."
+                    ),
+                },
+                "gui": {
+                    "type": "boolean",
+                    "default": user.load(paths.config_file()).defaults.gui,
+                    "description": (
+                        "Open the viewer window (default: config.yaml defaults.gui). When the user says "
+                        "'headless' / '无窗口' / 'no window', pass gui=false."
+                    ),
+                },
+                "backend": {"type": "string", "enum": sorted(BACKENDS),
+                            "description": "Physics engine; defaults to config.yaml defaults.backend."},
+                "world": {"type": "string", "enum": sorted(world_folders()),
+                          "description": "World folder; defaults to config.yaml, then the robot's world."},
             },
-            "gui": {
-                "type": "boolean",
-                "description": (
-                    "Open the viewer window (default: true). When the user says "
-                    "'headless' / '无窗口' / 'no window', pass gui=false."
-                ),
-                "default": True,
-            },
-        },
-        "required": ["embodiment"],
-    }
+            "required": ["embodiment"],
+        }
 
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         from vector_os_nano.sim.session import SimSession, SimSpec, SimStartError
+        from vector_os_nano.vcli.cognitive.abort import is_abort_requested
         from vector_os_nano.vcli.runtime import bind_body
 
         app = context.app_state
         if app is None:
             return ToolResult(content="No app state available", is_error=True)
-        gui = params.get("gui", True)
-        if not isinstance(gui, bool):  # bool("false") is True: never guess a window
-            return ToolResult(content=f"gui must be true or false, got {gui!r}", is_error=True)
-        spec = SimSpec(embodiment=str(params.get("embodiment", "")), gui=gui)
+        try:
+            spec = SimSpec(embodiment=params.get("embodiment", ""), gui=params.get("gui"),
+                           backend=params.get("backend"), world=params.get("world")).resolved()
+            SimSession.validate(spec)  # unknown/unsupported choices never stop the running session
+        except SimStartError as exc:
+            return ToolResult(content=f"Cannot start simulation: {exc}", is_error=True)
 
         current = app.get("sim_session")
-        if current is not None and current.spec == spec:
-            return ToolResult(content=f"{spec.embodiment} simulation already running ({current.summary()}).")
-
         note = ""
-        if spec.gui and not self._viewer_available():
+        if spec.gui and spec.backend == "mujoco" and not self._viewer_available():
             # macOS: the viewer needs mjpython. The running REPL (and its conversation)
             # is never replaced: run headless and say how to get a window.
-            spec = SimSpec(embodiment=spec.embodiment, gui=False)
+            spec = replace(spec, gui=False)
             note = (" (headless: on macOS the viewer window needs mjpython; relaunch as "
                     "`mjpython -m vector_os_nano.vcli.cli`)")
 
-        try:
-            SimSession.validate(spec)  # before touching the running sim: a typo must not stop it
-        except SimStartError as exc:
-            return ToolResult(content=f"Cannot start {spec.embodiment!r}: {exc}", is_error=True)
+        if current is not None and current.spec == spec:
+            return ToolResult(content=f"{spec.embodiment} simulation already running ({current.summary()}).")
 
         prefix = ""
         if current is not None:
             prefix = f"Stopped {current.spec.embodiment} ({current.stop()}). "
             bind_body(app, None)
         try:
-            session = SimSession.start(spec)
+            session = SimSession.start(spec, abort=is_abort_requested, cancel=context.abort.is_set)
         except SimStartError as exc:
             return ToolResult(
                 content=f"{prefix}Failed to start {spec.embodiment} simulation: {exc}",

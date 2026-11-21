@@ -6,17 +6,18 @@
 Tests verify:
 - Each skill has correct name, description, parameters, pre/postconditions, effects
 - All skills satisfy the Skill runtime-checkable Protocol
-- get_so101_skills() returns the SO-101 set
+- get_skills(load_robot("so101").capabilities) returns the SO-101 set
 """
 from __future__ import annotations
 
 import pytest
+from vector_os_nano.embodiments.registry import load as load_robot
 
 from vector_os_nano.core.skill import Skill
 from vector_os_nano.skills import (
     HomeSkill,
     PlaceSkill,
-    get_so101_skills,
+    get_skills,
 )
 
 
@@ -128,12 +129,12 @@ class TestPlaceSkillSchema:
 # get_so101_skills
 # ---------------------------------------------------------------------------
 
-_SO101_SET = {"stop", "home", "grasp", "place", "gripper_open", "gripper_close"}
+_SO101_SET = {"stop", "home", "grasp", "place", "gripper_open", "gripper_close", "place_top_down"}
 
 
 class TestGetSo101Skills:
     def setup_method(self):
-        self.skills = get_so101_skills()
+        self.skills = get_skills(load_robot("so101").capabilities)
 
     def test_returns_all_skills(self):
         assert len(self.skills) == len(_SO101_SET)

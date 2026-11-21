@@ -201,7 +201,10 @@ def render_turn(console: Any, engine: Any, trace: Any, answer: str, entries: lis
     if steps or trace.contract or trace.refused or trace.cancelled or trace.llm_error:
         try:
             oracle_names = verify_oracle_names(agent, engine)
-            report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent))
+            world = getattr(engine, "_world", None)
+            session = world.session(agent) if callable(getattr(world, "session", None)) else None
+            report = VerdictReport.from_trace(trace, oracle_names, gait_backend=_gait_backend(agent),
+                                               session_info=session.metadata() if callable(getattr(session, "metadata", None)) else None)
             color = "green" if report.verified else "yellow"
             gait = f" gait={report.gait_backend}" if report.gait_backend else ""
             console.print(

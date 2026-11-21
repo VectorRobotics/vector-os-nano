@@ -39,6 +39,7 @@ stopped after each case. Reproduce::
     scripts/gate.sh sim  (GATE_PATHS=tests/vcli/test_native_loop_arm_pty.py)
 """
 from __future__ import annotations
+from vector_os_nano.vcli.worlds.sim_oracles import session_namespace
 
 
 import pytest
@@ -94,7 +95,7 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
 
     with started("so101") as s:
         # The arm STARTS not holding anything: a grasp is a genuine, caused 0->1.
-        assert s.oracles()["holding_object"]() is False
+        assert session_namespace(s)["holding_object"]() is False
         eng, trace = _turn(s, [
             tool_turn(("grasp", {"query": _PICK_TARGET})),
             tool_turn(("verify", {"expr": f"holding_object('{_PICK_TARGET}')"})),
@@ -110,7 +111,7 @@ def test_native_arm_home_grounds_and_is_caused(sim_cleanup) -> None:
     from vector_os_nano.vcli.backends.fake import tool_turn
 
     with started("so101") as s:
-        assert s.oracles()["arm_at_home"]() is False  # the arm starts stretched out (qpos0)
+        assert session_namespace(s)["arm_at_home"]() is False  # the arm starts stretched out (qpos0)
         eng, trace = _turn(s, [
             tool_turn(("home", {})),
             tool_turn(("verify", {"expr": "arm_at_home()"})),

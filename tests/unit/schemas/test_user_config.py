@@ -110,3 +110,14 @@ def test_every_typed_field_has_a_reader_outside_schemas() -> None:
     for cls in (user.UserConfig, user.Llm):
         for f in dataclasses.fields(cls):
             assert f.name in read, f"{cls.__name__}.{f.name} has no reader outside schemas/"
+
+
+@pytest.mark.parametrize('value', ['[]', 'null', '{gui: 1}', '{gui: "false"}', '{backend: ""}', '{world: false}', '{embodiment: 2}', '{unknown: x}'])
+def test_invalid_sim_defaults_are_rejected(tmp_path, value):
+    with pytest.raises(user.UserConfigError, match='defaults'):
+        user.load(_file(tmp_path, f'schema: 1\ndefaults: {value}\n'))
+
+
+def test_sim_defaults_have_explicit_types(tmp_path):
+    cfg = user.load(_file(tmp_path, 'schema: 1\ndefaults: {embodiment: piper, backend: pybullet, world: workbench, gui: false}\n'))
+    assert cfg.defaults == user.Defaults('piper', 'pybullet', 'workbench', False)
