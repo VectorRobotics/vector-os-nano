@@ -132,6 +132,7 @@ for name in ('Environment follow', 'Third person'):
     views.append(obj)
 root = record['bodies'].index(record['root_body'])
 for frame, (bodies, camera_poses) in enumerate(zip(poses['bodies'], poses['cameras']), 1):
+    scene.frame_set(frame)
     for obj, pose in zip(parents, bodies):
         obj.location, obj.rotation_quaternion = pose[:3], Quaternion(pose[3:])
         obj.keyframe_insert('location', frame=frame)
@@ -142,9 +143,22 @@ for frame, (bodies, camera_poses) in enumerate(zip(poses['bodies'], poses['camer
         obj.keyframe_insert('location', frame=frame)
         obj.keyframe_insert('rotation_quaternion', frame=frame)
     pos = Vector(bodies[root, :3])
-    for obj, offset in zip(views, ((1.6, -.85, 1.75), (-1.5, -.85, 1.55))):
-        obj.location = pos+Vector(offset)
-        obj.rotation_euler = (pos+Vector((0, 0, .85))-obj.location).to_track_quat('-Z', 'Y').to_euler()
+    heading = Quaternion(bodies[root, 3:])
+    focus = pos+heading@Vector((.25, 0, .85))
+    deps = bpy.context.evaluated_depsgraph_get()
+    deps.update()
+    candidates = (((-.85, -1.6, 1.5), (-.85, 1.6, 1.5), (-1.0, -.7, 1.5)),
+                  ((-.85, .65, 1.4), (.9, -1.2, 1.55), (-1.2, -.9, 1.55)))
+    for obj, offsets in zip(views, candidates):
+        for offset in offsets:
+            location = pos+heading@Vector(offset)
+            sight = focus-location
+            if not scene.ray_cast(deps, location, sight.normalized(), distance=max(.05, sight.length-.5))[0]:
+                break
+        else:
+            raise ValueError(f'No unobstructed {obj.name} camera at recorded frame {frame}')
+        obj.location = location
+        obj.rotation_euler = sight.to_track_quat('-Z', 'Y').to_euler()
         obj.keyframe_insert('location', frame=frame)
         obj.keyframe_insert('rotation_euler', frame=frame)
 for pos, energy in (((4, -2, 3), 180), ((2, -3, 2.8), 120)):
@@ -156,6 +170,9 @@ scene['replay_recording'] = record['recording']
 scene['replay_scope'] = record['scope']
 scene['replay_model_sha256'] = record['model_sha256']
 scene['replay_surface_adjustments'] = 'Matte oak roughness 0.6; extension UV uses the source st map in meters'
+scene.view_settings.exposure = -.65
+scene.view_settings.look = 'AgX - Medium High Contrast'
+scene['replay_color_adjustments'] = 'Exposure -0.65 EV, AgX medium high contrast; source geometry/material colours unchanged'
 scene.render.engine = 'CYCLES'
 scene.cycles.samples = 16
 scene.cycles.use_denoising = True
