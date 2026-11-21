@@ -7,7 +7,7 @@ import math
 import pytest
 from unittest.mock import MagicMock
 from vector_os_nano.core.skill import SkillContext
-from vector_os_nano.core.world_model import WorldModel
+
 from vector_os_nano.core.types import SkillResult
 
 
@@ -33,7 +33,6 @@ def _make_go2_context():
         arm=None,
         gripper=None,
         perception=None,
-        world_model=WorldModel(),
         calibration=None,
         base=base,
     )

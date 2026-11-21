@@ -100,7 +100,7 @@ class MockFailingSkill:
 def _make_agent(skills: list[Any] | None = None) -> MagicMock:
     """Create a mock agent with a skill registry."""
     agent = MagicMock()
-    agent._build_context.return_value = MagicMock()
+    agent._build_context.return_value = MagicMock(services={})
     agent._sync_robot_state.return_value = None
 
     registry = MagicMock()
@@ -330,7 +330,7 @@ class TestWrapperExecute:
         assert result.is_error is True
         assert "silent_fail" in result.content
 
-    def test_wrapper_syncs_robot_state_on_success(self) -> None:
+    def test_wrapper_passes_the_runs_cancel_token(self) -> None:
         from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
 
         skill = MagicMock()
@@ -346,7 +346,7 @@ class TestWrapperExecute:
         ctx = _make_context(agent=agent)
 
         wrapper.execute({}, ctx)
-        agent._sync_robot_state.assert_called_once()
+        assert skill.execute.call_args.args[1].services["cancel"] is ctx.abort
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +534,7 @@ class TestWrapSkillsMultiple:
         from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
 
         agent = MagicMock()
-        agent._build_context.return_value = MagicMock()
+        agent._build_context.return_value = MagicMock(services={})
         agent._sync_robot_state.return_value = None
         registry = MagicMock()
         registry.list_skills.return_value = ["ghost_skill"]

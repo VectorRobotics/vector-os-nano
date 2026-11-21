@@ -69,11 +69,11 @@ def test_arm_honest_grasp_grades_grounded() -> None:
         timeout_sec=_SIM_TIMEOUT_SEC,
         extra_args=["--headless"],
         tool_script=_turns(
-            ({"name": "pick", "input": {"object_label": "banana", "mode": "hold"}},
+            ({"name": "grasp", "input": {"query": "banana"}},
              "holding_object('banana')"),
         ),
     )
     assert r.verified is True and r.exit_code == 0, r.verdict
     assert r.evidence == "GROUNDED" and r.verdict["goal_check"] == "proven", r.verdict
     (step,) = r.verdict["per_step"]
-    assert step["strategy"] == "pick" and step["evidence"] == "GROUNDED", step
+    assert step["strategy"] == "grasp" and step["evidence"] == "GROUNDED", step

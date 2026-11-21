@@ -17,7 +17,6 @@ from typing import Any
 from vector_os_nano.core.config import load_config
 from vector_os_nano.core.skill import Skill, SkillContext, SkillRegistry
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.core.world_model import WorldModel
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +61,7 @@ class Agent:
         skills: list[Skill] | None = None,
         config: dict | str | None = None,
         auto_perception: bool = False,
+        services: dict | None = None,
         base: Any = None,
     ) -> None:
         # ---- Configuration --------------------------------------------------
@@ -74,6 +74,7 @@ class Agent:
         self._arm = arm
         self._gripper = gripper
         self._base = base
+        self._services = dict(services or {})
 
         # Auto-create SO101Gripper when arm shares a serial bus and no gripper
         # was explicitly supplied.
@@ -111,9 +112,6 @@ class Agent:
                 except Exception as exc:
                     logger.warning("Could not auto-create perception pipeline: %s", exc)
 
-        # ---- World model ----------------------------------------------------
-        self._world_model = WorldModel()
-
         # ---- Skill registry -------------------------------------------------
         self._skill_registry = SkillRegistry()
         for skill in skills or []:
@@ -122,42 +120,6 @@ class Agent:
         # ---- Lazy-init state ------------------------------------------------
         self._ik_solver: Any = None
         self._calibration: Any = None
-
-        # ---- Sync world model with hardware ----------------------------------
-        self._sync_robot_state()
-
-    # -------------------------------------------------------------------------
-    # Public API — primary entry point
-    # -------------------------------------------------------------------------
-
-    def _sync_robot_state(self) -> None:
-        """Sync world model robot state from hardware."""
-        if self._arm is not None:
-            try:
-                joints = self._arm.get_joint_positions()
-                ee_pos = (0.0, 0.0, 0.0)
-                try:  # the arm's OWN kinematics, never another arm's solver
-                    pos, _ = self._arm.fk(joints)
-                    ee_pos = tuple(pos)
-                except Exception:
-                    pass
-                self._world_model.update_robot_state(
-                    joint_positions=tuple(joints),
-                    ee_position=ee_pos,
-                )
-            except Exception as exc:
-                logger.debug("Could not sync robot state: %s", exc)
-
-        if self._base is not None:
-            try:
-                pos = self._base.get_position()
-                heading = self._base.get_heading()
-                self._world_model.update_robot_state(
-                    position_xy=(pos[0], pos[1]),
-                    heading=heading,
-                )
-            except Exception as exc:
-                logger.debug("Could not sync base state: %s", exc)
 
     # -------------------------------------------------------------------------
     # Convenience methods
@@ -191,17 +153,11 @@ class Agent:
                 result_data={"diagnosis": "unknown_skill"},
             )
         result = skill_obj.execute(dict(params or {}), self._build_context())
-        self._sync_robot_state()
         return result
 
     # -------------------------------------------------------------------------
     # Properties
     # -------------------------------------------------------------------------
-
-    @property
-    def world(self) -> WorldModel:
-        """The current world model."""
-        return self._world_model
 
     @property
     def skills(self) -> list[str]:
@@ -267,7 +223,7 @@ class Agent:
                                calibration_error)
 
         # Build services dict for skills that need injected dependencies
-        services: dict = {}
+        services: dict = dict(self._services)
         if hasattr(self, "_vlm") and self._vlm is not None:
             services["vlm"] = self._vlm
         if hasattr(self, "_spatial_memory") and self._spatial_memory is not None:
@@ -285,7 +241,6 @@ class Agent:
                 {"default": self._perception} if self._perception else {}
             ),
             services=services,
-            world_model=self._world_model,
             calibration=self._calibration,
             config=self._config,
         )

@@ -21,7 +21,7 @@ _SCRIPT = {"steps": [
         {"name": "start_simulation", "input": {"embodiment": "piper", "gui": False}}]},
     {"when": "", "is_error": False, "text": "the piper simulation is up", "tool_calls": []},
     {"when": "pick up the red box", "tool_calls": [
-        {"name": "perception_grasp", "input": {"query": "red box"}}]},
+        {"name": "grasp", "input": {"query": "red box"}}]},
     {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": f"holding_object('{_TARGET}')"}}]},
     {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
 ]}

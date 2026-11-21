@@ -96,11 +96,11 @@ def test_native_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
         # The arm STARTS not holding anything: a grasp is a genuine, caused 0->1.
         assert s.oracles()["holding_object"]() is False
         eng, trace = _turn(s, [
-            tool_turn(("pick", {"object_label": _PICK_TARGET, "mode": "hold"})),
+            tool_turn(("grasp", {"query": _PICK_TARGET})),
             tool_turn(("verify", {"expr": f"holding_object('{_PICK_TARGET}')"})),
             tool_turn(end=True),
         ], "把香蕉抓起来")  # a closed form: a manipulation verifies only through a proven contract
-        report = _grounded_and_caused(s, eng, trace, "pick", "holding_object")
+        report = _grounded_and_caused(s, eng, trace, "grasp", "holding_object")
         assert report.goal_check == "proven", report.reject_reason
 
 

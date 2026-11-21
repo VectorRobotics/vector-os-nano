@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.core.skill import SkillContext
-from vector_os_nano.core.world_model import WorldModel
+
 
 
 # ---------------------------------------------------------------------------
@@ -157,10 +157,10 @@ class TestAgentSkills:
         agent = Agent(arm=MockArm(), skills=get_so101_skills())
         skill_names = agent.skills
         assert "home" in skill_names
-        assert "scan" in skill_names
-        assert "pick" in skill_names
+        assert "grasp" in skill_names
+        assert "pick" not in skill_names
         assert "place" in skill_names
-        assert "detect" in skill_names
+        assert "detect" not in skill_names
 
     def test_agent_same_name_registered_once(self):
         """Two skills with one name: the later one wins, listed once."""
@@ -174,24 +174,6 @@ class TestAgentSkills:
 # ---------------------------------------------------------------------------
 
 
-class TestAgentWorldProperty:
-    """Tests for the agent.world property."""
-
-    def test_agent_world_property(self):
-        """agent.world should return the WorldModel instance."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm())
-        assert isinstance(agent.world, WorldModel)
-
-    def test_agent_world_is_same_instance(self):
-        """Repeated access to agent.world returns the same object."""
-        from vector_os_nano.core.agent import Agent
-
-        agent = Agent(arm=MockArm())
-        w1 = agent.world
-        w2 = agent.world
-        assert w1 is w2
 
 
 # ---------------------------------------------------------------------------

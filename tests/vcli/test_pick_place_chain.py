@@ -27,7 +27,7 @@ def test_pick_hold_then_place_releases_and_moves_object():
 
         assert holding() is False  # gripper starts empty
 
-        pick = agent.execute_skill("pick", {"object_label": "banana", "mode": "hold"})
+        pick = agent.execute_skill("grasp", {"query": "banana"})
         assert pick.success
         assert holding() is True, "pick(mode='hold') must leave the object held"
         assert released() is False and released("banana") is False

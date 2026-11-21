@@ -27,18 +27,18 @@ class GripperOpenSkill:
     preconditions: list[str] = []
     postconditions: list[str] = ["gripper_empty"]
     effects: dict = {"gripper_state": "open", "held_object": None}
-    failure_modes: list[str] = ["no_arm"]
+    failure_modes: list[str] = ["no_gripper", "gripper_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         if context.gripper is None:
             return SkillResult(
                 success=False,
                 error_message="No gripper connected",
-                result_data={"diagnosis": "no_arm"},
+                result_data={"diagnosis": "no_gripper"},
             )
-        context.gripper.open()
-        context.world_model.update_robot_state(gripper_state="open", held_object=None)
-        return SkillResult(success=True, result_data={"diagnosis": "ok"})
+        ok = context.gripper.open()
+        return SkillResult(success=bool(ok), result_data={"diagnosis": "ok" if ok else "gripper_failed"},
+                           error_message="" if ok else "Gripper did not open")
 
 
 @skill(
@@ -57,15 +57,15 @@ class GripperCloseSkill:
     preconditions: list[str] = []
     postconditions: list[str] = []
     effects: dict = {"gripper_state": "closed"}
-    failure_modes: list[str] = ["no_arm"]
+    failure_modes: list[str] = ["no_gripper", "gripper_failed"]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         if context.gripper is None:
             return SkillResult(
                 success=False,
                 error_message="No gripper connected",
-                result_data={"diagnosis": "no_arm"},
+                result_data={"diagnosis": "no_gripper"},
             )
-        context.gripper.close()
-        context.world_model.update_robot_state(gripper_state="closed")
-        return SkillResult(success=True, result_data={"diagnosis": "ok"})
+        ok = context.gripper.close()
+        return SkillResult(success=bool(ok), result_data={"diagnosis": "ok" if ok else "gripper_failed"},
+                           error_message="" if ok else "Gripper did not close")

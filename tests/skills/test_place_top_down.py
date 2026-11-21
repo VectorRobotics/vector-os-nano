@@ -12,7 +12,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from vector_os_nano.core.skill import SkillContext
-from vector_os_nano.core.world_model import ObjectState, WorldModel
+
 from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
 
 
@@ -94,32 +94,18 @@ class _MockGripper:
 def _mkctx(
     arm=None,
     gripper=None,
-    world_model=None,
     config: dict | None = None,
 ) -> SkillContext:
     return SkillContext(
         arm=arm,
         gripper=gripper,
         base=SimpleNamespace(),
-        world_model=world_model,
         config=config or {},
     )
 
 
-def _mkworld(*objs: ObjectState) -> WorldModel:
-    wm = WorldModel()
-    for o in objs:
-        wm.add_object(o)
-    return wm
 
 
-def _receptacle(
-    rid: str = "tray_01",
-    x: float = 0.5,
-    y: float = 0.0,
-    z: float = 0.25,
-) -> ObjectState:
-    return ObjectState(object_id=rid, label="tray", x=x, y=y, z=z)
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +118,7 @@ def test_place_top_down_happy_path_explicit_xyz_calls_open_after_descent() -> No
     gripper.open() → move(pre).  No home return."""
     arm = _MockArm()
     gripper = _MockGripper()
-    ctx = _mkctx(arm=arm, gripper=gripper, world_model=_mkworld())
+    ctx = _mkctx(arm=arm, gripper=gripper)
 
     result = PlaceTopDownSkill().execute(
         {"target_xyz": [0.5, 0.0, 0.25]}, ctx
@@ -173,7 +159,7 @@ def test_place_top_down_happy_path_explicit_xyz_calls_open_after_descent() -> No
 def test_place_top_down_ik_unreachable_pre_place() -> None:
     arm = _MockArm(ik_fail_call=1)  # first ik_top_down returns None
     gripper = _MockGripper()
-    ctx = _mkctx(arm=arm, gripper=gripper, world_model=_mkworld())
+    ctx = _mkctx(arm=arm, gripper=gripper)
 
     result = PlaceTopDownSkill().execute({"target_xyz": [0.5, 0.0, 0.25]}, ctx)
 
@@ -190,7 +176,7 @@ def test_place_top_down_ik_unreachable_pre_place() -> None:
 def test_place_top_down_ik_unreachable_place() -> None:
     arm = _MockArm(ik_fail_call=2)  # second ik_top_down returns None
     gripper = _MockGripper()
-    ctx = _mkctx(arm=arm, gripper=gripper, world_model=_mkworld())
+    ctx = _mkctx(arm=arm, gripper=gripper)
 
     result = PlaceTopDownSkill().execute({"target_xyz": [0.5, 0.0, 0.25]}, ctx)
 
@@ -205,7 +191,7 @@ def test_place_top_down_ik_unreachable_place() -> None:
 
 
 def test_place_top_down_no_arm_returns_no_arm() -> None:
-    ctx = _mkctx(arm=None, gripper=_MockGripper(), world_model=_mkworld())
+    ctx = _mkctx(arm=None, gripper=_MockGripper())
 
     result = PlaceTopDownSkill().execute({"target_xyz": [0.5, 0.0, 0.25]}, ctx)
 
@@ -219,7 +205,7 @@ def test_place_top_down_no_arm_returns_no_arm() -> None:
 
 
 def test_place_top_down_no_gripper_returns_no_gripper() -> None:
-    ctx = _mkctx(arm=_MockArm(), gripper=None, world_model=_mkworld())
+    ctx = _mkctx(arm=_MockArm(), gripper=None)
 
     result = PlaceTopDownSkill().execute({"target_xyz": [0.5, 0.0, 0.25]}, ctx)
 
@@ -232,33 +218,6 @@ def test_place_top_down_no_gripper_returns_no_gripper() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_place_top_down_receptacle_id_resolves_from_world_model() -> None:
-    """When target_xyz is absent but receptacle_id is provided, the skill
-    fetches the receptacle's (x, y, z) from the world model and places there."""
-    arm = _MockArm()
-    gripper = _MockGripper()
-    receptacle = _receptacle(rid="tray_01", x=1.2, y=0.3, z=0.15)
-    wm = _mkworld(receptacle)
-    ctx = _mkctx(arm=arm, gripper=gripper, world_model=wm)
-
-    result = PlaceTopDownSkill().execute({"receptacle_id": "tray_01"}, ctx)
-
-    assert result.success is True
-    assert result.result_data["diagnosis"] == "ok"
-
-    placed = result.result_data["placed_at"]
-    # Should be [rx, ry, rz + drop_height]
-    assert abs(placed[0] - 1.2) < 1e-6
-    assert abs(placed[1] - 0.3) < 1e-6
-    drop_h = 0.05  # default
-    assert abs(placed[2] - (0.15 + drop_h)) < 1e-6
-
-    # world_model.get_object must have been called with "tray_01"
-    # Verify the IK targets use the receptacle coords
-    ik_calls = [c for c in arm.calls if c[0] == "ik_top_down"]
-    pre_place_target = ik_calls[0][1][0]  # (x, y, z)
-    assert abs(pre_place_target[0] - 1.2) < 1e-6
-    assert abs(pre_place_target[1] - 0.3) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +226,8 @@ def test_place_top_down_receptacle_id_resolves_from_world_model() -> None:
 
 
 def test_place_top_down_receptacle_not_found_returns_receptacle_not_found() -> None:
-    wm = _mkworld()  # empty world model
-    ctx = _mkctx(arm=_MockArm(), gripper=_MockGripper(), world_model=wm)
+
+    ctx = _mkctx(arm=_MockArm(), gripper=_MockGripper())
 
     result = PlaceTopDownSkill().execute({"receptacle_id": "nonexistent_tray"}, ctx)
 
@@ -282,7 +241,7 @@ def test_place_top_down_receptacle_not_found_returns_receptacle_not_found() -> N
 
 
 def test_place_top_down_missing_target_returns_missing_target() -> None:
-    ctx = _mkctx(arm=_MockArm(), gripper=_MockGripper(), world_model=_mkworld())
+    ctx = _mkctx(arm=_MockArm(), gripper=_MockGripper())
 
     result = PlaceTopDownSkill().execute({}, ctx)
 

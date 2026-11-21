@@ -115,7 +115,7 @@ def _make_agent(x: float = 0.0, y: float = 0.0, **gt_kwargs):
     )
 
     def _build_context():
-        return SimpleNamespace(base=base, arm=None, gripper=None, services=None)
+        return SimpleNamespace(base=base, arm=None, gripper=None, services={})
 
     def _sync_robot_state():
         return None
@@ -403,7 +403,7 @@ def _go2_piper_like_agent():
 
     agent, base = _make_agent(10.0, 3.0)
     reg = SkillRegistry()
-    for name in ("walk", "look", "explore", "navigate", "navigate_to_object", "perception_grasp", "place_top_down"):
+    for name in ("walk", "look", "explore", "navigate", "navigate_to_object", "grasp", "place_top_down"):
         reg.register(SimpleNamespace(name=name, description=name, parameters={}))
     sg = SceneGraph()
     sg.add_object(ObjectNode(object_id="o1", category="bottle", x=10.86, y=2.8, z=0.31,
@@ -470,7 +470,7 @@ def test_robot_world_policy_and_belief_state_reach_the_native_turn() -> None:
 
     text = _prompt_text(_go2_piper_like_agent(), RobotWorld())
     assert "look (it localizes" in text and "navigate_to_object first" in text
-    assert "grasp it with perception_grasp" in text
+    assert "grasp it with grasp" in text
     assert "navigate(8.0, 3.0)" in text and "near_object('user') and kept_holding" in text
     assert "dining_table centre (3.00, 7.50) top 0.66 m" in text and "object_on(" in text
     assert "go_to_room(room)" in text and "kitchen" in text
@@ -558,7 +558,7 @@ def test_policy_lines_follow_the_body() -> None:
     arm_only = _go2_piper_like_agent()
     arm_only._base = None
     text = task_policy(arm_only)
-    assert "perception_grasp" in text and "navigate(" not in text and "go_to_room" not in text
+    assert "grasp" in text and "navigate(" not in text and "go_to_room" not in text
     base_only = _go2_piper_like_agent()
     base_only._gripper = None
     text = task_policy(base_only)
@@ -1200,10 +1200,9 @@ def test_a_dispatched_release_skill_is_a_place_intent() -> None:
     what is held (``effects['held_object'] = None``): dispatching one is a place, so
     an unrelated walk verify cannot stand in for the release."""
     from vector_os_nano.skills.gripper import GripperOpenSkill
-    from vector_os_nano.skills.handover import HandoverSkill
     from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
 
-    for cls in (GripperOpenSkill, HandoverSkill):
+    for cls in (GripperOpenSkill,):
         assert SkillWrapperTool(cls(), None).effects["held_object"] is None
     release = _Skill("gripper_open_fake", lambda: None)
     release.effects = {"gripper_state": "open", "held_object": None}

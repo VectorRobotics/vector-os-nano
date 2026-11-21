@@ -8,7 +8,7 @@ DEMO-QUALITY — mirrors pick_top_down.py assumptions. Summary:
 
 * Gripper always approaches straight down (world -Z). No angled approach.
 * Target location is either explicit world XYZ or resolved from a receptacle's
-  world_model entry via ``receptacle_id``. No perception is involved.
+  perceived coordinates. No perception is involved.
 * Dog stands still during the drop. No base-arm coordination.
 * No collision checking against dog body, furniture, or other objects.
 * The arm must be an ``ArmProtocol`` implementation that exposes an
@@ -31,7 +31,7 @@ DEMO-QUALITY — mirrors pick_top_down.py assumptions. Summary:
 Flow:
     1. Hardware preconditions (arm, gripper)
     2. Verify arm exposes ``ik_top_down`` (ArmProtocol extension)
-    3. Resolve target XYZ (explicit or from world_model receptacle)
+    3. Resolve target XYZ (explicit perceived coordinates)
     4. Compute pre-place hover = (tx, ty, tz + PRE_PLACE_HEIGHT)
     5. Compute place pose = (tx, ty, tz + drop_height)
     6. IK for pre-place; IK for place (seeded from pre-place)
@@ -100,9 +100,8 @@ class PlaceTopDownSkill:
     * Pre-place hover height is _DEFAULT_PRE_PLACE_HEIGHT above target z.
     * drop_height keeps end-effector _DEFAULT_DROP_HEIGHT above surface.
     * Gripper opens after descent; arm lifts back to hover, not to home.
-    * world_model is optional — only needed when ``receptacle_id`` is used.
     * Object ownership (held_object) is not tracked here; callers that
-      maintain world_model state should call apply_skill_effects separately.
+      verify the final object pose independently.
     """
 
     name: str = "place_top_down"
@@ -131,7 +130,6 @@ class PlaceTopDownSkill:
             "description": (
                 "ID of a receptacle object in the world model (fallback to target_xyz)."
             ),
-            "source": "world_model.objects.object_id",
         },
         "drop_height": {
             "type": "number",
@@ -160,7 +158,6 @@ class PlaceTopDownSkill:
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
         arm = context.arm
         gripper = context.gripper
-        wm = context.world_model
         cfg = context.config.get("skills", {}).get("place_top_down", {})
 
         # Hardware preconditions
@@ -188,7 +185,7 @@ class PlaceTopDownSkill:
             )
 
         # Resolve target XYZ
-        target_xyz = self._resolve_target(params, wm)
+        target_xyz = self._resolve_target(params)
         if isinstance(target_xyz, SkillResult):
             # _resolve_target returns a SkillResult on failure
             return target_xyz
@@ -273,13 +270,12 @@ class PlaceTopDownSkill:
     def _resolve_target(
         self,
         params: dict,
-        wm: object,
     ) -> tuple[float, float, float] | SkillResult:
         """Return (tx, ty, tz) or a failure SkillResult.
 
         Priority:
         1. ``target_xyz`` — explicit 3-float list in params.
-        2. ``receptacle_id`` — ID of an object in the world model.
+        2. ``receptacle_id`` — refused until the destination is localized.
         3. Neither present → missing_target.
         """
         if "target_xyz" in params:
@@ -300,14 +296,8 @@ class PlaceTopDownSkill:
 
         if "receptacle_id" in params:
             rid: str = params["receptacle_id"]
-            obj = wm.get_object(rid) if wm is not None else None
-            if obj is None:
-                return SkillResult(
-                    success=False,
-                    error_message=f"Receptacle {rid!r} not found in world model",
-                    result_data={"diagnosis": "receptacle_not_found", "receptacle_id": rid},
-                )
-            return (float(obj.x), float(obj.y), float(obj.z))
+            return SkillResult(False, {"diagnosis": "receptacle_not_found", "receptacle_id": rid},
+                               "Named receptacles need a perceived target_xyz; use look to localize the destination.")
 
         return SkillResult(
             success=False,

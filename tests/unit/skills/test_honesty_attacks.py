@@ -12,28 +12,13 @@ import pytest
 
 from tests.unit.test_execute_skill import MockGripper, _Perception, _Seeing, _agent
 from tests.unit.skills.test_grasp_model_routing import RoutingPerception, _ctx
-from vector_os_nano.core.world_model import ObjectState, WorldModel
-from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
+
+from vector_os_nano.skills.grasp import GraspSkill
 
 
 # --- 3: nothing opens a holding gripper after detect / describe / pick -----------------
-@pytest.mark.parametrize("skill,params,perc", [
-    ("detect", {"query": "banana"}, _Seeing),
-    ("describe", {}, _Seeing),
-    ("scan", {}, _Seeing),
-])
-def test_no_arm_skill_opens_a_holding_gripper(skill, params, perc):
-    g = MockGripper(holding=True)
-    r = _agent(g, perception=perc()).execute_skill(skill, params)
-    assert g.opened == 0 and g.holding, (skill, r.result_data)
 
 
-def test_a_failing_pick_while_holding_keeps_the_held_object():
-    """pick of an object that is not there, while holding one: is the held one dropped?"""
-    g = MockGripper(holding=True)
-    r = _agent(g, perception=_Perception()).execute_skill("pick", {"object_label": "banana"})
-    assert not r.success
-    assert g.opened == 0 and g.holding, "pick opened a holding gripper before it found a target"
 
 
 def test_the_tool_result_carries_the_skills_own_diagnosis():
@@ -67,7 +52,7 @@ def test_coordinate_nav_that_did_not_arrive_fails_even_close(reason):
         def get_heading(self):
             return 0.0
 
-    ctx = SkillContext(base=_Base(), world_model=WorldModel(), config={})
+    ctx = SkillContext(base=_Base(), config={})
     r = NavigateSkill().execute({"x": 1.0, "y": 1.0}, ctx)
     assert not r.success and reason in r.error_message
 
@@ -93,7 +78,7 @@ class _NoDetector(RoutingPerception):
 def test_a_named_grasp_without_its_detector_grasps_nothing(perc, query):
     p = perc()
     ctx = _ctx(p)
-    r = PerceptionGraspSkill().execute({"query": query}, ctx)
+    r = GraspSkill().execute({"query": query}, ctx)
     assert not r.success and not ctx.gripper.is_holding()
     assert not any(c.startswith("front") for c in p.calls)
 
@@ -106,25 +91,11 @@ def test_a_named_grasp_with_no_detect_method_fails():
     for a in del_attrs:
         setattr(_Bare, a, property(lambda s: (_ for _ in ()).throw(AttributeError("no detector"))))
     ctx = _ctx(p)
-    r = PerceptionGraspSkill().execute({"query": "grab the banana"}, ctx)
+    r = GraspSkill().execute({"query": "grab the banana"}, ctx)
     assert not r.success and not ctx.gripper.is_holding()
     assert not any(c.startswith("front") for c in p.calls)
 
 
 # --- 4: pick with no target; empty label ----------------------------------------------
-@pytest.mark.parametrize("params", [{}, {"object_label": ""}, {"object_label": "  "}, {"object_id": ""}])
-def test_pick_with_no_target_picks_nothing(params):
-    g = MockGripper()
-    a = _agent(g, perception=_Seeing())
-    a._world_model.add_object(ObjectState(object_id="can_1", label="can", x=0.2, y=0.0, z=0.05))
-    r = a.execute_skill("pick", params)
-    assert not r.success and r.result_data["diagnosis"] == "no_target"
-    assert a._world_model.get_object("can_1") is not None
 
 
-def test_an_empty_label_matches_and_removes_nothing():
-    wm = WorldModel()
-    wm.add_object(ObjectState(object_id="can_1", label="can", x=0.2, y=0.0, z=0.05))
-    for q in ("", "  ", None):
-        assert wm.get_objects_by_label(q) == []
-    assert wm.get_object("can_1") is not None

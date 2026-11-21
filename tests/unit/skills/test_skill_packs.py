@@ -45,18 +45,18 @@ def test_go2_offers_no_arm_skill() -> None:
 
 def test_go2_piper_offers_the_piper_set_and_no_so101_skill() -> None:
     tools = _tools("go2_piper")
-    assert (_BASE | _PIPER) <= tools and not tools & _SO101, tools
+    assert (_BASE | _PIPER) <= tools and not tools & (_SO101 - _PIPER - {"home"}), tools
 
 
 def test_so101_offers_no_base_skill() -> None:
     tools = _tools("so101")
-    assert _SO101 <= tools and not tools & (_BASE | _PIPER), tools
+    assert _SO101 <= tools and not tools & (_BASE | (_PIPER - _SO101)), tools
 
 
 def test_the_fixed_piper_offers_the_piper_set_a_home_and_no_base_skill() -> None:
     tools = _tools("piper")
     assert (_PIPER | _GRIPPER | {"home", "stop"}) <= tools, tools
-    assert not tools & (_BASE | (_SO101 - {"home"})), tools
+    assert not tools & (_BASE | (_SO101 - _PIPER - {"home"})), tools
 
 
 def test_g1_offers_no_arm_skill() -> None:

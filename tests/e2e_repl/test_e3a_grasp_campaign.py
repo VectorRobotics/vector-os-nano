@@ -43,7 +43,7 @@ def _script(seed: int) -> dict:
         {"when": _GRASP, "tool_calls": [{"name": "walk", "input": {"direction": "backward", "distance": round(back, 3)}}]},
         {"when": "", "tool_calls": [{"name": "walk", "input": {"direction": side_dir, "distance": round(side, 3)}}]},
         {"when": "", "tool_calls": [{"name": "turn", "input": {"direction": turn_dir, "angle": round(angle, 1)}}]},
-        {"when": "", "tool_calls": [{"name": "perception_grasp", "input": {"query": "绿色的瓶子"}}]},
+        {"when": "", "tool_calls": [{"name": "grasp", "input": {"query": "绿色的瓶子"}}]},
         {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": f"holding_object('{_TARGET}')"}}]},
         {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]}
@@ -51,7 +51,7 @@ def _script(seed: int) -> dict:
 
 def _diagnosis(verdict: dict, observations: list[str]) -> str:
     """'' when the grasp grounded, else why not: the verdict's own words and the grasp's."""
-    steps = [s for s in verdict.get("per_step", []) if s["strategy"] == "perception_grasp" and not s["superseded"]]
+    steps = [s for s in verdict.get("per_step", []) if s["strategy"] == "grasp" and not s["superseded"]]
     if steps and steps[-1]["evidence"] == "GROUNDED" and steps[-1]["actor_caused"] == "CAUSED" \
             and verdict.get("goal_check") == "proven":
         return ""
@@ -66,16 +66,16 @@ def _diagnosis(verdict: dict, observations: list[str]) -> str:
 def test_a_seed_counts_only_when_its_verdict_grounds_the_grasp() -> None:
     """R2V-doc: the campaign asserted a rendered line that no longer appears, so every
     seed read failed while each was GROUNDED. It reads the verdict data now."""
-    ok = {"strategy": "perception_grasp", "superseded": False, "evidence": "GROUNDED",
+    ok = {"strategy": "grasp", "superseded": False, "evidence": "GROUNDED",
           "actor_caused": "CAUSED", "reject_reason": ""}
-    said = ["", "", "", "", "Skill 'perception_grasp' succeeded."]
+    said = ["", "", "", "", "Skill 'grasp' succeeded."]
     assert _diagnosis({"per_step": [ok], "goal_check": "proven"}, said) == ""
     for verdict in ({"per_step": [ok], "goal_check": "failed"},
                     {"per_step": [{**ok, "actor_caused": "UNCAUSED", "reject_reason": "not caused"}],
                      "goal_check": "proven"},
                     {"per_step": [{**ok, "evidence": "FAILED"}], "goal_check": "proven"},
                     {"per_step": [{**ok, "strategy": "walk"}], "goal_check": "proven"}):
-        assert _diagnosis(verdict, said).endswith("| grasp said: Skill 'perception_grasp' succeeded."), verdict
+        assert _diagnosis(verdict, said).endswith("| grasp said: Skill 'grasp' succeeded."), verdict
     failed = said[:4] + ["The detector failed for '绿色的瓶子': ... (perception_failed)\nData: {}"]
     assert _diagnosis({"per_step": [], "goal_check": "failed"}, failed) == (
         "goal_check=failed step=none/- | grasp said: The detector failed for '绿色的瓶子': ... (perception_failed)")

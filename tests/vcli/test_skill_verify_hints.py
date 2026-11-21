@@ -15,24 +15,22 @@ import re
 from typing import Any
 
 from vector_os_nano.core.skill import SkillRegistry
-from vector_os_nano.skills.detect import DetectSkill
 from vector_os_nano.skills.home import HomeSkill
-from vector_os_nano.skills.pick import PickSkill
+from vector_os_nano.skills.grasp import GraspSkill
 from vector_os_nano.skills.place import PlaceSkill
 
 
 def _arm_schemas() -> list[dict[str, Any]]:
     reg = SkillRegistry()
-    for s in (HomeSkill(), DetectSkill(), PickSkill(), PlaceSkill()):
+    for s in (HomeSkill(), GraspSkill(), PlaceSkill()):
         reg.register(s)
     return reg.to_schemas()
 
 
 def test_to_schemas_includes_verify_hint_per_skill() -> None:
     by_name = {s["name"]: s for s in _arm_schemas()}
-    assert by_name["pick"]["verify_hint"] == "holding_object({object_label})"
+    assert by_name["grasp"]["verify_hint"] == "holding_object({query})"
     assert by_name["home"]["verify_hint"] == "arm_at_home()"
-    assert by_name["detect"]["verify_hint"] == "in_view('<query>')"
     assert by_name["place"]["verify_hint"] == "released()"
 
 

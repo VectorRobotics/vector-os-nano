@@ -217,8 +217,13 @@ class SimSession:
         if self.runtime is None:  # no world owner: no oracles, every verify grades RAN
             self.notes.append("ground truth: unavailable (the builder made no SimRuntime)")
             return
+        if isinstance(self.agent._config, dict):
+            self.agent._config["skills"] = {**self.agent._config.get("skills", {}), **self.config.skills}
+            if self.config.arm is not None:
+                self.agent._config["arm"] = {"postures": self.config.arm.postures}
         self.gt = GroundTruth(self.runtime)
         self.world = load_world(self.config.world) if self.config.world else None
+        agent._services["object_world"] = self.world
         # Skills resolve object names through the world manifest by id (never GT).
         cfg = getattr(agent, "_config", None)
         if isinstance(cfg, dict) and self.config.world:
@@ -423,7 +428,7 @@ def _skill_pack(embodiment: str) -> list:
         "so101": get_so101_skills,
         "piper": lambda: [StopSkill(), HomeSkill(), *get_piper_skills()],
         "go2": get_go2_skills,
-        "go2_piper": lambda: [*get_go2_skills(), *get_piper_skills()],
+        "go2_piper": lambda: [*get_go2_skills(), HomeSkill(), *get_piper_skills()],
         "g1": get_go2_skills,
     }[embodiment]()
 
@@ -566,13 +571,6 @@ def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
     return agent
 
 
-# The bodies whose skill pack still reads its objects from simulator truth
-# (hardware/sim/mujoco_perception.py, with the pick parameters exact truth needs)
-# instead of the camera perception every other body uses: until R4 moves the SO-101
-# skill family onto CameraPerception and deletes both.
-_SIM_TRUTH_OBJECTS = frozenset({"so101"})
-
-
 def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
     """A body the generic drivers run whole (a fixed arm): its world's scene composed with
     the manifest (sim/scene/compose.py), loaded on MuJoCo, ONE SimRuntime with no
@@ -595,14 +593,6 @@ def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
     rt.start()
     session.runtime = rt
     arm, gripper, camera = _devices(cfg, rt)
-    if cfg.id in _SIM_TRUTH_OBJECTS:
-        from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
-        from vector_os_nano.sim.ground_truth import GroundTruth
-        from vector_os_nano.skills.pick import SIM_PICK_CONFIG
-
-        return Agent(arm=arm, gripper=gripper, skills=_skill_pack(cfg.id),
-                     perception=MuJoCoPerception(GroundTruth(rt).object_positions, camera),
-                     config={"skills": {"pick": dict(SIM_PICK_CONFIG)}})
     agent = Agent(arm=arm, gripper=gripper, config=_user_config(), skills=_skill_pack(cfg.id))
     agent._perception = _perception(camera)
     session.notes.append(_perception_note(agent, "a fixed arm has no scene VLM"))

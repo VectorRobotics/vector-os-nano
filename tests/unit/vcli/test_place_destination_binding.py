@@ -171,12 +171,8 @@ def test_a_turn_without_a_contract_adds_no_block() -> None:
 
 
 def _grasp_skills():
-    from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
-    from vector_os_nano.skills.pick import PickSkill
-    from vector_os_nano.skills.pick_top_down import PickTopDownSkill
-
-    return [(PerceptionGraspSkill, "query"), (PickTopDownSkill, "object_label"),
-            (PickSkill, "object_label")]
+    from vector_os_nano.skills.grasp import GraspSkill
+    return [(GraspSkill, "query")]
 
 
 @pytest.mark.parametrize("cls, field", _grasp_skills(), ids=lambda v: getattr(v, "name", v))

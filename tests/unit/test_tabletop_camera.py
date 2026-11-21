@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""MuJoCoPerception — the SO-101 skill family's object source (simulator truth), on
-the so101 session: detect / track from the scene's object poses, the image, depth and
-intrinsics from the body's generic Camera."""
+"""Generic SO-101 camera and MCP image conformance; no truth-fed detections."""
 from __future__ import annotations
 
 import io
@@ -27,43 +25,7 @@ def perception(so101):
     return so101.agent._perception
 
 
-class TestMuJoCoPerceptionDetect:
-    def test_detect_banana(self, perception):
-        """detect('banana') should return exactly one detection with label containing 'banana'."""
-        detections = perception.detect("banana")
-        assert len(detections) == 1
-        assert "banana" in detections[0].label.lower()
-
-    def test_detect_all(self, perception):
-        """detect('all') should return one detection per scene object."""
-        assert len(perception.detect("all")) == 6
-
-    def test_detect_nonexistent(self, perception):
-        assert perception.detect("laptop") == []
-
-    def test_detect_chinese_alias(self, perception):
-        """detect('杯子') should match 'mug' via the alias table."""
-        labels = [d.label.lower() for d in perception.detect("杯子")]
-        assert any("mug" in lbl for lbl in labels)
-
-    def test_detection_has_bbox(self, perception):
-        for det in perception.detect("all"):
-            assert len(det.bbox) == 4 and all(isinstance(c, (int, float)) for c in det.bbox), det
-
-
-class TestMuJoCoPerceptionTrack:
-    def test_track_returns_poses(self, perception):
-        detections = perception.detect("all")
-        tracked = perception.track(detections)
-        assert len(tracked) == len(detections) and all(o.pose is not None for o in tracked)
-
-    def test_tracked_position_is_the_scene_truth(self, perception, so101):
-        (obj,) = perception.track(perception.detect("banana"))
-        truth = so101.gt.object_positions()["banana"]
-        assert np.allclose([obj.pose.x, obj.pose.y, obj.pose.z], truth, atol=1e-3)
-
-
-class TestMuJoCoPerceptionCamera:
+class TestGenericTabletopCamera:
     """The capture is the body's camera (R6-V2 / the intrinsics mismatch)."""
 
     def test_capture_is_the_manifest_camera(self, perception, so101):

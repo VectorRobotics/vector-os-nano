@@ -16,9 +16,8 @@ from tests.harness.kin_base import KinBase
 from tests.unit.perception.test_object_localizer import Raising, no_weights, oom
 from vector_os_nano.core.scene_graph import SceneGraph
 from vector_os_nano.core.skill import SkillContext
-from vector_os_nano.core.world_model import WorldModel
+
 from vector_os_nano.perception.calibration import Calibration
-from vector_os_nano.skills.detect import DetectSkill
 from vector_os_nano.skills.go2.look import DescribeSceneSkill, LookSkill, observe_scene
 from vector_os_nano.vcli.worlds.world_manifest import load_world
 
@@ -92,7 +91,7 @@ def test_a_vlm_that_raises_is_a_vlm_failure_with_no_machine_path() -> None:
 
 def test_one_name_of_three_failing_is_named_and_the_rest_still_report() -> None:
     names = ["green bottle", "blue bottle", "red can"]
-    perc = Raising("detect", RuntimeError("boom"), only=("blue bottle",))
+    perc = Raising("detect", RuntimeError("boom"), only=("blue bottle"))
     data = observe_scene(_Base(), perc, _sg(), None, names)
     assert data["failed"] == {"blue bottle": "the detector failed: RuntimeError: boom"}
     assert "1 of 3 names could not be checked: blue bottle: the detector failed: RuntimeError: boom" \
@@ -109,7 +108,7 @@ class _FindsNothing(Raising):
 
 def test_nothing_localized_is_said_only_of_names_that_ran() -> None:
     names = ["green bottle", "red can"]
-    perc = _FindsNothing("detect", oom(), only=("red can",))
+    perc = _FindsNothing("detect", oom(), only=("red can"))
     data = observe_scene(_Base(), perc, _sg(), None, names)
     assert data["summary"] == (f"Seen (detector, no VLM): nothing localized. 1 of 2 names could not be "
                                f"checked: red can: the detector failed: {_OOM_CAUSE}.")
@@ -127,7 +126,7 @@ def test_describe_scene_whose_segmenter_cannot_load_fails_with_the_prefetch_comm
 def test_a_vlm_named_object_that_could_not_be_checked_is_failed_not_unlocalized() -> None:
     vlm = mock.MagicMock()
     vlm.find_objects.return_value = [SimpleNamespace(name=n, description="") for n in ("red can", "sofa")]
-    perc = _FindsNothing("detect", oom(), only=("red can",))
+    perc = _FindsNothing("detect", oom(), only=("red can"))
     res = DescribeSceneSkill().execute({"query": "what is here"}, _ctx(perc, vlm))
     assert res.success and res.result_data["unlocalized"] == ["sofa"]
     assert res.result_data["failed"] == {"red can": f"the detector failed: {_OOM_CAUSE}"}
@@ -170,15 +169,6 @@ def test_explore_note_for_a_look_whose_capture_ran_out_of_gpu_memory_has_no_path
     assert "Camera capture failed: out of GPU memory on cuda:1" in note and "/srv" not in note, note
 
 
-def test_detect_skill_whose_detector_cannot_run_names_the_cause() -> None:
-    class _Perc:
-        def detect(self, query):
-            raise no_weights()
-
-    res = DetectSkill().execute(
-        {"query": "red can"}, SkillContext(perception=_Perc(), world_model=WorldModel(), calibration=Calibration()))
-    assert not res.success and res.result_data["diagnosis"] == "perception_failed"
-    assert _PREFETCH in res.error_message and "nothing was checked" in res.error_message
 
 
 def test_the_producers_detect_tool_carries_the_cause_of_a_capture_or_a_model() -> None:

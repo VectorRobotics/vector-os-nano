@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from vector_os_nano.core.skill import SkillContext
-from vector_os_nano.core.world_model import WorldModel
+
 from vector_os_nano.sim.nav.follow import NavResult
 from vector_os_nano.skills.navigate import NavigateSkill
 
@@ -29,7 +29,7 @@ def _ctx(arrived=True, pos=(10.75, 3.05, 0.35), reason=None):
                     target=[10.5, 3.0], pos=list(pos))
     base.navigate_to = MagicMock(return_value=nav)
     # No spatial_memory needed for a coordinate goal.
-    return SkillContext(bases={"go2": base}, world_model=WorldModel(), services={})
+    return SkillContext(bases={"go2": base}, services={})
 
 
 def test_navigate_xy_drives_navigate_to_without_room():
@@ -55,7 +55,7 @@ def test_navigate_target_list_form():
 
 
 def test_navigate_xy_no_base_fails_loud():
-    ctx = SkillContext(world_model=WorldModel(), services={})
+    ctx = SkillContext( services={})
     res = NavigateSkill().execute({"x": 10.5, "y": 3.0}, ctx)
     assert res.success is False
     assert res.diagnosis_code == "no_base"
@@ -98,7 +98,7 @@ def test_named_room_path_unchanged_when_no_coordinates():
     base = MagicMock()
     base.get_position.return_value = [10.0, 3.0, 0.35]
     base.navigate_to = MagicMock(return_value=True)
-    ctx = SkillContext(bases={"go2": base}, world_model=WorldModel(), services={})
+    ctx = SkillContext(bases={"go2": base}, services={})
     res = NavigateSkill().execute({"room": "nonexistent_room"}, ctx)
     assert res.success is False
     # It did NOT take the coordinate path (no navigate_to call on a bare room name).

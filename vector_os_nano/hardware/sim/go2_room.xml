@@ -10,7 +10,8 @@
     <headlight diffuse="0.5 0.5 0.5" ambient="0.4 0.4 0.4" specular="0 0 0"/>
     <rgba haze="0.15 0.25 0.35 1"/>
     <global azimuth="-120" elevation="-25" offwidth="1280" offheight="960"/>
-    <map znear="0.05" zfar="50" shadowclip="0.5"/>
+    <!-- znear is multiplied by extent=12: 6 cm, below the camera's 10 cm valid range. -->
+    <map znear="0.005" zfar="50" shadowclip="0.5"/>
     <quality shadowsize="1024"/>
   </visual>
 

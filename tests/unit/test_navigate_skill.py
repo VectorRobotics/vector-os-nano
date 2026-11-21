@@ -5,7 +5,7 @@
 import pytest
 from unittest.mock import MagicMock
 from vector_os_nano.core.skill import SkillContext
-from vector_os_nano.core.world_model import WorldModel
+
 from vector_os_nano.sim.nav.follow import NavResult
 
 
@@ -46,7 +46,6 @@ def _make_context():
     services = {"spatial_memory": sg}
     return SkillContext(
         bases={"go2": base},
-        world_model=WorldModel(),
         services=services,
     )
 
@@ -140,7 +139,7 @@ class TestNavigateRooms:
 
     def test_no_base(self):
         from vector_os_nano.skills.navigate import NavigateSkill
-        ctx = SkillContext(world_model=WorldModel())
+        ctx = SkillContext()
         skill = NavigateSkill()
         result = skill.execute({"room": "kitchen"}, ctx)
         assert not result.success
@@ -156,7 +155,7 @@ class TestNavigateRooms:
         base.get_heading.return_value = 0.0
         base.navigate_to = MagicMock(return_value=_arrived(3.0, 2.5))
         sg = _make_scene_graph()
-        ctx = SkillContext(bases={"go2": base}, world_model=WorldModel(),
+        ctx = SkillContext(bases={"go2": base},
                           services={"spatial_memory": sg})
         skill = NavigateSkill()
         result = skill.execute({"room": "living_room"}, ctx)

@@ -14,11 +14,8 @@ import pytest
 
 from vector_os_nano.core.skill import Skill
 from vector_os_nano.skills import (
-    DetectSkill,
     HomeSkill,
-    PickSkill,
     PlaceSkill,
-    ScanSkill,
     get_so101_skills,
 )
 
@@ -65,28 +62,6 @@ class TestHomeSkillSchema:
 # ---------------------------------------------------------------------------
 
 
-class TestScanSkillSchema:
-    def setup_method(self):
-        self.skill = ScanSkill()
-
-    def test_name(self):
-        assert self.skill.name == "scan"
-
-    def test_description_nonempty(self):
-        assert isinstance(self.skill.description, str)
-        assert len(self.skill.description) > 0
-
-    def test_parameters_empty(self):
-        assert self.skill.parameters == {}
-
-    def test_preconditions_empty(self):
-        assert self.skill.preconditions == []
-
-    def test_effects_is_dict(self):
-        assert isinstance(self.skill.effects, dict)
-
-    def test_satisfies_skill_protocol(self):
-        assert isinstance(self.skill, Skill)
 
 
 # ---------------------------------------------------------------------------
@@ -94,37 +69,6 @@ class TestScanSkillSchema:
 # ---------------------------------------------------------------------------
 
 
-class TestDetectSkillSchema:
-    def setup_method(self):
-        self.skill = DetectSkill()
-
-    def test_name(self):
-        assert self.skill.name == "detect"
-
-    def test_description_nonempty(self):
-        assert isinstance(self.skill.description, str)
-        assert len(self.skill.description) > 0
-
-    def test_parameters_has_query(self):
-        assert "query" in self.skill.parameters
-
-    def test_query_parameter_required(self):
-        assert self.skill.parameters["query"]["required"] is True
-
-    def test_query_parameter_type_string(self):
-        assert self.skill.parameters["query"]["type"] == "string"
-
-    def test_preconditions_empty(self):
-        assert self.skill.preconditions == []
-
-    def test_postconditions_empty(self):
-        assert self.skill.postconditions == []
-
-    def test_effects_empty(self):
-        assert self.skill.effects == {}
-
-    def test_satisfies_skill_protocol(self):
-        assert isinstance(self.skill, Skill)
 
 
 # ---------------------------------------------------------------------------
@@ -132,41 +76,6 @@ class TestDetectSkillSchema:
 # ---------------------------------------------------------------------------
 
 
-class TestPickSkillSchema:
-    def setup_method(self):
-        self.skill = PickSkill()
-
-    def test_name(self):
-        assert self.skill.name == "pick"
-
-    def test_description_nonempty(self):
-        assert isinstance(self.skill.description, str)
-        assert len(self.skill.description) > 0
-
-    def test_parameters_has_object_id(self):
-        assert "object_id" in self.skill.parameters
-
-    def test_parameters_has_object_label(self):
-        assert "object_label" in self.skill.parameters
-
-    def test_object_id_not_required(self):
-        assert self.skill.parameters["object_id"]["required"] is False
-
-    def test_object_label_not_required(self):
-        assert self.skill.parameters["object_label"]["required"] is False
-
-    def test_preconditions_gripper_empty(self):
-        assert "gripper_empty" in self.skill.preconditions
-
-    def test_postconditions_empty(self):
-        assert self.skill.postconditions == []
-
-    def test_effects_gripper_state_holding(self):
-        # The default pick holds what it picked (its verify_hint is holding_object)
-        assert self.skill.effects.get("gripper_state") == "holding"
-
-    def test_satisfies_skill_protocol(self):
-        assert isinstance(self.skill, Skill)
 
 
 # ---------------------------------------------------------------------------
@@ -219,8 +128,7 @@ class TestPlaceSkillSchema:
 # get_so101_skills
 # ---------------------------------------------------------------------------
 
-_SO101_SET = {"stop", "home", "scan", "describe", "detect", "pick", "place", "handover",
-              "gripper_open", "gripper_close", "wave"}
+_SO101_SET = {"stop", "home", "grasp", "place", "gripper_open", "gripper_close"}
 
 
 class TestGetSo101Skills:
@@ -278,118 +186,3 @@ class TestGetSo101Skills:
 # test_pick_sampling_from_perception
 # ---------------------------------------------------------------------------
 
-class TestPickPerceptionSampling:
-    """Tests for PickSkill._sample_from_perception() with mock perception."""
-
-    def _make_context(self, perception, world_model=None):
-        from vector_os_nano.core.skill import SkillContext
-        from vector_os_nano.core.world_model import WorldModel
-        from unittest.mock import MagicMock
-        import numpy as np
-        arm = MagicMock()
-        arm.get_joint_positions.return_value = [0.0, 0.0, 0.0, 0.0, 0.0]
-        arm.ik.return_value = [0.0, 0.0, 0.0, 0.0, 0.0]
-        arm.move_joints.return_value = True
-        gripper = MagicMock()
-        wm = world_model or WorldModel()
-        from vector_os_nano.perception.calibration import Calibration
-
-        return SkillContext(
-            arm=arm,
-            gripper=gripper,
-            perception=perception,
-            world_model=wm,
-            calibration=Calibration(),  # identity: camera = base
-            config={},
-        )
-
-    def test_sample_uses_track_for_3d_position(self):
-        """_sample_from_perception() calls detect() then track() to get 3D pose."""
-        from unittest.mock import MagicMock
-        import numpy as np
-        from vector_os_nano.core.types import Detection, Pose3D, TrackedObject
-        from vector_os_nano.skills.pick import PickSkill
-
-        det = Detection(label="cup", bbox=(10.0, 10.0, 50.0, 50.0), confidence=0.9)
-        pose = Pose3D(x=0.25, y=0.0, z=0.22)
-        tracked = TrackedObject(track_id=1, label="cup", bbox_2d=(10, 10, 50, 50), pose=pose)
-
-        mock_perception = MagicMock()
-        mock_perception.detect.return_value = [det]
-        mock_perception.track.return_value = [tracked]
-        # update returns empty to limit sampling quickly
-        mock_perception.update.return_value = []
-
-        context = self._make_context(mock_perception)
-        skill = PickSkill()
-        # Override sample_count to 1 so we don't wait
-        context = context.__class__(
-            arm=context.arm,
-            gripper=context.gripper,
-            perception=context.perception,
-            world_model=context.world_model,
-            calibration=context.calibration,
-            config={"skills": {"pick": {"sample_count": 1}}},
-        )
-
-        result = skill._sample_from_perception({"object_label": "cup"}, context)
-        assert result is not None
-        # With identity calibration, camera pos == base pos
-        assert abs(result[0] - 0.25) < 1e-6
-        assert abs(result[2] - 0.22) < 1e-6
-        mock_perception.detect.assert_called_once()
-        mock_perception.track.assert_called_once()
-
-    def test_sample_returns_none_on_no_detections(self):
-        """_sample_from_perception() returns None when detect() finds nothing."""
-        from unittest.mock import MagicMock
-        from vector_os_nano.skills.pick import PickSkill
-
-        mock_perception = MagicMock()
-        mock_perception.detect.return_value = []
-
-        context = self._make_context(mock_perception)
-        skill = PickSkill()
-        result = skill._sample_from_perception({"object_label": "cup"}, context)
-        assert result is None
-
-    def test_sample_returns_none_on_detect_exception(self):
-        """_sample_from_perception() returns None when detect() raises."""
-        from unittest.mock import MagicMock
-        from vector_os_nano.skills.pick import PickSkill
-
-        mock_perception = MagicMock()
-        mock_perception.detect.side_effect = RuntimeError("No VLM")
-
-        context = self._make_context(mock_perception)
-        skill = PickSkill()
-        result = skill._sample_from_perception({"object_label": "cup"}, context)
-        assert result is None
-
-    def test_sample_returns_none_when_no_3d_pose(self):
-        """_sample_from_perception() returns None if tracked objects have no 3D pose."""
-        from unittest.mock import MagicMock
-        from vector_os_nano.core.types import Detection, TrackedObject
-        from vector_os_nano.skills.pick import PickSkill
-
-        det = Detection(label="cup", bbox=(10, 10, 50, 50))
-        # TrackedObject with pose=None (no depth data)
-        tracked = TrackedObject(track_id=1, label="cup", bbox_2d=(10, 10, 50, 50), pose=None)
-
-        mock_perception = MagicMock()
-        mock_perception.detect.return_value = [det]
-        mock_perception.track.return_value = [tracked]
-        mock_perception.update.return_value = []
-
-        context = self._make_context(mock_perception)
-        skill = PickSkill()
-        context = context.__class__(
-            arm=context.arm,
-            gripper=context.gripper,
-            perception=context.perception,
-            world_model=context.world_model,
-            calibration=context.calibration,
-            config={"skills": {"pick": {"sample_count": 1}}},
-        )
-        result = skill._sample_from_perception({"object_label": "cup"}, context)
-        assert result is None

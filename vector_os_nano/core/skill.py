@@ -101,12 +101,11 @@ class SkillContext:
             grippers={"so101": gripper},
             bases={"go2": base},
             perception_sources={"realsense": cam},
-            world_model=wm,
         )
 
     Legacy construction (flat fields, backward-compatible):
         ctx = SkillContext(arm=arm, gripper=gripper, base=base,
-                           perception=cam, world_model=wm, calibration=cal)
+                           perception=cam, calibration=cal)
     """
 
     def __init__(
@@ -119,7 +118,6 @@ class SkillContext:
         perception_sources: dict | None = None,
         services: dict | None = None,
         # Shared state
-        world_model: Any = None,
         calibration: Any = None,
         config: dict | None = None,
         # Legacy flat-field kwargs (backward-compatible)
@@ -138,7 +136,6 @@ class SkillContext:
         self.services: dict = services if services is not None else {}
 
         # Shared state
-        self.world_model: Any = world_model
         self.calibration: Any = calibration
         self.config: dict = config if config is not None else {}
 
@@ -252,8 +249,6 @@ class SkillContext:
             parts.append(f"bases={list(self.bases.keys())!r}")
         elif self._legacy_base is not None:
             parts.append("base=<legacy>")
-        if self.world_model is not None:
-            parts.append("world_model=set")
         return f"SkillContext({', '.join(parts)})"
 
 

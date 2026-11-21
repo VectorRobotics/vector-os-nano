@@ -65,9 +65,14 @@ base:
     explorer: tare                # with VECTOR_NAV_STACK; else the in-process coverage tour
 
 sensors:
-  # The RealSense head camera, fixed to base_link in the model; depth over the D435's range.
+  # Assumed adjustable head mount: 15 degrees below the original 5-degree mount,
+  # so the target remains visible during close approach. Original camera is retained.
   - role: camera
-    name: d435_rgb
+    name: manipulation_rgbd
+    body: d435_camera
+    pos: [0.0, 0.0, 0.0]
+    quat: [-0.560985527, -0.430459335, 0.430459335, 0.560985527]
+    fovy: 42
     width: 320                    # the measured grasp numbers used 320x240
     height: 240
     depth: [0.1, 10.0]
@@ -89,6 +94,9 @@ arm:
   home: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # URDF zero: the stow pose the body spawns in
   # Top-down IK starts: shoulder up, elbow back, wrist pitched down (joint5 at its
   # 1.22 limit), with both wrist rolls; the live arm joints are always tried too.
+  postures:
+    view: [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+    hold: [0.0, 1.98, -1.75, 0.0, 1.0, 3.13]
   ik_seeds:
     - [0.0, 1.57, -1.57, 0.0, 1.22, 0.0]
     - [0.0, 2.48, -1.75, 0.0, 1.00, 3.13]
@@ -111,3 +119,33 @@ capabilities:
   has_gripper: true
   camera: true
   lidar: true
+
+skills:
+  grasp:
+    pre_grasp_height: 0.02
+    grasp_z_above: 0.0
+    lift_height: 0.02
+    approach_back: 0.1
+    durations: [4.0, 1.5, 2.0, 2.0]
+    reach_m: 0.55
+    view_duration: 1.2
+    hold_duration: 2.0
+    base:
+      # Legacy approach can contact the table; not a pure-contact household validation.
+      standoff: 0.05
+      view_standoff: 0.95
+      step_speed: 0.4
+      step_duration: 0.8
+      approach_steps: 30
+      stall_distance: 0.03
+      seat_steps: 6
+      seat_distance: 0.015
+      lateral_gain: 1.2
+      lateral_speed: 0.25
+      lateral_deadband: 0.03
+      yaw_speed: 0.6
+      yaw_deadband: 0.03
+      scan_steps: 6
+      scan_step: 0.6
+      scan_range: 1.6
+      retries: 5

@@ -45,7 +45,7 @@ def _graded_nothing_happened(r, task: str) -> None:
     assert rec["grade"] is False and rec["outcome"] == "agree", rec
 
 
-_PICK_BANANA = {"name": "pick", "input": {"object_label": "banana", "mode": "hold"}}
+_PICK_BANANA = {"name": "grasp", "input": {"query": "banana"}}
 
 
 @pytest.mark.sim

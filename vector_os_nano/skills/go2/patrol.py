@@ -3,13 +3,11 @@
 
 """PatrolSkill -- multi-room patrol for the Go2 quadruped.
 
-Navigates to each target room in sequence, calls LookSkill (or DescribeSkill
-as fallback) to observe the scene with VLM, and returns a structured report.
+Navigates to each target room in sequence, calls LookSkill to observe the scene with VLM, and returns a structured report.
 
 Skill registry lookup order:
-1. context.services["skill_registry"].get("look")       -- LookSkill (future)
-2. context.services["skill_registry"].get("describe")   -- DescribeSkill (fallback)
-3. Direct import of NavigateSkill / DescribeSkill       -- last resort
+1. context.services["skill_registry"].get("look")
+2. Direct import of LookSkill
 
 Total patrol timeout: 5 minutes by default, configurable via params or
 context.config["patrol_timeout"].
@@ -49,26 +47,10 @@ def _get_skill(registry: Any | None, name: str) -> Any | None:
 
 
 def _resolve_look_skill(context: SkillContext) -> Any | None:
-    """Return the best available observation skill instance.
+    """Use the registered observation skill, or the shared camera observer."""
+    from vector_os_nano.skills.go2.look import LookSkill
 
-    Priority:
-    1. skill_registry["look"]
-    2. skill_registry["describe"]
-    3. Direct import of DescribeSkill (no registry)
-    """
-    registry: Any = context.services.get("skill_registry")
-
-    for candidate in ("look", "describe"):
-        skill_inst = _get_skill(registry, candidate)
-        if skill_inst is not None:
-            return skill_inst
-
-    # Last resort: direct import
-    try:
-        from vector_os_nano.skills.describe import DescribeSkill
-        return DescribeSkill()
-    except ImportError:
-        return None
+    return _get_skill(context.services.get("skill_registry"), "look") or LookSkill()
 
 
 def _resolve_navigate_skill(context: SkillContext) -> Any | None:

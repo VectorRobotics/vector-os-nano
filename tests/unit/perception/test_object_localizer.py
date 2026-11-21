@@ -732,3 +732,20 @@ def test_a_cause_never_carries_a_machine_path():
                   "(see https://huggingface.co/docs)")
     assert failure_cause(exc) == "OSError: Can't load '<path>' (see https://huggingface.co/docs)"
     assert failure_cause(no_weights()) == str(no_weights())
+
+
+@pytest.mark.parametrize("relief,expected", [(0., False), (.001, False), (.02, True), (.04, True)])
+def test_small_tabletop_objects_stand_out_but_flat_paint_does_not(relief, expected):
+    p = _StubPerception(depth_val=.5)
+    p._depth[:] = .5 + relief
+    p._depth[p._mask > 0] = .5
+    found, failed = localize_objects_3d(p, ["apple"])
+    assert not failed
+    assert bool(found) is expected
+
+
+@pytest.mark.parametrize("depth,expected", [(.02, False), (.12, True), (.4, True)])
+def test_close_valid_depth_is_not_a_far_camera_assumption(depth, expected):
+    p = _StubPerception(depth_val=depth)
+    found, failed = localize_objects_3d(p, ["apple"])
+    assert not failed and bool(found) is expected

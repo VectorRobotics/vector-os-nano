@@ -44,7 +44,7 @@ _CARRY_VERIFY = "kept_holding('green bottle') and near_object('user')"
 _CONTRACT = "Task contract: kept_holding('pickable_bottle_green') and near_object('user')"
 _CARRY_SCRIPT = {"steps": LAUNCH_STEPS + [
     # one fetch turn: grasp, carry to the user's spot (config/worlds/apartment.yaml user.xy)
-    {"when": _FETCH, "tool_calls": [{"name": "perception_grasp", "input": {"query": "绿色的瓶子"}}]},
+    {"when": _FETCH, "tool_calls": [{"name": "grasp", "input": {"query": "绿色的瓶子"}}]},
     {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": "holding_object('green bottle')"}}]},
     {"when": "PASS", "tool_calls": [{"name": "navigate", "input": {"x": 8.0, "y": 3.0}}]},
     {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": _CARRY_VERIFY}}]},

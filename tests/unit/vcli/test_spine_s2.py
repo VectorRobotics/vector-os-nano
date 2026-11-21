@@ -190,13 +190,11 @@ def test_every_gripper_skill_alias_is_in_the_vocabulary() -> None:
     """The vocabulary is derived from the manipulation skills' aliases: every alias
     of a skill whose verify_hint names a gripper oracle reads as a manipulation, so
     a new alias can never fail the gate open."""
-    from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
-    from vector_os_nano.skills.pick import PickSkill
-    from vector_os_nano.skills.pick_top_down import PickTopDownSkill
+    from vector_os_nano.skills.grasp import GraspSkill
     from vector_os_nano.skills.place import PlaceSkill
     from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
 
-    for cls in (PickSkill, PickTopDownSkill, PerceptionGraspSkill, PlaceSkill, PlaceTopDownSkill):
+    for cls in (GraspSkill, PlaceSkill, PlaceTopDownSkill):
         assert any(o in cls.verify_hint for o in ("holding_object", "released", "object_at"))
         for alias in cls.__skill_aliases__:
             assert goal_intents(alias), f"{cls.__name__} alias {alias!r} is not a manipulation"
@@ -318,7 +316,7 @@ def test_a_met_contract_needs_a_caused_step_that_asserts_it() -> None:
 
 
 def test_the_wp03_explore_grasp_stop_trace_verifies_under_its_contract() -> None:
-    """Graft (i), the live WP03 trace: explore -> perception_grasp -> verify holding
+    """Graft (i), the live WP03 trace: explore -> grasp -> verify holding
     (CAUSED) -> stop -> verify holding (UNCAUSED). Before WP07 the trailing stop step
     graded RAN and the turn RAN (1/3). The contract decides: the grasp is GROUNDED and
     the RAN housekeeping row neither FAILed nor contradicted it."""

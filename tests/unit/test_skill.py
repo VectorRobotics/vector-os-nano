@@ -121,30 +121,26 @@ class TestSkillRegistry:
 class TestSkillContext:
     def test_creation_with_required_fields(self):
         from vector_os_nano.core.skill import SkillContext
-        from vector_os_nano.core.world_model import WorldModel
-        wm = WorldModel()
+
         context = SkillContext(
             arm=MagicMock(),
             gripper=MagicMock(),
             perception=None,
-            world_model=wm,
             calibration=None,
         )
-        assert context.world_model is wm
+
         assert context.perception is None
         assert context.calibration is None
 
     def test_creation_with_optional_fields(self):
         from vector_os_nano.core.skill import SkillContext
-        from vector_os_nano.core.world_model import WorldModel
-        wm = WorldModel()
+
         arms = {"left": MagicMock(), "right": MagicMock()}
         base = MagicMock()
         context = SkillContext(
             arm=MagicMock(),
             gripper=MagicMock(),
             perception=MagicMock(),
-            world_model=wm,
             calibration=MagicMock(),
             arms=arms,
             base=base,
@@ -154,12 +150,11 @@ class TestSkillContext:
 
     def test_creation_default_config(self):
         from vector_os_nano.core.skill import SkillContext
-        from vector_os_nano.core.world_model import WorldModel
+
         context = SkillContext(
             arm=MagicMock(),
             gripper=MagicMock(),
             perception=None,
-            world_model=WorldModel(),
             calibration=None,
         )
         assert isinstance(context.config, dict)
@@ -168,12 +163,11 @@ class TestSkillContext:
     def test_arms_default_empty_no_base(self):
         """When no dict registries are passed, arms is empty dict and base is None."""
         from vector_os_nano.core.skill import SkillContext
-        from vector_os_nano.core.world_model import WorldModel
+
         context = SkillContext(
             arm=MagicMock(),
             gripper=MagicMock(),
             perception=None,
-            world_model=WorldModel(),
             calibration=None,
         )
         # arms dict is empty when no dict-style registry was provided

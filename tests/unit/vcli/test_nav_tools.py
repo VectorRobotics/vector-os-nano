@@ -180,7 +180,7 @@ class TestGoToRoom:
             reg.register(s)
         return SimpleNamespace(
             _skill_registry=reg, _spatial_memory=None, _base=None, _config={"world": "apartment"},
-            _build_context=lambda: SimpleNamespace(), _sync_robot_state=lambda: None,
+            _build_context=lambda: SimpleNamespace(services={}),
         )
 
     @staticmethod

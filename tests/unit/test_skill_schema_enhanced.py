@@ -91,20 +91,8 @@ def test_all_default_skills_have_failure_modes():
 # T11: enum and source annotations for pick.py and place.py
 # ---------------------------------------------------------------------------
 
-def test_pick_schema_has_mode_enum():
-    """pick.parameters['mode'] has an enum with exactly ['drop', 'hold']."""
-    from vector_os_nano.skills.pick import PickSkill
-    skill = PickSkill()
-    assert "enum" in skill.parameters["mode"]
-    assert skill.parameters["mode"]["enum"] == ["drop", "hold"]
 
 
-def test_pick_schema_has_source_annotation():
-    """pick.parameters['object_id'] and ['object_label'] have source annotations."""
-    from vector_os_nano.skills.pick import PickSkill
-    skill = PickSkill()
-    assert skill.parameters["object_label"].get("source") == "world_model.objects.label"
-    assert skill.parameters["object_id"].get("source") == "world_model.objects.object_id"
 
 
 def test_place_schema_has_location_enum():

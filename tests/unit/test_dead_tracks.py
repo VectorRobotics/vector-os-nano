@@ -167,17 +167,15 @@ def test_the_dead_core_api_stays_deleted() -> None:
     """R2, core:dead-scene-graph-and-worldmodel-api and the mini-planner's leftovers."""
     import inspect
 
-    from vector_os_nano.core import agent, config, scene_graph, types, world_model
-    from vector_os_nano.skills import navigate, perception_grasp
+    from vector_os_nano.core import agent, config, scene_graph, types
+    from vector_os_nano.skills import navigate, grasp
 
     dead = {
         scene_graph.SceneGraph: ("get_location", "get_all_locations", "remember_location",
                                  "get_unvisited_rooms", "rank_rooms_for_goal"),
-        world_model.WorldModel: ("check_predicate", "apply_skill_effects", "get_spatial_relations",
-                                 "save", "load", "decay_confidence"),
         agent.Agent: ("stop", "home", "register_skill"),
         navigate.NavigateSkill: ("_dead_reckoning", "_navigate_with_proxy"),
-        perception_grasp.PerceptionGraspSkill: ("_resolve_dock_pose",),
+        grasp.GraspSkill: ("_resolve_dock_pose",),
     }
     back = [f"{c.__name__}.{n}" for c, names in dead.items() for n in names if hasattr(c, n)]
     back += [f"{m.__name__}.{n}" for m, names in (
@@ -187,7 +185,7 @@ def test_the_dead_core_api_stays_deleted() -> None:
     ) for n in names if hasattr(m, n)]
     params = inspect.signature(agent.Agent).parameters
     back += [f"Agent({k}=)" for k in ("llm", "llm_api_key") if k in params]
-    back += ["perception_grasp dock_pose"] * ("dock_pose" in perception_grasp.PerceptionGraspSkill.parameters)
+    back += ["perception_grasp dock_pose"] * ("dock_pose" in grasp.GraspSkill.parameters)
     # the deleted producer's skill metadata (no reader since R1)
     from vector_os_nano.skills import get_piper_skills, get_so101_skills
     from vector_os_nano.skills.go2 import get_go2_skills

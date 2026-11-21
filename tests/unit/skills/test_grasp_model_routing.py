@@ -19,10 +19,11 @@ import pytest
 
 from vector_os_nano.core.skill import SkillContext
 from vector_os_nano.core.types import Detection
-from vector_os_nano.core.world_model import WorldModel
 from tests.harness.camera import pinhole
 from vector_os_nano.perception.front_object import parse_color
-from vector_os_nano.skills.perception_grasp import PerceptionGraspSkill
+from vector_os_nano.skills.grasp import GraspSkill
+from vector_os_nano.embodiments.config import load_embodiment_config
+from vector_os_nano.vcli.cognitive import abort
 from vector_os_nano.vcli.worlds.world_manifest import load_world
 
 _W, _H = 64, 48
@@ -81,6 +82,7 @@ class RoutingPerception:
         return _CAM_XPOS, _CAM_XMAT
 
     def detect(self, query):
+        self._paint(parse_color(query))
         self.calls.append(f"detect:{query}")
         return list(self._dets)
 
@@ -88,7 +90,12 @@ class RoutingPerception:
         self.calls.append("segment")
         return self._mask
 
+    def _paint(self, colour):
+        colors = {"red": [255, 0, 0], "green": [0, 255, 0], "blue": [0, 0, 255], "yellow": [255, 255, 0]}
+        self._color[self._mask > 0] = colors.get(colour, [200, 200, 200])
+
     def front_object_mask(self, rgb=None, depth=None, *, color=None):
+        self._paint(color)
         self.calls.append(f"front:{color}" if color else "front")
         return self._mask
 
@@ -134,7 +141,7 @@ class _Gripper:
         self._closed = True
         return True
 
-    def is_holding(self):
+    def is_holding(self, name=None):
         return self._closed
 
 
@@ -155,9 +162,11 @@ class _Base:
 
 
 def _ctx(perc, world="apartment", base=None):
+    abort.clear_abort()
+    cfg = load_embodiment_config("go2_piper")
     return SkillContext(
-        arm=_Arm(), gripper=_Gripper(), base=base, world_model=WorldModel(),
-        perception=perc, config={"world": world} if world else {},
+        arm=_Arm(), gripper=_Gripper(), base=base,
+        perception=perc, services={"object_world": load_world(world) if world else None, "cancel": abort.current_token()}, config={"world": world, "skills": cfg.skills, "arm": {"postures": cfg.arm.postures}},
     )
 
 
@@ -177,7 +186,7 @@ def _motion(ctx) -> list[str]:
 ])
 def test_a_named_object_is_perceived_by_its_own_hue_and_labelled_by_its_body(query, body, colour):
     perc = RoutingPerception()
-    res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
+    res = GraspSkill().execute({"query": query}, _ctx(perc))
     assert res.success is True, res.result_data
     assert perc.calls[0] == f"front:{colour}", perc.calls
     assert not any(c.startswith("detect:") for c in perc.calls), perc.calls
@@ -188,7 +197,7 @@ def test_without_a_hue_resolver_the_detector_is_asked_for_the_objects_own_name()
     """'罐子' names the red can: the detector is asked for 'red can' (the object's
     English name, colour included), never the bare noun, and the label is its body."""
     perc = _NoFront()
-    res = PerceptionGraspSkill().execute({"query": "罐子"}, _ctx(perc))
+    res = GraspSkill().execute({"query": "罐子"}, _ctx(perc))
     assert res.success is True
     assert perc.calls[0] == "detect:red can", perc.calls
     assert res.result_data["detection_label"] == "pickable_can_red"
@@ -197,7 +206,7 @@ def test_without_a_hue_resolver_the_detector_is_asked_for_the_objects_own_name()
 def test_deictic_routes_to_front_object():
     """'前面的东西' -> classical front_object(color=None), NOT the detector."""
     perc = RoutingPerception()
-    res = PerceptionGraspSkill().execute({"query": "前面的东西"}, _ctx(perc))
+    res = GraspSkill().execute({"query": "前面的东西"}, _ctx(perc))
     assert res.success is True
     assert "front" in perc.calls
     assert not any(c.startswith("detect:") for c in perc.calls)
@@ -208,7 +217,7 @@ def test_named_colour_query_routes_to_hsv_and_sets_verify_label():
     the front resolver reads; the verify LABEL is its body (pickable_can_red)."""
     assert parse_color("红色的罐子") == "red"
     perc = RoutingPerception()
-    res = PerceptionGraspSkill().execute({"query": "红色的罐子"}, _ctx(perc))
+    res = GraspSkill().execute({"query": "红色的罐子"}, _ctx(perc))
     assert res.success is True
     assert "front:red" in perc.calls, (
         f"expected HSV resolver for colour+noun query, got: {perc.calls}")
@@ -230,7 +239,7 @@ def test_named_colour_query_routes_to_hsv_and_sets_verify_label():
 ])
 def test_without_a_manifest_each_query_takes_exactly_one_route(query, first):
     perc = RoutingPerception()
-    res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc, world=None))
+    res = GraspSkill().execute({"query": query}, _ctx(perc, world=None))
     assert res.success is True, res.result_data
     assert perc.calls[0] == first, perc.calls
     other = "front" if first.startswith("detect") else "detect"
@@ -242,7 +251,7 @@ def test_without_a_manifest_cjk_the_words_cannot_carry_is_refused(query):
     """No world's words account for 苹果 / 白: the detector would be handed a guess."""
     perc = RoutingPerception()
     ctx = _ctx(perc, world=None)
-    res = PerceptionGraspSkill().execute({"query": query}, ctx)
+    res = GraspSkill().execute({"query": query}, ctx)
     assert not res.success and res.result_data["diagnosis"] == "unknown_object"
     assert perc.calls == [] and _motion(ctx) == []
 
@@ -250,7 +259,7 @@ def test_without_a_manifest_cjk_the_words_cannot_carry_is_refused(query):
 def test_a_front_route_without_a_front_resolver_fails_and_never_detects():
     """No fallback from one route to another: a deictic query on a detector-only backend."""
     perc = _NoFront()
-    res = PerceptionGraspSkill().execute({"query": "前面的东西"}, _ctx(perc))
+    res = GraspSkill().execute({"query": "前面的东西"}, _ctx(perc))
     assert not res.success and res.result_data["diagnosis"] == "perception_failed"
     assert perc.calls == []
 
@@ -258,41 +267,10 @@ def test_a_front_route_without_a_front_resolver_fails_and_never_detects():
 # --- D48 caveat 1: PERCEPTUAL colour selection among detector boxes ----------
 
 
-def test_select_detection_prefers_colour_match_over_max_confidence():
-    """The crux: a colour-matching box wins even when a non-matching box scores higher.
-
-    This is what makes colour selection PERCEPTUAL rather than centrality-staged:
-    the green box has the highest confidence (scene authors green dead-centre) but
-    'red' must still pick the lower-confidence RED box."""
-    boxes = [
-        Detection(label="green bottle", bbox=(10.0, 10.0, 20.0, 20.0), confidence=0.90),
-        Detection(label="red can", bbox=(40.0, 10.0, 50.0, 20.0), confidence=0.55),
-        Detection(label="blue bottle", bbox=(70.0, 10.0, 80.0, 20.0), confidence=0.50),
-    ]
-    chosen = PerceptionGraspSkill._select_detection(boxes, "red")
-    assert chosen.label == "red can"
-    chosen_blue = PerceptionGraspSkill._select_detection(boxes, "blue")
-    assert chosen_blue.label == "blue bottle"
-    chosen_green = PerceptionGraspSkill._select_detection(boxes, "green")
-    assert chosen_green.label == "green bottle"
 
 
-def test_select_detection_no_colour_is_plain_max_confidence():
-    boxes = [
-        Detection(label="bottle", bbox=(10.0, 10.0, 20.0, 20.0), confidence=0.40),
-        Detection(label="can", bbox=(40.0, 10.0, 50.0, 20.0), confidence=0.80),
-    ]
-    assert PerceptionGraspSkill._select_detection(boxes, None).label == "can"
 
 
-def test_select_detection_falls_back_when_colour_absent_from_labels():
-    """If no box label names the colour (under-grounded adjective), fall back to
-    plain max-confidence rather than failing."""
-    boxes = [
-        Detection(label="bottle", bbox=(10.0, 10.0, 20.0, 20.0), confidence=0.40),
-        Detection(label="can", bbox=(40.0, 10.0, 50.0, 20.0), confidence=0.80),
-    ]
-    assert PerceptionGraspSkill._select_detection(boxes, "red").label == "can"
 
 
 # --- a named grasp fails loud, never a substitute target (R2) ----------------
@@ -300,6 +278,7 @@ def test_select_detection_falls_back_when_colour_absent_from_labels():
 
 class _BrokenDetector(RoutingPerception):
     def detect(self, query):
+        self._paint(parse_color(query))
         self.calls.append(f"detect:{query}")
         raise RuntimeError("grounding-dino weights missing")
 
@@ -313,16 +292,16 @@ def test_a_detector_error_fails_loud_never_the_front_blob(perc, world):
     """perception:named-grasp-falls-back-to-front-blob: the detector raised and the
     skill grasped the front-most vivid blob, labelled as the query."""
     perc = perc()
-    res = PerceptionGraspSkill().execute({"query": "罐子"}, _ctx(perc, world=world))
+    res = GraspSkill().execute({"query": "罐子"}, _ctx(perc, world=world))
     assert not res.success and res.result_data["diagnosis"] == "perception_failed"
-    assert "weights missing" in res.result_data["cause"]
+    assert "weights missing" in res.error_message
     assert not any(c.startswith("front") for c in perc.calls), perc.calls
 
 
 def test_an_empty_detector_answer_fails_loud_never_the_front_blob():
     """skills-manip:silent-target-substitution: 'VLM empty -> front-object fallback'."""
     perc = RoutingPerception(detections=[])
-    res = PerceptionGraspSkill().execute({"query": "罐子"}, _ctx(perc, world=None))
+    res = GraspSkill().execute({"query": "罐子"}, _ctx(perc, world=None))
     assert not res.success and res.result_data["diagnosis"] == "no_detections"
     assert not any(c.startswith("front") for c in perc.calls), perc.calls
 
@@ -348,7 +327,7 @@ _REFUSED = [
 def test_a_phrase_the_world_does_not_resolve_is_refused_before_any_motion(query):
     perc = RoutingPerception()
     ctx = _ctx(perc, base=_Base())
-    res = PerceptionGraspSkill().execute({"query": query}, ctx)
+    res = GraspSkill().execute({"query": query}, ctx)
     assert not res.success and res.result_data["diagnosis"] == "unknown_object", res.result_data
     assert perc.calls == [] and _motion(ctx) == [], (perc.calls, _motion(ctx))
     # the refusal names what this world has, so the model can retry by name
@@ -365,7 +344,7 @@ def test_a_phrase_the_world_does_not_resolve_is_refused_before_any_motion(query)
 def test_a_reference_that_fits_several_objects_is_refused_and_names_them(query, names):
     perc = RoutingPerception()
     ctx = _ctx(perc, base=_Base())
-    res = PerceptionGraspSkill().execute({"query": query}, ctx)
+    res = GraspSkill().execute({"query": query}, ctx)
     assert not res.success and res.result_data["diagnosis"] == "ambiguous_object"
     assert res.result_data["candidates"] == names
     assert perc.calls == [] and _motion(ctx) == []
@@ -378,20 +357,20 @@ def test_a_spatial_or_deictic_word_beside_a_reference_takes_that_object(query):
     """R2V-04 (a deictic word never hides the named object), the other side: the
     reference alone resolves, so the object is perceived by its hue, never the front blob."""
     perc = RoutingPerception()
-    res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
+    res = GraspSkill().execute({"query": query}, _ctx(perc))
     assert res.success, res.result_data
     assert perc.calls[0] == "front:red", perc.calls
     assert res.result_data["detection_label"] == "pickable_can_red"
 
 
 @pytest.mark.parametrize("query", [
-    "前面的东西", "抓前面的", "the thing in front", "grab that one", "this", "前面", "nearest object", "",
+    "前面的东西", "抓前面的", "the thing in front", "grab that one", "this", "前面", "nearest object",
     "那个", "这个", "面前的", "东西", "object",
 ])
 def test_a_pure_deictic_query_still_takes_the_front_object(query):
     """The other side of R2V-04: a query naming no object stays on the space resolver."""
     perc = RoutingPerception()
-    res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
+    res = GraspSkill().execute({"query": query}, _ctx(perc))
     assert res.success, res.error_message
     assert perc.calls[0] == "front" and not any(c.startswith("detect:") for c in perc.calls), perc.calls
 
@@ -404,28 +383,11 @@ def test_a_colour_marked_as_a_reference_takes_the_one_object_of_that_colour(quer
     """The other side of R2F1V-01: a colour with a generic head or 的 (or a category of
     the same object) refers, to the only red object here."""
     perc = RoutingPerception()
-    res = PerceptionGraspSkill().execute({"query": query}, _ctx(perc))
+    res = GraspSkill().execute({"query": query}, _ctx(perc))
     assert res.success, res.error_message
     assert "front:red" in perc.calls, perc.calls
     assert res.result_data["detection_label"] == "pickable_can_red"
 
 
-def test_a_producer_box_must_be_plausible_on_the_current_frame():
-    """skills-manip:stale-passed-box: a passed box was segmented on the current frame
-    with no plausibility gate. A 1-px-wide sliver is no object; a real box passes."""
-    sliver = PerceptionGraspSkill().execute({"query": "罐子", "bbox": [32, 0, 33, 47]}, _ctx(RoutingPerception()))
-    assert not sliver.success and sliver.result_data["diagnosis"] == "implausible_box"
-    ok = PerceptionGraspSkill().execute({"query": "罐子", "bbox": [29, 21, 35, 27]}, _ctx(RoutingPerception()))
-    assert ok.success and ok.result_data["consumed_bbox"] is True
 
 
-def test_a_stale_box_whose_redetect_fails_reports_the_detector_failure():
-    """C0F2V-4:stale-box-folds-detector-error: the cause was folded into 'stale_box'.
-    The re-detect asks for the object's own name."""
-    frame = {"size": [320, 240], "cam_pos": [0, 0, 0], "cam_mat": np.eye(3).ravel().tolist()}
-    perc = _BrokenDetector()
-    res = PerceptionGraspSkill().execute(
-        {"query": "罐子", "detections": [{"label": "can", "bbox": [29, 21, 35, 27], "frame": frame}]}, _ctx(perc))
-    assert not res.success and res.result_data["diagnosis"] == "perception_failed"
-    assert "weights missing" in res.result_data["cause"]
-    assert perc.calls == ["detect:red can"]

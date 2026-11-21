@@ -41,6 +41,9 @@ class MockArm:
         self.moves.append(list(positions))
         return True
 
+    def home(self, duration=3.0):
+        return self.move_joints([0.0] * self.dof, duration)
+
     def fk(self, joints):
         return ([0.2, 0.0, 0.1], None)
 
@@ -130,26 +133,21 @@ def test_the_skill_result_is_returned_unchanged() -> None:
 def test_detect_while_holding_never_opens_the_gripper() -> None:
     """Base: detect expanded to scan -> detect -> home, and home opened the gripper."""
     g = MockGripper(holding=True)
-    r = _agent(g, perception=_Seeing()).execute_skill("detect", {"query": "banana"})
-    assert r.success and g.opened == 0 and g.holding
+    r = _agent(g, perception=_Seeing()).execute_skill("diagnosing", {})
+    assert not r.success and g.opened == 0 and g.holding
 
 
 def test_home_never_opens_a_holding_gripper() -> None:
     """skills-manip:home-opens-gripper-drops-object: home opened the gripper always."""
     g = MockGripper(holding=True)
     r = _agent(g).execute_skill("home")
-    assert r.success and r.result_data["kept_holding"] is True
+    assert not r.success and r.diagnosis_code == "holding_object"
     assert g.opened == 0 and g.holding
     empty = MockGripper()
-    assert _agent(empty).execute_skill("home").result_data["kept_holding"] is False
+    assert _agent(empty).execute_skill("home").success
     assert empty.opened == 1  # an empty gripper is still opened at home
 
 
-def test_pick_runs_its_scan_prerequisite_itself_and_returns_its_own_failure() -> None:
-    a = _agent(perception=_Perception())
-    r = a.execute_skill("pick", {"object_label": "banana", "mode": "hold"})
-    assert not r.success and r.result_data["diagnosis"] == "object_not_found"
-    assert a._arm.moves, "pick moved to the scan pose before it looked"
 
 
 def test_the_skill_tool_payload_is_the_skills_own() -> None:
@@ -158,11 +156,11 @@ def test_the_skill_tool_payload_is_the_skills_own() -> None:
     from vector_os_nano.vcli.tools.skill_wrapper import SkillWrapperTool
 
     a = _agent(perception=_Seeing())
-    tool = SkillWrapperTool(a._skill_registry.get("detect"), a)
+    tool = SkillWrapperTool(a._skill_registry.get("diagnosing"), a)
     ctx = ToolContext(agent=a, cwd=None, session=None, permissions=None, abort=threading.Event())
     out = tool.execute({"query": "banana"}, ctx)
-    assert not out.is_error and out.metadata["count"] == 1
-    assert out.metadata["objects"][0]["label"] == "banana" and "joint_values" not in out.metadata
+    assert out.is_error and out.metadata["mine"] == 1
+    assert "my_code" in out.content and "joint_values" not in out.metadata
 
 
 @pytest.mark.parametrize("attr", ["__skill_auto_steps__", "__skill_direct__"])

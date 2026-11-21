@@ -25,7 +25,7 @@ _SCRIPT = {"steps": [
         {"name": "start_simulation", "input": {"embodiment": "so101", "gui": False}}]},
     {"when": "", "is_error": False, "text": "机械臂仿真已启动", "tool_calls": []},
     {"when": "抓起香蕉", "tool_calls": [
-        {"name": "pick", "input": {"object_label": "banana", "mode": "hold"}}]},
+        {"name": "grasp", "input": {"query": "banana"}}]},
     {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": "holding_object('banana')"}}]},
     {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
 ]}

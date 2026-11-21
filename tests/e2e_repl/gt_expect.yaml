@@ -71,7 +71,8 @@ flows:
       启动机械臂仿真 无窗口: {none: a launch claims nothing}
       回到初始位置: {none: the arm going home (the dump carries no arm joint state)}
       抓起香蕉: {held_lifted: banana}
-      挥挥手: {none: a gesture (the dump carries no arm joint state)}
+      尝试抓起香蕉: {none: interrupted grasp claims no successful hold}
+      停: {none: P0 stop runs no model turn}
   e8_navigate_rooms:
     bodies: [go2]
     turns:

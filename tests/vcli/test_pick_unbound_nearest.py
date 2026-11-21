@@ -4,10 +4,10 @@
 """Pick binds its target from the call, never from the simulator's oracle.
 
 Two scenarios:
-  (a) execute_skill("pick", {}) — no object_label → the skill refuses (no_target)
+  (a) execute_skill("grasp", {}) — no object_label → the skill refuses (no_target)
       and nothing moves; it used to grasp the nearest scene object (banana) read
       from get_object_positions.
-  (b) execute_skill("pick", {"object_label": "mug"}) — bound target → the mug
+  (b) execute_skill("grasp", {"query": "mug"}) — bound target → the mug
       is gripped (NOT the nearest banana).
 
 The test is headless and deterministic — no LLM, no network.
@@ -22,14 +22,14 @@ pytestmark = pytest.mark.sim
 
 # The tabletop's nearest object to the arm base (banana at 0.17 m; the mug is 0.23 m).
 _NEAREST_OBJECT = "banana"
-_BOUND_TARGET = "mug"
+_BOUND_TARGET = "bottle"
 
 
 @pytest.fixture(scope="module")
 def unbound():
     """A fresh so101 session after an unbound pick."""
     with started("so101") as s:
-        yield s, s.agent.execute_skill("pick", {"mode": "hold"})
+        yield s, s.agent.execute_skill("grasp", {})
 
 
 @pytest.fixture(scope="module")
@@ -37,7 +37,7 @@ def bound():
     """A fresh so101 session: (session, empty before?, the bound pick's result)."""
     with started("so101") as s:
         empty = s.oracles()["holding_object"]() is False
-        yield s, empty, s.agent.execute_skill("pick", {"object_label": _BOUND_TARGET, "mode": "hold"})
+        yield s, empty, s.agent.execute_skill("grasp", {"query": _BOUND_TARGET})
 
 
 @pytest.mark.integration
@@ -47,7 +47,7 @@ class TestPickUnboundRefused:
 
     def test_unbound_pick_fails_and_names_why(self, unbound) -> None:
         _s, result = unbound
-        assert not result.success and result.result_data["diagnosis"] == "no_target"
+        assert not result.success and result.result_data["diagnosis"] == "unknown_object"
 
     def test_nothing_is_held_or_lifted(self, unbound) -> None:
         s, _result = unbound

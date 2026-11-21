@@ -16,6 +16,7 @@ ROS2 imports: pure data, importable and testable offline.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -185,6 +186,7 @@ class ArmSpec:
     # move_joints succeeds when every joint settles within this (rad) of its target.
     track_tol: float = 0.05
     gripper: GripperSpec | None = None
+    postures: dict[str, tuple[float, ...]] = field(default_factory=dict)
 
     @property
     def dof(self) -> int:
@@ -249,6 +251,7 @@ class EmbodimentConfig:
     # Files not shipped in the package; model.path, model.meshes_dir and the policy's
     # files are then relative to the asset folder (embodiments/assets.py resolves it).
     assets: AssetsSpec | None = None
+    skills: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def camera(self) -> CameraSpec | None:
@@ -294,9 +297,14 @@ def _as_tuple(value: Any) -> tuple[Any, ...]:
 
 
 def _floats(value: Any, n: int, ctx: str) -> tuple[float, ...]:
-    out = tuple(float(v) for v in _as_tuple(value))
+    try:
+        out = tuple(float(v) for v in _as_tuple(value))
+    except (TypeError, ValueError) as exc:
+        raise EmbodimentConfigError(f"{ctx}: expected {n} finite numbers: {exc}") from None
     if len(out) != n:
         raise EmbodimentConfigError(f"{ctx} must have {n} values, got {len(out)}: {value!r}")
+    if not all(math.isfinite(v) for v in out):
+        raise EmbodimentConfigError(f"{ctx} must contain finite numbers")
     return out
 
 
@@ -495,7 +503,7 @@ def _parse_capabilities(raw: dict[str, Any], ctx: str) -> CapabilityProfile:
     )
 
 
-_ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper"}
+_ARM_KEYS = {"joints", "ee", "home", "ik_seeds", "track_tol", "gripper", "postures"}
 _GRIPPER_KEYS = {"joint", "open", "closed", "finger_bodies", "weld_body", "min_opening"}
 
 
@@ -532,11 +540,59 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
         ),
         track_tol=float(a.get("track_tol", 0.05)),
         gripper=None if g is None else _parse_gripper(g, f"{actx}.gripper"),
+        postures={str(n): _floats(q, len(joints), f"{actx}.postures.{n}")
+                  for n, q in (_optional_mapping(a, "postures", actx) or {}).items()},
     )
 
 
 _TOP_KEYS = {"id", "display_name", "world", "model", "spawn", "sensors", "assets", "capabilities", "arm",
-             "base"}
+             "base", "skills"}
+
+_GRASP_POSITIVE = {"pre_grasp_height", "lift_height", "reach_m", "view_duration", "hold_duration"}
+_GRASP_NONNEGATIVE = {"grasp_z_above", "approach_back"}
+_GRASP_BASE_COUNTS = {"approach_steps", "seat_steps", "scan_steps", "retries"}
+_GRASP_BASE_POSITIVE = {"standoff", "view_standoff", "step_speed", "step_duration", "stall_distance", "seat_distance",
+                        "lateral_gain", "lateral_speed", "lateral_deadband", "yaw_speed", "yaw_deadband",
+                        "scan_step", "scan_range"}
+
+
+def _positive(raw: Any, ctx: str, *, zero: bool = False) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise EmbodimentConfigError(f"{ctx}: expected a finite number") from None
+    if isinstance(raw, bool) or not math.isfinite(value) or value < 0 or (value == 0 and not zero):
+        raise EmbodimentConfigError(f"{ctx}: expected a finite {'nonnegative' if zero else 'positive'} number")
+    return value
+
+
+def _parse_skills(raw: dict[str, Any], ctx: str, arm: ArmSpec | None) -> dict[str, dict[str, Any]]:
+    skills = _keys(_optional_mapping(raw, "skills", ctx) or {}, f"{ctx}.skills", {"grasp"})
+    if "grasp" not in skills:
+        return {}
+    gctx = f"{ctx}.skills.grasp"
+    if arm is None or arm.gripper is None:
+        raise EmbodimentConfigError(f"{gctx}: requires an arm with a gripper")
+    g = _keys(skills["grasp"], gctx, _GRASP_POSITIVE | _GRASP_NONNEGATIVE | {"durations", "base"})
+    parsed = {k: _positive(_require(g, k, gctx), f"{gctx}.{k}", zero=k in _GRASP_NONNEGATIVE)
+              for k in _GRASP_POSITIVE | _GRASP_NONNEGATIVE}
+    durations = _floats(_require(g, "durations", gctx), 4, f"{gctx}.durations")
+    if any(d <= 0 for d in durations):
+        raise EmbodimentConfigError(f"{gctx}.durations: all four motion durations must be positive")
+    parsed["durations"] = durations
+    if "base" in g:
+        bctx = f"{gctx}.base"
+        if raw.get("base") is None:
+            raise EmbodimentConfigError(f"{bctx}: requires a base")
+        b = _keys(g["base"], bctx, _GRASP_BASE_COUNTS | _GRASP_BASE_POSITIVE)
+        values = {k: _positive(_require(b, k, bctx), f"{bctx}.{k}", zero=k in _GRASP_BASE_COUNTS)
+                  for k in _GRASP_BASE_COUNTS | _GRASP_BASE_POSITIVE}
+        for k in _GRASP_BASE_COUNTS:
+            if not values[k].is_integer():
+                raise EmbodimentConfigError(f"{bctx}.{k}: expected a nonnegative integer")
+            values[k] = int(values[k])
+        parsed["base"] = values
+    return {"grasp": parsed}
 
 
 def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
@@ -573,6 +629,7 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> Emb
     _keys(raw, ctx, _TOP_KEYS)
     spawn = _optional_mapping(raw, "spawn", ctx)
     caps = _parse_capabilities(raw, ctx)
+    arm = _parse_arm(raw, ctx)
     if caps.has_base:  # a base stands at its own spawn, in its stance, driven by its policy
         for key in ("spawn", "base"):
             _require(raw, key, ctx)
@@ -583,10 +640,11 @@ def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> Emb
         sensors=_parse_sensors(raw, ctx),
         capabilities=caps,
         spawn=None if spawn is None else _parse_spawn(spawn, f"{ctx}.spawn"),
-        arm=_parse_arm(raw, ctx),
+        arm=arm,
         world=str(raw.get("world", "") or ""),
         assets=_parse_assets(raw, ctx),
         base=_parse_base(raw, ctx),
+        skills=_parse_skills(raw, ctx, arm),
     )
 
 

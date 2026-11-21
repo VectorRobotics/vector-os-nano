@@ -31,7 +31,7 @@ def test_an_arm_with_its_own_kinematics_never_gets_the_so101_solver(monkeypatch)
     agent = Agent(arm=_Arm())
     agent._build_context()
     assert built == [] and agent._ik_solver is None
-    assert agent.world.get_robot().ee_position == (10.4, 3.0, 0.6)  # the arm's own FK
+    assert agent._build_context().arm.fk([0.0] * 6)[0] == [10.4, 3.0, 0.6]
 
 
 def test_a_solver_failure_is_cached(monkeypatch) -> None:

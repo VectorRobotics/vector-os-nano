@@ -151,8 +151,9 @@ class SkillWrapperTool:
         if isinstance(live, str):
             return ToolResult(content=live, is_error=True)
         agent, skill = live
-        result = skill.execute(self._coerce(params), agent._build_context())
-        agent._sync_robot_state()
+        skill_context = agent._build_context()
+        skill_context.services["cancel"] = context.abort
+        result = skill.execute(self._coerce(params), skill_context)
 
         # A copy: the skill's own (frozen) result is never mutated.
         result_data: dict[str, Any] = dict(getattr(result, "result_data", None) or {})

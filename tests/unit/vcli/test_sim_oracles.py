@@ -331,5 +331,5 @@ def test_so101_tabletop_oracles() -> None:
         s.runtime.release(hand)
         s.runtime.wait_sim(1.0)  # it falls back onto the table
 
-        assert s.agent.execute_skill("pick", {"object_label": "banana", "mode": "hold"}).success
+        assert s.agent.execute_skill("grasp", {"query": "banana"}).success
         assert ns["holding_object"]("banana") and ns["holding_object"]("香蕉")

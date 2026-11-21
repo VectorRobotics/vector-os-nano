@@ -36,10 +36,10 @@ _REQUIRED_METHODS = ("capture", "detect_in", "segment")
 # --- plausibility gates (a graspable object seen by the head camera) ----------
 _MIN_SCORE = 0.30                       # detector score floor
 _MAX_EXTENT_M = 0.35                    # object size (p5-p95 span of its points)
-_DEPTH_RANGE_M = (0.2, 5.0)             # median depth of the object's points
+_DEPTH_RANGE_M = (0.05, 5.0)            # includes close RGB-D; the driver applies each sensor's own range
 _Z_BAND_M = (-0.05, 1.8)                # world height of the object's points
 _ASPECT = (0.15, 6.7)                   # box width / height
-_BEHIND_M, _MIN_BEHIND_FRAC = 0.05, 0.2  # >=20% of the box's surround lies >=5 cm behind it
+_BEHIND_M, _MIN_BEHIND_FRAC = 0.01, 0.2  # 1 cm relief admits small tabletop objects; flush surfaces still fail
 _DEDUPE_M = 0.06                        # two queries on one spot: the higher score wins
 
 

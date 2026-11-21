@@ -60,7 +60,7 @@ def task_policy(agent: Any) -> str:
             lines.append(
                 f"- Reach a room with go_to_room(room), then verify in_room('<room>'). Rooms: {', '.join(world.rooms)}."
             )
-    grasp = next((s for s in ("perception_grasp", "pick") if s in skills), "")
+    grasp = "grasp" if "grasp" in skills else ""
     if caps.has_gripper and grasp:
         if "look" in skills:
             search = "look (it localizes the objects the camera sees)"
@@ -79,7 +79,7 @@ def task_policy(agent: Any) -> str:
                 "- A known object more than about 1.5 m away: navigate_to_object first, then grasp."
             )
         lines.append(
-            f"- An object in view and within reach: grasp it with {grasp} (no other pick skill), naming "
+            f"- An object in view and within reach: grasp it with {grasp}, naming "
             "it as the user did, then verify holding_object('<object>')."
         )
         if caps.has_base and world is not None and world.user is not None:

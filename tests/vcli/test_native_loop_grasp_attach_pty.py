@@ -9,13 +9,13 @@ was this test hand-building the rig instead of using the product launcher):
     vector> 启动 go2 仿真 带机械臂 无窗口
       ▸ Started go2_piper simulation, ready in …            (E1: within 90 s)
     vector> 拿起绿色的瓶子
-      ▸ perception_grasp → verify holding_object('pickable_bottle_green') ✓
+      ▸ grasp → verify holding_object('pickable_bottle_green') ✓
       verdict GROUNDED verified=True                         (E3a)
 
 Only the network LLM is replaced (``VECTOR_FAKE_LLM_TOOLS`` replays the model's tool
 calls); the REPL is driven by the shared tests/harness/pty_cli.run_repl_session.
 Everything else is the product: SimSession (the generic LeggedBase + Arm +
-Gripper + Camera), bind_body, the native producer, perception_grasp (colour
+Gripper + Camera), bind_body, the native producer, grasp (colour
 resolve -> rendered depth -> IK -> weld, never ground truth) and the untouched
 verify spine.
 
@@ -42,7 +42,7 @@ _SCRIPT = {"turns": [
                      "input": {"embodiment": "go2_piper", "gui": False}}]},
     {"text": "go2_piper is up."},
     # turn 2 (native producer): perceive + grasp, then prove possession by GT
-    {"tool_calls": [{"name": "perception_grasp", "input": {"query": "绿色的瓶子"}}]},
+    {"tool_calls": [{"name": "grasp", "input": {"query": "绿色的瓶子"}}]},
     {"tool_calls": [{"name": "verify",
                      "input": {"expr": "holding_object('pickable_bottle_green')"}}]},
     {"text": "holding the green bottle."},
@@ -76,7 +76,7 @@ def test_bare_cli_nl_launch_go2_piper_then_grasp_grounds() -> None:
     evidence, verified, t = _launch_then_grasp("拿起绿色的瓶子", 420, tool_script=_SCRIPT)
     # the native turn prints the start_simulation result line (WP14 _lifecycle_lines)
     assert "▸ Started go2_piper simulation, ready in" in t
-    assert "perception_grasp → verify holding_object('pickable_bottle_green')" in t
+    assert "grasp → verify holding_object('pickable_bottle_green')" in t
     assert (evidence, verified) == ("GROUNDED", "True"), t[-3000:]
 
 

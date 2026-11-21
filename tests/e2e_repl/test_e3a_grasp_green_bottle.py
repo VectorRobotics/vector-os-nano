@@ -12,7 +12,7 @@ from tests.harness.pty_cli import run_repl_session
 _TARGET = "pickable_bottle_green"
 _SCRIPT = {"steps": LAUNCH_STEPS + [
     {"when": "拿起绿色的瓶子", "tool_calls": [
-        {"name": "perception_grasp", "input": {"query": "绿色的瓶子"}}]},
+        {"name": "grasp", "input": {"query": "绿色的瓶子"}}]},
     {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": f"holding_object('{_TARGET}')"}}]},
     {"when": "PASS", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
 ]}

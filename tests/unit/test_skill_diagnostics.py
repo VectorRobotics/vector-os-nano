@@ -19,7 +19,7 @@ from unittest.mock import Mock
 import pytest
 
 from vector_os_nano.core.skill import SkillContext
-from vector_os_nano.core.world_model import WorldModel
+
 from vector_os_nano.skills.place import PlaceSkill
 
 
@@ -33,7 +33,6 @@ def _make_context(arm=None, gripper=None) -> SkillContext:
         arm=arm,
         gripper=gripper,
         perception=None,
-        world_model=WorldModel(),
         calibration=None,
         config={},
     )
@@ -219,56 +218,14 @@ class TestPlaceSkillDiagnosticsSuccess:
 # ScanSkill diagnostics
 # ---------------------------------------------------------------------------
 
-from vector_os_nano.skills.scan import ScanSkill
 
 
-class TestScanSkillFailureModes:
-    def test_failure_modes_attribute_exists(self):
-        skill = ScanSkill()
-        assert hasattr(skill, "failure_modes")
-
-    def test_failure_modes_contains_required_codes(self):
-        skill = ScanSkill()
-        assert "no_arm" in skill.failure_modes
-        assert "move_failed" in skill.failure_modes
 
 
-class TestScanSkillDiagnosticsNoArm:
-    def test_scan_no_arm_returns_diagnosis(self):
-        """context.arm is None -> diagnosis == 'no_arm'."""
-        skill = ScanSkill()
-        context = _make_context(arm=None)
-        result = skill.execute({}, context)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "no_arm"
 
 
-class TestScanSkillDiagnosticsMoveFailed:
-    def test_scan_move_failed_returns_diagnosis(self):
-        """arm.move_joints returns False -> diagnosis == 'move_failed'."""
-        arm = Mock(dof=5)  # the SO-101's 5 DoF (a bare Mock dof is no int)
-        arm.move_joints = Mock(return_value=False)
-        skill = ScanSkill()
-        context = _make_context(arm=arm)
-        result = skill.execute({}, context)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "move_failed"
 
 
-class TestScanSkillDiagnosticsSuccess:
-    def test_scan_success_returns_diagnosis_ok(self):
-        """Full success path -> diagnosis == 'ok' and joint_values present."""
-        arm = Mock(dof=5)
-        arm.move_joints = Mock(return_value=True)
-        skill = ScanSkill()
-        context = _make_context(arm=arm)
-        result = skill.execute({}, context)
-
-        assert result.success is True
-        assert result.result_data.get("diagnosis") == "ok"
-        assert "joint_values" in result.result_data
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +261,7 @@ class TestHomeSkillDiagnosticsMoveFailed:
     def test_home_move_failed_returns_diagnosis(self):
         """arm.move_joints returns False -> diagnosis == 'move_failed'."""
         arm = Mock(dof=5)
-        arm.move_joints = Mock(return_value=False)
+        arm.home = Mock(return_value=False)
         skill = HomeSkill()
         context = _make_context(arm=arm)
         result = skill.execute({}, context)
@@ -341,7 +298,7 @@ class TestGripperOpenSkillFailureModes:
 
     def test_failure_modes_contains_no_arm(self):
         skill = GripperOpenSkill()
-        assert "no_arm" in skill.failure_modes
+        assert "no_gripper" in skill.failure_modes
 
 
 class TestGripperCloseSkillFailureModes:
@@ -351,7 +308,7 @@ class TestGripperCloseSkillFailureModes:
 
     def test_failure_modes_contains_no_arm(self):
         skill = GripperCloseSkill()
-        assert "no_arm" in skill.failure_modes
+        assert "no_gripper" in skill.failure_modes
 
 
 class TestGripperOpenSkillDiagnosticsNoGripper:
@@ -362,20 +319,17 @@ class TestGripperOpenSkillDiagnosticsNoGripper:
         result = skill.execute({}, context)
 
         assert result.success is False
-        assert result.result_data.get("diagnosis") == "no_arm"
+        assert result.result_data.get("diagnosis") == "no_gripper"
 
 
 class TestGripperOpenSkillDiagnosticsSuccess:
     def test_gripper_open_success_returns_diagnosis_ok(self):
         """Gripper present -> diagnosis == 'ok'."""
         gripper = _default_gripper()
-        world_model = Mock()
-        world_model.update_robot_state = Mock()
         context = SkillContext(
             arm=None,
             gripper=gripper,
             perception=None,
-            world_model=world_model,
             calibration=None,
             config={},
         )
@@ -390,13 +344,10 @@ class TestGripperCloseSkillDiagnosticsSuccess:
     def test_gripper_close_success_returns_diagnosis_ok(self):
         """Gripper present -> diagnosis == 'ok'."""
         gripper = _default_gripper()
-        world_model = Mock()
-        world_model.update_robot_state = Mock()
         context = SkillContext(
             arm=None,
             gripper=gripper,
             perception=None,
-            world_model=world_model,
             calibration=None,
             config={},
         )
@@ -411,363 +362,17 @@ class TestGripperCloseSkillDiagnosticsSuccess:
 # WaveSkill diagnostics
 # ---------------------------------------------------------------------------
 
-from vector_os_nano.skills.wave import WaveSkill
 
 
-class TestWaveSkillFailureModes:
-    def test_failure_modes_attribute_exists(self):
-        skill = WaveSkill()
-        assert hasattr(skill, "failure_modes")
-
-    def test_failure_modes_contains_required_codes(self):
-        skill = WaveSkill()
-        assert "no_arm" in skill.failure_modes
-        assert "move_failed" in skill.failure_modes
 
 
-class TestWaveSkillDiagnosticsNoArm:
-    def test_wave_no_arm_returns_diagnosis(self):
-        """context.arm is None -> diagnosis == 'no_arm'."""
-        skill = WaveSkill()
-        context = _make_context(arm=None)
-        result = skill.execute({}, context)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "no_arm"
 
 
-class TestWaveSkillDiagnosticsMoveFailed:
-    def test_wave_raise_failed_returns_diagnosis(self):
-        """First arm.move_joints (raise) returns False -> diagnosis == 'move_failed'."""
-        arm = Mock()
-        arm.move_joints = Mock(return_value=False)
-        skill = WaveSkill()
-        context = _make_context(arm=arm)
-        result = skill.execute({}, context)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "move_failed"
 
 
-class TestWaveSkillDiagnosticsSuccess:
-    def test_wave_success_returns_diagnosis_ok(self):
-        """Full success path -> diagnosis == 'ok'."""
-        arm = Mock()
-        arm.move_joints = Mock(return_value=True)
-        skill = WaveSkill()
-        context = _make_context(arm=arm)
-        result = skill.execute({}, context)
-
-        assert result.success is True
-        assert result.result_data.get("diagnosis") == "ok"
 
 
 # ---------------------------------------------------------------------------
 # PickSkill diagnostics
 # ---------------------------------------------------------------------------
 
-from vector_os_nano.perception.calibration import Calibration
-from vector_os_nano.skills.pick import PickSkill
-from vector_os_nano.core.world_model import WorldModel, ObjectState
-
-
-def _make_pick_context(
-    arm=None,
-    gripper=None,
-    perception=None,
-    world: WorldModel | None = None,
-) -> SkillContext:
-    """Build a SkillContext suitable for PickSkill unit tests.
-
-    hardware_offsets=False so workspace check runs on raw coordinates.
-    max_retries=1 so tests don't loop.
-    """
-    if world is None:
-        world = WorldModel()
-    return SkillContext(
-        arm=arm,
-        gripper=gripper,
-        perception=perception,
-        world_model=world,
-        calibration=Calibration(),
-        config={
-            "skills": {
-                "pick": {
-                    "hardware_offsets": False,
-                    "z_offset": 0.0,
-                    "pre_grasp_height": 0.04,
-                    "max_retries": 1,
-                },
-                "home": {
-                    "joint_values": [0.0, 0.0, 0.0, 0.0, 0.0],
-                },
-            },
-        },
-    )
-
-
-def _default_pick_arm() -> Mock:
-    """The real SO-101's surface: its own position IK, no top-down solve."""
-    arm = Mock()
-    del arm.ik_top_down
-    arm.get_joint_positions = Mock(return_value=[0.0, 0.0, 0.0, 0.0, 0.0])
-    arm.ik = Mock(return_value=[0.1, 0.2, 0.3, 0.4, 0.5])
-    arm.move_joints = Mock(return_value=True)
-    return arm
-
-
-def _default_pick_gripper() -> Mock:
-    gripper = Mock()
-    gripper.open = Mock()
-    gripper.close = Mock()
-    return gripper
-
-
-class TestPickSkillFailureModes:
-    """PickSkill must expose failure_modes as a class attribute."""
-
-    def test_failure_modes_attribute_exists(self):
-        skill = PickSkill()
-        assert hasattr(skill, "failure_modes")
-
-    def test_failure_modes_contains_required_codes(self):
-        skill = PickSkill()
-        assert "no_arm" in skill.failure_modes
-        assert "object_not_found" in skill.failure_modes
-        assert "out_of_workspace" in skill.failure_modes
-        assert "ik_unreachable" in skill.failure_modes
-        assert "move_failed" in skill.failure_modes
-
-
-class TestPickSkillDiagnosticsNoArm:
-    def test_pick_no_arm_returns_diagnosis(self):
-        """context.arm is None -> diagnosis == 'no_arm'."""
-        skill = PickSkill()
-        ctx = _make_pick_context(arm=None)
-        result = skill.execute({"object_label": "mug"}, ctx)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "no_arm"
-
-
-class TestPickSkillDiagnosticsObjectNotFound:
-    def test_pick_object_not_found_returns_diagnosis(self):
-        """No perception, empty world model -> diagnosis == 'object_not_found'."""
-        skill = PickSkill()
-        arm = _default_pick_arm()
-        ctx = _make_pick_context(arm=arm, perception=None)
-        # world model is empty — no objects
-        result = skill.execute({"object_label": "mug"}, ctx)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "object_not_found"
-        assert "query" in result.result_data
-        assert "world_model_objects" in result.result_data
-
-
-class TestPickSkillDiagnosticsOutOfWorkspace:
-    def test_pick_workspace_returns_diagnosis(self):
-        """Object at x=0.5 (50cm) is outside 35cm workspace limit."""
-        skill = PickSkill()
-        arm = _default_pick_arm()
-        world = WorldModel()
-        world.add_object(ObjectState(
-            object_id="obj_0",
-            label="mug",
-            x=0.5,   # 50cm — outside _WORKSPACE_MAX_DIST=0.35
-            y=0.0,
-            z=0.0,
-            confidence=0.9,
-            state="on_table",
-        ))
-        ctx = _make_pick_context(arm=arm, world=world)
-        result = skill.execute({"object_label": "mug"}, ctx)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "out_of_workspace"
-        assert "target_base_cm" in result.result_data
-        assert "distance_cm" in result.result_data
-        assert "workspace_bounds_cm" in result.result_data
-
-
-class TestPickSkillDiagnosticsIKFailure:
-    def test_pick_ik_failure_returns_diagnosis(self):
-        """Object in workspace but arm.ik returns None -> diagnosis == 'ik_unreachable'."""
-        skill = PickSkill()
-        arm = _default_pick_arm()
-        arm.ik = Mock(return_value=None)  # IK always fails
-        world = WorldModel()
-        world.add_object(ObjectState(
-            object_id="obj_0",
-            label="mug",
-            x=0.20,   # 20cm — inside workspace
-            y=0.0,
-            z=0.0,
-            confidence=0.9,
-            state="on_table",
-        ))
-        ctx = _make_pick_context(arm=arm, world=world)
-        result = skill.execute({"object_label": "mug"}, ctx)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "ik_unreachable"
-
-
-class TestPickSkillDiagnosticsSuccess:
-    def test_pick_success_returns_diagnosis_ok(self):
-        """Full mock success path -> diagnosis == 'ok' and position_cm present."""
-        skill = PickSkill()
-        arm = _default_pick_arm()
-        gripper = _default_pick_gripper()
-        world = WorldModel()
-        world.add_object(ObjectState(
-            object_id="obj_0",
-            label="mug",
-            x=0.20,
-            y=0.0,
-            z=0.0,
-            confidence=0.9,
-            state="on_table",
-        ))
-        ctx = _make_pick_context(arm=arm, gripper=gripper, world=world)
-        result = skill.execute({"object_label": "mug"}, ctx)
-
-        assert result.success is True
-        assert result.result_data.get("diagnosis") == "ok"
-        assert "position_cm" in result.result_data
-
-
-class TestPickSkillWorldModelFix:
-    def test_pick_removes_only_picked_object(self):
-        """After successful pick, only the picked object is removed from world model."""
-        skill = PickSkill()
-        arm = _default_pick_arm()
-        gripper = _default_pick_gripper()
-        world = WorldModel()
-        world.add_object(ObjectState(
-            object_id="mug_0",
-            label="mug",
-            x=0.20,
-            y=0.0,
-            z=0.0,
-            confidence=0.9,
-            state="on_table",
-        ))
-        world.add_object(ObjectState(
-            object_id="cup_0",
-            label="cup",
-            x=0.25,
-            y=0.05,
-            z=0.0,
-            confidence=0.9,
-            state="on_table",
-        ))
-        ctx = _make_pick_context(arm=arm, gripper=gripper, world=world)
-        result = skill.execute({"object_label": "mug"}, ctx)
-
-        assert result.success is True
-        # mug_0 should be gone, cup_0 should still be there
-        assert world.get_object("mug_0") is None
-        assert world.get_object("cup_0") is not None
-
-
-# ---------------------------------------------------------------------------
-# DetectSkill diagnostics (T6)
-# ---------------------------------------------------------------------------
-
-from vector_os_nano.skills.detect import DetectSkill
-from vector_os_nano.core.types import Detection, TrackedObject, Pose3D
-
-
-def _make_detect_ctx(perception=None, world=None) -> SkillContext:
-    """Minimal SkillContext for DetectSkill diagnostics tests."""
-    return SkillContext(
-        arm=None,
-        gripper=None,
-        perception=perception,
-        world_model=world if world is not None else WorldModel(),
-        calibration=Calibration(),
-        config={},
-    )
-
-
-class TestDetectSkillFailureModes:
-    """DetectSkill must expose failure_modes class attribute."""
-
-    def test_failure_modes_attribute_exists(self):
-        skill = DetectSkill()
-        assert hasattr(skill, "failure_modes")
-
-    def test_failure_modes_contains_required_codes(self):
-        skill = DetectSkill()
-        assert "no_perception" in skill.failure_modes
-        assert "no_detections" in skill.failure_modes
-
-
-class TestDetectSkillDiagnosticsNoPerception:
-    def test_detect_no_perception_returns_diagnosis(self):
-        """context.perception is None -> diagnosis == 'no_perception'."""
-        skill = DetectSkill()
-        context = _make_detect_ctx(perception=None)
-        result = skill.execute({"query": "banana"}, context)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "no_perception"
-
-
-class TestDetectSkillDiagnosticsSuccess:
-    def test_detect_success_returns_diagnosis_ok(self):
-        """Successful detection -> diagnosis == 'ok' and merged_count in result_data."""
-        mock_perception = Mock()
-        mock_perception.detect = Mock(return_value=[
-            Detection(label="banana", bbox=(100, 100, 200, 200), confidence=0.9),
-        ])
-        mock_perception.track = Mock(return_value=[])
-
-        skill = DetectSkill()
-        context = _make_detect_ctx(perception=mock_perception)
-        result = skill.execute({"query": "banana"}, context)
-
-        assert result.success is True
-        assert result.result_data.get("diagnosis") == "ok"
-        assert "merged_count" in result.result_data
-
-    def test_detect_specific_target_not_found_returns_failure(self):
-        """R2-7 honest-success: specific target absent -> success=False (moat fix).
-
-        When perception returns [] for a SPECIFIC query (e.g. "banana") the target
-        is not in the scene. Reporting success=True here was the moat hole — a verify
-        step counting objects would false-pass. Now success=False so the failure
-        is caught at the detect step itself, not silently swallowed.
-        """
-        mock_perception = Mock()
-        mock_perception.detect = Mock(return_value=[])
-
-        skill = DetectSkill()
-        context = _make_detect_ctx(perception=mock_perception)
-        result = skill.execute({"query": "banana"}, context)
-
-        assert result.success is False
-        assert result.result_data.get("diagnosis") == "no_detections"
-        assert result.result_data.get("query") == "banana"
-        assert result.result_data.get("objects") == []
-        assert result.result_data.get("count") == 0
-
-    def test_detect_generic_query_empty_scene_returns_success(self):
-        """R2-7: generic 'all objects' with empty scene -> success=True.
-
-        A detect for 'all objects' on an empty table is a valid observation —
-        the robot looked and found nothing.  success=True lets a downstream
-        foreach no-op cleanly over the empty list.
-        """
-        mock_perception = Mock()
-        mock_perception.detect = Mock(return_value=[])
-
-        skill = DetectSkill()
-        context = _make_detect_ctx(perception=mock_perception)
-        result = skill.execute({"query": "all objects"}, context)
-
-        assert result.success is True
-        assert result.result_data.get("diagnosis") == "no_detections"
-        assert result.result_data.get("objects") == []
-        assert result.result_data.get("count") == 0

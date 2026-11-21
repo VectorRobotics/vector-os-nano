@@ -33,6 +33,9 @@ arm:
   # are always tried too. Five joints hold a top-down tool with any jaw yaw: the pan
   # aims the arm, three pitch joints place the tool and point it down, the wrist roll
   # turns the jaws.
+  postures:
+    view: [-0.014, -1.238, 0.562, 0.858, 0.311]
+    hold: [-0.014, -1.238, 0.562, 0.858, 0.311]
   ik_seeds:
     - [0.0, 0.3, 0.6, 1.2, 0.0]
     - [0.0, -0.3, 1.2, 1.0, 0.0]
@@ -51,3 +54,14 @@ capabilities:
   has_gripper: true
   camera: true
   lidar: false
+
+skills:
+  grasp:
+    pre_grasp_height: 0.03
+    grasp_z_above: 0.0
+    lift_height: 0.03
+    approach_back: 0.1
+    durations: [3.0, 1.5, 1.0, 1.0]
+    reach_m: 0.35
+    view_duration: 1.2
+    hold_duration: 2.0

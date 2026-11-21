@@ -14,7 +14,7 @@ tool_script — the REAL provider backend resolved from the repo-root ``.env`` (
 product default) on the REAL SO-101 MuJoCo arm sim. The MODEL must AUTONOMOUSLY
 decompose / route / verify the grasp:
 
-  - some step's ``strategy == "pick"`` — a manipulation skill (the model chose to
+  - some step's ``strategy == "grasp"`` — a manipulation skill (the model chose to
     grasp, not to home/scan-only);
   - that step's ``verify`` starts with ``holding_object`` — the registry-derived
     GRIPPER oracle that MEASURES the goal (not a base position oracle, not a
@@ -148,7 +148,7 @@ def test_live_arm_pick_routes_and_grounds_holding(sim_cleanup) -> None:
     # verified it with the registry-derived GRIPPER oracle ``holding_object(...)``.
     pick_steps = [
         s for s in per_step
-        if s["strategy"] == "pick" and str(s["verify"]).startswith("holding_object")
+        if s["strategy"] == "grasp" and str(s["verify"]).startswith("holding_object")
     ]
     assert pick_steps, (
         f"the model must route a pick step verified by holding_object(...); got "

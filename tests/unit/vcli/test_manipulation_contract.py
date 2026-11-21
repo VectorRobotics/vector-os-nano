@@ -170,14 +170,13 @@ def _close_turn(goal: str, verify: str, *, real: bool):
     from types import SimpleNamespace
 
     from tests.unit.vcli.test_native_loop import _Skill
-    from vector_os_nano.core.world_model import WorldModel
     from vector_os_nano.skills.gripper import GripperCloseSkill
 
     agent, arm = _make_arm_agent()
     if real:  # the shipped skill: the driver's close() grips the red can
         grip = agent._gripper
         grip.close = lambda: setattr(arm, "held", True) or True
-        ctx = SimpleNamespace(base=agent._base, arm=arm, gripper=grip, services=None, world_model=WorldModel(),
+        ctx = SimpleNamespace(base=agent._base, arm=arm, gripper=grip, services={},
                               config={"world": "apartment"})
         agent._build_context = lambda: ctx
         agent._skill_registry.register(GripperCloseSkill())

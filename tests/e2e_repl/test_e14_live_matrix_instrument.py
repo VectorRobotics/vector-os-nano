@@ -29,7 +29,7 @@ def _script(*, verify: str = _OBJ, embodiment: str = "so101") -> dict:
         {"when": _CELL["launch"], "tool_calls": [
             {"name": "start_simulation", "input": {"embodiment": embodiment, "gui": False}}]},
         {"when": "", "text": "ok", "tool_calls": []},
-        {"when": _CELL["task"], "tool_calls": [{"name": "pick", "input": {"object_label": _OBJ, "mode": "hold"}}]},
+        {"when": _CELL["task"], "tool_calls": [{"name": "grasp", "input": {"query": _OBJ}}]},
         {"when": "", "tool_calls": [{"name": "verify", "input": {"expr": f"holding_object('{verify}')"}}]},
         {"when": "", "tool_calls": [{"name": "finish", "input": {}}], "stop_reason": "end_turn"},
     ]}
@@ -44,7 +44,7 @@ def test_e14_a_scripted_pick_is_a_success_and_a_dump_with_the_banana_on_the_tabl
     assert not rec["timed_out"] and r["status"] == "ran", (r.get("reason"), text[-3000:])
     assert r["verdict"]["verified"] is True and r["verdict"]["goal_check"] == "proven", text[-3000:]
     assert r["grade"] is True and r["outcome"] == "agree", (r, text[-3000:])
-    assert r["tools"] == ["pick", "verify", "finish"] and r["model_calls"] >= 4, r
+    assert r["tools"] == ["grasp", "verify", "finish"] and r["model_calls"] >= 4, r
     assert lm.exit_code(lm.summarize([_CELL], [r])) == 0
 
     # The same turn and verdict; the dump rewritten by hand: the banana never moved.
