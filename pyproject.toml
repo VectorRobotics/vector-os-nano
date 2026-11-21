@@ -53,7 +53,7 @@ dependencies = [
 
 # Simulation: MuJoCo (the primary, cross-platform sim backend)
 sim = [
-    "mujoco>=3.3",  # MjSpec.attach (scene_builder.build_room_scene); absent in 3.2.7
+    "mujoco==4.0.1",  # verified runtime and versioned physics traces
     "opencv-python>=4.8",  # perception/front_object: the sim go2 grasp's salient-blob resolver
 ]
 

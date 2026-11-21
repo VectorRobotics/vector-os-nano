@@ -164,7 +164,7 @@ def test_fk_waits_for_the_kinematics_lock(rig) -> None:
     assert done.wait(5.0)
 
 
-# -- today's numbers: the kinematics replace MuJoCoPiper's bit for bit ---------------
+# -- legacy kinematics, within MuJoCo 4 floating-point roundoff ---------------------
 # golden/piper_kinematics.json holds MuJoCoPiper's ik_top_down / ik / fk on these 16
 # cases, recorded from that driver on release/1.0 just before S3a deleted it (the live
 # comparison passed on 84fcde0). JSON floats round-trip exactly.
@@ -182,8 +182,13 @@ def test_the_kinematics_keep_the_old_driver_numbers(rig) -> None:
     assert len(golden) == len(cases) == 16
     for (base, target), old in zip(cases, golden):
         q = rig.place(*base, arm=_ARM).copy()
-        assert rig.kin.ik_top_down(q, target, rig.seeds()) == old["td"], (base, target)
-        assert rig.kin.ik(q, target, rig.kin.arm_q(q)) == old["ik"], (base, target)
         pos, rot = rig.kin.fk(q, _ARM)
-        assert [pos, rot] == old["fk"], (base, target)
+        # MuJoCo 4 changes floating-point roundoff; preserve twelve decimal places.
+        for got, want in ((rig.kin.ik_top_down(q, target, rig.seeds()), old['td']),
+                          (rig.kin.ik(q, target, rig.kin.arm_q(q)), old['ik']),
+                          (pos, old['fk'][0]), (rot, old['fk'][1])):
+            if want is None:
+                assert got is None, (base, target)
+            else:
+                np.testing.assert_allclose(got, want, rtol=0, atol=1e-12, err_msg=str((base, target)))
     assert sum(o["td"] is not None for o in golden) == 12  # solutions, not only misses

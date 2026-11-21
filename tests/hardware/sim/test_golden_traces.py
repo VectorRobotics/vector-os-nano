@@ -1,7 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Golden traces: the MuJoCo path moves onto the physics contract with ZERO behaviour change.
+"""Exact regression traces for the pinned MuJoCo 4.0.1 runtime.
+
+Current traces live in golden/mujoco-4.0.1. They include the current controller gains,
+mimic constraints and segmentation, and explicitly open the Piper jaws before approach.
+The old fixture approached with closed jaws and no longer gripped with the stronger
+jaw servo. Capture and replay both require every original holding/lift verdict to pass.
+The root-level archives below remain unchanged for the historical migration checks.
+
+Historical S1/S4a baseline:
 
 Captured in lockstep (VECTOR_SIM_LOCKSTEP=1, headless) on release/1.0 before S1 touched
 anything, and replayed here bit for bit:
@@ -17,9 +25,8 @@ anything, and replayed here bit for bit:
    read (base pose, object positions and speeds, contacts, clearance, welds, arm joints,
    segmentation pixels of the manifest camera).
 
-States compare with ``np.array_equal`` and oracle values exactly. Regenerate (only for
-a documented, justified change) with ``python -m tests.hardware.sim.test_golden_traces
-<dir>`` under scripts/gate.sh's environment; the ``release_*`` arrays are kept.
+States compare with ``np.array_equal`` and oracle values exactly. Regeneration uses
+``write(output_directory)`` through scripts/gate.sh; old release arrays stay archived.
 
 S4a moved both bodies onto the generic LeggedBase + convex_mpc policy. That code path
 replays the S1 goldens bit for bit once three deliberate changes are undone (proved by
@@ -72,6 +79,7 @@ pytest.importorskip("mujoco")
 pytestmark = pytest.mark.sim
 
 GOLDEN = Path(__file__).with_name("golden")
+CURRENT = GOLDEN / 'mujoco-4.0.1'
 _SEAT = (10.46, 3.0)  # the dog 42 cm behind the green bottle, head-on (test_piper_grasp)
 _GREEN = "pickable_bottle_green"
 _SAMPLE_S = 0.1
@@ -198,6 +206,7 @@ def run_go2_piper_pick() -> dict[str, np.ndarray]:
         arm = Arm(cfg.arm, rt, wait_mount=base.wait_settled)
         grip = Gripper(cfg.arm.gripper, rt)
         respawn(rt, base, cfg, xy=_SEAT)
+        assert grip.open()  # approach with open jaws; the reset retains a closed jaw position
         assert rt.wait_sim(1.5)
         rec = _Recorder(rt, "go2_piper", tuple(cfg.arm.joints))
         gt = rec.gt
@@ -255,8 +264,10 @@ def _replayed(golden: np.lib.npyio.NpzFile) -> list[str]:
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
 def test_golden_trace_replays_bit_for_bit(scenario: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VECTOR_SIM_LOCKSTEP", "1")
-    golden = np.load(GOLDEN / f"{scenario}.npz")
+    golden = np.load(CURRENT / f"{scenario}.npz")
     got = SCENARIOS[scenario]()
+    if 'verdicts' in got:
+        assert got['verdicts'].all(), 'a failed grasp must never become the new baseline'
     assert sorted(got) == _replayed(golden)
     bad = [_first_mismatch(k, golden[k], got[k]) for k in _replayed(golden)
            if not np.array_equal(golden[k], got[k], equal_nan=golden[k].dtype.kind == "f")]
@@ -299,10 +310,12 @@ def write(out: Path) -> None:
     os.environ["VECTOR_SIM_LOCKSTEP"] = "1"
     out.mkdir(parents=True, exist_ok=True)
     for name, run in SCENARIOS.items():
-        kept = np.load(GOLDEN / f"{name}.npz")
-        np.savez_compressed(out / f"{name}.npz", **run(), **{k: kept[k] for k in kept.files if k.startswith("release_")})
+        result = run()
+        if 'verdicts' in result:
+            assert result['verdicts'].all(), 'refuse to record a failed grasp as the baseline'
+        np.savez_compressed(out / f"{name}.npz", **result)
         print(f"wrote {out / name}.npz")
 
 
 if __name__ == "__main__":
-    write(Path(sys.argv[1]) if len(sys.argv) > 1 else GOLDEN)
+    write(Path(sys.argv[1]) if len(sys.argv) > 1 else CURRENT)
