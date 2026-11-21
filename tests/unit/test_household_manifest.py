@@ -25,6 +25,13 @@ def test_household_manifests_preserve_wheel_contact_and_disable_grasp_assistance
     assert not (root/'embodiments/malo/physical.xml').exists()
 
 
+def test_examples_contain_only_validated_household_data_not_retired_demo_scripts():
+    root = Path(__file__).resolve().parents[2]/'examples'
+    assert {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} == {
+        'household/sources.json', 'household/embodiments/malo/robot.yaml',
+        'household/worlds/artvip_home/world.yaml'}
+
+
 @pytest.mark.parametrize('initial', [{'head': float('nan')}, {'head': True}, {'': 0}, {'fl_wheel_joint': 1}])
 def test_initial_joints_reject_invalid_positions_and_base_overrides(initial):
     path = Path(__file__).resolve().parents[2]/'examples/household/embodiments/malo/robot.yaml'

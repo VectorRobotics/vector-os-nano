@@ -39,6 +39,7 @@ CATALOGUE: dict[str, EnvVar] = {
     "VECTOR_LLM_FALLBACK_MODEL": EnvVar("experimental", "anthropic/claude-sonnet-4-6", "the fallback's model"),
     "VECTOR_SIM_LOCKSTEP": EnvVar("test_seam", "", "'1': physics steps only when the caller steps it"),
     "VECTOR_GT_DUMP": EnvVar("test_seam", "", "a file: one ground-truth line per turn for scripts/gt_grade.py"),
+    "VECTOR_ROLLOUT_DIR": EnvVar("experimental", "", "a directory: MuJoCo records every actual step, solver contact loads and requested sensor frames"),
     "VECTOR_FAKE_LLM_TOOLS": EnvVar("test_seam", "", "a JSON script that replaces the network LLM"),
     "VECTOR_FAKE_LLM_LOG": EnvVar("test_seam", "", "a file the script LLM logs every call to"),
     "VECTOR_REEXEC": EnvVar("internal", "", "'1' on the mjpython re-exec (macOS), so it happens once"),

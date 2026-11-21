@@ -37,7 +37,6 @@ _DEAD: dict[str, str] = {
     "vector_os_nano/core/nav_client.py": "never constructed (services['nav'] is never populated)",
     "docker/isaac-sim": "periphery:isaac-healthcheck-humble",
     "gazebo": "dead gazebo env",
-    "examples": "periphery:examples-all-broken",
     "scripts/verify_loco_pick_place.py": "periphery:verify-loco-self-report",
     "scripts/verify_pick_top_down.py": "calls the deleted SimStartTool._populate_pickables_from_mjcf",
     "scripts/launch_explore.sh": "periphery B-1/B-2 (hardcoded /home/yusen, cp into the shared nav stack)",

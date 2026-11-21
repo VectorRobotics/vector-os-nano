@@ -542,7 +542,7 @@ def test_a_mobile_arms_oracles_reach_the_model_with_signature_and_meaning() -> N
     for n in names:
         assert re.search(rf"\n- {n}\([^\n]*\): \S", desc), n
     for line in (
-        "- kept_holding(target): Held now AND its weld never dropped since the turn started.",
+        "- kept_holding(target): Held now AND possession never dropped since the turn started.",
         "- near_object(name, r=",
         "- object_on(target, surface): Object resting ON the named support surface",
         "- released(target=None): No longer held",

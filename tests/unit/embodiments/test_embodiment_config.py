@@ -116,7 +116,7 @@ def test_go2_capabilities() -> None:
 
 def test_go2_policy() -> None:
     p = load_embodiment_config("go2").base.policy
-    assert (p.ref, p.timestep, p.tick_hz) == ("convex_mpc", 0.001, 200.0)
+    assert (p.ref, p.timestep, p.tick_hz) == ("convex_mpc", 0.001, 1000.0)
     assert p.params == {"file": "model/go2_description.urdf", "gait_hz": 3, "duty": 0.6, "z_des": 0.27, "brake_s": 0.35, "brake_ramp_s": 1.0}
     assert p.on("mujoco") == ("convex_mpc", p.params)
     assert p.on("pybullet") == ("sinusoidal", {"freq_hz": 2.0, "thigh_amp": 0.25, "calf_amp": 0.25, "hip_amp": 0.10})
