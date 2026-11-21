@@ -193,6 +193,13 @@ class WorldManifest:
         best_word, best = max(hits, key=lambda h: len(h[0]))
         return best if all(n == best or w in best_word for w, n in hits) else None
 
+    def resolve_articulation(self, text: Any) -> str | None:
+        """One whole furniture reference, never a pickable or a clause inside a task."""
+        q = _norm(text).removeprefix('the ')
+        hits = {n for n, spec in self.articulations.items()
+                if q and q in {_norm(w) for w in (n, n.replace('_', ' '), *spec.aliases)}}
+        return next(iter(hits)) if len(hits) == 1 else None
+
     def room_words(self) -> dict[str, frozenset[str]]:
         """``{word: the rooms it names}`` for every name ("living_room", "living room") and
         ``vocab.rooms`` alias of every room, lower-cased."""

@@ -69,6 +69,19 @@ def _unpack(f: Any) -> tuple[Any, Any, CameraIntrinsics, Any, Any]:
     return f.rgb, f.depth, CameraIntrinsics.from_matrix(f.K, w, h), f.cam_pos, f.cam_mat
 
 
+def frame_provenance(frame: Any, rgb: np.ndarray) -> dict[str, Any]:
+    """What an observation belongs to: size and, from a snapshot, id, time and pose."""
+    prov: dict[str, Any] = {"size": [int(rgb.shape[1]), int(rgb.shape[0])]}
+    if frame is not None:
+        prov.update(
+            frame_id=f"{getattr(frame, 'camera', 'camera')}@{float(frame.sim_time):.4f}",
+            sim_time=float(frame.sim_time),
+            cam_pos=[float(v) for v in np.asarray(frame.cam_pos).ravel()],
+            cam_mat=[float(v) for v in np.asarray(frame.cam_mat).ravel()],
+        )
+    return prov
+
+
 def detect_on(perception: Any, rgb: Any, query: str) -> Any:
     """Detections on *rgb* itself, so box and depth share a frame."""
     return perception.detect_in(rgb, query)

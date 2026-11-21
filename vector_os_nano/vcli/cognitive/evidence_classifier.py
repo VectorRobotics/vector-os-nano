@@ -79,7 +79,7 @@ _PREDICATE_ORACLES: frozenset[str] = frozenset(
         "object_on",
         "localized",
         "arm_at_home",
-        "joint_group_at",
+        "joint_group_at", "articulation_open", "articulation_closed",
         "file_exists",
         # path_contains(path, substr) is a goal-conditioned bool (the author
         # supplies the substring goal; True only if the file actually contains it).

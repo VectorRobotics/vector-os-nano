@@ -56,6 +56,18 @@ def test_unknown_target_causes_no_motion(query):
     ctx.gripper.open.assert_not_called()
 
 
+def test_grasp_observation_retains_its_single_sensor_frame():
+    ctx = context()
+    capture = ctx.perception.capture
+    ctx.perception.capture = Mock(side_effect=capture)
+    point, meta, error = perceive(ctx.perception, 'object', grasp_perception._Target(False, None, 'object', 'object'))
+    assert error is None and point is not None
+    ctx.perception.capture.assert_called_once_with()
+    assert meta['frame']['frame_id'] == 'd435_rgb@1.0000'
+    assert meta['frame']['sim_time'] == 1.0
+    assert meta['coordinate_frame'] == 'world'
+
+
 def test_colour_is_not_an_identity_when_two_objects_share_it():
     target = _target("red mug", "tabletop", True)
     assert target.label == "mug" and target.front is False

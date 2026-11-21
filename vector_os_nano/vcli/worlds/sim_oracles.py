@@ -209,6 +209,30 @@ def build_namespace(
 
     ns["localized"] = localized
 
+    if world is not None and world.articulations:
+        def articulation_state(target):
+            spec = world.articulations[world.resolve_articulation(target)]
+            value, = gt.joint_positions((spec.joint,))
+            if not math.isfinite(value):
+                raise ValueError('nonfinite articulation state')
+            return spec, value
+
+        @oracle(scope='robot', channel='articulation', transition='rise', domain='bool')
+        @_safe(False)
+        def articulation_open(target: str) -> bool:
+            """Declared joint has reached its required opening; not a whole-trajectory safety verdict."""
+            spec, value = articulation_state(target)
+            return (value-spec.closed)/(spec.opened-spec.closed) >= 1.
+
+        @oracle(scope='robot', channel='articulation', transition='rise', domain='bool')
+        @_safe(False)
+        def articulation_closed(target: str) -> bool:
+            """Declared joint is within its fixed flush tolerance; not a whole-trajectory safety verdict."""
+            spec, value = articulation_state(target)
+            return abs(value-spec.closed) <= spec.closed_tolerance
+
+        ns.update(articulation_open=articulation_open, articulation_closed=articulation_closed)
+
     groups = getattr(cfg, 'joint_groups', {})
     if groups:
         @oracle(scope='robot', channel='joints', transition='rise', domain='bool')

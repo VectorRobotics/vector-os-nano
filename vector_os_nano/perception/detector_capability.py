@@ -27,6 +27,7 @@ from typing import Any
 import numpy as np
 
 from vector_os_nano.perception.base import failure_cause
+from vector_os_nano.perception.object_localizer import frame_provenance
 from vector_os_nano.vcli.cognitive.capabilities.types import CapabilityResult
 
 BACKENDS = ("grounding-dino", "rynnbrain")
@@ -160,7 +161,7 @@ class DetectorCapability:
                 latency_sec=time.monotonic() - start,
             )
 
-        prov = _provenance(frame, rgb)
+        prov = frame_provenance(frame, rgb)
         output = {
             "detections": [dict(d.to_dict(), frame=prov) for d in detections],
             "boxes": [list(d.bbox) for d in detections],
@@ -209,16 +210,3 @@ class DetectorCapability:
                 logger.warning("[DETECT-CAP] frame source failed: %s: %s", type(exc).__name__, exc)
                 why_not = why_not or failure_cause(exc)
         return None, None, why_not
-
-
-def _provenance(frame: Any, rgb: np.ndarray) -> dict[str, Any]:
-    """What a box belongs to: frame size, and (from a snapshot) its id, time and pose."""
-    prov: dict[str, Any] = {"size": [int(rgb.shape[1]), int(rgb.shape[0])]}
-    if frame is not None:
-        prov.update(
-            frame_id=f"{getattr(frame, 'camera', 'camera')}@{float(frame.sim_time):.4f}",
-            sim_time=float(frame.sim_time),
-            cam_pos=[float(v) for v in np.asarray(frame.cam_pos).ravel()],
-            cam_mat=[float(v) for v in np.asarray(frame.cam_mat).ravel()],
-        )
-    return prov

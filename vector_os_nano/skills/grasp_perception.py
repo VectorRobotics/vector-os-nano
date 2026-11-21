@@ -13,7 +13,7 @@ import numpy as np
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.perception.base import failure_cause
 from vector_os_nano.perception.grasp_point import object_points, grasp_point_from_points
-from vector_os_nano.perception.object_localizer import capture_rgbd, implausible
+from vector_os_nano.perception.object_localizer import _unpack, frame_provenance, implausible
 
 logger = logging.getLogger(__name__)
 ALIASES = ["抓", "拿", "抓起", "抓住", "抓取", "拿起", "取", "grab", "grasp", "pick up", "pick"]
@@ -128,12 +128,13 @@ def perceive(perception, query, target, params=None, *, cancel=lambda: False, ex
     try:
         if cancel():
             return None, {}, _fail("cancelled", "Grasp cancelled before perception.")
-        rgb, depth, K, pos, rot = (capture_rgbd(perception) if camera is None else
-                                  capture_rgbd(perception, camera=camera))
+        captured = perception.capture() if camera is None else perception.capture(camera=camera)
+        rgb, depth, K, pos, rot = _unpack(captured)
+        provenance = frame_provenance(captured, rgb)
     except Exception as exc:
         return None, {}, _fail("no_camera", f"Cannot read RGB-D: {failure_cause(exc)}; check the camera.")
     meta = {"perceived": False, "consumed_bbox": False, "reperceived": True,
-            "detection_label": target.label or query}
+            "detection_label": target.label or query, "frame": provenance, "coordinate_frame": "world"}
     try:
         prior = None if expected_bounds is None else np.asarray(expected_bounds, dtype=float)
         if prior is not None and (prior.shape != (2, 3) or not np.isfinite(prior).all() or np.any(prior[0] >= prior[1])):
