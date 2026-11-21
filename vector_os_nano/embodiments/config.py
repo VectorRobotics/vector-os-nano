@@ -46,15 +46,6 @@ class ModelSpec:
 
 
 @dataclass(frozen=True)
-class SpawnSpec:
-    """Where a body with a base is placed in the scene: it stands there at its
-    ``base.height``, facing ``heading``."""
-
-    xy: tuple[float, float]
-    heading: float = 0.0
-
-
-@dataclass(frozen=True)
 class LidarSpec:
     """A lidar (``sensors: [{role: lidar, ...}]``) on ``body`` at ``pos`` (body frame; the
     mount follows the body's heading, not its roll and pitch). Its beams are pitched
@@ -252,16 +243,13 @@ def _under(rel: str, key: str) -> bool:
 
 @dataclass(frozen=True)
 class EmbodimentConfig:
-    """Full, immutable description of one robot morphology. A body with a base has a
-    ``spawn`` and a ``base`` block (the generic LeggedBase); a fixed arm stands at its
-    world's spawn."""
+    """Full, immutable robot morphology; its placement belongs to the world."""
 
     id: str
     display_name: str
     model: ModelSpec
     sensors: tuple[CameraSpec | LidarSpec, ...]
     capabilities: CapabilityProfile
-    spawn: SpawnSpec | None = None
     # Arm mounted on the body (e.g. the Piper on go2_piper), or None.
     arm: ArmSpec | None = None
     # The legged base the generic LeggedBase drives, or None.
@@ -345,14 +333,6 @@ def _parse_model(raw: dict[str, Any], ctx: str) -> ModelSpec:
         root_body=str(_require(m, "root_body", mctx)),
         meshes_dir=str(m.get("meshes_dir", "")),
     )
-
-
-def _parse_spawn(s: dict[str, Any], ctx: str) -> SpawnSpec:
-    xy = _as_tuple(_require(s, "xy", ctx))
-    if len(xy) != 2:
-        raise EmbodimentConfigError(f"{ctx}.xy must have exactly 2 values, got {xy!r}")
-    _keys(s, ctx, {"xy", "heading"})
-    return SpawnSpec(xy=(float(xy[0]), float(xy[1])), heading=float(s.get("heading", 0.0)))
 
 
 _CAMERA_KEYS = {"role", "name", "width", "height", "depth", "body", "pos", "quat", "fovy"}
@@ -569,7 +549,7 @@ def _parse_arm(raw: dict[str, Any], ctx: str) -> ArmSpec | None:
     )
 
 
-_TOP_KEYS = {"id", "display_name", "world", "model", "spawn", "sensors", "assets", "capabilities", "arm",
+_TOP_KEYS = {"id", "display_name", "world", "model", "sensors", "assets", "capabilities", "arm",
              "base", "skills"}
 
 _GRASP_POSITIVE = {"pre_grasp_height", "lift_height", "reach_m", "view_duration", "hold_duration"}
@@ -651,19 +631,16 @@ def _parse_assets(raw: dict[str, Any], ctx: str) -> AssetsSpec | None:
 def parse_embodiment_config(raw: dict[str, Any], ctx: str = "robot.yaml") -> EmbodimentConfig:
     """Parse an already-loaded dict into an EmbodimentConfig (fail-loud, unknown keys too)."""
     _keys(raw, ctx, _TOP_KEYS)
-    spawn = _optional_mapping(raw, "spawn", ctx)
     caps = _parse_capabilities(raw, ctx)
     arm = _parse_arm(raw, ctx)
-    if caps.has_base:  # a base stands at its own spawn, in its stance, driven by its policy
-        for key in ("spawn", "base"):
-            _require(raw, key, ctx)
+    if caps.has_base:
+        _require(raw, "base", ctx)
     return EmbodimentConfig(
         id=str(_require(raw, "id", ctx)),
         display_name=str(_require(raw, "display_name", ctx)),
         model=_parse_model(raw, ctx),
         sensors=_parse_sensors(raw, ctx),
         capabilities=caps,
-        spawn=None if spawn is None else _parse_spawn(spawn, f"{ctx}.spawn"),
         arm=arm,
         world=str(raw.get("world", "") or ""),
         assets=_parse_assets(raw, ctx),

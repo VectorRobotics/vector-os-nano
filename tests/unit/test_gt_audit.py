@@ -31,7 +31,7 @@ def _stale(row: dict, bodies: list[str], sentence: str) -> str:
 
     cfgs = [load_embodiment_config(b) for b in bodies]
     worlds = [load_world(c.world) for c in cfgs]
-    spawns = [tuple(c.spawn.xy) for c in cfgs if c.spawn is not None]
+    spawns = [w.spawn[:2] for w in worlds if w.spawn is not None]
     key, arg = gt_audit.expectation(row)
     if key == "held_lifted":
         ok = any(arg in w.pickables for w in worlds)

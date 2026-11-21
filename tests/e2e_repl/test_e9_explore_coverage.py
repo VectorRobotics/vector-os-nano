@@ -21,7 +21,7 @@ import pytest
 
 from tests.harness.kin_base import KinBase
 from tests.harness.pty_cli import run_repl_session
-from vector_os_nano.embodiments.config import load_embodiment_config
+from vector_os_nano.schemas.world import load_world
 from vector_os_nano.sim.nav.coverage import LOG_NAME, CoverageExplorer, room_layout
 
 _ROOM_XML = Path(__file__).resolve().parents[2] / "vector_os_nano/worlds/apartment/scene.xml"
@@ -46,7 +46,7 @@ def _scene_boxes() -> dict[str, tuple[float, float, float, float]]:
 
 def _last_room() -> tuple[float, float]:
     """The tour's final room point: the same nearest-first order from the spawn."""
-    explorer = CoverageExplorer(KinBase(*load_embodiment_config("go2").spawn.xy), log_path="/dev/null")
+    explorer = CoverageExplorer(KinBase(*load_world("apartment").spawn[:2]), log_path="/dev/null")
     return room_layout()["rooms"][explorer._order()[-1]]
 
 

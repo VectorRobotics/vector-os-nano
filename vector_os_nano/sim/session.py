@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable
 from vector_os_nano.core.run_dir import run_path
 from vector_os_nano.schemas import paths
+from vector_os_nano.schemas.world import WorldManifest
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +258,7 @@ class SimSession:
         """Stand the legged body up where it is (sim-only recovery: ``/reset``)."""
         if self.config.base is None or self.runtime is None:
             raise RuntimeError(f"{self.config.id} has no legged base to stand up")
-        respawn(self.runtime, self.agent._base, self.config)
+        respawn(self.runtime, self.agent._base, self.config, floor_z=self.world.spawn[2])
 
     def own(self, what: str, cleanup: Callable[[], Any]) -> None:
         """Register a teardown step (run LIFO by stop)."""
@@ -434,13 +435,13 @@ def _skill_pack(embodiment: str) -> list:
     }[embodiment]()
 
 
-def standing_state(scene: Any, cfg: Any, q: Any, xy: Any, heading: float) -> Any:
+def standing_state(scene: Any, cfg: Any, q: Any, xy: Any, heading: float, *, floor_z: float = 0.0) -> Any:
     """*q* with the body standing: its root at (*xy*, ``base.height``) facing *heading*,
     its base joints in the stance, its arm (if any) at home."""
     import numpy as np
 
     q = np.array(q, dtype=np.float64)
-    q[scene.free_q(scene.robot_root)] = [xy[0], xy[1], cfg.base.height,
+    q[scene.free_q(scene.robot_root)] = [xy[0], xy[1], floor_z + cfg.base.height,
                                          math.cos(heading / 2), 0.0, 0.0, math.sin(heading / 2)]
     for name, angle in cfg.base.stance.items():
         q[scene.joint_q(scene.joint(name))] = angle
@@ -449,7 +450,7 @@ def standing_state(scene: Any, cfg: Any, q: Any, xy: Any, heading: float) -> Any
     return q
 
 
-def legged_body(cfg: Any, scene: Any, *, backend: str = "mujoco", gui: bool = False) -> tuple[Any, Any, Any]:
+def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str = "mujoco", gui: bool = False) -> tuple[Any, Any, Any]:
     """``(runtime, base, lidar)``: the legged body of *cfg* loaded on *backend* in
     *scene*, spawned standing at its spawn, with ONE SimRuntime ticking at its policy's
     rate (not started yet), the generic LeggedBase connected and its manifest's Lidar
@@ -472,7 +473,8 @@ def legged_body(cfg: Any, scene: Any, *, backend: str = "mujoco", gui: bool = Fa
     rt = SimRuntime(world, substeps=round(1.0 / (cfg.base.policy.tick_hz * scene.timestep)),
                     threaded=not world.caller_thread_only, name=cfg.id)
     try:
-        spawn = standing_state(scene, cfg, scene.model.qpos0, cfg.spawn.xy, cfg.spawn.heading)
+        x, y, z, heading = manifest.spawn
+        spawn = standing_state(scene, cfg, scene.model.qpos0, (x, y), heading, floor_z=z)
         rt.call(lambda w: w.reset(spawn))
         lidar = Lidar(cfg.lidar, rt) if cfg.lidar is not None else None
         base = LeggedBase(cfg.base, rt, folder=model_root(cfg), lidar=lidar, abort=is_abort_requested)
@@ -483,7 +485,7 @@ def legged_body(cfg: Any, scene: Any, *, backend: str = "mujoco", gui: bool = Fa
     return rt, base, lidar
 
 
-def respawn(rt: Any, base: Any, cfg: Any, xy: Any = None, heading: float | None = None) -> None:
+def respawn(rt: Any, base: Any, cfg: Any, xy: Any = None, heading: float | None = None, *, floor_z: float = 0.0) -> None:
     """Stand the body up again (sim-only recovery: the ``/reset`` command) at *xy*
     facing *heading*, by default where it is: ONE step-boundary job writes the standing
     state (``world.reset``: velocities and torques zeroed), points the arm's servos at
@@ -494,7 +496,7 @@ def respawn(rt: Any, base: Any, cfg: Any, xy: Any = None, heading: float | None 
         q = w.state()[0]
         x, y, z, qw, qx, qy, qz = q[scene.free_q(scene.robot_root)]
         yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
-        w.reset(standing_state(scene, cfg, q, (x, y) if xy is None else xy, yaw if heading is None else heading))
+        w.reset(standing_state(scene, cfg, q, (x, y) if xy is None else xy, yaw if heading is None else heading, floor_z=floor_z))
         if cfg.arm is not None:  # the arm's servos hold it at home
             w.set_targets([scene.joint(j) for j in cfg.arm.joints], cfg.arm.home)
         base.respawned()
@@ -513,7 +515,7 @@ def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
 
     cfg, spec = session.config, session.spec
     world = load_world(cfg.world)
-    rt, base, lidar = legged_body(cfg, compose(cfg, world), gui=spec.gui)
+    rt, base, lidar = legged_body(cfg, compose(cfg, world), manifest=world, gui=spec.gui)
     session.own(f"{cfg.id} runtime closed", rt.close)
     session.own("base disconnected", base.disconnect)
     rt.start()

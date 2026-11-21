@@ -3,16 +3,13 @@
 # the package names it; the generic LeggedBase stands it up and walks it.
 
 id: quad2
+world: quad2_flat
 display_name: "A test quadruped (the go2 model, its own manifest)"
 
 model:
   path: vector_os_nano/hardware/sim/mjcf/go2/go2.xml
   meshes_dir: vector_os_nano/hardware/sim/mjcf/go2/assets
   root_body: base_link
-
-spawn:
-  xy: [2.0, -1.0]
-  heading: 0.5
 
 base:
   height: 0.31                    # the root height it stands at in its stance (measured)

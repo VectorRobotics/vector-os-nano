@@ -15,12 +15,12 @@ from __future__ import annotations
 import pytest
 
 from tests.harness.pty_cli import run_repl_session
-from vector_os_nano.embodiments.config import load_embodiment_config
+from vector_os_nano.schemas.world import load_world
 from vector_os_nano.sim.nav.coverage import room_layout
 
 _ROOMS = room_layout()["rooms"]
 _K, _D = _ROOMS["kitchen"], _ROOMS["dining_room"]
-_S = tuple(load_embodiment_config("go2").spawn.xy)
+_S = tuple(load_world("apartment").spawn[:2])
 _LAUNCH = "启动 go2 仿真 无窗口"
 
 

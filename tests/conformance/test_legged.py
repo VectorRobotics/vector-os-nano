@@ -26,7 +26,7 @@ from vector_os_nano.embodiments.config import EmbodimentConfigError, parse_embod
 from vector_os_nano.interfaces import BaseProtocol
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene.compose import compose
-from vector_os_nano.schemas.world import load_world
+from vector_os_nano.schemas.world import load_world, parse_world
 from vector_os_nano.sim.session import legged_body
 
 pytestmark = pytest.mark.sim
@@ -44,6 +44,27 @@ def _manifest(body: str):
     return registry.load(body)
 
 
+def _world(cfg):
+    path = SCENES / f"{cfg.world}.yaml"
+    if path.is_file():
+        return parse_world(yaml.safe_load(path.read_text()), cfg.world, path)
+    return dataclasses.replace(load_world(cfg.world), scene=SCENES / "flat.xml", pickables={})
+
+
+def test_spawn_uses_the_variant_world_on_each_engine(backend):
+    cfg = registry.load("go2")
+    world = dataclasses.replace(_world(cfg), spawn=(1.25, -2.5, .4, -.7))
+    scene = compose(cfg, world)
+    rt, base, _lidar = legged_body(cfg, scene, manifest=world, backend=backend)
+    try:
+        pose = rt.snapshot().q[scene.free_q(scene.robot_root)]
+        np.testing.assert_allclose(pose[:3], [1.25, -2.5, .4 + cfg.base.height], atol=1e-12)
+        assert yaw(pose[3:]) == pytest.approx(-.7)
+    finally:
+        base.disconnect()
+        rt.close()
+
+
 def _with_policy(cfg, backend: str, ref: str):
     """*cfg* running the policy row *ref* on *backend* (the go2's sinusoidal row is its
     PyBullet one)."""
@@ -59,12 +80,10 @@ class Body:
     """A manifest's legged body standing on flat ground on one engine."""
 
     def __init__(self, backend: str, cfg) -> None:
-        x, y = cfg.spawn.xy
-        world = dataclasses.replace(load_world("apartment"), scene=SCENES / "flat.xml",
-                                    spawn=(x, y, 0., cfg.spawn.heading), pickables={})
+        world = _world(cfg)
         scene = compose(cfg, world)
         self.cfg = cfg
-        self.rt, self.base, self.lidar = legged_body(cfg, scene, backend=backend)
+        self.rt, self.base, self.lidar = legged_body(cfg, scene, manifest=world, backend=backend)
         self.rt.start()
         assert not self.rt.threaded
 
@@ -401,7 +420,7 @@ def test_the_second_quadruped_is_data_only():
     """quad2 differs from the go2 in spawn, stance, gains and lidar mount, and nothing in
     the package names it."""
     go2, quad2 = registry.load("go2"), _manifest("quad2")
-    assert quad2.spawn != go2.spawn and quad2.base.stance != go2.base.stance
+    assert _world(quad2).spawn != _world(go2).spawn and quad2.base.stance != go2.base.stance
     assert (quad2.base.kp, quad2.base.kd) != (go2.base.kp, go2.base.kd) and quad2.lidar.pos != go2.lidar.pos
     import vector_os_nano
 

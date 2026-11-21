@@ -61,11 +61,6 @@ model:
   meshes_dir: meshes
   root_body: pelvis
 
-spawn:
-  # The entry hall; the body stands there in its stance at base.height.
-  xy: [10.0, 3.0]
-  heading: 0.0
-
 base:
   height: 0.78                    # the pelvis height it stands at, stepping in place (measured)
   holonomic: false                # it turns to walk where it goes (the follower never strafes it)

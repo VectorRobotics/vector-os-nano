@@ -37,8 +37,15 @@ def test_go2_loads_and_is_frozen() -> None:
 def test_go2_spawn_and_root_body() -> None:
     cfg = load_embodiment_config("go2")
     # the entry hall; a legged base stands there at its base.height (no drop height)
-    assert cfg.spawn.xy == (10.0, 3.0)
+    assert not hasattr(cfg, "spawn")
     assert cfg.model.root_body == "base_link"
+
+
+def test_robot_cannot_override_its_world_spawn():
+    raw = _legged()
+    raw['spawn'] = {'xy': [0, 0], 'heading': 0}
+    with pytest.raises(EmbodimentConfigError, match="unknown key 'spawn'"):
+        parse_embodiment_config(raw)
 
 
 def test_go2_base_block() -> None:
@@ -149,7 +156,7 @@ def test_a_bad_lidar_entry_fails_naming_the_key(lidar: dict, error: str) -> None
 def test_g1_spawn_and_root_body() -> None:
     cfg = load_embodiment_config("g1")
     # _G1_SPAWN_X=10.0, _G1_SPAWN_Y=3.0, _G1_PELVIS_Z=0.793
-    assert cfg.spawn.xy == (10.0, 3.0)
+    assert not hasattr(cfg, "spawn")
     assert cfg.base.height == pytest.approx(0.78)
     # _G1Offsets keys on model.body("g1_pelvis").
     assert cfg.model.root_body == "pelvis"
@@ -219,7 +226,7 @@ def test_missing_embodiment_raises_clear_error() -> None:
     assert "robot.yaml" in str(exc.value)
 
 
-@pytest.mark.parametrize("missing", ["model", "spawn", "base"])
+@pytest.mark.parametrize("missing", ["model", "base"])
 def test_missing_required_field_raises_clear_error(missing: str) -> None:
     # A body with a base (capabilities default to one) needs every one of these.
     raw = _legged()
@@ -232,7 +239,7 @@ def test_missing_required_field_raises_clear_error(missing: str) -> None:
 def test_a_fixed_arm_needs_no_spawn_stance_or_policy() -> None:
     """A body without a base stands at its world's spawn: those blocks are a base's."""
     cfg = load_embodiment_config("piper")
-    assert cfg.spawn is None and cfg.base is None
+    assert not hasattr(cfg, "spawn") and cfg.base is None
     assert cfg.arm.dof == 6 and cfg.camera.pos is not None
 
 

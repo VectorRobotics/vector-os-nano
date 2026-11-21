@@ -20,6 +20,7 @@ import pytest
 
 from tests.harness.kin_base import KinBase
 from vector_os_nano.embodiments.config import load_embodiment_config
+from vector_os_nano.schemas.world import load_world
 from vector_os_nano.sim.nav import vgraph as vg
 from vector_os_nano.sim.nav.coverage import CoverageExplorer, room_at, room_layout
 from vector_os_nano.sim.nav.follow import follow
@@ -114,7 +115,7 @@ def test_an_extended_arm_or_held_object_grows_the_footprint():
 
     cfg = load_embodiment_config("go2_piper")
     scene = _scene("go2_piper")
-    q = standing_state(scene, cfg, scene.model.qpos0, cfg.spawn.xy, 0.0)
+    q = standing_state(scene, cfg, scene.model.qpos0, load_world(cfg.world).spawn[:2], 0.0)
     legs = {scene.joint(j) for j in cfg.base.joints}
     assert vg.scene_overhang(scene, q, legs, {}) == 0.0  # stowed
     q[scene.joint_q(scene.joint("piper_joint2"))] = 1.57  # reach forward and down

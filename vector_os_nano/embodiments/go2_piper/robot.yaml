@@ -13,11 +13,6 @@ model:
   meshes_dir: ""                  # mesh paths are relative to go2_piper.xml
   root_body: base_link
 
-spawn:
-  # The entry hall; the body stands there in its stance at base.height.
-  xy: [10.0, 3.0]
-  heading: 0.0
-
 base:
   height: 0.279                   # the root height it stands at in its stance (measured)
   holonomic: true                 # it can strafe
