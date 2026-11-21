@@ -1,0 +1,41 @@
+schema: 1
+scene: scene.xml
+spawn: {xy: [4, -3.7], z: 0, heading: 1.5707963267948966}
+# Authored semantic map for development; this is not a learned household map.
+rooms:
+  entry: [4, -3.7]
+  storage: [3.5, -2.1]
+  corridor: [5.36, -0.34]
+  kitchen: [2.05, 2.5]
+  dining_room: [5.5, 1.3]
+  living_room: [5, 1.95]
+boxes:
+  entry: [0.9, -4.85, 7.37, -3.0]
+  storage: [0.9, -3.0, 7.37, -0.86]
+  corridor: [4.8, -0.86, 6.2, 0.0]
+  kitchen: [0.9, 1.0, 3.35, 5.4]
+  dining_room: [1.65, 0.0, 6.65, 1.65]
+  living_room: [3.35, 1.65, 6.65, 5.5]
+doors: {}
+surfaces:
+  storage_shelf:
+    body: world
+    box: [1.23, -2.9, 1.77, -1.3]
+    height: 0.778
+    aliases: [storage shelf, 厨房层架, 层架, 收纳架]
+pickables:
+  tissue_refill: {category: pack, colour: beige, surface: storage_shelf, aliases: [tissue refill, 纸巾补充装]}
+  sponge_pack_1: {category: sponge, colour: yellow, surface: storage_shelf, aliases: [yellow sponge pack, 黄色海绵包]}
+  sponge_pack_2: {category: sponge, colour: green, surface: storage_shelf, aliases: [green sponge pack, 绿色海绵包]}
+  zip_bag_box: {category: box, colour: blue, surface: storage_shelf, aliases: [zip bag box, 密封袋盒, 一盒密封袋]}
+vocab:
+  rooms:
+    entry: [玄关]
+    storage: [收纳区, 家庭储物区]
+    corridor: [走廊]
+    kitchen: [厨房]
+    dining_room: [餐区, 餐厅]
+    living_room: [客厅]
+  categories: {pack: [补充装], sponge: [sponge, sponge pack, 海绵, 厨房海绵], box: [box, 盒子]}
+  colours: {beige: [beige, 米色], yellow: [yellow, 黄], green: [green, 绿], blue: [blue, 蓝]}
+  scenery: [storage cart, drawer handle, cabinet, shelf, table, chair, sofa]

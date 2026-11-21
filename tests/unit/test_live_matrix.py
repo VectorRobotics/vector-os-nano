@@ -88,6 +88,14 @@ def test_a_weld_with_no_lift_is_no_pick_either(tmp_path) -> None:
     assert r["outcome"] == "FALSE_GROUNDED"
 
 
+def test_scripted_driver_is_not_reported_as_the_banner_model(tmp_path):
+    rec = _rec(tmp_path, _transcript(True), _dump(.12, True), [
+        {'type': 'assistant', 'text': 'scripted response'}])
+    result = lm.judge(_CELL, {**rec, 'decision_source': 'scripted'})
+    assert result['grade'] is True
+    assert result['model'] == 'scripted test driver' and result['model_calls'] == 0
+
+
 def test_gt_backend_must_match_the_requested_engine(tmp_path) -> None:
     dump = _dump(0.12, True).replace('"backend": "mujoco"', '"backend": "pybullet"')
     r = lm.judge(_CELL, _rec(tmp_path, _transcript(True), dump))

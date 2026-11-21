@@ -1,0 +1,1034 @@
+{
+  "repo": "X-Humanoid/ArtVIP",
+  "revision": "d22f2095bc9db29fdd4b60f4a3c4f8177e1f5e9e",
+  "files": [
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/.collect.mapping.json",
+      "size": 35746,
+      "sha256": "89927059f3703f308aa8bccc3c301f0eee0c89247e266e4279add2e90d83a727"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/.thumbs/256x256/Interactive_kitchen.usd.png",
+      "size": 74370,
+      "sha256": "2a47e997f212c2b12f6e2fa629515813409f160eb2eb70e6997df4817b1ad518"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/.thumbs/256x256/kitchen_with_parlor.usd.png",
+      "size": 114259,
+      "sha256": "9ed26983d8c2421637f15c7ca1ac2b0e440f7e6e5763922f727fc47816776971"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/.thumbs/256x256/kitchen_with_parlor_1.usd.png",
+      "size": 66887,
+      "sha256": "7ae7e8faaa25535af1cfb3caa610d77b8191c48eacdd9d67682bbb0916477fb2"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/.thumbs/256x256/kitchen_with_parlor_target_position0.usd.png",
+      "size": 110990,
+      "sha256": "6c444d02e3c3455c1408d2fb697bd5f0bd625296af5fa24b1627ca850141cf0f"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/01kitchenparlor/model_01kitchenparlor.usd",
+      "size": 157423,
+      "sha256": "90ec877f267ca656a2720a50b98a58c4ef558ad097a9f6cc2712f9635aea488a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/01kitchenparlor/resource/img/3bb23ac398fd6ee91727e94752ad0269.png",
+      "size": 138026,
+      "sha256": "bdd9d0579168db27ffecbcf069e63db3f8f4f758da28b0015803cf890671a945"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/01kitchenparlor/resource/img/624740c4c8dd40937e50274214767d7e.png",
+      "size": 60656,
+      "sha256": "d054b9bc9afaaf4ba0ecc9e1b3cffa04fd435a9634febc5bdee5c8359a2f6008"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/01kitchenparlor/resource/img/cfc2816110e1d2fb57f961051d0fc66c.png",
+      "size": 2564718,
+      "sha256": "657baa4ae43b90609f9e3196be6247f1abf0a30711374ca3e90a3495fdbc48f3"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/01kitchenparlor/resource/material.usd",
+      "size": 4360,
+      "sha256": "85a3e8938af39c3584554da2f36b5193f9ee68f1a7be998c78557b5e01d9929d"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/01kitchenparlor/resource/v_2144154/link_49504_0.usd",
+      "size": 148342,
+      "sha256": "14c9b03fb5d2426fc08569815a795c98f490cb20dd234501bc95cdede87cb4e0"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/Interactive_kitchen_with_parlor.usd",
+      "size": 272958,
+      "sha256": "26cedfc9fc8be07549346c882168e8e1e638831a237a0038af67fb0fbefbb38c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/Isaac Sim 4.5/isaac-sim-assets/Materials/2023_2_1/Base/Glass/Clear_Glass.mdl",
+      "size": 1177,
+      "sha256": "5454a44463d100c648eeec2ae1c2e12ef9d16f0d4caebf675ff65e8427a6b40a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/Isaac Sim 4.5/isaac-sim-assets/Materials/2023_2_1/Base/Glass/Tinted_Glass_R02.mdl",
+      "size": 576,
+      "sha256": "258e16873b70cb9cecbc1698887fa6cab02f84614174cdf52c12adc285bc0d6c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/Isaac Sim 4.5/isaac-sim-assets/Materials/2023_2_1/Base/Templates/GlassUtils.mdl",
+      "size": 2417,
+      "sha256": "18baaa8cd508d85075148b80097c56c4924212928bb196f2d9ee2352d5c618a4"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/Isaac Sim 4.5/isaac-sim-assets/Materials/2023_2_1/Base/Templates/GlassWithVolume.mdl",
+      "size": 4906,
+      "sha256": "54f4f99e1bd8c6cde022dd246a954b9efe9b251a169854f49f582501a9bdf089"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/barchair/model_barchair.usd",
+      "size": 2569,
+      "sha256": "33b5b73305096da425c912023f6f87cf51aa5ede2b6d7cad1919e17f81ef4d91"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/barchair/resource/img/b5438c25905693520be7b48998be40a7.png",
+      "size": 96513,
+      "sha256": "57825e298db850449f9ebbe75906a9fa96c2dbc2334c1f3ba542d52731626f21"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/barchair/resource/img/b97545e9e751c9bc730747adb76511c7.png",
+      "size": 3963115,
+      "sha256": "88b0f394d377f955e6ecd1dc557502479b9cb39b07aeeae1299143392c8f4581"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/barchair/resource/material.usd",
+      "size": 2313,
+      "sha256": "791f4fa72420593bbb2a609c284ffea6ea608119492d3ff6386f1cc2e6047ee1"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/barchair/resource/v_69323/link_0_0.usd",
+      "size": 547752,
+      "sha256": "ac40755a645b623029b236d403ab483967e8b5e6ec15b7a1e28d25c51e0aa8cd"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/board/model_board.usd",
+      "size": 2753,
+      "sha256": "53fc6bc5960f265919ff7f831c1f46160269b7cbd8613ac7fe9f954d17267c65"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/board/resource/img/b5438c25905693520be7b48998be40a7.png",
+      "size": 96513,
+      "sha256": "57825e298db850449f9ebbe75906a9fa96c2dbc2334c1f3ba542d52731626f21"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/board/resource/material.usd",
+      "size": 2138,
+      "sha256": "2c5936c5b29fe397dc785d0384d393bafbc2fb4394c18c1b51cd6364e16b3ade"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/board/resource/v_69323/link_0_0.usd",
+      "size": 47721,
+      "sha256": "b2c3657e464d19a9fb71aa01543879aa4b048c99a29d0200224bbfc66f98df23"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinet_1/model_cabinet.usd",
+      "size": 217214,
+      "sha256": "689976a5d0e15267de333ce06da00c8f5a6a388196d28ad5bd53f76ae5ae63e6"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinet_1/resource/img/e9f7c719a9c4fd93f4f8cbaf7f905858.png",
+      "size": 272743,
+      "sha256": "1aa95b0d44e62a6cde3198e98b863dbbb9ea3c4da551cf674ac6cd351ee5063f"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinet_1/resource/material.usd",
+      "size": 2343,
+      "sha256": "5e54cc31615ac960a40ec50015cc968b34da2f2a2f68e5bf1327fc7d7e2a1455"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinet_1/resource/v_69323/link_0_0.usd",
+      "size": 226711,
+      "sha256": "e59308974c589842c6715b882b5da0abb07a6c186fb929862f57d7bdcc2b4845"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinetb_2/model_cabinetb_2.usd",
+      "size": 158326,
+      "sha256": "db3eb2568352859402fe5cd32f9b76c9f662fcef57434ab5e6f2a82bd59763f1"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinetb_2/resource/img/47e62735bb81ebd55a3b96179f4ca477.png",
+      "size": 3312454,
+      "sha256": "9ea9c28103d141a41a4dd3349e3fc698294bfa6222a2b3313105218c05d5bada"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinetb_2/resource/img/b5438c25905693520be7b48998be40a7.png",
+      "size": 96513,
+      "sha256": "57825e298db850449f9ebbe75906a9fa96c2dbc2334c1f3ba542d52731626f21"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinetb_2/resource/material.usd",
+      "size": 2407,
+      "sha256": "c8ca06db1055299cb6b28d0cda40e771e69c42a323f78adc30154e760789a270"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/cabinetb_2/resource/v_69323/link_0_0.usd",
+      "size": 150175,
+      "sha256": "783846aa23fc2dca783f4b6ce9226cdaaf4c8b0ff13f15bd63bd0baabfff8cef"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chair/model_chair.usd",
+      "size": 2264,
+      "sha256": "87518474e5d5ab41a45cadeeaf4c47a9b4c1e81019cb6367e7177fa16aa42323"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chair/resource/img/01a7a0f752799d61cdb169b3a45da64a.png",
+      "size": 6643138,
+      "sha256": "accc6609ad80aad314d01c959550ff6713ddb4b44d82c43189d6683ac254c5e2"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chair/resource/material.usd",
+      "size": 2146,
+      "sha256": "0b56c2add4f0b36aac27c041ed04e753258c66b373507e0a25aaac71b671cc1b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chair/resource/v_69323/link_0_0.usd",
+      "size": 852722,
+      "sha256": "e26386d94ea455cda944f253b813ecff1ad20dbea7e8f7913d7885f0ece1d2a4"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/model_chopping_board.usd",
+      "size": 9712568,
+      "sha256": "fe9086fda8271f4fc22e910f00f655387cd8b473e7503a08ca397b04594fb7ab"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/img/1453f88159e16103df65a86130613b19.png",
+      "size": 1216853,
+      "sha256": "8f979d8e7fd877ffc4feb85d65bd35ab8007183b686bd0fffc3f963964de635e"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/img/63c1094a76556ec09bbc77490a6dbbeb.png",
+      "size": 2517138,
+      "sha256": "40b025f42c34fd660171d28ff0e385a8598e1e650aec5caa9338a50df311a922"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/img/6855482cdb656635cd638f2e122b1e7d.png",
+      "size": 38937,
+      "sha256": "2829de324028549ccbe9ae45be91e3e56c0d34e3aedb60162a5edf898198de71"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/img/6d65c7db8d941deccf2d586ee251e234.png",
+      "size": 79972,
+      "sha256": "d5b64eac6f5a14f7aa30955227529103302efe36c35f54e81ea897d97245447b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/img/767e7b5630a48c7edb339f2a81d3558d.png",
+      "size": 103488,
+      "sha256": "e5a9c2281b540860e09fe869e59c367a77d304fdddcf612ba847ac89228f18e6"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/img/795b9bff0a30994bb71d7f4f36d6a716.png",
+      "size": 207373,
+      "sha256": "c81af79121126ddd5c8e53da5fbd522cc4360acc3a20de76ac9ae941ffff2ebc"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/img/b887d087d732bde0506d83a2752294e5.png",
+      "size": 332921,
+      "sha256": "b3981aced270c49a1606a9fec3910222fae114c245f92e9aed23d182438db7d5"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/img/de4ff1d38b7a62e75cccf1b973242d69.png",
+      "size": 1048981,
+      "sha256": "2aecae188d44653fb6be5f50bba224806035d90fe480edba6ea634c269e215e3"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/material.usd",
+      "size": 3582,
+      "sha256": "7df22c7ef8b2e3f03ae4581c9e23a3fde3f90d236a6aa49e6725299f7d06a500"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/chopping_board/resource/v_0/link_default_0.usd",
+      "size": 11845364,
+      "sha256": "016b91dc348dd68b68ad386a0073a9597fd11d4dc19f5a905390f2a9211ee76c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/coffee_machine_5/model_coffee_machine_5.usda",
+      "size": 1754689,
+      "sha256": "dd4348e8cfdf96f6d5c1b0f8b0be9bea1b3efc5f32ae1bc6b7ee803c7312ac75"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/coffee_machine_5/resource/img/293eba2041cf8ce0346d7a74d219fa53.png",
+      "size": 361138,
+      "sha256": "bba69ff98347f17df60efe68a756a3d263a3285bc4b3de05802c35d5cb8f0056"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/coffee_machine_5/resource/img/49cae87ed87522e13a412700fd166419.png",
+      "size": 169626,
+      "sha256": "4cd8c49ce565b4d932d42140f6d8c47f27402425cdf0b4b6b77c737441ebe565"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/coffee_machine_5/resource/img/56c8f5aa1f58288634f5537191256a27.png",
+      "size": 169626,
+      "sha256": "f83927a780ab785adad214b09aadce23e62c42c4be83b09c04568778c45f99dd"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/coffee_machine_5/resource/material.usda",
+      "size": 9038,
+      "sha256": "3845496b1ada59d3fcc15b27453549091b881fd66393ea4607ea2ce12784acea"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/coffee_machine_5/resource/v_0/link_default_0.usda",
+      "size": 41405951,
+      "sha256": "e301fbdb8840be9b38d4526e2a78eea1fdf47a5b819696ede00328e71ae712d6"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/drying_racks/model_drying_racks.usd",
+      "size": 22944,
+      "sha256": "f5c6a838dfcce01ee790dadc402fe9980c8ca15373cdca6c48b61d32cca46f2f"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/drying_racks/resource/material.usd",
+      "size": 1333,
+      "sha256": "51fe2c0ac9fe98ad4ec0c29b1da45f586803d2bd0199d94f41e64152dfb3979a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/drying_racks/resource/v_69323/link_0_0.usd",
+      "size": 3224776,
+      "sha256": "4c63d16d4358e955cc155f17e3d0bef90c2cbf0a7d7fe13cd5fd651cfb522856"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/fridge_4/Isaac Sim 4.5/isaac-sim-assets/Materials/2023_2_1/Base/Glass/Clear_Glass.mdl",
+      "size": 1177,
+      "sha256": "5454a44463d100c648eeec2ae1c2e12ef9d16f0d4caebf675ff65e8427a6b40a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/fridge_4/model_fridge_4.usd",
+      "size": 17046708,
+      "sha256": "d29cc8665ca7c314a598a80acc7269ee126a1fc4e8ccd5142db5bd9d1f985265"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/fridge_4/resource/img/8feec021b4686f692e85c68a8d16f9a3.png",
+      "size": 13534,
+      "sha256": "9caeea8c965335b6e8d2d02b01e7dc2f62bb70f8a6a575540593c7eb473d5017"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/fridge_4/resource/material.usd",
+      "size": 3798,
+      "sha256": "8fd42c823355528c3ef348125dacc439d6b2da0d54860db25eaa01bce6138533"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/fridge_4/resource/v_0/link_default_0.usd",
+      "size": 14989117,
+      "sha256": "a3d8b41b3c109bad9e420f81f4172aee7b4dbb34f05378517c2b7c4cd03e6769"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book2/model_book2.usd",
+      "size": 2423,
+      "sha256": "681922c3f6c20d2d3c0a959aaad28437de5f335b0b37175679daea8b346de46a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book2/resource/img/37a4063dce8b4bafedf9573fbe6eb420.png",
+      "size": 162845,
+      "sha256": "94252332b0e521df25196aa3d808ea29a46900eda805a3af453556a9c5c461fb"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book2/resource/material.usd",
+      "size": 2268,
+      "sha256": "bf5279593b68436de8899e1f6871ea56d9516a5379eddbdb201cae9416377084"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book2/resource/v_0/link_default_0.usd",
+      "size": 868527,
+      "sha256": "74225c7c6f897af27a746d9e21e8de68494b99e2a3cdcadb56a78b182c0503b5"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book6/model_book6.usd",
+      "size": 2887,
+      "sha256": "7474e17f93fe7b338e8ace512426408b9bebbf722e65c9255c486222461aa593"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book6/resource/img/342dbda6268f75c9b5a2ca21ea02dbb6.png",
+      "size": 140086,
+      "sha256": "37292bf2218b95bf19f03a78d453e851ed19b3f66518af07b5a7380aef1901a9"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book6/resource/img/cd33cb7aceb26b08be997e59bf572ce5.png",
+      "size": 22993,
+      "sha256": "76417e9c1843fb46884cfab48ef56eb90a3de0de7cbff51aab1b07d8c5b05edb"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book6/resource/img/f5d074d26c2a54f62dc37ccadf3188e9.png",
+      "size": 21527,
+      "sha256": "641fb36ebeda5e47e3728ff32780c66e04694ff70ac1c6cf55108c8ade84a6e5"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book6/resource/material.usd",
+      "size": 2478,
+      "sha256": "7e913b008663189a6658f2b4d262c0d88ac7812da08bdfccbc2ebfee864921dd"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book6/resource/v_0/link_default_0.usd",
+      "size": 163527,
+      "sha256": "1ab4be54b0c5da1c36bff119a2d7e086f1813edec66964a2e9b5d11c999d386c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/model_book7.usd",
+      "size": 5069296,
+      "sha256": "bedeffdbe15f96daaaa2e5a9cd37c421805c419f78e73df001ef3bd953a8da7f"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/img/001d58abb064236daff817a7b0cdf898.png",
+      "size": 160116,
+      "sha256": "762671baed6cb68478a597c43dc3587f27cc620aa743147a310c60a4d08d3e3b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/img/17949daa709341fc8759eee1fbf44c43.png",
+      "size": 13352,
+      "sha256": "2c200702a85f20570fee30ea7ee6345ffda9944c42fd6a5513d4b9b5c93ae9a7"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/img/19f9828c00d2221a6ce479a90cc4b238.png",
+      "size": 60559,
+      "sha256": "5d50c2d5b118dede0e775b73572940bf67e214113f7363c6bdd4115c3189407b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/img/4388848efce973eaf2c6b5bc413031b8.png",
+      "size": 123235,
+      "sha256": "b322ca27bc2977c6386e4bedca3e5f602b0f1c879e8539fa333310e02d9d03e2"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/img/62773ae8b0f36bd3ddb0899600c377fe.png",
+      "size": 70133,
+      "sha256": "0c78f4aa317ba623543620d97f0093e39f9874a7a2530914198430ff063a1c0d"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/img/aca868e2b44149682f830df0d51a8ed0.png",
+      "size": 134551,
+      "sha256": "b09b13c2fe2063a6d7e41d86b349b2638102337c87210ab4d3249808a78adcda"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/img/d4ca37a4d496b5ad08ba7a786726f145.png",
+      "size": 70727,
+      "sha256": "50a968a13f5b69fe78878fb79d866aa17be3bfef22fe6e92e1c428c2cb0cd53c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/img/ea701b161c0baf11c2660218ad8a889e.png",
+      "size": 22722,
+      "sha256": "064771e80a2d75b738fce776f9d320bef28060e87f90ed1a26354ed932704e35"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/material.usd",
+      "size": 4859,
+      "sha256": "e0d45e8a53b6b8945971756df25247670c5fd95607044b89b128457f5d740f62"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book7/resource/v_0/link_default_0.usd",
+      "size": 6634798,
+      "sha256": "046bfb54c079bf2f760d99216a12c96ec34f1f4b1a2c44460f39982ea377ff4c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_12/model_book_12.usd",
+      "size": 2660,
+      "sha256": "5a8e4c67f92ef7b2d07cdeaccd058bfad72ad656ec6249e205ab6bdec2c78cae"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_12/resource/img/1db53a9f0e0993b9843d8bb9c8dbf1d8.png",
+      "size": 24662,
+      "sha256": "035eefaf421e78e07ae13a671868765629db468141d9565d27feec7736c0e62a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_12/resource/img/bd688bfd08aabcc1ceaec42dda1a40f0.png",
+      "size": 20165,
+      "sha256": "c25aef2db4c0d4352db9b55f4f2a714cbf10a94153d933d3c92ae3fea997c783"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_12/resource/img/ca27e58cfd3f73f2c272b1687442fb81.png",
+      "size": 78970,
+      "sha256": "3981a469b85eda49b25cfebd7474f8f2d4e40b8184009db7c52718b38af98bce"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_12/resource/material.usd",
+      "size": 2798,
+      "sha256": "a0603e3f9f2fe5b42ce995e17dfbebb106f9e99d10f90717a562a34c0d59fe03"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_12/resource/v_0/link_default_0.usd",
+      "size": 1061282,
+      "sha256": "6c1d845cc2d76e37c53fa9cbf1b913f567c6ddd1bc983338859407164beecd9a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_13/model_book_13.usd",
+      "size": 2151,
+      "sha256": "87ed18078404a78032916f523452e04ddde00a69c382a386acddae82079b0db2"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_13/resource/material.usd",
+      "size": 1291,
+      "sha256": "53fbd45b77f21aae5110c6c9ac9388a6b654e7f6f7fa5e23574142e74e99016d"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_13/resource/v_0/link_default_0.usd",
+      "size": 889721,
+      "sha256": "fcaf1df0c38bbe3cc2b3f21c9f7b6cf41a28956181e1aeb61b2b11028da3e635"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_14/model_book_14.usd",
+      "size": 7330242,
+      "sha256": "906b7ff689a79ce243dee2b8729624b2e73e8b97636afe48e919f86d383f1f75"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_14/resource/img/2d440f29648430cf633ba9141d350007.png",
+      "size": 16815,
+      "sha256": "251790f2839ed45fe82bfee6c1272a3355bdf63c518c15d598705981f9cbb58d"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_14/resource/img/b1b7e8f84aabc50644f2eefc9a715b7d.png",
+      "size": 6090,
+      "sha256": "f0ba911eea2c2ec9639c29b5d7530820636e0d618153ec1e96b3a1a2b6bdb949"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_14/resource/img/dc826344ef6ac101f1aadd2fb8948071.png",
+      "size": 16333,
+      "sha256": "8d3ba3aeecf66596ff7146007c9bb3089d5a37716384f7d64c33ed7b4f391f4a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_14/resource/material.usd",
+      "size": 2662,
+      "sha256": "dbadfa2cdb344a7f6a0abb06d9dc6bfea6fce865502c372d269e2970c5c342e6"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_14/resource/v_0/link_default_0.usd",
+      "size": 7328739,
+      "sha256": "e7f08aea168e60c857493b50b4c9775015d4c88548a7efd5af808bda1f01316a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_15/model_book_15.usd",
+      "size": 2595,
+      "sha256": "1888e927ab5995701c8017b3bab3cba201081c6e0f510b6b6f6c5d8847c06734"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_15/resource/img/997b0ef8c50beee3787857242b84b01a.png",
+      "size": 19070,
+      "sha256": "c8d73d15b467f34fe2d620e927a1d7636fbe7066dc34143b5e17e077a71f3155"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_15/resource/img/9f089bc9c03d7bc250d6648eec5e0d0a.png",
+      "size": 29188,
+      "sha256": "81a633ef615debe4a306fa167ac86e47615442c7bdc41af82881bf4141030798"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_15/resource/img/e665515175473bb1b186eaaa9df67489.png",
+      "size": 35877,
+      "sha256": "8fd3309e66bb817ce541a9e29218588416b8de52cdd980a875cf8b2f769d3b1d"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_15/resource/material.usd",
+      "size": 2885,
+      "sha256": "fa9f2048534cfa017349ad928d777fbc6e934ee172df3ccd8247ff2506539a05"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_15/resource/v_0/link_default_0.usd",
+      "size": 258246,
+      "sha256": "ad4408c3c1fec47781408dd3ae6b165f76a8d49b007a8bc2c9ad1456927562dd"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/model_book_16.usd",
+      "size": 559316,
+      "sha256": "8e3944ef57da6fe4d93224993001104ab1c74431e4b939d48c718a237d8b67e2"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/resource/img/0435e1496dcaad26034f649c4f65abbb.png",
+      "size": 18884,
+      "sha256": "c573eef0c7154222f9c361157862d541ead92461ee26d972f14b60a4c6bccc65"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/resource/img/067de916b77910cb8fd6f497da030e47.png",
+      "size": 43204,
+      "sha256": "290b8b69810f2c9e7bd5d339269a53b70630292b98d09c5b09056fd1f56c3002"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/resource/img/1ded8ec0359984ca45dc1c933b271c40.png",
+      "size": 34767,
+      "sha256": "3366c53e1f71dbee123b2af14754ccd99bd5e41527d88c08c43c0bb49dfc89f7"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/resource/img/9e8f4affe6de406056a211f8095a77a2.png",
+      "size": 4724,
+      "sha256": "3314c3b1425b82ac0d5fdc59ca59d1b79ae99bd602ad62de1c7d0a4e64936325"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/resource/img/9ed13a225ff37e93286113e4d5937bb9.png",
+      "size": 7160,
+      "sha256": "e777601cd02e9569549cc306ec8db2fa5e78f755e33c1583fb95b7f9298154f1"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/resource/img/ef4df2df7ca2b21868d75a9630774cb3.png",
+      "size": 7516,
+      "sha256": "2499441334aebf859288db5a7714262a0906eabe0dcb3ea86422cf1286937f27"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/resource/material.usd",
+      "size": 3165,
+      "sha256": "f0025fdacdc5ad543caab801d03790f033e673c02c49810a18daddd5892e0c69"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/book_16/resource/v_0/link_default_0.usd",
+      "size": 557762,
+      "sha256": "ac270620980d5870ef23dc5fec92c594faef97abc1102f173cdfadc3f53c4988"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware001/model_kitchenware001.usd",
+      "size": 1798700,
+      "sha256": "56e818427e70f50de2badc4759f9737234af1dffa19cc0403bb36ea87da3e126"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware001/resource/img/14cf6b57ce161060be6cbee4a25ffc34.png",
+      "size": 421350,
+      "sha256": "c79a29722c6cf91d38a1e2babad8553b7f490ae9e3e432412fc866d4d8113233"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware001/resource/material.usd",
+      "size": 2422,
+      "sha256": "bf2dbc4ea4dd0cff40ae25d04c9343b6f8f6afca37556a95471bf5a5d008e0ee"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware001/resource/v_0/link_0.usd",
+      "size": 2685091,
+      "sha256": "6e7b8b095a23644a697d63ee27ee14ba3004d7c1236695c49fb3c746e7a15f7f"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/model_kitchenware003.usd",
+      "size": 2702597,
+      "sha256": "9bfe5e817369df65d477b63792973b8452e2489b2463b028aba18f80545c2d51"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/08bbf990b558e151d7fe85b46a573b9c.png",
+      "size": 33579,
+      "sha256": "e89de53d78a516b413ad94621e1d198524240e17f76faa010803620e92719aa1"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/2e8a357b16d60756c184f83cfe1df284.png",
+      "size": 37288,
+      "sha256": "00e48712a1dbde04f264e872a62da728b3253b07076a33c0fa679553288b20d8"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/3190863a44b941c1f3f8190731eca6b4.png",
+      "size": 36144,
+      "sha256": "54aebf2b1f4109c68ed1058d5ab27e14847bf45581c9f4f26455e27b21aa1ec0"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/38f340750fd228c06c8586bc9abe6df5.png",
+      "size": 155667,
+      "sha256": "dc03cb0358aa679d387d41df75e59c265d78e610c57d738d0601f62260b297e3"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/4ea5b6d264352c00fea4c35a4eebe099.png",
+      "size": 198949,
+      "sha256": "7f0b40311a03d98f4ad61bef24904dc7b37bdab45a63d9bc91a365a61104db9c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/5f11e7baf67af119f950b68d08123b6e.png",
+      "size": 156492,
+      "sha256": "600b73ce4cec5dd7c72aa4290118ec9caa183a654faf9b2ac93b1e22f91a5651"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/5f2a375b8bec3a24ceea6971e30be2f6.png",
+      "size": 98069,
+      "sha256": "24a66940745987117a74aebe6eed2dd2a315e1a4d97b36a5f9f3348cc4166b67"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/c4c73a5818d5d03b58a081f2854ea951.png",
+      "size": 423168,
+      "sha256": "46242b4e3497badfb524b20a0fb41903ecf57cee237ef2a8a5653a7d235655a7"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/img/fd185c758909c9ddc59d928cd9f6d294.png",
+      "size": 95885,
+      "sha256": "9e9ba670aaeffb5cfb063f7d5add048a9a1e315cb5c347246f3675f1c7db5fdc"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/material.usd",
+      "size": 3801,
+      "sha256": "c741759c9d18bc51c61f66ec57004909f9b0ac3b4e755e0204ab32d6255c2938"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware003/resource/v_0/link_0.usd",
+      "size": 3002396,
+      "sha256": "7bce8fca442fe066c4b72f346465490f35b82ba7e8b0b6bce41ec0624506adc6"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware006/model_kitchenware006.usd",
+      "size": 130900,
+      "sha256": "5dbb0726de18ee2c61a52f3326fbeb747b4aeae7d83cc3634a281c29bb90f510"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware006/resource/img/daf78bc6ca926227680d36a1ea132f9e.png",
+      "size": 695,
+      "sha256": "7d7d7830d8234aafbe927bed7ce5ea3eb0c32fe21188cbd09a1ccf92c54198bf"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware006/resource/material.usd",
+      "size": 1981,
+      "sha256": "9f0ff581d4c3c3c083ee92c1cf99ab6157080a93f584c57707b36bdcfc9d3ffe"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/kitchenware006/resource/v_0/link_0.usd",
+      "size": 533583,
+      "sha256": "9acedb43004a88ecb63d6e2dd95fadac52fac9c0ad13fc47ae1081d95bd6c16b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant002/model_potted_plant002.usd",
+      "size": 324811,
+      "sha256": "7a0ac56e154348cbe877d30016d495e686d3a341ce388bbd454cee332cf5193a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant002/resource/img/5da83112d0a42a674ad2a57d512a6912.png",
+      "size": 1522,
+      "sha256": "3be7612a0ffc695e36f53c5d786f9563d2b5c62327ff31666eaf9c388bf65394"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant002/resource/img/daa9b13c485f6352da093235bff97ee3.png",
+      "size": 1709,
+      "sha256": "a89164b1c279a8999df646fb9f105cbd1b0c08f13d0c9eae4601e0df0ee27293"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant002/resource/material.usd",
+      "size": 2509,
+      "sha256": "c315ea33a896159ab5858329aecf616bbc56b8b0ead43cee5853f8516caf681e"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant002/resource/v_0/link_default_0.usd",
+      "size": 326708,
+      "sha256": "f97eebe1f2d4adc1b8351b73155ca9f5b8634f13e8f191ff7f37535fe0647747"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant003/model_potted_plant003.usd",
+      "size": 3223,
+      "sha256": "772e0a7610967368ae2b4c0347ddfd42ae2a3ae0c192a11fdcbb63066c2a9c37"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant003/resource/img/dae60a53aa59e8e355383e2ef7d269cf.png",
+      "size": 884,
+      "sha256": "6ab95086bd8a1887a8a09118b3312b30b8b5ad8b6ed7522587a0e961107e5187"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant003/resource/material.usd",
+      "size": 2167,
+      "sha256": "f98a2d7efb9d1ee3bd59bb6e97bed04f52496c96bdd23f24b387eab744c900a2"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant003/resource/v_0/link_default_0.usd",
+      "size": 602059,
+      "sha256": "9ee55ba9f04db23b1ede77cd0e9bf08f90067a40b04103301a62b81218b8fb35"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant005/model_potted_plant005.usd",
+      "size": 2219626,
+      "sha256": "a8b0268b79b3ba7ee557a3177b4a49007a0d177e97b079a0fcbca67ff0b3e778"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant005/resource/img/3e8222974181247cf8d0406dd7b6d511.png",
+      "size": 2870,
+      "sha256": "b8ed1e975570ab5be730a361fb293b3cb571f81a92d40b87965ba6771d1c762f"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant005/resource/material.usd",
+      "size": 2184,
+      "sha256": "d8991c0797d0aa0ec6496d36925f691aa45c5391b2746339d76eed722bbcace1"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant005/resource/v_0/link_default_0.usd",
+      "size": 2217867,
+      "sha256": "3088b180896fe727e98f070df1cbd7577a644d03ba9db29414822852c95c3e74"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant1/potted_plant1/model_potted_plant1.usd",
+      "size": 4685604,
+      "sha256": "eb6e266d97cfef3078b74816ad7fedb3987d1a14284e189ba23634a64a8c29d4"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant1/potted_plant1/resource/img/4a71adde5feb7a68a887f63e83b66412.png",
+      "size": 98304,
+      "sha256": "c1e6d4cb8c2810bf69a020c3882fb121e0ca786c8a0ca7a2a1e7d675383db53b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant1/potted_plant1/resource/img/70a5ce32d150f6309e75fb7d85a07eda.png",
+      "size": 1382,
+      "sha256": "601247696e3a86ea10af8d6fa633bf99eeb59acd32680459f5e765c25e1db925"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant1/potted_plant1/resource/img/9a3cc039805b7ed19d97b934e7b24a7b.png",
+      "size": 15474,
+      "sha256": "e920d21d85cc7f2bfeac9abac430e9d62b1b780d56cb19d6c67ded7043e34fc2"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant1/potted_plant1/resource/material.usd",
+      "size": 2577,
+      "sha256": "5361783b68e5e24b02eb43c0318dbc74c1e9574b07c8746304ee91b357113a5b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/potted_plant1/potted_plant1/resource/v_0/link_default_0.usd",
+      "size": 5139665,
+      "sha256": "a8689561d54aa0d6431ec90f8e4f2db4385251745a8b93728be1a5f16c90d5a3"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/tableware003/model_tableware003.usd",
+      "size": 2325618,
+      "sha256": "757bbbd0579a5bf615cdfdba6eb6fcc76caeb6a1f578b8b97d58a8f3fb818d4c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/tableware003/resource/material.usd",
+      "size": 1518,
+      "sha256": "c331db7a698aa15996fd59fb980cce4ff249071a0d987e8da349f7c2b8fea5f5"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/itm/tableware003/resource/v_0/link_default_0.usd",
+      "size": 2436003,
+      "sha256": "cf480f13dd368d2393bbc4aa39de0ec5602ea374fcb4f26213a28ec856bae00c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/largecabinet/model_largecabinet.usd",
+      "size": 8100,
+      "sha256": "6ecf9745935db3b12656232758d1d0c6437e6a32f50378b44187db9547eced0b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/largecabinet/resource/img/678119daf7295b124a9e78c1fbd3fb99.png",
+      "size": 546987,
+      "sha256": "8c913e34d1d8073abdf4acc9812e93bbcb885122606b70d109c12c21ec95afa6"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/largecabinet/resource/img/8f490156ad318ef0045c7bcfa5088ce3.png",
+      "size": 5069051,
+      "sha256": "e8b244c325c2ffc42b3df835f9ae366e33f9bf973398d4faf1362f7907abde42"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/largecabinet/resource/img/a014ee5de2002ee43da0cb1384212e3e.png",
+      "size": 276553,
+      "sha256": "49ef94f1c986d1678f9cbb110b483e3c66ab2351620702d5c75debdfa0da3337"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/largecabinet/resource/material.usd",
+      "size": 3091,
+      "sha256": "8d85433ded06e6a918772c90afe1880c2e92e45b7adc7f1c3946c61c7cf456e5"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/largecabinet/resource/v_69323/link_0_0.usd",
+      "size": 2356099,
+      "sha256": "2a21d7b66a47e0ac618bcde93c2749578bdfbe72a3c97efb1ab2d8958d0394ad"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/c/Isaac Sim 4.5/isaac-sim-assets/Materials/2023_2_1/Base/Glass/Clear_Glass.mdl",
+      "size": 1177,
+      "sha256": "5454a44463d100c648eeec2ae1c2e12ef9d16f0d4caebf675ff65e8427a6b40a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/model_oven.usd",
+      "size": 14853370,
+      "sha256": "ed8bddecfeee7f584f8f0a3a6964135cfff6b9f6d69906b403792bf2364acee1"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/img/3dc867ea7a737e83b9295bafdf5b24c3.png",
+      "size": 79153,
+      "sha256": "d6615db4b1c7f30da1347a0818e9bb7b1291163c9a44910807109cb1eb7a3b61"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/img/c6dbd8d68ea359d0d49d4c4e39f3a080.png",
+      "size": 2024567,
+      "sha256": "c371c507c0c4acd55ec277800236412bd33e45f6242caf66d16559b2909557a8"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/img/ee69344a9e8b2e377ccc57a83f592e69.png",
+      "size": 1059170,
+      "sha256": "8ce248cc7c9a39d8a5d0fa418f44838970eb27a91cc96c05c82bcff70b1aec6e"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/material.usd",
+      "size": 3799,
+      "sha256": "71fe418d6f510748a5c129ee91dd86dc7cbfaf0d087385224f976e83d179baa0"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/script/.vscode/extensions.json",
+      "size": 200,
+      "sha256": "d63c01227bcd40a956c58e539c0f8af0962dab955a59da1dca4aacacf5471fcf"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/script/.vscode/launch.json",
+      "size": 813,
+      "sha256": "b1ae6a52824a1ae89931f36a12fb1f941f0a6cbe3cce82e356f5ff4d0364fbdb"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/script/.vscode/settings.json",
+      "size": 366,
+      "sha256": "63920a4a97cfc4caaa6c39b51e7d2f229802357beb965936c1584d9b78cac48c"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/script/fridge_control.py",
+      "size": 9789,
+      "sha256": "a06917df1ebb1dddeddf860a6ca79a02daa203ea5f96d34ca2ff4dae9f483345"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/script/oven_control.py",
+      "size": 8377,
+      "sha256": "6581d7eb4fb6a365147697cf1b360fdf4252faa701f215e08271a266c9590abc"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/oven/resource/v_69323/link_0_0.usd",
+      "size": 8077463,
+      "sha256": "8bfeae376f874054cb6b37af9bb6e246107834cbae8bb77c5c32fb30c2b77432"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/rolling_washer_5/NVIDIA/Materials/2023_2_1/Base/Glass/Clear_Glass.mdl",
+      "size": 1177,
+      "sha256": "5454a44463d100c648eeec2ae1c2e12ef9d16f0d4caebf675ff65e8427a6b40a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/rolling_washer_5/model_rolling_washer_5.usd",
+      "size": 1331835,
+      "sha256": "2993553cec1fdabfdb6e15dc430dce2a3a05c2ab31424c5355b82709eb13d590"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/rolling_washer_5/resource/img/3d2d8a1c8fae283acdac197381b58d37.png",
+      "size": 70943,
+      "sha256": "51901c53df7d5d8baebd13351ced81ede4f1f49db8ba5aac087938da6a0a65c4"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/rolling_washer_5/resource/img/b99afd5d429b11ac912a7f5d4fe9614e.png",
+      "size": 5127394,
+      "sha256": "1b2747454458881dca5fb182fdd29290925c38c01eb81ad527ba698a0ce31451"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/rolling_washer_5/resource/material.usd",
+      "size": 3546,
+      "sha256": "f3218445195972b48fabc9b57c8d3336e1b2653b5fde68b96bcedb0b0341d47a"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/rolling_washer_5/resource/v_69323/link_0_0.usd",
+      "size": 396177,
+      "sha256": "6a52bb2ca2a8c8e421fcf70517b7991e7c86f35aae893398895509a800a5aeff"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/roundtable/model_roundtable.usd",
+      "size": 2734,
+      "sha256": "aeb4f4858f3f5971e818e5e2b41490a542cd8b856964674720572c94b107688b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/roundtable/resource/img/b5438c25905693520be7b48998be40a7.png",
+      "size": 96513,
+      "sha256": "57825e298db850449f9ebbe75906a9fa96c2dbc2334c1f3ba542d52731626f21"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/roundtable/resource/material.usd",
+      "size": 2146,
+      "sha256": "c3555d8625e8b7c899ef7d67f8b7cae710031418feb122f08a1d3b6ddb084869"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/roundtable/resource/v_69323/link_0_0.usd",
+      "size": 159522,
+      "sha256": "47470a6cfa947110fac0e0bcda80ecdd731d2a1e6a6e352b79c6b3b836c606d0"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/sofa/model_sofa.usd",
+      "size": 1867453,
+      "sha256": "c164633c176f1f15b8f1535733463c9e9f928b6c53904b8ec270bd2151f3a7f6"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/sofa/resource/img/ca709989e44dada136ae92c5849ace23.png",
+      "size": 181233,
+      "sha256": "5dfd41d16651867a02ffdabbb0aecddcea9df41c35fbe24d7452b2079ec30111"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/sofa/resource/img/e1c436d42a0b8eca85272af1f48f831e.png",
+      "size": 810516,
+      "sha256": "4a1591e844adacfe92db874837005da1a6223469040efc52b5bf7ab8708883e3"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/sofa/resource/material.usd",
+      "size": 2402,
+      "sha256": "c9bd44f434d108a8c7011bd52927c4a69a3b3117bba7c817d61c9883fcbd3606"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/sofa/resource/v_69323/link_0_0.usd",
+      "size": 4233846,
+      "sha256": "85ccabb9eb53eb15acee3942215257cfa510986385fe6897209a9995000719a9"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/teatable/model_teatable.usd",
+      "size": 60922,
+      "sha256": "3f82b49876be0cceb28e4fcb96b9b05ef1f57f069749fe21138608ab8d22d51d"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/teatable/resource/img/b5438c25905693520be7b48998be40a7.png",
+      "size": 96513,
+      "sha256": "57825e298db850449f9ebbe75906a9fa96c2dbc2334c1f3ba542d52731626f21"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/teatable/resource/material.usd",
+      "size": 2029,
+      "sha256": "b4c8863a02be3d24da1a720b6d2c082b76a716e0af2351c60c4b22fe33c1dcd4"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/teatable/resource/v_69323/link_0_0.usd",
+      "size": 195299,
+      "sha256": "9c58740ac85e9d208735ea29115e2c606a793930091009bb4c3064c123329eae"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/tv/model_tv.usd",
+      "size": 27863,
+      "sha256": "aa3bd5059bb35943c76ce9f0c55f444e55bed74a034f9984dfe746008e1e381f"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/tv/resource/material.usd",
+      "size": 1444,
+      "sha256": "e75760973c0d64e9ef625425d39ff75e222fe299d9b352b42cef9b5c67ec428e"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/tv/resource/v_69323/link_0_0.usd",
+      "size": 43182,
+      "sha256": "6950ac91439b29c06f1274481a14c7d0150dd2df20a44fb2bb690c668dad1ca5"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/tvcabinet/model_tvcabinet.usd",
+      "size": 26571,
+      "sha256": "0f2703b87e4f381e5f6aede377cb721936fef4a39384853bb08768eeb5845f4b"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/tvcabinet/resource/img/e9f7c719a9c4fd93f4f8cbaf7f905858.png",
+      "size": 272743,
+      "sha256": "1aa95b0d44e62a6cde3198e98b863dbbb9ea3c4da551cf674ac6cd351ee5063f"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/tvcabinet/resource/material.usd",
+      "size": 2029,
+      "sha256": "808cbe92cba41db49973576eb8fed11f6ca8cd261383636c6647a78f67e34687"
+    },
+    {
+      "path": "Interactive_scene/kitchen_with_parlor/tvcabinet/resource/v_69323/link_0_0.usd",
+      "size": 44293,
+      "sha256": "bed40f86ac3be97339305436eb24d1ec9a7b657fc34317cfeb9871790414979c"
+    },
+    {
+      "path": "Articulated_objects/Ikea_furniture/GULLABERG_Bedside_table_with_1_drawe_with_shelf_white_53x43x69cm/model_GULLABERG_Bedside_table_with_1_drawe_with_shelf_white_53x43x69cm.usd",
+      "size": 14049,
+      "sha256": "0a963cf2ddf086fc9b19b81ae67b114f10c817d464ea531489ee337cb4904bf1"
+    },
+    {
+      "path": "Articulated_objects/Ikea_furniture/GULLABERG_Bedside_table_with_1_drawe_with_shelf_white_53x43x69cm/resource/img/04215496bc65712bfecf4259cc2c109b.png",
+      "size": 145501,
+      "sha256": "05ee16e2c75fe94c47d1eb978a115279ffeef44024d6b30b5f88b21d71812e14"
+    },
+    {
+      "path": "Articulated_objects/Ikea_furniture/GULLABERG_Bedside_table_with_1_drawe_with_shelf_white_53x43x69cm/resource/material.usd",
+      "size": 2019,
+      "sha256": "69e292c312849a0e60e534914662f2f30d45497acf770490162410e215f6498a"
+    },
+    {
+      "path": "Articulated_objects/Ikea_furniture/GULLABERG_Bedside_table_with_1_drawe_with_shelf_white_53x43x69cm/resource/v_69323/element_path.json",
+      "size": 363,
+      "sha256": "be3fbed995e182eea45d4c92359d4601244bcba869a86999b5871d7feaa25dfa"
+    },
+    {
+      "path": "Articulated_objects/Ikea_furniture/GULLABERG_Bedside_table_with_1_drawe_with_shelf_white_53x43x69cm/resource/v_69323/link_0.usd",
+      "size": 1182302,
+      "sha256": "d1942e9704a8395a0a990d4c1e5dc9caf2f866715ac4f1a1821a53c701ddc7e4"
+    }
+  ],
+  "license": "Apache-2.0",
+  "upstream": "https://huggingface.co/datasets/X-Humanoid/ArtVIP",
+  "scope": "Kitchen-with-parlor source scene and GULLABERG cabinet, exact revision; source files remain immutable"
+}

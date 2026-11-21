@@ -138,7 +138,8 @@ def session_facts(path: Path, task: str) -> dict[str, Any]:
 def judge(cell: dict[str, Any], rec: dict[str, Any]) -> dict[str, Any]:
     """Grade one repetition from its files; never from the verdict alone."""
     text = Path(rec["transcript"]).read_text(encoding="utf-8")
-    out = {**rec, "model": model_of(text)}
+    scripted = rec.get('decision_source') == 'scripted'
+    out = {**rec, "model": 'scripted test driver' if scripted else model_of(text)}
     problem = launch_problem(text, cell)
     if problem:
         return {**out, "status": "not_run", "reason": problem}
@@ -148,8 +149,11 @@ def judge(cell: dict[str, Any], rec: dict[str, Any]) -> dict[str, Any]:
         snapshots = [json.loads(line) for line in Path(rec["dump"]).read_text().splitlines() if line.strip()]
         if {s.get("backend") for s in snapshots if s.get("goal") == cell["task"]} != {cell["backend"]}:
             grade, why = None, "GT backend does not match the requested backend"
+    facts = session_facts(Path(rec["session"]), cell["task"])
+    if scripted:
+        facts['model_calls'] = 0
     return {**out, "status": "ran", "verdict": verdict, "grade": grade, "grade_note": why,
-            "outcome": gt_audit.outcome(verdict, grade), **session_facts(Path(rec["session"]), cell["task"])}
+            "outcome": gt_audit.outcome(verdict, grade), **facts}
 
 
 def run_rep(cell: dict[str, Any], rep: int, out: Path, *, tool_script: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -158,8 +162,12 @@ def run_rep(cell: dict[str, Any], rep: int, out: Path, *, tool_script: dict[str,
     d.mkdir(parents=True, exist_ok=True)
     home = d / "vector_home"  # this session's own state directory: its session file survives
     home.mkdir(exist_ok=True)
-    if (paths.home() / "assets").is_dir():
-        (home / "assets").symlink_to(paths.home() / "assets")
+    for folder in ('assets', 'embodiments', 'worlds'):
+        if (paths.home() / folder).is_dir():
+            (home / folder).symlink_to(paths.home() / folder)
+    if paths.scene_cache().is_dir():
+        (home / 'cache').mkdir()
+        (home / 'cache/scenes').symlink_to(paths.scene_cache())
     t0 = time.monotonic()
     r = run_repl_session(
         # the task only once the launch brought the cell's body up: a failed launch bills no task turn
@@ -171,7 +179,8 @@ def run_rep(cell: dict[str, Any], rep: int, out: Path, *, tool_script: dict[str,
         extra_env={"VECTOR_HOME": str(home), "VECTOR_NAV_STACK": "",
                    **({"VECTOR_FAKE_LLM_TOOLS": ""} if tool_script is None else {})},
     )
-    rec = {"cell": cell["id"], "rep": rep, "wall_s": round(time.monotonic() - t0, 1), "timed_out": r.timed_out,
+    rec = {"cell": cell["id"], "rep": rep, "decision_source": 'scripted' if tool_script is not None else 'live_model',
+           "wall_s": round(time.monotonic() - t0, 1), "timed_out": r.timed_out,
            "exit_code": r.exit_code, "transcript": str(d / "transcript.txt"), "dump": r.dump,
            "session": str(d / "session.jsonl")}
     Path(rec["transcript"]).write_text(r.text, encoding="utf-8")

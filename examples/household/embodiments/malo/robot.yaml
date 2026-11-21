@@ -1,0 +1,77 @@
+schema: 1
+display_name: Zeno Malo EDU — contact-only development configuration
+world: artvip_home
+model: {file: physical.xml, root_body: base_link}
+initial_joints:
+  head_pitch_joint: 0.314
+  left_gripper_left_finger_axis: 0.04
+  left_gripper_right_finger_axis: 0.04
+  right_gripper_left_finger_axis: 0.04
+  right_gripper_right_finger_axis: 0.04
+
+# The complete dual-arm CAD is retained. This first control acceptance uses the
+# left arm; named dual-end-effector routing is still a separate integration gate.
+base:
+  height: 0.0
+  holonomic: true
+  limits: {vx: 0.25, vy: 0.18, vyaw: 0.3}
+  fall_z: -0.05
+  fall_tilt_deg: 5
+  joints: [fl_steering_joint, fl_wheel_joint, fr_steering_joint, fr_wheel_joint,
+           rl_steering_joint, rl_wheel_joint, rr_steering_joint, rr_wheel_joint]
+  stance: {fl_steering_joint: 0, fl_wheel_joint: 0, fr_steering_joint: 0, fr_wheel_joint: 0,
+           rl_steering_joint: 0, rl_wheel_joint: 0, rr_steering_joint: 0, rr_wheel_joint: 0}
+  postures: {}
+  kp: 5
+  kd: 0.08
+  policy:
+    ref: swerve
+    timestep: 0.001
+    tick_hz: 1000
+    wheels: [[0.155, 0.155, 0.04105, 0.00175], [0.155, -0.155, 0.04105, -0.00175],
+             [-0.155, 0.155, 0.04105, 0.00175], [-0.155, -0.155, 0.04105, -0.00175]]
+    steering_range: [-2.5, 2.5]
+    steering_kp: 5
+    steering_kd: 0.08
+    steering_speed: 0.6
+    wheel_kp: 0.04
+    wheel_ki: 0.4
+    wheel_speed: 8.5
+    accel: 0.25
+    yaw_accel: 0.5
+  nav: {body_radius: 0.42, speed: 0.15, vyaw_max: 0.2, goal_tol: 0.1}
+
+# CAD mount; FOV and pinhole intrinsics are estimates, not hardware calibration.
+sensors:
+  - {role: camera, name: head, width: 640, height: 480, depth: [0.1, 10]}
+
+arm:
+  joints: [left_arm_joint_1, left_arm_joint_2, left_arm_joint_3, left_arm_joint_4,
+           left_arm_joint_5, left_arm_joint_6, left_arm_joint_7]
+  ee: {site: left_tcp}
+  home: [0, 0, 0, 0, 0, 0, 0]
+  postures: {view: [0, 1.3, 0, 0, 0, 0, 0]}
+  track_tol: 0.04
+  velocity: [0.35, 0.35, 0.35, 0.35, 0.35, 0.35, 0.35]
+  acceleration: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
+  jerk: [2, 2, 2, 2, 2, 2, 2]
+  gripper:
+    joint: left_gripper_left_finger_axis
+    open: 0.04
+    closed: 0
+    finger_bodies: [left_gripper_left_finger_link, left_gripper_right_finger_link]
+    weld_body: left_gripper_link
+    min_opening: 0.002
+    assist: false
+    speed: 0.02
+
+skills:
+  grasp:
+    pre_grasp_height: 0.07
+    grasp_z_above: 0.016
+    lift_height: 0.09
+    approach_back: 0.1
+    durations: [4, 3, 2, 5]
+    reach_m: 0.65
+    view_duration: 3
+    hold_duration: 2

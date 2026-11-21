@@ -50,3 +50,20 @@ def test_mislabeled_jpeg_is_encoded_without_changing_source(tmp_path):
     model = mj.MjModel.from_xml_path(str(tmp_path/'derived'/'world.xml'))
     assert tuple(model.tex_data[:3]) == expected
     assert source.read_bytes() == original
+
+
+def test_reference_textures_keep_pixels_out_of_physics_model(tmp_path):
+    from PIL import Image
+
+    source = tmp_path/'wood.png'
+    Image.new('RGB', (8, 8), (80, 120, 160)).save(source)
+    spec = mj.MjSpec.from_string(f'''<mujoco><asset>
+      <texture name="albedo" type="2d" file="{source}" embed="false"/>
+      <material name="surface" texture="albedo"/></asset>
+      <worldbody><geom type="box" size="1 1 .1" material="surface"/></worldbody></mujoco>''')
+    write_mjcf(spec, tmp_path/'world.xml')
+    model = mj.MjModel.from_xml_path(str(tmp_path/'world.xml'))
+    assert model.ntex == 1 and model.ntexdata == 0 and model.tex_adr[0] == -1
+    embedded = mj.mj_embedAssets(model)
+    assert tuple(embedded.tex_data[:3]) == (80, 120, 160)
+    np.testing.assert_array_equal(embedded.geom_aabb, model.geom_aabb)

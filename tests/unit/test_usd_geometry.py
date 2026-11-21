@@ -5,7 +5,30 @@ import pytest
 pytest.importorskip('pxr', reason='offline USD asset-building extra not installed')
 from pxr import Sdf, Usd, UsdGeom, UsdPhysics, Vt
 
-from scripts.prepare_usd import normalize
+from scripts.prepare_usd import check_source, normalize
+
+
+def test_source_lock_rejects_changed_or_missing_sibling_assets(tmp_path):
+    import hashlib
+    import json
+
+    folder = tmp_path / 'dataset/scene'
+    folder.mkdir(parents=True)
+    source, texture = folder/'home.usd', folder/'wood.png'
+    source.write_bytes(b'original source')
+    texture.write_bytes(b'original texture')
+    lock = tmp_path/'lock.json'
+    lock.write_text(json.dumps({'files': [
+        {'path': 'scene/'+p.name, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
+        for p in (source, texture)]}))
+    check_source(source, lock)
+    texture.write_bytes(b'changed')
+    with pytest.raises(ValueError, match='SHA256 mismatch'):
+        check_source(source, lock)
+    assert texture.read_bytes() == b'changed'
+    texture.unlink()
+    with pytest.raises(FileNotFoundError):
+        check_source(source, lock)
 
 
 def points(mesh):

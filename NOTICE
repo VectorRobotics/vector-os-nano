@@ -70,6 +70,16 @@ Fetched by the user, not bundled
 Referenced, not bundled
 ------------------------------------------------------------------------
 
+  - X-Humanoid ArtVIP (https://huggingface.co/datasets/X-Humanoid/ArtVIP),
+        Apache-2.0, revision d22f2095bc9db29fdd4b60f4a3c4f8177e1f5e9e.
+        Household examples pin the kitchen/parlor and GULLABERG cabinet source
+        files in examples/household/sources.json. Conversion adds an entry/storage
+        wing, passive casters, drawer dividers and rigid packages; original meshes
+        and textures are downloaded separately, not included in this repository.
+  - Zeno Malo EDU local CAD/URDF, referenced by scripts/prepare_malo.py.
+        Redistribution permission has not been established. Neither the original
+        CAD nor derived robot meshes/models are included in the repository.
+
   - Vector Navigation Stack (https://github.com/VectorRobotics/vector_navigation_stack)
         Optional TARE / FAR navigation, launched from a separate checkout named
         by $VECTOR_NAV_STACK and reached over ROS2 topics. Not redistributed.

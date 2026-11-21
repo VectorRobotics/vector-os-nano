@@ -38,7 +38,7 @@ PACKAGE_TREE = {"__init__.py", "version.py", "interfaces", "schemas", "core", "s
                 "worlds", "skills", "perception", "vcli", "mcp", "hardware", "third_party"}
 HARDWARE_TREE = {"__init__.py", "so101"}
 REPO_TREE = {".github", ".gitignore", ".env.example", "CLAUDE.md", "CHANGELOG.md", "LICENSE", "NOTICE",
-             "README.md", "conftest.py", "docs", "images", "pyproject.toml", "scripts", "tests", P}
+             "README.md", "conftest.py", "docs", "examples", "images", "pyproject.toml", "scripts", "tests", P}
 
 
 def _sources() -> dict[str, Path]:

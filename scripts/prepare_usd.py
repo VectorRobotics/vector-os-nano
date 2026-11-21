@@ -5,6 +5,31 @@ import numpy as np
 from pxr import Gf, UsdGeom, UsdPhysics, UsdShade, Vt
 
 
+def check_source(source, lock):
+    """Verify the source and its sibling assets against a pinned download manifest."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    source = Path(source).resolve()
+    entries = json.loads(Path(lock).read_text())['files']
+    matches = [e for e in entries if Path(e['path']).name == source.name]
+    if len(matches) != 1:
+        raise ValueError(f'{source}: expected one source entry in {lock}')
+    relative = Path(matches[0]['path'])
+    root = source.parents[len(relative.parts)-1]
+    if root / relative != source:
+        raise ValueError(f'{source}: preserve the pinned dataset folder structure')
+    for entry in entries:
+        path = Path(entry['path'])
+        if path.parent != relative.parent and relative.parent not in path.parents:
+            continue
+        with (root / path).open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if digest != entry['sha256']:
+            raise ValueError(f'{root / path}: source SHA256 mismatch; original left untouched')
+
+
 def write_mjcf(spec, destination):
     """Keep independently indexed USD normals/UVs through MJCF serialization.
 
