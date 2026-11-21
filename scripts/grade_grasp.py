@@ -66,6 +66,43 @@ def contact_support(model, states, contacts, target, fingers, *, hold_s=2.):
                     finger_peak_force_N=peaks, mean_gripper_support_N=supported, target_weight_N=weight)
 
 
+def package_trajectory(model, states, target):
+    """Every transformed corner of a declared free rigid box package."""
+    body = model.body(target).id
+    joint = int(model.body_jntadr[body])
+    if joint < 0 or model.jnt_type[joint] != mj.mjtJoint.mjJNT_FREE or model.body_parentid[body] != 0:
+        raise ValueError('lift acceptance requires a free package attached to the world')
+    geoms = [i for i in range(model.ngeom) if model.geom_bodyid[i] == body and (model.geom_contype[i] or model.geom_conaffinity[i])]
+    if not geoms or any(model.geom_type[i] != mj.mjtGeom.mjGEOM_BOX for i in geoms):
+        raise ValueError('this acceptance supports box collision geometry only')
+    corners = []
+    signs = np.array([(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
+    for i in geoms:
+        rotation = np.empty(9)
+        mj.mju_quat2Mat(rotation, model.geom_quat[i])
+        corners.extend(signs*model.geom_size[i] @ rotation.reshape(3, 3).T+model.geom_pos[i])
+    q = states['qpos'][:, int(model.jnt_qposadr[joint]):int(model.jnt_qposadr[joint])+7]
+    if not np.allclose(np.linalg.norm(q[:, 3:], axis=1), 1., atol=1e-6, rtol=0):
+        raise ValueError('recorded package quaternions must be normalized')
+    w, x, y, z = q[:, 3:].T
+    row_z = np.stack((2*(x*z-w*y), 2*(y*z+w*x), 1-2*(x*x+y*y)), axis=1)
+    row_x = np.stack((1-2*(y*y+z*z), 2*(x*y-w*z), 2*(x*z+w*y)), axis=1)
+    row_y = np.stack((2*(x*y+w*z), 1-2*(x*x+z*z), 2*(y*z-w*x)), axis=1)
+    rotation = np.stack((row_x, row_y, row_z), axis=1)
+    vertices = np.einsum('tij,kj->tki', rotation, np.asarray(corners)) + q[:, None, :3]
+    return body, int(model.jnt_qposadr[joint]), vertices
+
+
+def integration_error(model, states, address):
+    error = 0.
+    t = states['sim_time'][:, 0]
+    for i in np.flatnonzero(np.diff(t)>0)+1:
+        expected = states['qpos'][i-1].copy()
+        mj.mj_integratePos(model, expected, states['qvel'][i], float(t[i]-t[i-1]))
+        error = max(error, float(np.max(abs(expected[address:address+7]-states['qpos'][i, address:address+7]))))
+    return error
+
+
 def grade(directory, cfg, world, audit, goal, target):
     result = grade_safety(directory, cfg, world, audit, goal, grasp_target=target)
     meta, states, contacts = read_recording(directory)
@@ -73,23 +110,8 @@ def grade(directory, cfg, world, audit, goal, target):
     g = cfg.arm.gripper
     if g.assist:
         raise ValueError('force-only acceptance requires gripper.assist=false')
-    body = m.body(target).id
-    joint = int(m.body_jntadr[body])
-    if joint < 0 or m.jnt_type[joint] != mj.mjtJoint.mjJNT_FREE or m.body_parentid[body] != 0:
-        raise ValueError('lift acceptance requires a free package attached to the world')
-    geoms = [i for i in range(m.ngeom) if m.geom_bodyid[i] == body and (m.geom_contype[i] or m.geom_conaffinity[i])]
-    if not geoms or any(m.geom_type[i] != mj.mjtGeom.mjGEOM_BOX for i in geoms):
-        raise ValueError('this acceptance supports box collision geometry only')
-    corners = []
-    signs = np.array([(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
-    for i in geoms:
-        rotation = np.empty(9)
-        mj.mju_quat2Mat(rotation, m.geom_quat[i])
-        corners.extend(signs*m.geom_size[i] @ rotation.reshape(3, 3).T+m.geom_pos[i])
-    q = states['qpos'][:, int(m.jnt_qposadr[joint]):int(m.jnt_qposadr[joint])+7]
-    w, x, y, z = q[:, 3:].T
-    row_z = np.stack((2*(x*z-w*y), 2*(y*z+w*x), 1-2*(x*x+y*y)), axis=1)
-    bottom = q[:, 2] + np.min(row_z @ np.asarray(corners).T, axis=1)
+    body, address, vertices = package_trajectory(m, states, target)
+    bottom = vertices[:, :, 2].min(axis=1)
     support = world.surfaces[world.pickables[target].surface].height
     t = states['sim_time'][:, 0]
     window = t >= t[-1]-CRITERIA['hold_s']-1e-8
@@ -99,12 +121,7 @@ def grade(directory, cfg, world, audit, goal, target):
     checks.update(lift_clearance=bool(np.all(bottom[window]-support >= CRITERIA['clearance_m'])),
                   jaw_held_open=bool(np.all(abs(opening-g.closed) >= g.min_opening)),
                   initially_supported=abs(float(bottom[0])-support) <= CRITERIA['initial_support_tolerance_m'])
-    error = 0.
-    address = int(m.jnt_qposadr[joint])
-    for i in np.flatnonzero(np.diff(t)>0)+1:
-        expected = states['qpos'][i-1].copy()
-        mj.mj_integratePos(m, expected, states['qvel'][i], float(t[i]-t[i-1]))
-        error = max(error, float(np.max(abs(expected[address:address+7]-q[i]))))
+    error = integration_error(m, states, address)
     checks['integrated_object_motion'] = error <= CRITERIA['object_state_step_error']
     checks['initially_ungrasped'] = checks['no_other_load_support'] = None
     if contacts:
