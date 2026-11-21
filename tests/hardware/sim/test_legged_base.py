@@ -318,19 +318,19 @@ def test_scenes_go_to_the_state_cache_never_the_package(monkeypatch, tmp_path):
 
     import vector_os_nano
     from vector_os_nano.embodiments import registry
-    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.sim.scene.compose import compose
     from vector_os_nano.schemas.world import load_world
 
     monkeypatch.setenv("VECTOR_HOME", str(tmp_path))
     pkg = Path(vector_os_nano.__file__).parent
     before = set(pkg.rglob("scene_*.xml"))
-    paths = [room_scene(registry.load(b), load_world("apartment")).xml_path for b in ("go2", "go2_piper")]
+    paths = [compose(registry.load(b), load_world("apartment")).xml_path for b in ("go2", "go2_piper")]
     for p in paths:
         assert p.is_relative_to(tmp_path / "cache" / "scenes"), p
         mujoco.MjModel.from_xml_path(str(p))  # loads from the cache dir
     assert set(pkg.rglob("scene_*.xml")) == before
     cfg = registry.load("go2_piper")  # content-addressed: a rebuild reuses the file
-    assert room_scene(cfg, load_world("apartment")).xml_path == paths[1]
+    assert compose(cfg, load_world("apartment")).xml_path == paths[1]
     assert not list(tmp_path.rglob("*.tmp"))
 
 
@@ -338,13 +338,13 @@ def test_a_missing_model_file_fails_loud(tmp_path):
     import dataclasses
 
     from vector_os_nano.embodiments import registry
-    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.sim.scene.compose import compose
     from vector_os_nano.schemas.world import load_world
 
     cfg = registry.load("go2_piper")
     gone = dataclasses.replace(cfg, model=dataclasses.replace(cfg.model, path=str(tmp_path / "go2_piper.xml")))
     with pytest.raises(Exception, match="go2_piper.xml"):
-        room_scene(gone, load_world("apartment"))
+        compose(gone, load_world("apartment"))
 
 
 _SCRIPT = r"""

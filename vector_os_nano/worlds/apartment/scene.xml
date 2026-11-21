@@ -1,6 +1,5 @@
 <mujoco model="go2 house">
-  <compiler angle="radian" meshdir="GO2_ASSETS_DIR" texturedir="GO2_ASSETS_DIR" autolimits="true"/>
-  <include file="GO2_MODEL_PATH"/>
+  <compiler angle="radian" meshdir="meshes" texturedir="meshes" autolimits="true"/>
 
   <option cone="elliptic" impratio="100"/>
 
@@ -624,7 +623,7 @@
             mass="0.08" friction="2 0.05 0.001" priority="2"/>
     </body>
 
-    <!-- More pickables on OTHER furniture / in OTHER rooms (config/worlds/apartment.yaml
+    <!-- More pickables on OTHER furniture / in OTHER rooms (worlds/apartment/world.yaml
          lists every pickable; the grasp welds are generated from that list). Each sits
          8 cm in from the furniture edge that faces open floor, on the collision box top. -->
     <body name="pickable_cup_yellow" pos="2.32 2.30 0.445">  <!-- coffee table, living room -->
@@ -686,5 +685,5 @@
     <geom name="df_guest_t" type="box" pos="16.0 10 2.23" size="0.62 0.06 0.03" material="dark_wood" contype="0" conaffinity="0"/>
 
   </worldbody>
-GRASP_WELDS
+
 </mujoco>

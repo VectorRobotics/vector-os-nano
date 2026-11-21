@@ -201,7 +201,7 @@ class TestGoToRoom:
                               execute=lambda p, c: calls.append(p) or SkillResult(success=True))
         res = GoToRoomTool().execute({"room": "厨房"}, self._ctx(self._agent([nav])))
         assert not res.is_error, res.content
-        assert calls == [{"x": 17.0, "y": 1.7}]  # config/worlds/apartment.yaml kitchen seed
+        assert calls == [{"x": 17.0, "y": 1.7}]  # worlds/apartment/world.yaml kitchen seed
         assert "verify(in_room('kitchen'))" in res.content
 
     def test_unknown_room_fails_loud_with_the_valid_set(self):

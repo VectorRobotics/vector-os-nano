@@ -10,6 +10,7 @@ Scenes are compiled once per session; worlds are loaded per test and closed.
 from __future__ import annotations
 
 import importlib.util
+from dataclasses import replace
 from pathlib import Path
 
 import mujoco as mj
@@ -20,7 +21,7 @@ from vector_os_nano.embodiments import registry
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene import compiled_scene
 from vector_os_nano.sim.scene.compose import compose
-from vector_os_nano.schemas.world import load_world
+from vector_os_nano.schemas.world import load_world, Pickable
 
 SCENES = Path(__file__).parent / "scenes"
 SIM_DIR = Path(vector_os_nano.__file__).parent / "hardware" / "sim"
@@ -81,12 +82,17 @@ def contract_scene():
     return compiled_scene(SCENES / "contract.xml", grasp_pairs=[("carrier", "parcel"), ("arm", "parcel")])
 
 
+def battery_world():
+    return replace(load_world("workbench"), id="battery", scene=SCENES / "battery.xml",
+                   spawn=(0., 0., .2, 0.),
+                   pickables={name: Pickable(name, name, "red", (name,)) for name in ("box", "cylinder")})
+
+
 @pytest.fixture(scope="session")
 def battery_scene():
     """battery.xml with the `piper` body (its manifest: camera, gripper) mounted at
     (0, 0, 0.2) and its two grasp welds, by the product's scene composition."""
-    return compose(SCENES / "battery.xml", registry.load("piper"), spawn=(0.0, 0.0, 0.2, 0.0),
-                   pickables=("box", "cylinder"))
+    return compose(registry.load("piper"), battery_world())
 
 
 @pytest.fixture(scope="session")
@@ -95,14 +101,15 @@ def tabletop_scene():
     pickables), by the product's scene composition."""
     cfg = registry.load("so101")
     world = load_world(cfg.world)
-    return compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+    return compose(cfg, world)
 
 
 @pytest.fixture(scope="session")
 def flat_go2_scene():
     """go2 on flat ground, at its policy's timestep."""
     go2 = registry.load("go2")
-    return compose(SCENES / "flat.xml", go2, spawn=(0.0, 0.0, 0.0, 0.0), timestep=go2.base.policy.timestep)
+    world = replace(load_world("apartment"), scene=SCENES / "flat.xml", spawn=(0., 0., 0., 0.), pickables={})
+    return compose(go2, world)
 
 
 def _inactive_welds(xml_path) -> list[tuple[str, str]]:
@@ -121,11 +128,11 @@ def _robot_scene(name: str):
     if name in ("so101", "piper"):
         return compiled_scene(SIM_DIR / "mjcf" / name / f"{name}.xml", robot_root="base_link")
     if name in ("go2", "go2_piper"):
-        from vector_os_nano.hardware.sim.scene_builder import room_scene
-        from vector_os_nano.schemas.world import load_world
+        from vector_os_nano.sim.scene.compose import compose
+        from vector_os_nano.schemas.world import load_world, Pickable
 
         cfg = registry.load(name)
-        return room_scene(cfg, load_world(cfg.world))
+        return compose(cfg, load_world(cfg.world))
     if name == "g1":
         from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
         from vector_os_nano.embodiments.config import load_embodiment_config

@@ -31,10 +31,10 @@ Robot models and meshes:
 Scene assets:
   - Furniture meshes (OBJ/MTL, some split per material), from the Kenney
         Furniture Kit (https://kenney.nl/assets/furniture-kit). CC0 1.0.
-        Files: vector_os_nano/hardware/sim/mjcf/go2/assets/furniture/*.obj, *.mtl
+        Files: vector_os_nano/worlds/apartment/meshes/furniture/*.obj, *.mtl
   - Furniture textures (metal0-4, stone0-4, wood0-4 .png), from furniture_sim
         common/textures (https://github.com/vikashplus/furniture_sim).
-        Apache-2.0. Files: vector_os_nano/hardware/sim/mjcf/go2/assets/furniture/*.png
+        Apache-2.0. Files: vector_os_nano/worlds/apartment/meshes/furniture/*.png
 
 Vendored source:
   - go2-convex-mpc (https://github.com/elijah-waichong-chan/go2-convex-mpc)

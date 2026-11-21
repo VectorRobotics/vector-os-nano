@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""World manifest — what a sim world contains, as data (``config/worlds/<id>.yaml``).
+"""World manifest — what a sim world contains, as data (``worlds/<id>/world.yaml``).
 
 Rooms (free seed + floor box), doors, support surfaces, pickables (MJCF body name
 -> category / colour / zh+en aliases) and the user location. A body names its
@@ -14,6 +14,7 @@ never where they are now (that lives in ``sim.ground_truth``).
 from __future__ import annotations
 
 import functools
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +22,9 @@ from typing import Any
 
 import yaml
 
-WORLDS_DIR = Path(__file__).resolve().parents[2] / "config" / "worlds"
+from vector_os_nano.schemas.strict import yaml_loader
+
+WORLDS_DIR = Path(__file__).resolve().parents[1] / "worlds"
 
 
 class WorldManifestError(ValueError):
@@ -195,75 +198,101 @@ class WorldManifest:
         return [p.english for p in self.pickables.values()]
 
 
+def _mapping(value: Any, ctx: str, valid: tuple[str, ...] | None = None,
+             required: tuple[str, ...] = ()) -> dict:
+    if not isinstance(value, dict) or any(not isinstance(k, str) or not k for k in value):
+        raise WorldManifestError(f"{ctx}: expected a mapping with nonempty string keys")
+    if valid is not None:
+        extra = set(value) - set(valid)
+        missing = set(required) - set(value)
+        if extra or missing:
+            raise WorldManifestError(f"{ctx}: unknown keys {sorted(extra)}, missing keys {sorted(missing)}; "
+                                     f"valid: {list(valid)}")
+    return value
+
+
+def _number(value: Any, ctx: str) -> float:
+    if type(value) not in (int, float) or not math.isfinite(value):
+        raise WorldManifestError(f"{ctx}: expected a finite number")
+    return float(value)
+
+
+def _text(value: Any, ctx: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise WorldManifestError(f"{ctx}: expected a nonempty string")
+    return value
+
+
+def _words(value: Any, ctx: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise WorldManifestError(f"{ctx}: expected a list of strings")
+    return tuple(_text(v, ctx) for v in value)
+
+
+def _vector(value: Any, size: int, ctx: str) -> tuple[float, ...]:
+    if not isinstance(value, (list, tuple)) or len(value) != size:
+        raise WorldManifestError(f"{ctx}: expected {size} finite coordinates")
+    return tuple(_number(v, ctx) for v in value)
+
+
 def _xy(v: Any, ctx: str) -> tuple[float, float]:
-    try:
-        x, y = (float(c) for c in v)
-    except (TypeError, ValueError) as exc:
-        raise WorldManifestError(f"{ctx}: expected [x, y], got {v!r}") from exc
+    x, y = _vector(v, 2, ctx)
     return x, y
 
 
 def _box(v: Any, ctx: str) -> tuple[float, float, float, float]:
-    try:
-        b = tuple(float(c) for c in v)
-    except (TypeError, ValueError) as exc:
-        raise WorldManifestError(f"{ctx}: expected [x_min, y_min, x_max, y_max], got {v!r}") from exc
-    if len(b) != 4 or b[0] > b[2] or b[1] > b[3]:
-        raise WorldManifestError(f"{ctx}: expected [x_min, y_min, x_max, y_max], got {v!r}")
-    return b  # type: ignore[return-value]
+    x0, y0, x1, y1 = _vector(v, 4, ctx)
+    if x0 > x1 or y0 > y1:
+        raise WorldManifestError(f"{ctx}: expected [x_min, y_min, x_max, y_max]")
+    return x0, y0, x1, y1
 
 
 def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest:
-    ctx = f"config/worlds/{world_id}.yaml"
+    ctx = str(path)
+    keys = ('schema', 'scene', 'spawn', 'rooms', 'boxes', 'doors', 'surfaces', 'pickables', 'user', 'vocab')
+    raw = _mapping(raw, ctx, keys, ('schema', 'scene', 'spawn'))
+    schema = raw['schema']
+    if type(schema) is not int or schema != 1:
+        advice = 'upgrade vector_os_nano' if type(schema) is int and schema > 1 else 'use schema: 1'
+        raise WorldManifestError(f"{ctx}: schema {schema!r}; valid: [1]; {advice}")
+    scene = Path(_text(raw['scene'], f'{ctx}: scene'))
+    if scene.is_absolute() or '..' in scene.parts:
+        raise WorldManifestError(f'{ctx}: scene must be a relative path inside the world folder')
+    spawn = _mapping(raw['spawn'], f'{ctx}: spawn', ('xy', 'z', 'heading'), ('xy', 'z', 'heading'))
+    spawn = (*_xy(spawn['xy'], f'{ctx}: spawn.xy'), _number(spawn['z'], f'{ctx}: spawn.z'),
+             _number(spawn['heading'], f'{ctx}: spawn.heading'))
     surfaces: dict[str, Surface] = {}
-    for name, s in (raw.get("surfaces") or {}).items():
-        try:
-            surfaces[str(name)] = Surface(
-                str(name), str(s["body"]), _box(s["box"], f"{ctx}: surfaces.{name}.box"),
-                float(s["height"]), tuple(str(a) for a in s.get("aliases") or ()),
-            )
-        except (KeyError, TypeError) as exc:
-            raise WorldManifestError(f"{ctx}: surfaces.{name} needs body, box, height ({exc})") from exc
+    for name, value in _mapping(raw.get('surfaces', {}), f'{ctx}: surfaces').items():
+        key = f'{ctx}: surfaces.{name}'
+        row = _mapping(value, key, ('body', 'box', 'height', 'aliases'), ('body', 'box', 'height'))
+        surfaces[name] = Surface(name, _text(row['body'], f'{key}.body'), _box(row['box'], f'{key}.box'),
+                                 _number(row['height'], f'{key}.height'), _words(row.get('aliases', []), f'{key}.aliases'))
     pickables: dict[str, Pickable] = {}
-    for name, p in (raw.get("pickables") or {}).items():
-        try:
-            aliases = tuple(str(a) for a in p["aliases"])
-            pk = Pickable(str(name), str(p["category"]), str(p["colour"]), aliases, str(p.get("surface", "")))
-        except (KeyError, TypeError) as exc:
-            raise WorldManifestError(
-                f"{ctx}: pickables.{name} needs category, colour, aliases ({exc})") from exc
+    for name, value in _mapping(raw.get('pickables', {}), f'{ctx}: pickables').items():
+        key = f'{ctx}: pickables.{name}'
+        row = _mapping(value, key, ('category', 'colour', 'aliases', 'surface'), ('category', 'colour', 'aliases'))
+        pk = Pickable(name, _text(row['category'], f'{key}.category'), _text(row['colour'], f'{key}.colour'),
+                      _words(row['aliases'], f'{key}.aliases'), _text(row['surface'], f'{key}.surface') if 'surface' in row else '')
         if pk.surface and pk.surface not in surfaces:
-            raise WorldManifestError(
-                f"{ctx}: pickables.{name}.surface={pk.surface!r}; surfaces: {sorted(surfaces)}")
-        pickables[pk.name] = pk
-    vocab = raw.get("vocab") or {}
-    user = raw.get("user")
-    spawn = raw.get("spawn")
-    try:
-        spawn = None if spawn is None else (*_xy(spawn["xy"], f"{ctx}: spawn.xy"), float(spawn["z"]),
-                                            float(spawn.get("heading", 0.0)))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise WorldManifestError(f"{ctx}: spawn needs xy, z and an optional heading ({exc})") from exc
-    rooms = {str(k): _xy(v, f"{ctx}: rooms.{k}") for k, v in (raw.get("rooms") or {}).items()}
-    room_aliases = {str(k): tuple(str(w) for w in v) for k, v in (vocab.get("rooms") or {}).items()}
-    if set(room_aliases) - set(rooms):
-        raise WorldManifestError(f"{ctx}: vocab.rooms names {sorted(set(room_aliases) - set(rooms))}; "
-                                 f"rooms: {sorted(rooms)}")
+            raise WorldManifestError(f"{key}.surface={pk.surface!r}; valid: {sorted(surfaces)}")
+        pickables[name] = pk
+    vocab = _mapping(raw.get('vocab', {}), f'{ctx}: vocab', ('rooms', 'colours', 'categories', 'scenery'))
+    words = {kind: {name: _words(value, f'{ctx}: vocab.{kind}.{name}')
+                    for name, value in _mapping(vocab.get(kind, {}), f'{ctx}: vocab.{kind}').items()}
+             for kind in ('rooms', 'colours', 'categories')}
+    rooms = {name: _xy(value, f'{ctx}: rooms.{name}') for name, value in _mapping(raw.get('rooms', {}), f'{ctx}: rooms').items()}
+    if set(words['rooms']) - set(rooms):
+        raise WorldManifestError(f"{ctx}: vocab.rooms names {sorted(set(words['rooms']) - set(rooms))}; valid: {sorted(rooms)}")
+    user = raw.get('user')
+    if user is not None:
+        user = _xy(_mapping(user, f'{ctx}: user', ('xy',), ('xy',))['xy'], f'{ctx}: user.xy')
     return WorldManifest(
-        id=world_id,
-        rooms=rooms,
-        boxes={str(k): _box(v, f"{ctx}: boxes.{k}") for k, v in (raw.get("boxes") or {}).items()},
-        doors={str(k): _xy(v, f"{ctx}: doors.{k}") for k, v in (raw.get("doors") or {}).items()},
-        surfaces=surfaces,
-        pickables=pickables,
-        colours={str(k): tuple(str(w) for w in v) for k, v in (vocab.get("colours") or {}).items()},
-        categories={str(k): tuple(str(w) for w in v) for k, v in (vocab.get("categories") or {}).items()},
-        user=_xy(user["xy"], f"{ctx}: user.xy") if user else None,
-        path=path,
-        scenery=tuple(str(w) for w in (vocab.get("scenery") or ())),
-        scene=path.parent / str(raw["scene"]) if raw.get("scene") else None,
-        spawn=spawn,
-        room_aliases=room_aliases,
+        id=world_id, rooms=rooms,
+        boxes={name: _box(value, f'{ctx}: boxes.{name}') for name, value in _mapping(raw.get('boxes', {}), f'{ctx}: boxes').items()},
+        doors={name: _xy(value, f'{ctx}: doors.{name}') for name, value in _mapping(raw.get('doors', {}), f'{ctx}: doors').items()},
+        surfaces=surfaces, pickables=pickables, colours=words['colours'], categories=words['categories'],
+        user=user, path=path, scenery=_words(vocab.get('scenery', []), f'{ctx}: vocab.scenery'),
+        scene=path.parent / scene, spawn=spawn, room_aliases=words['rooms'],
     )
 
 
@@ -280,9 +309,13 @@ def world_of(agent: Any) -> WorldManifest | None:
 
 @functools.lru_cache(maxsize=8)
 def load_world(world_id: str) -> WorldManifest:
-    """Load ``config/worlds/<world_id>.yaml``; unknown id fails loud with the valid set."""
-    path = WORLDS_DIR / f"{world_id}.yaml"
-    if not path.is_file():
-        valid = sorted(p.stem for p in WORLDS_DIR.glob("*.yaml"))
+    """Load ``worlds/<world_id>/world.yaml``; unknown id fails loud with the valid set."""
+    valid = sorted(p.parent.name for p in WORLDS_DIR.glob("*/world.yaml"))
+    path = WORLDS_DIR / world_id / "world.yaml"
+    if world_id not in valid:
         raise WorldManifestError(f"unknown world {world_id!r}; valid: {valid}")
-    return parse_world(yaml.safe_load(path.read_text()) or {}, world_id, path)
+    try:
+        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml_loader(path, WorldManifestError))
+    except (OSError, yaml.YAMLError) as exc:
+        raise WorldManifestError(f"{path}: unreadable ({exc})") from exc
+    return parse_world(raw, world_id, path)

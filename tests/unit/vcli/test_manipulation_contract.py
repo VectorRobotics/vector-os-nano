@@ -103,7 +103,7 @@ def test_without_a_manifest_nothing_changes() -> None:
     assert OUTSIDE in turn_reject_reason(_one_row(t.goal_tree.goal, "holding_object('red can')", "apartment"), APT)
 
 
-WORLDS = sorted(p.stem for p in WORLDS_DIR.glob("*.yaml"))
+WORLDS = sorted(p.parent.name for p in WORLDS_DIR.glob("*/world.yaml"))
 
 
 def _can_be_met(item: str, world) -> bool:

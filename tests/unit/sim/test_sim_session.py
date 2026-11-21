@@ -85,17 +85,17 @@ def test_corrupt_manifest_is_error_naming_the_key(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(emb_config, "_EMBODIMENTS_DIR", tmp_path)
     res = SimStartTool().execute({"embodiment": "broken"}, _ctx({}))
     assert res.is_error
-    assert "spawn" in res.content and "Started" not in res.content
+    assert "unknown key 'driver'" in res.content and "Started" not in res.content
 
 
 def test_unknown_driver_is_error_naming_the_field(tmp_path, monkeypatch) -> None:
     src = (Path(emb_config.__file__).parent / "go2" / "robot.yaml").read_text()
     (tmp_path / "odd").mkdir()
     (tmp_path / "odd" / "robot.yaml").write_text(
-        src.replace("id: go2\n", "id: odd\n").replace("driver: legged", "driver: warp_drive")
+        src.replace("id: go2\n", "id: odd\n") + "\ndriver: warp_drive\n"
     )
     monkeypatch.setattr(emb_config, "_EMBODIMENTS_DIR", tmp_path)
-    with pytest.raises(SimStartError, match="driver='warp_drive'"):
+    with pytest.raises(SimStartError, match="unknown key 'driver'"):
         SimSession.start(SimSpec("odd", gui=False))
 
 
@@ -205,7 +205,7 @@ def test_failed_start_tears_down_what_it_built(monkeypatch) -> None:
     closed: list[str] = []
     hooks = _Atexit()
     monkeypatch.setattr(sess, "atexit", hooks)
-    monkeypatch.setitem(sess._BUILDERS, "legged", _fake_builder(closed, fail=True))
+    monkeypatch.setattr(sess, "_build_legged", _fake_builder(closed, fail=True))
     with pytest.raises(SimStartError, match="boom"):
         SimSession.start(SimSpec("go2", gui=False))
     assert closed == ["closed"] and not sess._LIVE and not hooks.hooks
@@ -215,7 +215,7 @@ def test_stop_is_idempotent_and_unregisters_atexit(monkeypatch) -> None:
     closed: list[str] = []
     hooks = _Atexit()
     monkeypatch.setattr(sess, "atexit", hooks)
-    monkeypatch.setitem(sess._BUILDERS, "legged", _fake_builder(closed))
+    monkeypatch.setattr(sess, "_build_legged", _fake_builder(closed))
     s = SimSession.start(SimSpec("go2", gui=False))
     assert s in sess._LIVE and hooks.hooks == [s.stop]
     assert "device closed" in s.stop()
@@ -457,18 +457,19 @@ def test_the_session_dumps_ground_truth_at_turn_start_and_end(tmp_path, monkeypa
 
     mj = pytest.importorskip("mujoco")
     from tests.harness import gt_audit
-    from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
+    from vector_os_nano.sim.scene.compose import compose
+    from vector_os_nano.schemas.world import load_world
     from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld
     from vector_os_nano.sim.runtime import SimRuntime
-    from vector_os_nano.sim.scene import compiled_scene
 
-    world = MuJoCoWorld(compiled_scene(_build_room_scene_xml(with_arm=True), robot_root="base_link"))
+    cfg = registry.load("go2_piper")
+    world = MuJoCoWorld(compose(cfg, load_world(cfg.world)))
     m = world.model
     rt = SimRuntime(world, threaded=False, paced=False, name="dump_test")
     try:
         rt.call(lambda w: mj.mj_forward(w.model, w.data))
         s = SimSession(SimSpec("go2_piper", gui=False), registry.load("go2_piper"))
-        s.agent = SimpleNamespace(_base=SimpleNamespace(), _arm=None, _config={})
+        s.agent = SimpleNamespace(_base=SimpleNamespace(), _arm=None, _config={}, _services={})
         s.runtime = rt  # what a builder hands the session; the agent never carries it
         s._bind_ground_truth()
         assert s.agent._config["world"] == "apartment"  # skills resolve names by world id

@@ -507,12 +507,12 @@ def _build_legged(session: SimSession, vlm_api_key: str | None) -> Any:
     of its manifest."""
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.scene_graph import SceneGraph
-    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.sim.scene.compose import compose
     from vector_os_nano.schemas.world import load_world
 
     cfg, spec = session.config, session.spec
     world = load_world(cfg.world)
-    rt, base, lidar = legged_body(cfg, room_scene(cfg, world), gui=spec.gui)
+    rt, base, lidar = legged_body(cfg, compose(cfg, world), gui=spec.gui)
     session.own(f"{cfg.id} runtime closed", rt.close)
     session.own("base disconnected", base.disconnect)
     rt.start()
@@ -585,7 +585,7 @@ def _build_generic(session: SimSession, vlm_api_key: str | None) -> Any:
     world = load_world(cfg.world)
     if world.scene is None or world.spawn is None:
         raise SimStartError("bad world manifest", f"{world.path}: a fixed body needs the world's scene and spawn")
-    scene = compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+    scene = compose(cfg, world)
     sim = backends.get("mujoco").load(scene, gui=session.spec.gui)
     rt = SimRuntime(sim, substeps=max(1, round(_TICK_S / scene.timestep)), threaded=not sim.caller_thread_only,
                     name=cfg.id)

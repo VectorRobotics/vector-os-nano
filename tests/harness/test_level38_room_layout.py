@@ -4,7 +4,7 @@
 """L38: Room layout loading + position-based room detection (sim mode).
 
 Tests that SceneGraph.load_layout() properly seeds rooms and doors from
-config/worlds/apartment.yaml, enabling instant nearest_room() without VLM.
+worlds/apartment/world.yaml, enabling instant nearest_room() without VLM.
 """
 from __future__ import annotations
 
@@ -37,17 +37,17 @@ def layout_file(tmp_path):
 
 @pytest.fixture
 def full_layout_file(tmp_path):
-    """Full 8-room layout matching go2_room.xml."""
+    """Full 8-room layout matching the apartment scene."""
     src = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-        "config", "worlds", "apartment.yaml",
+        "vector_os_nano", "worlds", "apartment", "world.yaml",
     )
     if os.path.isfile(src):
         import shutil
         dst = tmp_path / "room_layout.yaml"
         shutil.copy(src, dst)
         return str(dst)
-    pytest.skip("config/worlds/apartment.yaml not found")
+    pytest.skip("worlds/apartment/world.yaml not found")
 
 
 class TestLoadLayout:
@@ -142,20 +142,20 @@ class TestExploreWithLayout:
 
 
 class TestConfigFileExists:
-    """Verify config/worlds/apartment.yaml is present and valid."""
+    """Verify worlds/apartment/world.yaml is present and valid."""
 
     def test_config_exists(self):
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "config", "worlds", "apartment.yaml",
+            "vector_os_nano", "worlds", "apartment", "world.yaml",
         )
-        assert os.path.isfile(path), "config/worlds/apartment.yaml must exist for sim"
+        assert os.path.isfile(path), "worlds/apartment/world.yaml must exist for sim"
 
     def test_config_has_8_rooms(self):
         import yaml
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "config", "worlds", "apartment.yaml",
+            "vector_os_nano", "worlds", "apartment", "world.yaml",
         )
         with open(path) as f:
             data = yaml.safe_load(f)
@@ -165,7 +165,7 @@ class TestConfigFileExists:
         import yaml
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "config", "worlds", "apartment.yaml",
+            "vector_os_nano", "worlds", "apartment", "world.yaml",
         )
         with open(path) as f:
             data = yaml.safe_load(f)

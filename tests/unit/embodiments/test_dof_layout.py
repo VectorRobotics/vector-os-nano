@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from vector_os_nano.embodiments import registry
-from vector_os_nano.hardware.sim.scene_builder import room_scene
+from vector_os_nano.sim.scene.compose import compose
 from vector_os_nano.sim.scene import reader
 from vector_os_nano.schemas.world import load_world
 
@@ -19,7 +19,7 @@ from vector_os_nano.schemas.world import load_world
 @pytest.fixture(params=["go2", "g1"])
 def body(request, g1_assets):
     cfg = registry.load(request.param)
-    return cfg, room_scene(cfg, load_world(cfg.world))
+    return cfg, compose(cfg, load_world(cfg.world))
 
 
 def test_free_and_joint_addresses_are_canonical(body):

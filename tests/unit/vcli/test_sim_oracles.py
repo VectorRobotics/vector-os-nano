@@ -21,7 +21,7 @@ mj = pytest.importorskip("mujoco")
 from vector_os_nano.core.scene_graph import SceneGraph  # noqa: E402
 from vector_os_nano.core.scene_nodes import ObjectNode  # noqa: E402
 from vector_os_nano.embodiments import registry  # noqa: E402
-from vector_os_nano.hardware.sim.scene_builder import room_scene  # noqa: E402
+from vector_os_nano.sim.scene.compose import compose  # noqa: E402
 from vector_os_nano.sim.backends.mujoco.world import MuJoCoWorld  # noqa: E402
 from vector_os_nano.sim.ground_truth import GroundTruth  # noqa: E402
 from vector_os_nano.sim.runtime import SimRuntime  # noqa: E402
@@ -38,7 +38,7 @@ class Rig:
     """The compiled scene + a kinematic pin for the robot's root, legs, arm and jaws."""
 
     def __init__(self) -> None:
-        world = MuJoCoWorld(room_scene(registry.load("go2_piper"), load_world("apartment")))
+        world = MuJoCoWorld(compose(registry.load("go2_piper"), load_world("apartment")))
         m = self.m = world.model
         sc = world.scene
         self.root_q, self.root_qd = sc.free_q(sc.robot_root).start, sc.free_qd(sc.robot_root).start

@@ -19,7 +19,7 @@ pytestmark = pytest.mark.sim
 
 def test_fixed_piper_grasp_from_rgbd_on_each_backend(backend, load):
     cfg, world = registry.load("piper"), load_world("workbench")
-    scene = compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+    scene = compose(cfg, world)
     sim = load(backend, scene)
     rt = SimRuntime(sim, substeps=5, threaded=False, paced=False, name="grasp-conformance")
     try:

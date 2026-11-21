@@ -1,5 +1,8 @@
-# World manifest — the go2 apartment (vector_os_nano/hardware/sim/go2_room.xml).
-# Loaded by vector_os_nano/vcli/worlds/world_manifest.py. Every body that stands in
+schema: 1
+scene: scene.xml
+spawn: {xy: [10.0, 3.0], z: 0.0, heading: 0.0}
+# World manifest — the go2 apartment (vector_os_nano/worlds/apartment/scene.xml).
+# Loaded by vector_os_nano/schemas/world.py. Every body that stands in
 # this house (go2, go2_piper, g1: robot.yaml `world: apartment`) shares it.
 #
 # SIM ONLY — on a real robot rooms come from mapping, objects from perception.
@@ -59,7 +62,7 @@ surfaces:
                   aliases: [console table, 玄关桌]}
 
 # Graspable objects: MJCF body name -> what NL calls it. The scene build adds one
-# inactive grasp weld per entry (hardware/sim/scene_builder.room_scene), so a pickable is
+# inactive grasp weld per entry (sim.scene.compose.compose), so a pickable is
 # added by adding its MJCF body + an entry here.
 pickables:
   pickable_bottle_green:
@@ -129,4 +132,3 @@ vocab:
 # Where "bring it to me" delivers: a free hallway floor point west of the spawn.
 user:
   xy: [8.0, 3.0]
-  room: hallway

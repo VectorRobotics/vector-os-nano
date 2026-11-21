@@ -194,13 +194,13 @@ def test_contact_only_grip_has_no_constraint_and_notices_lost_contact(body):
 
 
 def test_contact_only_scene_does_not_generate_grasp_welds():
-    from tests.conformance.conftest import SCENES
+    from tests.conformance.conftest import battery_world
     import mujoco as mj
 
     cfg = registry.load('piper')
     cfg = dataclasses.replace(cfg, arm=dataclasses.replace(
         cfg.arm, gripper=dataclasses.replace(cfg.arm.gripper, assist=False)))
-    scene = compose(SCENES / 'battery.xml', cfg, spawn=(0.,0.,.2,0.), pickables=('box','cylinder'))
+    scene = compose(cfg, battery_world())
     assert scene.grasp_pairs == ()
     assert not np.any(scene.model.eq_type == int(mj.mjtEq.mjEQ_WELD))
 
@@ -305,11 +305,11 @@ def test_a_variant_arm_is_data_alone(tmp_path, backend, load):
     raw.update(id="so101_variant", model={"path": str(model), "root_body": "base_link"})
     raw["arm"]["home"] = [0.5, -0.8, 0.4, 0.9, 0.0]
     cfg = parse_embodiment_config(raw, "so101_variant/robot.yaml")
-    world_yaml = pkg.parent / "config" / "worlds" / "tabletop.yaml"
+    world_yaml = pkg / "worlds" / "tabletop" / "world.yaml"
     wraw = yaml.safe_load(world_yaml.read_text())
     wraw["spawn"]["z"] = 0.10  # a riser under the base
     world = parse_world(wraw, "tabletop", world_yaml)
-    scene = compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+    scene = compose(cfg, world)
     assert scene.model.jnt_range[scene.joint("shoulder_pan")].tolist() == [-1.0, 1.0]
 
     rt = SimRuntime(load(backend, scene), substeps=5, threaded=False, paced=False, name="variant")

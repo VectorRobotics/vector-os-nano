@@ -3,7 +3,7 @@
 
 """One zh/en object vocabulary (nouns + colours), built from the world manifests.
 
-Every ``config/worlds/*.yaml`` contributes its ``vocab`` colour and category words,
+Every ``worlds/*/world.yaml`` contributes its ``vocab`` colour and category words,
 plus each pickable alias that names its object without a category word ("香蕉" ->
 banana). The grounding-dino prompt and colour parsing read this ONE table, so
 "绿色的瓶子", "green bottle" and "绿瓶" mean the same thing everywhere. It decides no
@@ -89,12 +89,12 @@ class Vocab:
 
 
 def _world_ids() -> list[str]:
-    return sorted(p.stem for p in WORLDS_DIR.glob("*.yaml"))
+    return sorted(p.parent.name for p in WORLDS_DIR.glob("*/world.yaml"))
 
 
 @functools.lru_cache(maxsize=1)
 def vocab() -> Vocab:
-    """The vocabulary of every world manifest in ``config/worlds`` (their colour and
+    """The vocabulary of every world manifest in ``worlds/*/world.yaml`` (their colour and
     category words and aliases)."""
     colours: dict[str, str] = {}
     nouns: dict[str, str] = {}

@@ -27,7 +27,7 @@ from vector_os_nano.schemas.world import WORLDS_DIR, load_world
 
 BASE = frozenset({"at_position", "facing", "in_room", "near_object"})
 ARM = frozenset({"holding_object", "kept_holding", "released", "object_at", "object_on", "lifted"})
-WORLDS = sorted(p.stem for p in WORLDS_DIR.glob("*.yaml"))
+WORLDS = sorted(p.parent.name for p in WORLDS_DIR.glob("*/world.yaml"))
 
 
 def _c(goal: str, names=BASE | ARM, world="apartment", held=()) -> tuple[tuple[str, ...], tuple[str, ...]]:

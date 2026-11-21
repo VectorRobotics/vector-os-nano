@@ -1,11 +1,12 @@
+schema: 1
 # World manifest — the workbench: a fixed arm on a pedestal at the back edge of a bench,
 # a red box and a blue cylinder on the bench top. Loaded by
-# vector_os_nano/vcli/worlds/world_manifest.py for robot.yaml `world: workbench`.
+# vector_os_nano/schemas/world.py for robot.yaml `world: workbench`.
 #
 # scene: the robot-free MJCF beside this file; spawn: where a body without a base is
 # mounted (x, y, z, heading): the pedestal top.
 
-scene: workbench.xml
+scene: scene.xml
 spawn: {xy: [0.0, 0.0], z: 0.50, heading: 0.0}
 
 rooms: {}

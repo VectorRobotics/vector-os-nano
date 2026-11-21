@@ -57,7 +57,7 @@ def test_e15_a_pick_of_the_wrong_object_is_never_a_pick_of_the_mug(verify: str) 
     _graded_nothing_happened(r, _MUG)
 
 
-# The kitchen-hallway door is (13.5, 3.0) (config/worlds/apartment.yaml); the kitchen floor
+# The kitchen-hallway door is (13.5, 3.0) (worlds/apartment/world.yaml); the kitchen floor
 # starts at x = 14.0. Lockstep, the base stops at (13.27, 2.94), outside the kitchen and
 # 0.78 m from the point it verifies: beyond the 0.5 m arrival tolerance, within twice it.
 _DOOR, _INSIDE = (13.5, 3.0), (14.05, 3.0)

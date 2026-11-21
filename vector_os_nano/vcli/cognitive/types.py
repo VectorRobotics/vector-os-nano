@@ -107,7 +107,7 @@ class ExecutionTrace:
     intents: tuple[str, ...] = ()
     scene: str = ""  # the sim the turn ran in ("go2_piper@go2_room"), display only
     # The world manifest id the contract bound its object / surface through
-    # (``config/worlds/<id>.yaml``); the spine recompiles the contract against it.
+    # (``worlds/<id>/world.yaml``); the spine recompiles the contract against it.
     world: str = ""
     # The objects the gripper held at turn start (the sim's grasp attachments, ground
     # truth): what a goal naming its object only as 'it' binds (``object_goal._sentence``).

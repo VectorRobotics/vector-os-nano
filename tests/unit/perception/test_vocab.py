@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-"""The shared zh/en object vocabulary (perception/vocab.py, from config/worlds/*.yaml)."""
+"""The shared zh/en object vocabulary (perception/vocab.py, from worlds/*/world.yaml)."""
 from __future__ import annotations
 
 import pytest
@@ -32,7 +32,7 @@ def test_colour_words_match_on_word_boundaries() -> None:
 def test_every_name_of_every_world_object_has_an_english_phrase() -> None:
     """A query the grasp hands the detector can always be put into English (盘子 was
     routed to the detector, which had no English for it)."""
-    for w in sorted(p.stem for p in WORLDS_DIR.glob("*.yaml")):
+    for w in sorted(p.parent.name for p in WORLDS_DIR.glob("*/world.yaml")):
         for pk in load_world(w).pickables.values():
             for name in (*pk.aliases, pk.english):
                 assert vocab().english(name), (w, name)

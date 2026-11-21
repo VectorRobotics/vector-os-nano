@@ -20,7 +20,7 @@ from vector_os_nano.schemas.world import WORLDS_DIR, load_world
 
 G, B, R = "pickable_bottle_green", "pickable_bottle_blue", "pickable_can_red"
 Y, O, P = "pickable_cup_yellow", "pickable_box_orange", "pickable_box_purple"
-WORLDS = sorted(p.stem for p in WORLDS_DIR.glob("*.yaml"))
+WORLDS = sorted(p.parent.name for p in WORLDS_DIR.glob("*/world.yaml"))
 
 _APARTMENT = [
     # colour with category (no alias)

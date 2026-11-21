@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
 
-"""Tests for the unified MjSpec.attach scene builder (scene_builder.py).
+"""Tests for the shared world/robot scene composition.
 
 Proves the attach + compile() path is BYTE-IDENTICAL to the legacy go2 include
 build (and g1's existing attach build) for all three cases, and that the
@@ -10,9 +10,9 @@ serialized scene file reloads (the MuJoCo 3.9 anonymous-default repair).
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -21,13 +21,15 @@ pytest.importorskip("mujoco", reason="mujoco not installed")
 import mujoco as mj  # noqa: E402
 import numpy as np  # noqa: E402
 
-from vector_os_nano.hardware.sim.scene_builder import build_room_scene  # noqa: E402
-from vector_os_nano.sim.scene.compose import normalize_attach_defaults  # noqa: E402
+from vector_os_nano.sim.scene.compose import compose  # noqa: E402
+from vector_os_nano.sim.scene.compose import normalize_attach_defaults
+from vector_os_nano.embodiments import registry
+from vector_os_nano.schemas.world import load_world  # noqa: E402
 
 _SIM = Path("vector_os_nano/hardware/sim").resolve()
 _MJCF = _SIM / "mjcf" / "go2"
-_ROOM = _SIM / "go2_room.xml"
-_GO2_ASSETS = (_MJCF / "assets").resolve()
+_ROOM = _SIM.parents[1] / "worlds" / "apartment" / "scene.xml"
+_GO2_ASSETS = _ROOM.parent / "meshes"
 _GO2_PIPER = _SIM / "mjcf" / "go2_piper" / "go2_piper.xml"
 _GO2_BARE = _MJCF / "go2.xml"
 
@@ -46,28 +48,36 @@ _WELDS_TXT = (
 
 
 # ---------------------------------------------------------------------------
-# Legacy (current) builders — verbatim behaviour, for the equivalence baseline
+# Independent include/attach reference builds for the equivalence baseline
 # ---------------------------------------------------------------------------
 
 def _legacy_go2(with_arm: bool) -> mj.MjModel:
     go2_xml = _GO2_PIPER if with_arm else _GO2_BARE
-    scene_name = "scene_room_piper.xml" if with_arm else "scene_room.xml"
-    xml = _ROOM.read_text()
-    xml = xml.replace("GO2_MODEL_PATH", str(go2_xml))
-    xml = xml.replace("GO2_ASSETS_DIR", str(_GO2_ASSETS))
-    xml = xml.replace("GRASP_WELDS", _WELDS_TXT if with_arm else "")
-    out = _MJCF / scene_name
-    out.write_text(xml)
-    return mj.MjModel.from_xml_path(str(out))
+    xml = _ROOM.read_text().replace('meshdir="meshes"', f'meshdir="{_GO2_ASSETS}"')
+    xml = xml.replace('texturedir="meshes"', f'texturedir="{_GO2_ASSETS}"')
+    # The included robot's compiler meshdir applies to the whole document.
+    xml = xml.replace('file="furniture/', f'file="{_GO2_ASSETS}/furniture/')
+    with tempfile.TemporaryDirectory() as folder:
+        robot = ET.parse(go2_xml).getroot()
+        compiler = robot.find('compiler')
+        for item in robot.findall('./asset/*[@file]'):
+            directory = compiler.get('meshdir' if item.tag == 'mesh' else 'texturedir', '')
+            item.set('file', str((go2_xml.parent / directory / item.get('file')).resolve()))
+        compiler.set('meshdir', '')
+        compiler.set('texturedir', '')
+        model_path = Path(folder) / 'robot.xml'
+        model_path.write_text(ET.tostring(robot, encoding='unicode'))
+        xml = xml.replace('</mujoco>', f'<include file="{model_path}"/>' + (_WELDS_TXT if with_arm else '') + '</mujoco>')
+        out = Path(folder) / 'scene.xml'
+        out.write_text(xml)
+        return mj.MjModel.from_xml_path(str(out))
 
 
 def _legacy_g1(g1_xml: Path, g1_meshes: Path) -> mj.MjModel:
     import os
 
-    xml = _ROOM.read_text()
-    xml = xml.replace('<include file="GO2_MODEL_PATH"/>', "<!-- no robot (g1 scene) -->")
-    xml = xml.replace("GO2_ASSETS_DIR", str(_GO2_ASSETS))
-    xml = xml.replace("GRASP_WELDS", "")
+    xml = _ROOM.read_text().replace('meshdir="meshes"', f'meshdir="{_GO2_ASSETS}"')
+    xml = xml.replace('texturedir="meshes"', f'texturedir="{_GO2_ASSETS}"')
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".xml", delete=False, dir="/tmp", prefix="g1_room_legacy_"
     ) as fh:
@@ -83,7 +93,7 @@ def _legacy_g1(g1_xml: Path, g1_meshes: Path) -> mj.MjModel:
         pelvis = next(b for b in g1_spec.bodies if b.name == "pelvis")
         pelvis.add_camera(name="head_rgb", pos=[0.04, 0.0, 0.42], xyaxes=[0, -1, 0, 0, 0, 1])
         frame = room_spec.worldbody.add_frame(pos=[10.0, 3.0, 0.0])
-        room_spec.attach(g1_spec, prefix="g1_", frame=frame)
+        room_spec.attach(g1_spec, prefix="", frame=frame)
         room_spec.compile()
         return mj.MjModel.from_xml_string(room_spec.to_xml())
     finally:
@@ -182,16 +192,10 @@ def test_normalize_attach_defaults_hoists_anonymous():
 
 def test_build_room_scene_go2_arm_byte_identical():
     legacy = _legacy_go2(with_arm=True)
-    model, path = build_room_scene(
-        robot_model_path=_GO2_PIPER,
-        room_template_path=_ROOM,
-        room_assets_dir=_GO2_ASSETS,
-        attach_prefix="",
-        spawn_xy=[10.0, 3.0],
-        welds=_WELDS,
-        robot_meshes_dir=None,  # go2_piper.xml's ../go2/assets paths resolve from its own dir, as in production
-    )
-    assert path is None
+    cfg = replace(registry.load("go2_piper"), sensors=())
+    world = load_world("apartment")
+    world = replace(world, pickables={child: world.pickables[child] for _, _, child in _WELDS})
+    model = compose(cfg, world).model
     _assert_byte_identical(legacy, model)
     _assert_foot_class(model)
     # Arm-specific bodies/sites present.
@@ -202,15 +206,8 @@ def test_build_room_scene_go2_arm_byte_identical():
 
 def test_build_room_scene_bare_go2_byte_identical():
     legacy = _legacy_go2(with_arm=False)
-    model, _ = build_room_scene(
-        robot_model_path=_GO2_BARE,
-        room_template_path=_ROOM,
-        room_assets_dir=_GO2_ASSETS,
-        attach_prefix="",
-        spawn_xy=[10.0, 3.0],
-        welds=(),
-        robot_meshes_dir=_GO2_ASSETS,
-    )
+    cfg = replace(registry.load("go2"), sensors=())
+    model = compose(cfg, load_world("apartment")).model
     _assert_byte_identical(legacy, model)
     _assert_foot_class(model)
     assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "base_link") >= 0
@@ -219,21 +216,9 @@ def test_build_room_scene_bare_go2_byte_identical():
 def test_build_room_scene_g1_byte_identical(g1_assets):
     g1_xml, g1_meshes = g1_assets / "g1_12dof.xml", g1_assets / "meshes"
     legacy = _legacy_g1(g1_xml, g1_meshes)
-    model, _ = build_room_scene(
-        robot_model_path=g1_xml,
-        room_template_path=_ROOM,
-        room_assets_dir=_GO2_ASSETS,
-        attach_prefix="g1_",
-        spawn_xy=[10.0, 3.0],
-        welds=(),
-        robot_meshes_dir=g1_meshes,
-        robot=SimpleNamespace(sensors=[SimpleNamespace(
-            body="pelvis", name="head_rgb", role="camera",
-            pos=[0.04, 0.0, 0.42], quat=[0.5, 0.5, -0.5, -0.5], fovy=45,
-        )]),
-    )
+    model = compose(registry.load("g1"), load_world("apartment")).model
     _assert_byte_identical(legacy, model)
-    assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "g1_pelvis") >= 0
+    assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "pelvis") >= 0
 
 
 # ---------------------------------------------------------------------------
@@ -242,11 +227,11 @@ def test_build_room_scene_g1_byte_identical(g1_assets):
 
 def test_go2_builder_file_reloads():
     from vector_os_nano.embodiments import registry
-    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.sim.scene.compose import compose
     from vector_os_nano.schemas.world import load_world
 
     for with_arm in (True, False):
-        path = room_scene(registry.load("go2_piper" if with_arm else "go2"), load_world("apartment")).xml_path
+        path = compose(registry.load("go2_piper" if with_arm else "go2"), load_world("apartment")).xml_path
         m = mj.MjModel.from_xml_path(str(path))  # must NOT raise 'empty class name'
         # Class defaults survive the round-trip.
         fl_hip = m.jnt_range[mj.mj_name2id(m, mj.mjtObj.mjOBJ_JOINT, "FL_hip_joint")]

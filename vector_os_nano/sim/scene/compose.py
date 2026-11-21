@@ -21,6 +21,8 @@ from typing import Any, Sequence
 import mujoco as mj
 
 from vector_os_nano.embodiments.assets import model_root
+from vector_os_nano.embodiments.config import EmbodimentConfig
+from vector_os_nano.schemas.world import WorldManifest
 from vector_os_nano.interfaces.physics import CompiledScene
 from vector_os_nano.schemas import paths
 from vector_os_nano.sim.scene.compiled import compiled_scene
@@ -118,25 +120,26 @@ def place_cameras(world: Any, model: Any, robot: Any) -> None:
             body.add_camera(name=cam.name, pos=list(cam.pos), quat=list(cam.quat), fovy=cam.fovy)
 
 
-def compose(world_scene: Path | str, robot: Any, *, spawn: Sequence[float],
-            pickables: Sequence[str] = (), timestep: float | None = None) -> CompiledScene:
-    """*robot* (an EmbodimentConfig) mounted in *world_scene* at *spawn* (x, y, z,
-    heading), its placed cameras added, one inactive grasp weld per gripper weld body
-    and pickable; compiled with its root body as the scene's robot root."""
-    world = robot_spec(world_scene)
+def compose(robot: EmbodimentConfig, manifest: WorldManifest) -> CompiledScene:
+    """Compile one world and one robot using the world's spawn and the robot's sensors."""
+    if manifest.scene is None or manifest.spawn is None:
+        raise ValueError(f"{manifest.path}: scene and spawn are required")
+    world = robot_spec(manifest.scene)
     model = robot_spec(*model_files(robot))
     place_cameras(world, model, robot)
-    x, y, z, heading = (float(v) for v in spawn)
+    x, y, z, heading = (float(v) for v in manifest.spawn)
     frame = world.worldbody.add_frame(pos=[x, y, z], quat=[math.cos(heading / 2), 0.0, 0.0, math.sin(heading / 2)])
     world.attach(model, prefix="", frame=frame)
     gripper = robot.arm.gripper if robot.arm is not None else None
-    pairs = [(gripper.weld_body, p) for p in pickables] if gripper is not None and gripper.assist else []
+    pairs = [(gripper.weld_body, p) for p in manifest.pickables] if gripper is not None and gripper.assist else []
     for parent, child in pairs:
         eq = world.add_equality()
+        eq.name = f"grasp_{child}"
         eq.type, eq.objtype = mj.mjtEq.mjEQ_WELD, mj.mjtObj.mjOBJ_BODY
         eq.name1, eq.name2, eq.active = parent, child, False
     world.compile()
-    path = write_scene(f"scene_{robot.id}_{Path(world_scene).stem}", normalize_attach_defaults(world.to_xml()))
+    path = write_scene(f"scene_{robot.id}_{manifest.id}", normalize_attach_defaults(world.to_xml()))
+    timestep = robot.base.policy.timestep if robot.base is not None else None
     return compiled_scene(path, robot_root=robot.model.root_body, grasp_pairs=pairs, timestep=timestep)
 
 

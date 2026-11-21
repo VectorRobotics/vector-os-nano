@@ -4,7 +4,7 @@
 """WhereAmISkill -- report the robot's current position and room.
 
 Reads position and heading from context.base. The room is the world layout's
-floor box that contains the position (geometry, config/worlds/apartment.yaml), else
+floor box that contains the position (geometry, worlds/apartment/world.yaml), else
 the SceneGraph's nearest room. Heading labels use the world convention the
 whole agent shares: yaw 0 = +x = east, counter-clockwise positive.
 """

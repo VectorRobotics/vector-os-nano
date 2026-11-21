@@ -13,7 +13,7 @@
 #   timeout_s       one deadline for the whole session (boot, both turns, exit)
 #   not_yet         a reason: the cell is listed and reported, never run
 # The numbers are copied from the world files on purpose (the grade shares no code and no
-# data path with the product): apartment = config/worlds/apartment.yaml, go2 spawn (10, 3).
+# data path with the product): apartment = worlds/apartment/world.yaml, go2 spawn (10, 3).
 schema: 1
 cells:
   - id: go2-mujoco-room

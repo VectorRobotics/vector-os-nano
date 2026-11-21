@@ -26,6 +26,7 @@ from vector_os_nano.embodiments.config import EmbodimentConfigError, parse_embod
 from vector_os_nano.interfaces import BaseProtocol
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene.compose import compose
+from vector_os_nano.schemas.world import load_world
 from vector_os_nano.sim.session import legged_body
 
 pytestmark = pytest.mark.sim
@@ -59,8 +60,9 @@ class Body:
 
     def __init__(self, backend: str, cfg) -> None:
         x, y = cfg.spawn.xy
-        scene = compose(SCENES / "flat.xml", cfg, spawn=(x, y, 0.0, cfg.spawn.heading),
-                        timestep=cfg.base.policy.timestep)
+        world = dataclasses.replace(load_world("apartment"), scene=SCENES / "flat.xml",
+                                    spawn=(x, y, 0., cfg.spawn.heading), pickables={})
+        scene = compose(cfg, world)
         self.cfg = cfg
         self.rt, self.base, self.lidar = legged_body(cfg, scene, backend=backend)
         self.rt.start()

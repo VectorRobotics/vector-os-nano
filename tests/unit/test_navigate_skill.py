@@ -20,7 +20,7 @@ def _make_scene_graph():
     sg = SceneGraph()
     layout = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "config", "worlds", "apartment.yaml",
+        "vector_os_nano", "worlds", "apartment", "world.yaml",
     )
     if os.path.isfile(layout):
         sg.load_layout(layout)

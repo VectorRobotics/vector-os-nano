@@ -34,7 +34,7 @@ def _copy_tracked_tree(dst: Path) -> None:
             capture_output=True, check=True, timeout=30,
         ).stdout.decode().split("\0")
     except (OSError, subprocess.SubprocessError):
-        for top in ("vector_os_nano", "config"):  # the scene build reads config/worlds
+        for top in ("vector_os_nano", "config"):  # package files plus remaining runtime configuration
             shutil.copytree(_REPO_ROOT / top, dst / top)
         return
     for rel in filter(None, files):
@@ -54,14 +54,14 @@ def missing() -> list[str]:
         sys.path.insert(0, str(tmp))
         try:
             from vector_os_nano.embodiments import registry
-            from vector_os_nano.hardware.sim import scene_builder
+            from vector_os_nano.sim.scene import compose
             from vector_os_nano.schemas.world import load_world
 
-            assert Path(scene_builder.__file__).is_relative_to(tmp), scene_builder.__file__
+            assert Path(compose.__file__).is_relative_to(tmp), compose.__file__
             for body in ("go2", "go2_piper"):
                 try:
                     cfg = registry.load(body)
-                    scene_builder.room_scene(cfg, load_world(cfg.world))
+                    compose.compose(cfg, load_world(cfg.world))
                 except Exception as exc:  # noqa: BLE001
                     problems.append(f"{body} scene does not compile from a clean checkout ({exc})")
             try:

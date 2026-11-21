@@ -22,6 +22,8 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
+from vector_os_nano.schemas.strict import yaml_loader
+
 SCHEMA = 1
 
 
@@ -82,25 +84,6 @@ def _unknown(path: Path, where: str, keys: Any, valid: list[str]) -> None:
         raise UserConfigError(f"{path}: unknown key {where}{extra[0]}; valid: {', '.join(valid)}")
 
 
-def _loader(path: Path) -> Any:
-    """yaml's safe loader, refusing a repeated key: yaml keeps the LAST of two equal keys
-    silently, so a block shadowed by a later one (and a secret inside it) would never be seen."""
-    import yaml
-
-    class Strict(yaml.SafeLoader):
-        def construct_mapping(self, node: Any, deep: bool = False) -> Any:
-            seen: set[str] = set()
-            for key_node, _value in node.value:
-                key = str(getattr(key_node, "value", ""))
-                if key in seen:
-                    raise UserConfigError(f"{path}: duplicate key {key} (line {key_node.start_mark.line + 1}): "
-                                          "a key appears once")
-                seen.add(key)
-            return super().construct_mapping(node, deep)
-
-    return Strict
-
-
 def load(path: Path) -> UserConfig:
     """Parse *path*; an absent file is the empty config. Raises UserConfigError."""
     if not path.exists():
@@ -108,7 +91,7 @@ def load(path: Path) -> UserConfig:
     import yaml
 
     try:
-        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_loader(path))  # noqa: S506 - a SafeLoader
+        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml_loader(path, UserConfigError))  # noqa: S506 - a SafeLoader
     except (OSError, yaml.YAMLError) as exc:
         raise UserConfigError(f"{path}: unreadable ({type(exc).__name__}: {exc})") from exc
     if not isinstance(raw, dict):

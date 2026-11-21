@@ -24,7 +24,7 @@ from tests.harness.pty_cli import run_repl_session
 from vector_os_nano.embodiments.config import load_embodiment_config
 from vector_os_nano.sim.nav.coverage import LOG_NAME, CoverageExplorer, room_layout
 
-_ROOM_XML = Path(__file__).resolve().parents[2] / "vector_os_nano/hardware/sim/go2_room.xml"
+_ROOM_XML = Path(__file__).resolve().parents[2] / "vector_os_nano/worlds/apartment/scene.xml"
 _FLOORS = {"f_living": "living_room", "f_dining": "dining_room", "f_kitchen": "kitchen",
            "f_study": "study", "f_master": "master_bedroom", "f_guest": "guest_bedroom",
            "f_bath": "bathroom"}

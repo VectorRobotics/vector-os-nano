@@ -36,17 +36,20 @@ def stand_up(embodiment: str = "go2", *, room: bool = True, start: bool = True) 
     from vector_os_nano.embodiments import registry
     from vector_os_nano.sim.session import legged_body
 
+    from vector_os_nano.schemas.world import load_world
+
     cfg = registry.load(embodiment)
     if room:
-        from vector_os_nano.hardware.sim.scene_builder import room_scene
+        from vector_os_nano.sim.scene.compose import compose
         from vector_os_nano.schemas.world import load_world
 
-        scene = room_scene(cfg, load_world(cfg.world))
+        scene = compose(cfg, load_world(cfg.world))
     else:  # at the world origin, as the flat-ground tests were calibrated (module docstring)
         from vector_os_nano.sim.scene.compose import compose
 
         cfg = dataclasses.replace(cfg, spawn=dataclasses.replace(cfg.spawn, xy=(0.0, 0.0)))
-        scene = compose(FLAT, cfg, spawn=(0.0, 0.0, 0.0, cfg.spawn.heading), timestep=cfg.base.policy.timestep)
+        world = dataclasses.replace(load_world(cfg.world), scene=FLAT, spawn=(0., 0., 0., cfg.spawn.heading), pickables={})
+        scene = compose(cfg, world)
     rt, base, lidar = legged_body(cfg, scene)
     dog = Dog(cfg, rt, base, lidar)
     if start:

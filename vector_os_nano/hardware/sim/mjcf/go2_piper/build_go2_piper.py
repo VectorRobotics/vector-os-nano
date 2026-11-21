@@ -52,7 +52,7 @@ def main() -> None:
 
     # Rewrite mesh file paths RELATIVE to this directory (where go2_piper.xml is
     # written). Absolute paths only work on the generating machine; consumers go
-    # through scene_builder.build_room_scene, which resolves them at load time.
+    # through sim.scene.compose.compose, which resolves them at load time.
     go2_assets = Path(os.path.relpath(mjcf_root / "go2" / "assets", this_dir))
     piper_assets = Path(os.path.relpath(mjcf_root / "piper" / "assets", this_dir))
     for mesh in go2.meshes:

@@ -21,7 +21,7 @@ import pytest
 pytest.importorskip("mujoco")
 
 from vector_os_nano.embodiments import registry  # noqa: E402
-from vector_os_nano.hardware.sim.scene_builder import room_scene  # noqa: E402
+from vector_os_nano.sim.scene.compose import compose  # noqa: E402
 from vector_os_nano.sim.scene import kinematics  # noqa: E402
 from vector_os_nano.schemas.world import load_world  # noqa: E402
 
@@ -31,7 +31,7 @@ _BASE_Z = 0.30  # standing trunk height
 class _Rig:
     def __init__(self) -> None:
         cfg = registry.load("go2_piper")
-        self.scene = room_scene(cfg, load_world(cfg.world))
+        self.scene = compose(cfg, load_world(cfg.world))
         self.spec = cfg.arm
         self.kin = kinematics.ArmKinematics(self.scene, self.spec.joints, self.spec.ee_site)
         self.q = self.scene.model.qpos0.copy()

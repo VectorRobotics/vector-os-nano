@@ -9,7 +9,7 @@
 
 id: g1
 display_name: "Unitree G1 (humanoid, 12-DoF)"
-world: apartment          # config/worlds/apartment.yaml
+world: apartment          # worlds/apartment/world.yaml
 
 assets:
   # Not shipped: fetched by `python scripts/fetch_assets.py g1` into

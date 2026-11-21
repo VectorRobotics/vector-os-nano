@@ -30,7 +30,7 @@ import yaml
 from vector_os_nano.core.run_dir import run_path
 from vector_os_nano.sim.nav.follow import _AbortFlag, nav_config, turn_by
 
-_LAYOUT_YAML = Path(__file__).resolve().parents[3] / "config" / "worlds" / "apartment.yaml"
+_LAYOUT_YAML = Path(__file__).resolve().parents[2] / "worlds" / "apartment" / "world.yaml"
 LOG_NAME = "explore_coverage.jsonl"
 
 

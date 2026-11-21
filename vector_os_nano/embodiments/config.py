@@ -266,7 +266,7 @@ class EmbodimentConfig:
     arm: ArmSpec | None = None
     # The legged base the generic LeggedBase drives, or None.
     base: BaseSpec | None = None
-    # The world it stands in: config/worlds/<world>.yaml (rooms, surfaces, pickables).
+    # The world it stands in: worlds/<world>/world.yaml (rooms, surfaces, pickables).
     world: str = ""
     # Files not shipped in the package; model.path, model.meshes_dir and the policy's
     # files are then relative to the asset folder (embodiments/assets.py resolves it).

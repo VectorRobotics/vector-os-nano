@@ -3,7 +3,6 @@
 2 a simulator is imported only by its backend | embodiments/dof_layout.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/mjcf/go2_piper/build_go2_piper.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/mujoco_g1.py | mujoco
-2 a simulator is imported only by its backend | hardware/sim/scene_builder.py | mujoco
 2 a simulator is imported only by its backend | hardware/sim/viewer_mode.py | mujoco
 3 actor code calls no attach / detach | perception/tracker.py | detach
 3 actor code imports neither the world side nor the kernel | perception/detector_capability.py | vcli.cognitive.capabilities.types

@@ -6,7 +6,7 @@
 
 id: go2
 display_name: "Unitree Go2 (quadruped)"
-world: apartment          # config/worlds/apartment.yaml
+world: apartment          # worlds/apartment/world.yaml
 
 model:
   path: vector_os_nano/hardware/sim/mjcf/go2/go2.xml

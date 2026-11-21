@@ -1,11 +1,12 @@
+schema: 1
 # World manifest — the tabletop: a table with six objects on it, and a fixed arm mounted
-# on the table top at the spawn. Loaded by vector_os_nano/vcli/worlds/world_manifest.py
+# on the table top at the spawn. Loaded by vector_os_nano/schemas/world.py
 # for robot.yaml `world: tabletop`.
 #
 # scene: the robot-free MJCF beside this file; spawn: where a body without a base is
 # mounted (x, y, z, heading): the table top (z 0.02).
 
-scene: tabletop.xml
+scene: scene.xml
 spawn: {xy: [0.0, 0.0], z: 0.02, heading: 0.0}
 
 rooms: {}

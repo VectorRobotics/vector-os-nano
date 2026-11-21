@@ -107,7 +107,7 @@ def test_no_gripper_finger_or_pickable_shape_on_pybullet_is_a_mesh(battery_scene
     on the battery table and on its workbench) collides through primitives only."""
     cfg = registry.load("piper")
     world = load_world(cfg.world)
-    workbench = compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+    workbench = compose(cfg, world)
     for sc, objects in ((battery_scene, ("box", "cylinder")), (workbench, tuple(world.pickables))):
         bodies = {sc.body(b) for b in (*cfg.arm.gripper.finger_bodies, *objects)}
         shapes = [g for g in geoms(sc.model) if g.body in bodies and g.collide]

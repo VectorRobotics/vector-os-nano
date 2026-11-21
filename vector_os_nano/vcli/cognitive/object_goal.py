@@ -141,7 +141,7 @@ def named_intents(expr: str | None) -> frozenset[str]:
 
 
 def _manifest(world_id: str) -> Any:
-    """The world manifest ``config/worlds/<world_id>.yaml`` (pure data: what the world
+    """The world manifest ``worlds/<world_id>/world.yaml`` (pure data: what the world
     contains and what NL calls it, never where it is), or None."""
     if not world_id:
         return None

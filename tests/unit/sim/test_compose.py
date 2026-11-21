@@ -16,6 +16,17 @@ from vector_os_nano.sim.scene.compose import check_fingers, compose, model_files
 from vector_os_nano.schemas.world import load_world
 
 
+@pytest.mark.parametrize("name", ["apartment", "tabletop", "workbench"])
+def test_world_scene_compiles_without_a_robot(name):
+    import mujoco as mj
+
+    path = load_world(name).scene
+    text = path.read_text()
+    assert "GO2_MODEL_PATH" not in text and "GRASP_WELDS" not in text
+    model = mj.MjModel.from_xml_path(str(path))
+    assert model.nu == 0 and model.neq == 0
+
+
 @pytest.fixture
 def piper(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -24,7 +35,7 @@ def piper(tmp_path, monkeypatch):
 
 
 def _compose(cfg, world):
-    return compose(world.scene, cfg, spawn=world.spawn, pickables=tuple(world.pickables))
+    return compose(cfg, world)
 
 
 @pytest.mark.parametrize("robot", ["piper", "so101"])

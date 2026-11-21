@@ -8,13 +8,13 @@ import math
 import pytest
 
 from vector_os_nano.embodiments import registry
-from vector_os_nano.hardware.sim.scene_builder import room_scene
+from vector_os_nano.sim.scene.compose import compose
 from vector_os_nano.schemas.world import load_world
 
 
 def test_g1_scene_and_sensors_compile(g1_assets):
     cfg = registry.load("g1")
-    scene = room_scene(cfg, load_world(cfg.world))
+    scene = compose(cfg, load_world(cfg.world))
     assert scene.body("pick_table") != scene.robot_root == scene.body("pelvis")
     assert scene.model.nu == 12 and cfg.camera.name in scene.cameras
     assert scene.body(cfg.lidar.body) in scene.subtree(scene.robot_root)

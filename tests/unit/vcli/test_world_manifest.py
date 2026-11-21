@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-"""World manifests (config/worlds/*.yaml): the data checked against the MJCF it
+"""World manifests (worlds/*/world.yaml): the data checked against the MJCF it
 describes (floor boxes, surfaces, pickables, grasp welds). Name resolution (the one
 referent rule) is tests/unit/vcli/test_referents.py."""
 from __future__ import annotations
@@ -16,7 +16,7 @@ from vector_os_nano.schemas.world import (
     parse_world,
 )
 
-_ROOM_XML = Path(__file__).resolve().parents[3] / "vector_os_nano" / "hardware" / "sim" / "go2_room.xml"
+_ROOM_XML = Path(__file__).resolve().parents[3] / "vector_os_nano" / "worlds" / "apartment" / "scene.xml"
 
 
 @pytest.fixture(scope="module")
@@ -31,13 +31,14 @@ def test_tabletop_world(apt) -> None:
 
 
 def test_unknown_world_and_bad_refs_fail_loud(tmp_path) -> None:
+    base = dict(schema=1, scene='scene.xml', spawn=dict(xy=[0, 0], z=0, heading=0))
     with pytest.raises(WorldManifestError, match="valid: .*apartment"):
         load_world("no_such_world")
     with pytest.raises(WorldManifestError, match="surface='nowhere'"):
-        parse_world({"surfaces": {}, "pickables": {"x": {
+        parse_world({**base, "surfaces": {}, "pickables": {"x": {
             "category": "c", "colour": "red", "aliases": ["x"], "surface": "nowhere"}}}, "t", tmp_path)
-    with pytest.raises(WorldManifestError, match="needs body, box, height"):
-        parse_world({"surfaces": {"s": {"box": [0, 0, 1, 1]}}}, "t", tmp_path)
+    with pytest.raises(WorldManifestError, match="missing keys.*body.*height"):
+        parse_world({**base, "surfaces": {"s": {"box": [0, 0, 1, 1]}}}, "t", tmp_path)
 
 
 def _floor_boxes() -> dict[str, tuple[float, ...]]:
@@ -71,9 +72,9 @@ def test_manifest_matches_the_compiled_scene(apt) -> None:
     import numpy as np
 
     from vector_os_nano.embodiments import registry
-    from vector_os_nano.hardware.sim.scene_builder import room_scene
+    from vector_os_nano.sim.scene.compose import compose
 
-    m = mj.MjModel.from_xml_path(str(room_scene(registry.load("go2_piper"), apt).xml_path))
+    m = mj.MjModel.from_xml_path(str(compose(registry.load("go2_piper"), apt).xml_path))
     d = mj.MjData(m)
     mj.mj_forward(m, d)
     free = {
