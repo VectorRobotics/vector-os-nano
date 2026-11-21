@@ -21,7 +21,7 @@ CRITERIA = dict(goal_error_m=.15, stopped_speed_m_s=.03, tilt_deg=5.,
                 integration_error_m=1e-6, supported_weight_fraction=.9, base_speed_slack=.01)
 
 
-def grade(directory, cfg, world, audit, goal):
+def grade(directory, cfg, world, audit, goal, *, grasp_target=None):
     meta, states, contacts = read_recording(directory)
     if cfg.base is None or cfg.base.policy.ref != 'swerve':
         raise ValueError('this acceptance checks swerve wheel contacts')
@@ -76,8 +76,17 @@ def grade(directory, cfg, world, audit, goal):
             robot.add(body)
     wheels = {int(model.jnt_bodyid[model.joint(n).id]) for n in cfg.base.joints[1::2]}
     bad_contacts = []
+    contact_check = 'only_wheel_support_contacts' if grasp_target is None else 'permitted_robot_contacts'
+    fingers, target = set(), -1
+    if grasp_target is not None:
+        if grasp_target not in world.pickables or cfg.arm is None or cfg.arm.gripper is None:
+            raise ValueError('grasp contact allowance needs a declared pickable and gripper')
+        target = model.body(grasp_target).id
+        if target in robot:
+            raise ValueError('grasp target cannot be part of the robot')
+        fingers = {model.body(n).id for n in cfg.arm.gripper.finger_bodies}
     if not contacts:
-        checks['only_wheel_support_contacts'] = None
+        checks[contact_check] = None
         checks['final_wheel_support'] = None
     else:
         a, b = contacts['body_a'][:, 0].astype(int), contacts['body_b'][:, 0].astype(int)
@@ -87,8 +96,10 @@ def grade(directory, cfg, world, audit, goal):
         ground = ((ra != rb) & np.isin(np.where(rb, b, a), list(wheels)) &
                   (np.abs(contacts['position'][:, 2]-world.spawn[2])<=CRITERIA['support_height_m']) &
                   (normal[:, 2]>=CRITERIA['support_normal_z']))
-        bad = active & (ra | rb) & ~ground
-        checks['only_wheel_support_contacts'] = not bool(bad.any())
+        hand = (((a == target) & np.isin(b, list(fingers))) |
+                ((b == target) & np.isin(a, list(fingers))))
+        bad = active & (ra | rb) & ~(ground | hand)
+        checks[contact_check] = not bool(bad.any())
         final_support = ground & active & np.isclose(contacts['sim_time'][:, 0], t[-1], rtol=0, atol=1e-8)
         force_robot = contacts['force_on_b']*np.where(rb[:, None], 1, -1)
         weight = float(model.body_mass[list(robot)].sum()*np.linalg.norm(model.opt.gravity))
@@ -105,7 +116,7 @@ def grade(directory, cfg, world, audit, goal):
     checks['no_dropped_objects'] = not dropped
     verdict = 'fail' if False in checks.values() else 'unverified' if None in checks.values() else 'pass'
     return dict(schema=1, assessed_at=datetime.now(timezone.utc).isoformat(),
-                recording=str(Path(directory).resolve()), criteria=CRITERIA, video_path=None,
+                recording=str(Path(directory).resolve()), criteria={**CRITERIA, 'grasp_target': grasp_target}, video_path=None,
                 model_sha256=meta['model_sha256'], reset_seed=meta['reset_seed'],
                 checks=checks, goal_error_m=error, final_speed_m_s=stopped, max_tilt_deg=float(tilt.max()),
                 max_contact_residual_m=float(residual.max()), joint_peak_velocity=joint_peaks,

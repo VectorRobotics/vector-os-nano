@@ -13,7 +13,8 @@ from vector_os_nano.vcli.worlds.sim_oracles import build_namespace
 pytestmark = pytest.mark.sim
 
 
-def test_force_only_possession_and_release_on_both_engines(backend, load, tmp_path):
+def test_force_only_possession_and_release_on_both_engines(backend, load, tmp_path, monkeypatch):
+    monkeypatch.setenv('VECTOR_ROLLOUT_DIR', str(tmp_path/'rollouts'))
     path = tmp_path/'grip.xml'
     path.write_text('''<mujoco><option timestep=".001" integrator="Euler"/>
     <default><geom friction="1 .005 .0001" solref=".004 1"/></default>
@@ -48,6 +49,8 @@ def test_force_only_possession_and_release_on_both_engines(backend, load, tmp_pa
         assert ns['holding_object']('box') and ns['holding_object']()
         assert ns['lifted']('box') and ns['kept_holding']('box')
         assert not ns['released']()
+        rt.wait_sim(2.)
+        held_until = rt.sim_time
         rt.call(lambda world: world.set_targets(joints, [.03, .03]))
         rt.wait_sim(.4)
         assert not ns['holding_object']('box') and not ns['kept_holding']('box')
@@ -55,3 +58,15 @@ def test_force_only_possession_and_release_on_both_engines(backend, load, tmp_pa
         assert gt.object_positions()['box'][2] < .1
     finally:
         rt.close()
+    if backend == 'mujoco':
+        from scripts.grade_grasp import contact_support
+        from vector_os_nano.sim.backends.mujoco.recording import read_recording
+        _, states, contacts = read_recording(next((tmp_path/'rollouts').iterdir()))
+        held_states = {k: v[states['sim_time'][:, 0] <= held_until] for k, v in states.items()}
+        held_contacts = {k: v[contacts['sim_time'][:, 0] <= held_until] for k, v in contacts.items()}
+        checks, _ = contact_support(scene.model, held_states, held_contacts,
+                                     scene.body('box'), [scene.body('left'), scene.body('right')])
+        assert all(checks.values()), checks
+        checks, _ = contact_support(scene.model, states, contacts,
+                                     scene.body('box'), [scene.body('left'), scene.body('right')])
+        assert not checks['sustained_opposing_loads']
