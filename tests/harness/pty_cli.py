@@ -397,8 +397,12 @@ def _is_echo(after_prompt: str, typed: str) -> bool:
 class _Pty:
     """The parent side of one REPL child: accumulate output, type into it."""
 
-    def __init__(self, master_fd: int) -> None:
+    def __init__(self, master_fd: int, capture: Path | None = None) -> None:
         self.fd = master_fd
+        self.capture = capture
+        if capture is not None:
+            capture.parent.mkdir(parents=True, exist_ok=True)
+            capture.write_bytes(b'')
         self.buf = bytearray()
         self.eof = False
         self.last_data = _now()
@@ -410,6 +414,9 @@ class _Pty:
             self.eof = True
         elif data:
             self.buf += data
+            if self.capture is not None:
+                with self.capture.open('ab') as stream:
+                    stream.write(data)
             self.last_data = _now()
 
     def text(self) -> str:
@@ -520,9 +527,9 @@ def run_repl_session(
     pending = list(answers or [])
     timed_out = False
     proc, master_fd = _spawn(argv, env, cwd or _REPO_ROOT)
-    tty = _Pty(master_fd)
     deadline = _session_deadline(timeout_sec)
     try:
+        tty = _Pty(master_fd, Path(out_dir)/'transcript.raw' if out_dir is not None else None)
         typed = ""
         for step in steps:
             gate = None
