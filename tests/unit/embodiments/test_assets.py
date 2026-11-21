@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from vector_os_nano.embodiments import assets
-from vector_os_nano.embodiments.config import (
+from vector_os_nano.schemas.robot import (
     EmbodimentConfigError,
     load_embodiment_config,
     parse_embodiment_config,

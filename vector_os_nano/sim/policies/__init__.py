@@ -22,7 +22,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from vector_os_nano.embodiments.config import BaseSpec
+from vector_os_nano.schemas.robot import BaseSpec
 from vector_os_nano.interfaces.policy import ControlPolicy
 
 # torchscript: an observation term -> its width (n = the number of base joints).

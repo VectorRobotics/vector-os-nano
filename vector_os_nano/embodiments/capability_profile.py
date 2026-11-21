@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vector_os_nano.embodiments.config import CapabilityProfile, EmbodimentConfig
+from vector_os_nano.schemas.robot import CapabilityProfile, EmbodimentConfig
 
 
 def _has_member(agent: Any, name: str) -> bool:

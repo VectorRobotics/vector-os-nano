@@ -26,7 +26,7 @@ _PAIR = re.compile(r"\(\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\)")
 
 def _stale(row: dict, bodies: list[str], sentence: str) -> str:
     """'' when every name and number of *row* is in the manifests of *bodies*, else what is not."""
-    from vector_os_nano.embodiments.config import load_embodiment_config
+    from vector_os_nano.schemas.robot import load_embodiment_config
     from vector_os_nano.schemas.world import load_world
 
     cfgs = [load_embodiment_config(b) for b in bodies]

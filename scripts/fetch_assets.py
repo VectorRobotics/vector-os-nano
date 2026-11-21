@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 
 from vector_os_nano.embodiments import assets
-from vector_os_nano.embodiments.config import AssetsSpec, load_embodiment_config
+from vector_os_nano.schemas.robot import AssetsSpec, load_embodiment_config
 
 
 def _git_checkout(spec: AssetsSpec, into: Path) -> Path:

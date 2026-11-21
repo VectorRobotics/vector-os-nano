@@ -154,7 +154,7 @@ class SimSession:
         tears down the sim that is already up.
         """
         from vector_os_nano.embodiments import registry
-        from vector_os_nano.embodiments.config import EmbodimentConfigError
+        from vector_os_nano.schemas.robot import EmbodimentConfigError
 
         try:
             cfg = registry.load(spec.embodiment)
@@ -457,7 +457,7 @@ def legged_body(cfg: Any, scene: Any, *, manifest: WorldManifest, backend: str =
     (None without one). A manifest joint the compiled scene lacks fails first, naming
     the manifest file and its key."""
     from vector_os_nano.embodiments.assets import model_root
-    from vector_os_nano.embodiments.config import EmbodimentConfigError
+    from vector_os_nano.schemas.robot import EmbodimentConfigError
     from vector_os_nano.sim import backends
     from vector_os_nano.sim.drivers.base import LeggedBase
     from vector_os_nano.sim.drivers.lidar import Lidar

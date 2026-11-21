@@ -352,6 +352,6 @@ def test_nav_result_bool_semantics() -> None:
 
 def test_g1_body_radius_is_manifest_config() -> None:
     """The G1 planning radius is the manifest's nav.body_radius (Rule 11)."""
-    from vector_os_nano.embodiments.config import load_embodiment_config
+    from vector_os_nano.schemas.robot import load_embodiment_config
 
     assert load_embodiment_config("g1").base.nav.body_radius == pytest.approx(0.30)

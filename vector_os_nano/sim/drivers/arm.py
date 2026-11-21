@@ -22,7 +22,7 @@ import math
 import threading
 from typing import Any, Callable
 
-from vector_os_nano.embodiments.config import ArmSpec
+from vector_os_nano.schemas.robot import ArmSpec
 from vector_os_nano.sim.runtime import ACTOR_EPOCH, SimRuntime
 from vector_os_nano.sim.scene.kinematics import ArmKinematics
 

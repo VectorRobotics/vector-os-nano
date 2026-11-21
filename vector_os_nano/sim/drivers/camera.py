@@ -11,7 +11,7 @@ the intrinsics and the camera pose. Depth outside the manifest's range reads 0
 """
 from __future__ import annotations
 
-from vector_os_nano.embodiments.config import CameraSpec
+from vector_os_nano.schemas.robot import CameraSpec
 from vector_os_nano.interfaces.devices import CameraFrame
 from vector_os_nano.sim.runtime import SimRuntime
 

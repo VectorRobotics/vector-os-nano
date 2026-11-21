@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import math
 
-from vector_os_nano.embodiments.config import GripperSpec
+from vector_os_nano.schemas.robot import GripperSpec
 from vector_os_nano.interfaces.physics import GraspSpec
 from vector_os_nano.sim.runtime import SimRuntime
 

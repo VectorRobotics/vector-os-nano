@@ -23,7 +23,7 @@ import yaml
 
 import vector_os_nano
 from vector_os_nano.embodiments import registry
-from vector_os_nano.embodiments.config import parse_embodiment_config
+from vector_os_nano.schemas.robot import parse_embodiment_config
 from vector_os_nano.interfaces import ArmProtocol, CameraProtocol, GripperProtocol
 from vector_os_nano.sim.drivers.arm import Arm
 from vector_os_nano.sim.drivers.camera import Camera

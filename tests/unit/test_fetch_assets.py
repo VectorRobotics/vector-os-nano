@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from vector_os_nano.embodiments import assets
-from vector_os_nano.embodiments.config import AssetsSpec
+from vector_os_nano.schemas.robot import AssetsSpec
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "fetch_assets.py"
 _FILES = {"model.xml": b"<mujoco/>", "meshes/a.STL": b"mesh-a", "meshes/b.STL": b"mesh-b"}

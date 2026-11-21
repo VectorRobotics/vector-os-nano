@@ -17,7 +17,7 @@ from typing import Any, Callable, NamedTuple
 
 import numpy as np
 
-from vector_os_nano.embodiments.config import LidarSpec
+from vector_os_nano.schemas.robot import LidarSpec
 from vector_os_nano.sim.runtime import SimRuntime
 from vector_os_nano.sim.scene import canonical
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from vector_os_nano.embodiments.config import _EMBODIMENTS_DIR, AssetsSpec, EmbodimentConfig
+from vector_os_nano.schemas.robot import _EMBODIMENTS_DIR, AssetsSpec, EmbodimentConfig
 from vector_os_nano.schemas import paths
 
 

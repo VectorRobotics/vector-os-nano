@@ -13,8 +13,9 @@ import math
 
 import pytest
 
-from vector_os_nano.embodiments import EmbodimentConfig, load_embodiment_config
-from vector_os_nano.embodiments.config import (
+from vector_os_nano.schemas.robot import EmbodimentConfig, load_embodiment_config
+from vector_os_nano.embodiments.registry import validate
+from vector_os_nano.schemas.robot import (
     EmbodimentConfigError,
     parse_embodiment_config,
 )
@@ -90,7 +91,7 @@ def _legged(**base) -> dict:
     """A minimal legged manifest whose base block is the go2's, overridden by *base*."""
     import yaml
 
-    from vector_os_nano.embodiments.config import _EMBODIMENTS_DIR
+    from vector_os_nano.schemas.robot import _EMBODIMENTS_DIR
 
     raw = yaml.safe_load((_EMBODIMENTS_DIR / "go2" / "robot.yaml").read_text())
     raw["base"].update(base)
@@ -112,7 +113,7 @@ def _legged(**base) -> dict:
 ])
 def test_a_bad_base_block_fails_naming_the_key(change: dict, error: str) -> None:
     with pytest.raises(EmbodimentConfigError, match=error):
-        parse_embodiment_config(_legged(**change), ctx="quad/robot.yaml")
+        validate(parse_embodiment_config(_legged(**change), ctx="quad/robot.yaml"), ctx="quad/robot.yaml")
 
 
 @pytest.mark.parametrize("edit, error", [
@@ -133,7 +134,7 @@ def test_a_bad_policy_row_fails_at_load_naming_the_file_and_key(edit, error: str
     raw = _legged()
     edit(raw["base"]["policy"])
     with pytest.raises(EmbodimentConfigError, match=error):
-        parse_embodiment_config(raw, ctx="quad/robot.yaml")
+        validate(parse_embodiment_config(raw, ctx="quad/robot.yaml"), ctx="quad/robot.yaml")
 
 
 @pytest.mark.parametrize("lidar, error", [
@@ -145,7 +146,7 @@ def test_a_bad_lidar_entry_fails_naming_the_key(lidar: dict, error: str) -> None
     raw = _legged()
     raw["sensors"][1] = {**raw["sensors"][1], **lidar}
     with pytest.raises(EmbodimentConfigError, match=error):
-        parse_embodiment_config(raw, ctx="quad/robot.yaml")
+        validate(parse_embodiment_config(raw, ctx="quad/robot.yaml"), ctx="quad/robot.yaml")
 
 
 # ---------------------------------------------------------------------------

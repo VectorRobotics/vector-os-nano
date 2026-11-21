@@ -135,7 +135,7 @@ def _robot_scene(name: str):
         return compose(cfg, load_world(cfg.world))
     if name == "g1":
         from vector_os_nano.embodiments.assets import AssetsMissing, asset_dir
-        from vector_os_nano.embodiments.config import load_embodiment_config
+        from vector_os_nano.schemas.robot import load_embodiment_config
 
         try:
             folder = asset_dir(load_embodiment_config("g1"))

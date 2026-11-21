@@ -15,7 +15,7 @@ import threading
 import pytest
 
 from tests.harness.kin_base import KinBase
-from vector_os_nano.embodiments.config import NavSpec
+from vector_os_nano.schemas.robot import NavSpec
 from vector_os_nano.sim.nav import vgraph as vg
 from vector_os_nano.sim.nav.follow import NAV_REASONS, NavResult, arrival_radius, follow, turn_by
 

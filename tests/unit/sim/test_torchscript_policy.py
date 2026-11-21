@@ -9,14 +9,14 @@ import numpy as np
 import pytest
 
 from vector_os_nano.embodiments import registry
-from vector_os_nano.embodiments.config import EmbodimentConfigError, parse_embodiment_config
+from vector_os_nano.schemas.robot import EmbodimentConfigError, parse_embodiment_config
 from vector_os_nano.interfaces.policy import PolicyObs
 from vector_os_nano.sim import policies
 
 
 def raw():
     import yaml
-    from vector_os_nano.embodiments.config import _EMBODIMENTS_DIR
+    from vector_os_nano.schemas.robot import _EMBODIMENTS_DIR
     return yaml.safe_load((_EMBODIMENTS_DIR / "g1" / "robot.yaml").read_text())
 
 
@@ -33,7 +33,7 @@ def test_invalid_policy_values_fail_at_manifest_load(change):
     r = raw()
     change(r["base"]["policy"])
     with pytest.raises(EmbodimentConfigError):
-        parse_embodiment_config(r)
+        registry.validate(parse_embodiment_config(r))
 
 
 def test_observation_decimation_reset_and_torque_limits(tmp_path):

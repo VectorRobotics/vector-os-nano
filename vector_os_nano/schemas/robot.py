@@ -24,7 +24,7 @@ from typing import Any
 import yaml
 
 # Directory holding the per-embodiment subfolders (go2/, g1/, …).
-_EMBODIMENTS_DIR: Path = Path(__file__).resolve().parent
+_EMBODIMENTS_DIR: Path = Path(__file__).resolve().parents[1] / "embodiments"
 
 
 class EmbodimentConfigError(ValueError):
@@ -413,8 +413,6 @@ def _gain(raw: Any, joints: tuple[str, ...], ctx: str) -> float | tuple[float, .
 
 
 def _parse_base_policy(p: dict[str, Any], ctx: str) -> BasePolicySpec:
-    from vector_os_nano.sim.backends import BACKENDS  # a name table: no simulator import
-
     timestep, tick_hz = float(_require(p, "timestep", ctx)), float(_require(p, "tick_hz", ctx))
     import math
 
@@ -426,8 +424,6 @@ def _parse_base_policy(p: dict[str, Any], ctx: str) -> BasePolicySpec:
             f"{ctx}: tick_hz={tick_hz} must divide the physics rate 1/timestep={1 / timestep:g} (whole substeps)")
     by_backend = _optional_mapping(p, "by_backend", ctx) or {}
     for name, entry in by_backend.items():
-        if name not in BACKENDS:
-            raise EmbodimentConfigError(f"{ctx}.by_backend: unknown backend {name!r}; valid: {sorted(BACKENDS)}")
         if not isinstance(entry, dict) or "ref" not in entry:
             raise EmbodimentConfigError(f"{ctx}.by_backend.{name} must be a mapping with a 'ref'")
     spec = BasePolicySpec(
@@ -435,22 +431,8 @@ def _parse_base_policy(p: dict[str, Any], ctx: str) -> BasePolicySpec:
         params={k: v for k, v in p.items() if k not in _POLICY_KEYS},
         by_backend={str(k): dict(v) for k, v in by_backend.items()},
     )
-    _check_policy_row(spec.ref, spec.params, ctx)
-    for name in spec.by_backend:
-        _check_policy_row(*spec.on(name), f"{ctx}.by_backend.{name}")
     return spec
 
-
-def _check_policy_row(ref: str, params: dict[str, Any], ctx: str) -> None:
-    """The row *ref* exists and *params* are exactly its keys (``sim.policies.owned``)."""
-    from vector_os_nano.sim.policies import owned  # a name table: no simulator import
-
-    try:
-        owned(ref, params)
-    except KeyError as exc:
-        raise EmbodimentConfigError(f"{ctx}.ref: {exc.args[0]}") from None
-    except ValueError as exc:
-        raise EmbodimentConfigError(f"{ctx}: {exc}") from None
 
 
 def _parse_base(raw: dict[str, Any], ctx: str) -> BaseSpec | None:

@@ -19,7 +19,7 @@ import math
 import pytest
 
 from tests.harness.kin_base import KinBase
-from vector_os_nano.embodiments.config import load_embodiment_config
+from vector_os_nano.schemas.robot import load_embodiment_config
 from vector_os_nano.schemas.world import load_world
 from vector_os_nano.sim.nav import vgraph as vg
 from vector_os_nano.sim.nav.coverage import CoverageExplorer, room_at, room_layout

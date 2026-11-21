@@ -3,12 +3,12 @@ from dataclasses import replace
 from types import SimpleNamespace
 import numpy as np
 import pytest
-from vector_os_nano.embodiments.config import ArmSpec, GripperSpec, EmbodimentConfigError
+from vector_os_nano.schemas.robot import ArmSpec, GripperSpec, EmbodimentConfigError
 from vector_os_nano.interfaces.physics import GraspSpec
 from vector_os_nano.sim import grasp
 from vector_os_nano.sim.drivers.arm import Arm
 from vector_os_nano.sim.drivers.gripper import Gripper
-from vector_os_nano.embodiments.config import _parse_arm
+from vector_os_nano.schemas.robot import _parse_arm
 
 
 class Runtime:

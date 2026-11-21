@@ -21,7 +21,7 @@ from typing import Any, Sequence
 import mujoco as mj
 
 from vector_os_nano.embodiments.assets import model_root
-from vector_os_nano.embodiments.config import EmbodimentConfig
+from vector_os_nano.schemas.robot import EmbodimentConfig
 from vector_os_nano.schemas.world import WorldManifest
 from vector_os_nano.interfaces.physics import CompiledScene
 from vector_os_nano.schemas import paths

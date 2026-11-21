@@ -33,7 +33,7 @@ from typing import Any, Callable
 
 import yaml
 
-from vector_os_nano.embodiments.config import NavSpec
+from vector_os_nano.schemas.robot import NavSpec
 from vector_os_nano.sim.nav import vgraph as vg
 
 NAV_REASONS: tuple[str, ...] = ("arrived", "unreachable", "timeout", "aborted", "stalled", "fell")

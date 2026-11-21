@@ -6,7 +6,7 @@ import copy
 import pytest
 import yaml
 
-from vector_os_nano.embodiments.config import _EMBODIMENTS_DIR, EmbodimentConfigError, parse_embodiment_config
+from vector_os_nano.schemas.robot import _EMBODIMENTS_DIR, EmbodimentConfigError, parse_embodiment_config
 
 
 def raw():

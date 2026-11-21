@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from vector_os_nano.embodiments import config as emb_config
+from vector_os_nano.schemas import robot as emb_config
 from vector_os_nano.embodiments import registry
 from vector_os_nano.sim import session as sess
 from vector_os_nano.sim.session import SimSession, SimSpec, SimStartError
@@ -89,7 +89,7 @@ def test_corrupt_manifest_is_error_naming_the_key(tmp_path, monkeypatch) -> None
 
 
 def test_unknown_driver_is_error_naming_the_field(tmp_path, monkeypatch) -> None:
-    src = (Path(emb_config.__file__).parent / "go2" / "robot.yaml").read_text()
+    src = (emb_config._EMBODIMENTS_DIR / "go2" / "robot.yaml").read_text()
     (tmp_path / "odd").mkdir()
     (tmp_path / "odd" / "robot.yaml").write_text(
         src.replace("id: go2\n", "id: odd\n") + "\ndriver: warp_drive\n"

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from vector_os_nano.embodiments.config import BaseSpec
+from vector_os_nano.schemas.robot import BaseSpec
 from vector_os_nano.interfaces.policy import PolicyObs
 from vector_os_nano.sim.policies import pd
 

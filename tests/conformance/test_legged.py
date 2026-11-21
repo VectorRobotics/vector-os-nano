@@ -22,7 +22,7 @@ import yaml
 
 from tests.conformance.rig import yaw
 from vector_os_nano.embodiments import registry
-from vector_os_nano.embodiments.config import EmbodimentConfigError, parse_embodiment_config
+from vector_os_nano.schemas.robot import EmbodimentConfigError, parse_embodiment_config
 from vector_os_nano.interfaces import BaseProtocol
 from vector_os_nano.sim import backends
 from vector_os_nano.sim.scene.compose import compose
