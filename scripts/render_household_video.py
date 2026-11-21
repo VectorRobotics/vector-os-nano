@@ -48,7 +48,8 @@ for name, _, _ in views:
     assert bpy.data.objects[name].type == 'CAMERA'
 encoder = subprocess.Popen(['ffmpeg', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24',
     '-s', '3840x2160', '-r', '30', '-i', '-', '-an', '-c:v', 'libx264', '-threads', '4',
-    '-preset', 'fast', '-crf', '19', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(partial)],
+    '-preset', 'fast', '-crf', '19', '-pix_fmt', 'yuv420p', '-movflags',
+    '+frag_keyframe+empty_moov+default_base_moof', str(partial)],
     stdin=subprocess.PIPE)
 start, completed, frame_seconds = time.monotonic(), 0, []
 try:
@@ -100,9 +101,10 @@ finally:
     a.output.with_suffix('.render.json').write_text(json.dumps(metadata, indent=2))
 assert rc == 0 and completed == requested
 info = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-count_frames',
-    '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames,width,height,r_frame_rate',
+    '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames,width,height,avg_frame_rate',
     '-of', 'json', str(partial)]))['streams'][0]
-assert (int(info['nb_read_frames']), info['width'], info['height'], info['r_frame_rate']) == (requested, 3840, 2160, '30/1')
+# r_frame_rate is an inferred codec base rate (60 for a one-frame fragment), not presentation FPS.
+assert (int(info['nb_read_frames']), info['width'], info['height'], info['avg_frame_rate']) == (requested, 3840, 2160, '30/1')
 partial.rename(a.output)
 metadata.update(complete=completed == record['frames'], video_sha256=hashlib.sha256(a.output.read_bytes()).hexdigest())
 a.output.with_suffix('.render.json').write_text(json.dumps(metadata, indent=2))
