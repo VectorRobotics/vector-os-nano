@@ -56,8 +56,20 @@ class Surface:
     place_point: tuple[float, float] | None = None  # authored world XY, never inferred from missing data
 
 
-# The ONE closed list of words a reference may carry besides this world's own: articles
-# and demonstratives, and the generic heads that (like 的) let a colour refer ("the red one").
+@dataclass(frozen=True)
+class Articulation:
+    """Static identity and acceptance positions; live state belongs only to the evaluator."""
+
+    body: str
+    joint: str
+    closed: float
+    opened: float
+    closed_tolerance: float
+    aliases: tuple[str, ...] = ()
+    handle_geom: str | None = None
+
+
+# The closed list of articles, demonstratives and generic heads in object references.
 _FILLERS = {
     "det": ("the", "a", "an", "this", "that", "my", "这个", "那个", "这", "那"),
     "head": ("one", "thing", "object", "item", "东西", "物体", "物品", "个", "的"),
@@ -116,6 +128,7 @@ class WorldManifest:
     spawn: tuple[float, float, float, float] | None = None
     # What NL calls a room (``vocab.rooms``: room -> words), besides its own name.
     room_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    articulations: dict[str, Articulation] = field(default_factory=dict)
 
     @functools.cached_property
     def _lexicon(self) -> tuple[tuple[str, str, frozenset[str]], ...]:
@@ -251,7 +264,7 @@ def _box(v: Any, ctx: str) -> tuple[float, float, float, float]:
 
 def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest:
     ctx = str(path)
-    keys = ('schema', 'scene', 'spawn', 'rooms', 'boxes', 'doors', 'surfaces', 'pickables', 'user', 'vocab')
+    keys = ('schema', 'scene', 'spawn', 'rooms', 'boxes', 'doors', 'surfaces', 'pickables', 'user', 'vocab', 'articulations')
     raw = _mapping(raw, ctx, keys, ('schema', 'scene', 'spawn'))
     schema = raw['schema']
     if type(schema) is not int or schema != 1:
@@ -263,6 +276,18 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
     spawn = _mapping(raw['spawn'], f'{ctx}: spawn', ('xy', 'z', 'heading'), ('xy', 'z', 'heading'))
     spawn = (*_xy(spawn['xy'], f'{ctx}: spawn.xy'), _number(spawn['z'], f'{ctx}: spawn.z'),
              _number(spawn['heading'], f'{ctx}: spawn.heading'))
+    articulations: dict[str, Articulation] = {}
+    for name, value in _mapping(raw.get('articulations', {}), f'{ctx}: articulations').items():
+        key = f'{ctx}: articulations.{name}'
+        fields = ('body', 'joint', 'closed', 'opened', 'closed_tolerance')
+        row = _mapping(value, key, (*fields, 'aliases', 'handle_geom'), fields)
+        closed, opened, tolerance = (_number(row[k], f'{key}.{k}') for k in fields[2:])
+        if not 0 < tolerance < abs(opened-closed)/2:
+            raise WorldManifestError(f'{key}: closed_tolerance must be positive and smaller than half the travel')
+        articulations[name] = Articulation(_text(row['body'], f'{key}.body'),
+            _text(row['joint'], f'{key}.joint'), closed, opened, tolerance,
+            _words(row.get('aliases', []), f'{key}.aliases'),
+            _text(row['handle_geom'], f'{key}.handle_geom') if 'handle_geom' in row else None)
     surfaces: dict[str, Surface] = {}
     for name, value in _mapping(raw.get('surfaces', {}), f'{ctx}: surfaces').items():
         key = f'{ctx}: surfaces.{name}'
@@ -298,7 +323,7 @@ def parse_world(raw: dict[str, Any], world_id: str, path: Path) -> WorldManifest
         doors={name: _xy(value, f'{ctx}: doors.{name}') for name, value in _mapping(raw.get('doors', {}), f'{ctx}: doors').items()},
         surfaces=surfaces, pickables=pickables, colours=words['colours'], categories=words['categories'],
         user=user, path=path, scenery=_words(vocab.get('scenery', []), f'{ctx}: vocab.scenery'),
-        scene=path.parent / scene, spawn=spawn, room_aliases=words['rooms'],
+        scene=path.parent / scene, spawn=spawn, room_aliases=words['rooms'], articulations=articulations,
     )
 
 

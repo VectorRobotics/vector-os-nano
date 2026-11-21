@@ -17,6 +17,15 @@ boxes:
   dining_room: [1.65, 0.0, 6.65, 1.65]
   living_room: [3.35, 1.65, 6.65, 5.5]
 doors: {}
+articulations:
+  storage_drawer:
+    body: cart_/root/E_drawer_4
+    joint: cart_/root/E_drawer_4/PrismaticJoint_up
+    handle_geom: cart_/root/E_drawer_4/E_handle_11/P_9d043626900169c5
+    closed: 0
+    opened: -0.27
+    closed_tolerance: 0.003
+    aliases: [storage cart drawer, storage drawer, 收纳推车抽屉]
 surfaces:
   storage_shelf:
     body: world

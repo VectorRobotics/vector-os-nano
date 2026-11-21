@@ -9,6 +9,30 @@ from vector_os_nano.schemas import world
 BASE = dict(schema=1, scene='scene.xml', spawn=dict(xy=[0, 0], z=0, heading=0))
 
 
+DRAWER = dict(body='drawer_body', joint='drawer_slide', closed=0, opened=-.27,
+              closed_tolerance=.003, aliases=['storage drawer'], handle_geom='knob_mesh')
+
+
+def test_articulations_declare_identity_and_limits_without_live_state(tmp_path):
+    manifest = world.parse_world({**BASE, 'articulations': {'drawer': DRAWER}}, 'test', tmp_path/'world.yaml')
+    drawer = manifest.articulations['drawer']
+    assert (drawer.body, drawer.joint, drawer.closed, drawer.opened, drawer.closed_tolerance) == (
+        'drawer_body', 'drawer_slide', 0, -.27, .003)
+    assert drawer.aliases == ('storage drawer',)
+    assert drawer.handle_geom == 'knob_mesh'
+    assert manifest.referents('storage drawer') is None
+    assert world.parse_world(BASE, 'test', tmp_path/'world.yaml').articulations == {}
+
+
+@pytest.mark.parametrize('field,value', [('body', ''), ('joint', 4), ('opened', float('nan')),
+    ('closed', True), ('opened', 0), ('closed_tolerance', -.1), ('closed_tolerance', .15),
+    ('aliases', 'drawer'), ('current_position', -.1), ('handle_geom', False)])
+def test_articulation_rejects_invalid_or_live_state_fields(tmp_path, field, value):
+    with pytest.raises(world.WorldManifestError, match='articulations.drawer'):
+        world.parse_world({**BASE, 'articulations': {'drawer': {**DRAWER, field: value}}},
+                          'test', tmp_path/'world.yaml')
+
+
 @pytest.mark.parametrize('key,value,match', [
     ('schema', 2, 'upgrade vector_os_nano'), ('schema', True, 'schema'),
     ('schema', 0, 'schema'), ('unknown', 0, 'unknown.*valid'),
