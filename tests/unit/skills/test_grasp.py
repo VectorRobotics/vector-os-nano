@@ -232,3 +232,20 @@ def test_cancel_in_approach_prevents_another_base_step(token):
     _, error = grasp.reach(ctx, Pose3D(.8, 0., .4), ctx.config["skills"]["grasp"], token)
     assert error.diagnosis_code == "cancelled"
     ctx.base.walk.assert_called_once()
+
+
+@pytest.mark.parametrize('failure', [None, 'slip', 'blocked'])
+def test_grasp_without_carry_posture_still_waits_and_checks_the_hold(failure, token):
+    ctx = context()
+    ctx.config['arm']['postures'] = {}
+    cfg = ctx.config['skills']['grasp']
+    def move(q, duration):
+        if ctx.arm.move_joints.call_count == 4:
+            assert duration == cfg['hold_duration'] and q == ctx.arm.get_joint_positions()
+            if failure == 'slip': ctx.gripper.is_holding.return_value = False
+            if failure == 'blocked': return False
+        return True
+    ctx.arm.move_joints.side_effect = move
+    result = grasp.grip(ctx, Pose3D(.3, 0., .4), cfg, token)
+    assert ctx.arm.move_joints.call_count == 4
+    assert result is None if failure is None else result.diagnosis_code in {'not_holding', 'move_failed'}

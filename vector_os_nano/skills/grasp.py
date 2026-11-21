@@ -213,10 +213,10 @@ def grip(context, gp, cfg, token, identity=None):
     if error:
         return error
     hold = context.config.get("arm", {}).get("postures", {}).get("hold")
-    if hold is not None:
-        error = _move(arm, hold, cfg["hold_duration"], "hold", token)
-        if error:
-            return error
+    error = _move(arm, arm.get_joint_positions() if hold is None else hold,
+                  cfg["hold_duration"], "hold", token)
+    if error:
+        return error
     return _cancelled(token) or (None if (gripper.is_holding() if identity is None else gripper.is_holding(identity)) else _fail("not_holding", "Object slipped during lift; look again before grasping."))
 
 
