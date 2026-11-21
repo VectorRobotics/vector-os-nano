@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 from pxr import Usd, UsdPhysics
 from prepare_usd import check_source, normalize, write_mjcf
+from package_visuals import add_wrapper
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('source',type=Path)
 parser.add_argument('output',type=Path)
@@ -77,9 +78,11 @@ objects = [
  ('sponge_pack_1',[1.5,-2.3,.799],[.025,.06,.02],.06,[.94,.72,.19,1]),
  ('sponge_pack_2',[1.5,-1.95,.799],[.025,.06,.02],.06,[.28,.58,.38,1]),
  ('zip_bag_box',[1.5,-1.6,.799],[.025,.07,.02],.12,[.29,.52,.75,1])]
+wrappers = {}
 for name,pos,size,mass,rgba in objects:
  body=s.worldbody.add_body(name=name,pos=pos);body.add_freejoint(name=name+'_free')
- body.add_geom(name=name,type=mj.mjtGeom.mjGEOM_BOX,size=size,mass=mass,rgba=rgba,friction=[.8,.005,.0001],condim=4)
+ collision=body.add_geom(name=name,type=mj.mjtGeom.mjGEOM_BOX,size=size,mass=mass,rgba=rgba,friction=[.8,.005,.0001],condim=4)
+ wrappers[name]=add_wrapper(s,body,collision,out/'package-textures')
 s.option.timestep=.001;s.option.integrator=mj.mjtIntegrator.mjINT_IMPLICITFAST
 s.option.cone=mj.mjtCone.mjCONE_ELLIPTIC;s.option.iterations=100
 s.visual.global_.offwidth=1280;s.visual.global_.offheight=960
@@ -99,6 +102,7 @@ json.dump(dict(source=str(source),source_sha256=hashlib.sha256(source.read_bytes
  dataset_revision='d22f2095bc9db29fdd4b60f4a3c4f8177e1f5e9e',ngeom=m.ngeom,nmesh=m.nmesh,
  fixed_background=True, cart_source=str(a.cart.resolve()), cart_sha256=hashlib.sha256(a.cart.read_bytes()).hexdigest(),
  object_parameters=[dict(name=n,position=p,half_size=z,mass_kg=m,source='engineering estimate, rigid sealed package') for n,p,z,m,c in objects],
+ package_visuals=wrappers,
  cart_brakes='initially engaged via rolling frictionloss, no pedal actuation yet',source_furniture_transform_changes=False,planar_panels_2mm=repairs,
  collision_status='Source convex hulls on fixed background only; not validated for contact manipulation. Core drawer and objects use separate cavity-preserving colliders.',
  render_near_m=.03,estimated=['extension dimensions','panel thickness','friction'],physical_verdict='unverified'),(out/'asset-audit.json').open('w'),indent=2)
