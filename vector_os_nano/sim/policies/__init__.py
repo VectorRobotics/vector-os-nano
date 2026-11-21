@@ -75,6 +75,15 @@ def _action(v: Any) -> float:
     return out
 
 
+def _wheels(v: Any) -> tuple[tuple[float, ...], ...]:
+    if not isinstance(v, list) or not v:
+        raise ValueError('wheels must be a nonempty list of [x, y, radius, lateral_offset]')
+    rows = tuple(tuple(float(x) for x in row) for row in v)
+    if any(len(row) != 4 or not all(math.isfinite(x) for x in row) or row[2] <= 0 for row in rows):
+        raise ValueError('each wheel needs finite [x, y, positive radius, lateral_offset]')
+    return rows
+
+
 POLICIES: dict[str, tuple[str, dict[str, Callable[[Any], Any]]]] = {
     "convex_mpc": ("vector_os_nano.sim.policies.convex_mpc",
                    dict.fromkeys(("gait_hz", "duty", "z_des", "brake_s", "brake_ramp_s"), float)),
@@ -82,6 +91,10 @@ POLICIES: dict[str, tuple[str, dict[str, Callable[[Any], Any]]]] = {
                    dict.fromkeys(("freq_hz", "thigh_amp", "calf_amp", "hip_amp"), float)),
     "torchscript": ("vector_os_nano.sim.policies.torchscript",
                     {"file": str, "decimation": _count, "obs": _obs, "action": _action}),
+    "swerve": ("vector_os_nano.sim.policies.swerve",
+               {"wheels": _wheels, "steering_range": _scale,
+                **dict.fromkeys(("steering_kp", "steering_kd", "wheel_kp", "wheel_speed",
+                                 "accel", "yaw_accel"), float)}),
 }
 
 

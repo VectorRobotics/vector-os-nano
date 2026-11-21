@@ -110,7 +110,7 @@ def test_a_bad_base_block_fails_naming_the_key(change: dict, error: str) -> None
 
 @pytest.mark.parametrize("edit, error", [
     (lambda p: p.update(ref="rl_magic"),
-     r"^quad/robot\.yaml\.base\.policy\.ref: no control policy 'rl_magic'; policies: \['convex_mpc', 'sinusoidal', 'torchscript'\]$"),
+     r"^quad/robot\.yaml\.base\.policy\.ref: no control policy 'rl_magic'; policies: \['convex_mpc', 'sinusoidal', 'swerve', 'torchscript'\]$"),
     (lambda p: p.update(gait_hzz=3),
      r"^quad/robot\.yaml\.base\.policy: keys \[.*'gait_hzz'.*\]; convex_mpc takes exactly \['brake_ramp_s'"),
     (lambda p: p.pop("duty"), r"^quad/robot\.yaml\.base\.policy: keys .*; convex_mpc takes exactly .*'duty'"),

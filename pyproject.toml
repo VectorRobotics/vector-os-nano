@@ -57,6 +57,14 @@ sim = [
     "opencv-python>=4.8",  # perception/front_object: the sim go2 grasp's salient-blob resolver
 ]
 
+# Offline high-fidelity USD scene conversion; separate from either runtime backend.
+home-assets = [
+    "mujoco[usd]==4.0.1",
+    "trimesh==5.2.1",
+    "coacd==1.0.14",
+    "pillow>=10",
+]
+
 # Perception: VLM detection + EdgeTAM tracker + pointcloud (no robot/USB deps).
 # These were previously undeclared despite being imported by perception/.
 perception = [
