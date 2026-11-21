@@ -96,3 +96,15 @@ def test_frontal_group_outcomes_and_cancellation_cannot_report_success(failure):
     ctx.arm.home.assert_not_called()
     ctx.gripper.open.assert_called_once()
     abort.clear_abort()
+
+
+def test_approach_step_shrinks_to_the_remaining_gap_instead_of_oscillating():
+    from tests.harness.kin_base import KinBase
+    ctx, cfg = frontal(); ctx.base = KinBase()
+    cfg['base'] = dict(standoff=.65, lateral_offset=0., yaw_deadband=.01, yaw_speed=.1,
+        approach_steps=20, seat_steps=0, step_duration=1., step_speed=.06,
+        stall_distance=.0001, seat_distance=.005, lateral_gain=.5, lateral_speed=.04,
+        lateral_deadband=.015)
+    moved, error = grasp.reach(ctx, Pose3D(.98, 0., .8), cfg, ctx.services['cancel'])
+    assert moved and error is None
+    assert abs(ctx.base.get_position()[0]-.33) <= .015

@@ -207,7 +207,7 @@ def reach(context, gp, cfg, token, *, reseat=False):
         previous = (*pos, yaw)
         # Too close: back out toward the standoff; never creep through the target.
         gap = forward - bc["standoff"]
-        vx = math.copysign(bc["step_speed"], gap) if abs(gap) > bc["lateral_deadband"] else 0.
+        vx = max(-bc["step_speed"], min(bc["step_speed"], gap / bc["step_duration"])) if abs(gap) > bc["lateral_deadband"] else 0.
         vy = max(-bc["lateral_speed"], min(bc["lateral_speed"], lateral * bc["lateral_gain"])) if abs(lateral) > bc["lateral_deadband"] else 0.
         vyaw = max(-bc["yaw_speed"], min(bc["yaw_speed"], angle * bc["lateral_gain"])) if abs(angle) > bc["yaw_deadband"] else 0.
         if not any((vx, vy, vyaw)):
