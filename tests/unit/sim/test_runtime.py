@@ -296,10 +296,12 @@ def test_a_hold_is_only_its_threads_and_a_forgotten_one_is_dropped(scene, monkey
         rt.close()
 
 
-def test_sensor_backed_cancellation_does_not_hold_the_publication_lock(rt):
+@pytest.mark.parametrize('hold', [False, True])
+def test_sensor_backed_cancellation_does_not_hold_the_publication_lock(rt, hold):
     target = rt.sim_time + .03
     class SensorStop:
         def is_set(self):
             return rt.call(lambda world: world.time(), timeout=.5) >= target
-    assert not rt.wait_sim(1., cancel=SensorStop())
+    assert not rt.wait_sim(1., cancel=SensorStop(), hold=hold)
+    rt.release_clock()
     assert rt.wait_sim(.01), 'the physics publisher must remain responsive after the stop'
