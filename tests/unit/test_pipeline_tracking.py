@@ -243,7 +243,7 @@ class TestTrackingLoopUpdates:
 class TestTrackAutoStartsLoop:
     def test_track_starts_background_thread(self):
         """Calling track() should automatically start the background thread."""
-        from vector_os_nano.core.types import Detection
+        from vector_os_nano.interfaces.perception import Detection
         tracker = _make_tracker()
         pipeline = _make_pipeline(tracker=tracker)
 
@@ -261,7 +261,7 @@ class TestTrackAutoStartsLoop:
 
     def test_double_track_does_not_create_second_thread(self):
         """Calling track() twice must reuse the existing background thread."""
-        from vector_os_nano.core.types import Detection
+        from vector_os_nano.interfaces.perception import Detection
         tracker = _make_tracker()
         pipeline = _make_pipeline(tracker=tracker)
 

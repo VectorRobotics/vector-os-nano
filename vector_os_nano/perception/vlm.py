@@ -32,7 +32,7 @@ from typing import Optional
 
 import numpy as np
 
-from vector_os_nano.core.types import Detection
+from vector_os_nano.interfaces.perception import Detection
 
 logger = logging.getLogger(__name__)
 

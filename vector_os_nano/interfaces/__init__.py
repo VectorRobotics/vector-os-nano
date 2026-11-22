@@ -9,6 +9,7 @@ Everything a plug-in implements or consumes is declared here and nowhere else:
   implements), ``CompiledScene`` (the canonical model), ``RGBDFrame``, ``GraspSpec``.
 * :mod:`.devices` — ``BaseProtocol`` / ``ArmProtocol`` / ``GripperProtocol`` /
   ``CameraProtocol`` and ``CameraFrame``: what skills and perception may touch of a body.
+* :mod:`.perception` — pixel-only ``Detector`` / ``Segmenter`` and ``Detection``.
 * :mod:`.llm` — ``LLMBackend`` and provider-independent response / usage values.
 * :mod:`.policy` — ``ControlPolicy`` / ``PolicyObs`` (a locomotion controller).
 
@@ -35,9 +36,13 @@ from vector_os_nano.interfaces.physics import (
     SimBackend,
 )
 from vector_os_nano.interfaces.llm import LLMBackend, LLMResponse, LLMToolCall, TokenUsage
+from vector_os_nano.interfaces.perception import Detection, Detector, Segmenter
 from vector_os_nano.interfaces.policy import ControlPolicy, PolicyObs
 
 __all__ = [
+    "Detection",
+    "Detector",
+    "Segmenter",
     "LLMBackend",
     "LLMResponse",
     "LLMToolCall",

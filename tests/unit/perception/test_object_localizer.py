@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from vector_os_nano.core.types import Detection
+from vector_os_nano.interfaces.perception import Detection
 from tests.harness.camera import pinhole
 from vector_os_nano.perception.depth_projection import camera_to_world
 from vector_os_nano.perception.object_localizer import (

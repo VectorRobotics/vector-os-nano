@@ -27,7 +27,7 @@ from typing import Any
 
 import numpy as np
 
-from vector_os_nano.core.types import Detection
+from vector_os_nano.interfaces.perception import Detection, Detector, Segmenter
 from vector_os_nano.interfaces.devices import CameraFrame, CameraProtocol
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class CameraPerception:
         tracker: Optional pre-built EdgeTAMTracker (else lazily constructed).
     """
 
-    def __init__(self, camera: CameraProtocol, *, vlm: Any = None, tracker: Any = None,
+    def __init__(self, camera: CameraProtocol, *, vlm: Detector | None = None, tracker: Segmenter | None = None,
                  cameras: dict[str, CameraProtocol] | None = None) -> None:
         self._camera = camera
         self._cameras = dict(cameras or {})

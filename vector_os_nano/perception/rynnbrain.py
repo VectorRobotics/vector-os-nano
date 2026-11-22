@@ -21,7 +21,7 @@ import re
 
 import numpy as np
 
-from vector_os_nano.core.types import Detection
+from vector_os_nano.interfaces.perception import Detection
 
 DEFAULT_URL = "http://127.0.0.1:8786"
 _PROMPT = (

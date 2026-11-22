@@ -18,7 +18,7 @@ runs torch-free). CUDA is used when present, else CPU (the tiny model is fine on
 
 Prompt format that WORKED in the go/no-go probe: lowercase, period-separated noun
 phrases ("a can. a bottle. a cylinder."). ``query_to_prompt`` maps an NL query to
-that form through the shared world vocabulary. Boxes are returned as ``core.types.Detection`` (label, bbox xyxy in
+that form through the shared world vocabulary. Boxes are returned as ``interfaces.Detection`` (label, bbox xyxy in
 pixels, confidence=score), sorted by score descending, above a score threshold.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ from typing import Any
 
 import numpy as np
 
-from vector_os_nano.core.types import Detection
+from vector_os_nano.interfaces.perception import Detection
 from vector_os_nano.perception.weights import Weights, loading
 
 logger = logging.getLogger(__name__)

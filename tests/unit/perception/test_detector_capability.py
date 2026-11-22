@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from vector_os_nano.core.types import Detection
+from vector_os_nano.interfaces.perception import Detection
 from vector_os_nano.perception.detector_capability import DetectorCapability
 from vector_os_nano.vcli.cognitive.capabilities.types import (
     Capability,

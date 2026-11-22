@@ -16,7 +16,8 @@ import pytest
 
 from vector_os_nano.core.agent import Agent
 from vector_os_nano.core.skill import skill
-from vector_os_nano.core.types import Detection, SkillResult
+from vector_os_nano.core.types import SkillResult
+from vector_os_nano.interfaces.perception import Detection
 from vector_os_nano.perception.calibration import Calibration
 from vector_os_nano.skills import get_skills
 from vector_os_nano.embodiments.registry import load as load_robot

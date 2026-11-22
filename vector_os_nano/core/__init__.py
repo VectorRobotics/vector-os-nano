@@ -4,7 +4,7 @@
 """Core agent engine — pure Python, no ROS2 imports.
 
 Contains:
-- types.py      : shared frozen data types (Pose3D, Detection, SkillResult, ...)
+- types.py      : shared frozen data types (Pose3D, SkillResult, ...)
 - config.py     : configuration loading
 - agent.py      : Agent, the body the skills act on
 - skill.py      : @skill, the Skill protocol, SkillContext, SkillRegistry

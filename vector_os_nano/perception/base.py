@@ -12,7 +12,8 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from vector_os_nano.core.types import CameraIntrinsics, Detection, TrackedObject
+from vector_os_nano.core.types import CameraIntrinsics, TrackedObject
+from vector_os_nano.interfaces.perception import Detection
 
 _GPU = re.compile(r"\bGPU (\d+)\b")
 # an absolute or home-relative path (two components or more): a machine detail

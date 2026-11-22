@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from vector_os_nano.core.skill import SkillContext
-from vector_os_nano.core.types import Detection
+from vector_os_nano.interfaces.perception import Detection
 from tests.harness.camera import pinhole
 from vector_os_nano.perception.front_object import parse_color
 from vector_os_nano.skills.grasp import GraspSkill

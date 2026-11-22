@@ -211,7 +211,7 @@ class TestCameraIntrinsics:
 
 class TestDetection:
     def test_construction(self):
-        from vector_os_nano.core.types import Detection
+        from vector_os_nano.interfaces.perception import Detection
 
         d = Detection(label="cup", bbox=(10.0, 20.0, 100.0, 150.0), confidence=0.95)
         assert d.label == "cup"
@@ -219,20 +219,20 @@ class TestDetection:
         assert d.confidence == 0.95
 
     def test_default_confidence(self):
-        from vector_os_nano.core.types import Detection
+        from vector_os_nano.interfaces.perception import Detection
 
         d = Detection(label="cup", bbox=(0.0, 0.0, 1.0, 1.0))
         assert d.confidence == 1.0
 
     def test_is_frozen(self):
-        from vector_os_nano.core.types import Detection
+        from vector_os_nano.interfaces.perception import Detection
 
         d = Detection(label="cup", bbox=(0.0, 0.0, 1.0, 1.0))
         with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
             d.label = "bottle"  # type: ignore[misc]
 
     def test_to_dict(self):
-        from vector_os_nano.core.types import Detection
+        from vector_os_nano.interfaces.perception import Detection
 
         d = Detection(label="cup", bbox=(10.0, 20.0, 100.0, 150.0), confidence=0.95)
         dct = d.to_dict()
@@ -241,7 +241,7 @@ class TestDetection:
         assert dct["confidence"] == 0.95
 
     def test_from_dict_roundtrip(self):
-        from vector_os_nano.core.types import Detection
+        from vector_os_nano.interfaces.perception import Detection
 
         original = Detection(label="bottle", bbox=(5.0, 10.0, 80.0, 120.0), confidence=0.88)
         reconstructed = Detection.from_dict(original.to_dict())
