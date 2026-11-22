@@ -92,7 +92,7 @@ class SO101Gripper:
                 )
         return True
 
-    def is_holding(self) -> bool:
+    def is_holding(self, name: str | None = None) -> bool:
         """Check whether the gripper has grasped an object.
 
         Reads the current encoder position. If it stopped between the
@@ -102,6 +102,8 @@ class SO101Gripper:
         Returns:
             True if an object appears to be gripped.
         """
+        if name is not None:
+            return False  # Encoders cannot identify an object.
         enc = self._bus.read_position(self._motor_id)
         if enc < 0:
             logger.warning("SO101Gripper: cannot read encoder for is_holding check")
@@ -129,8 +131,7 @@ class SO101Gripper:
         """
         enc = self._bus.read_position(self._motor_id)
         if enc < 0:
-            logger.warning("SO101Gripper: cannot read encoder for get_position")
-            return 0.0
+            raise RuntimeError('SO101Gripper: cannot read encoder position')
 
         enc_range = GRIPPER_OPEN_ENC - GRIPPER_CLOSED_ENC
         normalized = (enc - GRIPPER_CLOSED_ENC) / enc_range

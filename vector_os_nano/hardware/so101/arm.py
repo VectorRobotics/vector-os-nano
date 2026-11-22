@@ -14,6 +14,8 @@ Connect/disconnect lifecycle:
 """
 
 import logging
+import math
+import threading
 import time
 from typing import Any, Optional
 
@@ -54,6 +56,9 @@ class SO101Arm:
         self._bus = SerialBus(port=port, baudrate=baudrate)
         self._connected: bool = False
         self._ik_solver: Optional[Any] = None
+        self._stopped = threading.Event()
+        self._command_lock = threading.RLock()
+        self._motion_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # ArmProtocol properties
@@ -88,6 +93,8 @@ class SO101Arm:
         Raises:
             RuntimeError: if port cannot be opened or baudrate fails.
         """
+        if self._connected:
+            return
         if not self._bus.connect():
             raise RuntimeError(
                 f"SO101Arm: cannot open serial port {self.port}. "
@@ -96,16 +103,25 @@ class SO101Arm:
 
         logger.info("SO101Arm: connected to %s, enabling motors", self.port)
 
-        # Read-before-write for ALL joints (including gripper) to prevent jump
-        for name, cfg in JOINT_CONFIG.items():
-            motor_id = cfg["id"]
-            pos = self._bus.read_position(motor_id)
-            if pos >= 0:
-                # Write current position as goal before enabling torque
-                self._bus.write_position(motor_id, pos)
-            ok = self._bus.set_torque(motor_id, enable=True)
-            if not ok:
-                logger.warning("SO101Arm: torque enable failed for %s (id=%d)", name, motor_id)
+        # Seat every goal before enabling any motor; a failed startup must roll back.
+        try:
+            for name, cfg in JOINT_CONFIG.items():
+                pos = self._bus.read_position(cfg['id'])
+                if not cfg['enc_min'] <= pos <= cfg['enc_max']:
+                    raise RuntimeError(f'SO101Arm: invalid startup encoder for {name}')
+                if not self._bus.write_position(cfg['id'], pos):
+                    raise RuntimeError(f'SO101Arm: cannot seat startup goal for {name}')
+            for name, cfg in JOINT_CONFIG.items():
+                if not self._bus.set_torque(cfg['id'], enable=True):
+                    raise RuntimeError(f'SO101Arm: cannot enable torque for {name}')
+        except BaseException:
+            for cfg in JOINT_CONFIG.values():
+                try:
+                    self._bus.set_torque(cfg['id'], enable=False)
+                except Exception:
+                    logger.exception('SO101Arm: startup torque rollback failed')
+            self._bus.disconnect()
+            raise
 
         self._connected = True
         logger.info("SO101Arm: all motors torque-enabled")
@@ -115,6 +131,7 @@ class SO101Arm:
 
         Safe to call even if connect() was never called or already disconnected.
         """
+        self._stopped.set()
         if self._connected:
             logger.info("SO101Arm: disabling torque on all motors")
             for name, cfg in JOINT_CONFIG.items():
@@ -192,6 +209,21 @@ class SO101Arm:
                 f"got {len(positions)}"
             )
 
+        if not math.isfinite(duration) or duration < 0 or any(
+            not math.isfinite(value) or not JOINT_CONFIG[name]['rad_min'] <= value <= JOINT_CONFIG[name]['rad_max']
+            for name, value in zip(ARM_JOINT_NAMES, positions)
+        ):
+            raise ValueError('SO101Arm: trajectory needs finite, in-range joints and a nonnegative duration')
+        if not self._motion_lock.acquire(blocking=False):
+            return False
+        try:
+            with self._command_lock:
+                self._stopped.clear()
+            return self._move_joints(positions, duration)
+        finally:
+            self._motion_lock.release()
+
+    def _move_joints(self, positions, duration):
         try:
             current = self.get_joint_positions()
         except RuntimeError as exc:
@@ -206,7 +238,10 @@ class SO101Arm:
                 current[i] + alpha * (positions[i] - current[i])
                 for i in range(self.dof)
             ]
-            success = self._write_arm_positions(waypoint)
+            with self._command_lock:
+                if self._stopped.is_set():
+                    return False
+                success = self._write_arm_positions(waypoint)
             if not success:
                 logger.error("SO101Arm: write failed at waypoint %d/%d", step, n_waypoints)
                 return False
@@ -215,7 +250,7 @@ class SO101Arm:
 
         # Allow servos to settle at final position
         time.sleep(_SETTLE_DELAY)
-        return True
+        return not self._stopped.is_set()
 
     def move_cartesian(
         self,
@@ -263,12 +298,20 @@ class SO101Arm:
             RuntimeError: if not connected.
         """
         self._require_connection()
-        logger.warning("SO101Arm: STOP called — freezing all joints")
-        for name in ARM_JOINT_NAMES:
-            motor_id = JOINT_CONFIG[name]["id"]
-            enc = self._bus.read_position(motor_id)
-            if enc >= 0:
-                self._bus.write_position(motor_id, enc)
+        self._stopped.set()
+        with self._command_lock:
+            logger.warning("SO101Arm: STOP called — freezing all joints")
+            failed = []
+            for name in ARM_JOINT_NAMES:
+                motor_id = JOINT_CONFIG[name]["id"]
+                try:
+                    enc = self._bus.read_position(motor_id)
+                    if enc < 0 or not self._bus.write_position(motor_id, enc):
+                        failed.append(name)
+                except Exception:
+                    failed.append(name)
+            if failed:
+                raise RuntimeError(f'SO101Arm: cannot hold {failed} after stop')
 
     # ------------------------------------------------------------------
     # IK solver injection
@@ -280,7 +323,7 @@ class SO101Arm:
     ) -> tuple[list[float], list[list[float]]]:
         """Forward kinematics: joint positions -> end-effector pose.
 
-        Delegates to the IK solver if set. Returns a zero pose otherwise.
+        Delegates to the IK solver; missing kinematics is an error.
 
         Args:
             joint_positions: Joint positions in radians, length == dof.
@@ -290,8 +333,7 @@ class SO101Arm:
         """
         if self._ik_solver is not None:
             return self._ik_solver.fk(joint_positions)
-        logger.warning("SO101Arm.fk: IK solver not set, returning zero pose")
-        return ([0.0, 0.0, 0.0], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        raise RuntimeError('SO101Arm: IK solver not set')
 
     def ik(
         self,
