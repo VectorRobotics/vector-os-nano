@@ -21,8 +21,8 @@ from typing import Any, Callable
 
 import openai
 
-from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
-from vector_os_nano.vcli.session import TokenUsage
+from vector_os_nano.interfaces.llm import LLMResponse, LLMToolCall
+from vector_os_nano.interfaces.llm import TokenUsage
 
 logger = logging.getLogger(__name__)
 

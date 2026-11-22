@@ -23,7 +23,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vector_os_nano.vcli.backends import LLMBackend
+from vector_os_nano.interfaces.llm import LLMBackend
 from vector_os_nano.vcli.config import Credentials
 
 _CREDS = Credentials(provider="anthropic", model="m", base_url=None, key_env="ANTHROPIC_API_KEY", api_key="k")

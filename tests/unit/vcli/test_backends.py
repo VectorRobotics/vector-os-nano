@@ -21,15 +21,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vector_os_nano.vcli.backends import LLMBackend, create_backend
+from vector_os_nano.interfaces.llm import LLMBackend
+from vector_os_nano.vcli.backends import create_backend
 from vector_os_nano.vcli.backends.openai_compat import (
     convert_messages,
     convert_system,
     convert_tools,
     parse_usage,
 )
-from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
-from vector_os_nano.vcli.session import TokenUsage
+from vector_os_nano.interfaces.llm import LLMResponse, LLMToolCall
+from vector_os_nano.interfaces.llm import TokenUsage
 
 
 # ---------------------------------------------------------------------------

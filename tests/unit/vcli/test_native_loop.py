@@ -689,8 +689,8 @@ def test_lifecycle_tool_rebinds_the_turn_to_the_new_body() -> None:
 def test_turns_share_the_real_session() -> None:
     """cli-entry:native-scratch-session-no-memory: the second turn's model call sees the
     first turn ('it' has a referent), and the usage lands on the session."""
-    from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
-    from vector_os_nano.vcli.session import TokenUsage
+    from vector_os_nano.interfaces.llm import LLMResponse, LLMToolCall
+    from vector_os_nano.interfaces.llm import TokenUsage
 
     seen: list[list] = []
 
@@ -752,7 +752,7 @@ class _Scripted:
         self.turns, self.seen = list(turns), []
 
     def call(self, messages, tools, **_kw):
-        from vector_os_nano.vcli.backends.types import LLMResponse
+        from vector_os_nano.interfaces.llm import LLMResponse
         self.seen.append(list(messages))
         return self.turns.pop(0) if self.turns else LLMResponse(text="", stop_reason="end_turn")
 

@@ -18,7 +18,7 @@ from tests.unit.vcli.test_native_loop import _session
 from tests.unit.vcli.test_native_safety import _dev_engine, _script, _SpyTool
 from vector_os_nano.vcli import repl
 from vector_os_nano.vcli.backends.fake import tool_turn
-from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
+from vector_os_nano.interfaces.llm import LLMResponse, LLMToolCall
 
 
 def test_the_permission_prompt_defaults_to_no(monkeypatch) -> None:

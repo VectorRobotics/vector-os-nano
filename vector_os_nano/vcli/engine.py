@@ -16,7 +16,7 @@ import threading
 from contextlib import contextmanager
 from typing import Any, Callable
 
-from vector_os_nano.vcli.backends import LLMBackend
+from vector_os_nano.interfaces.llm import LLMBackend
 from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.cognitive.capabilities.registry import CapabilityRegistry
 from vector_os_nano.vcli.permissions import PermissionContext

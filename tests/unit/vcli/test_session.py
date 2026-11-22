@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
+from vector_os_nano.interfaces.llm import TokenUsage
 from vector_os_nano.vcli.session import (
     Session,
     SessionSummary,
-    TokenUsage,
     create_session,
     get_latest_session,
     list_sessions,

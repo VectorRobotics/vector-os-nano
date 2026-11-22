@@ -9,6 +9,7 @@ Everything a plug-in implements or consumes is declared here and nowhere else:
   implements), ``CompiledScene`` (the canonical model), ``RGBDFrame``, ``GraspSpec``.
 * :mod:`.devices` — ``BaseProtocol`` / ``ArmProtocol`` / ``GripperProtocol`` /
   ``CameraProtocol`` and ``CameraFrame``: what skills and perception may touch of a body.
+* :mod:`.llm` — ``LLMBackend`` and provider-independent response / usage values.
 * :mod:`.policy` — ``ControlPolicy`` / ``PolicyObs`` (a locomotion controller).
 
 This package imports the standard library, numpy and ``vector_os_nano.schemas``
@@ -33,9 +34,14 @@ from vector_os_nano.interfaces.physics import (
     RGBDFrame,
     SimBackend,
 )
+from vector_os_nano.interfaces.llm import LLMBackend, LLMResponse, LLMToolCall, TokenUsage
 from vector_os_nano.interfaces.policy import ControlPolicy, PolicyObs
 
 __all__ = [
+    "LLMBackend",
+    "LLMResponse",
+    "LLMToolCall",
+    "TokenUsage",
     "CONTACT_DISTANCE_M",
     "ArmProtocol",
     "BaseProtocol",

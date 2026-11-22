@@ -19,8 +19,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from vector_os_nano.vcli.backends.types import LLMResponse
-from vector_os_nano.vcli.session import TokenUsage
+from vector_os_nano.interfaces.llm import LLMResponse
+from vector_os_nano.interfaces.llm import TokenUsage
 
 
 class FakeToolScriptBackend:
@@ -208,7 +208,7 @@ class ReactiveFakeBackend:
 
 def _turns_from_dicts(raw_turns: Any) -> list["LLMResponse"]:
     """Deserialize a list of turn dicts into ``LLMResponse`` native turns."""
-    from vector_os_nano.vcli.backends.types import LLMToolCall
+    from vector_os_nano.interfaces.llm import LLMToolCall
 
     if not isinstance(raw_turns, list):
         raise ValueError(f"'turns' must be a list, got {type(raw_turns).__name__}")
@@ -246,7 +246,7 @@ def tool_turn(*tool_calls: Any, text: str = "", end: bool = False) -> "LLMRespon
     Each positional arg is ``(name, input_dict)``. ``end=True`` (or no tool calls)
     marks the turn's stop_reason ``end_turn``; otherwise ``tool_use``.
     """
-    from vector_os_nano.vcli.backends.types import LLMToolCall
+    from vector_os_nano.interfaces.llm import LLMToolCall
 
     calls = [
         LLMToolCall(id=f"tc_{i}", name=str(name), input=dict(inp or {}))

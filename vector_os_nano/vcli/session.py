@@ -27,43 +27,13 @@ from pathlib import Path
 from typing import Any
 
 from vector_os_nano.schemas import paths
+from vector_os_nano.interfaces.llm import TokenUsage
 
 # ---------------------------------------------------------------------------
 # Value objects (frozen)
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class TokenUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-
-    def add(self, other: "TokenUsage") -> "TokenUsage":
-        return TokenUsage(
-            input_tokens=self.input_tokens + other.input_tokens,
-            output_tokens=self.output_tokens + other.output_tokens,
-            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
-            cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
-        )
-
-    def to_dict(self) -> dict[str, int]:
-        return {
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
-            "cache_creation_tokens": self.cache_creation_tokens,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "TokenUsage":
-        return cls(
-            input_tokens=d.get("input_tokens", 0),
-            output_tokens=d.get("output_tokens", 0),
-            cache_read_tokens=d.get("cache_read_tokens", 0),
-            cache_creation_tokens=d.get("cache_creation_tokens", 0),
-        )
 
 
 @dataclass(frozen=True)

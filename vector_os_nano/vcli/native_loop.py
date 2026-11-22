@@ -33,7 +33,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from vector_os_nano.vcli.backends.types import LLMResponse
+from vector_os_nano.interfaces.llm import LLMResponse
 from vector_os_nano.vcli.cognitive import abort as _abort
 from vector_os_nano.vcli.cognitive.goal_verifier import GoalVerifier
 from vector_os_nano.vcli.cognitive.object_goal import contract_leads, task_contract, unbound_reason

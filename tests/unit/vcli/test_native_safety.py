@@ -224,8 +224,8 @@ def test_starting_a_new_run_never_clears_another_runs_abort() -> None:
 
 def test_the_answer_wrap_never_clears_a_stop_on_a_background_run() -> None:
     """producers:answer-wrap-clears-abort: chat during a plan must not un-stop it."""
-    from vector_os_nano.vcli.backends.types import LLMResponse
-    from vector_os_nano.vcli.session import TokenUsage
+    from vector_os_nano.interfaces.llm import LLMResponse
+    from vector_os_nano.interfaces.llm import TokenUsage
 
     class _Chat:
         def call(self, **kw: Any) -> LLMResponse:
@@ -808,8 +808,8 @@ class _StrictBackend:
     """Like the real APIs: a malformed message list is a hard error (a 400)."""
 
     def call(self, messages: list[dict], **kw: Any) -> Any:
-        from vector_os_nano.vcli.backends.types import LLMResponse
-        from vector_os_nano.vcli.session import TokenUsage
+        from vector_os_nano.interfaces.llm import LLMResponse
+        from vector_os_nano.interfaces.llm import TokenUsage
 
         _assert_well_formed(messages)
         return LLMResponse(text="ok", tool_calls=[], stop_reason="end_turn", usage=TokenUsage())
