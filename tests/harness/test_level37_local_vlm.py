@@ -4,7 +4,7 @@
 """L37: Local VLM (Ollama) backend integration tests.
 
 Tests that the VLM perception layer works with a local Ollama backend
-when VECTOR_VLM_URL and VECTOR_VLM_MODEL env vars are set.
+when perception.scene_vlm selects it in config.yaml.
 
 These tests verify:
 - Backend selection logic (local vs remote)
@@ -49,15 +49,12 @@ _SKIP_REASON = "Ollama not running or gemma4:e4b not pulled"
 class TestVLMBackendSelection:
     """Verify backend selection logic in vlm_go2.py."""
 
-    def test_local_vlm_env_vars_read_at_construction(self, monkeypatch):
-        """VECTOR_VLM_URL / VECTOR_VLM_MODEL are read when the VLM is built, not at
-        import (perception:vlm-cost-prompt-drift), and need no API key."""
+    def test_local_vlm_config_is_read_at_construction(self, monkeypatch):
         from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
 
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-        monkeypatch.setenv("VECTOR_VLM_URL", "http://localhost:11434/v1")
-        monkeypatch.setenv("VECTOR_VLM_MODEL", "llava:7b")
-        vlm = Go2VLMPerception()
+        vlm = Go2VLMPerception(config={'base_url': 'http://localhost:11434/v1',
+                                      'model': 'llava:7b', 'api_key_env': None})
         assert vlm._local and vlm._model == "llava:7b" and vlm._base_url.endswith("/v1")
 
     def test_local_backend_no_auth_header(self):
@@ -90,9 +87,8 @@ class TestVLMBackendSelection:
         """
         from vector_os_nano.perception import vlm_go2
 
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setenv("VECTOR_VLM_URL", "http://localhost:11434/v1")
-            vlm = vlm_go2.Go2VLMPerception()
+        vlm = vlm_go2.Go2VLMPerception(config={'base_url': 'http://localhost:11434/v1',
+                                              'model': 'gemma4:e4b', 'api_key_env': None})
         assert vlm._timeout >= 30.0, (
             f"Local timeout should be >= 30s (model load time), got {vlm._timeout}"
         )
@@ -121,10 +117,11 @@ class TestLocalVLMInference:
     """Integration tests that hit the actual local Ollama endpoint."""
 
     @pytest.fixture(autouse=True)
-    def _setup_local_env(self, monkeypatch):
+    def _setup_local_config(self, monkeypatch, tmp_path):
         """Force local VLM backend for all tests in this class."""
-        monkeypatch.setenv("VECTOR_VLM_URL", "http://localhost:11434/v1")
-        monkeypatch.setenv("VECTOR_VLM_MODEL", "gemma4:e4b")
+        monkeypatch.setenv('VECTOR_HOME', str(tmp_path))
+        (tmp_path/'config.yaml').write_text('schema: 1\nperception:\n  scene_vlm: '
+            '{base_url: http://localhost:11434/v1, model: "gemma4:e4b", api_key_env: null}\n')
 
     def _make_frame(self) -> np.ndarray:
         """Create a simple test frame (gray image)."""

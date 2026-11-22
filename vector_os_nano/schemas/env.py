@@ -30,8 +30,6 @@ CATALOGUE: dict[str, EnvVar] = {
     "OPENAI_API_KEY": EnvVar("user", "", "key of the openai_compat LLM provider"),
     "MOONDREAM_API_KEY": EnvVar("user", "", "key of the Moondream cloud VLM"),
     "MOONDREAM_MODEL": EnvVar("user", "vikhyatk/moondream2", "the Moondream model id"),
-    "VECTOR_VLM_URL": EnvVar("user", "", "a local OpenAI-compatible server (e.g. Ollama) for the scene VLM"),
-    "VECTOR_VLM_MODEL": EnvVar("user", "gemma4:e4b", "the model that local VLM server serves"),
     "VECTOR_RYNNBRAIN_URL": EnvVar("user", "http://127.0.0.1:8786", "the RynnBrain detector server"),
     "VECTOR_NAV_STACK": EnvVar("user", "", "set: go2 explore launches the external TARE/FAR nav stack"),
     "VECTOR_BRIDGE_QUIET": EnvVar("experimental", "", "set: external ROS navigation bridge logs warnings and errors only"),

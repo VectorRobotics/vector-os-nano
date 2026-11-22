@@ -28,9 +28,10 @@ import numpy as np
 
 from vector_os_nano.perception.base import failure_cause
 from vector_os_nano.perception.object_localizer import frame_provenance
+from vector_os_nano.perception.models import build
+from vector_os_nano.schemas.user import DETECTORS
 from vector_os_nano.vcli.cognitive.capabilities.types import CapabilityResult
 
-BACKENDS = ("grounding-dino", "rynnbrain")
 logger = logging.getLogger(__name__)
 
 
@@ -54,7 +55,7 @@ class DetectorCapability:
         "required": ["query"],
         "properties": {
             "query": {"type": "string"},
-            "backend": {"type": "string", "enum": list(BACKENDS)},
+            "backend": {"type": "string", "enum": list(DETECTORS)},
             "rgb": {"type": "array"},
             "perception": {"type": "object"},
         },
@@ -77,7 +78,8 @@ class DetectorCapability:
     ) -> None:
         # Default to the shared lazy singleton so this capability and the grasp
         # route share ONE loaded model. Injectable for tests (no torch load).
-        self._detector = detector
+        self._detectors = {name: model for name, model in
+                           (('grounding-dino', detector), ('rynnbrain', rynnbrain)) if model is not None}
         # Optional bound RGB source (exposes ``get_color_frame()``), supplied at
         # registration by the world. The capability-dispatch path builds a
         # SkillContext (not a perception), so the kernel context cannot itself
@@ -92,7 +94,6 @@ class DetectorCapability:
         # time, so a cold product turn (sim started this same turn) perceives without
         # any pre-boot. World-side wiring only; the cognitive seam is untouched.
         self._agent = agent
-        self._rynnbrain = rynnbrain
 
     def _live_perception(self) -> Any:
         """The current frame source: a snapshot perception, else the agent's LIVE one.
@@ -110,15 +111,9 @@ class DetectorCapability:
         return None
 
     def _get_detector(self, backend: str = "grounding-dino") -> Any:
-        if backend == "rynnbrain":
-            if self._rynnbrain is None:
-                from vector_os_nano.perception.rynnbrain import RynnBrainDetector
-                self._rynnbrain = RynnBrainDetector()
-            return self._rynnbrain
-        if self._detector is None:
-            from vector_os_nano.perception.grounding_dino import get_shared_detector
-            self._detector = get_shared_detector()
-        return self._detector
+        if backend not in self._detectors:
+            self._detectors[backend] = build(DETECTORS, backend)
+        return self._detectors[backend]
 
     def estimate(self, payload: dict[str, Any]) -> tuple[float, float]:
         # Cheap, no I/O: a free, ~0.3 s prior for routing/tiebreak.
@@ -135,13 +130,18 @@ class DetectorCapability:
                 error="missing required input: query (non-empty string)",
             )
 
-        backend = str(payload.get("backend") or "grounding-dino").strip().lower()
-        if backend not in BACKENDS:
+        perception = self._live_perception()
+        backend = payload.get('backend') or getattr(perception, 'detector_name', None)
+        if not backend:
+            from vector_os_nano.schemas import paths, user
+            backend = user.load(paths.config_file()).perception.detector
+        backend = str(backend).strip().lower()
+        if backend not in DETECTORS:
             return CapabilityResult(
-                success=False, error=f"unknown detector backend {backend!r}; valid: {list(BACKENDS)}",
+                success=False, error=f"unknown detector backend {backend!r}; valid: {list(DETECTORS)}",
             )
 
-        frame, rgb, capture_failed = self._resolve_frame(payload, context, self._live_perception())
+        frame, rgb, capture_failed = self._resolve_frame(payload, context, perception)
         if rgb is None:
             return CapabilityResult(
                 success=False,

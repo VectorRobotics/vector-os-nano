@@ -36,7 +36,7 @@ def test_a_valid_file_and_an_absent_one(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(("text", "key", "says"), [
-    ("schema: 1\nperception: {detector: owlv2}\n", "perception", "valid: schema, llm"),
+    ("schema: 1\nperception: {detector: owlv2}\n", "perception.detector", "valid: grounding-dino, rynnbrain"),
     ("schema: 1\nllm:\n  provider: deepseek\n  temperature: '0.2'\n", "llm.temperature",
      "valid: provider, model, base_url, api_key_env"),
     ("schema: 2\nllm: {}\n", "schema 2", "upgrade vector_os_nano"),

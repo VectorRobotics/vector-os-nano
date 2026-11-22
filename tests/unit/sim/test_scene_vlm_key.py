@@ -1,31 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Vector Robotics
-"""C1a / R5V-D6 — the scene VLM's key comes from the environment like every provider's.
+"""Simulation uses public user config and never reads inline model credentials."""
+import pytest
 
-A key left in config/user.yaml (llm.api_key, vlm.api_key) is neither read nor sent to
-the OpenRouter VLM; one notice names the variable to set instead, never the value.
-"""
-from __future__ import annotations
-
-from vector_os_nano.sim.session import _scene_vlm_config
-
-SECRET = "sk-or-SECRET-in-user-yaml"
+from vector_os_nano.schemas.user import UserConfigError
+from vector_os_nano.sim.session import _user_config
 
 
-def test_a_key_in_user_yaml_is_ignored_with_one_notice(monkeypatch) -> None:
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    cfg = {"llm": {"api_key": SECRET}, "vlm": {"api_key": SECRET, "model": "m"}}
-    key, vlm, note = _scene_vlm_config(cfg, None)
-    assert key == "" and vlm == {"model": "m"}  # the VLM is built from these: no key reaches it
-    assert note == ("config/user.yaml llm.api_key and vlm.api_key ignored (keys come only from the "
-                    "environment): set OPENROUTER_API_KEY")
-    assert SECRET not in note
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-env")
-    assert _scene_vlm_config(cfg, None)[0] == "or-env"
-    assert cfg["vlm"]["api_key"] == SECRET  # the caller's dict is left as it was
+@pytest.mark.parametrize('block', ['llm', 'perception:\n  scene_vlm'])
+def test_inline_keys_are_refused_before_session_construction(tmp_path, monkeypatch, block):
+    monkeypatch.setenv('VECTOR_HOME', str(tmp_path))
+    indent = '    ' if block.startswith('perception') else '  '
+    (tmp_path/'config.yaml').write_text(f'schema: 1\n{block}:\n{indent}api_key: sk-PRIVATE\n')
+    with pytest.raises(UserConfigError, match='looks like a secret') as error:
+        _user_config()
+    assert 'sk-PRIVATE' not in str(error.value)
 
 
-def test_no_key_in_the_file_no_notice(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-env")
-    assert _scene_vlm_config({"llm": {"provider": "x"}}, None) == ("or-env", {}, "")
-    assert _scene_vlm_config({}, None) == ("or-env", {}, "")
+def test_session_reads_canonical_model_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv('VECTOR_HOME', str(tmp_path))
+    (tmp_path/'config.yaml').write_text('schema: 1\nperception:\n  detector: rynnbrain\n'
+                                      '  scene_vlm: {api_key_env: MY_VISION_KEY, model: chosen-model}\n')
+    cfg = _user_config()['perception']
+    assert cfg['detector'] == 'rynnbrain'
+    assert cfg['scene_vlm']['model'] == 'chosen-model'
+    assert cfg['scene_vlm']['api_key_env'] == 'MY_VISION_KEY'
+    assert 'api_key' not in cfg['scene_vlm']

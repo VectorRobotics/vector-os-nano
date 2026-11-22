@@ -23,6 +23,7 @@ NOT_ENV = {"VECTOR_VERDICT": "the stdout sentinel of the verdict line (charter s
 # Reads whose name is computed, each with where its possible names come from.
 DYNAMIC = {
     ("vcli/config.py", "key_env"): "a provider's key variable (schemas/user.py PROVIDERS) or llm.api_key_env",
+    ("perception/vlm_go2.py", "key_env"): "perception.scene_vlm.api_key_env (default OPENROUTER_API_KEY)",
     ("schemas/env.py", "name"): "env.read itself: its callers are checked like any read",
 }
 _WORD = re.compile(r"\bVECTOR_[A-Z0-9_]+\b")

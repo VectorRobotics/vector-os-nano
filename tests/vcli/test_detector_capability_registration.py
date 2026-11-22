@@ -84,7 +84,7 @@ def test_arm_agent_registers_detect_when_torch_present():
     cap = reg.get("detect")
     assert cap.kind == "detector" and cap.side_effecting is False
     # registration must NOT have loaded the model (lazy)
-    assert getattr(cap, "_detector", None) is None
+    assert cap._detectors == {}
 
 
 def test_detect_capability_bound_to_agent_perception():
@@ -123,7 +123,7 @@ def test_g1_camera_base_registers_detect_via_raw_camera():
     assert "detect" in reg.names()
     cap = reg.get("detect")
     assert cap.kind == "detector" and cap.side_effecting is False
-    assert getattr(cap, "_detector", None) is None  # lazy, no model load
+    assert cap._detectors == {}  # lazy, no model load
 
 
 def test_g1_bound_perception_wins_as_frame_source():

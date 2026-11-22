@@ -3,9 +3,8 @@
 
 """Vision-language model scene perception for a camera-bearing base (optional).
 
-An OpenAI-compatible chat endpoint: OpenRouter (``config["model"]``, default
-``google/gemma-4-31b-it``) with an API key, or a local server such as Ollama when
-``VECTOR_VLM_URL`` is set (``VECTOR_VLM_MODEL``, default ``gemma4:e4b``; no key).
+An OpenAI-compatible chat endpoint selected by ``perception.scene_vlm`` in
+config.yaml. A local server can declare ``api_key_env: null`` for unauthenticated calls.
 It captions the scene, suggests the room and names objects; it is never required
 (the detector over the world vocabulary discovers objects on its own). Frames go
 out at up to 640 px, so small objects stay visible. No ROS2 dependency.
@@ -14,7 +13,7 @@ Typical usage::
 
     from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
 
-    vlm = Go2VLMPerception()                          # key / VECTOR_VLM_URL from env
+    vlm = Go2VLMPerception()                          # model config + environment credentials
     vlm = Go2VLMPerception(config={"api_key": "..", "rooms": ["kitchen", "hallway"]})
 
     scene = vlm.describe_scene(rgb_frame)
@@ -29,19 +28,17 @@ import logging
 import os
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from io import BytesIO
 from typing import Any
 
 import httpx
 import numpy as np
 from PIL import Image
+from vector_os_nano.schemas import paths, user
 
 logger = logging.getLogger(__name__)
 
-_OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-_MODEL: str = "google/gemma-4-31b-it"
-_LOCAL_MODEL: str = "gemma4:e4b"
 _TIMEOUT_S: float = 30.0
 _MAX_RETRIES: int = 2
 _JPEG_QUALITY: int = 80
@@ -125,39 +122,28 @@ class Go2VLMPerception:
         config: Optional dict: ``api_key`` (else OPENROUTER_API_KEY), ``model``,
             ``rooms`` (the room names the room question may answer), and
             ``price_in``/``price_out`` (USD per 1M tokens; cost tracking is 0
-            unless they are given). ``VECTOR_VLM_URL`` selects a local server.
+            unless they are given). ``base_url`` selects the server and
+            ``api_key_env`` names its credential variable (null for no authentication).
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
-        cfg = config or {}
-        local_url = os.environ.get("VECTOR_VLM_URL")
+        selected = user.load(paths.config_file()).perception.scene_vlm if config is None else user.SceneVlm()
+        if selected is None:
+            raise ValueError('scene VLM disabled by perception.scene_vlm: null')
+        cfg = {**asdict(selected), **(config or {})}
         rooms = [str(r) for r in cfg.get("rooms") or ()]
         self._room_prompt = _IDENTIFY_ROOM_PROMPT.format(
             rooms=f" (one of: {', '.join(rooms)}; else \"unknown\")" if rooms else "")
         self._price = (float(cfg.get("price_in", 0.0)) / 1e6, float(cfg.get("price_out", 0.0)) / 1e6)
 
-        # Local VLM (Ollama) — no API key needed
-        if local_url:
-            self._api_key: str = "ollama"  # dummy, not sent
-            self._base_url: str = local_url
-            self._model: str = os.environ.get("VECTOR_VLM_MODEL") or _LOCAL_MODEL
-            self._local: bool = True
-            self._timeout: float = 45.0  # local: first call loads model (~30s), retry handles it
-            logger.info("VLM: local server at %s model=%s", self._base_url, self._model)
-        else:
-            api_key: str | None = cfg.get("api_key") or os.environ.get(
-                "OPENROUTER_API_KEY"
-            )
-            if not api_key:
-                raise ValueError(
-                    "OpenRouter API key not found. "
-                    "Pass config={'api_key': '...'} or set OPENROUTER_API_KEY."
-                )
-            self._api_key = api_key
-            self._base_url = _OPENROUTER_BASE_URL
-            self._model = str(cfg.get("model") or _MODEL)
-            self._local = False
-            self._timeout: float = _TIMEOUT_S
+        key_env = cfg['api_key_env']
+        self._api_key = cfg.get('api_key') or (os.environ.get(key_env, '') if key_env else '')
+        if key_env and not self._api_key:
+            raise ValueError(f'no {key_env} set for scene VLM; set the key in the environment')
+        self._base_url = cfg['base_url'].rstrip('/')
+        self._model = cfg['model']
+        self._local = not bool(self._api_key)
+        self._timeout = 45.0 if self._local else _TIMEOUT_S
 
         self._cost_usd: float = 0.0
         self._cost_lock: threading.Lock = threading.Lock()

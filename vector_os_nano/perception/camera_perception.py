@@ -10,7 +10,7 @@ ONE camera instant:
   - :meth:`capture` -> a CameraFrame: RGB, metric depth with the robot's own pixels
     zeroed out (its self mask), intrinsics from the camera fovy and the frame's
     ACTUAL shape, and the exact camera->world pose, all of one sim time;
-  - :meth:`detect_in` runs grounding-dino-tiny (the shared singleton) on a GIVEN
+  - :meth:`detect_in` runs the selected detector on a GIVEN
     frame, so a box always belongs to the pose it is projected with;
   - :meth:`segment` masks a box with EdgeTAM (a segmenter that cannot load or run
     raises), or the box rectangle when EdgeTAM finds nothing in the box;
@@ -29,6 +29,8 @@ import numpy as np
 
 from vector_os_nano.interfaces.perception import Detection, Detector, Segmenter
 from vector_os_nano.interfaces.devices import CameraFrame, CameraProtocol
+from vector_os_nano.perception.models import build
+from vector_os_nano.schemas.user import DETECTORS, SEGMENTERS
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +38,22 @@ _warned_box_rect = False  # the box-rect fallback is announced once per process
 
 
 class CameraPerception:
-    """RGB-D + detector + EdgeTAM perception over one camera.
+    """RGB-D + selected detector and segmenter over one camera.
 
     Args:
         camera: the body's camera (renders at its manifest size).
         vlm: Optional pre-built detector (else the shared grounding-dino).
-        tracker: Optional pre-built EdgeTAMTracker (else lazily constructed).
+        tracker: Optional pre-built segmenter (else lazily constructed).
+        detector_name, segmenter_name: rows of the public user-config model tables.
     """
 
     def __init__(self, camera: CameraProtocol, *, vlm: Detector | None = None, tracker: Segmenter | None = None,
-                 cameras: dict[str, CameraProtocol] | None = None) -> None:
+                 cameras: dict[str, CameraProtocol] | None = None,
+                 detector_name: str = 'grounding-dino', segmenter_name: str = 'edgetam') -> None:
+        for table, name in ((DETECTORS, detector_name), (SEGMENTERS, segmenter_name)):
+            if name not in table:
+                raise ValueError(f'unknown perception model {name!r}; valid: {list(table)}')
+        self.detector_name, self.segmenter_name = detector_name, segmenter_name
         self._camera = camera
         self._cameras = dict(cameras or {})
         self._vlm = vlm
@@ -73,21 +81,16 @@ class CameraPerception:
 
     def _ensure_detector(self) -> None:
         if self._vlm is None:
-            from vector_os_nano.perception.grounding_dino import get_shared_detector
-            logger.info("[GO2-PERCEPT] using shared grounding-dino detector (lazy)")
-            self._vlm = get_shared_detector()
+            self._vlm = build(DETECTORS, self.detector_name)
 
     def _ensure_tracker(self) -> None:
         if self._tracker is None:
-            from vector_os_nano.perception.tracker import EdgeTAMTracker
-            logger.info("[GO2-PERCEPT] loading EdgeTAM tracker (lazy)")
-            self._tracker = EdgeTAMTracker()
+            self._tracker = build(SEGMENTERS, self.segmenter_name)
 
     def detect_in(self, rgb: np.ndarray, query: str) -> list[Detection]:
         """Open-vocab detections of *query* on the GIVEN frame (score-sorted boxes).
 
-        Routed through the SHARED grounding-dino-tiny detector (the same instance
-        the registered ``detect`` capability uses). It reads ONLY the pixels + the
+        GroundingDINO uses its shared singleton. Each detector reads ONLY pixels and the
         text query — never a ground-truth pose.
         """
         with self._lock:
@@ -113,11 +116,11 @@ class CameraPerception:
             results = self._tracker.init_track(image, bboxes=[(x1, y1, x2, y2)])
         mask = results[0].get("mask") if results else None
         if mask is not None and int(np.count_nonzero(mask)) > 0:
-            self.last_segmenter = "edgetam"
+            self.last_segmenter = self.segmenter_name
             return mask
         if not _warned_box_rect:
             _warned_box_rect = True
-            logger.warning("[GO2-PERCEPT] EdgeTAM returned an empty mask — box-rect mask (coarse)")
+            logger.warning("[GO2-PERCEPT] %s returned an empty mask — box-rect mask (coarse)", self.segmenter_name)
         self.last_segmenter = "box_rect"
         return self._box_rect_mask(image, (x1, y1, x2, y2))
 

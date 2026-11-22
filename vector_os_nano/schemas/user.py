@@ -12,7 +12,7 @@
 
 Precedence: CLI flag > this file > the built-in default (vcli/config.py). The file never
 holds a key: a key that looks like a secret is refused, naming the variable to set.
-The ``defaults`` block selects simulation startup; perception is not yet configured here.
+The ``defaults`` block selects simulation startup; ``perception`` selects its models.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from vector_os_nano.schemas.strict import yaml_loader
 
@@ -41,6 +42,12 @@ PROVIDERS: dict[str, Provider] = {
 }
 DEFAULT_PROVIDER = "deepseek"
 
+DETECTORS = {
+    'grounding-dino': 'vector_os_nano.perception.grounding_dino:get_shared_detector',
+    'rynnbrain': 'vector_os_nano.perception.rynnbrain:RynnBrainDetector',
+}
+SEGMENTERS = {'edgetam': 'vector_os_nano.perception.tracker:EdgeTAMTracker'}
+
 
 @dataclass(frozen=True)
 class Llm:
@@ -59,9 +66,24 @@ class Defaults:
 
 
 @dataclass(frozen=True)
+class SceneVlm:
+    model: str = 'google/gemma-4-31b-it'
+    base_url: str = 'https://openrouter.ai/api/v1'
+    api_key_env: str | None = 'OPENROUTER_API_KEY'
+
+
+@dataclass(frozen=True)
+class Perception:
+    detector: str = 'grounding-dino'
+    segmenter: str = 'edgetam'
+    scene_vlm: SceneVlm | None = SceneVlm()
+
+
+@dataclass(frozen=True)
 class UserConfig:
     llm: Llm = Llm()
     defaults: Defaults = Defaults()
+    perception: Perception = Perception()
 
 
 class UserConfigError(ValueError):
@@ -78,11 +100,18 @@ def _secret_error(path: Path, raw: dict[str, Any]) -> UserConfigError | None:
     llm = raw.get("llm") if isinstance(raw.get("llm"), dict) else {}
     provider = PROVIDERS.get(str(llm.get("provider")), PROVIDERS[DEFAULT_PROVIDER])
     own = str(llm.get("api_key_env") or provider.key_env)
-    for dotted, key in [(k, k) for k in raw] + [(f"llm.{k}", k) for k in llm]:
-        if _SECRET.search(str(key)):
-            var = own if re.fullmatch(_SECRET_WORD, str(key), re.I) else str(key).upper()
-            return UserConfigError(f"{path}: {dotted} looks like a secret, and the config file never holds "
-                                   f"one: delete it and set {var} in the environment (or .env) instead")
+    perception = raw.get('perception')
+    perception = perception if isinstance(perception, dict) else {}
+    scene = perception.get('scene_vlm')
+    scene = scene if isinstance(scene, dict) else {}
+    blocks = [('', raw, own), ('llm.', llm, own), ('perception.', perception, 'OPENROUTER_API_KEY'),
+              ('perception.scene_vlm.', scene, scene.get('api_key_env') or 'OPENROUTER_API_KEY')]
+    for prefix, block, own in blocks:
+        for key in block:
+            if _SECRET.search(str(key)):
+                var = own if re.fullmatch(_SECRET_WORD, str(key), re.I) else str(key).upper()
+                return UserConfigError(f"{path}: {prefix}{key} looks like a secret, and the config file never holds "
+                                       f"one: delete it and set {var} in the environment (or .env) instead")
     return None
 
 
@@ -115,7 +144,7 @@ def load(path: Path) -> UserConfig:
                               "upgrade vector_os_nano")
     if schema < SCHEMA:
         raise UserConfigError(f"{path}: schema {schema} is not a valid schema number; use schema: {SCHEMA}")
-    _unknown(path, "", raw, ["schema", "llm", "defaults"])
+    _unknown(path, "", raw, ["schema", "llm", "defaults", "perception"])
     llm = raw.get("llm") or {}
     if not isinstance(llm, dict):
         raise UserConfigError(f"{path}: llm must be a mapping (got {type(llm).__name__})")
@@ -136,4 +165,31 @@ def load(path: Path) -> UserConfig:
                 raise UserConfigError(f"{path}: defaults.gui must be true or false")
         elif not isinstance(value, str) or not value.strip():
             raise UserConfigError(f"{path}: defaults.{key} must be a non-empty string")
-    return UserConfig(llm=Llm(**llm), defaults=Defaults(**defaults))
+    perception = raw.get('perception', {})
+    if not isinstance(perception, dict):
+        raise UserConfigError(f'{path}: perception must be a mapping')
+    _unknown(path, 'perception.', perception, [f.name for f in fields(Perception)])
+    for key, table in (('detector', DETECTORS), ('segmenter', SEGMENTERS)):
+        if key in perception and (not isinstance(perception[key], str) or perception[key] not in table):
+            raise UserConfigError(f'{path}: perception.{key} must name a model; valid: {", ".join(table)}')
+    scene = perception.get('scene_vlm', {})
+    if scene is not None:
+        if not isinstance(scene, dict):
+            raise UserConfigError(f'{path}: perception.scene_vlm must be a mapping or null')
+        _unknown(path, 'perception.scene_vlm.', scene, [f.name for f in fields(SceneVlm)])
+        for key, value in scene.items():
+            if key == 'api_key_env' and value is None:
+                continue
+            if not isinstance(value, str) or not value.strip():
+                raise UserConfigError(f'{path}: perception.scene_vlm.{key} must be a non-empty string')
+        scene = SceneVlm(**scene)
+        try:
+            url = urlsplit(scene.base_url)
+        except ValueError as exc:
+            raise UserConfigError(f'{path}: perception.scene_vlm.base_url is not a valid URL') from exc
+        if url.scheme not in ('http', 'https') or not url.netloc or url.username or url.password or url.query or url.fragment:
+            raise UserConfigError(f'{path}: perception.scene_vlm.base_url must be an HTTP(S) URL without credentials, query or fragment')
+        if scene.api_key_env is not None and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', scene.api_key_env):
+            raise UserConfigError(f'{path}: perception.scene_vlm.api_key_env must name an environment variable')
+    return UserConfig(llm=Llm(**llm), defaults=Defaults(**defaults),
+                      perception=Perception(**{**perception, 'scene_vlm': scene}))

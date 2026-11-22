@@ -24,7 +24,7 @@ import math
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Callable
 from vector_os_nano.core.run_dir import run_path
@@ -32,8 +32,6 @@ from vector_os_nano.schemas import paths
 from vector_os_nano.schemas.world import WorldManifest
 
 logger = logging.getLogger(__name__)
-
-_REPO = Path(__file__).resolve().parents[2]
 
 # Readiness: physics must advance this much sim time, and a clock that does not
 # move at all for _STALL_S of wall time is a dead physics thread.
@@ -438,34 +436,18 @@ def _probe_ready(agent: Any, cfg: Any, runtime: Any, *, deadline: float,
 
 
 def _user_config() -> dict[str, Any]:
-    from vector_os_nano.core.config import load_config
-
-    path = _REPO / "config" / "user.yaml"
-    return load_config(str(path)) if path.exists() else {}
+    from vector_os_nano.schemas import user
+    return asdict(user.load(paths.config_file()))
 
 
-def _scene_vlm_config(user_cfg: dict[str, Any], vlm_api_key: str | None) -> tuple[str, dict[str, Any], str]:
-    """The scene VLM's key, its config/user.yaml ``vlm:`` block and one notice.
-
-    The key comes from the environment like every provider's: a key left in
-    config/user.yaml (``llm.api_key``, ``vlm.api_key``) is never read nor sent, and the
-    notice names the variable to set instead ('' when the file holds none).
-    """
-    vlm_cfg = dict(user_cfg.get("vlm") or {})
-    stray = [f"{block}.api_key" for block, d in (("llm", user_cfg.get("llm")), ("vlm", vlm_cfg))
-             if isinstance(d, dict) and d.get("api_key")]
-    vlm_cfg.pop("api_key", None)
-    note = (f"config/user.yaml {' and '.join(stray)} ignored (keys come only from the environment): "
-            "set OPENROUTER_API_KEY") if stray else ""
-    return vlm_api_key or os.environ.get("OPENROUTER_API_KEY", ""), vlm_cfg, note
-
-
-def _perception(camera: Any, cameras: dict | None = None) -> Any:
+def _perception(camera: Any, cameras: dict | None = None, config: dict | None = None) -> Any:
     """The ONE perception over the manifest's camera: built once per session and shared by
     the grasp and look/localize skills, so they always see the same camera size."""
     from vector_os_nano.perception.camera_perception import CameraPerception
 
-    return CameraPerception(camera, cameras=cameras) if camera is not None else None
+    selected = _user_config()['perception'] if config is None else config
+    return CameraPerception(camera, cameras=cameras, detector_name=selected['detector'],
+                            segmenter_name=selected['segmenter']) if camera is not None else None
 
 
 def _perception_note(agent: Any, vlm_why: str = "") -> str:
@@ -474,6 +456,9 @@ def _perception_note(agent: Any, vlm_why: str = "") -> str:
 
     import importlib.util
 
+    perception, vlm = getattr(agent, "_perception", None), getattr(agent, "_vlm", None)
+    detector_name = getattr(perception, 'detector_name', 'grounding-dino')
+    segmenter_name = getattr(perception, 'segmenter_name', 'edgetam')
     if importlib.util.find_spec("torch") is None or importlib.util.find_spec("transformers") is None:
         detector = seg = "unavailable (torch/transformers not installed: uv pip install -e '.[all]')"
     else:
@@ -487,8 +472,11 @@ def _perception_note(agent: Any, vlm_why: str = "") -> str:
         device = "cuda" if visible and Path("/proc/driver/nvidia/version").exists() else "cpu"
         detector = f"grounding-dino@{device} ({status(GroundingDinoDetector.WEIGHTS)})"
         seg = f"edgetam ({status(EdgeTAMTracker.WEIGHTS)})"
-    perception, vlm = getattr(agent, "_perception", None), getattr(agent, "_vlm", None)
-    vlm_s = f"none ({vlm_why})" if vlm is None else f"{'local' if vlm._local else 'openrouter'}:{vlm._model}"
+    if detector_name != 'grounding-dino':
+        detector = f'{detector_name} (lazy)'
+    if segmenter_name != 'edgetam':
+        seg = f'{segmenter_name} (lazy)'
+    vlm_s = f"none ({vlm_why})" if vlm is None else f"{vlm._base_url}:{vlm._model}"
     return (
         f"perception: detector={detector}, segmenter={seg}, "
         f"self_mask={'yes' if callable(getattr(perception, 'capture', None)) else 'no'}, "
@@ -625,25 +613,24 @@ def _build(session: SimSession, vlm_api_key: str | None) -> Any:
                                      abort=session.abort)
 
     user_cfg = _user_config()
-    api_key, vlm_cfg, key_note = _scene_vlm_config(user_cfg, vlm_api_key)
     agent = Agent(base=base, arm=arm, gripper=gripper, config=user_cfg, skills=get_skills(cfg.capabilities))
     agent._services["joint_groups"] = groups
     agent._services["lidar"] = lidar
     agent._services["layout"] = {"rooms": world.rooms, "boxes": world.boxes}
     from vector_os_nano.schemas.robot import CameraSpec
     from vector_os_nano.sim.drivers.camera import Camera
-    agent._perception = _perception(camera, {s.name: Camera(s, rt) for s in cfg.sensors if isinstance(s, CameraSpec)})
+    agent._perception = _perception(camera, {s.name: Camera(s, rt) for s in cfg.sensors if isinstance(s, CameraSpec)}, user_cfg['perception'])
     agent._calibration = None
 
-    # The scene VLM is optional naming sugar: an OpenRouter key OR a local server
-    # (VECTOR_VLM_URL, e.g. Ollama). Discovery never needs it.
-    vlm_why = "no OPENROUTER_API_KEY or VECTOR_VLM_URL"
-    if api_key or os.environ.get("VECTOR_VLM_URL"):
+    # Scene captioning is optional; the selected detector handles discovery independently.
+    vlm_why = "disabled by perception.scene_vlm: null"
+    vlm_cfg = user_cfg['perception']['scene_vlm']
+    if vlm_cfg is not None:
         try:
             from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
 
             agent._vlm = Go2VLMPerception(config={
-                "api_key": api_key, "rooms": sorted(world.rooms),
+                "api_key": vlm_api_key, "rooms": sorted(world.rooms),
                 **vlm_cfg,
             })
         except Exception as exc:  # noqa: BLE001 — VLM is optional; the capability line says why
@@ -673,8 +660,6 @@ def _build(session: SimSession, vlm_api_key: str | None) -> Any:
             except Exception as exc:  # noqa: BLE001 — optional capability
                 session.notes.append(f"explore: coverage (TARE unavailable: {exc})")
     session.notes.append(_perception_note(agent, vlm_why))  # after it: the explore note stays up front
-    if key_note:
-        session.notes.append(key_note)
     if moved:
         session.notes.append(moved)
     return agent
