@@ -143,7 +143,8 @@ def perceive(perception, query, target, params=None, *, cancel=lambda: False, ex
         if passed is not None and _fresh(frame, rgb, pos, rot, camera):
             detections = [SimpleNamespace(**{k: passed[k] for k in ("bbox", "confidence")})]
             meta.update(consumed_bbox=True, reperceived=False)
-        elif target.front:
+        # A colour proposal may cover only a printed patch; refine named objects after moving.
+        elif target.front and (not target.prompt or expected_bounds is None):
             mask = perception.front_object_mask(rgb, depth, color=target.colour)
             if mask is None or not np.any(mask):
                 detections = perception.detect_in(rgb, target.prompt) if target.prompt else []

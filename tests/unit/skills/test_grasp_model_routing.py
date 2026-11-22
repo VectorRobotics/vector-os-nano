@@ -419,3 +419,17 @@ def test_empty_named_detector_proposal_stays_a_failure():
     result = GraspSkill().execute({'query': '罐子'}, _ctx(perc))
     assert not result.success and result.diagnosis_code == 'no_detections'
     assert 'detect:red can' in perc.calls
+
+
+def test_named_reobservation_refines_the_object_with_detector_and_segmentation():
+    from vector_os_nano.skills.grasp_perception import _target, perceive
+    perc = RoutingPerception()
+    target = _target('罐子', load_world('apartment'), True)
+    _, prior, error = perceive(perc, '罐子', target)
+    assert error is None
+    bounds = (np.asarray(prior['visible_bounds']) + np.array([[-.001]*3, [.001]*3])).tolist()
+    perc.calls.clear()
+    _, observed, error = perceive(perc, '罐子', target, expected_bounds=bounds)
+    assert error is None
+    assert perc.calls == ['detect:red can', 'segment']
+    assert observed['association_bounds'] == bounds
