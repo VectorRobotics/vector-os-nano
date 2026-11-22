@@ -146,9 +146,11 @@ def perceive(perception, query, target, params=None, *, cancel=lambda: False, ex
         elif target.front:
             mask = perception.front_object_mask(rgb, depth, color=target.colour)
             if mask is None or not np.any(mask):
-                return None, meta, _fail("no_detections", f"Cannot see {query!r}; use look from another view, then grasp again.")
-            yy, xx = np.nonzero(mask)
-            detections = [SimpleNamespace(bbox=(xx.min(), yy.min(), xx.max()+1, yy.max()+1), confidence=1., mask=mask)]
+                detections = perception.detect_in(rgb, target.prompt) if target.prompt else []
+                meta['detection_route'] = 'detector_after_empty_colour_mask' if target.prompt else 'empty_front_mask'
+            else:
+                yy, xx = np.nonzero(mask)
+                detections = [SimpleNamespace(bbox=(xx.min(), yy.min(), xx.max()+1, yy.max()+1), confidence=1., mask=mask)]
         else:
             detections = perception.detect_in(rgb, target.prompt or query)
         if not detections:

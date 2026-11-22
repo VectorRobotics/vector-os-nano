@@ -391,3 +391,31 @@ def test_a_colour_marked_as_a_reference_takes_the_one_object_of_that_colour(quer
 
 
 
+
+class _EmptyHue(RoutingPerception):
+    def front_object_mask(self, rgb=None, depth=None, *, color=None):
+        self.calls.append(f'front:{color}' if color else 'front')
+        return None
+
+
+def test_named_target_uses_detector_when_colour_proposal_is_empty():
+    perc = _EmptyHue()
+    result = GraspSkill().execute({'query': '罐子'}, _ctx(perc))
+    assert result.success, result.error_message
+    assert perc.calls[:2] == ['front:red', 'detect:red can']
+    assert result.result_data['detection_route'] == 'detector_after_empty_colour_mask'
+    assert result.result_data['detection_label'] == 'pickable_can_red'
+
+
+def test_deictic_empty_mask_does_not_invent_a_detector_target():
+    perc = _EmptyHue()
+    result = GraspSkill().execute({'query': '前面的东西'}, _ctx(perc))
+    assert not result.success and result.diagnosis_code == 'no_detections'
+    assert perc.calls == ['front']
+
+
+def test_empty_named_detector_proposal_stays_a_failure():
+    perc = _EmptyHue(detections=[])
+    result = GraspSkill().execute({'query': '罐子'}, _ctx(perc))
+    assert not result.success and result.diagnosis_code == 'no_detections'
+    assert 'detect:red can' in perc.calls
