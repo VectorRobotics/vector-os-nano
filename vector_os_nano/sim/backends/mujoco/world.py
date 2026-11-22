@@ -93,7 +93,8 @@ class MuJoCoWorld:
             if v is not None and self._track >= 0:
                 v.cam.type = mj.mjtCamera.mjCAMERA_FREE
                 v.cam.lookat[:] = [*d.xpos[self._track][:2], _TRACK_Z]
-                v.cam.distance, v.cam.elevation, v.cam.azimuth = 5.5, -20.0, -90.0
+                # Look over indoor walls while following the robot across rooms.
+                v.cam.distance, v.cam.elevation, v.cam.azimuth = 5.5, -70.0, -90.0
         if directory := os.environ.get('VECTOR_ROLLOUT_DIR'):
             from vector_os_nano.sim.backends.mujoco.recording import Recording
 
