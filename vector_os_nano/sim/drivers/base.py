@@ -331,7 +331,8 @@ class LeggedBase:
             except BaseException:
                 self._navigation = {**self._navigation, "state": "error"}
                 raise
-            self._navigation = {**self._navigation, "state": res.reason, "result": dict(res)}
+            self._navigation = {**self._navigation, "state": res.reason, "result": dict(res),
+                                "remaining_m": res['dist'], "elapsed_s": res['elapsed_s']}
         logger.info("navigate_to(%.2f, %.2f): %s", x, y, res)
         return res
 
