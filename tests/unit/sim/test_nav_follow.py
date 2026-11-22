@@ -283,3 +283,14 @@ def test_a_frozen_sim_clock_ends_the_follow_as_a_timeout():
     base = Frozen()
     res = follow(base, (4, 0), [], nav=GO2, fallen=lambda: False, cancel=Never())
     assert res.reason == "timeout" and base.waits == 1 and base.cmd == (0.0, 0.0, 0.0)
+
+
+def test_visualized_plan_is_the_executed_plan_and_refreshes_on_recovery():
+    plans = []
+    base = KinBase(blocked=lambda x, y, t: t < 8.0 and 1.0 < x < 1.4)
+    result = follow(base, (3, 0), [], nav=GO2, fallen=lambda: False,
+                    on_plan=lambda path: plans.append([tuple(p) for p in path]))
+    assert result and len(plans) == result['recoveries'] + 1
+    assert plans[0][0] == (0., 0.) and plans[0][-1] == (3., 0.)
+    assert plans[-1][0] != plans[0][0]
+    assert tuple(result['target']) == plans[-1][-1]

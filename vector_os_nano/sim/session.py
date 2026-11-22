@@ -231,6 +231,16 @@ class SimSession:
             session.agent = builder(session, vlm_api_key)
             session.ready = _probe_ready(session.agent, cfg, session.runtime,
                                          deadline=t0 + deadline_s, abort=cancelled)
+            if os.environ.get('VECTOR_ROS_VIZ') == '1':
+                from vector_os_nano.schemas.robot import CameraSpec
+                from vector_os_nano.sim.drivers.camera import Camera
+                from vector_os_nano.sim.nav.ros2.session_viz import start
+                cameras = {s.name: Camera(s, session.runtime) for s in cfg.sensors if isinstance(s, CameraSpec)}
+                agent = session.agent
+                session.own('ROS sensor visualization stopped', start(
+                    session.runtime, cfg, cameras, agent._base, agent._services['lidar'], agent._gripper,
+                    layout=session.world))
+                session.notes.append('ROS visualization: live sensors; navigation=visibility_graph, map=authored_scene')
             session._bind_ground_truth()
         except BaseException as exc:
             session.stop()
@@ -648,7 +658,7 @@ def _build(session: SimSession, vlm_api_key: str | None) -> Any:
     agent._spatial_memory.load()
     agent._spatial_memory.load_layout(str(world.path))
 
-    if cfg.base is not None and cfg.base.nav.explorer == "tare":
+    if os.environ.get('VECTOR_ROS_VIZ') != '1' and cfg.base is not None and cfg.base.nav.explorer == "tare":
         if not os.environ.get("VECTOR_NAV_STACK"):
             session.notes.append("explore: coverage (VECTOR_NAV_STACK unset)")
         else:

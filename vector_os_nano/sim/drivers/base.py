@@ -130,6 +130,7 @@ class LeggedBase:
         self._handover = True           # the policy starts fresh at its next tick
         self._ticked = _ZERO            # the command the policy last saw
         self._connected = False
+        self._navigation: dict = {"state": "idle", "planner": "visibility_graph", "map_source": "authored_scene", "path": []}
 
     # -- the BaseProtocol surface ----------------------------------------------
 
@@ -290,6 +291,11 @@ class LeggedBase:
     def cmd_motion(self) -> float:
         return float(self._cmd_motion)
 
+    def navigation_state(self) -> dict:
+        """A detached, read-only view of the actual in-process plan and its result."""
+        import copy
+        return copy.deepcopy(self._navigation)
+
     def navigate_to(self, x: float, y: float, tol: float | None = None, speed: float | None = None,
                     timeout: float | None = None, cancel: Any = None, on_progress: Any = None) -> NavResult:
         """Walk to world (x, y) around the scene's static obstacles (the shared follower).
@@ -310,9 +316,22 @@ class LeggedBase:
         outer = self._cancel if cancel is None else cancel
         with self._control() as stops:
             stopped = _Abort(lambda: self._stops != stops or outer.is_set())
-            res = follow(self, (x, y), obstacles, nav=nav, fallen=self._fallen,
-                         inflation=nav.body_radius + reach, tol=tol, speed=speed, timeout=timeout,
-                         cancel=stopped, on_progress=on_progress)
+            self._navigation = {"planner": "visibility_graph", "map_source": "authored_scene",
+                                "state": "planning", "goal": [x, y], "path": []}
+            def planned(path):
+                self._navigation = {**self._navigation, "state": "following", "path": [list(p) for p in path]}
+            def progress(remaining, elapsed):
+                self._navigation = {**self._navigation, "remaining_m": remaining, "elapsed_s": elapsed}
+                if on_progress is not None:
+                    on_progress(remaining, elapsed)
+            try:
+                res = follow(self, (x, y), obstacles, nav=nav, fallen=self._fallen,
+                             inflation=nav.body_radius + reach, tol=tol, speed=speed, timeout=timeout,
+                             cancel=stopped, on_progress=progress, on_plan=planned)
+            except BaseException:
+                self._navigation = {**self._navigation, "state": "error"}
+                raise
+            self._navigation = {**self._navigation, "state": res.reason, "result": dict(res)}
         logger.info("navigate_to(%.2f, %.2f): %s", x, y, res)
         return res
 

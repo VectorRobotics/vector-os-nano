@@ -125,6 +125,7 @@ def follow(
     timeout: float | None = None,
     cancel: Any = None,
     on_progress: Callable[[float, float], None] | None = None,
+    on_plan: Callable[[list], None] | None = None,
 ) -> NavResult:
     """Drive *base* to *goal* around *obstacles*; see the module docstring.
 
@@ -149,6 +150,8 @@ def follow(
     t0 = base.get_sim_time()
     goal = (float(goal[0]), float(goal[1]))
     path, plan_m = vg.plan_path((x0, y0), goal, obstacles, r, snap_goal=True)
+    if on_plan is not None:
+        on_plan(path or [])
     moved = [0.0]
     last = [(x0, y0)]
     recoveries = 0
@@ -251,6 +254,8 @@ def follow(
                 _recover(base, inflated, cfg, cancel)
                 x, y, _ = _xyz(base)
                 new_path, new_m = vg.plan_path((x, y), goal, obstacles, r, snap_goal=True)
+                if on_plan is not None:
+                    on_plan(new_path or [])
                 if new_path is None:
                     return result("unreachable")
                 path, plan_m, i, seg_start = new_path, new_m, 1, (x, y)

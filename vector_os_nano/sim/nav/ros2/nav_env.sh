@@ -10,6 +10,11 @@ if [ -z "${VECTOR_NAV_STACK:-}" ] || [ ! -f "$VECTOR_NAV_STACK/install/setup.bas
     exit 2
 fi
 NAV_STACK="$VECTOR_NAV_STACK"
+# TARE's bundled OR-Tools is outside the workspace's ament library paths.
+ORTOOLS_LIB="$NAV_STACK/src/exploration_planner/tare_planner/or-tools/lib"
+if [ -f "$ORTOOLS_LIB/libortools.so.9" ]; then
+    export LD_LIBRARY_PATH="$ORTOOLS_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
 CMEEL_SP="$VENV_SP/cmeel.prefix/lib/python3.12/site-packages"
 

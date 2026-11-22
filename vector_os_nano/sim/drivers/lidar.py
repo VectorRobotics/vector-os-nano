@@ -95,7 +95,7 @@ class Lidar:
         self._body = scene.body(spec.body)
         self._robot = scene.subtree(scene.robot_root)
         self._lock = threading.Lock()
-        self._cache: tuple[float, Any, list] | None = None
+        self._cache: tuple | None = None
 
     def scan(self) -> Any:
         """The latest 2-D ``core.types.LaserScan`` (the elev 0 ring)."""
@@ -105,7 +105,22 @@ class Lidar:
         """The latest 3-D point cloud: ``(x, y, z, 0.0)`` world hits of every ring."""
         return self._latest()[2]
 
-    def _latest(self) -> tuple[float, Any, list]:
+    def observation(self) -> tuple:
+        """Scan, world points, sensor origin and heading from ONE cached acquisition."""
+        _, scan, points, origin, heading = self._latest()
+        return scan, list(points), origin.copy(), heading
+
+    def pose(self, snap: Any) -> tuple:
+        """The same yaw-only mount convention used by the ray grid."""
+        s = self._spec
+        pos, quat = canonical.body_poses(self._scene, snap.q)
+        w, x, y, z = quat[self._body]
+        heading = math.atan2(2.0 * (w*z+x*y), 1.0-2.0*(y*y+z*z))
+        c, si = math.cos(heading), math.sin(heading)
+        px, py, pz = s.pos
+        return pos[self._body]+np.array([c*px-si*py, si*px+c*py, pz]), heading
+
+    def _latest(self) -> tuple:
         with self._lock:
             c = self._cache
             if c is not None and 0.0 <= self._rt.sim_time - c[0] < self._spec.period_s:
@@ -113,16 +128,11 @@ class Lidar:
             self._cache = self._cast(self._rt.snapshot())
             return self._cache
 
-    def _cast(self, snap: Any) -> tuple[float, Any, list]:
+    def _cast(self, snap: Any) -> tuple:
         from vector_os_nano.core.types import LaserScan
 
         s = self._spec
-        pos, quat = canonical.body_poses(self._scene, snap.q)
-        w, x, y, z = quat[self._body]
-        heading = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-        c, si = math.cos(heading), math.sin(heading)
-        px, py, pz = s.pos
-        origin = pos[self._body] + np.array([c * px - si * py, si * px + c * py, pz])
+        origin, heading = self.pose(snap)
         raw = raycast_lidar(
             self._rt.world.raycast, pos_lidar=origin, heading=heading, exclude_bid=self._body,
             robot_bodies=self._robot, tilt_deg=s.tilt_deg, elevations=list(s.elevations_deg),
@@ -133,4 +143,4 @@ class Lidar:
             angle_increment=math.radians(360.0 / s.n_azimuth), range_min=_RANGE_MIN, range_max=s.range,
             ranges=tuple(raw.mid_ring_ranges),
         )
-        return snap.sim_time, scan, raw.points_3d
+        return snap.sim_time, scan, raw.points_3d, origin, heading

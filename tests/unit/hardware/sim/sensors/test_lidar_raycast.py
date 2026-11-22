@@ -21,6 +21,29 @@ import numpy as np
 from vector_os_nano.sim.drivers.lidar import raycast_lidar
 
 
+def test_observation_retains_acquisition_pose_when_runtime_moves(tiny_world):
+    from vector_os_nano.schemas.robot import LidarSpec
+    from vector_os_nano.sim.runtime import SimRuntime
+    from vector_os_nano.sim.drivers.lidar import Lidar
+    rt = SimRuntime(tiny_world, controller=lambda w: None)
+    lidar = Lidar(LidarSpec(body='trunk', pos=(.2, 0., .1), tilt_deg=0.,
+                          elevations_deg=(0.,), n_azimuth=8, range=10., period_s=.5), rt)
+    first = lidar.observation()
+    assert np.allclose(first[2], [.2, 0., .6])
+    first[2][:] = 99
+    first[1].clear()
+    again = lidar.observation()
+    assert np.allclose(again[2], [.2, 0., .6]) and len(again[1]) > 0
+    assert again[0].timestamp == rt.sim_time
+    # A caller's changed snapshot cannot relabel the old cached scan's TF.
+    from dataclasses import replace
+    snap = rt.snapshot()
+    q = snap.q.copy(); q[0] += 2
+    origin, _ = lidar.pose(replace(snap, q=q))
+    assert np.allclose(origin, [2.2, 0., .6])
+    assert np.allclose(lidar.observation()[2], [.2, 0., .6])
+
+
 # ----------------------------------------------------------------------------
 # Golden references — VERBATIM copies of the two original inline ray loops
 # ----------------------------------------------------------------------------
