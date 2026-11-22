@@ -38,7 +38,8 @@ _HOME_CAUSED = "home → verify arm_at_home() ✓ (actor=CAUSED)"
 def e7(request):
     script = copy.deepcopy(_SCRIPT)
     script["steps"][0]["tool_calls"][0]["input"]["backend"] = request.param
-    r = run_repl_session(["启动机械臂仿真 无窗口", "回到初始位置", "尝试抓起香蕉", (1.8, "停"), "回到初始位置", "抓起香蕉"],
+    # The initial view equals home; let the observed grasp progress leave that preparation phase.
+    r = run_repl_session(["启动机械臂仿真 无窗口", "回到初始位置", "尝试抓起香蕉", ("grasp 4s", "停"), "回到初始位置", "抓起香蕉"],
                          tool_script=script, answers=["y"], timeout_sec=240)
     assert f"backend={request.param}" in r.text
     return r, r.text
