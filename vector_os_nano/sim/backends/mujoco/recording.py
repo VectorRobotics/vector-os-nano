@@ -38,7 +38,12 @@ def read_recording(directory: str | Path):
             index += size
         return out
 
-    states = columns(np.memmap(directory/'states.bin', dtype='<f8', mode='r'), meta['fields'], meta['rows'])
+    if (directory/'states.bin').exists():
+        raw = np.memmap(directory/'states.bin', dtype='<f8', mode='r')
+    else:
+        with gzip.open(directory/'states.bin.gz', 'rb') as stream:
+            raw = np.frombuffer(stream.read(), dtype='<f8')
+    states = columns(raw, meta['fields'], meta['rows'])
     contacts = {}
     if 'contact_fields' in meta:
         with gzip.open(directory/'contacts.bin.gz', 'rb') as stream:
