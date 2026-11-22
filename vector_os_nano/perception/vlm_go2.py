@@ -127,6 +127,8 @@ class Go2VLMPerception:
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
+        if os.environ.get('VECTOR_VLM_URL') or os.environ.get('VECTOR_VLM_MODEL'):
+            raise ValueError('remove VECTOR_VLM_URL/VECTOR_VLM_MODEL and select perception.scene_vlm in config.yaml')
         selected = user.load(paths.config_file()).perception.scene_vlm if config is None else user.SceneVlm()
         if selected is None:
             raise ValueError('scene VLM disabled by perception.scene_vlm: null')

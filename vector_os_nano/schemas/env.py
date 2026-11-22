@@ -28,6 +28,8 @@ CATALOGUE: dict[str, EnvVar] = {
     "OPENROUTER_API_KEY": EnvVar("user", "", "key of the openrouter LLM provider, the scene VLM and the LLM fallback"),
     "ANTHROPIC_API_KEY": EnvVar("user", "", "key of the anthropic LLM provider"),
     "OPENAI_API_KEY": EnvVar("user", "", "key of the openai_compat LLM provider"),
+    "VECTOR_VLM_URL": EnvVar("user", "", "retired: a nonempty value is rejected; migrate to perception.scene_vlm.base_url in config.yaml"),
+    "VECTOR_VLM_MODEL": EnvVar("user", "", "retired: a nonempty value is rejected; migrate to perception.scene_vlm.model in config.yaml"),
     "MOONDREAM_API_KEY": EnvVar("user", "", "key of the Moondream cloud VLM"),
     "MOONDREAM_MODEL": EnvVar("user", "vikhyatk/moondream2", "the Moondream model id"),
     "VECTOR_RYNNBRAIN_URL": EnvVar("user", "http://127.0.0.1:8786", "the RynnBrain detector server"),

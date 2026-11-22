@@ -36,11 +36,18 @@ def test_config_reaches_camera_routed_detector_and_scene_vlm(tmp_path, monkeypat
     direct = DetectorCapability().invoke({'rgb': rgb, 'query': 'cup'}, None)
     assert direct.success and direct.output['backend'] == 'rynnbrain'
     assert seen == ['cup', 'cup', 'cup']
-    monkeypatch.setenv('VECTOR_VLM_URL', 'http://wrong.invalid/v1')
-    monkeypatch.setenv('VECTOR_VLM_MODEL', 'wrong-model')
     vlm = Go2VLMPerception()
     assert vlm._base_url == 'http://localhost:11434/v1'
     assert vlm._model == 'local-vision' and vlm._local
+
+
+@pytest.mark.parametrize('name', ['VECTOR_VLM_URL', 'VECTOR_VLM_MODEL'])
+def test_retired_selection_vars_refuse_to_switch_an_existing_endpoint(tmp_path, monkeypatch, name):
+    from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
+    config(tmp_path, monkeypatch, '  scene_vlm: {api_key_env: null}\n')
+    monkeypatch.setenv(name, 'old-local-selection')
+    with pytest.raises(ValueError, match='config.yaml'):
+        Go2VLMPerception()
 
 
 @pytest.mark.parametrize('body,key', [
