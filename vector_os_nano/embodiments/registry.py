@@ -45,8 +45,9 @@ def validate(cfg: EmbodimentConfig, *, ctx: str = "robot.yaml") -> EmbodimentCon
     from vector_os_nano.skills.grasp_config import parse
     from vector_os_nano.skills.place_config import parse as parse_place
     from vector_os_nano.skills.transport import parse as parse_transport
+    from vector_os_nano.skills.drawer import parse as parse_drawer
 
-    owners = {'grasp': parse, 'place': parse_place, 'transport': parse_transport}
+    owners = {'grasp': parse, 'place': parse_place, 'transport': parse_transport, 'drawer': parse_drawer}
     skills = {}
     for name, params in cfg.skills.items():
         if name not in owners:

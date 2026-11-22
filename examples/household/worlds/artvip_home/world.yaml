@@ -22,6 +22,7 @@ articulations:
     body: cart_/root/E_drawer_4
     joint: cart_/root/E_drawer_4/PrismaticJoint_up
     handle_geom: cart_/root/E_drawer_4/E_handle_11/P_9d043626900169c5
+    handle_query: drawer knob
     closed: 0
     opened: -0.27
     closed_tolerance: 0.003
@@ -33,6 +34,47 @@ surfaces:
     height: 0.778
     place_point: [1.50, -2.68]  # authored development return position; not a perceived empty slot
     aliases: [storage shelf, 厨房层架, 层架, 收纳架]
+  # Development insertion geometry; each transfer still requires independent physical acceptance.
+  tissue_compartment:
+    body: cart_/root/E_drawer_4
+    box: [-0.185, 0.060, -0.006, 0.217]
+    height: -0.0684961
+    ceiling: 0.08
+    place_point: [-0.1105, 0.1385]  # TCP point includes the nominal frontal-grasp lateral offset
+    approach_pose: [-0.5955, -0.1815, 0]
+    local_anchor: &drawer_anchor
+      query: drawer knob
+      point: [0.00016855, 0.022650755, 0.00016855]
+      yaw: -1.5707963267948966
+      max_extent: 0.06
+    aliases: [tissue compartment, 纸巾格]
+  yellow_sponge_compartment:
+    body: cart_/root/E_drawer_4
+    box: [0.006, 0.060, 0.185, 0.217]
+    height: -0.0684961
+    ceiling: 0.08
+    place_point: [0.0805, 0.1385]
+    approach_pose: [-0.4045, -0.1815, 0]
+    local_anchor: *drawer_anchor
+    aliases: [yellow sponge compartment, 黄色海绵格]
+  green_sponge_compartment:
+    body: cart_/root/E_drawer_4
+    box: [-0.185, 0.223, -0.006, 0.380]
+    height: -0.0684961
+    ceiling: 0.08
+    place_point: [-0.1105, 0.253]
+    approach_pose: [-0.5955, -0.067, 0]
+    local_anchor: *drawer_anchor
+    aliases: [green sponge compartment, 绿色海绵格]
+  zip_bag_compartment:
+    body: cart_/root/E_drawer_4
+    box: [0.006, 0.223, 0.185, 0.380]
+    height: -0.0684961
+    ceiling: 0.08
+    place_point: [0.0805, 0.253]
+    approach_pose: [-0.4045, -0.067, 0]
+    local_anchor: *drawer_anchor
+    aliases: [zip bag compartment, 密封袋格]
 pickables:
   tissue_refill: {category: pack, colour: beige, surface: storage_shelf, aliases: [tissue refill, 纸巾补充装]}
   sponge_pack_1: {category: sponge, colour: yellow, surface: storage_shelf, aliases: [yellow sponge pack, 黄色海绵包]}

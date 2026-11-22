@@ -87,6 +87,18 @@ def test_missing_contacts_cannot_verify_and_assisted_grip_is_rejected():
         drawer_checks(model, states, contacts, cfg, spec)
 
 
+def test_stationary_open_drawer_can_be_released_for_loading_but_cannot_drift():
+    model, states, contacts, cfg, spec = trace()
+    keep = ~((contacts['sim_time'][:, 0] >= 6.5) & (contacts['sim_time'][:, 0] < 6.9))
+    contacts = {key: value[keep] for key, value in contacts.items()}
+    assert all(drawer_checks(model, states, contacts, cfg, spec)[0].values())
+    states['qpos'][650:690, -1] = -.27-np.arange(40)*.0001
+    states['qvel'][650:690, -1] = -.01
+    checks, _ = drawer_checks(model, states, contacts, cfg, spec)
+    assert not checks['released_open_stable']
+    assert not checks['opposed_grip_during_motion']
+
+
 def test_authored_time_zero_resets_are_allowed_but_midrun_resets_are_not():
     model, states, contacts, cfg, spec = trace()
     states = {key: np.concatenate((value[:1], value), axis=0) for key, value in states.items()}

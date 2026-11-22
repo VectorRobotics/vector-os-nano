@@ -302,8 +302,11 @@ class NativeStepRunner:
         # An object the world manifest cannot resolve binds nothing (no evidence), never a guess.
         world = getattr(sim_session(self._world, self._agent), "world", None)
         used = {f for _, f, _, _ in string.Formatter().parse(hint) if f}
-        if world is not None and any(isinstance(params[f], str) and world.resolve(params[f]) is None for f in used):
-            return None
+        if world is not None:
+            channels = {channel for _, _, channel, _ in actor_causation.robot_calls(bound, self._oracles)}
+            resolve = world.resolve_articulation if channels == {'articulation'} else world.resolve
+            if any(isinstance(params[f], str) and resolve(params[f]) is None for f in used):
+                return None
         return bound
 
     def _note_intents(self, tool: Any) -> None:

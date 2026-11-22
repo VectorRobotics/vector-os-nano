@@ -131,8 +131,15 @@ def drawer_checks(model, states, contacts, cfg, spec):
     for i in range(len(fingers)):
         for j in range(i):
             opposed |= np.sum(normals[i]*normals[j], axis=1) < CRITERIA['opposing_cosine']*magnitudes[i]*magnitudes[j]
-    required = (abs(v) > CRITERIA['stopped_speed_m_s']) | opened
+    # A released stationary drawer must remain open for loading; opening alone is not a grasp requirement.
+    required = abs(v) > CRITERIA['stopped_speed_m_s']
     checks['opposed_grip_during_motion'] = bool(required.any() and np.all((np.all(magnitudes > CRITERIA['min_compression_N'], axis=0) & opposed)[required]))
+    touching = np.any(magnitudes > CRITERIA['min_compression_N'], axis=0)
+    edges = np.diff(np.r_[False, ~touching, False].astype(int))
+    checks['released_open_stable'] = all(
+        not np.any(opened[a:b]) or (np.all(opened[a:b]) and np.ptp(q[a:b]) <= spec.closed_tolerance
+                                   and np.max(abs(v[a:b])) <= CRITERIA['stopped_speed_m_s'])
+        for a, b in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)))
     net = np.zeros((len(t), 3))
     sign = np.isin(b, fingers).astype(int)-np.isin(a, fingers).astype(int)
     np.add.at(net, indices, contacts['force_on_b']*sign[:, None])

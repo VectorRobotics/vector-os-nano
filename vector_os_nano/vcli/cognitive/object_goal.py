@@ -173,7 +173,10 @@ def backs_contract(item: str, verify: str | None, world_id: str = "") -> bool:
         if not isinstance(arg, ast.Constant):
             return ast.dump(arg)
         v = arg.value
-        return (world.resolve(v) or v) if world is not None and isinstance(v, str) else v
+        if world is not None and isinstance(v, str):
+            resolve = world.resolve_articulation if want.func.id in {'articulation_open', 'articulation_closed'} else world.resolve
+            return resolve(v) or v
+        return v
 
     return any(
         c.func.id == want.func.id and len(c.args) >= len(want.args)
@@ -189,6 +192,8 @@ def backs_contract(item: str, verify: str | None, world_id: str = "") -> bool:
 # of any kind; a phrasing nobody listed compiles nothing (unchecked), never a guess. Read in
 # this order: a place before a release ("put down X on S": S is where X goes, not where it is).
 _FORMS: dict[str, tuple[str, ...]] = {
+    "drawer_open": (r"open {a}", r"打开{a}", r"把{a}打开"),
+    "drawer_close": (r"close {a}", r"(?:关闭|关好){a}", r"把{a}(?:关闭|关好)"),
     "place": (r"(?:put|place|set|drop) {o} (?:down )?(?:on top of|onto|on) {s}",
               r"(?:put|set) down {o} (?:on top of|onto|on) {s}",
               r"(?:把?{o})?(?:放到|放在|搁到|搁在|摆到|摆在){s}(?:上面|上)"),
@@ -218,7 +223,7 @@ _LEADS = frozenset({"grasp", "room", "coord"})
 _EXAMPLES = ("pick up the {o}", "put the {o} down", "put the {o} on the {s}", "bring me the {o}", "把{zo}拿过来")
 # A grasp may say where the object ends up: in the hand (拿在手里, "in your hand").
 _IN_HAND = r"(?:(?:拿|握|抓)在手(?:里|上|中)| in (?:your|the|its) (?:hand|gripper))?"
-_SLOTS = {"o": r"(?P<o>.+?)", "s": r"(?P<s>.+)", "r": r"(?P<r>.+?)",
+_SLOTS = {"o": r"(?P<o>.+?)", "s": r"(?P<s>.+)", "r": r"(?P<r>.+?)", "a": r"(?P<a>.+?)",
           "xy": r"\s*\(\s*(?P<x>[-+]?\d+(?:\.\d+)?)\s*,\s*(?P<y>[-+]?\d+(?:\.\d+)?)\s*\)"}
 _CLAUSES = [(kind, re.compile(f.format(**_SLOTS) + (_IN_HAND if kind == "grasp" else "") + "(?: for me)?"))
             for kind, fs in _FORMS.items() for f in fs]
@@ -298,7 +303,8 @@ def _clause(world: Any, text: str) -> tuple[str, dict[str, Any]] | None:
         if slots and world is None:
             continue
         fill = {"o": lambda v: _object(world, v), "s": lambda v: (_surface(world, v), world.resolve_surface(v)),
-                "r": lambda v: _room(world, v)}
+                "r": lambda v: _room(world, v),
+                "a": lambda v: (world.resolve_articulation(v) is not None, world.resolve_articulation(v))}
         got = {k: fill[k](v) for k, v in slots.items()}
         if all(ok for ok, _ in got.values()):
             return kind, {**bound, **{k: b for k, (_, b) in got.items()}}
@@ -340,7 +346,7 @@ def _sentence(world: Any, goal_text: str, held: tuple[str, ...] = ()) -> tuple[s
         obj = held[0] if objs and not grasp and len(held) == 1 else None
 
     def dest(slots: dict[str, Any]) -> Any:
-        return next((slots[k] for k in ("s", "r", "xy") if k in slots), None)
+        return next((slots[k] for k in ("s", "r", "xy", "a") if k in slots), None)
 
     return clauses[-1][0], obj, dest(clauses[-1][1]), tuple((k, dest(s)) for k, s in clauses[:-1])
 
@@ -383,13 +389,15 @@ def unbound_reason(item: str, goal_text: str | None, world_id: str = "", held: t
     return ""
 
 
-_NEEDS = {"room": "in_room", "coord": "at_position"}  # a manipulation kind needs holding_object
+_NEEDS = {"room": "in_room", "coord": "at_position",
+          "drawer_open": "articulation_open", "drawer_close": "articulation_closed"}
 
 
 def _items(kind: str, obj: str | None, dest: Any) -> tuple[str, ...]:
     if kind == "coord":
         return (f"at_position({dest[0]}, {dest[1]})",)
     return {"grasp": (f"holding_object({obj!r})",), "release": (f"released({obj!r})",),
+            "drawer_open": (f"articulation_open({dest!r})",), "drawer_close": (f"articulation_closed({dest!r})",),
             "place": (f"object_on({obj!r}, {dest!r})",), "room": (f"in_room({dest!r})",),
             "fetch": (f"kept_holding({obj!r})", "near_object('user')")}[kind]
 

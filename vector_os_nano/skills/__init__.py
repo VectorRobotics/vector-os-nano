@@ -12,6 +12,7 @@ from vector_os_nano.skills.gripper import GripperCloseSkill, GripperOpenSkill
 from vector_os_nano.skills.home import HomeSkill
 from vector_os_nano.skills.joint_posture import JointPostureSkill
 from vector_os_nano.skills.place import PlaceSkill
+from vector_os_nano.skills.drawer import OpenDrawerSkill, CloseDrawerSkill
 
 __all__ = ["GraspSkill", "GripperCloseSkill", "GripperOpenSkill", "HomeSkill", "PlaceSkill",
            "get_skills"]

@@ -146,6 +146,7 @@ class ActorBaseline:
     joint_groups: dict[str, tuple[float | None, tuple[float, ...] | None]] | None = None
     gripper_contacts: dict[str, bool] | None = None
     gripper_ctrl_motion: float | None = None
+    articulations: dict[str, float | None] | None = None
 
 
 def _read_float(fn: Any) -> float | None:
@@ -219,6 +220,8 @@ def capture(agent: Any, session: Any = None) -> ActorBaseline:
         joint_groups=groups,
         gripper_contacts=contact_held,
         gripper_ctrl_motion=_read_float(getattr(gripper, 'ctrl_motion', None)),
+        articulations={n: _read_truth('articulation', lambda: float(gt.joint_positions((spec.joint,))[0]))
+                       for n, spec in getattr(getattr(session, 'world', None), 'articulations', {}).items()},
     )
 
 
@@ -229,7 +232,7 @@ def capture(agent: Any, session: Any = None) -> ActorBaseline:
 # The actor channels causation is graded on ("none" oracles name no actor state: a
 # step verified only by them is never graded here). "perception" is the actor's belief
 # judged against GT (``localized``): caused only by a localized observation this step.
-_ROBOT_CHANNELS: frozenset[str] = frozenset({"base", "arm", "gripper", "perception", "joints"})
+_ROBOT_CHANNELS: frozenset[str] = frozenset({"base", "arm", "gripper", "perception", "joints", "articulation"})
 # ``not <pred>`` asks for the opposite transition of ``<pred>``.
 _FLIP = {"rise": "fall", "fall": "rise", "level": "level"}
 
@@ -373,6 +376,22 @@ def _gripper_caused(want: str, call: ast.Call, b: ActorBaseline, p: ActorBaselin
 
 def _call_caused(name: str, call: ast.Call, channel: str, want: str,
                  b: ActorBaseline, p: ActorBaseline, world: Any = None) -> bool:
+    if channel == 'articulation':
+        arg = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == 'target'), None)
+        target = world.resolve_articulation(arg.value) if world is not None and isinstance(arg, ast.Constant) else None
+        before, after = (b.articulations or {}).get(target), (p.articulations or {}).get(target)
+        if (target is None or before is None or after is None or not all(math.isfinite(q) for q in (before, after))
+                or not _commanded(b.gripper_ctrl_motion, p.gripper_ctrl_motion)
+                or not (_commanded(b.base_cmd_motion, p.base_cmd_motion) or _commanded(b.arm_ctrl_motion, p.arm_ctrl_motion))):
+            return False
+        spec = world.articulations[target]
+        if name == 'articulation_open':
+            was, now = ((q-spec.closed)/(spec.opened-spec.closed) >= 1. for q in (before, after))
+        elif name == 'articulation_closed':
+            was, now = (abs(q-spec.closed) <= spec.closed_tolerance for q in (before, after))
+        else:
+            return False
+        return (not was and now) if want == 'rise' else (was and not now) if want == 'fall' else was != now
     if channel == "gripper":
         return _gripper_caused(want, call, b, p, world)
     if channel == "perception":
