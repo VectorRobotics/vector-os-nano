@@ -142,6 +142,7 @@ class ArmKinematics:
         use_rot = target_rot is not None
         jacp = np.zeros((3, m.nv))
         jacr = np.zeros((3, m.nv)) if use_rot else None
+        quat_err, rot_err = np.empty(4), np.empty(3)
         for _ in range(_IK_MAX_ITER):
             d.qpos[qadr] = q
             mj.mj_kinematics(m, d)  # + com positions: all mj_jacSite needs
@@ -151,7 +152,9 @@ class ArmKinematics:
                 dR = target_rot @ d.site_xmat[sid].reshape(3, 3).T
                 if np.linalg.norm(pos_err) < self._position_tolerance and _rot_angle(dR) < _IK_ROT_TOL:
                     return [float(v) for v in q]
-                rot_err = 0.5 * np.array([dR[2, 1] - dR[1, 2], dR[0, 2] - dR[2, 0], dR[1, 0] - dR[0, 1]])
+                # The rotation log stays nonzero at pi, unlike the skew/sine error.
+                mj.mju_mat2Quat(quat_err, dR.ravel())
+                mj.mju_quat2Vel(rot_err, quat_err, 1.0)
                 err = np.concatenate([pos_err, rot_err])
             else:
                 if np.linalg.norm(pos_err) < self._position_tolerance:

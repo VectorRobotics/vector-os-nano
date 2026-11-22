@@ -12,9 +12,7 @@ from vector_os_nano.sim.runtime import ACTOR_EPOCH, SimRuntime
 
 logger = logging.getLogger(__name__)
 
-# move_joints writes the servo set-points at this SIM rate; after the interpolation
-# the joints get up to _SETTLE_S sim seconds to come within the manifest's track_tol.
-_MOVE_UPDATE_HZ = 50.0
+# After interpolation, allow this much sim time to reach the manifest's track_tol.
 _SETTLE_S = 1.0
 _SETTLE_POLL_S = 0.02
 
@@ -84,8 +82,9 @@ class JointGroup:
             if not self._preempted():  # queued commands cannot land after cancellation
                 w.set_targets(joints, v)
 
-        steps = max(1, int(duration * _MOVE_UPDATE_HZ))
-        dt = duration / steps
+        # Updating at the physics tick avoids 50 Hz target jumps and contact impulses.
+        dt = rt.tick_dt
+        steps = max(1, math.ceil(duration / dt))
         done = 0.0
         try:
             for i in range(1, steps + 1):
@@ -97,12 +96,15 @@ class JointGroup:
                 targets = [s + t * (g - s) for s, g in zip(start, goal)]
                 rt.submit(lambda w, v=targets: _write(w, v))
                 done = t
-                rt.wait_sim(dt, cancel=stop)
+                if not rt.wait_sim(dt, cancel=stop, hold=True):
+                    self.stop()
+                    break
         except BaseException:
             if not stop.is_set():
                 self.stop()
             raise
         finally:
+            rt.release_clock()
             # also when the loop raises: a call that wrote set-points commanded motion
             # (the verdict tells a refused call from a failed attempt by this counter)
             if counted:  # the actor's command only inside a producer-dispatched tool

@@ -15,6 +15,9 @@ class Runtime:
     def __init__(self, q):
         self.q = np.array(q, dtype=float)
         self.sim_time = 0.
+        self.tick_dt = .001
+        self.held_waits = []
+        self.clock_releases = 0
         self.samples = [(0., self.q.copy())]
         self.world = SimpleNamespace(scene=SimpleNamespace(joint=lambda n: int(n), joint_q=lambda j: j))
     def call(self, fn):
@@ -22,14 +25,41 @@ class Runtime:
     submit = call
     def snapshot(self):
         return SimpleNamespace(q=self.q.copy())
+    def state(self):
+        return self.q.copy(), np.zeros_like(self.q)
     def targets(self, joints):
         return self.q[joints]
     def set_targets(self, joints, q):
         self.q[joints] = q
     def wait_sim(self, seconds, **kw):
+        self.held_waits.append(kw.get('hold', False))
         self.sim_time += seconds
         self.samples.append((self.sim_time, self.q.copy()))
         return True
+    def release_clock(self):
+        self.clock_releases += 1
+
+
+def test_joint_targets_advance_each_physics_tick_and_release_clock(monkeypatch):
+    monkeypatch.setattr('vector_os_nano.sim.drivers.arm.ArmKinematics', lambda *a: None)
+    rt = Runtime([0.])
+    arm = Arm(ArmSpec(('0',), 'tcp', (0.,)), rt)
+    assert arm.move_joints([.01], duration=.1015)
+    times = np.array([t for t, _ in rt.samples])
+    assert np.max(np.diff(times)) <= rt.tick_dt + 1e-12
+    assert .1015 <= times[-1] < .1015 + rt.tick_dt
+    assert all(rt.held_waits)
+    assert rt.clock_releases == 1
+
+
+def test_interrupted_joint_wait_holds_actual_position_and_releases_clock(monkeypatch):
+    monkeypatch.setattr('vector_os_nano.sim.drivers.arm.ArmKinematics', lambda *a: None)
+    rt = Runtime([0.])
+    arm = Arm(ArmSpec(('0',), 'tcp', (0.,)), rt)
+    monkeypatch.setattr(rt, 'wait_sim', lambda *a, **kw: False)
+    assert arm.move_joints([.1], duration=.1) is False
+    assert rt.q[0] < .1
+    assert rt.clock_releases == 1
 
 
 def test_quintic_obeys_each_joint_rate_acceleration_jerk(monkeypatch):

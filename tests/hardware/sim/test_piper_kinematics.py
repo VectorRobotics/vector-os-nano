@@ -174,7 +174,7 @@ _TARGETS = [(0.45, 0.0, 0.30), (0.40, 0.08, 0.22), (0.38, -0.05, 0.34), (2.0, 0.
 _ARM = [0.1, 0.9, -0.8, 0.05, 0.3, -0.2]
 
 
-def test_the_kinematics_keep_the_old_driver_numbers(rig) -> None:
+def test_kinematics_preserve_fk_position_ik_and_top_down_reach(rig) -> None:
     golden = json.loads((Path(__file__).with_name("golden") / "piper_kinematics.json").read_text())
     cases = [((x, y, yaw), (x + math.cos(yaw) * f - math.sin(yaw) * left,
                             y + math.sin(yaw) * f + math.cos(yaw) * left, z))
@@ -184,11 +184,21 @@ def test_the_kinematics_keep_the_old_driver_numbers(rig) -> None:
         q = rig.place(*base, arm=_ARM).copy()
         pos, rot = rig.kin.fk(q, _ARM)
         # MuJoCo 4 changes floating-point roundoff; preserve twelve decimal places.
-        for got, want in ((rig.kin.ik_top_down(q, target, rig.seeds()), old['td']),
-                          (rig.kin.ik(q, target, rig.kin.arm_q(q)), old['ik']),
+        for got, want in ((rig.kin.ik(q, target, rig.kin.arm_q(q)), old['ik']),
                           (pos, old['fk'][0]), (rot, old['fk'][1])):
             if want is None:
                 assert got is None, (base, target)
             else:
                 np.testing.assert_allclose(got, want, rtol=0, atol=1e-12, err_msg=str((base, target)))
+        # Rotation-log IK may select different joints; its physical target is unchanged.
+        solved = rig.kin.ik_top_down(q, target, rig.seeds())
+        if old['td'] is None:
+            assert solved is None, (base, target)
+        else:
+            assert solved is not None, (base, target)
+            position, rotation = rig.kin.fk(q, solved)
+            assert math.dist(position, target) < rig.spec.ik_tolerance
+            assert np.dot(np.array(rotation)[:, 2], [0, 0, -1]) > math.cos(kinematics._IK_ROT_TOL)
+            assert np.all(np.asarray(solved) >= rig.kin.range[:, 0])
+            assert np.all(np.asarray(solved) <= rig.kin.range[:, 1])
     assert sum(o["td"] is not None for o in golden) == 12  # solutions, not only misses
