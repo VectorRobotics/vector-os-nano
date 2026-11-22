@@ -93,6 +93,23 @@ def test_jaw_commands_have_finite_speed():
     assert max(abs(b[1][0]-a[1][0])/(b[0]-a[0]) for a,b in zip(rows,rows[1:]))<=.05+1e-9
 
 
+def test_release_unloads_from_previous_target_at_each_physics_tick(monkeypatch):
+    grip = Gripper.__new__(Gripper)
+    grip._rt = Runtime([.025])
+    grip._jaw = grip._jaw_q = 0
+    grip._spec = GripperSpec('0', .04, 0., ('left', 'right'), 'palm', .002, assist=False, speed=.02)
+    # The package holds the jaws open while the servo still commands a squeeze.
+    monkeypatch.setattr(grip._rt, 'targets', lambda joints: np.array([0.]))
+    grip._servo(.04)
+    rows = grip._rt.samples[1:]
+    commands = np.r_[0., [q[0] for _, q in rows]]
+    times = np.r_[0., [t for t, _ in rows]]
+    assert np.max(np.diff(times)) <= grip._rt.tick_dt + 1e-12
+    assert np.max(np.diff(commands)/np.diff(times)) <= .02 + 1e-9
+    assert commands[-1] == .04
+    assert all(grip._rt.held_waits) and grip._rt.clock_releases == 1
+
+
 @pytest.mark.parametrize('speed', [None, .05])
 def test_jaw_finishes_at_exact_requested_target(speed):
     grip=Gripper.__new__(Gripper);grip._rt=Runtime([.038123]);grip._jaw=grip._jaw_q=0
@@ -158,7 +175,7 @@ def test_jaw_command_counter_counts_actor_writes_even_when_interrupted(monkeypat
     with ACTOR_EPOCH.tool():
         grip._servo(.02)
     assert grip.ctrl_motion() == 0.
-    monkeypatch.setattr(grip._rt, 'wait_sim', lambda *args: False)
+    monkeypatch.setattr(grip._rt, 'wait_sim', lambda *args, **kwargs: False)
     with ACTOR_EPOCH.tool(), pytest.raises(RuntimeError, match='interrupted'):
         grip._servo(0.)
-    assert grip.ctrl_motion() == pytest.approx(.001)
+    assert 0 < grip.ctrl_motion() == pytest.approx(abs(grip._rt.q[0]-.02))

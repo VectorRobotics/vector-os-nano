@@ -53,18 +53,22 @@ class Gripper:
     def _servo(self, q: float) -> None:
         jaw = [self._jaw]
         rt, speed = self._rt, self._spec.speed
-        start = float(rt.snapshot().q[self._jaw_q])
-        previous = float(rt.call(lambda w: w.targets(jaw))[0])
+        # A loaded jaw differs from its target; starting at its pose would dump grip force.
+        start = previous = float(rt.call(lambda w: w.targets(jaw))[0])
         counted = ACTOR_EPOCH.active
-        steps = 1 if speed is None else max(1, math.ceil(abs(q - start) / (speed * _SETTLE_POLL_S)))
-        for i in range(1, steps + 1):
-            target = q if i == steps else start + (q - start) * i / steps
-            rt.call(lambda w, v=target: w.set_targets(jaw, [v]))
-            if counted:
-                self._ctrl_motion += abs(target-previous)
-            previous = target
-            if speed is not None and not rt.wait_sim(_SETTLE_POLL_S):
-                raise RuntimeError("gripper motion interrupted")
+        steps = 1 if speed is None else max(1, math.ceil(abs(q - start) / (speed * rt.tick_dt)))
+        try:
+            for i in range(1, steps + 1):
+                target = q if i == steps else start + (q - start) * i / steps
+                rt.call(lambda w, v=target: w.set_targets(jaw, [v]))
+                if counted:
+                    self._ctrl_motion += abs(target-previous)
+                previous = target
+                if speed is not None and not rt.wait_sim(rt.tick_dt, hold=True):
+                    raise RuntimeError("gripper motion interrupted")
+        finally:
+            if speed is not None:
+                rt.release_clock()
 
     def ctrl_motion(self) -> float:
         """Jaw set-point displacement issued inside producer-dispatched tools."""
