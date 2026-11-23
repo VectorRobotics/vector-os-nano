@@ -1,0 +1,37 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+localPlanner:
+  ros__parameters:
+    adjacentRange: 3.5
+    autonomyMode: true
+    autonomySpeed: 0.15
+    checkObstacle: true
+    goalClearRange: 0.3
+    maxRelZ: 1.5
+    maxSpeed: 0.15
+    minRelZ: -0.3
+    omniDirGoalThre: 0.5
+    sensorOffsetX: 0.12
+    sensorOffsetY: 0.0
+    twoWayDrive: false
+    useTerrainAnalysis: true
+    vehicleLength: 0.84
+    vehicleWidth: 0.84
+pathFollower:
+  ros__parameters:
+    autonomyMode: true
+    autonomySpeed: 0.15
+    dirDiffThre: 0.3
+    maxSpeed: 0.15
+    maxYawRate: 11.4591559
+    omniDirGoalThre: 0.5
+    sensorOffsetX: 0.12
+    sensorOffsetY: 0.0
+    stopDisThre: 0.05
+    stopYawRateGain: 3.0
+    yawRateGain: 3.0
+    twoWayDrive: false
+    maxAccel: 0.15
+    slowDwnDisThre: 0.4
+    realRobot: false

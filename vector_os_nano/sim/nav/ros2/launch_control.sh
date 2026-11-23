@@ -12,7 +12,7 @@ cleanup() { nav_stop_groups "${pids[@]}"; wait 2>/dev/null || true; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-ros2 run local_planner localPlanner --ros-args --params-file "$folder/local.yaml" & pids+=($!)
+ros2 run local_planner localPlanner --ros-args --params-file "$folder/local.yaml" -p pathFolder:="$NAV_STACK/install/local_planner/share/local_planner/paths" & pids+=($!)
 ros2 run local_planner pathFollower --ros-args --params-file "$folder/local.yaml" & pids+=($!)
 ros2 run sensor_scan_generation sensorScanGeneration --ros-args -p use_sim_time:=true & pids+=($!)
 ros2 run terrain_analysis terrainAnalysis --ros-args -p use_sim_time:=true -p vehicleHeight:=0.25505 -p maxRelZ:=1.5 -p obstacleHeightThre:=0.1 -p limitGroundLift:=true -p maxGroundLift:=0.05 & pids+=($!)

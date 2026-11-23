@@ -158,9 +158,9 @@ class NavStack(Node):
                 if not self._apply(values, command):
                     reason = 'aborted'; break
                 if fresh:
-                    base._navigation.update(state='following', path=path[0])
+                    base._navigation = {**base._navigation, 'state': 'following', 'path': path[0]}
                 else:
-                    base._navigation.update(state='waiting_for_stack')
+                    base._navigation = {**base._navigation, 'state': 'waiting_for_stack'}
                     last_fresh = min(cmd[2] if cmd else wall_start, path[2] if path else wall_start,
                                      self._route[1] if self._route else wall_start)
                     if wall-last_fresh > 20.:
@@ -170,7 +170,8 @@ class NavStack(Node):
                 if now-progress_at > 20.:
                     reason, detail = 'stalled', 'NAV STACK made no position progress'; break
                 if now-last_progress >= 2.:
-                    base._navigation.update(remaining_m=dist if goal is not None else None, elapsed_s=now-start)
+                    base._navigation = {**base._navigation, 'remaining_m': dist if goal is not None else None,
+                                        'elapsed_s': now-start}
                     if on_progress:
                         on_progress(dist, now-start)
                     last_progress = now
@@ -185,5 +186,6 @@ class NavStack(Node):
                            dist=math.dist(pos[:2], goal) if goal is not None else 0., moved_m=moved,
                            net_m=math.dist(origin, pos[:2]), plan_m=None, elapsed_s=base.get_sim_time()-start,
                            recoveries=0, planner='far' if goal is not None else 'tare', detail=detail)
-        base._navigation.update(state=reason, result=dict(result), remaining_m=result['dist'], elapsed_s=result['elapsed_s'])
+        base._navigation = {**base._navigation, 'state': reason, 'result': dict(result),
+                            'remaining_m': result['dist'], 'elapsed_s': result['elapsed_s']}
         return result
