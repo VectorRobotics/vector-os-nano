@@ -6,6 +6,20 @@ symptom pointed away from the cause, that survived a green test suite, or that h
 SHORT: dot points, key facts only (symptom → why hidden → root cause → fix → lesson).
 Routine bugs do NOT belong here; git history covers those.
 
+## NAV STACK stops short with a valid FAR goal (2026-11-23)
+
+- Symptom: the Malo rollout stopped 0.444 m from the original goal; FAR still
+  published that goal, while localPlanner emitted a one-point path and pathFollower
+  correctly emitted zero velocity. The VECTOR arrival check remained false.
+- Cause: localPlanner inherited a 0.5 m `goalReachedThreshold`, inconsistent with
+  the 0.1 m session arrival tolerance. This looked like a bridge or follower stall.
+- Fix: set the existing localPlanner parameter to 0.05 m alongside pathFollower's
+  0.05 m stop distance; retain the independent 0.15 m physical criterion. A config
+  regression checks all three tolerances, and cold-start ROS parameter readback
+  confirms the installed executable actually consumes the setting.
+- Lesson: inspect path endpoints and each controller's terminal predicate before
+  weakening the user's goal predicate. Preserve the failed rollout and its grade.
+
 ---
 
 ## Case 10 — FAKEABLE GRASP: "抓前面的东西" graded GROUNDED by a self-written marker file, not the gripper (2026-06-24, D69)

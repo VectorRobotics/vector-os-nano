@@ -63,7 +63,7 @@ Progress lives in the work-package table below and in `/data/vos-analysis/releas
 | perception weights | resolved through the Hugging Face cache, fetched on first use with one visible notice; `HF_HUB_OFFLINE=1` forbids | a fresh clone has none |
 | install | editable clone documented; the wheel is also made correct | `config/` outside the package; `.gitignore` `assets/` drops 232 meshes |
 | real SO-101 hardware | experimental, SDK-only, unadvertised | no hardware here to verify |
-| external TARE/FAR stack | experimental opt-in (`VECTOR_NAV_STACK`), honest readiness | the in-process bridge (old WP13) is 1.1 |
+| external TARE/FAR stack | experimental opt-in (`VECTOR_NAV_STACK`, session control via `VECTOR_NAV_CONTROL`) | HOME-MALO demo validated; release-wide NV1 qualification remains open |
 | version | 1.0.0 | |
 
 ## Architecture — N simulators × M robots with N + M code

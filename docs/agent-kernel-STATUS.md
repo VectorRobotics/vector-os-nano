@@ -1,3 +1,15 @@
+# >> 2026-11-23 — HOME-MALO NAV STACK demo validated on `rel/HOME-MALO`.
+#   Actual CLI -> FAR/TARE -> CMU localPlanner/pathFollower -> guarded wheel control;
+#   oblique third-person camera. One cold CLI dining-room goal: GROUNDED, independent
+#   physics 14/14 pass, 0.095974 m error; all 1,862 nonzero applied commands match the
+#   recorded C++ follower. FAR -> stop -> TARE -> stop -> FAR also exercised.
+#   160 focused tests pass. Full GUI video: 738.4 s, 1920x1080, 15 fps; decode passes.
+#   Evidence: /home/yusenzlabpc/vector-os-household-output/20261121/04_验证证据/full-system-20261123-101548
+#   Parameters/commands: examples/household/navigation/malo/README.md.
+#   Scope is the current demo, not release acceptance. Full TARE coverage, continuous
+#   ergonomic-motion review, hardware calibration and long-horizon tasks remain open;
+#   deployment gate stays closed. No RL run. Next development waits for owner direction.
+#
 # >> 2026-11-11 — RELEASE 1.0 CAMPAIGN IN PROGRESS on branch `release/1.0`.
 #   The live resume anchor is docs/plan-release-1.0.md (scope, work packages, disciplines).
 #   Everything below this banner predates the 2026-10 refactor waves and is STALE until the docs

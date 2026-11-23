@@ -117,6 +117,17 @@ physics advances only inside `wait_sim`/`step`, so a scripted run is determinist
 
 ## In-process navigation (vector_os_nano/sim/nav)
 
+For the release-1.0 `SimSession` path, `VECTOR_NAV_CONTROL=1` instead connects
+`LeggedBase.navigate_to` to the existing FAR + CMU localPlanner/pathFollower stack;
+CLI exploration selects TARE. Set `VECTOR_NAV_STACK` to the installed external
+workspace and `VECTOR_NAV_CONFIG` to the parameter directory. See
+[Malo configuration and CLI commands](../examples/household/navigation/malo/README.md).
+The session starts and closes its own stack; the base lease serializes control and
+stop. Sensors, planner paths, source velocity and applied velocity are observable
+ROS topics. The GUI follows from an oblique third-person view with wall avoidance.
+Room goals and ideal simulated odometry are declared inputs; this is not a
+localization benchmark. This opt-in path does not use the fallback described below.
+
 `MuJoCoGo2.navigate_to` and `MuJoCoG1.navigate_to` both delegate to ONE follower
 (`sim/nav/follow.py`) over ONE planner (`sim/nav/vgraph.py`): the static scene's
 box/cylinder geoms (`obstacles_from_model`, robot subtree excluded) are Minkowski-

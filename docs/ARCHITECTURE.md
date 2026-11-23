@@ -201,6 +201,13 @@ The architectural form of the CLAUDE.md Rules. Anything that violates them is a 
 One terse line per package. No line numbers (they rot — read the file). Paths relative to
 `vector_os_nano/`.
 
+- `sim/nav/ros2/control.py` — optional session-owned external NAV STACK control:
+  FAR goals or TARE exploration select one waypoint stream for the existing CMU
+  localPlanner/pathFollower. A dedicated ROS executor caches commands; the skill
+  thread applies them under the base control lease. Stale routes, paths or commands
+  stop motion; cancellation disarms the lease. This mode has no authored-map planner
+  fallback. `SimSession` owns the stack processes; `SessionViz` publishes sensors
+  and command provenance. Arrival checks the original requested goal.
 - `vcli/engine.py` + `vcli/backends/` — VectorEngine (tool-use loop, dispatch, VGG entry
   points, per-world verify-namespace binding) and the model adapters behind a common type.
 - `vcli/native_loop.py` — the default model-driven producer: a native tool-use ReAct loop

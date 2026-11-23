@@ -69,3 +69,25 @@ Record `/navigation_cmd_vel`, `/vector/navigation/applied_cmd`,
 `/vector/navigation/status` and `/odom_base_link` before the first goal. This check
 establishes command provenance and observed motion; it does not replace the
 independent raw-physics grade or continuous-motion review.
+
+Validation on 2026-11-23 (MuJoCo 4.0.1, existing ROS Jazzy NAV STACK):
+
+- One cold bare-CLI `去餐厅` goal: `GROUNDED verified=True`; independent physical
+  checks 14/14 pass, original-goal error 0.095974 m, final speed below 0.000001 m/s.
+- All 1,862 nonzero applied commands match recorded C++ pathFollower output.
+  The separate FAR -> stop -> TARE -> stop -> FAR run matched another 613 commands
+  (159 from TARE). It demonstrates exploration control and cancellation, not complete
+  house coverage.
+- 24 live topics and six TF transforms checked; 160 focused tests pass, none skipped.
+  The continuous GUI recording includes simulation, CLI, RViz and all three configured
+  RGB-D cameras: 738.4 seconds at 1920x1080/15 fps, full decode passes.
+- The preceding failed rollout stopped 0.444 m short because localPlanner inherited
+  a 0.5 m arrival threshold. `local.yaml` sets it to 0.05 m; runtime parameter readback
+  and a regression test confirm this. The fixed physical criterion stays at 0.15 m.
+
+Evidence is local under `vector-os-household-output/20261121/04_验证证据/`:
+`full-system-20261123-101548` (final), `094917` (planner switching), `095747`
+(preserved threshold failure). The final recording is
+`01_演示/NAV_STACK真实控制-第三人称-20261123.mp4`. No held-out reset seed was declared.
+Room coordinates and ideal simulated odometry are known inputs. Continuous ergonomic
+motion review remains unverified, so the long-horizon deployment gate is closed.
