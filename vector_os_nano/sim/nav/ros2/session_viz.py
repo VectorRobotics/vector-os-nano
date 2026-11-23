@@ -7,6 +7,7 @@ All sensor stamps are simulation acquisition times, including the optical TF.
 from __future__ import annotations
 
 import json
+import os
 import threading
 
 import numpy as np
@@ -93,7 +94,8 @@ class SessionViz(Node):
             'fingertip_load': bool(config.arm and config.arm.gripper and config.arm.gripper.force_feedback),
             'odometry': 'ideal simulated root pose', 'imu': 'not configured',
             'calibration': 'simulation estimates; not hardware calibration',
-            'navigation': 'VECTOR visibility graph on authored scene; not TARE/FAR',
+            'navigation': 'FAR/TARE + CMU pathFollower' if base and base._nav_stack is not None
+                          else 'VECTOR visibility graph on authored scene',
         })))
         self.create_timer(.05, self.publish_state)
         self.create_timer(.5, self.publish_sensors)
@@ -209,7 +211,7 @@ class SessionViz(Node):
             msg.poses.append(p)
         self.path.publish(msg)
         goal = state.get('goal')
-        if goal and goal != self._last_goal:
+        if self.base._nav_stack is None and goal and goal != self._last_goal:
             point = PointStamped()
             point.header = msg.header
             point.point.x, point.point.y = map(float, goal)
@@ -230,16 +232,39 @@ def start(runtime, config, cameras, base, lidar, gripper, *, layout=None):
     """Own an isolated ROS context and executor; no global rclpy shutdown."""
     context = Context()
     context.init()
+    control, control_executor, control_thread = None, None, None
     try:
+        if os.environ.get('VECTOR_NAV_CONTROL') == '1':
+            if base is None or lidar is None:
+                raise ValueError('NAV STACK control requires a base and lidar')
+            from .control import NavStack
+            control = NavStack(base, context=context)
+            base._nav_stack = control
+            base._navigation.update(planner='far', controller='CMU pathFollower', map_source='live_lidar')
+            control_executor = SingleThreadedExecutor(context=context)
+            control_executor.add_node(control)
         node = SessionViz(runtime, config, cameras, base, lidar, gripper, context=context, layout=layout)
         executor = SingleThreadedExecutor(context=context)
         executor.add_node(node)
     except BaseException:
+        if control is not None:
+            control.destroy_node()
+            base._nav_stack = None
         context.shutdown()
         raise
+    if control_executor is not None:
+        control_thread = threading.Thread(target=control_executor.spin, daemon=True, name='session_nav_control')
+        control_thread.start()
     thread = threading.Thread(target=executor.spin, daemon=True, name='session_sensor_viz')
     thread.start()
     def close():
+        if control is not None:
+            control.closed.set()
+            base.stop()
+            control_executor.shutdown()
+            control_thread.join()
+            control.destroy_node()
+            base._nav_stack = None
         executor.shutdown()
         thread.join()
         node.destroy_node()

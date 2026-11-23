@@ -5,8 +5,8 @@
 
 A room name resolves (aliases, SceneGraph) to its learned centre; a coordinate
 goal ({x, y} / target) goes straight to the base's planner. Both drive
-``base.navigate_to``, which returns a ``NavResult`` from the ONE global planner
-(sim/nav): its ``reason`` is reported.
+``base.navigate_to``, which returns a ``NavResult`` from the session's selected
+navigation backend: its ``reason`` is reported.
 
 A room visit is recorded only after a verified arrival (never on failure: the
 SceneGraph centres feed the legacy verify). Room positions

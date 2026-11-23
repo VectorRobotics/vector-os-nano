@@ -131,6 +131,7 @@ class LeggedBase:
         self._ticked = _ZERO            # the command the policy last saw
         self._connected = False
         self._navigation: dict = {"state": "idle", "planner": "visibility_graph", "map_source": "authored_scene", "path": []}
+        self._nav_stack = None
 
     # -- the BaseProtocol surface ----------------------------------------------
 
@@ -292,7 +293,7 @@ class LeggedBase:
         return float(self._cmd_motion)
 
     def navigation_state(self) -> dict:
-        """A detached, read-only view of the actual in-process plan and its result."""
+        """A detached, read-only view of the selected planner's path and result."""
         import copy
         return copy.deepcopy(self._navigation)
 
@@ -309,6 +310,13 @@ class LeggedBase:
         navigate holds control (the rise out of a posture included) ends it 'aborted',
         like *cancel* (None: the run's stop signal).
         """
+        if self._nav_stack is not None:
+            outer = self._cancel if cancel is None else cancel
+            with self._control() as stops:
+                return self._nav_stack.navigate((x, y), nav=self._spec.nav, fallen=self._fallen,
+                    cancel=_Abort(lambda: self._stops != stops or outer.is_set()),
+                    tol=tol, speed=speed, timeout=timeout, on_progress=on_progress,
+                    command=lambda *values: self._command(*values, stops=stops))
         q = self._rt.snapshot().q
         obstacles = vg.scene_obstacles(self._scene, q)
         reach = vg.scene_overhang(self._scene, q, set(self._joints), self._rt.attachments())
@@ -335,6 +343,16 @@ class LeggedBase:
                                 "remaining_m": res['dist'], "elapsed_s": res['elapsed_s']}
         logger.info("navigate_to(%.2f, %.2f): %s", x, y, res)
         return res
+
+    def explore_tare(self, *, cancel, timeout=120., on_progress=None):
+        """Give the installed exploration stack the same cancellable control lease."""
+        if self._nav_stack is None:
+            raise RuntimeError('NAV STACK is not connected')
+        with self._control() as stops:
+            return self._nav_stack.explore(nav=self._spec.nav, fallen=self._fallen,
+                cancel=_Abort(lambda: self._stops != stops or self._cancel.is_set() or cancel.is_set()),
+                timeout=timeout, on_progress=on_progress,
+                command=lambda *values: self._command(*values, stops=stops))
 
     # -- beyond the protocol: the world side and the mount ----------------------------
 

@@ -231,7 +231,7 @@ class SimSession:
             session.agent = builder(session, vlm_api_key)
             session.ready = _probe_ready(session.agent, cfg, session.runtime,
                                          deadline=t0 + deadline_s, abort=cancelled)
-            if os.environ.get('VECTOR_ROS_VIZ') == '1':
+            if os.environ.get('VECTOR_ROS_VIZ') == '1' or os.environ.get('VECTOR_NAV_CONTROL') == '1':
                 from vector_os_nano.schemas.robot import CameraSpec
                 from vector_os_nano.sim.drivers.camera import Camera
                 from vector_os_nano.sim.nav.ros2.session_viz import start
@@ -240,7 +240,12 @@ class SimSession:
                 session.own('ROS sensor visualization stopped', start(
                     session.runtime, cfg, cameras, agent._base, agent._services['lidar'], agent._gripper,
                     layout=session.world))
-                session.notes.append('ROS visualization: live sensors; navigation=visibility_graph, map=authored_scene')
+                if os.environ.get('VECTOR_NAV_CONTROL') == '1':
+                    _launch_nav_control(session)
+                    agent._services['explore_tare'] = agent._base.explore_tare
+                    session.notes.append('navigation: FAR/TARE → CMU localPlanner/pathFollower → simulated base')
+                else:
+                    session.notes.append('ROS visualization: live sensors; navigation=visibility_graph, map=authored_scene')
             session._bind_ground_truth()
         except BaseException as exc:
             session.stop()
@@ -658,7 +663,8 @@ def _build(session: SimSession, vlm_api_key: str | None) -> Any:
     agent._spatial_memory.load()
     agent._spatial_memory.load_layout(str(world.path))
 
-    if os.environ.get('VECTOR_ROS_VIZ') != '1' and cfg.base is not None and cfg.base.nav.explorer == "tare":
+    if (os.environ.get('VECTOR_ROS_VIZ') != '1' and os.environ.get('VECTOR_NAV_CONTROL') != '1'
+            and cfg.base is not None and cfg.base.nav.explorer == "tare"):
         if not os.environ.get("VECTOR_NAV_STACK"):
             session.notes.append("explore: coverage (VECTOR_NAV_STACK unset)")
         else:
@@ -678,6 +684,26 @@ def _build(session: SimSession, vlm_api_key: str | None) -> Any:
 # ---------------------------------------------------------------------------
 # Optional TARE capability: bridge + CMU nav stack (moved from cli; WP13 rewrites)
 # ---------------------------------------------------------------------------
+
+
+def _launch_nav_control(session):
+    """The same CLI session owns the installed stack, including terminal-only use."""
+    import subprocess
+    folder = Path(os.environ['VECTOR_NAV_CONFIG'])
+    for name in ('far.yaml', 'tare.yaml', 'local.yaml'):
+        if not (folder/name).is_file():
+            raise ValueError(f'NAV STACK configuration missing: {folder/name}')
+    from vector_os_nano.core.run_dir import run_path
+    log_dir = Path(os.environ.get('VECTOR_DEMO_RUN', str(Path(run_path('nav-control.log')).parent)))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir/'nav-stack.log').open('w') as log:
+        proc = subprocess.Popen(['bash', str(Path(__file__).parent/'nav/ros2/launch_control.sh'), str(folder)],
+                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    def close():
+        session.agent._base.stop()
+        _kill_sessions({proc.pid})
+        proc.wait(timeout=5.)
+    session.own('NAV STACK stopped', close)
 
 
 def _session_pgids(sids: set[int]) -> set[int]:

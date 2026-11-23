@@ -30,7 +30,7 @@ from vector_os_nano.sim.scene import reader
 
 _KINDS = ("rgb", "depth", "seg")
 _VIEWER_SYNC_S = 1.0 / 60.0
-_TRACK_Z = 0.3  # the viewer looks at a mobile robot's root, this high above the floor
+_TRACK_Z = 0.8  # third-person focus above the mobile robot's root
 
 
 def intrinsics(width: int, height: int, fovy_deg: float) -> np.ndarray:
@@ -80,6 +80,8 @@ class MuJoCoWorld:
         root = scene.robot_root
         free = root >= 0 and m.body_jntnum[root] and m.jnt_type[m.body_jntadr[root]] == mj.mjtJoint.mjJNT_FREE
         self._track = root if free else -1
+        self._camera_bodies = set(scene.subtree(root)) if free else set()
+        self._camera_checked = -float('inf')
         if gui:
             import mujoco.viewer  # noqa: PLC0415
 
@@ -92,9 +94,8 @@ class MuJoCoWorld:
             self.caller_thread_only = sys.platform == "darwin"  # Apple GLFW: main thread only
             if v is not None and self._track >= 0:
                 v.cam.type = mj.mjtCamera.mjCAMERA_FREE
-                v.cam.lookat[:] = [*d.xpos[self._track][:2], _TRACK_Z]
-                # Keep the tracked view inside indoor ceilings and clear of walls.
-                v.cam.distance, v.cam.elevation, v.cam.azimuth = 2.3, -70.0, -90.0
+                v.cam.distance, v.cam.elevation = 2.3, -25.0
+                self._follow_camera()
         if directory := os.environ.get('VECTOR_ROLLOUT_DIR'):
             from vector_os_nano.sim.backends.mujoco.recording import Recording
 
@@ -142,11 +143,47 @@ class MuJoCoWorld:
                     self._recording.state(self.model, self.data, self._contact_loads())
             if self._viewer is not None and _time.monotonic() - self._synced > _VIEWER_SYNC_S:
                 if self._track >= 0:
-                    self._viewer.cam.lookat[:] = [*self.data.xpos[self._track][:2], _TRACK_Z]
+                    self._follow_camera()
                 self._viewer.sync()
                 self._synced = _time.monotonic()
         if self._recording is not None:
             self._recording.capture_due(self)
+
+    def _follow_camera(self) -> None:
+        """Rear three-quarter view; orbit to the side when a room wall blocks it."""
+        cam, d = self._viewer.cam, self.data
+        cam.lookat[:] = d.xpos[self._track] + [0., 0., _TRACK_Z]
+        if _time.monotonic()-self._camera_checked < .25:
+            return
+        self._camera_checked = _time.monotonic()
+        rot = d.xmat[self._track].reshape(3, 3)
+        yaw = np.degrees(np.arctan2(rot[1, 0], rot[0, 0]))
+        elevation = np.radians(-25.)
+        best = None
+        for offset in (25., -25., 70., -70., 110., -110., 180.):
+            angle = np.radians(yaw+offset)
+            direction = np.array([-np.cos(angle)*np.cos(elevation),
+                                  -np.sin(angle)*np.cos(elevation), -np.sin(elevation)])
+            # Skip only robot intersections; starting outside it can miss a nearby wall.
+            travelled, distance = 0., .65
+            geom = np.empty(1, dtype=np.int32)
+            for _ in range(32):
+                hit = mj.mj_ray(self.model, d, cam.lookat+direction*travelled, direction,
+                                None, True, -1, geom)
+                if hit < 0 or travelled+hit >= 2.45:
+                    distance = 2.3
+                    break
+                travelled += hit
+                if int(self.model.geom_bodyid[geom[0]]) not in self._camera_bodies:
+                    distance = max(.2, min(2.3, travelled-.15))
+                    break
+                travelled += .001
+            score = distance - abs(offset)*.001
+            if best is None or score > best[0]:
+                best = score, distance, yaw+offset
+            if distance >= 2.3:
+                break
+        cam.distance, cam.azimuth = best[1], best[2]
 
     def state(self) -> tuple[np.ndarray, np.ndarray]:
         with self._lock:

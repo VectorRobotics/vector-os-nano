@@ -170,7 +170,7 @@ def cancel_exploration() -> None:
     """
     if _explore_running:
         _explore_cancel.set()
-        if _explore_backend == "tare":
+        if _explore_backend == "tare" and os.environ.get('VECTOR_NAV_CONTROL') != '1':
             stop_tare_only()
             _emit("stopped", {"reason": "cancelled", "rooms": sorted(_explore_visited)})
 
@@ -454,7 +454,8 @@ class ExploreSkill:
                 },
             )
 
-        backend = str(params.get("backend") or ("tare" if _tare_running() else "coverage"))
+        live_tare = context.services.get('explore_tare')
+        backend = str(params.get("backend") or ("tare" if live_tare or _tare_running() else "coverage"))
         if backend not in BACKENDS:
             return SkillResult(
                 success=False, diagnosis_code="no_backend",
@@ -475,6 +476,17 @@ class ExploreSkill:
         _vocab = _world_vocabulary(context)
 
         if backend == "tare":
+            if live_tare:
+                _explore_cancel.clear()
+                _explore_visited.clear()
+                _explore_backend, _explore_running = 'tare', True
+                try:
+                    out = live_tare(cancel=_Cancelled())
+                finally:
+                    _explore_running = False
+                return SkillResult(bool(out), dict(out),
+                    None if out else f"TARE exploration ended: {out['reason']}",
+                    None if out else 'exploration_failed')
             if not _tare_running():
                 return SkillResult(
                     success=False, diagnosis_code="no_backend",
