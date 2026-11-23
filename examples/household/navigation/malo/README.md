@@ -57,3 +57,15 @@ The local full demo entry remains
 `/home/yusenzlabpc/vector-os-household-output/20261121/02_启动/完整系统演示.sh`.
 It supplies the sensor monitor, terminal and RViz arrangement. Hardware deployment,
 full-house coverage and long-horizon manipulation are separate acceptance gates.
+
+For a closed run folder containing `nav-bag`, verify that nonzero applied commands
+match recorded `pathFollower` output (with the Malo limits) using:
+
+```bash
+python /absolute/path/to/vector-os-nano/examples/household/navigation/malo/verify_bag.py /absolute/path/to/run
+```
+
+Record `/navigation_cmd_vel`, `/vector/navigation/applied_cmd`,
+`/vector/navigation/status` and `/odom_base_link` before the first goal. This check
+establishes command provenance and observed motion; it does not replace the
+independent raw-physics grade or continuous-motion review.

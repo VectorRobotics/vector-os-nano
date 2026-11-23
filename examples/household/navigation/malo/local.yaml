@@ -8,6 +8,7 @@ localPlanner:
     autonomySpeed: 0.15
     checkObstacle: true
     goalClearRange: 0.3
+    goalReachedThreshold: 0.05
     maxRelZ: 1.5
     maxSpeed: 0.15
     minRelZ: -0.3
